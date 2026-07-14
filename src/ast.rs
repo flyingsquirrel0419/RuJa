@@ -140,6 +140,20 @@ pub enum Expr {
         this_value: Box<Expr>,
         args: Vec<Expr>,
     },
+    /// Compiler-generated body of a decorator context's `addInitializer`.
+    DecoratorAddInitializer {
+        initializer: Box<Expr>,
+        active_binding: Arc<str>,
+        queue_binding: Arc<str>,
+    },
+    /// Compiler-generated public decorator access operation. Kind: 0 has,
+    /// 1 get, 2 set.
+    DecoratorAccess {
+        receiver: Box<Expr>,
+        key: Box<Expr>,
+        value: Option<Box<Expr>>,
+        kind: u8,
+    },
     ImportCall {
         specifier: Box<Expr>,
         options: Option<Box<Expr>>,

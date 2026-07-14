@@ -2329,18 +2329,92 @@ impl Vm {
                         self.stack.push(original);
                     } else {
                         let valid = match kind {
-                            0 => crate::builtins::is_callable(&result, &self.heap),
+                            0 => self.is_constructor_value(&result),
                             1 | 2 => crate::builtins::is_callable(&result, &self.heap),
                             _ => false,
                         };
                         if !valid {
                             return Err(Error::type_err(match kind {
-                                0 => "Class decorator must return a callable value or undefined",
+                                0 => "Class decorator must return a constructor or undefined",
                                 2 => "Field decorator must return a function or undefined",
                                 _ => "Element decorator must return a function or undefined",
                             }));
                         }
                         self.stack.push(result);
+                    }
+                }
+                Op::DecoratorAddInitializer => {
+                    let initializer = self.stack.pop().unwrap_or(Value::Undefined);
+                    let queue = self.stack.pop().unwrap_or(Value::Undefined);
+                    let active = self.stack.pop().unwrap_or(Value::Undefined);
+                    if !matches!(active, Value::Bool(true)) {
+                        return Err(Error::type_err(
+                            "addInitializer cannot be called after decoration has completed",
+                        ));
+                    }
+                    if !crate::builtins::is_callable(&initializer, &self.heap) {
+                        return Err(Error::type_err(
+                            "addInitializer requires a callable initializer",
+                        ));
+                    }
+                    let appended = if let Value::Object(idx) = &queue {
+                        self.heap.with_obj(idx.0, |object| {
+                            if let HeapObj::Array(array) = object {
+                                array.items.lock().push(initializer.clone());
+                                array.present.lock().push(true);
+                                true
+                            } else {
+                                false
+                            }
+                        })
+                    } else {
+                        false
+                    };
+                    if !appended {
+                        return Err(Error::internal(
+                            "decorator initializer queue is not an array",
+                        ));
+                    }
+                    self.stack.push(Value::Undefined);
+                }
+                Op::DecoratorAccess(kind) => {
+                    let value = if kind == 2 {
+                        Some(self.stack.pop().unwrap_or(Value::Undefined))
+                    } else {
+                        None
+                    };
+                    let key = self.stack.pop().unwrap_or(Value::Undefined);
+                    let receiver = self.stack.pop().unwrap_or(Value::Undefined);
+                    if !matches!(receiver, Value::Object(_)) {
+                        return Err(Error::type_err(
+                            "Decorator access receiver must be an object",
+                        ));
+                    }
+                    match kind {
+                        0 => {
+                            let property_key = match &key {
+                                Value::Symbol(id) => crate::value::PropertyKey::Symbol(*id),
+                                _ => {
+                                    let key_string = self.to_property_key(&key)?;
+                                    crate::value::PropertyKey::from(key_string.as_str())
+                                }
+                            };
+                            let found = self.has_property_key(&receiver, &property_key)?;
+                            self.stack.push(Value::Bool(found));
+                        }
+                        1 => {
+                            let result = self.get_property_key(&receiver, &key)?;
+                            self.stack.push(result);
+                        }
+                        2 => {
+                            self.set_property_key(
+                                &receiver,
+                                &key,
+                                value.unwrap_or(Value::Undefined),
+                            )?;
+                            self.stack.push(Value::Undefined);
+                        }
+                        _ => return Err(Error::internal("invalid decorator access kind")),
                     }
                 }
                 Op::CallRef(arg_count) => self.op_call_ref(arg_count)?,

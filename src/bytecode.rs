@@ -202,6 +202,11 @@ pub enum Op {
     /// Select a decorator replacement. Kind: 0 class constructor, 1 callable
     /// element value, 2 field initializer. Stack: [original, result].
     ApplyDecoratorResult(u8),
+    /// Validate and append a decorator extra initializer. Stack:
+    /// [active(bool), queue(array), initializer].
+    DecoratorAddInitializer,
+    /// Public decorator context access. Kind: 0 has, 1 get, 2 set.
+    DecoratorAccess(u8),
     /// Unqualified `eval(...)`: call directly only if the resolved callee is
     /// the current Realm's intrinsic eval function; otherwise call normally.
     /// Stack: [callee, args...].

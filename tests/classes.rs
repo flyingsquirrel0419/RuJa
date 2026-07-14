@@ -645,12 +645,16 @@ fn class_computed_method_and_field_names_follow_source_order() {
 
     assert_eq!(
         run(r#"
-            class C {
-                [C.name]() { return 1; }
+            try {
+                class C {
+                    [C.name]() { return 1; }
+                }
+                false;
+            } catch (error) {
+                error instanceof ReferenceError;
             }
-            C.prototype.C();
         "#),
-        Value::Number(1.0)
+        Value::Bool(true)
     );
 }
 
@@ -2131,9 +2135,10 @@ fn decorator_replacements_are_type_checked() {
     assert!(run_err("class C { @(() => 1) method() {} }").contains("Element decorator"));
     assert!(run_err("class C { @(() => 1) field; }").contains("Field decorator"));
     assert_eq!(
-        run("@(() => (() => 7)) class C {} C();"),
+        run("@(function() { return function() { return 7; }; }) class C {} C();"),
         Value::Number(7.0)
     );
+    assert!(run_err("@(() => (() => 7)) class C {}").contains("Class decorator"));
 }
 
 #[test]
@@ -2183,6 +2188,17 @@ fn decorator_member_expressions_preserve_factory_receivers() {
             };
             @namespace.factory() class C {}
             receiver === namespace;
+        "#),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run(r#"
+            let receiver;
+            let holder = {
+              decorator(value, context) { receiver = this; }
+            };
+            @holder.decorator class C {}
+            receiver === holder;
         "#),
         Value::Bool(true)
     );
@@ -2300,4 +2316,281 @@ fn decorator_grammar_rejects_unrestricted_and_invalid_targets() {
     assert!(run_err("class C { @foo constructor() {} }").contains("cannot be decorated"));
     assert!(run_err("class C { @foo #method() {} }").contains("not implemented"));
     assert!(run_err("class C { @foo accessor value; }").contains("not implemented"));
+}
+
+#[test]
+fn decorator_context_exposes_public_access_and_exact_shape() {
+    assert_eq!(
+        run(r#"
+            let contexts = [];
+            function capture(value, context) { contexts.push(context); }
+            let symbol = Symbol("computed");
+            class C {
+              @capture method() { return 1; }
+              @capture get value() { return this._value; }
+              @capture set value(next) { this._value = next; }
+              @capture field = 2;
+              @capture [symbol]() { return 3; }
+              @capture static staticMethod() { return 4; }
+            }
+            let instance = new C();
+            let staticContext = contexts[0];
+            let methodContext = contexts[1];
+            let getterContext = contexts[2];
+            let setterContext = contexts[3];
+            let symbolContext = contexts[4];
+            let fieldContext = contexts[5];
+            methodContext.access.get(instance) === C.prototype.method;
+            getterContext.access.get(instance) === undefined;
+            setterContext.access.set(instance, 7);
+            fieldContext.access.set(instance, 8);
+            let fieldValue = fieldContext.access.get(instance);
+            let symbolValue = contexts[4].access.get(instance);
+            let staticValue = staticContext.access.get(C);
+            let primitiveErrors = 0;
+            for (let operation of [
+              () => methodContext.access.has(1),
+              () => methodContext.access.get(1),
+              () => fieldContext.access.set(1, 2),
+              () => new methodContext.access.get(instance)
+            ]) {
+              try { operation(); } catch (error) { if (error instanceof TypeError) primitiveErrors++; }
+            }
+            [
+              Object.keys(methodContext).join(","), Object.keys(methodContext.access).join(","),
+              Object.keys(getterContext.access).join(","), Object.keys(setterContext.access).join(","),
+              Object.keys(fieldContext.access).join(","), symbolContext.name === symbol,
+              methodContext.access.get.name, setterContext.access.set.name,
+              methodContext.addInitializer.name, methodContext.access.has(instance),
+              methodContext.access.get.length,
+              setterContext.access.set.length, methodContext.addInitializer.length,
+              instance._value, fieldValue, symbolValue(), staticValue(), primitiveErrors
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "kind,access,static,private,name,addInitializer|get,has|get,has|set,has|get,set,has|true|||addInitializer|true|1|2|1|7|8|3|4|4"
+        ))
+    );
+    assert_eq!(
+        run(r#"
+            let named;
+            let anonymous;
+            function captureNamed(value, context) { named = context; }
+            function captureAnonymous(value, context) { anonymous = context; }
+            @captureNamed class C {}
+            (@captureAnonymous class {});
+            [
+              Object.keys(named).join(","), named.kind, named.name,
+              "access" in named, "static" in named, "private" in named,
+              anonymous.name === undefined
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "kind,name,addInitializer|class|C|false|false|false|true"
+        ))
+    );
+    assert_eq!(
+        run(r#"
+            let access;
+            function replace(value, context) {
+              access = context.access;
+              return function replacement() { return 9; };
+            }
+            class C { @replace method() { return 1; } }
+            let instance = new C();
+            access.get(instance) === C.prototype.method && access.get(instance)() === 9;
+        "#),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn decorator_add_initializer_runs_at_specified_boundaries() {
+    assert_eq!(
+        run(r#"
+            let log = [];
+            function extra(label) {
+              return function(value, context) {
+                log.push("apply " + label);
+                context.addInitializer(function() {
+                  log.push("extra " + label + ":" + context.kind + ":" + this.marker + ":" + this.field);
+                });
+              };
+            }
+            @extra("class-a") @extra("class-b")
+            class C {
+              @extra("instance-method-a") @extra("instance-method-b") method() {}
+              marker = (log.push("instance marker"), "instance");
+              @extra("instance-field-a") @extra("instance-field-b") field = (log.push("instance field"), "field");
+              @extra("static-method-a") @extra("static-method-b") static method() {}
+              static marker = (log.push("static marker"), "static");
+              @extra("static-field-a") @extra("static-field-b") static field = (log.push("static field"), "field");
+            }
+            log.push("before instance");
+            new C();
+            log.join("|");
+        "#),
+        Value::String(Arc::from(
+            "apply static-method-b|apply static-method-a|apply instance-method-b|apply instance-method-a|apply static-field-b|apply static-field-a|apply instance-field-b|apply instance-field-a|apply class-b|apply class-a|extra static-method-b:method:undefined:undefined|extra static-method-a:method:undefined:undefined|static marker|static field|extra static-field-b:field:static:field|extra static-field-a:field:static:field|extra class-b:class:static:field|extra class-a:class:static:field|before instance|extra instance-method-b:method:undefined:undefined|extra instance-method-a:method:undefined:undefined|instance marker|instance field|extra instance-field-b:field:instance:field|extra instance-field-a:field:instance:field"
+        ))
+    );
+}
+
+#[test]
+fn decorator_add_initializer_validates_callable_and_lifetime() {
+    assert!(
+        run_err("class C { @((value, context) => context.addInitializer(1)) method() {} }")
+            .contains("callable initializer")
+    );
+    assert!(run_err(
+        "class C { @((value, context) => new context.addInitializer(function() {})) method() {} }"
+    )
+    .contains("not a constructor"));
+    assert_eq!(
+        run(r#"
+            let lateFromSuccess;
+            let lateFromThrow;
+            function success(value, context) { lateFromSuccess = context.addInitializer; }
+            function fail(value, context) {
+              lateFromThrow = context.addInitializer;
+              throw 1;
+            }
+            class C { @success method() {} }
+            let successRejected = false;
+            let throwRejected = false;
+            try { lateFromSuccess(function() {}); } catch (error) { successRejected = error instanceof TypeError; }
+            try { @fail class D {} } catch (error) {}
+            try { lateFromThrow(function() {}); } catch (error) { throwRejected = error instanceof TypeError; }
+            successRejected && throwRejected;
+        "#),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run(r#"
+            let previous;
+            let rejected = false;
+            function first(value, context) { previous = context.addInitializer; }
+            function second(value, context) {
+              try { previous(function() {}); } catch (error) { rejected = error instanceof TypeError; }
+              context.addInitializer(function() {});
+            }
+            class C { @second @first method() {} }
+            rejected;
+        "#),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run(r#"
+            let receiver;
+            function replace(value, context) {
+              context.addInitializer(function() { receiver = this; });
+              return class Replacement extends value {};
+            }
+            @replace class C {}
+            receiver === C && C.name === "Replacement";
+        "#),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn decorator_initializers_ignore_mutated_function_call_and_propagate_errors() {
+    assert_eq!(
+        run(r#"
+            let receivers = [];
+            function record(value, context) {
+              context.addInitializer(function() { receivers.push(this); });
+            }
+            Function.prototype.call = function() { throw new Error("must not run"); };
+            @record class C {
+              @record method() {}
+              @record field = 1;
+              @record static method() {}
+              @record static field = 2;
+            }
+            let instance = new C();
+            receivers.length === 5 && receivers[0] === C && receivers[1] === C &&
+              receivers[2] === C && receivers[3] === instance && receivers[4] === instance;
+        "#),
+        Value::Bool(true)
+    );
+    assert!(run_err(
+        r#"
+        function fail(value, context) {
+          context.addInitializer(function() { throw new Error("static initializer failed"); });
+        }
+        class C { @fail static method() {} }
+    "#
+    )
+    .contains("static initializer failed"));
+    assert!(run_err(
+        r#"
+        function fail(value, context) {
+          context.addInitializer(function() { throw new Error("instance initializer failed"); });
+        }
+        class C { @fail method() {} }
+        new C();
+    "#
+    )
+    .contains("instance initializer failed"));
+}
+
+#[test]
+fn decorator_instance_initializer_queues_survive_gc() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+    assert_eq!(
+        vm.run(
+            r#"
+            let calls = 0;
+            function count(value, context) {
+              context.addInitializer(function() { calls++; });
+            }
+            class C {
+              @count method() {}
+              @count field = 1;
+            }
+            forceGc();
+            new C();
+            calls;
+        "#
+        )
+        .expect("decorator initializer queues should remain reachable"),
+        Value::Number(2.0)
+    );
+}
+
+#[test]
+fn derived_constructor_initializes_elements_immediately_after_nested_super() {
+    assert_eq!(
+        run(r#"
+            function extra(value, context) {
+              context.addInitializer(function() { this.log.push("extra"); });
+            }
+            class Base {
+              constructor() { this.log = []; }
+            }
+            class Derived extends Base {
+              @extra field = (this.log.push("field"), 1);
+              constructor(flag) {
+                if (flag) {
+                  super();
+                  this.log.push("body");
+                } else {
+                  super();
+                }
+              }
+            }
+            [new Derived(true).log.join(","), new Derived(false).log.join(",")].join("|");
+        "#),
+        Value::String(Arc::from("field,extra,body|field,extra"))
+    );
 }

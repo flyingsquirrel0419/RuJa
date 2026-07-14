@@ -5324,6 +5324,21 @@ impl Parser {
                         .iter()
                         .any(Self::class_field_initializer_contains_arguments_expr)
             }
+            Expr::DecoratorAddInitializer { initializer, .. } => {
+                Self::class_field_initializer_contains_arguments_expr(initializer)
+            }
+            Expr::DecoratorAccess {
+                receiver,
+                key,
+                value,
+                ..
+            } => {
+                Self::class_field_initializer_contains_arguments_expr(receiver)
+                    || Self::class_field_initializer_contains_arguments_expr(key)
+                    || value.as_ref().is_some_and(|value| {
+                        Self::class_field_initializer_contains_arguments_expr(value)
+                    })
+            }
             Expr::ImportCall { specifier, options } => {
                 Self::class_field_initializer_contains_arguments_expr(specifier)
                     || options.as_ref().is_some_and(|options| {
@@ -5646,6 +5661,22 @@ impl Parser {
                 Self::check_static_block_expr(this_value)?;
                 for arg in args {
                     Self::check_static_block_expr(arg)?;
+                }
+                Ok(())
+            }
+            Expr::DecoratorAddInitializer { initializer, .. } => {
+                Self::check_static_block_expr(initializer)
+            }
+            Expr::DecoratorAccess {
+                receiver,
+                key,
+                value,
+                ..
+            } => {
+                Self::check_static_block_expr(receiver)?;
+                Self::check_static_block_expr(key)?;
+                if let Some(value) = value {
+                    Self::check_static_block_expr(value)?;
                 }
                 Ok(())
             }
@@ -6227,6 +6258,22 @@ impl Parser {
                 Self::validate_private_names_expr(this_value, names)?;
                 for arg in args {
                     Self::validate_private_names_expr(arg, names)?;
+                }
+                Ok(())
+            }
+            Expr::DecoratorAddInitializer { initializer, .. } => {
+                Self::validate_private_names_expr(initializer, names)
+            }
+            Expr::DecoratorAccess {
+                receiver,
+                key,
+                value,
+                ..
+            } => {
+                Self::validate_private_names_expr(receiver, names)?;
+                Self::validate_private_names_expr(key, names)?;
+                if let Some(value) = value {
+                    Self::validate_private_names_expr(value, names)?;
                 }
                 Ok(())
             }

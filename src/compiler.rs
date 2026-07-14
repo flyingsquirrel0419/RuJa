@@ -46,6 +46,9 @@ pub struct Compiler {
     /// Whether the current function is an async generator. Nested function
     /// compilation saves and restores this context.
     current_async_generator: bool,
+    /// Instance element initialization emitted immediately after a successful
+    /// `super()` in the derived constructor currently being compiled.
+    derived_instance_initializers: Option<Vec<Stmt>>,
     /// Module top-level bindings live in a declarative environment rather
     /// than on the Realm's global object.
     top_level_declarative: bool,
@@ -104,6 +107,22 @@ enum AssignTargetRef {
     Private(usize),
     Super(usize),
     Member(usize),
+}
+
+#[derive(Clone, Copy)]
+enum DecoratorAccess {
+    None,
+    Get,
+    Set,
+    GetSet,
+}
+
+#[derive(Clone, Copy)]
+struct DecoratorContextSpec<'a> {
+    kind: &'a str,
+    name: (Option<&'a Arc<str>>, Option<&'a Arc<str>>),
+    flags: Option<(bool, bool)>,
+    access: DecoratorAccess,
 }
 
 impl Default for Compiler {
@@ -182,6 +201,7 @@ impl Compiler {
             current_line: 0,
             class_field_initializer_depth: 0,
             current_async_generator: false,
+            derived_instance_initializers: None,
             top_level_declarative: false,
         }
     }
@@ -2700,102 +2720,401 @@ impl Compiler {
         self.pop_scope();
     }
 
+    fn decorator_property_key_expr(name: (Option<&Arc<str>>, Option<&Arc<str>>)) -> Expr {
+        if let Some(binding) = name.1 {
+            Expr::Ident(binding.clone())
+        } else {
+            Expr::String(name.0.cloned().unwrap_or_else(|| Arc::from("")))
+        }
+    }
+
+    fn decorator_access_function(
+        name: (Option<&Arc<str>>, Option<&Arc<str>>),
+        setter: bool,
+    ) -> Expr {
+        let receiver_name: Arc<str> = Arc::from("receiver");
+        let value_name: Arc<str> = Arc::from("value");
+        let access = Expr::DecoratorAccess {
+            receiver: Box::new(Expr::Ident(receiver_name.clone())),
+            key: Box::new(Self::decorator_property_key_expr(name)),
+            value: setter.then(|| Box::new(Expr::Ident(value_name.clone()))),
+            kind: if setter { 2 } else { 1 },
+        };
+        let body = if setter {
+            vec![Stmt {
+                line: 0,
+                node: StmtNode::ExprStmt(access),
+            }]
+        } else {
+            vec![Stmt {
+                line: 0,
+                node: StmtNode::Return(Some(access)),
+            }]
+        };
+        Expr::Arrow(FunctionExpr {
+            name: Some(Arc::from("")),
+            params: if setter {
+                vec![receiver_name, value_name]
+            } else {
+                vec![receiver_name]
+            },
+            param_defaults: if setter { vec![None, None] } else { vec![None] },
+            rest_param: None,
+            body,
+            is_arrow: true,
+            is_async: false,
+            is_generator: false,
+            param_decls: Vec::new(),
+            is_strict: true,
+            is_method: false,
+            has_name_binding: false,
+        })
+    }
+
+    fn decorator_has_function(name: (Option<&Arc<str>>, Option<&Arc<str>>)) -> Expr {
+        let receiver_name: Arc<str> = Arc::from("receiver");
+        Expr::Arrow(FunctionExpr {
+            name: Some(Arc::from("")),
+            params: vec![receiver_name.clone()],
+            param_defaults: vec![None],
+            rest_param: None,
+            body: vec![Stmt {
+                line: 0,
+                node: StmtNode::Return(Some(Expr::DecoratorAccess {
+                    receiver: Box::new(Expr::Ident(receiver_name)),
+                    key: Box::new(Self::decorator_property_key_expr(name)),
+                    value: None,
+                    kind: 0,
+                })),
+            }],
+            is_arrow: true,
+            is_async: false,
+            is_generator: false,
+            param_decls: Vec::new(),
+            is_strict: true,
+            is_method: false,
+            has_name_binding: false,
+        })
+    }
+
+    fn decorator_add_initializer_function(
+        active_binding: &Arc<str>,
+        queue_binding: &Arc<str>,
+    ) -> Expr {
+        let initializer: Arc<str> = Arc::from("initializer");
+        Expr::Arrow(FunctionExpr {
+            name: Some(Arc::from("addInitializer")),
+            params: vec![initializer.clone()],
+            param_defaults: vec![None],
+            rest_param: None,
+            body: vec![Stmt {
+                line: 0,
+                node: StmtNode::ExprStmt(Expr::DecoratorAddInitializer {
+                    initializer: Box::new(Expr::Ident(initializer)),
+                    active_binding: active_binding.clone(),
+                    queue_binding: queue_binding.clone(),
+                }),
+            }],
+            is_arrow: true,
+            is_async: false,
+            is_generator: false,
+            param_decls: Vec::new(),
+            is_strict: true,
+            is_method: false,
+            has_name_binding: false,
+        })
+    }
+
+    fn emit_context_data_property(&mut self, key: &str, value: &Expr) -> error::Result<()> {
+        self.chunk.emit(Op::Dup, self.current_line);
+        let key_idx = self.chunk.add_constant(Value::String(Arc::from(key)));
+        self.chunk.emit(Op::Const(key_idx), self.current_line);
+        self.compile_expr(value)?;
+        self.chunk.emit(Op::DefineDataProperty, self.current_line);
+        self.chunk.emit(Op::Pop, self.current_line);
+        Ok(())
+    }
+
     fn emit_decorator_context(
         &mut self,
-        kind: &str,
-        name: (Option<&Arc<str>>, Option<&Arc<str>>),
-        flags: (bool, bool),
-    ) {
+        spec: DecoratorContextSpec<'_>,
+        active_binding: &Arc<str>,
+        queue_binding: &Arc<str>,
+    ) -> error::Result<()> {
         self.chunk.emit(Op::NewObject, self.current_line);
-        self.chunk.emit(Op::Dup, self.current_line);
-        let kind_key_idx = self.chunk.add_constant(Value::String(Arc::from("kind")));
-        self.chunk.emit(Op::Const(kind_key_idx), self.current_line);
-        let kind_value_idx = self.chunk.add_constant(Value::String(Arc::from(kind)));
-        self.chunk
-            .emit(Op::Const(kind_value_idx), self.current_line);
-        self.chunk.emit(Op::DefineDataProperty, self.current_line);
-        self.chunk.emit(Op::Pop, self.current_line);
-        self.chunk.emit(Op::Dup, self.current_line);
-        let name_key_idx = self.chunk.add_constant(Value::String(Arc::from("name")));
-        self.chunk.emit(Op::Const(name_key_idx), self.current_line);
-        if let Some(binding) = name.1 {
-            let binding_idx = self.intern(binding);
-            self.chunk.emit(Op::LoadEnv(binding_idx), self.current_line);
+        self.emit_context_data_property("kind", &Expr::String(Arc::from(spec.kind)))?;
+        if !matches!(spec.access, DecoratorAccess::None) {
+            let mut properties = Vec::new();
+            if matches!(spec.access, DecoratorAccess::Get | DecoratorAccess::GetSet) {
+                properties.push(Property {
+                    key: PropertyKey::Ident(Arc::from("get")),
+                    value: Self::decorator_access_function(spec.name, false),
+                    computed: false,
+                    method: false,
+                    shorthand: false,
+                    kind: PropKind::Normal,
+                });
+            }
+            if matches!(spec.access, DecoratorAccess::Set | DecoratorAccess::GetSet) {
+                properties.push(Property {
+                    key: PropertyKey::Ident(Arc::from("set")),
+                    value: Self::decorator_access_function(spec.name, true),
+                    computed: false,
+                    method: false,
+                    shorthand: false,
+                    kind: PropKind::Normal,
+                });
+            }
+            properties.push(Property {
+                key: PropertyKey::Ident(Arc::from("has")),
+                value: Self::decorator_has_function(spec.name),
+                computed: false,
+                method: false,
+                shorthand: false,
+                kind: PropKind::Normal,
+            });
+            self.emit_context_data_property("access", &Expr::Object(properties))?;
+        }
+        if let Some((is_static, is_private)) = spec.flags {
+            self.emit_context_data_property("static", &Expr::Bool(is_static))?;
+            self.emit_context_data_property("private", &Expr::Bool(is_private))?;
+        }
+        let context_name = if let Some(binding) = spec.name.1 {
+            Expr::Ident(binding.clone())
+        } else if let Some(name) = spec.name.0 {
+            Expr::String(name.clone())
         } else {
-            let value_idx = self.chunk.add_constant(Value::String(
-                name.0.cloned().unwrap_or_else(|| Arc::from("")),
-            ));
-            self.chunk.emit(Op::Const(value_idx), self.current_line);
-        }
-        self.chunk.emit(Op::DefineDataProperty, self.current_line);
+            Expr::Undefined
+        };
+        self.emit_context_data_property("name", &context_name)?;
+        self.emit_context_data_property(
+            "addInitializer",
+            &Self::decorator_add_initializer_function(active_binding, queue_binding),
+        )?;
+        Ok(())
+    }
+
+    fn emit_set_decorator_active(&mut self, binding: &Arc<str>, active: bool) {
+        self.chunk
+            .emit(if active { Op::True } else { Op::False }, self.current_line);
+        let binding_idx = self.intern(binding);
+        self.chunk
+            .emit(Op::StoreEnvName(binding_idx), self.current_line);
         self.chunk.emit(Op::Pop, self.current_line);
-        for (key, value) in [("static", flags.0), ("private", flags.1)] {
-            self.chunk.emit(Op::Dup, self.current_line);
-            let key_idx = self.chunk.add_constant(Value::String(Arc::from(key)));
-            self.chunk.emit(Op::Const(key_idx), self.current_line);
-            self.chunk
-                .emit(if value { Op::True } else { Op::False }, self.current_line);
-            self.chunk.emit(Op::DefineDataProperty, self.current_line);
-            self.chunk.emit(Op::Pop, self.current_line);
+    }
+
+    fn compile_decorator_expression(
+        &mut self,
+        decorator: &Expr,
+        receiver_binding: &Arc<str>,
+    ) -> error::Result<()> {
+        match decorator {
+            Expr::Member {
+                object,
+                property,
+                computed,
+                optional,
+                optional_chain,
+            } => {
+                self.compile_expr(object)?;
+                self.chunk.emit(Op::Dup, self.current_line);
+                let receiver_idx = self.intern(receiver_binding);
+                self.chunk
+                    .emit(Op::DeclareEnvConst(receiver_idx), self.current_line);
+                self.compile_expr(&Expr::Member {
+                    object: Box::new(Expr::Ident(receiver_binding.clone())),
+                    property: property.clone(),
+                    computed: *computed,
+                    optional: *optional,
+                    optional_chain: *optional_chain,
+                })?;
+                self.chunk.emit(Op::Swap, self.current_line);
+                self.chunk.emit(Op::Pop, self.current_line);
+            }
+            Expr::PrivateGet {
+                object,
+                name,
+                optional,
+            } => {
+                self.compile_expr(object)?;
+                self.chunk.emit(Op::Dup, self.current_line);
+                let receiver_idx = self.intern(receiver_binding);
+                self.chunk
+                    .emit(Op::DeclareEnvConst(receiver_idx), self.current_line);
+                self.compile_expr(&Expr::PrivateGet {
+                    object: Box::new(Expr::Ident(receiver_binding.clone())),
+                    name: name.clone(),
+                    optional: *optional,
+                })?;
+                self.chunk.emit(Op::Swap, self.current_line);
+                self.chunk.emit(Op::Pop, self.current_line);
+            }
+            _ => {
+                self.chunk.emit(Op::Undefined, self.current_line);
+                let receiver_idx = self.intern(receiver_binding);
+                self.chunk
+                    .emit(Op::DeclareEnvConst(receiver_idx), self.current_line);
+                self.compile_expr(decorator)?;
+            }
         }
+        Ok(())
+    }
+
+    fn emit_derived_instance_initializers(&mut self) -> error::Result<()> {
+        let Some(initializers) = self.derived_instance_initializers.clone() else {
+            return Ok(());
+        };
+        for initializer in &initializers {
+            self.compile_stmt(initializer)?;
+        }
+        Ok(())
+    }
+
+    fn decorator_call_wrapper(active_binding: &Arc<str>) -> Expr {
+        let decorator: Arc<str> = Arc::from("decorator");
+        let receiver: Arc<str> = Arc::from("receiver");
+        let value: Arc<str> = Arc::from("value");
+        let context: Arc<str> = Arc::from("context");
+        Expr::Arrow(FunctionExpr {
+            name: None,
+            params: vec![
+                decorator.clone(),
+                receiver.clone(),
+                value.clone(),
+                context.clone(),
+            ],
+            param_defaults: vec![None, None, None, None],
+            rest_param: None,
+            body: vec![Stmt {
+                line: 0,
+                node: StmtNode::TryCatch {
+                    try_body: Box::new(Stmt {
+                        line: 0,
+                        node: StmtNode::Block(vec![Stmt {
+                            line: 0,
+                            node: StmtNode::Return(Some(Expr::CallWithThis {
+                                callee: Box::new(Expr::Ident(decorator)),
+                                this_value: Box::new(Expr::Ident(receiver)),
+                                args: vec![Expr::Ident(value), Expr::Ident(context)],
+                            })),
+                        }]),
+                    }),
+                    catch_param: None,
+                    catch_body: None,
+                    finally_body: Some(Box::new(Stmt {
+                        line: 0,
+                        node: StmtNode::Block(vec![Stmt {
+                            line: 0,
+                            node: StmtNode::ExprStmt(Expr::Assign(
+                                AssignOp::Assign,
+                                Box::new(Expr::Ident(active_binding.clone())),
+                                Box::new(Expr::Bool(false)),
+                            )),
+                        }]),
+                    })),
+                },
+            }],
+            is_arrow: true,
+            is_async: false,
+            is_generator: false,
+            param_decls: Vec::new(),
+            is_strict: true,
+            is_method: false,
+            has_name_binding: false,
+        })
     }
 
     fn emit_apply_decorators(
         &mut self,
         decorator_bindings: &[Arc<str>],
+        receiver_bindings: &[Arc<str>],
+        active_bindings: &[Arc<str>],
+        queue_binding: &Arc<str>,
         result_kind: u8,
-        context_kind: &str,
-        name: (Option<&Arc<str>>, Option<&Arc<str>>),
-        flags: (bool, bool),
-    ) {
-        for binding in decorator_bindings.iter().rev() {
+        context: DecoratorContextSpec<'_>,
+    ) -> error::Result<()> {
+        for ((binding, receiver_binding), active_binding) in decorator_bindings
+            .iter()
+            .zip(receiver_bindings.iter())
+            .zip(active_bindings.iter())
+            .rev()
+        {
             self.chunk.emit(Op::Dup, self.current_line);
+            let value_binding: Arc<str> =
+                Arc::from(format!("#decorated_value:{}", binding).as_str());
+            let value_idx = self.intern(&value_binding);
+            self.chunk
+                .emit(Op::DeclareEnv(value_idx), self.current_line);
+            self.emit_set_decorator_active(active_binding, true);
+            self.compile_expr(&Self::decorator_call_wrapper(active_binding))?;
             let binding_idx = self.intern(binding);
             self.chunk.emit(Op::LoadEnv(binding_idx), self.current_line);
-            self.chunk.emit(Op::Rot3, self.current_line);
-            self.emit_decorator_context(context_kind, name, flags);
-            self.chunk.emit(Op::Call(2), self.current_line);
+            let receiver_idx = self.intern(receiver_binding);
+            self.chunk
+                .emit(Op::LoadEnv(receiver_idx), self.current_line);
+            self.chunk.emit(Op::LoadEnv(value_idx), self.current_line);
+            self.emit_decorator_context(context, active_binding, queue_binding)?;
+            self.chunk.emit(Op::Call(4), self.current_line);
             self.chunk
                 .emit(Op::ApplyDecoratorResult(result_kind), self.current_line);
         }
+        Ok(())
     }
 
     fn emit_field_decorators(
         &mut self,
         decorator_bindings: &[Arc<str>],
+        receiver_bindings: &[Arc<str>],
+        active_bindings: &[Arc<str>],
         initializer_bindings: &[Arc<str>],
-        name: (Option<&Arc<str>>, Option<&Arc<str>>),
-        flags: (bool, bool),
-    ) {
-        for (decorator, initializer) in decorator_bindings
+        queue_binding: &Arc<str>,
+        context: DecoratorContextSpec<'_>,
+    ) -> error::Result<()> {
+        for (((decorator, receiver_binding), active_binding), initializer) in decorator_bindings
             .iter()
+            .zip(receiver_bindings.iter())
+            .zip(active_bindings.iter())
             .zip(initializer_bindings.iter())
             .rev()
         {
             self.chunk.emit(Op::Undefined, self.current_line);
-            self.chunk.emit(Op::Dup, self.current_line);
+            self.emit_set_decorator_active(active_binding, true);
+            self.compile_expr(&Self::decorator_call_wrapper(active_binding))?;
             let decorator_idx = self.intern(decorator);
             self.chunk
                 .emit(Op::LoadEnv(decorator_idx), self.current_line);
-            self.chunk.emit(Op::Rot3, self.current_line);
-            self.emit_decorator_context("field", name, flags);
-            self.chunk.emit(Op::Call(2), self.current_line);
+            let receiver_idx = self.intern(receiver_binding);
+            self.chunk
+                .emit(Op::LoadEnv(receiver_idx), self.current_line);
+            self.chunk.emit(Op::Undefined, self.current_line);
+            self.emit_decorator_context(context, active_binding, queue_binding)?;
+            self.chunk.emit(Op::Call(4), self.current_line);
             self.chunk
                 .emit(Op::ApplyDecoratorResult(2), self.current_line);
             let initializer_idx = self.intern(initializer);
             self.chunk
                 .emit(Op::DeclareEnvConst(initializer_idx), self.current_line);
         }
+        Ok(())
     }
 
     fn compile_class_public_method(&mut self, method: &ClassMethod) -> error::Result<()> {
-        self.compile_class_public_method_with_decorators(method, &[])
+        self.compile_class_public_method_with_decorators(
+            method,
+            &[],
+            &[],
+            &[],
+            &Arc::from("#unused_decorator_queue"),
+        )
     }
 
     fn compile_class_public_method_with_decorators(
         &mut self,
         method: &ClassMethod,
         decorator_bindings: &[Arc<str>],
+        receiver_bindings: &[Arc<str>],
+        active_bindings: &[Arc<str>],
+        queue_binding: &Arc<str>,
     ) -> error::Result<()> {
         if method.is_constructor || method.is_private {
             return Ok(());
@@ -2874,11 +3193,21 @@ impl Compiler {
                     .emit(Op::SetFunctionNameFromKey(akind + 1), self.current_line);
                 self.emit_apply_decorators(
                     decorator_bindings,
+                    receiver_bindings,
+                    active_bindings,
+                    queue_binding,
                     1,
-                    if akind == 0 { "getter" } else { "setter" },
-                    (Some(&method.name), context_name_binding),
-                    (true, false),
-                );
+                    DecoratorContextSpec {
+                        kind: if akind == 0 { "getter" } else { "setter" },
+                        name: (Some(&method.name), context_name_binding),
+                        flags: Some((true, false)),
+                        access: if akind == 0 {
+                            DecoratorAccess::Get
+                        } else {
+                            DecoratorAccess::Set
+                        },
+                    },
+                )?;
                 self.chunk
                     .emit(Op::DefineClassAccessor(akind), self.current_line);
                 self.chunk.emit(Op::Pop, self.current_line);
@@ -2909,11 +3238,21 @@ impl Compiler {
                     .emit(Op::SetFunctionNameFromKey(akind + 1), self.current_line);
                 self.emit_apply_decorators(
                     decorator_bindings,
+                    receiver_bindings,
+                    active_bindings,
+                    queue_binding,
                     1,
-                    if akind == 0 { "getter" } else { "setter" },
-                    (Some(&method.name), context_name_binding),
-                    (false, false),
-                );
+                    DecoratorContextSpec {
+                        kind: if akind == 0 { "getter" } else { "setter" },
+                        name: (Some(&method.name), context_name_binding),
+                        flags: Some((false, false)),
+                        access: if akind == 0 {
+                            DecoratorAccess::Get
+                        } else {
+                            DecoratorAccess::Set
+                        },
+                    },
+                )?;
                 self.chunk
                     .emit(Op::DefineClassAccessor(akind), self.current_line);
                 self.chunk.emit(Op::Pop, self.current_line);
@@ -2941,11 +3280,17 @@ impl Compiler {
             }
             self.emit_apply_decorators(
                 decorator_bindings,
+                receiver_bindings,
+                active_bindings,
+                queue_binding,
                 1,
-                "method",
-                (Some(&method.name), context_name_binding),
-                (true, false),
-            );
+                DecoratorContextSpec {
+                    kind: "method",
+                    name: (Some(&method.name), context_name_binding),
+                    flags: Some((true, false)),
+                    access: DecoratorAccess::Get,
+                },
+            )?;
             self.chunk.emit(Op::DefineMethod, self.current_line);
             self.chunk.emit(Op::Pop, self.current_line);
         } else {
@@ -2975,11 +3320,17 @@ impl Compiler {
             }
             self.emit_apply_decorators(
                 decorator_bindings,
+                receiver_bindings,
+                active_bindings,
+                queue_binding,
                 1,
-                "method",
-                (Some(&method.name), context_name_binding),
-                (false, false),
-            );
+                DecoratorContextSpec {
+                    kind: "method",
+                    name: (Some(&method.name), context_name_binding),
+                    flags: Some((false, false)),
+                    access: DecoratorAccess::Get,
+                },
+            )?;
             self.chunk.emit(Op::DefineMethod, self.current_line);
             self.chunk.emit(Op::Pop, self.current_line);
         }
@@ -3071,6 +3422,40 @@ impl Compiler {
         }
     }
 
+    fn class_element_decorator_phase(class: &ClassExpr, element: &ClassElement) -> u8 {
+        match element {
+            ClassElement::Method(index) => {
+                if class.methods[*index].is_static {
+                    0
+                } else {
+                    1
+                }
+            }
+            ClassElement::PrivateField(index) => {
+                if class.private_fields[*index].is_static {
+                    2
+                } else {
+                    3
+                }
+            }
+            ClassElement::PublicField(index) => {
+                if class.public_fields[*index].is_static {
+                    2
+                } else {
+                    3
+                }
+            }
+            ClassElement::AutoAccessor(index) => {
+                if class.auto_accessors[*index].is_static {
+                    2
+                } else {
+                    3
+                }
+            }
+            ClassElement::StaticBlock(_) => 4,
+        }
+    }
+
     fn decorated_field_initializer(
         init: Box<Expr>,
         initializer_bindings: &[Arc<str>],
@@ -3131,6 +3516,80 @@ impl Compiler {
             optional: false,
             optional_chain: false,
         })
+    }
+
+    fn decorator_initializer_runner(queue_binding: &Arc<str>, receiver: Expr) -> Expr {
+        let queue: Arc<str> = Arc::from("queue");
+        let target: Arc<str> = Arc::from("target");
+        let index: Arc<str> = Arc::from("index");
+        let queue_ident = || Expr::Ident(queue.clone());
+        let index_ident = || Expr::Ident(index.clone());
+        let initializer = Expr::Member {
+            object: Box::new(queue_ident()),
+            property: Box::new(index_ident()),
+            computed: true,
+            optional: false,
+            optional_chain: false,
+        };
+        let length = Expr::Member {
+            object: Box::new(queue_ident()),
+            property: Box::new(Expr::String(Arc::from("length"))),
+            computed: false,
+            optional: false,
+            optional_chain: false,
+        };
+        let runner = Expr::Arrow(FunctionExpr {
+            name: None,
+            params: vec![queue.clone(), target.clone()],
+            param_defaults: vec![None, None],
+            rest_param: None,
+            body: vec![Stmt {
+                line: 0,
+                node: StmtNode::For {
+                    init: Some(Box::new(Stmt {
+                        line: 0,
+                        node: StmtNode::VarDecl {
+                            kind: VarKind::Let,
+                            decls: vec![(index.clone(), Some(Expr::Number(0.0)))],
+                        },
+                    })),
+                    cond: Some(Expr::Binary(
+                        BinOp::Lt,
+                        Box::new(index_ident()),
+                        Box::new(length),
+                    )),
+                    update: Some(Expr::Update(UpdateOp::Inc, false, Box::new(index_ident()))),
+                    body: Box::new(Stmt {
+                        line: 0,
+                        node: StmtNode::ExprStmt(Expr::CallWithThis {
+                            callee: Box::new(initializer),
+                            this_value: Box::new(Expr::Ident(target.clone())),
+                            args: Vec::new(),
+                        }),
+                    }),
+                },
+            }],
+            is_arrow: true,
+            is_async: false,
+            is_generator: false,
+            param_decls: Vec::new(),
+            is_strict: true,
+            is_method: false,
+            has_name_binding: false,
+        });
+        Expr::Call {
+            callee: Box::new(runner),
+            args: vec![Expr::Ident(queue_binding.clone()), receiver],
+            optional: false,
+            optional_chain: false,
+        }
+    }
+
+    fn decorator_initializer_stmt(queue_binding: &Arc<str>, receiver: Expr) -> Stmt {
+        Stmt {
+            line: 0,
+            node: StmtNode::ExprStmt(Self::decorator_initializer_runner(queue_binding, receiver)),
+        }
     }
 
     fn compile_class_static_public_field(
@@ -3806,6 +4265,33 @@ impl Compiler {
                 }
                 self.chunk.emit(Op::CallThis(args.len()), self.current_line);
             }
+            Expr::DecoratorAddInitializer {
+                initializer,
+                active_binding,
+                queue_binding,
+            } => {
+                let active_idx = self.intern(active_binding);
+                self.chunk.emit(Op::LoadEnv(active_idx), self.current_line);
+                let queue_idx = self.intern(queue_binding);
+                self.chunk.emit(Op::LoadEnv(queue_idx), self.current_line);
+                self.compile_expr(initializer)?;
+                self.chunk
+                    .emit(Op::DecoratorAddInitializer, self.current_line);
+            }
+            Expr::DecoratorAccess {
+                receiver,
+                key,
+                value,
+                kind,
+            } => {
+                self.compile_expr(receiver)?;
+                self.compile_expr(key)?;
+                if let Some(value) = value {
+                    self.compile_expr(value)?;
+                }
+                self.chunk
+                    .emit(Op::DecoratorAccess(*kind), self.current_line);
+            }
             Expr::Bool(b) => {
                 self.chunk.emit(if *b { Op::True } else { Op::False }, 0);
             }
@@ -4284,6 +4770,7 @@ impl Compiler {
                             self.compile_expr(inner)?;
                         }
                         self.chunk.emit(Op::CallSuperCtorSpread, self.current_line);
+                        self.emit_derived_instance_initializers()?;
                         return Ok(());
                     }
                     let has_spread = args.iter().any(|a| matches!(a, Expr::Spread(_)));
@@ -4309,6 +4796,7 @@ impl Compiler {
                         self.chunk
                             .emit(Op::CallSuperCtor(args.len()), self.current_line);
                     }
+                    self.emit_derived_instance_initializers()?;
                     return Ok(());
                 }
                 match callee.as_ref() {
@@ -4814,7 +5302,10 @@ impl Compiler {
                 }
             }
             Expr::Function(f) | Expr::Arrow(f) => {
-                let (func_chunk, param_slots) = self.compile_function(f)?;
+                let saved_derived_initializers = self.derived_instance_initializers.take();
+                let compiled = self.compile_function(f);
+                self.derived_instance_initializers = saved_derived_initializers;
+                let (func_chunk, param_slots) = compiled?;
                 let func_idx = self.funcs.len();
                 let fdef = crate::function::FunctionDef {
                     name: f.name.clone(),
@@ -4871,6 +5362,38 @@ impl Compiler {
                         )
                     })
                     .collect();
+                let class_decorator_receiver_bindings: Vec<Arc<str>> = cls
+                    .decorators
+                    .iter()
+                    .enumerate()
+                    .map(|(index, _)| {
+                        Arc::from(
+                            format!(
+                                "#class_decorator_receiver:{}:{}:{}",
+                                index,
+                                self.chunk.code.len(),
+                                self.chunk.constants.len()
+                            )
+                            .as_str(),
+                        )
+                    })
+                    .collect();
+                let class_decorator_active_bindings: Vec<Arc<str>> = cls
+                    .decorators
+                    .iter()
+                    .enumerate()
+                    .map(|(index, _)| {
+                        Arc::from(
+                            format!(
+                                "#class_decorator_active:{}:{}:{}",
+                                index,
+                                self.chunk.code.len(),
+                                self.chunk.constants.len()
+                            )
+                            .as_str(),
+                        )
+                    })
+                    .collect();
                 let element_decorator_bindings: Vec<Vec<Arc<str>>> = cls
                     .elements
                     .iter()
@@ -4883,6 +5406,52 @@ impl Compiler {
                                 Arc::from(
                                     format!(
                                         "#class_element_decorator:{}:{}:{}:{}",
+                                        element_index,
+                                        decorator_index,
+                                        self.chunk.code.len(),
+                                        self.chunk.constants.len()
+                                    )
+                                    .as_str(),
+                                )
+                            })
+                            .collect()
+                    })
+                    .collect();
+                let element_decorator_receiver_bindings: Vec<Vec<Arc<str>>> = cls
+                    .elements
+                    .iter()
+                    .enumerate()
+                    .map(|(element_index, element)| {
+                        Self::class_element_decorators(cls, element)
+                            .iter()
+                            .enumerate()
+                            .map(|(decorator_index, _)| {
+                                Arc::from(
+                                    format!(
+                                        "#class_element_decorator_receiver:{}:{}:{}:{}",
+                                        element_index,
+                                        decorator_index,
+                                        self.chunk.code.len(),
+                                        self.chunk.constants.len()
+                                    )
+                                    .as_str(),
+                                )
+                            })
+                            .collect()
+                    })
+                    .collect();
+                let element_decorator_active_bindings: Vec<Vec<Arc<str>>> = cls
+                    .elements
+                    .iter()
+                    .enumerate()
+                    .map(|(element_index, element)| {
+                        Self::class_element_decorators(cls, element)
+                            .iter()
+                            .enumerate()
+                            .map(|(decorator_index, _)| {
+                                Arc::from(
+                                    format!(
+                                        "#class_element_decorator_active:{}:{}:{}:{}",
                                         element_index,
                                         decorator_index,
                                         self.chunk.code.len(),
@@ -4917,6 +5486,42 @@ impl Compiler {
                             .collect()
                     })
                     .collect();
+                let decorator_id =
+                    format!("{}:{}", self.chunk.code.len(), self.chunk.constants.len());
+                let class_extra_initializer_queue: Arc<str> =
+                    Arc::from(format!("#class_extra_initializers:{decorator_id}").as_str());
+                let instance_method_initializer_queue: Arc<str> = Arc::from(
+                    format!("#instance_method_extra_initializers:{decorator_id}").as_str(),
+                );
+                let static_method_initializer_queue: Arc<str> =
+                    Arc::from(format!("#static_method_extra_initializers:{decorator_id}").as_str());
+                let element_extra_initializer_queues: Vec<Arc<str>> = cls
+                    .elements
+                    .iter()
+                    .enumerate()
+                    .map(|(element_index, _)| {
+                        Arc::from(
+                            format!(
+                                "#class_element_extra_initializers:{element_index}:{decorator_id}"
+                            )
+                            .as_str(),
+                        )
+                    })
+                    .collect();
+                let has_instance_method_decorators = cls.elements.iter().any(|element| {
+                    let ClassElement::Method(index) = element else {
+                        return false;
+                    };
+                    !cls.methods[*index].is_static
+                        && !Self::class_element_decorators(cls, element).is_empty()
+                });
+                let has_static_method_decorators = cls.elements.iter().any(|element| {
+                    let ClassElement::Method(index) = element else {
+                        return false;
+                    };
+                    cls.methods[*index].is_static
+                        && !Self::class_element_decorators(cls, element).is_empty()
+                });
                 self.chunk.emit(Op::PushScope, self.current_line);
                 self.push_scope_with_runtime(false, true);
                 if let Some(name) = explicit_class_name {
@@ -4924,6 +5529,38 @@ impl Compiler {
                     let name_idx = self.intern(name);
                     self.chunk
                         .emit(Op::DeclareConstUninit(name_idx), self.current_line);
+                }
+                let mut decorator_queues = Vec::new();
+                if !class_decorator_bindings.is_empty() {
+                    decorator_queues.push(&class_extra_initializer_queue);
+                }
+                if has_instance_method_decorators {
+                    decorator_queues.push(&instance_method_initializer_queue);
+                }
+                if has_static_method_decorators {
+                    decorator_queues.push(&static_method_initializer_queue);
+                }
+                for (element_index, element) in cls.elements.iter().enumerate() {
+                    if !element_decorator_bindings[element_index].is_empty()
+                        && !matches!(element, ClassElement::Method(_))
+                    {
+                        decorator_queues.push(&element_extra_initializer_queues[element_index]);
+                    }
+                }
+                for queue in decorator_queues {
+                    self.chunk.emit(Op::NewArray(0), self.current_line);
+                    let queue_idx = self.intern(queue);
+                    self.chunk
+                        .emit(Op::DeclareEnvConst(queue_idx), self.current_line);
+                }
+                for active in class_decorator_active_bindings
+                    .iter()
+                    .chain(element_decorator_active_bindings.iter().flatten())
+                {
+                    self.chunk.emit(Op::False, self.current_line);
+                    let active_idx = self.intern(active);
+                    self.chunk
+                        .emit(Op::DeclareEnv(active_idx), self.current_line);
                 }
                 let mut private_names: Vec<Arc<str>> = Vec::new();
                 for pf in &cls.private_fields {
@@ -4956,10 +5593,13 @@ impl Compiler {
                     self.chunk
                         .emit(Op::DeclareEnvConst(binding_idx), self.current_line);
                 }
-                for (decorator, binding) in
-                    cls.decorators.iter().zip(class_decorator_bindings.iter())
+                for ((decorator, binding), receiver_binding) in cls
+                    .decorators
+                    .iter()
+                    .zip(class_decorator_bindings.iter())
+                    .zip(class_decorator_receiver_bindings.iter())
                 {
-                    self.compile_expr(decorator)?;
+                    self.compile_decorator_expression(decorator, receiver_binding)?;
                     let binding_idx = self.intern(binding);
                     self.chunk
                         .emit(Op::DeclareEnvConst(binding_idx), self.current_line);
@@ -5045,6 +5685,7 @@ impl Compiler {
                         })
                     })
                     .collect();
+                let mut derived_initializers = None;
                 let ctor_fn = FunctionExpr {
                     name: display_name.clone(),
                     params: cls
@@ -5174,6 +5815,13 @@ impl Compiler {
                             }
                         }
 
+                        if has_instance_method_decorators {
+                            init_stmts.push(Self::decorator_initializer_stmt(
+                                &instance_method_initializer_queue,
+                                Expr::This,
+                            ));
+                        }
+
                         // Fields still initialize in their original source order.
                         for (element_index, element) in cls.elements.iter().enumerate() {
                             match element {
@@ -5201,6 +5849,12 @@ impl Compiler {
                                             value: init,
                                         }),
                                     });
+                                    if !element_decorator_bindings[element_index].is_empty() {
+                                        init_stmts.push(Self::decorator_initializer_stmt(
+                                            &element_extra_initializer_queues[element_index],
+                                            Expr::This,
+                                        ));
+                                    }
                                 }
                                 crate::ast::ClassElement::PrivateField(idx) => {
                                     let field = &cls.private_fields[*idx];
@@ -5224,6 +5878,12 @@ impl Compiler {
                                             kind: field.kind,
                                         }),
                                     });
+                                    if !element_decorator_bindings[element_index].is_empty() {
+                                        init_stmts.push(Self::decorator_initializer_stmt(
+                                            &element_extra_initializer_queues[element_index],
+                                            Expr::This,
+                                        ));
+                                    }
                                 }
                                 crate::ast::ClassElement::AutoAccessor(idx) => {
                                     let accessor = &cls.auto_accessors[*idx];
@@ -5267,30 +5927,20 @@ impl Compiler {
                                             kind: PropKind::Normal,
                                         }),
                                     });
+                                    if !element_decorator_bindings[element_index].is_empty() {
+                                        init_stmts.push(Self::decorator_initializer_stmt(
+                                            &element_extra_initializer_queues[element_index],
+                                            Expr::This,
+                                        ));
+                                    }
                                 }
                                 crate::ast::ClassElement::Method(_)
                                 | crate::ast::ClassElement::StaticBlock(_) => {}
                             }
                         }
                         if cls.superclass.is_some() {
-                            let mut combined = Vec::new();
-                            let mut inserted = false;
-                            for stmt in body {
-                                let is_super_stmt = matches!(
-                                    &stmt.node,
-                                    StmtNode::ExprStmt(Expr::Call { callee, .. })
-                                        if matches!(callee.as_ref(), Expr::Super)
-                                );
-                                combined.push(stmt);
-                                if is_super_stmt && !inserted {
-                                    combined.extend(init_stmts.clone());
-                                    inserted = true;
-                                }
-                            }
-                            if !inserted {
-                                combined.extend(init_stmts);
-                            }
-                            combined
+                            derived_initializers = Some(init_stmts);
+                            body
                         } else {
                             let mut combined = init_stmts;
                             combined.extend(body);
@@ -5305,7 +5955,11 @@ impl Compiler {
                     is_method: true,
                     has_name_binding: false,
                 };
-                let (func_chunk, param_slots) = self.compile_function(&ctor_fn)?;
+                let saved_derived_initializers = self.derived_instance_initializers.take();
+                self.derived_instance_initializers = derived_initializers;
+                let compiled_ctor = self.compile_function(&ctor_fn);
+                self.derived_instance_initializers = saved_derived_initializers;
+                let (func_chunk, param_slots) = compiled_ctor?;
                 let func_idx = self.funcs.len();
                 let fdef = crate::function::FunctionDef {
                     name: display_name.clone(),
@@ -5452,23 +6106,16 @@ impl Compiler {
                     self.chunk
                         .emit(Op::DeclareEnv(binding_idx), self.current_line);
                 }
-                // Initialize the explicit class-name binding captured by the
-                // constructor, computed class elements, and static blocks.
-                if let Some(name) = &cls.name {
-                    let name_idx = self.intern(name);
-                    self.chunk.emit(Op::Dup, self.current_line); // [ctor, ctor]
-                    self.chunk
-                        .emit(Op::InitEnvConst(name_idx), self.current_line); // [ctor]
-                }
-
                 // Evaluate decorator expressions and computed names in source
                 // order before any decorator is applied.
                 for (element_index, element) in cls.elements.iter().enumerate() {
-                    for (decorator, binding) in Self::class_element_decorators(cls, element)
-                        .iter()
-                        .zip(element_decorator_bindings[element_index].iter())
+                    for ((decorator, binding), receiver_binding) in
+                        Self::class_element_decorators(cls, element)
+                            .iter()
+                            .zip(element_decorator_bindings[element_index].iter())
+                            .zip(element_decorator_receiver_bindings[element_index].iter())
                     {
-                        self.compile_expr(decorator)?;
+                        self.compile_decorator_expression(decorator, receiver_binding)?;
                         let binding_idx = self.intern(binding);
                         self.chunk
                             .emit(Op::DeclareEnvConst(binding_idx), self.current_line);
@@ -5513,53 +6160,80 @@ impl Compiler {
                     }
                 }
 
-                // Apply decorators in reverse list order and install methods.
-                for (element_index, element) in cls.elements.iter().enumerate() {
-                    match element {
-                        ClassElement::Method(index) => {
-                            let mut method = cls.methods[*index].clone();
-                            if let Some(temp_name) = &method_computed_key_temps[*index] {
-                                method.computed_name =
-                                    Some(Box::new(Expr::Ident(temp_name.clone())));
+                // Apply static methods, instance methods, static fields, then
+                // instance fields. Within each group, preserve lexical order.
+                for phase in 0..4 {
+                    for (element_index, element) in cls.elements.iter().enumerate() {
+                        if Self::class_element_decorator_phase(cls, element) != phase {
+                            continue;
+                        }
+                        match element {
+                            ClassElement::Method(index) => {
+                                let mut method = cls.methods[*index].clone();
+                                if let Some(temp_name) = &method_computed_key_temps[*index] {
+                                    method.computed_name =
+                                        Some(Box::new(Expr::Ident(temp_name.clone())));
+                                }
+                                self.compile_class_public_method_with_decorators(
+                                    &method,
+                                    &element_decorator_bindings[element_index],
+                                    &element_decorator_receiver_bindings[element_index],
+                                    &element_decorator_active_bindings[element_index],
+                                    if method.is_static {
+                                        &static_method_initializer_queue
+                                    } else {
+                                        &instance_method_initializer_queue
+                                    },
+                                )?;
                             }
-                            self.compile_class_public_method_with_decorators(
-                                &method,
-                                &element_decorator_bindings[element_index],
-                            )?;
-                        }
-                        ClassElement::PublicField(index) => {
-                            let field = &cls.public_fields[*index];
-                            self.emit_field_decorators(
-                                &element_decorator_bindings[element_index],
-                                &element_initializer_bindings[element_index],
-                                (
-                                    Some(&field.name),
-                                    public_field_computed_key_temps[*index].as_ref(),
-                                ),
-                                (field.is_static, false),
-                            );
-                        }
-                        ClassElement::PrivateField(index) => {
-                            let field = &cls.private_fields[*index];
-                            self.emit_field_decorators(
-                                &element_decorator_bindings[element_index],
-                                &element_initializer_bindings[element_index],
-                                (Some(&field.name), None),
-                                (field.is_static, true),
-                            );
-                        }
-                        ClassElement::AutoAccessor(index) => {
-                            let accessor = &cls.auto_accessors[*index];
-                            let methods = Self::auto_accessor_methods(
-                                accessor,
-                                &auto_accessor_backing_names[*index],
-                                auto_accessor_computed_key_temps[*index].as_ref(),
-                            );
-                            for method in &methods {
-                                self.compile_class_public_method(method)?;
+                            ClassElement::PublicField(index) => {
+                                let field = &cls.public_fields[*index];
+                                self.emit_field_decorators(
+                                    &element_decorator_bindings[element_index],
+                                    &element_decorator_receiver_bindings[element_index],
+                                    &element_decorator_active_bindings[element_index],
+                                    &element_initializer_bindings[element_index],
+                                    &element_extra_initializer_queues[element_index],
+                                    DecoratorContextSpec {
+                                        kind: "field",
+                                        name: (
+                                            Some(&field.name),
+                                            public_field_computed_key_temps[*index].as_ref(),
+                                        ),
+                                        flags: Some((field.is_static, false)),
+                                        access: DecoratorAccess::GetSet,
+                                    },
+                                )?;
                             }
+                            ClassElement::PrivateField(index) => {
+                                let field = &cls.private_fields[*index];
+                                self.emit_field_decorators(
+                                    &element_decorator_bindings[element_index],
+                                    &element_decorator_receiver_bindings[element_index],
+                                    &element_decorator_active_bindings[element_index],
+                                    &element_initializer_bindings[element_index],
+                                    &element_extra_initializer_queues[element_index],
+                                    DecoratorContextSpec {
+                                        kind: "field",
+                                        name: (Some(&field.name), None),
+                                        flags: Some((field.is_static, true)),
+                                        access: DecoratorAccess::GetSet,
+                                    },
+                                )?;
+                            }
+                            ClassElement::AutoAccessor(index) => {
+                                let accessor = &cls.auto_accessors[*index];
+                                let methods = Self::auto_accessor_methods(
+                                    accessor,
+                                    &auto_accessor_backing_names[*index],
+                                    auto_accessor_computed_key_temps[*index].as_ref(),
+                                );
+                                for method in &methods {
+                                    self.compile_class_public_method(method)?;
+                                }
+                            }
+                            ClassElement::StaticBlock(_) => {}
                         }
-                        ClassElement::StaticBlock(_) => {}
                     }
                 }
 
@@ -5567,11 +6241,56 @@ impl Compiler {
                 // applied and before static fields execute.
                 self.emit_apply_decorators(
                     &class_decorator_bindings,
+                    &class_decorator_receiver_bindings,
+                    &class_decorator_active_bindings,
+                    &class_extra_initializer_queue,
                     0,
-                    "class",
-                    (display_name.as_ref(), None),
-                    (false, false),
-                );
+                    DecoratorContextSpec {
+                        kind: "class",
+                        name: (display_name.as_ref(), None),
+                        flags: None,
+                        access: DecoratorAccess::None,
+                    },
+                )?;
+
+                // The class's inner name observes a decorator replacement in
+                // static fields/blocks and in all captured class methods.
+                if let Some(name) = &cls.name {
+                    let name_idx = self.intern(name);
+                    self.chunk.emit(Op::Dup, self.current_line);
+                    self.chunk
+                        .emit(Op::InitEnvConst(name_idx), self.current_line);
+                }
+
+                let decorated_class_binding: Arc<str> =
+                    Arc::from(format!("#decorated_class:{decorator_id}").as_str());
+                let has_static_field_decorators =
+                    cls.elements
+                        .iter()
+                        .enumerate()
+                        .any(|(element_index, element)| {
+                            matches!(
+                                element,
+                                ClassElement::PublicField(index)
+                                    if cls.public_fields[*index].is_static
+                            ) && !element_decorator_bindings[element_index].is_empty()
+                        });
+                if !class_decorator_bindings.is_empty()
+                    || has_static_method_decorators
+                    || has_static_field_decorators
+                {
+                    self.chunk.emit(Op::Dup, self.current_line);
+                    let decorated_class_idx = self.intern(&decorated_class_binding);
+                    self.chunk
+                        .emit(Op::DeclareEnv(decorated_class_idx), self.current_line);
+                }
+                if has_static_method_decorators {
+                    self.compile_expr(&Self::decorator_initializer_runner(
+                        &static_method_initializer_queue,
+                        Expr::Ident(decorated_class_binding.clone()),
+                    ))?;
+                    self.chunk.emit(Op::Pop, self.current_line);
+                }
 
                 // Static element initialization runs after decorator
                 // application, in static element source order.
@@ -5579,6 +6298,7 @@ impl Compiler {
                     match element {
                         crate::ast::ClassElement::PublicField(idx) => {
                             let mut field = cls.public_fields[*idx].clone();
+                            let is_static = field.is_static;
                             let init = field
                                 .init
                                 .take()
@@ -5591,9 +6311,17 @@ impl Compiler {
                                 &field,
                                 public_field_computed_key_temps[*idx].as_ref(),
                             )?;
+                            if is_static && !element_decorator_bindings[element_index].is_empty() {
+                                self.compile_expr(&Self::decorator_initializer_runner(
+                                    &element_extra_initializer_queues[element_index],
+                                    Expr::Ident(decorated_class_binding.clone()),
+                                ))?;
+                                self.chunk.emit(Op::Pop, self.current_line);
+                            }
                         }
                         crate::ast::ClassElement::PrivateField(idx) => {
                             let mut field = cls.private_fields[*idx].clone();
+                            let is_static = field.is_static;
                             let init = field
                                 .init
                                 .take()
@@ -5603,6 +6331,13 @@ impl Compiler {
                                 &element_initializer_bindings[element_index],
                             ));
                             self.compile_class_static_private_field(&field)?;
+                            if is_static && !element_decorator_bindings[element_index].is_empty() {
+                                self.compile_expr(&Self::decorator_initializer_runner(
+                                    &element_extra_initializer_queues[element_index],
+                                    Expr::Ident(decorated_class_binding.clone()),
+                                ))?;
+                                self.chunk.emit(Op::Pop, self.current_line);
+                            }
                         }
                         crate::ast::ClassElement::Method(idx) => {
                             self.compile_class_static_private_method(&cls.methods[*idx])?;
@@ -5637,9 +6372,23 @@ impl Compiler {
                                     kind: PropKind::Normal,
                                 };
                                 self.compile_class_static_private_field(&backing_field)?;
+                                if !element_decorator_bindings[element_index].is_empty() {
+                                    self.compile_expr(&Self::decorator_initializer_runner(
+                                        &element_extra_initializer_queues[element_index],
+                                        Expr::Ident(decorated_class_binding.clone()),
+                                    ))?;
+                                    self.chunk.emit(Op::Pop, self.current_line);
+                                }
                             }
                         }
                     }
+                }
+                if !class_decorator_bindings.is_empty() {
+                    self.compile_expr(&Self::decorator_initializer_runner(
+                        &class_extra_initializer_queue,
+                        Expr::Ident(decorated_class_binding),
+                    ))?;
+                    self.chunk.emit(Op::Pop, self.current_line);
                 }
                 self.chunk.emit(Op::PopScope, self.current_line);
                 self.pop_scope();
