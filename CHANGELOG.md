@@ -4,6 +4,13 @@
 
 ### Fixed
 
+- Test262 now admits the exact **272** generated class declaration/expression
+  files whose sole remaining gate was `destructuring-binding`. The frozen set
+  covers 136 ordinary and static method parameter-pattern cases in both class
+  forms. Runner and analyzer retain all broad gates and remove only the single
+  feature for exact manifest members. The manifest passes **272/272** and
+  raises pinned supported coverage to **12728 pass / 0 fail / 7711 skip /
+  20439 total**.
 - Object, public class, and private class accessors now enforce their grammar's
   formal-parameter arity after parsing: getters accept no parameters, and
   setters accept exactly one non-rest parameter. Valid setter defaults and

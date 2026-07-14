@@ -11,6 +11,7 @@ import test262_analyze
 import test262_runner
 from test262_class_computed_field_admission import CLASS_COMPUTED_FIELD_FILES
 from test262_class_default_parameter_admission import CLASS_DEFAULT_PARAMETER_FILES
+from test262_class_destructuring_admission import CLASS_DESTRUCTURING_FILES
 from test262_class_private_admission import (
     CLASS_PRIVATE_FEATURES_BY_FILE,
     CLASS_PRIVATE_FILES,
@@ -1595,6 +1596,240 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
                     self.assertEqual(
                         test262_runner.class_default_parameter_path(path),
                         test262_analyze.class_default_parameter_path(path),
+                    )
+                    self.assertEqual(
+                        test262_runner.should_skip(meta, path),
+                        test262_analyze.should_skip(meta, path),
+                    )
+                    self.assertFalse(test262_runner.should_skip(meta, path))
+            finally:
+                test262_runner.TEST262 = original_runner_root
+                test262_analyze.TEST262 = original_analyze_root
+
+    def test_class_destructuring_admission_is_exact(self):
+        names = {
+            "dstr/meth-ary-name-iter-val.js",
+            "dstr/meth-ary-ptrn-elem-ary-elem-init.js",
+            "dstr/meth-ary-ptrn-elem-ary-elem-iter.js",
+            "dstr/meth-ary-ptrn-elem-ary-empty-iter.js",
+            "dstr/meth-ary-ptrn-elem-ary-rest-init.js",
+            "dstr/meth-ary-ptrn-elem-ary-rest-iter.js",
+            "dstr/meth-ary-ptrn-elem-ary-val-null.js",
+            "dstr/meth-ary-ptrn-elem-id-init-exhausted.js",
+            "dstr/meth-ary-ptrn-elem-id-init-fn-name-arrow.js",
+            "dstr/meth-ary-ptrn-elem-id-init-fn-name-class.js",
+            "dstr/meth-ary-ptrn-elem-id-init-fn-name-cover.js",
+            "dstr/meth-ary-ptrn-elem-id-init-fn-name-fn.js",
+            "dstr/meth-ary-ptrn-elem-id-init-hole.js",
+            "dstr/meth-ary-ptrn-elem-id-init-skipped.js",
+            "dstr/meth-ary-ptrn-elem-id-init-throws.js",
+            "dstr/meth-ary-ptrn-elem-id-init-undef.js",
+            "dstr/meth-ary-ptrn-elem-id-init-unresolvable.js",
+            "dstr/meth-ary-ptrn-elem-id-iter-complete.js",
+            "dstr/meth-ary-ptrn-elem-id-iter-done.js",
+            "dstr/meth-ary-ptrn-elem-id-iter-val.js",
+            "dstr/meth-ary-ptrn-elem-obj-id-init.js",
+            "dstr/meth-ary-ptrn-elem-obj-id.js",
+            "dstr/meth-ary-ptrn-elem-obj-prop-id-init.js",
+            "dstr/meth-ary-ptrn-elem-obj-prop-id.js",
+            "dstr/meth-ary-ptrn-elem-obj-val-null.js",
+            "dstr/meth-ary-ptrn-elem-obj-val-undef.js",
+            "dstr/meth-ary-ptrn-rest-ary-elem.js",
+            "dstr/meth-ary-ptrn-rest-ary-rest.js",
+            "dstr/meth-ary-ptrn-rest-id-direct.js",
+            "dstr/meth-ary-ptrn-rest-id-elision.js",
+            "dstr/meth-ary-ptrn-rest-id.js",
+            "dstr/meth-ary-ptrn-rest-init-ary.js",
+            "dstr/meth-ary-ptrn-rest-init-id.js",
+            "dstr/meth-ary-ptrn-rest-init-obj.js",
+            "dstr/meth-ary-ptrn-rest-not-final-ary.js",
+            "dstr/meth-ary-ptrn-rest-not-final-id.js",
+            "dstr/meth-ary-ptrn-rest-not-final-obj.js",
+            "dstr/meth-ary-ptrn-rest-obj-id.js",
+            "dstr/meth-ary-ptrn-rest-obj-prop-id.js",
+            "dstr/meth-obj-init-null.js",
+            "dstr/meth-obj-init-undefined.js",
+            "dstr/meth-obj-ptrn-empty.js",
+            "dstr/meth-obj-ptrn-id-get-value-err.js",
+            "dstr/meth-obj-ptrn-id-init-fn-name-arrow.js",
+            "dstr/meth-obj-ptrn-id-init-fn-name-class.js",
+            "dstr/meth-obj-ptrn-id-init-fn-name-cover.js",
+            "dstr/meth-obj-ptrn-id-init-fn-name-fn.js",
+            "dstr/meth-obj-ptrn-id-init-skipped.js",
+            "dstr/meth-obj-ptrn-id-init-throws.js",
+            "dstr/meth-obj-ptrn-id-init-unresolvable.js",
+            "dstr/meth-obj-ptrn-id-trailing-comma.js",
+            "dstr/meth-obj-ptrn-list-err.js",
+            "dstr/meth-obj-ptrn-prop-ary-init.js",
+            "dstr/meth-obj-ptrn-prop-ary-trailing-comma.js",
+            "dstr/meth-obj-ptrn-prop-ary-value-null.js",
+            "dstr/meth-obj-ptrn-prop-ary.js",
+            "dstr/meth-obj-ptrn-prop-eval-err.js",
+            "dstr/meth-obj-ptrn-prop-id-get-value-err.js",
+            "dstr/meth-obj-ptrn-prop-id-init-skipped.js",
+            "dstr/meth-obj-ptrn-prop-id-init-throws.js",
+            "dstr/meth-obj-ptrn-prop-id-init-unresolvable.js",
+            "dstr/meth-obj-ptrn-prop-id-init.js",
+            "dstr/meth-obj-ptrn-prop-id-trailing-comma.js",
+            "dstr/meth-obj-ptrn-prop-id.js",
+            "dstr/meth-obj-ptrn-prop-obj-init.js",
+            "dstr/meth-obj-ptrn-prop-obj-value-null.js",
+            "dstr/meth-obj-ptrn-prop-obj-value-undef.js",
+            "dstr/meth-obj-ptrn-prop-obj.js",
+            "dstr/meth-static-ary-name-iter-val.js",
+            "dstr/meth-static-ary-ptrn-elem-ary-elem-init.js",
+            "dstr/meth-static-ary-ptrn-elem-ary-elem-iter.js",
+            "dstr/meth-static-ary-ptrn-elem-ary-empty-iter.js",
+            "dstr/meth-static-ary-ptrn-elem-ary-rest-init.js",
+            "dstr/meth-static-ary-ptrn-elem-ary-rest-iter.js",
+            "dstr/meth-static-ary-ptrn-elem-ary-val-null.js",
+            "dstr/meth-static-ary-ptrn-elem-id-init-exhausted.js",
+            "dstr/meth-static-ary-ptrn-elem-id-init-fn-name-arrow.js",
+            "dstr/meth-static-ary-ptrn-elem-id-init-fn-name-class.js",
+            "dstr/meth-static-ary-ptrn-elem-id-init-fn-name-cover.js",
+            "dstr/meth-static-ary-ptrn-elem-id-init-fn-name-fn.js",
+            "dstr/meth-static-ary-ptrn-elem-id-init-hole.js",
+            "dstr/meth-static-ary-ptrn-elem-id-init-skipped.js",
+            "dstr/meth-static-ary-ptrn-elem-id-init-throws.js",
+            "dstr/meth-static-ary-ptrn-elem-id-init-undef.js",
+            "dstr/meth-static-ary-ptrn-elem-id-init-unresolvable.js",
+            "dstr/meth-static-ary-ptrn-elem-id-iter-complete.js",
+            "dstr/meth-static-ary-ptrn-elem-id-iter-done.js",
+            "dstr/meth-static-ary-ptrn-elem-id-iter-val.js",
+            "dstr/meth-static-ary-ptrn-elem-obj-id-init.js",
+            "dstr/meth-static-ary-ptrn-elem-obj-id.js",
+            "dstr/meth-static-ary-ptrn-elem-obj-prop-id-init.js",
+            "dstr/meth-static-ary-ptrn-elem-obj-prop-id.js",
+            "dstr/meth-static-ary-ptrn-elem-obj-val-null.js",
+            "dstr/meth-static-ary-ptrn-elem-obj-val-undef.js",
+            "dstr/meth-static-ary-ptrn-rest-ary-elem.js",
+            "dstr/meth-static-ary-ptrn-rest-ary-rest.js",
+            "dstr/meth-static-ary-ptrn-rest-id-direct.js",
+            "dstr/meth-static-ary-ptrn-rest-id-elision.js",
+            "dstr/meth-static-ary-ptrn-rest-id.js",
+            "dstr/meth-static-ary-ptrn-rest-init-ary.js",
+            "dstr/meth-static-ary-ptrn-rest-init-id.js",
+            "dstr/meth-static-ary-ptrn-rest-init-obj.js",
+            "dstr/meth-static-ary-ptrn-rest-not-final-ary.js",
+            "dstr/meth-static-ary-ptrn-rest-not-final-id.js",
+            "dstr/meth-static-ary-ptrn-rest-not-final-obj.js",
+            "dstr/meth-static-ary-ptrn-rest-obj-id.js",
+            "dstr/meth-static-ary-ptrn-rest-obj-prop-id.js",
+            "dstr/meth-static-obj-init-null.js",
+            "dstr/meth-static-obj-init-undefined.js",
+            "dstr/meth-static-obj-ptrn-empty.js",
+            "dstr/meth-static-obj-ptrn-id-get-value-err.js",
+            "dstr/meth-static-obj-ptrn-id-init-fn-name-arrow.js",
+            "dstr/meth-static-obj-ptrn-id-init-fn-name-class.js",
+            "dstr/meth-static-obj-ptrn-id-init-fn-name-cover.js",
+            "dstr/meth-static-obj-ptrn-id-init-fn-name-fn.js",
+            "dstr/meth-static-obj-ptrn-id-init-skipped.js",
+            "dstr/meth-static-obj-ptrn-id-init-throws.js",
+            "dstr/meth-static-obj-ptrn-id-init-unresolvable.js",
+            "dstr/meth-static-obj-ptrn-id-trailing-comma.js",
+            "dstr/meth-static-obj-ptrn-list-err.js",
+            "dstr/meth-static-obj-ptrn-prop-ary-init.js",
+            "dstr/meth-static-obj-ptrn-prop-ary-trailing-comma.js",
+            "dstr/meth-static-obj-ptrn-prop-ary-value-null.js",
+            "dstr/meth-static-obj-ptrn-prop-ary.js",
+            "dstr/meth-static-obj-ptrn-prop-eval-err.js",
+            "dstr/meth-static-obj-ptrn-prop-id-get-value-err.js",
+            "dstr/meth-static-obj-ptrn-prop-id-init-skipped.js",
+            "dstr/meth-static-obj-ptrn-prop-id-init-throws.js",
+            "dstr/meth-static-obj-ptrn-prop-id-init-unresolvable.js",
+            "dstr/meth-static-obj-ptrn-prop-id-init.js",
+            "dstr/meth-static-obj-ptrn-prop-id-trailing-comma.js",
+            "dstr/meth-static-obj-ptrn-prop-id.js",
+            "dstr/meth-static-obj-ptrn-prop-obj-init.js",
+            "dstr/meth-static-obj-ptrn-prop-obj-value-null.js",
+            "dstr/meth-static-obj-ptrn-prop-obj-value-undef.js",
+            "dstr/meth-static-obj-ptrn-prop-obj.js",
+        }
+        expected = frozenset(
+            f"{prefix}{name}"
+            for prefix in (
+                "language/expressions/class/",
+                "language/statements/class/",
+            )
+            for name in names
+        )
+        self.assertEqual(len(names), 136)
+        self.assertEqual(len(CLASS_DESTRUCTURING_FILES), 272)
+        self.assertEqual(CLASS_DESTRUCTURING_FILES, expected)
+        self.assertTrue(
+            all(
+                path.startswith((
+                    "language/expressions/class/dstr/",
+                    "language/statements/class/dstr/",
+                )) and path.endswith(".js")
+                for path in CLASS_DESTRUCTURING_FILES
+            )
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            admitted = root / "test" / next(iter(expected))
+            unrelated = root / (
+                "test/language/expressions/class/dstr/not-admitted.js"
+            )
+            meta = {"flags": ["generated"], "features": ["destructuring-binding"]}
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    self.assertTrue(tool.class_destructuring_path(admitted))
+                    self.assertFalse(tool.should_skip(meta, admitted))
+                    self.assertFalse(tool.class_destructuring_path(unrelated))
+                    self.assertTrue(tool.should_skip(meta, unrelated))
+                    self.assertTrue(
+                        tool.should_skip(
+                            {
+                                "flags": ["generated"],
+                                "features": [
+                                    "destructuring-binding",
+                                    "class-fields-private",
+                                ],
+                            },
+                            admitted,
+                        )
+                    )
+                finally:
+                    tool.TEST262 = original_root
+
+    def test_class_destructuring_admission_requires_live_metadata_feature(self):
+        test_root = Path(test262_runner.TEST262) / "test"
+        try:
+            checkout_available = test_root.is_dir()
+        except (OSError, PermissionError):
+            checkout_available = False
+        if not checkout_available:
+            self.skipTest("live Test262 checkout is unavailable")
+        for relative in CLASS_DESTRUCTURING_FILES:
+            path = test_root / relative
+            try:
+                self.assertTrue(path.is_file(), relative)
+                meta = test262_runner.parse_meta(path.read_text())
+            except (OSError, PermissionError):
+                self.skipTest("live Test262 checkout is inaccessible")
+            self.assertEqual(meta.get("features"), ["destructuring-binding"], relative)
+
+    def test_class_destructuring_runner_analyzer_parity(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            original_runner_root = test262_runner.TEST262
+            original_analyze_root = test262_analyze.TEST262
+            test262_runner.TEST262 = str(root)
+            test262_analyze.TEST262 = str(root)
+            try:
+                for relative in CLASS_DESTRUCTURING_FILES:
+                    path = root / "test" / relative
+                    meta = {
+                        "flags": ["generated"],
+                        "features": ["destructuring-binding"],
+                    }
+                    self.assertEqual(
+                        test262_runner.class_destructuring_path(path),
+                        test262_analyze.class_destructuring_path(path),
                     )
                     self.assertEqual(
                         test262_runner.should_skip(meta, path),

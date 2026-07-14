@@ -31,7 +31,7 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 59.5% of all matrix files; 81.3% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (12456 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (12728 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
@@ -166,6 +166,22 @@ succeeded. Expressions and statements each moved by **+28 pass / -28 skip**;
 the other 28 result artifacts are byte-for-byte identical to matrix
 `29317703061`. The aggregate is **28760 pass / 6614 fail / 12931 skip / 12
 timeout / 0 error / 48317 total / 35374 pass-or-fail executed**.
+
+## Class destructuring admission
+
+`tools/test262_class_destructuring_admission.txt` freezes the exact **272**
+generated class declaration and expression files whose only remaining skip
+reason was `destructuring-binding`. The set is the cross product of 136
+ordinary/static method parameter-pattern cases with the two class forms. The
+runner and analyzer remove only that feature gate for exact manifest members;
+private methods, generators, defaults, iterator overrides, object rest, and
+unrelated destructuring tests retain their independent gates.
+
+Local verification reports **272 pass / 0 fail** for the frozen manifest. On
+test262 `d1d583db95a521218f3eb8341a887fd63eda8ff1`, the supported subset is
+**12728 pass / 0 fail / 7711 skip / 20439 total**. The current upstream
+checkout `020cb74075849d1e404bbcdb62feb7a02e6966db` reports **12727 pass / 0
+fail / 7711 skip / 20438 total**.
 
 ## JSON.parse reviver admission
 
