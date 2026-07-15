@@ -870,6 +870,9 @@ impl Vm {
             HeapObj::CollectionIterator(iterator) => iterator
                 .extensible
                 .store(false, std::sync::atomic::Ordering::Relaxed),
+            HeapObj::IteratorHelper(iterator) => iterator
+                .extensible
+                .store(false, std::sync::atomic::Ordering::Relaxed),
             HeapObj::WeakRef(wr) => wr
                 .extensible
                 .store(false, std::sync::atomic::Ordering::Relaxed),
@@ -2901,6 +2904,9 @@ impl Vm {
             Self::push_value_roots(&mut roots, v);
         }
         for v in self.realm_string_iterator_prototypes.values() {
+            Self::push_value_roots(&mut roots, v);
+        }
+        for v in self.realm_iterator_helper_prototypes.values() {
             Self::push_value_roots(&mut roots, v);
         }
         for v in self.realm_regexp_prototypes.values() {

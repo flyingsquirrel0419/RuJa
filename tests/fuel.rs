@@ -56,6 +56,31 @@ fn fuel_exhaustion_is_uncatchable() {
 }
 
 #[test]
+fn iterator_helper_close_does_not_suppress_fuel_exhaustion() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.set_fuel(Some(20_000));
+    let err = vm
+        .run(
+            r#"
+            var source = {
+              next: function() { return { value: 1, done: false }; },
+              return: function() { while (true) {} }
+            };
+            Iterator.prototype.map.call(source, function() {
+              throw "callback";
+            }).next();
+            "#,
+        )
+        .expect_err("close-time fuel exhaustion must abort the host run");
+    assert!(
+        err.to_string().contains("fuel exhausted"),
+        "expected close-time fuel exhaustion, got: {}",
+        err
+    );
+    assert_eq!(vm.fuel_remaining(), Some(0));
+}
+
+#[test]
 fn normal_errors_remain_catchable() {
     // Fuel change must not break ordinary try/catch of catchable errors.
     let mut vm = Vm::new().expect("failed to initialize VM");

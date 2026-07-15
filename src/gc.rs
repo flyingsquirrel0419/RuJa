@@ -231,6 +231,11 @@ pub fn trace_obj(obj: &HeapObj, marked: &[bool], worklist: &mut Vec<usize>) {
                 push_value(next, worklist);
             }
         }
+        HeapObj::IteratorHelper(it) => {
+            push_value(&it.iterator, worklist);
+            push_value(&it.next_method, worklist);
+            push_value(&it.callback, worklist);
+        }
         HeapObj::RegExpStringIterator(it) => {
             push_value(&it.matcher, worklist);
         }

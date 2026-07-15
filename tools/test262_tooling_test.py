@@ -1699,7 +1699,7 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
                 test262_analyze.TEST262 = original_analyze_root
 
     def test_iterator_core_admission_is_exact(self):
-        self.assertEqual(len(ITERATOR_CORE_FILES), 74)
+        self.assertEqual(len(ITERATOR_CORE_FILES), 147)
         self.assertEqual(
             sum("/prototype/Symbol.dispose/" in path for path in ITERATOR_CORE_FILES),
             6,
@@ -1736,6 +1736,14 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
             sum("/Iterator/prototype/toArray/" in path for path in ITERATOR_CORE_FILES),
             18,
         )
+        self.assertEqual(
+            sum("/Iterator/prototype/map/" in path for path in ITERATOR_CORE_FILES),
+            36,
+        )
+        self.assertEqual(
+            sum("/Iterator/prototype/filter/" in path for path in ITERATOR_CORE_FILES),
+            37,
+        )
 
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -1745,7 +1753,9 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
             string_iterator = root / "test/built-ins/StringIteratorPrototype/next/next-iteration.js"
             iterator_from = root / "test/built-ins/Iterator/from/is-function.js"
             to_array = root / "test/built-ins/Iterator/prototype/toArray/is-function.js"
-            unrelated = root / "test/built-ins/Iterator/prototype/map/is-function.js"
+            iterator_map = root / "test/built-ins/Iterator/prototype/map/is-function.js"
+            iterator_filter = root / "test/built-ins/Iterator/prototype/filter/is-function.js"
+            unrelated = root / "test/built-ins/Iterator/prototype/take/is-function.js"
             sequencing = root / "test/built-ins/Iterator/concat/is-function.js"
             joint = root / "test/built-ins/Iterator/zip/is-function.js"
             joint_keyed = root / "test/built-ins/Iterator/zipKeyed/is-function.js"
@@ -1791,6 +1801,20 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
                         tool.should_skip(
                             {"flags": [], "features": ["iterator-helpers"]},
                             to_array,
+                        )
+                    )
+                    self.assertTrue(tool.iterator_core_path(iterator_map))
+                    self.assertFalse(
+                        tool.should_skip(
+                            {"flags": [], "features": ["iterator-helpers"]},
+                            iterator_map,
+                        )
+                    )
+                    self.assertTrue(tool.iterator_core_path(iterator_filter))
+                    self.assertFalse(
+                        tool.should_skip(
+                            {"flags": [], "features": ["iterator-helpers"]},
+                            iterator_filter,
                         )
                     )
                     self.assertFalse(tool.iterator_core_path(unrelated))

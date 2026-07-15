@@ -161,6 +161,7 @@ pub struct Vm {
     pub(crate) realm_array_iterator_prototypes: HashMap<usize, Value>,
     pub(crate) realm_wrap_for_valid_iterator_prototypes: HashMap<usize, Value>,
     pub(crate) realm_string_iterator_prototypes: HashMap<usize, Value>,
+    pub(crate) realm_iterator_helper_prototypes: HashMap<usize, Value>,
     /// Realm global environment index + native error constructor name -> that
     /// Realm's original intrinsic Error prototype. Native errors must not
     /// consult mutable global bindings such as `TypeError`.
@@ -589,6 +590,7 @@ impl Vm {
             realm_array_iterator_prototypes: HashMap::new(),
             realm_wrap_for_valid_iterator_prototypes: HashMap::new(),
             realm_string_iterator_prototypes: HashMap::new(),
+            realm_iterator_helper_prototypes: HashMap::new(),
             realm_error_prototypes: HashMap::new(),
             realm_regexp_prototypes: HashMap::new(),
             realm_array_buffer_prototypes: HashMap::new(),

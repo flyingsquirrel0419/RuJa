@@ -515,6 +515,247 @@ fn iterator_to_array_caps_infinite_materialization() {
 }
 
 #[test]
+fn iterator_map_and_filter_have_lazy_helper_shape() {
+    assert_eq!(
+        run(r#"
+            var calls = 0;
+            var source = {
+              __proto__: Iterator.prototype,
+              value: 0,
+              next: function() {
+                calls += 1;
+                return this.value < 4
+                  ? { value: this.value++, done: false }
+                  : { done: true };
+              }
+            };
+            var helper = source.map(function(value, index) {
+              return value + index;
+            }).filter(function(value) {
+              return value > 2;
+            });
+            var proto = Object.getPrototypeOf(helper);
+            var nextBrand = false;
+            var returnBrand = false;
+            try { proto.next.call({}); }
+            catch (error) { nextBrand = error instanceof TypeError; }
+            try { proto.return.call({}); }
+            catch (error) { returnBrand = error instanceof TypeError; }
+            var before = calls;
+            var first = helper.next();
+            var second = helper.next();
+            var done = helper.next();
+            [
+              before, first.value, first.done, second.value, second.done, done.done,
+              helper instanceof Iterator,
+              Object.getPrototypeOf(proto) === Iterator.prototype,
+              proto.next.length, proto.next.name, proto.return.length, proto.return.name,
+              nextBrand, returnBrand
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "0|4|false|6|false|true|true|true|0|next|0|return|true|true"
+        ))
+    );
+}
+
+#[test]
+fn iterator_helpers_use_the_method_realm_for_prototypes_results_and_errors() {
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var source = {
+              value: 1,
+              next: function() {
+                return this.value < 2
+                  ? { value: this.value++, done: false }
+                  : { done: true };
+              }
+            };
+            var helper = other.Iterator.prototype.map.call(source, function(value) {
+              return value + 1;
+            });
+            var proto = Object.getPrototypeOf(helper);
+            var step = helper.next();
+            var brandError = false;
+            try { proto.next.call({}); }
+            catch (error) {
+              brandError = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            [
+              helper instanceof other.Iterator, helper instanceof Iterator,
+              Object.getPrototypeOf(proto) === other.Iterator.prototype,
+              Object.getPrototypeOf(proto.next) === other.Function.prototype,
+              Object.getPrototypeOf(proto.return) === other.Function.prototype,
+              Object.getPrototypeOf(step) === other.Object.prototype,
+              step.value, step.done, brandError
+            ].join("|");
+        "#),
+        Value::String(Arc::from("true|false|true|true|true|true|2|false|true"))
+    );
+}
+
+#[test]
+fn iterator_helpers_keep_source_next_and_callbacks_alive_across_gc() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+    assert_eq!(
+        vm.run(
+            r#"
+            var helper = (function() {
+              var state = { value: 0, limit: 4, offset: 10 };
+              var source = {
+                get next() {
+                  forceGc();
+                  return function() {
+                    forceGc();
+                    var result = {};
+                    Object.defineProperty(result, "done", {
+                      get: function() { forceGc(); return state.value >= state.limit; }
+                    });
+                    Object.defineProperty(result, "value", {
+                      get: function() { forceGc(); return state.value++; }
+                    });
+                    return result;
+                  };
+                }
+              };
+              return Iterator.prototype.map.call(source, function(value) {
+                forceGc();
+                return value + state.offset;
+              }).filter(function(value) {
+                forceGc();
+                return value % 2 === 0;
+              });
+            })();
+            forceGc();
+            var first = helper.next();
+            forceGc();
+            var second = helper.next();
+            forceGc();
+            var done = helper.next();
+            [first.value, first.done, second.value, second.done, done.done].join("|");
+            "#,
+        )
+        .expect("Iterator helpers should retain all lazy state across GC"),
+        Value::String(Arc::from("10|false|12|false|true"))
+    );
+}
+
+#[test]
+fn iterator_helpers_stay_executing_while_closing() {
+    assert_eq!(
+        run(r#"
+            var callbackCloseReentry = false;
+            var explicitCloseReentry = false;
+            var suspendedStartCloseReentry = false;
+            var originalThrow = false;
+            var callbackHelper;
+            var callbackSource = {
+              next: function() { return { value: 1, done: false }; },
+              return: function() {
+                try { callbackHelper.next(); }
+                catch (error) { callbackCloseReentry = error instanceof TypeError; }
+                return {};
+              }
+            };
+            callbackHelper = Iterator.prototype.map.call(callbackSource, function() {
+              throw "callback";
+            });
+            try { callbackHelper.next(); }
+            catch (error) { originalThrow = error === "callback"; }
+
+            var explicitHelper;
+            var explicitSource = {
+              yielded: false,
+              next: function() {
+                if (this.yielded) return { done: true };
+                this.yielded = true;
+                return { value: 2, done: false };
+              },
+              return: function() {
+                try { explicitHelper.next(); }
+                catch (error) { explicitCloseReentry = error instanceof TypeError; }
+                return {};
+              }
+            };
+            explicitHelper = Iterator.prototype.filter.call(explicitSource, function() {
+              return true;
+            });
+            explicitHelper.next();
+            explicitHelper.return();
+
+            var startHelper;
+            var startSource = {
+              next: function() { return { value: 3, done: false }; },
+              return: function() {
+                var step = startHelper.next();
+                suspendedStartCloseReentry = step.done && step.value === undefined;
+                return {};
+              }
+            };
+            startHelper = Iterator.prototype.map.call(startSource, function(value) {
+              return value;
+            });
+            startHelper.return();
+            [
+              callbackCloseReentry,
+              explicitCloseReentry,
+              suspendedStartCloseReentry,
+              originalThrow
+            ].join("|");
+        "#),
+        Value::String(Arc::from("true|true|true|true"))
+    );
+}
+
+#[test]
+fn iterator_helper_tag_and_integrity_operations_are_spec_shaped() {
+    assert_eq!(
+        run(r#"
+            function helper() {
+              return [1].values().map(function(value) { return value; });
+            }
+            var tagged = helper();
+            var proto = Object.getPrototypeOf(tagged);
+            var tag = Object.getOwnPropertyDescriptor(proto, Symbol.toStringTag);
+
+            var prevented = helper();
+            var preventResult = Reflect.preventExtensions(prevented);
+            prevented.extra = 1;
+
+            var sealed = helper();
+            sealed.extra = 1;
+            Object.seal(sealed);
+            var sealedDesc = Object.getOwnPropertyDescriptor(sealed, "extra");
+
+            var frozen = helper();
+            frozen.extra = 1;
+            Object.freeze(frozen);
+            var frozenDesc = Object.getOwnPropertyDescriptor(frozen, "extra");
+            [
+              Object.prototype.toString.call(tagged),
+              tag.value, tag.writable, tag.enumerable, tag.configurable,
+              preventResult, Object.isExtensible(prevented), prevented.extra === undefined,
+              Object.isSealed(sealed), sealedDesc.configurable, sealedDesc.writable,
+              Object.isFrozen(frozen), frozenDesc.configurable, frozenDesc.writable
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "[object Iterator Helper]|Iterator Helper|false|false|true|true|false|true|true|false|true|true|false|false"
+        ))
+    );
+}
+
+#[test]
 fn array_map_reduce() {
     assert_eq!(
         run("[1,2,3].map(x => x*2).join(',');"),

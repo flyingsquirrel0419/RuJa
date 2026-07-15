@@ -7,7 +7,7 @@
 use crate::ast::FunctionExpr;
 use indexmap::{IndexMap, IndexSet};
 use parking_lot::{Condvar, Mutex};
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, AtomicUsize, Ordering};
 
 use std::fmt;
 use std::sync::Arc;
@@ -561,6 +561,7 @@ pub enum HeapObj {
     Map(MapData),
     Set(SetData),
     CollectionIterator(CollectionIteratorData),
+    IteratorHelper(IteratorHelperData),
     RegExpStringIterator(RegExpStringIteratorData),
     WeakMap(WeakMapData),
     WeakSet(WeakSetData),
@@ -758,6 +759,25 @@ pub struct CollectionIteratorData {
     pub next_method: Mutex<Option<Value>>,
     pub kind: CollectionIteratorKind,
     pub index: AtomicUsize,
+    pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
+    pub proto: Mutex<Option<Value>>,
+    pub extensible: AtomicBool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum IteratorHelperKind {
+    Map,
+    Filter,
+}
+
+pub struct IteratorHelperData {
+    pub iterator: Value,
+    pub next_method: Value,
+    pub callback: Value,
+    pub kind: IteratorHelperKind,
+    pub counter: AtomicU64,
+    /// 0 = suspended-start, 1 = executing, 2 = completed, 3 = suspended-yield.
+    pub state: AtomicU8,
     pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
     pub proto: Mutex<Option<Value>>,
     pub extensible: AtomicBool,
@@ -1070,6 +1090,7 @@ impl HeapObj {
             HeapObj::Map(m) => &m.props,
             HeapObj::Set(s) => &s.props,
             HeapObj::CollectionIterator(i) => &i.props,
+            HeapObj::IteratorHelper(i) => &i.props,
             HeapObj::RegExpStringIterator(i) => &i.props,
             HeapObj::WeakMap(w) => &w.props,
             HeapObj::WeakSet(ws) => &ws.props,
@@ -1097,6 +1118,7 @@ impl HeapObj {
             HeapObj::Map(m) => &m.proto,
             HeapObj::Set(s) => &s.proto,
             HeapObj::CollectionIterator(i) => &i.proto,
+            HeapObj::IteratorHelper(i) => &i.proto,
             HeapObj::RegExpStringIterator(i) => &i.proto,
             HeapObj::WeakMap(w) => &w.proto,
             HeapObj::WeakSet(ws) => &ws.proto,
@@ -1154,6 +1176,7 @@ impl HeapObj {
                     "Set Iterator"
                 }
             },
+            HeapObj::IteratorHelper(_) => "Iterator Helper",
             HeapObj::RegExpStringIterator(_) => "RegExp String Iterator",
             HeapObj::WeakMap(_) => "WeakMap",
             HeapObj::WeakSet(_) => "WeakSet",
@@ -1182,6 +1205,7 @@ impl HeapObj {
             HeapObj::Function(f) => f.extensible.load(Ordering::Relaxed),
             HeapObj::TypedArray(t) => t.extensible.load(Ordering::Relaxed),
             HeapObj::CollectionIterator(iterator) => iterator.extensible.load(Ordering::Relaxed),
+            HeapObj::IteratorHelper(iterator) => iterator.extensible.load(Ordering::Relaxed),
             HeapObj::WeakRef(wr) => wr.extensible.load(Ordering::Relaxed),
             HeapObj::FinalizationRegistry(registry) => registry.extensible.load(Ordering::Relaxed),
             HeapObj::ModuleNamespace(_) => false,
