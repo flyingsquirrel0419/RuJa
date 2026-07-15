@@ -2341,6 +2341,286 @@ fn decorated_public_auto_accessors_support_static_computed_names() {
 }
 
 #[test]
+fn decorated_private_auto_accessors_expose_context_and_branded_access() {
+    assert_eq!(
+        run(r#"
+            let instanceContext;
+            let staticContext;
+            let instanceValueShape;
+            let staticValueShape;
+            function capture(value, context) {
+              if (context.static) {
+                staticContext = context;
+                staticValueShape = Object.keys(value).join(",");
+              } else {
+                instanceContext = context;
+                instanceValueShape = Object.keys(value).join(",");
+              }
+            }
+            class C {
+              @capture accessor #instanceValue = 1;
+              @capture static accessor #staticValue = 2;
+              read() { return this.#instanceValue; }
+              static read() { return this.#staticValue; }
+            }
+            let instance = new C();
+            instanceContext.access.set(instance, 5);
+            staticContext.access.set(C, 6);
+            let brandErrors = 0;
+            for (let operation of [
+              () => instanceContext.access.get({}),
+              () => instanceContext.access.set({}, 1),
+              () => staticContext.access.get(class D {}),
+              () => staticContext.access.set(class D {}, 1)
+            ]) {
+              try { operation(); } catch (error) {
+                if (error instanceof TypeError) brandErrors++;
+              }
+            }
+            [
+              instanceValueShape, staticValueShape,
+              Object.keys(instanceContext).join(","),
+              Object.keys(instanceContext.access).join(","),
+              instanceContext.kind, instanceContext.name,
+              instanceContext.private, instanceContext.static,
+              staticContext.name, staticContext.private, staticContext.static,
+              instanceContext.access.has(instance), instanceContext.access.has({}),
+              staticContext.access.has(C), staticContext.access.has(class D {}),
+              instanceContext.access.get(instance), staticContext.access.get(C), brandErrors
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "get,set|get,set|kind,access,static,private,name,addInitializer|get,set,has|accessor|#instanceValue|true|false|#staticValue|true|true|true|false|true|false|5|6|4"
+        ))
+    );
+}
+
+#[test]
+fn decorated_private_auto_accessors_replace_get_set_and_init() {
+    assert_eq!(
+        run(r#"
+            function replace(value) {
+              return {
+                get() { return value.get.call(this) * 2; },
+                set(next) { value.set.call(this, next + 1); },
+                init(initial) { return initial + 3; }
+              };
+            }
+            class C {
+              @replace accessor #instanceValue = 4;
+              @replace static accessor #staticValue = 8;
+              read() { return this.#instanceValue; }
+              write(value) { this.#instanceValue = value; }
+              static read() { return this.#staticValue; }
+              static write(value) { this.#staticValue = value; }
+            }
+            let instance = new C();
+            let initial = [instance.read(), C.read()];
+            instance.write(5);
+            C.write(10);
+            [initial.join(","), instance.read(), C.read()].join("|");
+        "#),
+        Value::String(Arc::from("14,22|12|22"))
+    );
+}
+
+#[test]
+fn decorated_private_auto_accessor_initializers_follow_specified_order() {
+    assert_eq!(
+        run(r#"
+            let order = [];
+            let staticReceivers = [];
+            let instanceReceivers = [];
+            function mark(label) {
+              return function(value, context) {
+                order.push("apply:" + label);
+                context.addInitializer(function() {
+                  order.push("extra:" + label);
+                  (context.static ? staticReceivers : instanceReceivers).push(this);
+                });
+                return {
+                  init(initial) {
+                    order.push("init:" + label);
+                    return initial;
+                  }
+                };
+              };
+            }
+            class C {
+              @mark("i-outer") @mark("i-inner")
+              accessor #instanceValue = (order.push("value:i"), 1);
+              @mark("s-outer") @mark("s-inner")
+              static accessor #staticValue = (order.push("value:s"), 2);
+            }
+            let instance = new C();
+            [
+              order.join(","),
+              staticReceivers.every(value => value === C),
+              instanceReceivers.every(value => value === instance)
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "apply:s-inner,apply:s-outer,apply:i-inner,apply:i-outer,value:s,init:s-outer,init:s-inner,extra:s-inner,extra:s-outer,value:i,init:i-outer,init:i-inner,extra:i-inner,extra:i-outer|true|true"
+        ))
+    );
+}
+
+#[test]
+fn decorated_private_auto_accessors_validate_return_records() {
+    assert_eq!(
+        run(r#"
+            function rejectsInstance(decorator) {
+              try { class C { @decorator accessor #value; } }
+              catch (error) { return error instanceof TypeError; }
+              return false;
+            }
+            function rejectsStatic(decorator) {
+              try { class C { @decorator static accessor #value; } }
+              catch (error) { return error instanceof TypeError; }
+              return false;
+            }
+            let invalid = [
+              () => 1,
+              () => ({ get: 1 }),
+              () => ({ set: 1 }),
+              () => ({ init: 1 }),
+              (value, context) => context.addInitializer(1)
+            ];
+            invalid.every(rejectsInstance) && invalid.every(rejectsStatic);
+        "#),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn class_decorator_replacement_receives_static_private_auto_accessor_slots() {
+    assert_eq!(
+        run(r#"
+            let access;
+            function capture(value, context) { access = context.access; }
+            function replace(value) { return class Replacement extends value {}; }
+            @replace
+            class C {
+              @capture static accessor #value = 7;
+              static read() { return this.#value; }
+              static write(value) { this.#value = value; }
+            }
+            let initial = C.read();
+            C.write(8);
+            access.set(C, 9);
+            [C.name, initial, C.read(), access.has(C), access.get(C)].join("|");
+        "#),
+        Value::String(Arc::from("Replacement|7|9|true|9"))
+    );
+}
+
+#[test]
+fn undecorated_private_auto_accessors_survive_mixed_decorator_pipeline() {
+    assert_eq!(
+        run(r#"
+            let classDecoratorCalled = false;
+            function identity(value) {
+              classDecoratorCalled = true;
+              return value;
+            }
+            function passthrough(value) { return value; }
+            @identity
+            class C {
+              accessor #instanceValue = 3;
+              static accessor #staticValue = 4;
+              @passthrough method() { return this.#instanceValue; }
+              static read() { return this.#staticValue; }
+            }
+            let instance = new C();
+            [classDecoratorCalled, instance.method(), C.read()].join("|");
+        "#),
+        Value::String(Arc::from("true|3|4"))
+    );
+}
+
+#[test]
+fn decorated_private_auto_accessor_records_survive_gc() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+    assert_eq!(
+        vm.run(
+            r#"
+            function preserve(value) {
+              return {
+                get get() {
+                  forceGc();
+                  return function() { return value.get.call(this) + 1; };
+                },
+                get set() {
+                  forceGc();
+                  return function(next) { value.set.call(this, next + 1); };
+                },
+                get init() {
+                  forceGc();
+                  return function(initial) { return initial + 1; };
+                }
+              };
+            }
+            class C {
+              @preserve accessor #instanceValue = 1;
+              @preserve static accessor #staticValue = 3;
+              read() { return this.#instanceValue; }
+              write(value) { this.#instanceValue = value; }
+              static read() { return this.#staticValue; }
+              static write(value) { this.#staticValue = value; }
+            }
+            forceGc();
+            let instance = new C();
+            forceGc();
+            let initial = [instance.read(), C.read()];
+            instance.write(5);
+            C.write(7);
+            [initial.join(","), instance.read(), C.read()].join("|");
+        "#,
+        )
+        .expect("private accessor decorator records should remain reachable across GC"),
+        Value::String(Arc::from("3,5|7|9"))
+    );
+}
+
+#[test]
+fn private_auto_accessor_access_uses_its_realm_and_rejects_foreign_receivers() {
+    assert_eq!(
+        run(r#"
+            let other = $262.createRealm().global;
+            other.eval(`
+              function capture(value, context) { globalThis.access = context.access; }
+              class Foreign {
+                @capture accessor #value = 1;
+                read() { return this.#value; }
+              }
+              globalThis.Foreign = Foreign;
+              globalThis.instance = new Foreign();
+            `);
+            let errorUsesForeignRealm = false;
+            try { other.access.get({}); }
+            catch (error) {
+              errorUsesForeignRealm = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            other.access.set(other.instance, 4);
+            [
+              other.access.has(other.instance), other.access.has({}),
+              other.access.get(other.instance), other.instance.read(), errorUsesForeignRealm
+            ].join("|");
+        "#),
+        Value::String(Arc::from("true|false|4|4|true"))
+    );
+}
+
+#[test]
 fn decorated_auto_accessors_use_method_application_phases() {
     assert_eq!(
         run(r#"
@@ -2449,7 +2729,6 @@ fn decorator_grammar_rejects_unrestricted_and_invalid_targets() {
     assert!(run_err("class C { @foo; }").contains("must precede a class element"));
     assert!(run_err("class C { @foo static {} }").contains("cannot be decorated"));
     assert!(run_err("class C { @foo constructor() {} }").contains("cannot be decorated"));
-    assert!(run_err("class C { @foo accessor #value; }").contains("not implemented"));
     assert!(!run_err("class C { @foo a\\u0073ync #method() {} }").is_empty());
     assert!(
         run_err("let decorators = []; class C { @decorators[0]\n method() {} }")

@@ -3299,6 +3299,46 @@ impl Compiler {
         self.chunk.patch_jump(skip, self.chunk.code.len());
     }
 
+    fn emit_install_static_private_auto_accessor(
+        &mut self,
+        accessor: &AutoAccessorDecl,
+        getter_binding: &Arc<str>,
+        setter_binding: &Arc<str>,
+    ) {
+        if !accessor.is_private || !accessor.is_static {
+            return;
+        }
+        self.chunk.emit(Op::Dup, self.current_line);
+        let getter_idx = self.intern(getter_binding);
+        self.chunk.emit(Op::LoadEnv(getter_idx), self.current_line);
+        let setter_idx = self.intern(setter_binding);
+        self.chunk.emit(Op::LoadEnv(setter_idx), self.current_line);
+        let name_idx = self
+            .chunk
+            .add_constant(Value::String(accessor.name.clone()));
+        self.chunk
+            .emit(Op::DefinePrivateAccessor(name_idx), self.current_line);
+        self.chunk.emit(Op::Pop, self.current_line);
+    }
+
+    fn emit_install_static_private_auto_accessor_on_replacement(
+        &mut self,
+        accessor: &AutoAccessorDecl,
+        getter_binding: &Arc<str>,
+        setter_binding: &Arc<str>,
+        original_class_binding: &Arc<str>,
+    ) {
+        self.chunk.emit(Op::Dup, self.current_line);
+        let original_idx = self.intern(original_class_binding);
+        self.chunk
+            .emit(Op::LoadEnv(original_idx), self.current_line);
+        self.chunk.emit(Op::StrictEq, self.current_line);
+        let skip = self.chunk.code.len();
+        self.chunk.emit(Op::JumpIfTrue(0), self.current_line);
+        self.emit_install_static_private_auto_accessor(accessor, getter_binding, setter_binding);
+        self.chunk.patch_jump(skip, self.chunk.code.len());
+    }
+
     fn compile_class_public_method_with_decorators(
         &mut self,
         method: &ClassMethod,
@@ -6080,6 +6120,28 @@ impl Compiler {
                                 });
                             }
                         }
+                        for element in &cls.elements {
+                            let crate::ast::ClassElement::AutoAccessor(idx) = element else {
+                                continue;
+                            };
+                            let accessor = &cls.auto_accessors[*idx];
+                            if !accessor.is_private || accessor.is_static {
+                                continue;
+                            }
+                            init_stmts.push(Stmt {
+                                line: 0,
+                                node: StmtNode::ExprStmt(Expr::PrivateDefineAccessor {
+                                    object: Box::new(Expr::This),
+                                    name: accessor.name.clone(),
+                                    get: Some(Box::new(Expr::Ident(
+                                        auto_accessor_getter_bindings[*idx].clone(),
+                                    ))),
+                                    set: Some(Box::new(Expr::Ident(
+                                        auto_accessor_setter_bindings[*idx].clone(),
+                                    ))),
+                                }),
+                            });
+                        }
 
                         if has_instance_method_decorators {
                             init_stmts.push(Self::decorator_initializer_stmt(
@@ -6155,26 +6217,6 @@ impl Compiler {
                                     let accessor = &cls.auto_accessors[*idx];
                                     if accessor.is_static {
                                         continue;
-                                    }
-                                    if accessor.is_private {
-                                        let [getter, setter] = Self::auto_accessor_methods(
-                                            accessor,
-                                            &auto_accessor_backing_names[*idx],
-                                            None,
-                                        );
-                                        init_stmts.push(Stmt {
-                                            line: 0,
-                                            node: StmtNode::ExprStmt(Expr::PrivateDefineAccessor {
-                                                object: Box::new(Expr::This),
-                                                name: accessor.name.clone(),
-                                                get: Some(Box::new(
-                                                    Self::class_method_function_expression(&getter),
-                                                )),
-                                                set: Some(Box::new(
-                                                    Self::class_method_function_expression(&setter),
-                                                )),
-                                            }),
-                                        });
                                     }
                                     let init = accessor
                                         .init
@@ -6520,7 +6562,44 @@ impl Compiler {
                                     &auto_accessor_backing_names[*index],
                                     auto_accessor_computed_key_temps[*index].as_ref(),
                                 );
-                                if element_decorator_bindings[element_index].is_empty() {
+                                if accessor.is_private {
+                                    self.emit_auto_accessor_function(&methods[0], None)?;
+                                    let getter_idx =
+                                        self.intern(&auto_accessor_getter_bindings[*index]);
+                                    self.chunk
+                                        .emit(Op::DeclareEnv(getter_idx), self.current_line);
+                                    self.emit_auto_accessor_function(&methods[1], None)?;
+                                    let setter_idx =
+                                        self.intern(&auto_accessor_setter_bindings[*index]);
+                                    self.chunk
+                                        .emit(Op::DeclareEnv(setter_idx), self.current_line);
+                                    if !element_decorator_bindings[element_index].is_empty() {
+                                        let private_name_binding =
+                                            Self::private_name_binding_name(&accessor.name);
+                                        self.emit_auto_accessor_decorators(
+                                            &element_decorator_bindings[element_index],
+                                            &element_decorator_receiver_bindings[element_index],
+                                            &element_decorator_active_bindings[element_index],
+                                            &element_initializer_bindings[element_index],
+                                            &element_extra_initializer_queues[element_index],
+                                            AutoAccessorDecoratorSpec {
+                                                getter_binding: &auto_accessor_getter_bindings
+                                                    [*index],
+                                                setter_binding: &auto_accessor_setter_bindings
+                                                    [*index],
+                                                context: DecoratorContextSpec {
+                                                    kind: "accessor",
+                                                    name: DecoratorName::Private {
+                                                        description: &accessor.name,
+                                                        binding: &private_name_binding,
+                                                    },
+                                                    flags: Some((accessor.is_static, true)),
+                                                    access: DecoratorAccess::GetSet,
+                                                },
+                                            },
+                                        )?;
+                                    }
+                                } else if element_decorator_bindings[element_index].is_empty() {
                                     for method in &methods {
                                         self.compile_class_public_method(method)?;
                                     }
@@ -6577,11 +6656,16 @@ impl Compiler {
 
                 // Static private methods/accessors are installed during class
                 // definition, before class decorators and static fields run.
-                let copy_static_private_to_replacement = !class_decorator_bindings.is_empty()
-                    && private_callable_bindings.iter().any(|(index, _)| {
+                let has_static_private_callables =
+                    private_callable_bindings.iter().any(|(index, _)| {
                         let method = &cls.methods[*index];
                         method.is_private && method.is_static
-                    });
+                    }) || cls
+                        .auto_accessors
+                        .iter()
+                        .any(|accessor| accessor.is_private && accessor.is_static);
+                let copy_static_private_to_replacement =
+                    !class_decorator_bindings.is_empty() && has_static_private_callables;
                 let original_class_binding: Arc<str> =
                     Arc::from(format!("#decorated_original_class:{decorator_id}").as_str());
                 if copy_static_private_to_replacement {
@@ -6602,6 +6686,13 @@ impl Compiler {
                             self.emit_install_static_private_callable(method, binding);
                         }
                     }
+                }
+                for (index, accessor) in cls.auto_accessors.iter().enumerate() {
+                    self.emit_install_static_private_auto_accessor(
+                        accessor,
+                        &auto_accessor_getter_bindings[index],
+                        &auto_accessor_setter_bindings[index],
+                    );
                 }
 
                 // Class decorators may invoke methods that close over the
@@ -6638,6 +6729,16 @@ impl Compiler {
                             self.emit_install_static_private_callable_on_replacement(
                                 method,
                                 binding,
+                                &original_class_binding,
+                            );
+                        }
+                    }
+                    for (index, accessor) in cls.auto_accessors.iter().enumerate() {
+                        if accessor.is_private && accessor.is_static {
+                            self.emit_install_static_private_auto_accessor_on_replacement(
+                                accessor,
+                                &auto_accessor_getter_bindings[index],
+                                &auto_accessor_setter_bindings[index],
                                 &original_class_binding,
                             );
                         }
@@ -6746,16 +6847,6 @@ impl Compiler {
                         crate::ast::ClassElement::AutoAccessor(idx) => {
                             let accessor = &cls.auto_accessors[*idx];
                             if accessor.is_static {
-                                if accessor.is_private {
-                                    let methods = Self::auto_accessor_methods(
-                                        accessor,
-                                        &auto_accessor_backing_names[*idx],
-                                        None,
-                                    );
-                                    for method in &methods {
-                                        self.compile_class_static_private_method(method)?;
-                                    }
-                                }
                                 let backing_field = PrivateFieldDecl {
                                     decorators: Vec::new(),
                                     name: auto_accessor_backing_names[*idx].clone(),

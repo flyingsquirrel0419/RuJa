@@ -6594,11 +6594,6 @@ impl Parser {
                         };
                         (Arc::from(name.as_str()), None, false)
                     };
-                if is_private && !element_decorators.is_empty() {
-                    return Err(error::Error::syntax(
-                        "Decorated private auto-accessors are not implemented".to_string(),
-                    ));
-                }
                 if !is_private && computed_name.is_none() && name.as_ref() == "constructor" {
                     return Err(error::Error::syntax(
                         "Class field cannot be named constructor".to_string(),
