@@ -7379,6 +7379,60 @@ fn iterator_every(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Re
     result
 }
 
+fn iterator_find(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let Some(iterator @ Value::Object(_)) = this else {
+        return Err(Error::type_err(
+            "Iterator.prototype.find requires an object",
+        ));
+    };
+    let predicate = args.first().cloned().unwrap_or(Value::Undefined);
+    if !is_callable(&predicate, &vm.heap) {
+        return close_iterator_after_error(
+            vm,
+            &iterator,
+            Error::type_err("Iterator.prototype.find predicate is not callable"),
+        );
+    }
+
+    let mut pin_count = vm.pin_many(&[iterator.clone(), predicate.clone()]);
+    let result = (|| -> error::Result<Value> {
+        let next_method = vm.get_property(&iterator, "next")?;
+        pin_count += vm.pin(&next_method);
+        let mut counter = BigUint::zero();
+        loop {
+            let Some(value) = iterator_helper_step(vm, &iterator, &next_method, true)? else {
+                return Ok(Value::Undefined);
+            };
+            let value_pin = vm.pin(&value);
+            let selected = match vm.call_function(
+                &predicate,
+                &[
+                    value.clone(),
+                    Value::Number(counter.to_f64().unwrap_or(f64::INFINITY)),
+                ],
+                Some(Value::Undefined),
+            ) {
+                Ok(selected) => selected,
+                Err(error) => {
+                    let outcome = close_iterator_after_error(vm, &iterator, error);
+                    vm.unpin_many(value_pin);
+                    return outcome;
+                }
+            };
+            if vm.to_boolean(&selected) {
+                let close_result = close_iterator_normally(vm, &iterator);
+                vm.unpin_many(value_pin);
+                close_result?;
+                return Ok(value);
+            }
+            vm.unpin_many(value_pin);
+            counter += 1u8;
+        }
+    })();
+    vm.unpin_many(pin_count);
+    result
+}
+
 fn iterator_to_array(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
     const MAX_ITERATOR_TO_ARRAY_LEN: usize = 1 << 16;
 
@@ -7635,6 +7689,8 @@ fn install_iterator_intrinsic_in_env(
     pin_count += vm.pin(&Value::Object(some));
     let every = vm.new_native_function_in_env("every", iterator_every, 1, realm)?;
     pin_count += vm.pin(&Value::Object(every));
+    let find = vm.new_native_function_in_env("find", iterator_find, 1, realm)?;
+    pin_count += vm.pin(&Value::Object(find));
     let to_array = vm.new_native_function_in_env("toArray", iterator_to_array, 0, realm)?;
     pin_count += vm.pin(&Value::Object(to_array));
     let constructor = vm.new_native_function_in_env("Iterator", iterator_constructor, 0, realm)?;
@@ -7696,6 +7752,7 @@ fn install_iterator_intrinsic_in_env(
             );
             props.insert(PropertyKey::from("some"), data_prop(Value::Object(some)));
             props.insert(PropertyKey::from("every"), data_prop(Value::Object(every)));
+            props.insert(PropertyKey::from("find"), data_prop(Value::Object(find)));
             props.insert(
                 PropertyKey::from("toArray"),
                 data_prop(Value::Object(to_array)),

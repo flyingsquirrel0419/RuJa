@@ -387,6 +387,40 @@ built-ins/Iterator/prototype/every/this-non-callable-next.js
 built-ins/Iterator/prototype/every/this-non-object.js
 built-ins/Iterator/prototype/every/this-plain-iterator.js
 
+# Eager predicate search helper.
+built-ins/Iterator/prototype/find/argument-effect-order.js
+built-ins/Iterator/prototype/find/argument-validation-failure-closes-underlying.js
+built-ins/Iterator/prototype/find/callable.js
+built-ins/Iterator/prototype/find/get-next-method-only-once.js
+built-ins/Iterator/prototype/find/get-next-method-throws.js
+built-ins/Iterator/prototype/find/get-return-method-throws.js
+built-ins/Iterator/prototype/find/is-function.js
+built-ins/Iterator/prototype/find/iterator-already-exhausted.js
+built-ins/Iterator/prototype/find/iterator-has-no-return.js
+built-ins/Iterator/prototype/find/iterator-return-method-throws.js
+built-ins/Iterator/prototype/find/length.js
+built-ins/Iterator/prototype/find/name.js
+built-ins/Iterator/prototype/find/next-method-returns-non-object.js
+built-ins/Iterator/prototype/find/next-method-returns-throwing-done.js
+built-ins/Iterator/prototype/find/next-method-returns-throwing-value-done.js
+built-ins/Iterator/prototype/find/next-method-returns-throwing-value.js
+built-ins/Iterator/prototype/find/next-method-throws.js
+built-ins/Iterator/prototype/find/non-callable-predicate.js
+built-ins/Iterator/prototype/find/non-constructible.js
+built-ins/Iterator/prototype/find/predicate-args.js
+built-ins/Iterator/prototype/find/predicate-returns-falsey-then-truthy.js
+built-ins/Iterator/prototype/find/predicate-returns-falsey.js
+built-ins/Iterator/prototype/find/predicate-returns-non-boolean.js
+built-ins/Iterator/prototype/find/predicate-returns-truthy.js
+built-ins/Iterator/prototype/find/predicate-this.js
+built-ins/Iterator/prototype/find/predicate-throws-then-closing-iterator-also-throws.js
+built-ins/Iterator/prototype/find/predicate-throws.js
+built-ins/Iterator/prototype/find/prop-desc.js
+built-ins/Iterator/prototype/find/proto.js
+built-ins/Iterator/prototype/find/this-non-callable-next.js
+built-ins/Iterator/prototype/find/this-non-object.js
+built-ins/Iterator/prototype/find/this-plain-iterator.js
+
 # Concrete iterator prototypes admitted with the common base hierarchy.
 built-ins/GeneratorPrototype/Symbol.toStringTag.js
 

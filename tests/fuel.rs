@@ -90,6 +90,7 @@ fn iterator_helper_native_loops_consume_fuel() {
         "Iterator.prototype.forEach.call(source, function() {})",
         "Iterator.prototype.some.call(source, function() { return false; })",
         "Iterator.prototype.every.call(source, function() { return true; })",
+        "Iterator.prototype.find.call(source, function() { return false; })",
     ] {
         let mut vm = Vm::new().expect("failed to initialize VM");
         vm.set_fuel(Some(100));
