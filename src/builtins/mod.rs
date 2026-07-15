@@ -3471,43 +3471,49 @@ pub(crate) fn get_arg(args: &[Value], idx: usize) -> Value {
 // Object constructor / prototype
 // ---------------------------------------------------------------------------
 
-fn object_constructor(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    if let Some(Value::Object(idx)) = this {
-        if args.is_empty() {
-            return Ok(Value::Object(idx));
-        }
-        let first = args.first().unwrap_or(&Value::Undefined);
-        match first {
-            Value::Undefined | Value::Null => {}
-            Value::Bool(_)
-            | Value::Number(_)
-            | Value::String(_)
-            | Value::Symbol(_)
-            | Value::BigInt(_) => {
-                return vm.to_object(first);
-            }
-            Value::Object(_) => return Ok(first.clone()),
-            Value::PrivateName(_) => {
-                return Err(Error::type_err("Private name is not an object".to_string()))
-            }
-            Value::Reference(_) => {
-                return Err(Error::type_err("Reference is not an object".to_string()))
-            }
-        }
-        let new_idx = vm.new_object()?;
-        return Ok(Value::Object(new_idx));
+fn new_object_with_prototype(vm: &mut Vm, prototype: Value) -> error::Result<Value> {
+    let pin_count = vm.pin(&prototype);
+    let result = vm
+        .alloc(HeapObj::Object(ObjectData {
+            props: Mutex::new(IndexMap::new()),
+            proto: Mutex::new(Some(prototype)),
+            extensible: AtomicBool::new(true),
+            class_name: None,
+            private_fields: Mutex::new(std::collections::HashMap::new()),
+            primitive: Mutex::new(None),
+        }))
+        .map(Value::Object);
+    vm.unpin_many(pin_count);
+    result
+}
+
+fn new_object_in_current_realm(vm: &mut Vm) -> error::Result<Value> {
+    let realm = vm.current_realm_global_env();
+    let prototype = vm
+        .realm_object_prototypes
+        .get(&realm.0)
+        .cloned()
+        .unwrap_or_else(|| vm.object_proto.clone());
+    new_object_with_prototype(vm, prototype)
+}
+
+fn object_constructor(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
+    let has_distinct_new_target = match (
+        vm.current_native_new_target.as_ref(),
+        vm.current_native_callee.as_ref(),
+    ) {
+        (Some(new_target), Some(active_function)) => !vm.strict_eq(new_target, active_function),
+        _ => false,
+    };
+    if has_distinct_new_target {
+        let fallback = vm.object_proto.clone();
+        let prototype = native_constructor_prototype(vm, fallback)?;
+        return new_object_with_prototype(vm, prototype);
     }
-    // Called as function
-    if args.is_empty() {
-        let new_idx = vm.new_object()?;
-        return Ok(Value::Object(new_idx));
-    }
+
     let first = args.first().unwrap_or(&Value::Undefined);
     match first {
-        Value::Undefined | Value::Null => {
-            let new_idx = vm.new_object()?;
-            Ok(Value::Object(new_idx))
-        }
+        Value::Undefined | Value::Null => new_object_in_current_realm(vm),
         Value::Bool(_)
         | Value::Number(_)
         | Value::String(_)

@@ -20,6 +20,10 @@ from test262_class_private_admission import (
 )
 from test262_class_public_field_admission import CLASS_PUBLIC_FIELD_FILES
 from test262_date_to_primitive_admission import DATE_TO_PRIMITIVE_FILES
+from test262_object_constructor_admission import (
+    OBJECT_CONSTRUCTOR_FEATURES,
+    OBJECT_CONSTRUCTOR_FILES,
+)
 from test262_proxy_get_admission import PROXY_GET_FEATURES, PROXY_GET_FILES
 from test262_proxy_own_keys_admission import (
     PROXY_OWN_KEYS_FEATURES,
@@ -904,6 +908,55 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                         {"features": ["Proxy"]}, outside_path
                     ))
                     self.assertTrue(tool.reference_primitive_path(admitted_path))
+                finally:
+                    tool.TEST262 = original_root
+
+    def test_object_constructor_manifest_is_exact_and_shared(self):
+        expected = {
+            "built-ins/Object/is-a-constructor.js": {"Reflect.construct"},
+            "built-ins/Object/proto-from-ctor-realm.js": {
+                "cross-realm", "Reflect",
+            },
+            "built-ins/Object/subclass-object-arg.js": {
+                "class", "Reflect", "Reflect.construct",
+            },
+        }
+        self.assertEqual(OBJECT_CONSTRUCTOR_FILES, frozenset(expected))
+        self.assertEqual(
+            OBJECT_CONSTRUCTOR_FEATURES,
+            {path: frozenset(features) for path, features in expected.items()},
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            outside = root / "test" / "built-ins/Object/future.js"
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for relative, features in expected.items():
+                        path = root / "test" / relative
+                        self.assertTrue(tool.object_constructor_path(path))
+                        self.assertEqual(
+                            tool.object_constructor_features(path), features
+                        )
+                        self.assertFalse(
+                            tool.should_skip(
+                                {"features": sorted(features)},
+                                path,
+                            )
+                        )
+                        self.assertTrue(
+                            tool.should_skip(
+                                {"features": sorted(features | {"Proxy"})},
+                                path,
+                            )
+                        )
+                    self.assertFalse(tool.object_constructor_path(outside))
+                    self.assertTrue(
+                        tool.should_skip(
+                            {"features": ["Reflect.construct"]}, outside
+                        )
+                    )
                 finally:
                     tool.TEST262 = original_root
 

@@ -1,0 +1,4 @@
+# Object constructor surface and NewTarget/Realm behavior.
+built-ins/Object/is-a-constructor.js
+built-ins/Object/proto-from-ctor-realm.js
+built-ins/Object/subclass-object-arg.js

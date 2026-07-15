@@ -9931,6 +9931,133 @@ fn parse_int_radix_to_int32_and_large_prefix() {
 }
 
 #[test]
+fn object_constructor_uses_active_function_and_new_target_realms() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+
+    assert_eq!(
+        vm.run(
+            r#"
+            var other = $262.createRealm().global;
+            var receiver = { receiver: true };
+            var called = other.Object.call(receiver);
+            var calledNull = other.Object(null);
+            var constructedNull = new other.Object(null);
+            var boxed = other.Object(1);
+            var constructedBoxed = new other.Object(1);
+            var argument = { argument: true };
+            class Sub extends other.Object {}
+            var subclassed = new Sub(argument);
+            var reflected = Reflect.construct(other.Object, [argument], Sub);
+            var active = Reflect.construct(other.Object, [argument], other.Object);
+            var customPrototype = {};
+            var newTarget = new Proxy(function() {}, {
+              get: function(target, key, receiver) {
+                if (key === "prototype") {
+                  forceGc();
+                  return customPrototype;
+                }
+                return Reflect.get(target, key, receiver);
+              }
+            });
+            var custom = Reflect.construct(other.Object, [argument], newTarget);
+            var deepNewTarget = new other.Function();
+            deepNewTarget.prototype = null;
+            for (var i = 0; i < 40; i++) {
+              deepNewTarget = deepNewTarget.bind(null);
+            }
+            var deep = Reflect.construct(other.Object, [], deepNewTarget);
+            var nestedFactory = new other.Function("return function NestedNewTarget() {};");
+            var nestedNewTarget = nestedFactory();
+            nestedNewTarget.prototype = null;
+            var nested = Reflect.construct(Object, [], nestedNewTarget);
+            var revoked = Proxy.revocable(function() {}, {});
+            var revokedBound = revoked.proxy.bind(null);
+            revoked.revoke();
+            var revokedRejected = false;
+            try {
+              Reflect.construct(other.Object, [], revokedBound);
+            } catch (error) {
+              revokedRejected = error instanceof other.TypeError;
+            }
+            [
+              called !== receiver && Object.getPrototypeOf(called) === other.Object.prototype,
+              Object.getPrototypeOf(calledNull) === other.Object.prototype,
+              Object.getPrototypeOf(constructedNull) === other.Object.prototype,
+              Object.getPrototypeOf(boxed) === other.Number.prototype,
+              Object.getPrototypeOf(constructedBoxed) === other.Number.prototype,
+              other.Object(argument) === argument,
+              new other.Object(argument) === argument,
+              subclassed !== argument && subclassed.argument === undefined &&
+                Object.getPrototypeOf(subclassed) === Sub.prototype,
+              reflected !== argument && reflected.argument === undefined &&
+                Object.getPrototypeOf(reflected) === Sub.prototype,
+              active === argument,
+              Object.getPrototypeOf(custom) === customPrototype,
+              Object.getPrototypeOf(deep) === other.Object.prototype,
+              Object.getPrototypeOf(nested) === other.Object.prototype,
+              revokedRejected
+            ].join("|");
+        "#,
+        )
+        .expect("Object constructor Realm and NewTarget paths should succeed"),
+        Value::String(Arc::from(
+            "true|true|true|true|true|true|true|true|true|true|true|true|true|true"
+        ))
+    );
+
+    vm.run(
+        r#"
+        var retainedObject = other.Object;
+        var retainedObjectPrototype = other.Object.prototype;
+        var intrinsicNewTarget = new other.Function();
+        intrinsicNewTarget.prototype = null;
+        other.Object = { prototype: {} };
+        "#,
+    )
+    .expect("failed to retain foreign Object intrinsics");
+    vm.gc();
+    assert_eq!(
+        vm.run(
+            r#"
+            Object.getPrototypeOf(retainedObject()) === retainedObjectPrototype &&
+            Object.getPrototypeOf(
+              Reflect.construct(retainedObject, [], intrinsicNewTarget)
+            ) === retainedObjectPrototype;
+            "#,
+        )
+        .expect("retained foreign Object intrinsics should survive mutation and GC"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn object_constructor_does_not_preallocate_for_object_arguments() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    let constructor = vm
+        .run("Object")
+        .expect("failed to obtain Object constructor");
+    let argument = vm
+        .run("({ marker: true })")
+        .expect("failed to create Object argument");
+
+    vm.set_max_heap_objects(Some(1));
+    assert_eq!(
+        vm.construct(&constructor, std::slice::from_ref(&argument))
+            .expect("Object construction with an object argument must not allocate"),
+        argument
+    );
+}
+
+#[test]
 fn object_static_methods_are_realm_specific() {
     let mut vm = Vm::new().expect("failed to initialize VM");
     vm.register_fn(

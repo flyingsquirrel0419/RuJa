@@ -805,26 +805,34 @@ impl Vm {
         })
     }
 
-    pub(crate) fn constructor_realm(&self, constructor: &Value) -> Option<GcIdx> {
+    pub(crate) fn constructor_realm(&self, constructor: &Value) -> error::Result<GcIdx> {
         let mut current = constructor.clone();
-        for _ in 0..32 {
+        loop {
             let Value::Object(idx) = current else {
-                return None;
+                return Err(Error::type_err("constructor has no Realm"));
             };
-            let next = self.heap.with_obj(idx.0, |obj| match obj {
-                HeapObj::Function(f) => match &f.kind {
-                    FunctionKind::Bound { target, .. } => Err(Value::Object(*target)),
-                    _ => Ok(f.closure),
-                },
-                HeapObj::Proxy(proxy) => Err(proxy.target.clone()),
-                _ => Ok(self.global),
-            });
-            match next {
-                Ok(realm) => return Some(realm),
+            let next: error::Result<std::result::Result<GcIdx, Value>> =
+                self.heap.with_obj(idx.0, |obj| match obj {
+                    HeapObj::Function(f) => match &f.kind {
+                        FunctionKind::Bound { target, .. } => Ok(Err(Value::Object(*target))),
+                        _ => Ok(Ok(crate::environment::global_env_root(
+                            &self.heap, f.closure,
+                        ))),
+                    },
+                    HeapObj::Proxy(proxy) => {
+                        if *proxy.revoked.lock() {
+                            Err(Error::type_err("Cannot get Realm of a revoked Proxy"))
+                        } else {
+                            Ok(Err(proxy.target.clone()))
+                        }
+                    }
+                    _ => Err(Error::type_err("constructor has no Realm")),
+                });
+            match next? {
+                Ok(realm) => return Ok(realm),
                 Err(next) => current = next,
             }
         }
-        None
     }
 
     pub(crate) fn constructor_realm_default_prototype(
@@ -833,9 +841,14 @@ impl Vm {
         intrinsic: &str,
         fallback: Value,
     ) -> error::Result<Value> {
-        let Some(realm) = self.constructor_realm(constructor) else {
-            return Ok(fallback);
-        };
+        let realm = self.constructor_realm(constructor)?;
+        if intrinsic == "Object" {
+            return Ok(self
+                .realm_object_prototypes
+                .get(&realm.0)
+                .cloned()
+                .unwrap_or(fallback));
+        }
         let Some(intrinsic_ctor) = env::get(&self.heap, realm, intrinsic) else {
             return Ok(fallback);
         };
@@ -1436,7 +1449,8 @@ impl Vm {
             }
             matches!(
                 f.name.as_deref(),
-                Some("Iterator")
+                Some("Object")
+                    | Some("Iterator")
                     | Some("ArrayBuffer")
                     | Some("DataView")
                     | Some("WeakRef")
