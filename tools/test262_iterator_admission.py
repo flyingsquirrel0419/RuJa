@@ -22,6 +22,7 @@ ITERATOR_CORE_FEATURES = frozenset(
         "generators",
         "iterator-helpers",
         "iterator-sequencing",
+        "joint-iteration",
         "arrow-function",
     }
 )

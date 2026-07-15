@@ -772,8 +772,17 @@ pub enum IteratorHelperKind {
     Take,
     Drop,
     Concat,
+    Zip,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum IteratorZipMode {
+    Shortest,
+    Longest,
+    Strict,
+}
+
+#[derive(Clone)]
 pub struct IteratorHelperInner {
     pub iterator: Value,
     pub next_method: Value,
@@ -794,6 +803,10 @@ pub struct IteratorHelperData {
     pub inner_iterator: Mutex<Option<IteratorHelperInner>>,
     pub concat_iterables: Box<[IteratorConcatIterable]>,
     pub concat_index: AtomicUsize,
+    pub zip_iterators: Mutex<Box<[Option<IteratorHelperInner>]>>,
+    pub zip_open_count: AtomicUsize,
+    pub zip_padding: Box<[Value]>,
+    pub zip_mode: IteratorZipMode,
     /// Exact mathematical remaining count; `None` represents +Infinity.
     pub remaining: Mutex<Option<BigUint>>,
     /// 0 = suspended-start, 1 = executing, 2 = completed, 3 = suspended-yield.

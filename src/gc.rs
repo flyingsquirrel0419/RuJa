@@ -246,6 +246,13 @@ pub fn trace_obj(obj: &HeapObj, marked: &[bool], worklist: &mut Vec<usize>) {
                 push_value(&record.iterable, worklist);
                 push_value(&record.open_method, worklist);
             }
+            for record in it.zip_iterators.lock().iter().flatten() {
+                push_value(&record.iterator, worklist);
+                push_value(&record.next_method, worklist);
+            }
+            for value in &it.zip_padding {
+                push_value(value, worklist);
+            }
         }
         HeapObj::RegExpStringIterator(it) => {
             push_value(&it.matcher, worklist);

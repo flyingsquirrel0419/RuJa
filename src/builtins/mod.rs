@@ -42,8 +42,8 @@ use crate::gc::Heap;
 use crate::value::{
     ArrayData, BindingKind, CollectionIteratorData, CollectionIteratorKind, FunctionData,
     FunctionKind, GcIdx, HeapObj, IteratorConcatIterable, IteratorHelperData, IteratorHelperInner,
-    IteratorHelperKind, MapData, MapKey, ObjectData, PropertyDescriptor, PropertyKey,
-    RegExpStringIteratorData, SetData, Value,
+    IteratorHelperKind, IteratorZipMode, MapData, MapKey, ObjectData, PropertyDescriptor,
+    PropertyKey, RegExpStringIteratorData, SetData, Value,
 };
 use crate::vm::{NativeFn, Vm};
 use indexmap::{IndexMap, IndexSet};
@@ -6697,6 +6697,69 @@ fn close_iterator_normally(vm: &mut Vm, iterator: &Value) -> error::Result<()> {
     Ok(())
 }
 
+fn close_iterator_records(
+    vm: &mut Vm,
+    records: &[IteratorHelperInner],
+    mut completion: error::Result<()>,
+) -> error::Result<()> {
+    let mut roots = Vec::with_capacity(records.len() * 2);
+    for record in records {
+        roots.push(record.iterator.clone());
+        roots.push(record.next_method.clone());
+    }
+    let pin_count = vm.pin_many(&roots);
+    let result = (|| {
+        for record in records.iter().rev() {
+            if let Err(error) = &completion {
+                if !error.catchable() {
+                    return completion;
+                }
+            }
+            vm.consume_fuel()?;
+            completion = match completion {
+                Ok(()) => close_iterator_normally(vm, &record.iterator),
+                Err(error) => {
+                    let error_pin = error
+                        .thrown_value
+                        .as_ref()
+                        .map(|value| vm.pin(value))
+                        .unwrap_or(0);
+                    let close_result = close_iterator_preserving_abrupt(vm, &record.iterator);
+                    vm.unpin_many(error_pin);
+                    match close_result {
+                        Ok(()) => Err(error),
+                        Err(close_error) => Err(close_error),
+                    }
+                }
+            };
+        }
+        completion
+    })();
+    vm.unpin_many(pin_count);
+    result
+}
+
+fn create_array_from_values_in_realm(
+    vm: &mut Vm,
+    values: Vec<Value>,
+    realm: GcIdx,
+) -> error::Result<Value> {
+    let prototype = vm
+        .realm_array_prototypes
+        .get(&realm.0)
+        .cloned()
+        .ok_or_else(|| Error::internal("missing Array prototype intrinsic"))?;
+    let mut roots = Vec::with_capacity(values.len() + 1);
+    roots.extend(values.iter().cloned());
+    roots.push(prototype.clone());
+    let pin_count = vm.pin_many(&roots);
+    let result = vm
+        .alloc(HeapObj::Array(ArrayData::new(values, Some(prototype))))
+        .map(Value::Object);
+    vm.unpin_many(pin_count);
+    result
+}
+
 fn allocate_iterator_helper(
     vm: &mut Vm,
     iterator: Value,
@@ -6727,6 +6790,10 @@ fn allocate_iterator_helper(
             inner_iterator: Mutex::new(None),
             concat_iterables: Box::new([]),
             concat_index: AtomicUsize::new(0),
+            zip_iterators: Mutex::new(Box::new([])),
+            zip_open_count: AtomicUsize::new(0),
+            zip_padding: Box::new([]),
+            zip_mode: IteratorZipMode::Shortest,
             remaining: Mutex::new(remaining),
             state: std::sync::atomic::AtomicU8::new(0),
             props: Mutex::new(IndexMap::new()),
@@ -6766,6 +6833,10 @@ fn allocate_iterator_concat(
             inner_iterator: Mutex::new(None),
             concat_iterables: iterables.into_boxed_slice(),
             concat_index: AtomicUsize::new(0),
+            zip_iterators: Mutex::new(Box::new([])),
+            zip_open_count: AtomicUsize::new(0),
+            zip_padding: Box::new([]),
+            zip_mode: IteratorZipMode::Shortest,
             remaining: Mutex::new(Some(BigUint::zero())),
             state: std::sync::atomic::AtomicU8::new(0),
             props: Mutex::new(IndexMap::new()),
@@ -6775,6 +6846,233 @@ fn allocate_iterator_concat(
         .map(Value::Object);
     vm.unpin_many(pin_count);
     helper
+}
+
+fn allocate_iterator_zip(
+    vm: &mut Vm,
+    iterators: Vec<IteratorHelperInner>,
+    mode: IteratorZipMode,
+    padding: Vec<Value>,
+) -> error::Result<Value> {
+    let realm = active_iterator_realm(vm);
+    let proto = vm
+        .realm_iterator_helper_prototypes
+        .get(&realm.0)
+        .cloned()
+        .ok_or_else(|| Error::internal("missing Iterator Helper prototype intrinsic"))?;
+    let mut roots = Vec::with_capacity(iterators.len() * 2 + padding.len() + 1);
+    roots.push(proto.clone());
+    for record in &iterators {
+        roots.push(record.iterator.clone());
+        roots.push(record.next_method.clone());
+    }
+    roots.extend(padding.iter().cloned());
+    let pin_count = vm.pin_many(&roots);
+    let open_count = iterators.len();
+    let slots = iterators
+        .into_iter()
+        .map(Some)
+        .collect::<Vec<_>>()
+        .into_boxed_slice();
+    let helper = vm
+        .alloc(HeapObj::IteratorHelper(IteratorHelperData {
+            resume_realm: realm,
+            iterator: Value::Undefined,
+            next_method: Value::Undefined,
+            callback: None,
+            kind: IteratorHelperKind::Zip,
+            counter: Mutex::new(BigUint::zero()),
+            inner_iterator: Mutex::new(None),
+            concat_iterables: Box::new([]),
+            concat_index: AtomicUsize::new(0),
+            zip_iterators: Mutex::new(slots),
+            zip_open_count: AtomicUsize::new(open_count),
+            zip_padding: padding.into_boxed_slice(),
+            zip_mode: mode,
+            remaining: Mutex::new(Some(BigUint::zero())),
+            state: std::sync::atomic::AtomicU8::new(0),
+            props: Mutex::new(IndexMap::new()),
+            proto: Mutex::new(Some(proto)),
+            extensible: AtomicBool::new(true),
+        }))
+        .map(Value::Object);
+    vm.unpin_many(pin_count);
+    helper
+}
+
+fn get_sync_iterator(vm: &mut Vm, iterable: Value) -> error::Result<IteratorHelperInner> {
+    let iterable_pin = vm.pin(&iterable);
+    let result = (|| {
+        let iterator_key = PropertyKey::Symbol(vm.well_known_symbols.iterator);
+        let method = vm.get_property_by_key(&iterable, &iterator_key)?;
+        if method.is_nullish() || !is_callable(&method, &vm.heap) {
+            return Err(Error::type_err("value is not iterable"));
+        }
+        let method_pin = vm.pin(&method);
+        let iterator_result = vm.call_function(&method, &[], Some(iterable.clone()));
+        vm.unpin_many(method_pin);
+        let iterator = iterator_result?;
+        if !matches!(iterator, Value::Object(_)) {
+            return Err(Error::type_err("iterator method must return an object"));
+        }
+        let iterator_pin = vm.pin(&iterator);
+        let next_result = vm.get_property(&iterator, "next");
+        vm.unpin_many(iterator_pin);
+        Ok(IteratorHelperInner {
+            iterator,
+            next_method: next_result?,
+        })
+    })();
+    vm.unpin_many(iterable_pin);
+    result
+}
+
+fn close_iterator_records_after_error<T>(
+    vm: &mut Vm,
+    records: &[IteratorHelperInner],
+    error: Arc<Error>,
+) -> error::Result<T> {
+    close_iterator_records(vm, records, Err(error))?;
+    unreachable!("an abrupt completion cannot become normal")
+}
+
+fn iterator_zip(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
+    let iterables = args.first().cloned().unwrap_or(Value::Undefined);
+    if !matches!(iterables, Value::Object(_)) {
+        return Err(Error::type_err("Iterator.zip requires an object iterable"));
+    }
+
+    let options = args.get(1).cloned().unwrap_or(Value::Undefined);
+    if !matches!(options, Value::Undefined | Value::Object(_)) {
+        return Err(Error::type_err("Iterator.zip options must be an object"));
+    }
+    let mode_value = if matches!(options, Value::Undefined) {
+        Value::Undefined
+    } else {
+        vm.get_property(&options, "mode")?
+    };
+    let mode = match mode_value {
+        Value::Undefined => IteratorZipMode::Shortest,
+        Value::String(value) if value.as_ref() == "shortest" => IteratorZipMode::Shortest,
+        Value::String(value) if value.as_ref() == "longest" => IteratorZipMode::Longest,
+        Value::String(value) if value.as_ref() == "strict" => IteratorZipMode::Strict,
+        _ => return Err(Error::type_err("invalid Iterator.zip mode")),
+    };
+    let padding_option = if mode == IteratorZipMode::Longest && !matches!(options, Value::Undefined)
+    {
+        vm.get_property(&options, "padding")?
+    } else {
+        Value::Undefined
+    };
+    if mode == IteratorZipMode::Longest
+        && !matches!(padding_option, Value::Undefined | Value::Object(_))
+    {
+        return Err(Error::type_err(
+            "Iterator.zip padding must be an object or undefined",
+        ));
+    }
+
+    let mut root_pins = vm.pin(&padding_option);
+    let outer = match get_sync_iterator(vm, iterables) {
+        Ok(outer) => outer,
+        Err(error) => {
+            vm.unpin_many(root_pins);
+            return Err(error);
+        }
+    };
+    root_pins += vm.pin_many(&[outer.iterator.clone(), outer.next_method.clone()]);
+    let mut iterators = Vec::new();
+    let setup = (|| -> error::Result<()> {
+        loop {
+            let item = match iterator_helper_step(vm, &outer.iterator, &outer.next_method, true) {
+                Ok(Some(item)) => item,
+                Ok(None) => break,
+                Err(error) => {
+                    return close_iterator_records_after_error(vm, &iterators, error);
+                }
+            };
+            let record = match get_iterator_flattenable_reject_primitives(
+                vm,
+                item,
+                "Iterator.zip inputs must be objects",
+            ) {
+                Ok((iterator, next_method)) => IteratorHelperInner {
+                    iterator,
+                    next_method,
+                },
+                Err(error) => {
+                    let mut records = Vec::with_capacity(iterators.len() + 1);
+                    records.push(outer.clone());
+                    records.extend(iterators.iter().cloned());
+                    return close_iterator_records_after_error(vm, &records, error);
+                }
+            };
+            root_pins += vm.pin_many(&[record.iterator.clone(), record.next_method.clone()]);
+            iterators.push(record);
+        }
+        Ok(())
+    })();
+    if let Err(error) = setup {
+        vm.unpin_many(root_pins);
+        return Err(error);
+    }
+
+    let mut padding = Vec::with_capacity(iterators.len());
+    let padding_result = (|| -> error::Result<()> {
+        if matches!(padding_option, Value::Undefined) {
+            padding.resize(iterators.len(), Value::Undefined);
+            return Ok(());
+        }
+
+        let padding_iterator = match get_sync_iterator(vm, padding_option) {
+            Ok(iterator) => iterator,
+            Err(error) => {
+                return close_iterator_records_after_error(vm, &iterators, error);
+            }
+        };
+        root_pins += vm.pin_many(&[
+            padding_iterator.iterator.clone(),
+            padding_iterator.next_method.clone(),
+        ]);
+        (|| -> error::Result<()> {
+            let mut using_iterator = true;
+            for _ in 0..iterators.len() {
+                if using_iterator {
+                    match iterator_helper_step(
+                        vm,
+                        &padding_iterator.iterator,
+                        &padding_iterator.next_method,
+                        true,
+                    ) {
+                        Ok(Some(value)) => {
+                            root_pins += vm.pin(&value);
+                            padding.push(value);
+                            continue;
+                        }
+                        Ok(None) => using_iterator = false,
+                        Err(error) => {
+                            return close_iterator_records_after_error(vm, &iterators, error);
+                        }
+                    }
+                }
+                padding.push(Value::Undefined);
+            }
+            if using_iterator {
+                if let Err(error) = close_iterator_normally(vm, &padding_iterator.iterator) {
+                    return close_iterator_records_after_error(vm, &iterators, error);
+                }
+            }
+            Ok(())
+        })()
+    })();
+    if let Err(error) = padding_result {
+        vm.unpin_many(root_pins);
+        return Err(error);
+    }
+
+    let result = allocate_iterator_zip(vm, iterators, mode, padding);
+    vm.unpin_many(root_pins);
+    result
 }
 
 fn iterator_concat(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
@@ -6980,6 +7278,91 @@ fn iterator_helper_advance_concat(vm: &Vm, idx: GcIdx) {
     });
 }
 
+fn iterator_helper_zip_snapshot(vm: &Vm, idx: GcIdx) -> Option<(IteratorZipMode, usize)> {
+    vm.heap.with_obj(idx.0, |obj| {
+        let HeapObj::IteratorHelper(helper) = obj else {
+            return None;
+        };
+        Some((helper.zip_mode, helper.zip_iterators.lock().len()))
+    })
+}
+
+fn iterator_helper_zip_padding(vm: &Vm, idx: GcIdx, index: usize) -> Value {
+    vm.heap.with_obj(idx.0, |obj| {
+        let HeapObj::IteratorHelper(helper) = obj else {
+            return Value::Undefined;
+        };
+        helper
+            .zip_padding
+            .get(index)
+            .cloned()
+            .unwrap_or(Value::Undefined)
+    })
+}
+
+fn iterator_helper_zip_record(vm: &Vm, idx: GcIdx, index: usize) -> Option<IteratorHelperInner> {
+    vm.heap.with_obj(idx.0, |obj| {
+        let HeapObj::IteratorHelper(helper) = obj else {
+            return None;
+        };
+        helper
+            .zip_iterators
+            .lock()
+            .get(index)
+            .and_then(Clone::clone)
+    })
+}
+
+fn iterator_helper_zip_mark_done(vm: &Vm, idx: GcIdx, index: usize) {
+    vm.heap.with_obj(idx.0, |obj| {
+        if let HeapObj::IteratorHelper(helper) = obj {
+            if let Some(slot) = helper.zip_iterators.lock().get_mut(index) {
+                if slot.take().is_some() {
+                    helper.zip_open_count.fetch_sub(1, Ordering::Relaxed);
+                }
+            }
+        }
+    });
+}
+
+fn iterator_helper_zip_has_open(vm: &Vm, idx: GcIdx) -> bool {
+    vm.heap.with_obj(idx.0, |obj| {
+        let HeapObj::IteratorHelper(helper) = obj else {
+            return false;
+        };
+        helper.zip_open_count.load(Ordering::Relaxed) != 0
+    })
+}
+
+fn iterator_helper_take_zip_open(
+    vm: &mut Vm,
+    idx: GcIdx,
+) -> error::Result<Vec<IteratorHelperInner>> {
+    let len = vm.heap.with_obj(idx.0, |obj| {
+        let HeapObj::IteratorHelper(helper) = obj else {
+            return 0;
+        };
+        helper.zip_iterators.lock().len()
+    });
+    let mut records = Vec::new();
+    for _ in 0..len {
+        vm.consume_fuel()?;
+    }
+    vm.heap.with_obj(idx.0, |obj| {
+        if let HeapObj::IteratorHelper(helper) = obj {
+            records.extend(
+                helper
+                    .zip_iterators
+                    .lock()
+                    .iter_mut()
+                    .filter_map(Option::take),
+            );
+            helper.zip_open_count.store(0, Ordering::Relaxed);
+        }
+    });
+    Ok(records)
+}
+
 fn iterator_concat_open_inner(
     vm: &mut Vm,
     iterable: Value,
@@ -7003,11 +7386,10 @@ fn iterator_concat_open_inner(
 fn get_iterator_flattenable_reject_primitives(
     vm: &mut Vm,
     mapped: Value,
+    primitive_error: &'static str,
 ) -> error::Result<(Value, Value)> {
     if !matches!(mapped, Value::Object(_)) {
-        return Err(Error::type_err(
-            "Iterator.prototype.flatMap mapper must return an object",
-        ));
+        return Err(Error::type_err(primitive_error));
     }
     let mapped_pin = vm.pin(&mapped);
     let iterator_key = PropertyKey::Symbol(vm.well_known_symbols.iterator);
@@ -7070,6 +7452,119 @@ fn iterator_helper_step(
         }
     })();
     vm.unpin_many(step_pin);
+    result
+}
+
+fn iterator_zip_step(vm: &mut Vm, idx: GcIdx, realm: GcIdx) -> error::Result<Option<Value>> {
+    let (mode, iter_count) = iterator_helper_zip_snapshot(vm, idx)
+        .ok_or_else(|| Error::internal("Iterator.zip helper state is missing"))?;
+    if iter_count == 0 {
+        return Ok(None);
+    }
+
+    let mut values = Vec::with_capacity(iter_count);
+    let mut value_pins = 0;
+    let result = (|| -> error::Result<Option<Value>> {
+        for index in 0..iter_count {
+            let Some(record) = iterator_helper_zip_record(vm, idx, index) else {
+                if mode == IteratorZipMode::Longest {
+                    vm.consume_fuel()?;
+                    let value = iterator_helper_zip_padding(vm, idx, index);
+                    value_pins += vm.pin(&value);
+                    values.push(value);
+                    continue;
+                }
+                return Err(Error::internal(
+                    "inactive iterator in non-longest zip helper",
+                ));
+            };
+            let record_pin = vm.pin_many(&[record.iterator.clone(), record.next_method.clone()]);
+            let step = iterator_helper_step(vm, &record.iterator, &record.next_method, true);
+            vm.unpin_many(record_pin);
+            match step {
+                Ok(Some(value)) => {
+                    value_pins += vm.pin(&value);
+                    values.push(value);
+                }
+                Err(error) => {
+                    iterator_helper_zip_mark_done(vm, idx, index);
+                    let open = iterator_helper_take_zip_open(vm, idx)?;
+                    return close_iterator_records_after_error(vm, &open, error);
+                }
+                Ok(None) => {
+                    iterator_helper_zip_mark_done(vm, idx, index);
+                    match mode {
+                        IteratorZipMode::Longest => {
+                            if !iterator_helper_zip_has_open(vm, idx) {
+                                return Ok(None);
+                            }
+                            let value = iterator_helper_zip_padding(vm, idx, index);
+                            value_pins += vm.pin(&value);
+                            values.push(value);
+                        }
+                        IteratorZipMode::Shortest => {
+                            let open = iterator_helper_take_zip_open(vm, idx)?;
+                            close_iterator_records(vm, &open, Ok(()))?;
+                            return Ok(None);
+                        }
+                        IteratorZipMode::Strict if index != 0 => {
+                            let open = iterator_helper_take_zip_open(vm, idx)?;
+                            return close_iterator_records_after_error(
+                                vm,
+                                &open,
+                                Error::type_err("Iterator.zip inputs have different lengths"),
+                            );
+                        }
+                        IteratorZipMode::Strict => {
+                            for remaining_index in 1..iter_count {
+                                let Some(remaining) =
+                                    iterator_helper_zip_record(vm, idx, remaining_index)
+                                else {
+                                    continue;
+                                };
+                                let remaining_pin = vm.pin_many(&[
+                                    remaining.iterator.clone(),
+                                    remaining.next_method.clone(),
+                                ]);
+                                let remaining_step = iterator_helper_step(
+                                    vm,
+                                    &remaining.iterator,
+                                    &remaining.next_method,
+                                    false,
+                                );
+                                vm.unpin_many(remaining_pin);
+                                match remaining_step {
+                                    Ok(None) => {
+                                        iterator_helper_zip_mark_done(vm, idx, remaining_index)
+                                    }
+                                    Err(error) => {
+                                        iterator_helper_zip_mark_done(vm, idx, remaining_index);
+                                        let open = iterator_helper_take_zip_open(vm, idx)?;
+                                        return close_iterator_records_after_error(
+                                            vm, &open, error,
+                                        );
+                                    }
+                                    Ok(Some(_)) => {
+                                        let open = iterator_helper_take_zip_open(vm, idx)?;
+                                        return close_iterator_records_after_error(
+                                            vm,
+                                            &open,
+                                            Error::type_err(
+                                                "Iterator.zip inputs have different lengths",
+                                            ),
+                                        );
+                                    }
+                                }
+                            }
+                            return Ok(None);
+                        }
+                    }
+                }
+            }
+        }
+        create_array_from_values_in_realm(vm, values, realm).map(Some)
+    })();
+    vm.unpin_many(value_pins);
     result
 }
 
@@ -7193,7 +7688,11 @@ fn iterator_helper_next(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> er
                         Ok(mapped) => mapped,
                         Err(error) => return close_iterator_after_error(vm, &iterator, error),
                     };
-                    let inner = match get_iterator_flattenable_reject_primitives(vm, mapped) {
+                    let inner = match get_iterator_flattenable_reject_primitives(
+                        vm,
+                        mapped,
+                        "Iterator.prototype.flatMap mapper must return an object",
+                    ) {
                         Ok(inner) => inner,
                         Err(error) => return close_iterator_after_error(vm, &iterator, error),
                     };
@@ -7218,6 +7717,13 @@ fn iterator_helper_next(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> er
                     };
                     let inner = iterator_concat_open_inner(vm, iterable, open_method)?;
                     iterator_helper_set_inner(vm, idx, Some(inner));
+                },
+                IteratorHelperKind::Zip => match iterator_zip_step(vm, idx, realm)? {
+                    Some(values) => Some(values),
+                    None => {
+                        iterator_helper_set_state(vm, idx, 2);
+                        return create_iterator_result(vm, Value::Undefined, true);
+                    }
                 },
             };
             if let Some(yielded) = yielded {
@@ -7290,13 +7796,26 @@ fn iterator_helper_return(
     if previous == 0 && kind == IteratorHelperKind::Concat {
         return create_iterator_result(vm, Value::Undefined, true);
     }
+    let zip_open = if kind == IteratorHelperKind::Zip {
+        match iterator_helper_take_zip_open(vm, idx) {
+            Ok(open) => open,
+            Err(error) => {
+                iterator_helper_set_state(vm, idx, 2);
+                return Err(error);
+            }
+        }
+    } else {
+        Vec::new()
+    };
     let inner_pin = inner
         .as_ref()
         .map(|(inner_iterator, inner_next)| {
             vm.pin_many(&[inner_iterator.clone(), inner_next.clone()])
         })
         .unwrap_or(0);
-    let close_result = if kind == IteratorHelperKind::Concat {
+    let close_result = if kind == IteratorHelperKind::Zip {
+        close_iterator_records(vm, &zip_open, Ok(()))
+    } else if kind == IteratorHelperKind::Concat {
         if let Some((inner_iterator, _)) = inner {
             close_iterator_normally(vm, &inner_iterator)
         } else {
@@ -7859,6 +8378,8 @@ fn install_iterator_intrinsic_in_env(
     pin_count += vm.pin(&Value::Object(to_array));
     let concat = vm.new_native_function_in_env("concat", iterator_concat, 0, realm)?;
     pin_count += vm.pin(&Value::Object(concat));
+    let zip = vm.new_native_function_in_env("zip", iterator_zip, 1, realm)?;
+    pin_count += vm.pin(&Value::Object(zip));
     let constructor = vm.new_native_function_in_env("Iterator", iterator_constructor, 0, realm)?;
     let constructor_value = Value::Object(constructor);
     pin_count += vm.pin(&constructor_value);
@@ -7878,6 +8399,9 @@ fn install_iterator_intrinsic_in_env(
             PropertyKey::from("concat"),
             data_prop(Value::Object(concat)),
         );
+        obj.props()
+            .lock()
+            .insert(PropertyKey::from("zip"), data_prop(Value::Object(zip)));
     });
     if let Value::Object(prototype_idx) = &prototype {
         vm.heap.with_obj(prototype_idx.0, |obj| {

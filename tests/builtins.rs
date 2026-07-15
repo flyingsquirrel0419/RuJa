@@ -2454,6 +2454,137 @@ fn iterator_concat_abrupt_steps_do_not_close_or_open_later_sources() {
 }
 
 #[test]
+fn iterator_zip_retains_fresh_padding_across_forced_gc() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+    assert_eq!(
+        vm.run(
+            r#"
+            var outerIndex = 0;
+            var outer = {
+              [Symbol.iterator]: function() { return this; },
+              next: function() {
+                forceGc();
+                if (outerIndex === 0) { outerIndex += 1; return { value: [] }; }
+                if (outerIndex === 1) { outerIndex += 1; return { value: [7] }; }
+                return { done: true };
+              }
+            };
+            var helper = Iterator.zip(outer, {
+              mode: "longest",
+              get padding() {
+                return {
+                  index: 0,
+                  [Symbol.iterator]: function() { forceGc(); return this; },
+                  next: function() {
+                    forceGc();
+                    return { value: { slot: this.index++ }, done: false };
+                  },
+                  return: function() { forceGc(); return {}; }
+                };
+              }
+            });
+            forceGc();
+            var result = helper.next();
+            forceGc();
+            [result.value[0].slot, result.value[1], result.done].join("|");
+        "#,
+        )
+        .expect("Iterator.zip padding GC regression failed"),
+        Value::String(Arc::from("0|7|false"))
+    );
+}
+
+#[test]
+fn iterator_zip_uses_creation_and_borrowed_method_realms() {
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var mainHelperPrototype = Object.getPrototypeOf(Iterator.zip([]));
+            var helper = other.Iterator.zip([[1], [2]]);
+            var yielded = helper.next();
+            helper.next();
+            var completed = mainHelperPrototype.next.call(helper);
+
+            var strictRealm = false;
+            try { other.Iterator.zip([[], [1]], { mode: "strict" }).next(); }
+            catch (error) {
+              strictRealm = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+
+            var borrowedCloseRealm = false;
+            var start = other.Iterator.zip([{
+              next: function() { return { done: true }; },
+              return: 1
+            }]);
+            try { mainHelperPrototype.return.call(start); }
+            catch (error) {
+              borrowedCloseRealm = error instanceof TypeError &&
+                !(error instanceof other.TypeError);
+            }
+
+            [
+              helper instanceof other.Iterator,
+              Object.getPrototypeOf(yielded) === other.Object.prototype,
+              Object.getPrototypeOf(yielded.value) === other.Array.prototype,
+              Object.getPrototypeOf(completed) === Object.prototype,
+              strictRealm,
+              borrowedCloseRealm
+            ].join("|");
+        "#),
+        Value::String(Arc::from("true|true|true|true|true|true"))
+    );
+}
+
+#[test]
+fn iterator_zip_treats_duplicate_records_separately_and_preserves_close_priority() {
+    assert_eq!(
+        run(r#"
+            var closes = 0;
+            var shared = {
+              next: function() { return { value: 1, done: false }; },
+              return: function() { closes += 1; return {}; }
+            };
+            Iterator.zip([{
+              next: function() { return { done: true }; }
+            }, shared, shared]).next();
+
+            var primary = {};
+            var secondary = {};
+            var order = [];
+            var right = {
+              next: function() { return { value: 1, done: false }; }
+            };
+            Object.defineProperty(right, "return", {
+              get: function() { order.push("right"); throw primary; }
+            });
+            var middle = {
+              next: function() { return { value: 1, done: false }; },
+              return: function() { order.push("middle"); throw secondary; }
+            };
+            var caughtPrimary = false;
+            try {
+              Iterator.zip([{
+                next: function() { return { done: true }; }
+              }, middle, right]).next();
+            } catch (error) {
+              caughtPrimary = error === primary;
+            }
+            [closes, caughtPrimary, order.join(",")].join("|");
+        "#),
+        Value::String(Arc::from("2|true|right,middle"))
+    );
+}
+
+#[test]
 fn array_map_reduce() {
     assert_eq!(
         run("[1,2,3].map(x => x*2).join(',');"),
@@ -2697,6 +2828,22 @@ fn array_sort_cmp() {
     assert_eq!(
         run("[10,5,8].sort((a,b)=>a-b).join(',');"),
         Value::String(Arc::from("5,8,10"))
+    );
+}
+
+#[test]
+fn array_fill_materializes_holes() {
+    assert_eq!(
+        run(r#"
+            var value = {};
+            var array = Array(3).fill(value);
+            [
+              0 in array, 1 in array, 2 in array,
+              array[0] === value, array[1] === value, array[2] === value,
+              Object.keys(array).join(",")
+            ].join("|");
+        "#),
+        Value::String(Arc::from("true|true|true|true|true|true|0,1,2"))
     );
 }
 

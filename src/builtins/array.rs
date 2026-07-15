@@ -1521,8 +1521,10 @@ pub(crate) fn array_fill(vm: &mut Vm, args: &[Value], this: Option<Value>) -> er
             vm.heap.with_obj(idx.0, |obj| {
                 if let HeapObj::Array(a) = obj {
                     let mut items = a.items.lock();
+                    let mut present = a.present.lock();
                     for i in s..e.min(items.len()) {
                         items[i] = value.clone();
+                        present[i] = true;
                     }
                 }
             });

@@ -1699,7 +1699,7 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
                 test262_analyze.TEST262 = original_analyze_root
 
     def test_iterator_core_admission_is_exact(self):
-        self.assertEqual(len(ITERATOR_CORE_FILES), 445)
+        self.assertEqual(len(ITERATOR_CORE_FILES), 483)
         self.assertEqual(
             sum("/prototype/Symbol.dispose/" in path for path in ITERATOR_CORE_FILES),
             6,
@@ -1779,6 +1779,10 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
         self.assertEqual(
             sum("/Iterator/concat/" in path for path in ITERATOR_CORE_FILES),
             32,
+        )
+        self.assertEqual(
+            sum("/Iterator/zip/" in path for path in ITERATOR_CORE_FILES),
+            38,
         )
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1875,6 +1879,7 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
                     self.assertTrue(tool.iterator_core_path(iterator_every))
                     self.assertTrue(tool.iterator_core_path(iterator_find))
                     self.assertTrue(tool.iterator_core_path(iterator_concat))
+                    self.assertTrue(tool.iterator_core_path(joint))
                     self.assertFalse(
                         tool.should_skip(
                             {"flags": [], "features": ["iterator-helpers"]},
@@ -1887,7 +1892,7 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
                             iterator_concat,
                         )
                     )
-                    self.assertTrue(
+                    self.assertFalse(
                         tool.should_skip(
                             {"flags": [], "features": ["joint-iteration"]},
                             joint,

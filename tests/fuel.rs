@@ -145,6 +145,97 @@ fn iterator_concat_empty_sources_consume_fuel() {
 }
 
 #[test]
+fn iterator_zip_eager_setup_consumes_fuel() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.set_fuel(Some(1_000));
+    let error = vm
+        .run(
+            r#"
+            var inner = { next: function() { return { done: true }; } };
+            Iterator.zip({
+              [Symbol.iterator]: function() { return this; },
+              next: function() { return { value: inner, done: false }; }
+            });
+            "#,
+        )
+        .expect_err("infinite Iterator.zip setup should exhaust fuel");
+    assert!(
+        error.to_string().contains("fuel exhausted"),
+        "expected fuel exhaustion, got: {}",
+        error
+    );
+    assert_eq!(vm.fuel_remaining(), Some(0));
+}
+
+#[test]
+fn iterator_zip_inactive_longest_slots_consume_fuel() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        var inputs = [];
+        for (var i = 0; i < 200; i++) {
+          inputs.push({ next: function() { return { done: true }; } });
+        }
+        var liveStep = 0;
+        inputs.push({
+          next: function() {
+            return liveStep++ === 0
+              ? { value: 1, done: false }
+              : { done: true };
+          }
+        });
+        var zipped = Iterator.zip(inputs, { mode: "longest" });
+        zipped.next();
+        "#,
+    )
+    .expect("failed to create and start wide zip helper");
+    vm.set_fuel(Some(100));
+    let error = vm
+        .run("zipped.next()")
+        .expect_err("inactive longest slots should exhaust fuel");
+    assert!(
+        error.to_string().contains("fuel exhausted"),
+        "expected fuel exhaustion, got: {}",
+        error
+    );
+    assert_eq!(vm.fuel_remaining(), Some(0));
+}
+
+#[test]
+fn iterator_zip_return_fuel_abort_does_not_leave_helper_running() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        var inputs = [];
+        for (var i = 0; i < 200; i++) {
+          inputs.push({
+            next: function() { return { value: 1, done: false }; },
+            return: function() { return {}; }
+          });
+        }
+        var zipped = Iterator.zip(inputs);
+        zipped.next();
+        "#,
+    )
+    .expect("failed to create and suspend wide zip helper");
+    vm.set_fuel(Some(100));
+    let error = vm
+        .run("zipped.return()")
+        .expect_err("wide zip return should exhaust fuel while extracting inputs");
+    assert!(
+        error.to_string().contains("fuel exhausted"),
+        "expected fuel exhaustion, got: {}",
+        error
+    );
+
+    vm.set_fuel(Some(10_000));
+    let result = vm
+        .run("zipped.next().done")
+        .expect("fuel-aborted return must leave the helper completed");
+    assert_eq!(result, ruja::Value::Bool(true));
+}
+
+#[test]
 fn normal_errors_remain_catchable() {
     // Fuel change must not break ordinary try/catch of catchable errors.
     let mut vm = Vm::new().expect("failed to initialize VM");
