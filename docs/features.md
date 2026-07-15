@@ -84,6 +84,7 @@
   the Generator prototype's own `"Generator"` tag. `Iterator.from` accepts
   iterables and direct iterators through a Realm-specific valid-iterator
   wrapper, `Iterator.prototype.toArray` eagerly collects an iterator, and the
+  eager `Iterator.prototype.reduce` accumulates iterator values. The
   Realm-specific Iterator Helper machinery powers lazy `map`, `filter`,
   `flatMap`, `take`, and `drop` pipelines with dynamic close and reentrancy
   semantics.

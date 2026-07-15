@@ -85,7 +85,7 @@ guarantees, run RuJa in a separately killable process as well.
   scoped subset of ES5.1 + selected ES2015+ features (see
   [test262.md](test262.md#supported-subset) for the exact list). The full
   suite is run in CI (excluding `intl402`/`staging`) with a baseline pass
-  rate of 60.7% of all matrix files and 81.9% of executed files; within the
+  rate of 60.8% of all matrix files and 81.9% of executed files; within the
   supported subset, tests currently run at 100%.
   Full ES conformance is not claimed. See
   [test262.md](test262.md) for current numbers and the failure breakdown.
@@ -100,8 +100,8 @@ guarantees, run RuJa in a separately killable process as well.
 - The global `Iterator` and common synchronous iterator prototype hierarchy
   are implemented, including Realm-specific branded String iterators,
   `Iterator.from`, eager `Iterator.prototype.toArray`, and lazy `map`/`filter`/
-  `flatMap`/`take`/`drop` helpers. Remaining helpers (`reduce`, `forEach`,
-  `some`, `every`, `find`, and related methods),
+  `flatMap`/`take`/`drop` helpers and eager `reduce`. Remaining helpers
+  (`forEach`, `some`, `every`, `find`, and related methods),
   `Iterator.concat`, `Iterator.zip`, and `Iterator.zipKeyed` are not. Async
   iterator helpers are a separate unsupported surface.
 - `Vm` is `Send` (but not `Sync`): the engine uses `Arc`/`Mutex`/atomics

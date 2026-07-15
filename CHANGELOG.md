@@ -142,6 +142,16 @@
   matrix `29401085162`; only built-ins changes by **+44 pass / -44 skip**,
   producing **29328 pass / 6486 fail / 12491 skip / 12 timeout / 0 error /
   48317 total**.
+- `Iterator.prototype.reduce` now eagerly consumes direct iterators with
+  cached `next`, omitted-versus-explicit initial-value handling, specified
+  callback indices, method-Realm errors, native-loop fuel, and GC-rooted
+  accumulator replacement. Iterator-step errors propagate directly while
+  reducer errors close the source and preserve the original abrupt completion.
+  The exact Iterator manifest expands to **288/288** with all **30 reduce**
+  files. Commit `92ce768` passed CI `29405803022` and full matrix
+  `29405803115`; only built-ins changes by **+30 pass / -30 skip**, producing
+  **29358 pass / 6486 fail / 12461 skip / 12 timeout / 0 error / 48317
+  total**.
 - Private instance and static auto-accessor decorators now expose the private
   name and branded `access` functions while keeping their synthetic backing
   storage internal. Optional `get`, `set`, and `init` replacements, extra
