@@ -220,6 +220,21 @@
   `29438450881`; built-ins moves by exactly **+39 pass / -1 fail / -38 skip**,
   including the `fill` correction. The normalized aggregate is **29554 pass /
   6485 fail / 12266 skip / 12 timeout / 0 error / 48317 total**.
+- Static `Iterator.zipKeyed` now snapshots eligible own enumerable string and
+  Symbol keys, rechecks descriptors, and yields fresh null-prototype records in
+  `shortest`, `longest`, and `strict` modes. Longest padding uses keyed property
+  reads, and all setup, reverse-close, Realm, GC, reentrancy, and fuel behavior
+  shares the audited zip helper machinery. Proxy `ownKeys` now validates trap
+  result key types, duplicates, target invariants, and filtering in specification
+  order; the public own-key consumers and Object descriptor operations preserve
+  symbols, validation order, atomic conversion, SameValue invariants, and GC
+  roots. Exact admission adds all **44 zipKeyed** and **40 Proxy/Reflect
+  ownKeys** files, expanding the Iterator manifest to **527/527**. Feature
+  commit `93de368`, CI-checkout fix `5339ba3`, and unsupported `IsHTMLDDA`
+  classification fix `e59bc43` passed CI `29448974479` and full matrix
+  `29448974428`. The final aggregate is **29751 pass / 6348 fail / 12206 skip /
+  12 timeout / 0 error / 48317 total**, or **61.6%** of all files and **82.4%**
+  of executed files.
 - Private instance and static auto-accessor decorators now expose the private
   name and branded `access` functions while keeping their synthetic backing
   storage internal. Optional `get`, `set`, and `init` replacements, extra

@@ -30,7 +30,7 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 61.1% of all matrix files; 82.0% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 61.6% of all matrix files; 82.4% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (12751 pass / 0 fail on current Test262; 12752 / 0 on the pinned checkout) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
@@ -5607,10 +5607,19 @@ close loops charge fuel, and extraction is failure-atomic so a fuel-aborted
 path now marks replaced sparse slots present, as required by the upstream zip
 padding and input fixtures.
 
-Local verification against Test262 `020cb740` is **469 pass / 0 fail / 45
-skip / 514 total** for all of `built-ins/Iterator`; the separately admitted
-Generator and String iterator files also pass, for **483/483** exact manifest
-members. `built-ins/Array/from` is **27 pass / 0 fail / 20 skip / 47 total**.
+`Iterator.zipKeyed` selects own enumerable string and Symbol keys with
+descriptor rechecks, omits missing, non-enumerable, and undefined-valued
+entries, and uses keyed padding reads in longest mode. It shares zip's
+ascending stepping, reverse close-all, Realm, GC, reentrancy, failure-atomic,
+and fuel behavior while producing fresh null-prototype result records.
+Proxy `ownKeys` support validates trap result types and duplicates before
+target invariants and consumer filtering, and descriptor operations preserve
+the required key, conversion, SameValue, Realm, and GC behavior.
+
+Local verification is **513 pass / 0 fail / 1 skip / 514 total** for all of
+`built-ins/Iterator`; the separately admitted Generator and String iterator
+files also pass, for **527/527** exact manifest members.
+`built-ins/Array/from` is **27 pass / 0 fail / 20 skip / 47 total**.
 The related String iterator method,
 `StringIteratorPrototype`, `ArrayIteratorPrototype`, `GeneratorPrototype`,
 `MapIteratorPrototype`, `SetIteratorPrototype`, and
@@ -5732,10 +5741,34 @@ pass-or-fail executed**, or **61.2%** of all files and **82.0%** of executed
 files. The raw CI artifacts additionally contain 150 unsupported built-ins
 skips and therefore total 48467 files.
 
+Feature commit `93de368` admits all **44** static `Iterator.zipKeyed` files and
+all **40** Proxy/Reflect `ownKeys` files. Local verification is **44/44** for
+zipKeyed, **84/84** for the combined new boundary, **527/527** for the exact
+Iterator manifest, **513 pass / 0 fail / 1 skip / 514 total** for
+`built-ins/Iterator`, and **12751 pass / 0 fail / 7687 skip / 20438 total** for
+the supported subset. Rust all-target/all-feature tests, Clippy with warnings
+denied, formatting, release and wasm32 builds, and the **86/86** Python tooling
+suite pass. Two independent final reviews reported no high- or medium-severity
+finding.
+
+The first feature CI `29446474795` exposed a tooling-only permission error
+while probing an unavailable local Test262 checkout; full run `29446474751`
+was canceled to avoid duplicating the corrected run. Commit `5339ba3` fixed
+that probe, and commit `e59bc43` classified Test262's unsupported host-only
+`IsHTMLDDA` feature as a skip instead of retaining accidental Object target
+validation results. Final CI `29448974479` and full matrix `29448974428`
+succeeded. Compared with the Iterator.zip documentation baseline, only annexB
+and built-ins change: built-ins moves **+208 pass / -124 fail / -84 skip**,
+while the corrected `IsHTMLDDA` policy moves annexB **-11 pass / -13 fail /
++24 skip**. The aggregate is **29751 pass / 6348 fail / 12206 skip / 12 timeout
+/ 0 error / 48317 total / 36099 pass-or-fail executed**, or **61.6%** of all
+files and **82.4%** of executed files. Artifacts are retained at
+`/tmp/ruja-artifacts-iterator-zip-keyed-feature-final.CJEoTi`.
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is
 still much lower because the full matrix includes unsupported features such as
-Intl, remaining Iterator joint helpers, remaining RegExp semantics, and
-tail-call optimization. Those larger feature areas are tracked
+Intl, async iterator helpers, remaining RegExp semantics, and tail-call
+optimization. Those larger feature areas are tracked
 in `HANDOFF.md` and will be pulled into support in later milestones.

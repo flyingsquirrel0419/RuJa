@@ -85,7 +85,7 @@ guarantees, run RuJa in a separately killable process as well.
   scoped subset of ES5.1 + selected ES2015+ features (see
   [test262.md](test262.md#supported-subset) for the exact list). The full
   suite is run in CI (excluding `intl402`/`staging`) with a baseline pass
-  rate of 61.1% of all matrix files and 82.0% of executed files; within the
+  rate of 61.6% of all matrix files and 82.4% of executed files; within the
   supported subset, tests currently run at 100%.
   Full ES conformance is not claimed. See
   [test262.md](test262.md) for current numbers and the failure breakdown.
@@ -102,8 +102,8 @@ guarantees, run RuJa in a separately killable process as well.
   `Iterator.from`, eager `Iterator.prototype.toArray`, and lazy `map`/`filter`/
   `flatMap`/`take`/`drop` helpers and eager `reduce`/`forEach`/`some`/`every`.
   Eager `find` completes the current synchronous prototype-helper surface, and
-  static `Iterator.concat` provides lazy iterator sequencing. `Iterator.zip`
-  and `Iterator.zipKeyed` are not implemented. Async iterator helpers are a
+  static `Iterator.concat`, `Iterator.zip`, and `Iterator.zipKeyed` provide
+  iterator sequencing and joint iteration. Async iterator helpers are a
   separate unsupported surface.
 - `Vm` is `Send` (but not `Sync`): the engine uses `Arc`/`Mutex`/atomics
   for shared ownership and interior mutability, so a `Vm` can be moved
