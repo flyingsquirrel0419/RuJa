@@ -117,6 +117,34 @@ fn iterator_helper_native_loops_consume_fuel() {
 }
 
 #[test]
+fn iterator_concat_empty_sources_consume_fuel() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        var empty = {
+          [Symbol.iterator]: function() {
+            return { next: function() { return { done: true }; } };
+          }
+        };
+        var sources = [];
+        for (var i = 0; i < 200; i++) sources.push(empty);
+        var concatenated = Iterator.concat(...sources);
+        "#,
+    )
+    .expect("failed to create concatenated iterator");
+    vm.set_fuel(Some(100));
+    let error = vm
+        .run("concatenated.next()")
+        .expect_err("empty concat scan should exhaust fuel");
+    assert!(
+        error.to_string().contains("fuel exhausted"),
+        "expected fuel exhaustion, got: {}",
+        error
+    );
+    assert_eq!(vm.fuel_remaining(), Some(0));
+}
+
+#[test]
 fn normal_errors_remain_catchable() {
     // Fuel change must not break ordinary try/catch of catchable errors.
     let mut vm = Vm::new().expect("failed to initialize VM");

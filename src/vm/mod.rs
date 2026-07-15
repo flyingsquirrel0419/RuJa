@@ -1900,6 +1900,20 @@ impl Vm {
         Ok(Value::Object(GcIdx(self.heap.allocate(obj)?)))
     }
 
+    pub(crate) fn materialize_error_in_realm(
+        &mut self,
+        error: Arc<Error>,
+        error_env: GcIdx,
+    ) -> Arc<Error> {
+        if !error.catchable() || error.thrown_value.is_some() {
+            return error;
+        }
+        match self.make_error_value_in_realm(&error, error_env) {
+            Ok(thrown) => Error::thrown(thrown, &self.heap),
+            Err(materialization_error) => materialization_error,
+        }
+    }
+
     /// Run the dispatch loop, routing runtime errors to an active try/catch
     /// handler when one is present on the current frame's catch stack. A JS
     /// `throw` already routes through `Op::Throw`; this wrapper additionally

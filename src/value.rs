@@ -771,6 +771,7 @@ pub enum IteratorHelperKind {
     FlatMap,
     Take,
     Drop,
+    Concat,
 }
 
 pub struct IteratorHelperInner {
@@ -778,13 +779,21 @@ pub struct IteratorHelperInner {
     pub next_method: Value,
 }
 
+pub struct IteratorConcatIterable {
+    pub iterable: Value,
+    pub open_method: Value,
+}
+
 pub struct IteratorHelperData {
+    pub resume_realm: GcIdx,
     pub iterator: Value,
     pub next_method: Value,
     pub callback: Option<Value>,
     pub kind: IteratorHelperKind,
     pub counter: Mutex<BigUint>,
     pub inner_iterator: Mutex<Option<IteratorHelperInner>>,
+    pub concat_iterables: Box<[IteratorConcatIterable]>,
+    pub concat_index: AtomicUsize,
     /// Exact mathematical remaining count; `None` represents +Infinity.
     pub remaining: Mutex<Option<BigUint>>,
     /// 0 = suspended-start, 1 = executing, 2 = completed, 3 = suspended-yield.

@@ -421,6 +421,40 @@ built-ins/Iterator/prototype/find/this-non-callable-next.js
 built-ins/Iterator/prototype/find/this-non-object.js
 built-ins/Iterator/prototype/find/this-plain-iterator.js
 
+# Static iterator sequencing.
+built-ins/Iterator/concat/arguments-checked-in-order.js
+built-ins/Iterator/concat/fresh-iterator-result.js
+built-ins/Iterator/concat/get-iterator-method-only-once.js
+built-ins/Iterator/concat/get-iterator-method-throws.js
+built-ins/Iterator/concat/get-value-after-done.js
+built-ins/Iterator/concat/inner-iterator-created-in-order.js
+built-ins/Iterator/concat/is-function.js
+built-ins/Iterator/concat/iterable-primitive-wrapper-objects.js
+built-ins/Iterator/concat/length.js
+built-ins/Iterator/concat/many-arguments.js
+built-ins/Iterator/concat/name.js
+built-ins/Iterator/concat/next-method-called-with-zero-arguments.js
+built-ins/Iterator/concat/next-method-returns-non-object.js
+built-ins/Iterator/concat/next-method-returns-throwing-done.js
+built-ins/Iterator/concat/next-method-returns-throwing-value-done.js
+built-ins/Iterator/concat/next-method-returns-throwing-value.js
+built-ins/Iterator/concat/next-method-throws.js
+built-ins/Iterator/concat/non-constructible.js
+built-ins/Iterator/concat/prop-desc.js
+built-ins/Iterator/concat/proto.js
+built-ins/Iterator/concat/result-is-iterator.js
+built-ins/Iterator/concat/return-is-forwarded.js
+built-ins/Iterator/concat/return-is-not-forwarded-after-exhaustion.js
+built-ins/Iterator/concat/return-is-not-forwarded-before-initial-start.js
+built-ins/Iterator/concat/return-method-called-with-zero-arguments.js
+built-ins/Iterator/concat/single-argument.js
+built-ins/Iterator/concat/throws-typeerror-when-generator-is-running-next.js
+built-ins/Iterator/concat/throws-typeerror-when-generator-is-running-return.js
+built-ins/Iterator/concat/throws-typeerror-when-iterable-not-an-object.js
+built-ins/Iterator/concat/throws-typeerror-when-iterator-method-not-callable.js
+built-ins/Iterator/concat/throws-typeerror-when-iterator-not-an-object.js
+built-ins/Iterator/concat/zero-arguments.js
+
 # Concrete iterator prototypes admitted with the common base hierarchy.
 built-ins/GeneratorPrototype/Symbol.toStringTag.js
 

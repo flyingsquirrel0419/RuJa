@@ -21,6 +21,7 @@ ITERATOR_CORE_FEATURES = frozenset(
         "explicit-resource-management",
         "generators",
         "iterator-helpers",
+        "iterator-sequencing",
         "arrow-function",
     }
 )

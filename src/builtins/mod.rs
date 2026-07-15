@@ -41,9 +41,9 @@ use crate::error::{self, Error};
 use crate::gc::Heap;
 use crate::value::{
     ArrayData, BindingKind, CollectionIteratorData, CollectionIteratorKind, FunctionData,
-    FunctionKind, GcIdx, HeapObj, IteratorHelperData, IteratorHelperInner, IteratorHelperKind,
-    MapData, MapKey, ObjectData, PropertyDescriptor, PropertyKey, RegExpStringIteratorData,
-    SetData, Value,
+    FunctionKind, GcIdx, HeapObj, IteratorConcatIterable, IteratorHelperData, IteratorHelperInner,
+    IteratorHelperKind, MapData, MapKey, ObjectData, PropertyDescriptor, PropertyKey,
+    RegExpStringIteratorData, SetData, Value,
 };
 use crate::vm::{NativeFn, Vm};
 use indexmap::{IndexMap, IndexSet};
@@ -1169,7 +1169,7 @@ where
     false
 }
 use parking_lot::Mutex;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
 use std::sync::Arc;
 
@@ -6614,8 +6614,12 @@ fn valid_iterator_wrapper_return(
     result
 }
 
-fn create_iterator_result(vm: &mut Vm, value: Value, done: bool) -> error::Result<Value> {
-    let realm = active_iterator_realm(vm);
+fn create_iterator_result_in_realm(
+    vm: &mut Vm,
+    value: Value,
+    done: bool,
+    realm: GcIdx,
+) -> error::Result<Value> {
     let proto = vm
         .realm_object_prototypes
         .get(&realm.0)
@@ -6640,6 +6644,10 @@ fn create_iterator_result(vm: &mut Vm, value: Value, done: bool) -> error::Resul
         .map(Value::Object);
     vm.unpin_many(pin_count);
     result
+}
+
+fn create_iterator_result(vm: &mut Vm, value: Value, done: bool) -> error::Result<Value> {
+    create_iterator_result_in_realm(vm, value, done, active_iterator_realm(vm))
 }
 
 fn close_iterator_preserving_abrupt(vm: &mut Vm, iterator: &Value) -> error::Result<()> {
@@ -6710,12 +6718,15 @@ fn allocate_iterator_helper(
     let pin_count = vm.pin_many(&roots);
     let helper = vm
         .alloc(HeapObj::IteratorHelper(IteratorHelperData {
+            resume_realm: realm,
             iterator,
             next_method,
             callback,
             kind,
             counter: Mutex::new(BigUint::zero()),
             inner_iterator: Mutex::new(None),
+            concat_iterables: Box::new([]),
+            concat_index: AtomicUsize::new(0),
             remaining: Mutex::new(remaining),
             state: std::sync::atomic::AtomicU8::new(0),
             props: Mutex::new(IndexMap::new()),
@@ -6725,6 +6736,73 @@ fn allocate_iterator_helper(
         .map(Value::Object);
     vm.unpin_many(pin_count);
     helper
+}
+
+fn allocate_iterator_concat(
+    vm: &mut Vm,
+    iterables: Vec<IteratorConcatIterable>,
+) -> error::Result<Value> {
+    let realm = active_iterator_realm(vm);
+    let proto = vm
+        .realm_iterator_helper_prototypes
+        .get(&realm.0)
+        .cloned()
+        .ok_or_else(|| Error::internal("missing Iterator Helper prototype intrinsic"))?;
+    let mut roots = Vec::with_capacity(iterables.len() * 2 + 1);
+    roots.push(proto.clone());
+    for record in &iterables {
+        roots.push(record.iterable.clone());
+        roots.push(record.open_method.clone());
+    }
+    let pin_count = vm.pin_many(&roots);
+    let helper = vm
+        .alloc(HeapObj::IteratorHelper(IteratorHelperData {
+            resume_realm: realm,
+            iterator: Value::Undefined,
+            next_method: Value::Undefined,
+            callback: None,
+            kind: IteratorHelperKind::Concat,
+            counter: Mutex::new(BigUint::zero()),
+            inner_iterator: Mutex::new(None),
+            concat_iterables: iterables.into_boxed_slice(),
+            concat_index: AtomicUsize::new(0),
+            remaining: Mutex::new(Some(BigUint::zero())),
+            state: std::sync::atomic::AtomicU8::new(0),
+            props: Mutex::new(IndexMap::new()),
+            proto: Mutex::new(Some(proto)),
+            extensible: AtomicBool::new(true),
+        }))
+        .map(Value::Object);
+    vm.unpin_many(pin_count);
+    helper
+}
+
+fn iterator_concat(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
+    let iterator_key = PropertyKey::Symbol(vm.well_known_symbols.iterator);
+    let mut iterables = Vec::with_capacity(args.len());
+    let mut pin_count = 0;
+    let result = (|| -> error::Result<Value> {
+        for item in args {
+            vm.consume_fuel()?;
+            if !matches!(item, Value::Object(_)) {
+                return Err(Error::type_err("Iterator.concat requires object iterables"));
+            }
+            let method = vm.get_property_by_key(item, &iterator_key)?;
+            if method.is_nullish() || !is_callable(&method, &vm.heap) {
+                return Err(Error::type_err(
+                    "Iterator.concat iterator method is not callable",
+                ));
+            }
+            pin_count += vm.pin_many(&[item.clone(), method.clone()]);
+            iterables.push(IteratorConcatIterable {
+                iterable: item.clone(),
+                open_method: method,
+            });
+        }
+        allocate_iterator_concat(vm, iterables)
+    })();
+    vm.unpin_many(pin_count);
+    result
 }
 
 fn iterator_callback_helper_start(
@@ -6881,6 +6959,47 @@ fn iterator_helper_increment_counter(vm: &Vm, idx: GcIdx) {
     });
 }
 
+fn iterator_helper_concat_record(vm: &Vm, idx: GcIdx) -> Option<(Value, Value)> {
+    vm.heap.with_obj(idx.0, |obj| {
+        let HeapObj::IteratorHelper(helper) = obj else {
+            return None;
+        };
+        let index = helper.concat_index.load(Ordering::Relaxed);
+        helper
+            .concat_iterables
+            .get(index)
+            .map(|record| (record.iterable.clone(), record.open_method.clone()))
+    })
+}
+
+fn iterator_helper_advance_concat(vm: &Vm, idx: GcIdx) {
+    vm.heap.with_obj(idx.0, |obj| {
+        if let HeapObj::IteratorHelper(helper) = obj {
+            helper.concat_index.fetch_add(1, Ordering::Relaxed);
+        }
+    });
+}
+
+fn iterator_concat_open_inner(
+    vm: &mut Vm,
+    iterable: Value,
+    open_method: Value,
+) -> error::Result<(Value, Value)> {
+    let base_pin = vm.pin_many(&[iterable.clone(), open_method.clone()]);
+    let iterator_result = vm.call_function(&open_method, &[], Some(iterable));
+    vm.unpin_many(base_pin);
+    let iterator = iterator_result?;
+    if !matches!(iterator, Value::Object(_)) {
+        return Err(Error::type_err(
+            "Iterator.concat iterator method must return an object",
+        ));
+    }
+    let iterator_pin = vm.pin(&iterator);
+    let next_method = vm.get_property(&iterator, "next");
+    vm.unpin_many(iterator_pin);
+    next_method.map(|next_method| (iterator, next_method))
+}
+
 fn get_iterator_flattenable_reject_primitives(
     vm: &mut Vm,
     mapped: Value,
@@ -6970,13 +7089,14 @@ fn iterator_helper_next(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> er
         }
         Some((
             state,
+            helper.resume_realm,
             helper.iterator.clone(),
             helper.next_method.clone(),
             helper.callback.clone(),
             helper.kind,
         ))
     });
-    let Some((state, iterator, next_method, callback, kind)) = record else {
+    let Some((state, realm, iterator, next_method, callback, kind)) = record else {
         return Err(Error::type_err(
             "Iterator Helper next called on incompatible receiver",
         ));
@@ -7079,9 +7199,29 @@ fn iterator_helper_next(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> er
                     };
                     iterator_helper_set_inner(vm, idx, Some(inner));
                 },
+                IteratorHelperKind::Concat => loop {
+                    if let Some((inner_iterator, inner_next)) = iterator_helper_inner(vm, idx) {
+                        match iterator_helper_step(vm, &inner_iterator, &inner_next, true)? {
+                            Some(value) => break Some(value),
+                            None => {
+                                iterator_helper_set_inner(vm, idx, None);
+                                iterator_helper_advance_concat(vm, idx);
+                                continue;
+                            }
+                        }
+                    }
+
+                    let Some((iterable, open_method)) = iterator_helper_concat_record(vm, idx)
+                    else {
+                        iterator_helper_set_state(vm, idx, 2);
+                        return create_iterator_result(vm, Value::Undefined, true);
+                    };
+                    let inner = iterator_concat_open_inner(vm, iterable, open_method)?;
+                    iterator_helper_set_inner(vm, idx, Some(inner));
+                },
             };
             if let Some(yielded) = yielded {
-                let result = create_iterator_result(vm, yielded, false)?;
+                let result = create_iterator_result_in_realm(vm, yielded, false, realm)?;
                 iterator_helper_set_state(vm, idx, 3);
                 return Ok(result);
             } else if matches!(kind, IteratorHelperKind::Take | IteratorHelperKind::Drop) {
@@ -7091,9 +7231,12 @@ fn iterator_helper_next(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> er
         }
     })();
     if result.is_err() {
+        if kind == IteratorHelperKind::Concat {
+            iterator_helper_set_inner(vm, idx, None);
+        }
         iterator_helper_set_state(vm, idx, 2);
     }
-    result
+    result.map_err(|error| vm.materialize_error_in_realm(error, realm))
 }
 
 fn iterator_helper_return(
@@ -7125,9 +7268,15 @@ fn iterator_helper_return(
         } else {
             None
         };
-        Some((previous, helper.iterator.clone(), inner))
+        Some((
+            previous,
+            helper.resume_realm,
+            helper.iterator.clone(),
+            inner,
+            helper.kind,
+        ))
     });
-    let Some((previous, iterator, inner)) = record else {
+    let Some((previous, realm, iterator, inner, kind)) = record else {
         return Err(Error::type_err(
             "Iterator Helper return called on incompatible receiver",
         ));
@@ -7138,13 +7287,22 @@ fn iterator_helper_return(
     if previous == 2 {
         return create_iterator_result(vm, Value::Undefined, true);
     }
+    if previous == 0 && kind == IteratorHelperKind::Concat {
+        return create_iterator_result(vm, Value::Undefined, true);
+    }
     let inner_pin = inner
         .as_ref()
         .map(|(inner_iterator, inner_next)| {
             vm.pin_many(&[inner_iterator.clone(), inner_next.clone()])
         })
         .unwrap_or(0);
-    let close_result = if let Some((inner_iterator, _)) = inner {
+    let close_result = if kind == IteratorHelperKind::Concat {
+        if let Some((inner_iterator, _)) = inner {
+            close_iterator_normally(vm, &inner_iterator)
+        } else {
+            Ok(())
+        }
+    } else if let Some((inner_iterator, _)) = inner {
         match close_iterator_normally(vm, &inner_iterator) {
             Ok(()) => close_iterator_normally(vm, &iterator),
             Err(error) => close_iterator_after_error(vm, &iterator, error),
@@ -7154,8 +7312,14 @@ fn iterator_helper_return(
     };
     vm.unpin_many(inner_pin);
     iterator_helper_set_state(vm, idx, 2);
-    close_result?;
-    create_iterator_result(vm, Value::Undefined, true)
+    if previous == 0 {
+        close_result?;
+        return create_iterator_result(vm, Value::Undefined, true);
+    }
+    match close_result {
+        Ok(()) => create_iterator_result(vm, Value::Undefined, true),
+        Err(error) => Err(vm.materialize_error_in_realm(error, realm)),
+    }
 }
 
 fn iterator_reduce(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
@@ -7693,6 +7857,8 @@ fn install_iterator_intrinsic_in_env(
     pin_count += vm.pin(&Value::Object(find));
     let to_array = vm.new_native_function_in_env("toArray", iterator_to_array, 0, realm)?;
     pin_count += vm.pin(&Value::Object(to_array));
+    let concat = vm.new_native_function_in_env("concat", iterator_concat, 0, realm)?;
+    pin_count += vm.pin(&Value::Object(concat));
     let constructor = vm.new_native_function_in_env("Iterator", iterator_constructor, 0, realm)?;
     let constructor_value = Value::Object(constructor);
     pin_count += vm.pin(&constructor_value);
@@ -7708,6 +7874,10 @@ fn install_iterator_intrinsic_in_env(
         obj.props()
             .lock()
             .insert(PropertyKey::from("from"), data_prop(Value::Object(from)));
+        obj.props().lock().insert(
+            PropertyKey::from("concat"),
+            data_prop(Value::Object(concat)),
+        );
     });
     if let Value::Object(prototype_idx) = &prototype {
         vm.heap.with_obj(prototype_idx.0, |obj| {

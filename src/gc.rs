@@ -232,6 +232,7 @@ pub fn trace_obj(obj: &HeapObj, marked: &[bool], worklist: &mut Vec<usize>) {
             }
         }
         HeapObj::IteratorHelper(it) => {
+            worklist.push(it.resume_realm.0);
             push_value(&it.iterator, worklist);
             push_value(&it.next_method, worklist);
             if let Some(callback) = &it.callback {
@@ -240,6 +241,10 @@ pub fn trace_obj(obj: &HeapObj, marked: &[bool], worklist: &mut Vec<usize>) {
             if let Some(inner) = it.inner_iterator.lock().as_ref() {
                 push_value(&inner.iterator, worklist);
                 push_value(&inner.next_method, worklist);
+            }
+            for record in &it.concat_iterables {
+                push_value(&record.iterable, worklist);
+                push_value(&record.open_method, worklist);
             }
         }
         HeapObj::RegExpStringIterator(it) => {

@@ -2003,6 +2003,457 @@ fn iterator_find_preserves_full_abrupt_close_priority() {
 }
 
 #[test]
+fn iterator_concat_validates_caches_and_opens_iterables_lazily() {
+    assert_eq!(
+        run(r#"
+            var effects = [];
+            function make(name, values) {
+              return {
+                get [Symbol.iterator]() {
+                  effects.push("get-" + name);
+                  return function() {
+                    effects.push("open-" + name);
+                    return values[Symbol.iterator]();
+                  };
+                }
+              };
+            }
+            var first = make("first", [1, 2]);
+            var second = make("second", [3]);
+            var iterator = Iterator.concat(first, second);
+            var afterCreate = effects.join(",");
+            delete first[Symbol.iterator];
+            delete second[Symbol.iterator];
+            var a = iterator.next();
+            var b = iterator.next();
+            var c = iterator.next();
+            var d = iterator.next();
+            var invalidOrder = [];
+            var invalid = {
+              get [Symbol.iterator]() {
+                invalidOrder.push("get");
+                return function() { throw "unreachable"; };
+              }
+            };
+            var invalidType = false;
+            try { Iterator.concat(invalid, null); }
+            catch (error) { invalidType = error instanceof TypeError; }
+            [
+              afterCreate, effects.join(","),
+              a.value, b.value, c.value, d.done, d.value,
+              a !== b && b !== c && c !== d,
+              invalidType, invalidOrder.join(",")
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "get-first,get-second|get-first,get-second,open-first,open-second|1|2|3|true||true|true|get"
+        ))
+    );
+}
+
+#[test]
+fn iterator_concat_forwards_return_only_to_the_active_inner() {
+    assert_eq!(
+        run(r#"
+            var opens = 0;
+            var closes = 0;
+            function iterable(doneImmediately) {
+              return {
+                [Symbol.iterator]: function() {
+                  opens += 1;
+                  return {
+                    next: function() {
+                      return doneImmediately
+                        ? { done: true }
+                        : { value: 1, done: false };
+                    },
+                    return: function() { closes += 1; return {}; }
+                  };
+                }
+              };
+            }
+            var before = Iterator.concat(iterable(false));
+            var beforeResult = before.return();
+            var beforeState = [opens, closes, beforeResult.done].join(",");
+
+            var active = Iterator.concat(iterable(false));
+            active.next();
+            var activeResult = active.return();
+            active.return();
+            var activeState = [opens, closes, activeResult.done].join(",");
+
+            var exhausted = Iterator.concat(iterable(true));
+            exhausted.next();
+            exhausted.return();
+            var exhaustedState = [opens, closes].join(",");
+            [beforeState, activeState, exhaustedState].join("|");
+        "#),
+        Value::String(Arc::from("0,0,true|1,1,true|2,1"))
+    );
+}
+
+#[test]
+fn iterator_concat_rejects_reentrant_next_and_return() {
+    assert_eq!(
+        run(r#"
+            var nextIterator;
+            var nextEntries = 0;
+            nextIterator = Iterator.concat({
+              [Symbol.iterator]: function() {
+                return {
+                  next: function() {
+                    nextEntries += 1;
+                    nextIterator.next();
+                    return { value: 1, done: false };
+                  }
+                };
+              }
+            });
+            var nextType = false;
+            try { nextIterator.next(); }
+            catch (error) { nextType = error instanceof TypeError; }
+
+            var returnIterator;
+            var returnEntries = 0;
+            returnIterator = Iterator.concat({
+              [Symbol.iterator]: function() {
+                return {
+                  next: function() { return { value: 1, done: false }; },
+                  return: function() {
+                    returnEntries += 1;
+                    returnIterator.return();
+                    return {};
+                  }
+                };
+              }
+            });
+            returnIterator.next();
+            var returnType = false;
+            try { returnIterator.return(); }
+            catch (error) { returnType = error instanceof TypeError; }
+            [nextType, nextEntries, returnType, returnEntries].join("|");
+        "#),
+        Value::String(Arc::from("true|1|true|1"))
+    );
+}
+
+#[test]
+fn iterator_concat_retains_records_and_uses_the_method_realm() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+    assert_eq!(
+        vm.run(
+            r#"
+            var other = $262.createRealm().global;
+            var iterator = (function() {
+              var state = { values: [{ amount: 7 }, { amount: 9 }], index: 0 };
+              var iterable = {
+                get [Symbol.iterator]() {
+                  forceGc();
+                  return function() {
+                    forceGc();
+                    return {
+                      next: function() {
+                        forceGc();
+                        return state.index < state.values.length
+                          ? { value: state.values[state.index++], done: false }
+                          : { done: true };
+                      }
+                    };
+                  };
+                }
+              };
+              return other.Iterator.concat(iterable);
+            })();
+            forceGc();
+            var result = iterator.next();
+            forceGc();
+            var second = iterator.next();
+            forceGc();
+            var helperRealm = iterator instanceof other.Iterator && !(iterator instanceof Iterator);
+            var resultRealm = Object.getPrototypeOf(result) === other.Object.prototype;
+            var argumentRealm = false;
+            try { other.Iterator.concat(1); }
+            catch (error) {
+              argumentRealm = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            var openRealm = false;
+            var bad = other.Iterator.concat({
+              [Symbol.iterator]: function() { return 0; }
+            });
+            try { bad.next(); }
+            catch (error) {
+              openRealm = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            [
+              result.value.amount, second.value.amount,
+              helperRealm, resultRealm, argumentRealm, openRealm
+            ].join("|");
+            "#,
+        )
+        .expect("Iterator concat should retain records and method Realm"),
+        Value::String(Arc::from("7|9|true|true|true|true"))
+    );
+}
+
+#[test]
+fn iterator_helpers_distinguish_creation_and_borrowed_method_realms() {
+    assert_eq!(
+        run(r#"
+            var a = $262.createRealm().global;
+            var b = $262.createRealm().global;
+            var bSample = b.Iterator.prototype.map.call(
+              { next: function() { return { done: true }; } },
+              function(value) { return value; }
+            );
+            var bProto = Object.getPrototypeOf(bSample);
+            var nextB = bProto.next;
+            var returnB = bProto.return;
+
+            var closes = 0;
+            var source = {
+              index: 0,
+              next: function() {
+                return this.index++ === 0
+                  ? { value: 1, done: false }
+                  : { done: true };
+              },
+              return: function() { closes += 1; return {}; }
+            };
+            var helper = a.Iterator.prototype.map.call(
+              source,
+              function(value) { return value; }
+            );
+            var yielded = nextB.call(helper);
+            var returned = returnB.call(helper);
+            var completedNext = nextB.call(helper);
+            var completedReturn = returnB.call(helper);
+
+            var terminalSource = {
+              index: 0,
+              next: function() {
+                return this.index++ === 0
+                  ? { value: 1, done: false }
+                  : { done: true };
+              }
+            };
+            var terminalHelper = a.Iterator.prototype.map.call(
+              terminalSource,
+              function(value) { return value; }
+            );
+            var terminalYield = nextB.call(terminalHelper);
+            var terminalDone = nextB.call(terminalHelper);
+
+            var startCloses = 0;
+            var startHelper = a.Iterator.prototype.map.call({
+              next: function() { return { value: 1, done: false }; },
+              return: function() { startCloses += 1; return {}; }
+            }, function(value) { return value; });
+            var startReturn = returnB.call(startHelper);
+
+            var startCloseTypeRealm = false;
+            var startBadClose = a.Iterator.prototype.map.call({
+              next: function() { return { done: true }; },
+              return: function() { return 1; }
+            }, function(value) { return value; });
+            try { returnB.call(startBadClose); }
+            catch (error) {
+              startCloseTypeRealm = error instanceof b.TypeError &&
+                !(error instanceof a.TypeError);
+            }
+
+            var resumedTypeRealm = false;
+            var badResult = a.Iterator.prototype.map.call({
+              next: function() { return 1; }
+            }, function(value) { return value; });
+            try { nextB.call(badResult); }
+            catch (error) {
+              resumedTypeRealm = error instanceof a.TypeError &&
+                !(error instanceof b.TypeError);
+            }
+
+            var closeTypeRealm = false;
+            var badClose = a.Iterator.prototype.map.call({
+              next: function() { return { value: 1, done: false }; },
+              return: function() { return 1; }
+            }, function(value) { return value; });
+            nextB.call(badClose);
+            try { returnB.call(badClose); }
+            catch (error) {
+              closeTypeRealm = error instanceof a.TypeError &&
+                !(error instanceof b.TypeError);
+            }
+
+            var brandTypeRealm = false;
+            try { nextB.call({}); }
+            catch (error) {
+              brandTypeRealm = error instanceof b.TypeError &&
+                !(error instanceof a.TypeError);
+            }
+
+            var runningTypeRealm = false;
+            var running;
+            running = a.Iterator.prototype.map.call({
+              next: function() {
+                nextB.call(running);
+                return { done: true };
+              }
+            }, function(value) { return value; });
+            try { nextB.call(running); }
+            catch (error) {
+              runningTypeRealm = error instanceof b.TypeError &&
+                !(error instanceof a.TypeError);
+            }
+
+            [
+              Object.getPrototypeOf(yielded) === a.Object.prototype,
+              Object.getPrototypeOf(returned) === b.Object.prototype,
+              Object.getPrototypeOf(terminalYield) === a.Object.prototype,
+              Object.getPrototypeOf(terminalDone) === b.Object.prototype,
+              Object.getPrototypeOf(completedNext) === b.Object.prototype,
+              Object.getPrototypeOf(completedReturn) === b.Object.prototype,
+              Object.getPrototypeOf(startReturn) === b.Object.prototype,
+              closes === 1, startCloses === 1,
+              startCloseTypeRealm, resumedTypeRealm, closeTypeRealm,
+              brandTypeRealm, runningTypeRealm
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "true|true|true|true|true|true|true|true|true|true|true|true|true|true"
+        ))
+    );
+}
+
+#[test]
+fn iterator_concat_close_errors_complete_without_observing_results() {
+    assert_eq!(
+        run(r#"
+            function closeCase(mode) {
+              var marker = {};
+              var accesses = 0;
+              var source = {
+                next: function() { return { value: 1, done: false }; }
+              };
+              if (mode === "getter") {
+                Object.defineProperty(source, "return", {
+                  get: function() { throw marker; }
+                });
+              } else if (mode === "noncallable") {
+                source.return = 1;
+              } else if (mode === "throw") {
+                source.return = function() { throw marker; };
+              } else if (mode === "primitive") {
+                source.return = function() { return 1; };
+              } else {
+                source.return = function() {
+                  var result = {};
+                  Object.defineProperty(result, "done", {
+                    get: function() { accesses += 1; throw marker; }
+                  });
+                  Object.defineProperty(result, "value", {
+                    get: function() { accesses += 1; throw marker; }
+                  });
+                  return result;
+                };
+              }
+              var helper = Iterator.concat({
+                [Symbol.iterator]: function() { return source; }
+              });
+              helper.next();
+              var outcome = "ok";
+              try { helper.return(); }
+              catch (error) {
+                outcome = error === marker ? "marker" :
+                  error instanceof TypeError ? "type" : "other";
+              }
+              return [outcome, accesses, helper.next().done].join(",");
+            }
+            [
+              closeCase("getter"), closeCase("noncallable"),
+              closeCase("throw"), closeCase("primitive"), closeCase("ignored")
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "marker,0,true|type,0,true|marker,0,true|type,0,true|ok,0,true"
+        ))
+    );
+}
+
+#[test]
+fn iterator_concat_abrupt_steps_do_not_close_or_open_later_sources() {
+    assert_eq!(
+        run(r#"
+            function failureCase(mode) {
+              var marker = {};
+              var closes = 0;
+              var laterOpens = 0;
+              var first = {
+                [Symbol.iterator]: function() {
+                  if (mode === "open-throw") throw marker;
+                  if (mode === "open-primitive") return 1;
+                  var iterator = {
+                    return: function() { closes += 1; return {}; }
+                  };
+                  if (mode === "next-getter") {
+                    Object.defineProperty(iterator, "next", {
+                      get: function() { throw marker; }
+                    });
+                  } else if (mode === "next-throw") {
+                    iterator.next = function() { throw marker; };
+                  } else if (mode === "next-primitive") {
+                    iterator.next = function() { return 1; };
+                  } else if (mode === "done-throw") {
+                    iterator.next = function() {
+                      return Object.defineProperty({}, "done", {
+                        get: function() { throw marker; }
+                      });
+                    };
+                  } else {
+                    iterator.next = function() {
+                      var result = { done: false };
+                      Object.defineProperty(result, "value", {
+                        get: function() { throw marker; }
+                      });
+                      return result;
+                    };
+                  }
+                  return iterator;
+                }
+              };
+              var later = {
+                [Symbol.iterator]: function() {
+                  laterOpens += 1;
+                  return { next: function() { return { done: true }; } };
+                }
+              };
+              var helper = Iterator.concat(first, later);
+              var failed = false;
+              try { helper.next(); }
+              catch (error) { failed = true; }
+              return [failed, closes, laterOpens, helper.next().done].join(",");
+            }
+            [
+              failureCase("open-throw"), failureCase("open-primitive"),
+              failureCase("next-getter"), failureCase("next-throw"),
+              failureCase("next-primitive"), failureCase("done-throw"),
+              failureCase("value-throw")
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "true,0,0,true|true,0,0,true|true,0,0,true|true,0,0,true|true,0,0,true|true,0,0,true|true,0,0,true"
+        ))
+    );
+}
+
+#[test]
 fn array_map_reduce() {
     assert_eq!(
         run("[1,2,3].map(x => x*2).join(',');"),
