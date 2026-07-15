@@ -30,7 +30,7 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 61.0% of all matrix files; 82.0% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 61.1% of all matrix files; 82.0% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (12751 pass / 0 fail on current Test262; 12752 / 0 on the pinned checkout) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
@@ -5502,7 +5502,7 @@ artifacts are retained at
 
 ## Iterator intrinsic and helper core
 
-`tools/test262_iterator_admission.txt` freezes exactly 413 files: 23
+`tools/test262_iterator_admission.txt` freezes exactly 445 files: 23
 `built-ins/Iterator` files covering the global constructor, subclass
 construction, `%Iterator.prototype%[Symbol.iterator]`,
 `%Iterator.prototype%[Symbol.dispose]`, and the `constructor` and
@@ -5514,10 +5514,10 @@ all 18 `Iterator.prototype.toArray` files; plus all 36
 `Iterator.prototype.take` and 34 `Iterator.prototype.drop` files; plus all 44
 `Iterator.prototype.flatMap` files; all 30 `Iterator.prototype.reduce` files;
 all 27 `Iterator.prototype.forEach` files; all 33 `Iterator.prototype.some`
-files; all 33 `Iterator.prototype.every` files; and all 32
-`Iterator.prototype.find` files. The runner and analyzer admit only those exact
-paths. Static sequencing,
-`concat`, `zip`, and `zipKeyed` stay behind their feature gates.
+files; all 33 `Iterator.prototype.every` files; all 32
+`Iterator.prototype.find` files; and all 32 static `Iterator.concat` files.
+The runner and analyzer admit only those exact paths. `Iterator.zip` and
+`Iterator.zipKeyed` stay behind their joint-iteration feature gates.
 
 The global constructor and prototype are Realm-specific. Direct calls and
 construction reject, subclass construction allocates with the derived
@@ -5586,10 +5586,19 @@ before next lookup, cached next, callback `this`, done/value ordering,
 no-return continuation, close precedence, GC, Realm errors, and fuel. This
 completes every synchronous `%Iterator.prototype%` helper directory in the
 current Test262 checkout.
+`Iterator.concat` captures each object argument and its callable
+`Symbol.iterator` method left-to-right without opening an iterator. Pulling
+then lazily opens and drains one cached iterator record at a time. A yielded
+`return()` closes only the active inner iterator; pre-start return, natural
+exhaustion, and opener or step failures never close or open later records.
+Captured records, active iterator methods, and the helper creation Realm are
+GC-traced, and empty-source scans consume fuel. Shared Iterator Helper Realm
+handling now distinguishes creation-Realm yielded results and resumed protocol
+errors from borrowed-method-Realm terminal results and direct validation.
 
-Local verification against Test262 `020cb740` is **399 pass / 0 fail / 115
+Local verification against Test262 `020cb740` is **431 pass / 0 fail / 83
 skip / 514 total** for all of `built-ins/Iterator`; the separately admitted
-Generator and String iterator files also pass, for **413/413** exact manifest
+Generator and String iterator files also pass, for **445/445** exact manifest
 members. `built-ins/Array/from` is **27 pass / 0 fail / 20 skip / 47 total**.
 The related String iterator method,
 `StringIteratorPrototype`, `ArrayIteratorPrototype`, `GeneratorPrototype`,
@@ -5690,10 +5699,18 @@ timeout / 0 error / 48317 total / 35969 pass-or-fail executed**, or **61.0%**
 of all files and **82.0%** of executed files. Artifacts are retained at
 `/tmp/ruja-artifacts-iterator-find-feature.hwOlff`.
 
+Feature commit `decf8d5` passed CI `29432285167` and full matrix
+`29432285229`. Of the 30 downloaded result artifacts, 29 are byte-for-byte
+identical to the find documentation baseline; built-ins moves exactly **+32
+pass / -32 skip**. The aggregate is **29515 pass / 6486 fail / 12304 skip / 12
+timeout / 0 error / 48317 total / 36001 pass-or-fail executed**, or **61.1%**
+of all files and **82.0%** of executed files. Artifacts are retained at
+`/tmp/ruja-artifacts-iterator-concat-feature.35pEbB`.
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is
 still much lower because the full matrix includes unsupported features such as
-Intl, remaining Iterator helpers, remaining RegExp semantics, and tail-call
-optimization. Those larger feature areas are tracked
+Intl, remaining Iterator joint helpers, remaining RegExp semantics, and
+tail-call optimization. Those larger feature areas are tracked
 in `HANDOFF.md` and will be pulled into support in later milestones.

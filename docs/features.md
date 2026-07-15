@@ -87,7 +87,9 @@
   eager `Iterator.prototype.reduce` accumulates iterator values,
   `Iterator.prototype.forEach` visits each value for side effects, and
   `Iterator.prototype.some` and `every` short-circuit predicate results, while
-  `Iterator.prototype.find` returns the first matching value. The
+  `Iterator.prototype.find` returns the first matching value. Static
+  `Iterator.concat` validates and caches iterable methods eagerly, then opens
+  and drains each iterator lazily in argument order. The
   Realm-specific Iterator Helper machinery powers lazy `map`, `filter`,
   `flatMap`, `take`, and `drop` pipelines with dynamic close and reentrancy
   semantics.

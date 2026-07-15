@@ -194,6 +194,17 @@
   CI `29426108186` and full matrix `29426108093`; only built-ins changes by
   **+32 pass / -32 skip**, producing **29483 pass / 6486 fail / 12336 skip /
   12 timeout / 0 error / 48317 total**.
+- Static `Iterator.concat` now validates object arguments and caches their
+  iterator methods left-to-right, then lazily opens and drains each iterator.
+  Only the active iterator is closed by `return`; pre-start return and natural
+  exhaustion do not open or close sources, while opener and step failures
+  complete without opening later sources. Iterator Helpers now retain their
+  creation Realm so yielded results and resumed protocol errors use it, while
+  terminal results and direct validation use the borrowed method Realm. Exact
+  admission expands to **445/445** with all **32 concat** files. Commit
+  `decf8d5` passed CI `29432285167` and full matrix `29432285229`; only
+  built-ins changes by **+32 pass / -32 skip**, producing **29515 pass / 6486
+  fail / 12304 skip / 12 timeout / 0 error / 48317 total**.
 - Private instance and static auto-accessor decorators now expose the private
   name and branded `access` functions while keeping their synthetic backing
   storage internal. Optional `get`, `set`, and `init` replacements, extra
