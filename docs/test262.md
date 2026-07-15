@@ -5788,6 +5788,41 @@ to the Iterator.zipKeyed documentation baseline and retain **29751 pass / 6348
 fail / 12206 skip / 12 timeout / 0 error / 48317 total / 36099 pass-or-fail
 executed** (**61.6%** of all files, **82.4%** of executed files).
 
+Feature commit `436e7ea` completes the active `%Object%` constructor and
+distinct-`NewTarget` Realm paths. Function calls ignore their receiver;
+nullish inputs allocate with the active constructor Realm's rooted
+`%Object.prototype%`; primitive boxing uses that Realm; and object arguments
+are returned only when `NewTarget` is the active `%Object%`. Subclass and
+`Reflect.construct` paths ignore the argument and allocate exactly once from
+the observed `NewTarget.prototype`, falling back to the constructor Realm's
+rooted intrinsic when the value is not an object.
+
+`GetFunctionRealm`-style traversal now follows bound and Proxy targets without
+an arbitrary depth cap, rejects revoked Proxies, and normalizes a function's
+lexical closure environment to its global Realm. The Object fallback no longer
+consults a replaceable global `Object` binding. Rust regressions cover active
+and distinct NewTarget paths, foreign primitive boxing, subclassing, forced GC
+during Proxy prototype lookup, 40 bound-function layers, revoked Proxy errors,
+nested foreign closures, mutable global replacement, intrinsic survival, and
+the zero-preallocation object-argument path under a saturated heap limit.
+
+The frozen admission adds exactly
+`built-ins/Object/is-a-constructor.js`,
+`built-ins/Object/proto-from-ctor-realm.js`, and
+`built-ins/Object/subclass-object-arg.js`, all passing at **3/3**. Final local
+gates pass: all Rust targets/features including builtins **431/431**, Clippy
+with warnings denied, formatting, release and wasm32 builds, tooling **87/87**,
+`built-ins/Object` **3123 pass / 121 fail / 167 skip / 3411 total**, and the
+supported subset **12751 pass / 0 fail / 7687 skip / 20438 total**. Two
+independent final reviews reported no high- or medium-severity finding.
+
+CI `29458827810` and full matrix `29458827839` succeeded. Of the 30 artifacts
+at `/tmp/ruja-artifacts-object-constructor-feature.WPjmhF`, 29 are
+byte-for-byte identical to the Object-static documentation baseline; built-ins
+moves exactly **+3 pass / -3 skip**. The aggregate is **29754 pass / 6348 fail
+/ 12203 skip / 12 timeout / 0 error / 48317 total / 36102 pass-or-fail
+executed**, or **61.6%** of all files and **82.4%** of executed files.
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is

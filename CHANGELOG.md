@@ -4,6 +4,20 @@
 
 ### Fixed
 
+- `Object` call and construction now follow the active function and distinct
+  `NewTarget` rules without generic receiver preallocation. Nullish values and
+  primitive wrappers use the active constructor Realm, object arguments are
+  returned only for the intrinsic `NewTarget`, and subclass/`Reflect.construct`
+  paths allocate from the observed `NewTarget.prototype`. Constructor Realm
+  fallback now follows arbitrarily deep bound/Proxy targets, rejects revoked
+  Proxies, normalizes lexical closures to their global Realm, and reads the
+  rooted `%Object.prototype%` intrinsic instead of mutable global bindings.
+  Exact Test262 admission adds three Object constructor files at **3/3**;
+  `built-ins/Object` is **3123 pass / 121 fail / 167 skip**, the supported
+  subset remains **12751/0/7687**, and tooling is **87/87**. Commit `436e7ea`
+  passed CI `29458827810` and full matrix `29458827839`; only built-ins changes
+  by **+3 pass / -3 skip**, producing **29754 pass / 6348 fail / 12203 skip /
+  12 timeout / 0 error / 48317 total**.
 - Classes now parse and retain restricted decorator expressions and implement
   the audited class/public-element core: source-order evaluation, reverse
   application, method/class replacements, field initializer transforms with

@@ -67,7 +67,7 @@ for intentionally-unsupported features.
 **Supported-subset pass rate: 100.0%** (12,751 tests in `language/statements`
 + `language/expressions` on current Test262, unsupported-feature tests
 skipped). The latest full matrix is 61.6% of all files and 82.4% of executed
-files — see
+files (29,754 pass / 6,348 fail / 12,203 skip) — see
 [test262 conformance](docs/test262.md)
 for why these numbers differ.
 
