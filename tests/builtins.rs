@@ -132,6 +132,389 @@ fn iterator_constructor_uses_new_target_realm_default_prototype() {
 }
 
 #[test]
+fn iterator_from_has_spec_shaped_nonconstructible_method() {
+    assert_eq!(
+        run(r#"
+            var descriptor = Object.getOwnPropertyDescriptor(Iterator, "from");
+            var length = Object.getOwnPropertyDescriptor(Iterator.from, "length");
+            var name = Object.getOwnPropertyDescriptor(Iterator.from, "name");
+            var constructError = false;
+            try { new Iterator.from([]); }
+            catch (error) { constructError = error instanceof TypeError; }
+            [
+                typeof Iterator.from,
+                descriptor.value === Iterator.from,
+                descriptor.writable, descriptor.enumerable, descriptor.configurable,
+                length.value, length.writable, length.enumerable, length.configurable,
+                name.value, name.writable, name.enumerable, name.configurable,
+                Object.getPrototypeOf(Iterator.from) === Function.prototype,
+                constructError
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "function|true|true|false|true|1|false|false|true|from|false|false|true|true|true"
+        ))
+    );
+}
+
+#[test]
+fn iterator_from_accepts_strings_iterables_and_direct_iterators() {
+    assert_eq!(
+        run(r#"
+            function collect(iterator) {
+              var values = [];
+              for (var step = iterator.next(); !step.done; step = iterator.next()) {
+                values.push(step.value);
+              }
+              return values.join(",");
+            }
+            var iterable = {
+              [Symbol.iterator]: function() {
+                var values = [3, 4];
+                return {
+                  next: function() {
+                    return values.length === 0
+                      ? { done: true }
+                      : { value: values.shift(), done: false };
+                  }
+                };
+              }
+            };
+            var direct = {
+              value: 5,
+              next: function() {
+                return this.value > 6
+                  ? { done: true }
+                  : { value: this.value++, done: false };
+              }
+            };
+            [
+              collect(Iterator.from("ab")),
+              collect(Iterator.from(iterable)),
+              collect(Iterator.from(direct))
+            ].join("|");
+        "#),
+        Value::String(Arc::from("a,b|3,4|5,6"))
+    );
+}
+
+#[test]
+fn iterator_from_returns_iterator_instances_unchanged() {
+    assert_eq!(
+        run(r#"
+            class CustomIterator extends Iterator {
+              next() { return { done: true }; }
+            }
+            var arrayIterator = [1].values();
+            var customIterator = new CustomIterator();
+            [
+              Iterator.from(arrayIterator) === arrayIterator,
+              Iterator.from(customIterator) === customIterator
+            ].join("|");
+        "#),
+        Value::String(Arc::from("true|true"))
+    );
+}
+
+#[test]
+fn iterator_from_caches_next_and_uses_a_branded_wrapper_prototype() {
+    assert_eq!(
+        run(r#"
+            var nextGets = 0;
+            var nextCalls = 0;
+            var receiverIsIterator = true;
+            var iterator = {
+              value: 1,
+              get next() {
+                nextGets += 1;
+                return function() {
+                  nextCalls += 1;
+                  receiverIsIterator = receiverIsIterator && this === iterator;
+                  return this.value > 2
+                    ? { done: true }
+                    : { value: this.value++, done: false };
+                };
+              }
+            };
+            var wrapper = Iterator.from(iterator);
+            var wrapperPrototype = Object.getPrototypeOf(wrapper);
+            var nextBrandError = false;
+            var returnBrandError = false;
+            var arrayNextBrandError = false;
+            var wrapperNextBrandError = false;
+            try { wrapperPrototype.next.call({}); }
+            catch (error) { nextBrandError = error instanceof TypeError; }
+            try { wrapperPrototype.return.call({}); }
+            catch (error) { returnBrandError = error instanceof TypeError; }
+            try { Object.getPrototypeOf([][Symbol.iterator]()).next.call(wrapper); }
+            catch (error) { arrayNextBrandError = error instanceof TypeError; }
+            try { wrapperPrototype.next.call([][Symbol.iterator]()); }
+            catch (error) { wrapperNextBrandError = error instanceof TypeError; }
+            var first = wrapper.next();
+            var second = wrapper.next();
+            var done = wrapper.next();
+            [
+              nextGets, nextCalls, receiverIsIterator,
+              Object.getPrototypeOf(wrapperPrototype) === Iterator.prototype,
+              wrapper instanceof Iterator,
+              wrapper[Symbol.iterator]() === wrapper,
+              Object.prototype.toString.call(wrapper),
+              nextBrandError, returnBrandError, arrayNextBrandError, wrapperNextBrandError,
+              first.value, second.value, done.done
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "1|3|true|true|true|true|[object Iterator]|true|true|true|true|1|2|true"
+        ))
+    );
+}
+
+#[test]
+fn iterator_from_looks_up_return_dynamically_and_preserves_its_result() {
+    assert_eq!(
+        run(r#"
+            var returnGets = 0;
+            var receivers = [];
+            var argumentCounts = [];
+            var firstResult = { value: "first", done: true };
+            var secondResult = { value: "second", done: true };
+            var iterator = {
+              next: function() { return { done: true }; },
+              get return() {
+                returnGets += 1;
+                var result = returnGets === 1 ? firstResult : secondResult;
+                return function() {
+                  receivers.push(this === iterator);
+                  argumentCounts.push(arguments.length);
+                  return result;
+                };
+              }
+            };
+            var wrapper = Iterator.from(iterator);
+            var beforeReturn = returnGets === 0;
+            var first = wrapper.return(123);
+            var second = wrapper.return();
+            [
+              beforeReturn, returnGets, receivers.join(","), argumentCounts.join(","),
+              first === firstResult, second === secondResult
+            ].join("|");
+        "#),
+        Value::String(Arc::from("true|2|true,true|0,0|true|true"))
+    );
+}
+
+#[test]
+fn iterator_from_return_without_underlying_method_returns_done_result() {
+    assert_eq!(
+        run(r#"
+            var wrapper = Iterator.from({ next: function() { return { done: true }; } });
+            var result = wrapper.return();
+            [
+              result.hasOwnProperty("value"), result.value === undefined, result.done,
+              Object.getPrototypeOf(result) === Object.prototype
+            ].join("|");
+        "#),
+        Value::String(Arc::from("true|true|true|true"))
+    );
+}
+
+#[test]
+fn iterator_from_uses_the_calling_realm_wrapper_prototype_and_errors() {
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var wrapper = other.Iterator.from({
+              next: function() { return { done: true }; }
+            });
+            var emptyResult = other.Iterator.from({ next: function() { return { done: true }; } }).return();
+            var arrayResult = other.Iterator.prototype.toArray.call({
+              next: function() { return { done: true }; }
+            });
+            var arrayIterator = other.Array.prototype.values.call(new other.Array(1));
+            var wrapperPrototype = Object.getPrototypeOf(wrapper);
+            var nextError = false;
+            var returnError = false;
+            try { wrapperPrototype.next.call({}); }
+            catch (error) {
+              nextError = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            try { wrapperPrototype.return.call({}); }
+            catch (error) {
+              returnError = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            [
+              other.Object.prototype !== Object.prototype,
+              other.Array.prototype !== Array.prototype,
+              Object.getPrototypeOf(other.Array.prototype) === other.Object.prototype,
+              Object.getPrototypeOf(other.Iterator.prototype) === other.Object.prototype,
+              Object.getPrototypeOf(Object.getPrototypeOf(arrayIterator)) === other.Iterator.prototype,
+              arrayIterator instanceof other.Iterator,
+              Object.getPrototypeOf(wrapperPrototype) === other.Iterator.prototype,
+              Object.getPrototypeOf(wrapperPrototype.next) === other.Function.prototype,
+              Object.getPrototypeOf(wrapperPrototype.return) === other.Function.prototype,
+              Object.getPrototypeOf(emptyResult) === other.Object.prototype,
+              Object.getPrototypeOf(arrayResult) === other.Array.prototype,
+              wrapper instanceof other.Iterator, wrapper instanceof Iterator,
+              nextError, returnError
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "true|true|true|true|true|true|true|true|true|true|true|true|false|true|true"
+        ))
+    );
+}
+
+#[test]
+fn iterator_from_keeps_wrapped_iterator_state_alive_across_gc() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+    assert_eq!(
+        vm.run(
+            r#"
+            var wrapper = (function() {
+              var state = { calls: 0, value: "kept" };
+              var iterator = {};
+              Object.defineProperty(iterator, "next", {
+                get: function() {
+                  forceGc();
+                  return function() {
+                    forceGc();
+                    var current = state.calls++;
+                    return {
+                      get value() { forceGc(); return state.value; },
+                      get done() { forceGc(); return current > 0; }
+                    };
+                  };
+                }
+              });
+              return Iterator.from(iterator);
+            })();
+            forceGc();
+            var first = wrapper.next();
+            var done = wrapper.next();
+            [first.value, first.done, done.done].join("|");
+            "#,
+        )
+        .expect("Iterator.from wrapper should retain iterator state across GC"),
+        Value::String(Arc::from("kept|false|true"))
+    );
+}
+
+#[test]
+fn array_from_keeps_iterator_result_alive_across_done_getter_gc() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+    assert_eq!(
+        vm.run(
+            r#"
+            var calls = 0;
+            var source = {
+              [Symbol.iterator]: function() {
+                return {
+                  next: function() {
+                    calls += 1;
+                    if (calls > 1) return { done: true };
+                    var result = {};
+                    Object.defineProperty(result, "done", {
+                      get: function() { forceGc(); return false; }
+                    });
+                    Object.defineProperty(result, "value", {
+                      get: function() { return "kept"; }
+                    });
+                    return result;
+                  }
+                };
+              }
+            };
+            Array.from(source)[0];
+            "#,
+        )
+        .expect("Array.from iterator result should survive observable getters"),
+        Value::String(Arc::from("kept"))
+    );
+}
+
+#[test]
+fn iterator_to_array_caches_next_and_observes_done_before_value() {
+    assert_eq!(
+        run(r#"
+            var gets = 0;
+            var calls = 0;
+            var valueGets = 0;
+            var iterator = {
+              get next() {
+                gets += 1;
+                return function() {
+                  calls += 1;
+                  return calls < 3
+                    ? { done: false, value: calls }
+                    : { done: true, get value() { valueGets += 1; throw new Error(); } };
+                };
+              }
+            };
+            var values = Iterator.prototype.toArray.call(iterator);
+            [values.join(","), gets, calls, valueGets].join("|");
+        "#),
+        Value::String(Arc::from("1,2|1|3|0"))
+    );
+}
+
+#[test]
+fn iterator_to_array_validates_receiver_next_and_result() {
+    assert_eq!(
+        run(r#"
+            function throwsTypeError(receiver) {
+              try { Iterator.prototype.toArray.call(receiver); }
+              catch (error) { return error instanceof TypeError; }
+              return false;
+            }
+            [
+              throwsTypeError(null),
+              throwsTypeError({ next: 0 }),
+              throwsTypeError({ next: function() { return 1; } })
+            ].join("|");
+        "#),
+        Value::String(Arc::from("true|true|true"))
+    );
+}
+
+#[test]
+fn iterator_to_array_caps_infinite_materialization() {
+    assert_eq!(
+        run(r#"
+            var closed = 0;
+            var rangeError = false;
+            try {
+              Iterator.prototype.toArray.call({
+                next: function() { return { value: 1, done: false }; },
+                return: function() { closed += 1; return {}; }
+              });
+            } catch (error) {
+              rangeError = error instanceof RangeError;
+            }
+            [rangeError, closed].join("|");
+        "#),
+        Value::String(Arc::from("true|1"))
+    );
+}
+
+#[test]
 fn array_map_reduce() {
     assert_eq!(
         run("[1,2,3].map(x => x*2).join(',');"),
@@ -3247,7 +3630,7 @@ fn typed_array_realm_to_string_alias_ignores_mutated_array_prototype() {
                 writable: true,
                 value: intrinsic
             });
-            alias === intrinsic;
+            alias !== intrinsic && alias === other.Array.prototype.toString;
         "#),
         Value::Bool(true)
     );

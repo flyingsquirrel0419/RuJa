@@ -741,6 +741,7 @@ pub struct SetData {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum CollectionIteratorKind {
+    WrappedIterator,
     StringValues,
     ArrayEntries,
     ArrayKeys,
@@ -754,6 +755,7 @@ pub enum CollectionIteratorKind {
 
 pub struct CollectionIteratorData {
     pub source: Value,
+    pub next_method: Mutex<Option<Value>>,
     pub kind: CollectionIteratorKind,
     pub index: AtomicUsize,
     pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
@@ -1140,6 +1142,7 @@ impl HeapObj {
             HeapObj::Map(_) => "Map",
             HeapObj::Set(_) => "Set",
             HeapObj::CollectionIterator(i) => match i.kind {
+                CollectionIteratorKind::WrappedIterator => "Iterator",
                 CollectionIteratorKind::StringValues => "String Iterator",
                 CollectionIteratorKind::ArrayEntries
                 | CollectionIteratorKind::ArrayKeys

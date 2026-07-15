@@ -21,6 +21,10 @@ pub(crate) fn new_collection_iterator(
     source: Value,
     kind: CollectionIteratorKind,
 ) -> error::Result<Value> {
+    let realm = vm
+        .native_callee_closure()
+        .map(|closure| env::global_env_root(&vm.heap, closure))
+        .unwrap_or(vm.global);
     let proto = match kind {
         CollectionIteratorKind::StringValues
             if matches!(vm.string_iterator_proto, Value::Object(_)) =>
@@ -30,9 +34,9 @@ pub(crate) fn new_collection_iterator(
         CollectionIteratorKind::ArrayEntries
         | CollectionIteratorKind::ArrayKeys
         | CollectionIteratorKind::ArrayValues
-            if matches!(vm.iterator_proto, Value::Object(_)) =>
+            if vm.realm_array_iterator_prototypes.contains_key(&realm.0) =>
         {
-            vm.iterator_proto.clone()
+            vm.realm_array_iterator_prototypes[&realm.0].clone()
         }
         CollectionIteratorKind::MapEntries
         | CollectionIteratorKind::MapKeys
@@ -53,6 +57,7 @@ pub(crate) fn new_collection_iterator(
         .heap
         .allocate(HeapObj::CollectionIterator(CollectionIteratorData {
             source,
+            next_method: Mutex::new(None),
             kind,
             index: std::sync::atomic::AtomicUsize::new(0),
             props: Mutex::new(IndexMap::new()),
@@ -91,6 +96,7 @@ fn string_iterator_method(
     let iterator = Value::Object(GcIdx(vm.heap.allocate(HeapObj::CollectionIterator(
         CollectionIteratorData {
             source: Value::String(string),
+            next_method: Mutex::new(None),
             kind: CollectionIteratorKind::StringValues,
             index: std::sync::atomic::AtomicUsize::new(0),
             props: Mutex::new(IndexMap::new()),
@@ -206,10 +212,45 @@ pub(crate) fn setup_string_iterator_proto_in_env(
 }
 
 pub(crate) fn setup_array_iterator_proto(vm: &mut Vm) -> error::Result<()> {
-    let next_fn = vm.new_native_function("next", collection_iterator_next, 0)?;
-    let proto = collection_iterator_proto(vm, Value::Object(next_fn), "Array Iterator")?;
-    vm.iterator_proto = Value::Object(proto);
+    let iterator_base = vm.iterator_base_proto.clone();
+    setup_array_iterator_proto_in_env(vm, vm.global, iterator_base)?;
     Ok(())
+}
+
+pub(crate) fn setup_array_iterator_proto_in_env(
+    vm: &mut Vm,
+    realm: GcIdx,
+    iterator_base: Value,
+) -> error::Result<Value> {
+    let next = vm.new_native_function_in_env("next", collection_iterator_next, 0, realm)?;
+    let proto = Value::Object(GcIdx(vm.heap.allocate(HeapObj::Object(ObjectData {
+        props: Mutex::new(IndexMap::new()),
+        proto: Mutex::new(Some(iterator_base)),
+        extensible: std::sync::atomic::AtomicBool::new(true),
+        class_name: None,
+        private_fields: Mutex::new(std::collections::HashMap::new()),
+        primitive: Mutex::new(None),
+    }))?));
+    if let Value::Object(index) = &proto {
+        vm.heap.with_obj(index.0, |object| {
+            object
+                .props()
+                .lock()
+                .insert(PropertyKey::from("next"), data_prop(Value::Object(next)));
+            let mut tag = data_prop(Value::String(Arc::from("Array Iterator")));
+            tag.writable = false;
+            object.props().lock().insert(
+                PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
+                tag,
+            );
+        });
+    }
+    vm.realm_array_iterator_prototypes
+        .insert(realm.0, proto.clone());
+    if realm == vm.global {
+        vm.iterator_proto = proto.clone();
+    }
+    Ok(proto)
 }
 
 pub(crate) fn setup_map_set_iterator_protos(vm: &mut Vm) -> error::Result<()> {
@@ -275,6 +316,12 @@ fn collection_iterator_next(
     };
     let Some((source, kind, raw_index)) = vm.heap.with_obj(iter_idx.0, |obj| {
         if let HeapObj::CollectionIterator(iter) = obj {
+            if matches!(
+                iter.kind,
+                CollectionIteratorKind::WrappedIterator | CollectionIteratorKind::StringValues
+            ) {
+                return None;
+            }
             Some((
                 iter.source.clone(),
                 iter.kind,
@@ -292,7 +339,6 @@ fn collection_iterator_next(
     let index = raw_index;
 
     let next_value = match (&source, kind) {
-        (_, CollectionIteratorKind::StringValues) => None,
         (
             _,
             kind @ (CollectionIteratorKind::ArrayEntries

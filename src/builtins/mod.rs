@@ -2622,6 +2622,121 @@ fn make_regexp_constructor_in_env(vm: &mut Vm, env: GcIdx) -> error::Result<(GcI
     Ok((regex_ctor, regex_proto))
 }
 
+const ARRAY_PROTOTYPE_METHODS: &[(&str, NativeFn, usize)] = &[
+    ("push", array_push, 1),
+    ("pop", array_pop, 0),
+    ("join", array_join, 1),
+    ("map", array_map, 1),
+    ("filter", array_filter, 1),
+    ("reduce", array_reduce, 1),
+    ("reduceRight", array_reduce_right, 1),
+    ("toReversed", array_to_reversed, 0),
+    ("toSorted", array_to_sorted, 1),
+    ("toSpliced", array_to_spliced, 2),
+    ("with", array_with, 2),
+    ("forEach", array_for_each, 1),
+    ("indexOf", array_index_of, 1),
+    ("includes", array_includes, 1),
+    ("slice", array_slice, 2),
+    ("concat", array_concat, 1),
+    ("find", array_find, 1),
+    ("findIndex", array_find_index, 1),
+    ("findLast", array_find_last, 1),
+    ("findLastIndex", array_find_last_index, 1),
+    ("fill", array_fill, 1),
+    ("some", array_some, 1),
+    ("every", array_every, 1),
+    ("reverse", array_reverse, 0),
+    ("sort", array_sort, 1),
+    ("shift", array_shift, 0),
+    ("unshift", array_unshift, 1),
+    ("splice", array_splice, 2),
+    ("lastIndexOf", array_last_index_of, 1),
+    ("at", array_at, 1),
+    ("flat", array_flat, 0),
+    ("flatMap", array_flat_map, 1),
+    ("copyWithin", array_copy_within, 2),
+    ("keys", array_keys, 0),
+    ("values", array_values, 0),
+    ("entries", array_entries, 0),
+    ("toString", array_to_string, 0),
+    ("toLocaleString", array_to_string, 0),
+];
+
+fn install_array_intrinsic_in_env(
+    vm: &mut Vm,
+    env: GcIdx,
+    realm_global: Option<&Value>,
+) -> error::Result<(GcIdx, GcIdx)> {
+    let (constructor, prototype) = make_builtin_constructor_with_in_env(
+        vm,
+        "Array",
+        1,
+        array_constructor,
+        ARRAY_PROTOTYPE_METHODS,
+        env,
+    )?;
+    let constructor_value = Value::Object(constructor);
+    let prototype_value = Value::Object(prototype);
+    let mut pin_count = vm.pin(&constructor_value);
+    pin_count += vm.pin(&prototype_value);
+
+    let function_prototype = vm
+        .realm_function_prototypes
+        .get(&env.0)
+        .cloned()
+        .unwrap_or_else(|| vm.function_proto.clone());
+    set_function_object_proto(vm, constructor, &function_prototype);
+    let object_prototype = vm
+        .realm_object_prototypes
+        .get(&env.0)
+        .cloned()
+        .unwrap_or_else(|| vm.object_proto.clone());
+    vm.heap.with_obj(prototype.0, |object| {
+        *object.proto().lock() = Some(object_prototype);
+    });
+
+    let values = vm.get_property(&prototype_value, "values")?;
+    vm.heap.with_obj(prototype.0, |object| {
+        object.props().lock().insert(
+            PropertyKey::Symbol(vm.well_known_symbols.iterator),
+            data_prop(values),
+        );
+    });
+
+    for (name, function, length) in [
+        ("isArray", array_is_array as NativeFn, 1),
+        ("from", array_from as NativeFn, 1),
+        ("of", array_of as NativeFn, 0),
+    ] {
+        let method = vm.new_native_function_in_env(name, function, length, env)?;
+        vm.heap.with_obj(constructor.0, |object| {
+            object
+                .props()
+                .lock()
+                .insert(PropertyKey::from(name), data_prop(Value::Object(method)));
+        });
+    }
+    let species =
+        vm.new_native_function_in_env("get [Symbol.species]", promise_species_get, 0, env)?;
+    vm.heap.with_obj(constructor.0, |object| {
+        object.props().lock().insert(
+            PropertyKey::Symbol(vm.well_known_symbols.species),
+            accessor_get_prop(Value::Object(species)),
+        );
+    });
+
+    vm.realm_array_prototypes
+        .insert(env.0, prototype_value.clone());
+    if env == vm.global {
+        define_global(vm, "Array", constructor_value);
+    } else if let Some(global) = realm_global {
+        define_realm_global(vm, env, global, "Array", constructor_value);
+    }
+    vm.unpin_many(pin_count);
+    Ok((constructor, prototype))
+}
+
 fn make_test262_realm(vm: &mut Vm) -> error::Result<Value> {
     let realm_env = crate::environment::new_env(&vm.heap, None, true)?;
     let global_idx = vm.heap.allocate(HeapObj::Object(crate::value::ObjectData {
@@ -2661,9 +2776,6 @@ fn make_test262_realm(vm: &mut Vm) -> error::Result<Value> {
     );
     if let Some(object) = crate::environment::get(&vm.heap, vm.global, "Object") {
         define_realm_global(vm, realm_env, &global, "Object", object);
-    }
-    if let Some(array) = crate::environment::get(&vm.heap, vm.global, "Array") {
-        define_realm_global(vm, realm_env, &global, "Array", array);
     }
     if let Some(bigint) = crate::environment::get(&vm.heap, vm.global, "BigInt") {
         define_realm_global(vm, realm_env, &global, "BigInt", bigint);
@@ -2787,19 +2899,46 @@ fn make_test262_realm(vm: &mut Vm) -> error::Result<Value> {
     if let Some(Value::Object(main_object_idx)) =
         crate::environment::get(&vm.heap, vm.global, "Object")
     {
-        let main_props = vm
+        let mut main_props = vm
             .heap
             .with_obj(main_object_idx.0, |obj| obj.props().lock().clone());
+        let main_prototype = main_props
+            .get(&PropertyKey::from("prototype"))
+            .map(|descriptor| descriptor.value.clone())
+            .ok_or_else(|| Error::internal("missing Object prototype intrinsic"))?;
+        let prototype_props = match main_prototype {
+            Value::Object(index) => vm
+                .heap
+                .with_obj(index.0, |object| object.props().lock().clone()),
+            _ => return Err(Error::internal("Object prototype is not an object")),
+        };
+        let realm_object_prototype_idx = vm.alloc(HeapObj::Object(ObjectData {
+            props: Mutex::new(prototype_props),
+            proto: Mutex::new(None),
+            extensible: AtomicBool::new(true),
+            class_name: Some(Arc::from("Object")),
+            private_fields: Mutex::new(std::collections::HashMap::new()),
+            primitive: Mutex::new(None),
+        }))?;
+        let realm_object_prototype = Value::Object(realm_object_prototype_idx);
+        let prototype_pin = vm.pin(&realm_object_prototype);
+        if let Some(descriptor) = main_props.get_mut(&PropertyKey::from("prototype")) {
+            descriptor.value = realm_object_prototype.clone();
+        }
         let realm_object_idx =
             vm.new_native_function_in_env("Object", object_constructor, 1, realm_env)?;
-        let object_prototype = main_props
-            .get(&PropertyKey::from("prototype"))
-            .map(|desc| desc.value.clone());
         vm.heap.with_obj(realm_object_idx.0, |obj| {
             *obj.props().lock() = main_props;
-            if let (HeapObj::Function(function), Some(prototype)) = (obj, object_prototype) {
-                *function.prototype.lock() = Some(prototype);
+            if let HeapObj::Function(function) = obj {
+                *function.prototype.lock() = Some(realm_object_prototype.clone());
             }
+        });
+        set_function_object_proto(vm, realm_object_idx, &realm_function_proto);
+        vm.heap.with_obj(realm_object_prototype_idx.0, |object| {
+            object.props().lock().insert(
+                PropertyKey::from("constructor"),
+                data_prop(Value::Object(realm_object_idx)),
+            );
         });
         define_realm_global(
             vm,
@@ -2808,11 +2947,20 @@ fn make_test262_realm(vm: &mut Vm) -> error::Result<Value> {
             "Object",
             Value::Object(realm_object_idx),
         );
+        vm.realm_object_prototypes
+            .insert(realm_env.0, realm_object_prototype);
+        vm.unpin_many(prototype_pin);
     }
     install_async_function_intrinsic(vm, realm_env, &realm_function_proto, function_ctor_idx)?;
-    let object_proto = vm.object_proto.clone();
+    let object_proto = vm
+        .realm_object_prototypes
+        .get(&realm_env.0)
+        .cloned()
+        .ok_or_else(|| Error::internal("missing Object prototype intrinsic"))?;
     let realm_iterator_proto =
         install_iterator_intrinsic_in_env(vm, realm_env, Some(&global), object_proto)?;
+    install_array_intrinsic_in_env(vm, realm_env, Some(&global))?;
+    setup_array_iterator_proto_in_env(vm, realm_env, realm_iterator_proto.clone())?;
     let (str_ctor, str_proto) = make_builtin_constructor_with_in_env(
         vm,
         "String",
@@ -3048,7 +3196,13 @@ fn make_test262_realm(vm: &mut Vm) -> error::Result<Value> {
     install_shared_array_buffer_constructor_in_env(vm, realm_env, Some(&global))?;
     install_data_view_constructor_in_env(vm, realm_env, Some(&global))?;
     let (typed_array_ctor, typed_array_proto) = make_typed_array_intrinsic_in_env(vm, realm_env)?;
-    install_typed_array_to_string_alias(vm, &typed_array_proto, vm.array_to_string_fn.clone());
+    let realm_array_prototype = vm
+        .realm_array_prototypes
+        .get(&realm_env.0)
+        .cloned()
+        .ok_or_else(|| Error::internal("missing Array prototype intrinsic"))?;
+    let realm_array_to_string = vm.get_property(&realm_array_prototype, "toString")?;
+    install_typed_array_to_string_alias(vm, &typed_array_proto, realm_array_to_string);
     for entry in typed_array_constructor_entries() {
         install_typed_array_constructor_in_env(
             vm,
@@ -6300,6 +6454,200 @@ fn iterator_identity(_vm: &mut Vm, _args: &[Value], this: Option<Value>) -> erro
     Ok(this.unwrap_or(Value::Undefined))
 }
 
+fn iterator_from(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
+    let input = args.first().cloned().unwrap_or(Value::Undefined);
+    if !matches!(input, Value::Object(_) | Value::String(_)) {
+        return Err(Error::type_err(
+            "Iterator.from requires an object or string",
+        ));
+    }
+
+    let iterator_key = PropertyKey::Symbol(vm.well_known_symbols.iterator);
+    let method = vm.get_property_by_key(&input, &iterator_key)?;
+    let iterator = if method.is_nullish() {
+        input
+    } else {
+        if !is_callable(&method, &vm.heap) {
+            return Err(Error::type_err("iterator method is not callable"));
+        }
+        let method_pin = vm.pin(&method);
+        let result = vm.call_function(&method, &[], Some(input));
+        vm.unpin_many(method_pin);
+        result?
+    };
+    if !matches!(iterator, Value::Object(_)) {
+        return Err(Error::type_err("iterator method must return an object"));
+    }
+
+    let mut pin_count = vm.pin(&iterator);
+    let result = (|| -> error::Result<Value> {
+        let next = vm.get_property(&iterator, "next")?;
+        pin_count += vm.pin(&next);
+        let realm = active_iterator_realm(vm);
+        let constructor = vm
+            .realm_iterator_constructors
+            .get(&realm.0)
+            .cloned()
+            .ok_or_else(|| Error::internal("missing Iterator intrinsic"))?;
+        if vm.ordinary_has_instance(&constructor, &iterator)? {
+            return Ok(iterator.clone());
+        }
+        let proto = vm
+            .realm_wrap_for_valid_iterator_prototypes
+            .get(&realm.0)
+            .cloned()
+            .ok_or_else(|| Error::internal("missing valid Iterator wrapper prototype"))?;
+        let wrapper = Value::Object(vm.alloc(HeapObj::CollectionIterator(
+            CollectionIteratorData {
+                source: iterator.clone(),
+                next_method: Mutex::new(Some(next)),
+                kind: CollectionIteratorKind::WrappedIterator,
+                index: std::sync::atomic::AtomicUsize::new(0),
+                props: Mutex::new(IndexMap::new()),
+                proto: Mutex::new(Some(proto)),
+                extensible: AtomicBool::new(true),
+            },
+        ))?);
+        vm.keep_during_job(&wrapper);
+        Ok(wrapper)
+    })();
+    vm.unpin_many(pin_count);
+    result
+}
+
+fn valid_iterator_wrapper_record(vm: &Vm, this: Option<Value>) -> error::Result<(Value, Value)> {
+    let Some(Value::Object(idx)) = this else {
+        return Err(Error::type_err(
+            "valid Iterator wrapper method called on incompatible receiver",
+        ));
+    };
+    vm.heap
+        .with_obj(idx.0, |obj| {
+            let HeapObj::CollectionIterator(iterator) = obj else {
+                return None;
+            };
+            if iterator.kind != CollectionIteratorKind::WrappedIterator {
+                return None;
+            }
+            iterator
+                .next_method
+                .lock()
+                .clone()
+                .map(|next| (iterator.source.clone(), next))
+        })
+        .ok_or_else(|| {
+            Error::type_err("valid Iterator wrapper method called on incompatible receiver")
+        })
+}
+
+fn valid_iterator_wrapper_next(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let (iterator, next) = valid_iterator_wrapper_record(vm, this)?;
+    vm.call_function(&next, &[], Some(iterator))
+}
+
+fn valid_iterator_wrapper_return(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let (iterator, _) = valid_iterator_wrapper_record(vm, this)?;
+    let return_method = vm.get_property(&iterator, "return")?;
+    if return_method.is_nullish() {
+        let realm = active_iterator_realm(vm);
+        let proto = vm
+            .realm_object_prototypes
+            .get(&realm.0)
+            .cloned()
+            .ok_or_else(|| Error::internal("missing Object prototype intrinsic"))?;
+        let result = Value::Object(vm.alloc(HeapObj::Object(ObjectData {
+            props: Mutex::new(IndexMap::from([
+                (
+                    PropertyKey::from("value"),
+                    PropertyDescriptor::data(Value::Undefined),
+                ),
+                (
+                    PropertyKey::from("done"),
+                    PropertyDescriptor::data(Value::Bool(true)),
+                ),
+            ])),
+            proto: Mutex::new(Some(proto)),
+            extensible: AtomicBool::new(true),
+            class_name: None,
+            private_fields: Mutex::new(std::collections::HashMap::new()),
+            primitive: Mutex::new(None),
+        }))?);
+        vm.keep_during_job(&result);
+        return Ok(result);
+    }
+    if !is_callable(&return_method, &vm.heap) {
+        return Err(Error::type_err("Iterator return is not callable"));
+    }
+    let return_pin = vm.pin(&return_method);
+    let result = vm.call_function(&return_method, &[], Some(iterator));
+    vm.unpin_many(return_pin);
+    result
+}
+
+fn iterator_to_array(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    const MAX_ITERATOR_TO_ARRAY_LEN: usize = 1 << 16;
+
+    let Some(iterator @ Value::Object(_)) = this else {
+        return Err(Error::type_err(
+            "Iterator.prototype.toArray requires an object",
+        ));
+    };
+    let mut pin_count = vm.pin(&iterator);
+    let result = (|| -> error::Result<Value> {
+        let next = vm.get_property(&iterator, "next")?;
+        pin_count += vm.pin(&next);
+        let mut values = Vec::new();
+        loop {
+            let result = vm.call_function(&next, &[], Some(iterator.clone()))?;
+            if !matches!(result, Value::Object(_)) {
+                return Err(Error::type_err("Iterator result is not an object"));
+            }
+            let result_pin = vm.pin(&result);
+            let done_result = (|| -> error::Result<Option<Value>> {
+                let done = vm.get_property(&result, "done")?;
+                if vm.to_boolean(&done) {
+                    return Ok(None);
+                }
+                Ok(Some(vm.get_property(&result, "value")?))
+            })();
+            vm.unpin_many(result_pin);
+            let Some(value) = done_result? else {
+                break;
+            };
+            if values.len() >= MAX_ITERATOR_TO_ARRAY_LEN {
+                if let Ok(return_method) = vm.get_property(&iterator, "return") {
+                    if is_callable(&return_method, &vm.heap) {
+                        let return_pin = vm.pin(&return_method);
+                        let _ = vm.call_function(&return_method, &[], Some(iterator.clone()));
+                        vm.unpin_many(return_pin);
+                    }
+                }
+                return Err(Error::range("Invalid array length"));
+            }
+            pin_count += vm.pin(&value);
+            values.push(value);
+        }
+        let realm = active_iterator_realm(vm);
+        let prototype = vm
+            .realm_array_prototypes
+            .get(&realm.0)
+            .cloned()
+            .ok_or_else(|| Error::internal("missing Array prototype intrinsic"))?;
+        vm.alloc(HeapObj::Array(ArrayData::new(values, Some(prototype))))
+            .map(Value::Object)
+    })();
+    vm.unpin_many(pin_count);
+    result
+}
+
 fn iterator_dispose(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let receiver = this.unwrap_or(Value::Undefined);
     let return_method = vm.get_property(&receiver, "return")?;
@@ -6423,6 +6771,38 @@ fn install_iterator_intrinsic_in_env(
         realm,
     )?;
     pin_count += vm.pin(&Value::Object(tag_set));
+    let wrapper_next =
+        vm.new_native_function_in_env("next", valid_iterator_wrapper_next, 0, realm)?;
+    pin_count += vm.pin(&Value::Object(wrapper_next));
+    let wrapper_return =
+        vm.new_native_function_in_env("return", valid_iterator_wrapper_return, 0, realm)?;
+    pin_count += vm.pin(&Value::Object(wrapper_return));
+    let wrapper_prototype = Value::Object(vm.alloc(HeapObj::Object(ObjectData {
+        props: Mutex::new(IndexMap::new()),
+        proto: Mutex::new(Some(prototype.clone())),
+        extensible: AtomicBool::new(true),
+        class_name: None,
+        private_fields: Mutex::new(std::collections::HashMap::new()),
+        primitive: Mutex::new(None),
+    }))?);
+    pin_count += vm.pin(&wrapper_prototype);
+    if let Value::Object(wrapper_idx) = &wrapper_prototype {
+        vm.heap.with_obj(wrapper_idx.0, |obj| {
+            let mut props = obj.props().lock();
+            props.insert(
+                PropertyKey::from("next"),
+                data_prop(Value::Object(wrapper_next)),
+            );
+            props.insert(
+                PropertyKey::from("return"),
+                data_prop(Value::Object(wrapper_return)),
+            );
+        });
+    }
+    let from = vm.new_native_function_in_env("from", iterator_from, 1, realm)?;
+    pin_count += vm.pin(&Value::Object(from));
+    let to_array = vm.new_native_function_in_env("toArray", iterator_to_array, 0, realm)?;
+    pin_count += vm.pin(&Value::Object(to_array));
     let constructor = vm.new_native_function_in_env("Iterator", iterator_constructor, 0, realm)?;
     let constructor_value = Value::Object(constructor);
     pin_count += vm.pin(&constructor_value);
@@ -6435,6 +6815,9 @@ fn install_iterator_intrinsic_in_env(
             PropertyKey::from("prototype"),
             const_prop(prototype.clone()),
         );
+        obj.props()
+            .lock()
+            .insert(PropertyKey::from("from"), data_prop(Value::Object(from)));
     });
     if let Value::Object(prototype_idx) = &prototype {
         vm.heap.with_obj(prototype_idx.0, |obj| {
@@ -6458,6 +6841,10 @@ fn install_iterator_intrinsic_in_env(
                 PropertyKey::Symbol(vm.well_known_symbols.dispose),
                 data_prop(Value::Object(dispose_fn)),
             );
+            props.insert(
+                PropertyKey::from("toArray"),
+                data_prop(Value::Object(to_array)),
+            );
         });
     }
 
@@ -6465,6 +6852,8 @@ fn install_iterator_intrinsic_in_env(
         .insert(realm.0, constructor_value.clone());
     vm.realm_iterator_prototypes
         .insert(realm.0, prototype.clone());
+    vm.realm_wrap_for_valid_iterator_prototypes
+        .insert(realm.0, wrapper_prototype);
     if realm == vm.global {
         vm.iterator_base_proto = prototype.clone();
         define_global(vm, "Iterator", constructor_value);
@@ -6482,6 +6871,8 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
         vm.new_native_function("Function.prototype", function_proto_noop, 0)?;
     vm.function_proto = Value::Object(function_proto_idx);
     setup(vm)?;
+    vm.realm_object_prototypes
+        .insert(vm.global.0, vm.object_proto.clone());
     // Per spec, Function.prototype's [[Prototype]] is Object.prototype.
     // (Function.prototype is itself a function, but it inherits Object.prototype
     // methods like isPrototypeOf, hasOwnProperty, toString, etc.)
@@ -6629,85 +7020,10 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
     setup_array_iterator_proto(vm)?;
     setup_regexp_string_iterator_proto(vm)?;
     // Array
-    let (array_ctor, array_proto) = make_builtin_constructor_with(
-        vm,
-        "Array",
-        1,
-        array_constructor,
-        &[
-            ("push", array_push, 1),
-            ("pop", array_pop, 0),
-            ("join", array_join, 1),
-            ("map", array_map, 1),
-            ("filter", array_filter, 1),
-            ("reduce", array_reduce, 1),
-            ("reduceRight", array_reduce_right, 1),
-            ("toReversed", array_to_reversed, 0),
-            ("toSorted", array_to_sorted, 1),
-            ("toSpliced", array_to_spliced, 2),
-            ("with", array_with, 2),
-            ("forEach", array_for_each, 1),
-            ("indexOf", array_index_of, 1),
-            ("includes", array_includes, 1),
-            ("slice", array_slice, 2),
-            ("concat", array_concat, 1),
-            ("find", array_find, 1),
-            ("findIndex", array_find_index, 1),
-            ("findLast", array_find_last, 1),
-            ("findLastIndex", array_find_last_index, 1),
-            ("fill", array_fill, 1),
-            ("some", array_some, 1),
-            ("every", array_every, 1),
-            ("reverse", array_reverse, 0),
-            ("sort", array_sort, 1),
-            ("shift", array_shift, 0),
-            ("unshift", array_unshift, 1),
-            ("splice", array_splice, 2),
-            ("lastIndexOf", array_last_index_of, 1),
-            ("at", array_at, 1),
-            ("flat", array_flat, 0),
-            ("flatMap", array_flat_map, 1),
-            ("copyWithin", array_copy_within, 2),
-            ("keys", array_keys, 0),
-            ("values", array_values, 0),
-            ("entries", array_entries, 0),
-            ("toString", array_to_string, 0),
-            ("toLocaleString", array_to_string, 0),
-        ],
-    )?;
-    // override the constructor function to use array_constructor
+    let (_, array_proto) = install_array_intrinsic_in_env(vm, vm.global, None)?;
     vm.array_proto = Value::Object(array_proto);
     vm.array_to_string_fn = vm.get_property(&vm.array_proto.clone(), "toString")?;
     install_typed_array_to_string_alias(vm, &typed_array_proto, vm.array_to_string_fn.clone());
-    let array_values_fn = vm.get_property(&vm.array_proto.clone(), "values")?;
-    vm.heap.with_obj(array_proto.0, |obj| {
-        obj.props().lock().insert(
-            PropertyKey::Symbol(vm.well_known_symbols.iterator),
-            data_prop(array_values_fn),
-        );
-    });
-    define_global(vm, "Array", Value::Object(array_ctor));
-    // Array statics
-    for (n, f, len) in [
-        ("isArray", array_is_array as NativeFn, 1),
-        ("from", array_from as NativeFn, 1),
-        ("of", array_of as NativeFn, 0),
-    ] {
-        let m = vm.new_native_function(n, f, len)?;
-        vm.heap.with_obj(array_ctor.0, |obj| {
-            obj.props()
-                .lock()
-                .insert(PropertyKey::from(n), data_prop(Value::Object(m)));
-        });
-    }
-    let array_species_getter =
-        vm.new_native_function("get [Symbol.species]", promise_species_get, 0)?;
-    vm.heap.with_obj(array_ctor.0, |obj| {
-        obj.props().lock().insert(
-            PropertyKey::Symbol(vm.well_known_symbols.species),
-            accessor_get_prop(Value::Object(array_species_getter)),
-        );
-    });
     // String
     let (str_ctor, str_proto) = make_builtin_constructor_with(
         vm,

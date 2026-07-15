@@ -227,6 +227,9 @@ pub fn trace_obj(obj: &HeapObj, marked: &[bool], worklist: &mut Vec<usize>) {
         }
         HeapObj::CollectionIterator(it) => {
             push_value(&it.source, worklist);
+            if let Some(next) = it.next_method.lock().as_ref() {
+                push_value(next, worklist);
+            }
         }
         HeapObj::RegExpStringIterator(it) => {
             push_value(&it.matcher, worklist);

@@ -1845,20 +1845,26 @@ impl Vm {
         if !matches!(iter_obj, Value::Object(_)) {
             return Err(Error::type_err("iterator method must return an object"));
         }
-        let next = self.get_property(&iter_obj, "next")?;
-        let it = HeapObj::Iterator(crate::value::IteratorData {
-            items: Mutex::new(Vec::new()),
-            index: std::sync::atomic::AtomicUsize::new(0),
-            lazy_iter: Mutex::new(Some(iter_obj)),
-            lazy_next: Mutex::new(Some(next)),
-            generator: Mutex::new(None),
-            array_like: Mutex::new(None),
-            for_in_source: Mutex::new(None),
-            for_in_key_sources: Mutex::new(Vec::new()),
-            async_from_sync: AtomicBool::new(false),
-            done: std::sync::atomic::AtomicBool::new(false),
-        });
-        Ok(Value::Object(GcIdx(self.heap.allocate(it)?)))
+        let mut pin_count = self.pin(&iter_obj);
+        let result = (|| -> error::Result<Value> {
+            let next = self.get_property(&iter_obj, "next")?;
+            pin_count += self.pin(&next);
+            let it = HeapObj::Iterator(crate::value::IteratorData {
+                items: Mutex::new(Vec::new()),
+                index: std::sync::atomic::AtomicUsize::new(0),
+                lazy_iter: Mutex::new(Some(iter_obj)),
+                lazy_next: Mutex::new(Some(next)),
+                generator: Mutex::new(None),
+                array_like: Mutex::new(None),
+                for_in_source: Mutex::new(None),
+                for_in_key_sources: Mutex::new(Vec::new()),
+                async_from_sync: AtomicBool::new(false),
+                done: std::sync::atomic::AtomicBool::new(false),
+            });
+            self.alloc(it).map(Value::Object)
+        })();
+        self.unpin_many(pin_count);
+        result
     }
 
     /// Build a lazy iterator wrapping a generator object. Each `next()` resumes
@@ -2325,7 +2331,16 @@ impl Vm {
             if !matches!(result, Value::Object(_)) {
                 return Err(Error::type_err("Iterator result is not an object"));
             }
-            let done = self.get_property(&result, "done")?.is_truthy();
+            let result_pin = self.pin(&result);
+            let fields = (|| -> error::Result<(Value, bool)> {
+                let done = self.get_property(&result, "done")?.is_truthy();
+                if done {
+                    return Ok((Value::Undefined, true));
+                }
+                Ok((self.get_property(&result, "value")?, false))
+            })();
+            self.unpin_many(result_pin);
+            let (value, done) = fields?;
             if done {
                 if let Value::Object(idx) = it {
                     self.heap.with_obj(idx.0, |o| {
@@ -2336,7 +2351,6 @@ impl Vm {
                 }
                 return Ok((Value::Undefined, true));
             }
-            let value = self.get_property(&result, "value")?;
             Ok((value, done))
         } else {
             let idx = match it {

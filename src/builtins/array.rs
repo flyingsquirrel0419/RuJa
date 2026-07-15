@@ -4,110 +4,123 @@ use super::*;
 // Array prototype + constructor
 // =========================================================================
 
-pub(crate) fn array_from(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+pub(crate) fn array_from(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let src_val = args.first().cloned().unwrap_or(Value::Undefined);
-    let map_fn = args.get(1).cloned();
-    // Array-like or iterable
-    let mut items: Vec<Value> = Vec::new();
-    // Cap total materialized elements so an infinite or huge iterable (e.g.
-    // a generator that yields forever) cannot OOM the host. Matches the
-    // engine's dense-array model.
+    let constructor = this.unwrap_or(Value::Undefined);
+    let map_fn = match args.get(1) {
+        None | Some(Value::Undefined) => None,
+        Some(value) if is_callable(value, &vm.heap) => Some(value.clone()),
+        Some(_) => return Err(Error::type_err("Array.from mapper is not callable")),
+    };
+    let this_arg = args.get(2).cloned().unwrap_or(Value::Undefined);
     // Cap total materialized elements so an infinite or huge iterable (e.g.
     // a generator that yields forever) cannot OOM the host. 65k keeps an
     // infinite iterable from running for many seconds before the cap trips.
     const MAX_ARRAY_FROM_LEN: usize = 1 << 16; // 65,536
-    if let Value::Object(idx) = &src_val {
-        // Iterable protocol first: if the object has a Symbol.iterator
-        // (generators, sets, maps, user iterables), drain it. This was
-        // missing before, so `Array.from(gen())` returned [] instead of the
-        // elements. Capped so an infinite iterable cannot OOM the host.
-        let has_iter = vm.heap.with_obj(idx.0, |o| {
-            matches!(
-                o,
-                HeapObj::Generator(_)
-                    | HeapObj::LazyGenerator(_)
-                    | HeapObj::Map(_)
-                    | HeapObj::Set(_)
-            )
-        }) || {
-            let pkey = crate::value::PropertyKey::Symbol(vm.well_known_symbols.iterator);
-            vm.has_property_key(&src_val, &pkey)?
-        };
-        if has_iter {
-            let iter = vm.make_iterator(&src_val)?;
-            // The iterator must survive any GC triggered by `iterator_next`
-            // (which allocates result objects). Without pinning, the iterator
-            // was collected mid-loop, so an infinite iterable stopped at ~593
-            // elements instead of running to the cap.
-            let pin = vm.pin(&iter);
+    if src_val.is_nullish() {
+        return Err(Error::type_err("Array.from requires an array-like value"));
+    }
+
+    let iterator_key = PropertyKey::Symbol(vm.well_known_symbols.iterator);
+    let iterator_method = vm.get_property_by_key(&src_val, &iterator_key)?;
+    if !iterator_method.is_nullish() {
+        if !is_callable(&iterator_method, &vm.heap) {
+            return Err(Error::type_err("iterator method is not callable"));
+        }
+        let mut pin_count = vm.pin(&iterator_method);
+        let result = (|| -> error::Result<Value> {
+            let target = if vm.is_constructor_value(&constructor) {
+                vm.construct(&constructor, &[])?
+            } else {
+                make_value_array(vm, Vec::new())?
+            };
+            pin_count += vm.pin(&target);
+            let iter_obj = vm.call_function(&iterator_method, &[], Some(src_val.clone()))?;
+            let iter = vm.new_lazy_iterator(iter_obj)?;
+            pin_count += vm.pin(&iter);
+            let mut index = 0usize;
             loop {
-                if items.len() >= MAX_ARRAY_FROM_LEN {
-                    vm.unpin(pin);
-                    return Err(Error::range("Invalid array length"));
-                }
-                let (v, done) = vm.iterator_next(&iter)?;
+                let (mut value, done) = vm.iterator_next(&iter)?;
                 if done {
                     break;
                 }
-                items.push(v);
+                if index >= MAX_ARRAY_FROM_LEN {
+                    let _ = vm.iterator_close(&iter);
+                    return Err(Error::range("Invalid array length"));
+                }
+                if let Some(mapper) = &map_fn {
+                    value = match vm.call_function(
+                        mapper,
+                        &[value, Value::Number(index as f64)],
+                        Some(this_arg.clone()),
+                    ) {
+                        Ok(value) => value,
+                        Err(error) => {
+                            let _ = vm.iterator_close(&iter);
+                            return Err(error);
+                        }
+                    };
+                }
+                let value_pin = vm.pin(&value);
+                let define_result = vm.define_own_property_or_throw(
+                    &target,
+                    PropertyKey::from(index.to_string()),
+                    PropertyDescriptor::data(value),
+                );
+                vm.unpin_many(value_pin);
+                if let Err(error) = define_result {
+                    let _ = vm.iterator_close(&iter);
+                    return Err(error);
+                }
+                index += 1;
             }
-            vm.unpin(pin);
-            return finish_array_from(vm, items, map_fn);
-        }
-        let (is_arr, arr_items, is_iterator_obj) = vm.heap.with_obj(idx.0, |o| {
-            if let HeapObj::Array(a) = o {
-                (true, a.items.lock().clone(), false)
-            } else if let HeapObj::Iterator(_) = o {
-                (false, Vec::new(), true)
-            } else {
-                (false, Vec::new(), false)
-            }
-        });
-        if is_arr {
-            items = arr_items;
-        } else if !is_iterator_obj {
-            // array-like: read index 0..len. Cap to prevent untrusted input
-            // like `{length: 2**26}` from forcing a multi-second / multi-GB
-            // materialization (a trivial DoS). Node tolerates large lengths
-            // but RuJa materializes densely, so we bound it.
-            let len_value = vm.get_property(&src_val, "length")?;
-            let len_number = vm.to_number(&len_value)?;
-            let len = if len_number.is_nan() || len_number <= 0.0 {
-                0
-            } else {
-                len_number.trunc().min((MAX_ARRAY_FROM_LEN + 1) as f64) as usize
-            };
-            if len > MAX_ARRAY_FROM_LEN {
-                return Err(Error::range("Invalid array length"));
-            }
-            for i in 0..len {
-                let key = i.to_string();
-                let v = vm.get_property(&src_val, &key)?;
-                items.push(v);
-            }
-        }
-    } else if let Value::String(s) = &src_val {
-        for ch in s.chars() {
-            items.push(Value::String(Arc::from(ch.to_string().as_str())));
-        }
+            vm.set_property_strict(&target, "length", Value::Number(index as f64))?;
+            Ok(target)
+        })();
+        vm.unpin_many(pin_count);
+        return result;
     }
-    finish_array_from(vm, items, map_fn)
-}
 
-/// Apply an optional map function and box the items into an Array.
-pub(crate) fn finish_array_from(
-    vm: &mut Vm,
-    mut items: Vec<Value>,
-    map_fn: Option<Value>,
-) -> error::Result<Value> {
-    if let Some(mfn) = map_fn {
-        let mut mapped = Vec::new();
-        for (i, v) in items.iter().enumerate() {
-            mapped.push(vm.call_function(&mfn, &[v.clone(), Value::Number(i as f64)], None)?);
-        }
-        items = mapped;
+    let len_value = vm.get_property(&src_val, "length")?;
+    let len_number = vm.to_number(&len_value)?;
+    let len = if len_number.is_nan() || len_number <= 0.0 {
+        0
+    } else {
+        len_number.trunc().min((MAX_ARRAY_FROM_LEN + 1) as f64) as usize
+    };
+    if len > MAX_ARRAY_FROM_LEN {
+        return Err(Error::range("Invalid array length"));
     }
-    make_value_array(vm, items)
+    let target = if vm.is_constructor_value(&constructor) {
+        vm.construct(&constructor, &[Value::Number(len as f64)])?
+    } else {
+        make_value_array(vm, Vec::new())?
+    };
+    let mut pin_count = vm.pin(&target);
+    let result = (|| -> error::Result<Value> {
+        for index in 0..len {
+            let mut value = vm.get_property(&src_val, &index.to_string())?;
+            if let Some(mapper) = &map_fn {
+                value = vm.call_function(
+                    mapper,
+                    &[value, Value::Number(index as f64)],
+                    Some(this_arg.clone()),
+                )?;
+            }
+            let value_pin = vm.pin(&value);
+            let define_result = vm.define_own_property_or_throw(
+                &target,
+                PropertyKey::from(index.to_string()),
+                PropertyDescriptor::data(value),
+            );
+            vm.unpin_many(value_pin);
+            define_result?;
+        }
+        vm.set_property_strict(&target, "length", Value::Number(len as f64))?;
+        Ok(target.clone())
+    })();
+    vm.unpin_many(pin_count);
+    result
 }
 pub(crate) fn array_of(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let len = args.len();
@@ -1371,7 +1384,12 @@ pub(crate) fn array_constructor(
     } else {
         (args.to_vec(), None)
     };
-    let default_proto = vm.array_proto.clone();
+    let realm = vm.current_realm_global_env();
+    let default_proto = vm
+        .realm_array_prototypes
+        .get(&realm.0)
+        .cloned()
+        .unwrap_or_else(|| vm.array_proto.clone());
     let proto = native_constructor_prototype_with_default(vm, "Array", default_proto)?;
     let arr = if let Some(len) = holes_len {
         HeapObj::Array(ArrayData::new_holes(len, Some(proto)))

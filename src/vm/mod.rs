@@ -134,6 +134,10 @@ pub struct Vm {
     pub(crate) global_constants: Vec<Value>,
     /// Realm global environment index -> that Realm's global object.
     pub(crate) realm_globals: HashMap<usize, Value>,
+    /// Realm global environment index -> original `%Object.prototype%`.
+    pub(crate) realm_object_prototypes: HashMap<usize, Value>,
+    /// Realm global environment index -> original `%Array.prototype%`.
+    pub(crate) realm_array_prototypes: HashMap<usize, Value>,
     /// Realm global environment index + primitive kind -> that Realm's
     /// intrinsic wrapper prototype used by ToObject and primitive references.
     pub(crate) realm_primitive_prototypes: HashMap<(usize, PrimitivePrototypeKind), Value>,
@@ -154,6 +158,8 @@ pub struct Vm {
     /// Realm global environment -> `%Iterator%` and `%Iterator.prototype%`.
     pub(crate) realm_iterator_constructors: HashMap<usize, Value>,
     pub(crate) realm_iterator_prototypes: HashMap<usize, Value>,
+    pub(crate) realm_array_iterator_prototypes: HashMap<usize, Value>,
+    pub(crate) realm_wrap_for_valid_iterator_prototypes: HashMap<usize, Value>,
     pub(crate) realm_string_iterator_prototypes: HashMap<usize, Value>,
     /// Realm global environment index + native error constructor name -> that
     /// Realm's original intrinsic Error prototype. Native errors must not
@@ -571,6 +577,8 @@ impl Vm {
             global_names: HashMap::new(),
             global_constants: Vec::new(),
             realm_globals: HashMap::new(),
+            realm_object_prototypes: HashMap::new(),
+            realm_array_prototypes: HashMap::new(),
             realm_primitive_prototypes: HashMap::new(),
             realm_eval_functions: HashMap::new(),
             realm_throw_type_errors: HashMap::new(),
@@ -578,6 +586,8 @@ impl Vm {
             realm_async_function_prototypes: HashMap::new(),
             realm_iterator_constructors: HashMap::new(),
             realm_iterator_prototypes: HashMap::new(),
+            realm_array_iterator_prototypes: HashMap::new(),
+            realm_wrap_for_valid_iterator_prototypes: HashMap::new(),
             realm_string_iterator_prototypes: HashMap::new(),
             realm_error_prototypes: HashMap::new(),
             realm_regexp_prototypes: HashMap::new(),

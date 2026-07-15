@@ -25,6 +25,47 @@ built-ins/Iterator/prototype/Symbol.toStringTag/weird-setter.js
 built-ins/Iterator/prototype/constructor/prop-desc.js
 built-ins/Iterator/prototype/constructor/weird-setter.js
 
+# Iterator.from and %WrapForValidIteratorPrototype%.
+built-ins/Iterator/from/callable.js
+built-ins/Iterator/from/get-next-method-only-once.js
+built-ins/Iterator/from/get-next-method-throws.js
+built-ins/Iterator/from/get-return-method-when-call-return.js
+built-ins/Iterator/from/is-function.js
+built-ins/Iterator/from/iterable-primitives.js
+built-ins/Iterator/from/iterable-to-iterator-fallback.js
+built-ins/Iterator/from/length.js
+built-ins/Iterator/from/name.js
+built-ins/Iterator/from/non-constructible.js
+built-ins/Iterator/from/primitives.js
+built-ins/Iterator/from/prop-desc.js
+built-ins/Iterator/from/proto.js
+built-ins/Iterator/from/result-proto.js
+built-ins/Iterator/from/return-method-calls-base-return-method.js
+built-ins/Iterator/from/return-method-returns-iterator-result.js
+built-ins/Iterator/from/return-method-throws-for-invalid-this.js
+built-ins/Iterator/from/supports-iterable.js
+built-ins/Iterator/from/supports-iterator.js
+
+# First eager Iterator helper.
+built-ins/Iterator/prototype/toArray/callable.js
+built-ins/Iterator/prototype/toArray/get-next-method-only-once.js
+built-ins/Iterator/prototype/toArray/get-next-method-throws.js
+built-ins/Iterator/prototype/toArray/is-function.js
+built-ins/Iterator/prototype/toArray/iterator-already-exhausted.js
+built-ins/Iterator/prototype/toArray/length.js
+built-ins/Iterator/prototype/toArray/name.js
+built-ins/Iterator/prototype/toArray/next-method-returns-non-object.js
+built-ins/Iterator/prototype/toArray/next-method-returns-throwing-done.js
+built-ins/Iterator/prototype/toArray/next-method-returns-throwing-value-done.js
+built-ins/Iterator/prototype/toArray/next-method-returns-throwing-value.js
+built-ins/Iterator/prototype/toArray/next-method-throws.js
+built-ins/Iterator/prototype/toArray/non-constructible.js
+built-ins/Iterator/prototype/toArray/prop-desc.js
+built-ins/Iterator/prototype/toArray/proto.js
+built-ins/Iterator/prototype/toArray/this-non-callable-next.js
+built-ins/Iterator/prototype/toArray/this-non-object.js
+built-ins/Iterator/prototype/toArray/this-plain-iterator.js
+
 # Concrete iterator prototypes admitted with the common base hierarchy.
 built-ins/GeneratorPrototype/Symbol.toStringTag.js
 

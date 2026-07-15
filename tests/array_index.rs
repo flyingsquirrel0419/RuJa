@@ -248,6 +248,71 @@ fn array_from_small_length_works() {
     assert_eq!(v, Value::String(std::sync::Arc::from("a-b")));
 }
 
+#[test]
+fn array_from_observes_iterators_on_primitives() {
+    assert_eq!(
+        run(r#"
+            Number.prototype[Symbol.iterator] = function* () {
+              for (var i = 0; i < this; i += 1) yield i;
+            };
+            Array.from(4).join(",");
+            "#,),
+        Value::String(std::sync::Arc::from("0,1,2,3"))
+    );
+}
+
+#[test]
+fn array_from_maps_during_iteration_and_closes_on_mapper_error() {
+    assert_eq!(
+        run(r#"
+            var steps = 0;
+            var closes = 0;
+            var iteratorGets = 0;
+            var source = {
+              get [Symbol.iterator]() {
+                iteratorGets += 1;
+                return function() {
+                  return {
+                    next: function() {
+                      steps += 1;
+                      return { value: steps, done: false };
+                    },
+                    return: function() {
+                      closes += 1;
+                      return { done: true };
+                    }
+                  };
+                };
+              }
+            };
+            var nonCallableCheckedFirst = false;
+            try { Array.from(source, 0); }
+            catch (error) {
+              nonCallableCheckedFirst = error instanceof TypeError && iteratorGets === 0;
+            }
+            try { Array.from(source, function() { throw new Error("map"); }); }
+            catch (error) {}
+            [nonCallableCheckedFirst, iteratorGets, steps, closes].join("|");
+            "#,),
+        Value::String(std::sync::Arc::from("true|1|1|1"))
+    );
+}
+
+#[test]
+fn array_from_array_like_fallback_observes_holes_through_prototypes() {
+    assert_eq!(
+        run(r#"
+            var source = [,];
+            source[Symbol.iterator] = null;
+            Array.prototype[0] = 42;
+            var value = Array.from(source)[0];
+            delete Array.prototype[0];
+            value;
+            "#,),
+        Value::Number(42.0)
+    );
+}
+
 // --- toFixed / toExponential / toPrecision range conformance ---
 
 #[test]
@@ -621,5 +686,46 @@ fn array_from_infinite_iterable_capped() {
         res.contains("Invalid array length"),
         "expected RangeError, got: {}",
         res
+    );
+}
+
+/// The host-safety cap rejects only an element beyond 65,536. A finite
+/// iterable with exactly that many elements must still complete normally.
+#[test]
+fn array_from_accepts_finite_iterable_at_cap() {
+    let v = run_big_stack(
+        "function* values() { for (var i = 0; i < 65536; i++) yield i; } Array.from(values()).length",
+    );
+    assert_eq!(v, Value::Number(65536.0));
+}
+
+/// Iterable Array.from constructs its generic result before obtaining the
+/// iterator, then defines mapped elements directly on that result.
+#[test]
+fn array_from_uses_generic_constructor_before_iterator() {
+    let v = run(r#"
+            var log = [];
+            function C() { log.push("construct"); }
+            var source = {};
+            source[Symbol.iterator] = function() {
+                log.push("iterator");
+                var done = false;
+                return {
+                    next: function() {
+                        if (done) return { done: true };
+                        done = true;
+                        return { value: 4, done: false };
+                    }
+                };
+            };
+            var result = Array.from.call(C, source, function(value) {
+                log.push("map");
+                return value + 1;
+            });
+            [result instanceof C, result[0], result.length, log.join(",")].join("|");
+        "#);
+    assert_eq!(
+        v,
+        Value::String(std::sync::Arc::from("true|5|1|construct,iterator,map"))
     );
 }
