@@ -30,7 +30,7 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 60.8% of all matrix files; 81.9% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 60.9% of all matrix files; 81.9% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (12751 pass / 0 fail on current Test262; 12752 / 0 on the pinned checkout) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
@@ -5502,7 +5502,7 @@ artifacts are retained at
 
 ## Iterator intrinsic and helper core
 
-`tools/test262_iterator_admission.txt` freezes exactly 315 files: 23
+`tools/test262_iterator_admission.txt` freezes exactly 348 files: 23
 `built-ins/Iterator` files covering the global constructor, subclass
 construction, `%Iterator.prototype%[Symbol.iterator]`,
 `%Iterator.prototype%[Symbol.dispose]`, and the `constructor` and
@@ -5513,8 +5513,9 @@ all 18 `Iterator.prototype.toArray` files; plus all 36
 `Iterator.prototype.map` and 37 `Iterator.prototype.filter` files; plus all 33
 `Iterator.prototype.take` and 34 `Iterator.prototype.drop` files; plus all 44
 `Iterator.prototype.flatMap` files; all 30 `Iterator.prototype.reduce` files;
-and all 27 `Iterator.prototype.forEach` files. The runner and analyzer admit
-only those exact paths. Remaining helpers, sequencing,
+all 27 `Iterator.prototype.forEach` files; and all 33
+`Iterator.prototype.some` files. The runner and analyzer admit only those exact
+paths. Remaining helpers, sequencing,
 `concat`, `zip`, and `zipKeyed` stay behind their feature gates.
 
 The global constructor and prototype are Realm-specific. Direct calls and
@@ -5535,11 +5536,12 @@ host-safety materialization cap closes the source iterator before throwing.
 The shared `Array.from` path also follows iterable-first generic-constructor
 and per-step mapping semantics with IteratorClose on abrupt completion.
 `Iterator.prototype.map` and `filter` use Realm-specific branded lazy helpers
-with cached direct `next`, deferred callback execution, callback counters,
-ToBoolean filtering, dynamic IteratorClose, and distinct suspended-start,
+with cached direct `next`, deferred callback execution, exact mathematical
+callback counters, ToBoolean filtering, dynamic IteratorClose, and distinct
+suspended-start,
 executing, suspended-yield, and completed states. Helper GC slots, integrity
 operations, result/error Realms, `Iterator Helper` tagging, close-time fuel
-aborts, and 32-bit portability are covered by Rust regressions.
+aborts, and short-lock counter updates are covered by Rust regressions.
 `Iterator.prototype.take` and `drop` reuse those branded helpers with exact
 finite `BigUint` limits and an explicit positive-infinity state. Limit
 conversion and close ordering, boundary close, skipped-value elision, native
@@ -5559,10 +5561,18 @@ error. Realm behavior and native-loop fuel have dedicated regressions.
 returns undefined. Validation ordering, cached `next`, callback-only close,
 object-value GC roots, method-Realm errors, and native-loop fuel are covered by
 Rust and Test262 regressions.
+`Iterator.prototype.some` eagerly invokes `(value, index)` predicates and
+returns a Boolean. Exhaustion does not close; predicate abrupt completion
+closes while preserving the original error; a truthy result performs normal
+close and propagates return lookup, call, and non-object-result failures.
+Object-value roots, method-Realm errors, and native-loop fuel have dedicated
+regressions. Callback helpers use exact `BigUint` counters and convert the
+mathematical index to Number only at the callback boundary, with no non-spec
+safe-integer exception.
 
-Local verification against Test262 `020cb740` is **301 pass / 0 fail / 213
+Local verification against Test262 `020cb740` is **334 pass / 0 fail / 180
 skip / 514 total** for all of `built-ins/Iterator`; the separately admitted
-Generator and String iterator files also pass, for **315/315** exact manifest
+Generator and String iterator files also pass, for **348/348** exact manifest
 members. `built-ins/Array/from` is **27 pass / 0 fail / 20 skip / 47 total**.
 The related String iterator method,
 `StringIteratorPrototype`, `ArrayIteratorPrototype`, `GeneratorPrototype`,
@@ -5638,6 +5648,14 @@ pass / -27 skip**. The aggregate is **29385 pass / 6486 fail / 12434 skip / 12
 timeout / 0 error / 48317 total / 35871 pass-or-fail executed**, or **60.8%**
 of all files and **81.9%** of executed files. Artifacts are retained at
 `/tmp/ruja-artifacts-iterator-foreach-feature.7r4JfZ`.
+
+Feature commit `74f540b` passed CI `29415121304` and full matrix
+`29415121337`. Of the 30 downloaded result artifacts, 29 are byte-for-byte
+identical to the forEach documentation baseline; built-ins moves exactly **+33
+pass / -33 skip**. The aggregate is **29418 pass / 6486 fail / 12401 skip / 12
+timeout / 0 error / 48317 total / 35904 pass-or-fail executed**, or **60.9%**
+of all files and **81.9%** of executed files. Artifacts are retained at
+`/tmp/ruja-artifacts-iterator-some-feature.QN9R24`.
 
 ## Why the full-suite rate is not higher
 

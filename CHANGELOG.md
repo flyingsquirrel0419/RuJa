@@ -113,8 +113,9 @@
   callback indices, close dynamically on callback failures, distinguish all
   helper suspension states during reentrant close, and preserve non-catchable
   fuel aborts. GC tracing, helper integrity operations, `Iterator Helper`
-  tagging, Realm-specific results/errors, and 32-bit counters are covered by
-  regressions. The exact Iterator manifest expands to **147/147**, including
+  tagging, Realm-specific results/errors, and exact mathematical counters are
+  covered by regressions. The exact Iterator manifest expands to **147/147**,
+  including
   all **36 map** and **37 filter** files. Commit `8c911a5` passed CI
   `29390731665` and full matrix `29390731676`; only built-ins changes by
   **+73 pass / -73 skip**, producing **29217 pass / 6486 fail / 12602 skip /
@@ -160,6 +161,17 @@
   **315/315** with all **27 forEach** files. Commit `20dc605` passed CI
   `29410076808` and full matrix `29410076834`; only built-ins changes by
   **+27 pass / -27 skip**, producing **29385 pass / 6486 fail / 12434 skip /
+  12 timeout / 0 error / 48317 total**.
+- `Iterator.prototype.some` now eagerly consumes direct iterators with cached
+  `next`, exact mathematical callback indices, method-Realm errors, native-loop
+  fuel, and GC-rooted object values. Exhaustion does not close; predicate
+  failures perform abrupt close preserving the original error; truthy results
+  perform normal close and propagate close failures. Lazy `map`/`filter`/
+  `flatMap` and eager `reduce`/`forEach` counters now share exact `BigUint`
+  semantics without the previous non-spec safe-integer cap. The exact Iterator
+  manifest expands to **348/348** with all **33 some** files. Commit `74f540b`
+  passed CI `29415121304` and full matrix `29415121337`; only built-ins changes
+  by **+33 pass / -33 skip**, producing **29418 pass / 6486 fail / 12401 skip /
   12 timeout / 0 error / 48317 total**.
 - Private instance and static auto-accessor decorators now expose the private
   name and branded `access` functions while keeping their synthetic backing
