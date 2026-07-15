@@ -5502,7 +5502,7 @@ artifacts are retained at
 
 ## Iterator intrinsic and helper core
 
-`tools/test262_iterator_admission.txt` freezes exactly 288 files: 23
+`tools/test262_iterator_admission.txt` freezes exactly 315 files: 23
 `built-ins/Iterator` files covering the global constructor, subclass
 construction, `%Iterator.prototype%[Symbol.iterator]`,
 `%Iterator.prototype%[Symbol.dispose]`, and the `constructor` and
@@ -5512,8 +5512,9 @@ all seven `%StringIteratorPrototype%` files; all 19 `Iterator.from` files; and
 all 18 `Iterator.prototype.toArray` files; plus all 36
 `Iterator.prototype.map` and 37 `Iterator.prototype.filter` files; plus all 33
 `Iterator.prototype.take` and 34 `Iterator.prototype.drop` files; plus all 44
-`Iterator.prototype.flatMap` files; plus all 30 `Iterator.prototype.reduce`
-files. The runner and analyzer admit only those exact paths. Remaining helpers, sequencing,
+`Iterator.prototype.flatMap` files; all 30 `Iterator.prototype.reduce` files;
+and all 27 `Iterator.prototype.forEach` files. The runner and analyzer admit
+only those exact paths. Remaining helpers, sequencing,
 `concat`, `zip`, and `zipKeyed` stay behind their feature gates.
 
 The global constructor and prototype are Realm-specific. Direct calls and
@@ -5554,10 +5555,14 @@ and empty-inner native-loop fuel are covered by dedicated Rust regressions.
 GC-rooted accumulator. Step abrupt completions propagate without close;
 reducer abrupt completions close the source while preserving the original
 error. Realm behavior and native-loop fuel have dedicated regressions.
+`Iterator.prototype.forEach` eagerly invokes `(value, index)` callbacks and
+returns undefined. Validation ordering, cached `next`, callback-only close,
+object-value GC roots, method-Realm errors, and native-loop fuel are covered by
+Rust and Test262 regressions.
 
-Local verification against Test262 `020cb740` is **274 pass / 0 fail / 240
+Local verification against Test262 `020cb740` is **301 pass / 0 fail / 213
 skip / 514 total** for all of `built-ins/Iterator`; the separately admitted
-Generator and String iterator files also pass, for **288/288** exact manifest
+Generator and String iterator files also pass, for **315/315** exact manifest
 members. `built-ins/Array/from` is **27 pass / 0 fail / 20 skip / 47 total**.
 The related String iterator method,
 `StringIteratorPrototype`, `ArrayIteratorPrototype`, `GeneratorPrototype`,
@@ -5625,6 +5630,14 @@ identical to the flatMap documentation baseline; built-ins moves exactly
 skip / 12 timeout / 0 error / 48317 total / 35844 pass-or-fail executed**, or
 **60.8%** of all files and **81.9%** of executed files. Artifacts are retained
 at `/tmp/ruja-artifacts-iterator-reduce-feature.Sk5GRM`.
+
+Feature commit `20dc605` passed CI `29410076808` and full matrix
+`29410076834`. Of the 30 downloaded result artifacts, 29 are byte-for-byte
+identical to the reduce documentation baseline; built-ins moves exactly **+27
+pass / -27 skip**. The aggregate is **29385 pass / 6486 fail / 12434 skip / 12
+timeout / 0 error / 48317 total / 35871 pass-or-fail executed**, or **60.8%**
+of all files and **81.9%** of executed files. Artifacts are retained at
+`/tmp/ruja-artifacts-iterator-foreach-feature.7r4JfZ`.
 
 ## Why the full-suite rate is not higher
 

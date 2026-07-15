@@ -48,7 +48,7 @@ and `pause`, file-backed ES Module graphs with named imports/exports and live
 bindings, relative dynamic imports, and JSON/text import attributes,
 the realm-specific global `Iterator`, common synchronous iterator prototype
 hierarchy, branded Realm-specific String iterators, `Iterator.from`, and
-`Iterator.prototype.toArray` and `reduce`, plus lazy
+`Iterator.prototype.toArray`, `reduce`, and `forEach`, plus lazy
 `Iterator.prototype.map`, `filter`, `flatMap`, `take`, and `drop`,
 length-tracking TypedArray/DataView views, TypedArray constructors,
 indexing, `at`/`copyWithin`/`entries`/`fill`/`filter`/`find`/`findIndex`/

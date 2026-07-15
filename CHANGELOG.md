@@ -152,6 +152,15 @@
   `29405803115`; only built-ins changes by **+30 pass / -30 skip**, producing
   **29358 pass / 6486 fail / 12461 skip / 12 timeout / 0 error / 48317
   total**.
+- `Iterator.prototype.forEach` now eagerly consumes direct iterators with a
+  cached `next`, `(value, index)` callbacks, undefined results, method-Realm
+  errors, native-loop fuel, and GC-rooted object values. Iterator-step errors
+  propagate directly while callback errors close the source and preserve the
+  original abrupt completion. The exact Iterator manifest expands to
+  **315/315** with all **27 forEach** files. Commit `20dc605` passed CI
+  `29410076808` and full matrix `29410076834`; only built-ins changes by
+  **+27 pass / -27 skip**, producing **29385 pass / 6486 fail / 12434 skip /
+  12 timeout / 0 error / 48317 total**.
 - Private instance and static auto-accessor decorators now expose the private
   name and branded `access` functions while keeping their synthetic backing
   storage internal. Optional `get`, `set`, and `init` replacements, extra
