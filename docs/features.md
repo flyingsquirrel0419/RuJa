@@ -85,7 +85,8 @@
   iterables and direct iterators through a Realm-specific valid-iterator
   wrapper, `Iterator.prototype.toArray` eagerly collects an iterator, and the
   Realm-specific Iterator Helper machinery powers lazy `map`, `filter`,
-  `take`, and `drop` pipelines with dynamic close and reentrancy semantics.
+  `flatMap`, `take`, and `drop` pipelines with dynamic close and reentrancy
+  semantics.
 
 ## Property model
 

@@ -49,7 +49,7 @@ bindings, relative dynamic imports, and JSON/text import attributes,
 the realm-specific global `Iterator`, common synchronous iterator prototype
 hierarchy, branded Realm-specific String iterators, `Iterator.from`, and
 `Iterator.prototype.toArray`, plus lazy `Iterator.prototype.map`, `filter`,
-`take`, and `drop`,
+`flatMap`, `take`, and `drop`,
 length-tracking TypedArray/DataView views, TypedArray constructors,
 indexing, `at`/`copyWithin`/`entries`/`fill`/`filter`/`find`/`findIndex`/
 `findLast`/`findLastIndex`/`forEach`/`includes`/`indexOf`/`join`/`keys`/
@@ -65,7 +65,7 @@ for intentionally-unsupported features.
 
 **Supported-subset pass rate: 100.0%** (12,751 tests in `language/statements`
 + `language/expressions` on current Test262, unsupported-feature tests
-skipped). The latest full matrix is 60.6% of all files and 81.9% of executed
+skipped). The latest full matrix is 60.7% of all files and 81.9% of executed
 files — see
 [test262 conformance](docs/test262.md)
 for why these numbers differ.

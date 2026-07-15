@@ -131,6 +131,17 @@
   `29396353596`; only built-ins changes by **+67 pass / -67 skip**, producing
   **29284 pass / 6486 fail / 12535 skip / 12 timeout / 0 error / 48317
   total**.
+- `Iterator.prototype.flatMap` now lazily drains one mapper-produced iterator
+  at a time through the branded Realm-specific helper machinery. Inner
+  iterators cache `next`, remain GC-rooted across stepping and close, reject
+  primitive mapper results, preserve mapper and inner-step errors while
+  closing the outer source, and close inner before outer on explicit return.
+  Reentrant running-state calls and native-loop fuel are covered by Rust
+  regressions. The exact Iterator manifest expands to **258/258** with all
+  **44 flatMap** files. Commit `043852b` passed CI `29401085165` and full
+  matrix `29401085162`; only built-ins changes by **+44 pass / -44 skip**,
+  producing **29328 pass / 6486 fail / 12491 skip / 12 timeout / 0 error /
+  48317 total**.
 - Private instance and static auto-accessor decorators now expose the private
   name and branded `access` functions while keeping their synthetic backing
   storage internal. Optional `get`, `set`, and `init` replacements, extra
