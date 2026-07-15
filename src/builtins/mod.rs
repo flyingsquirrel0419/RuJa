@@ -2811,7 +2811,8 @@ fn make_test262_realm(vm: &mut Vm) -> error::Result<Value> {
     }
     install_async_function_intrinsic(vm, realm_env, &realm_function_proto, function_ctor_idx)?;
     let object_proto = vm.object_proto.clone();
-    install_iterator_intrinsic_in_env(vm, realm_env, Some(&global), object_proto)?;
+    let realm_iterator_proto =
+        install_iterator_intrinsic_in_env(vm, realm_env, Some(&global), object_proto)?;
     let (str_ctor, str_proto) = make_builtin_constructor_with_in_env(
         vm,
         "String",
@@ -2830,6 +2831,7 @@ fn make_test262_realm(vm: &mut Vm) -> error::Result<Value> {
             .lock()
             .insert(PropertyKey::from("length"), const_prop(Value::Number(0.0)));
     });
+    setup_string_iterator_proto_in_env(vm, realm_env, &realm_string_proto, realm_iterator_proto)?;
     define_realm_global(vm, realm_env, &global, "String", Value::Object(str_ctor));
 
     let (num_ctor, num_proto) = make_builtin_constructor_with_in_env(
@@ -6757,6 +6759,9 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
             .lock()
             .insert(PropertyKey::from("length"), const_prop(Value::Number(0.0)));
     });
+    let string_proto = vm.string_proto.clone();
+    let iterator_base_proto = vm.iterator_base_proto.clone();
+    setup_string_iterator_proto_in_env(vm, vm.global, &string_proto, iterator_base_proto)?;
     define_global(vm, "String", Value::Object(str_ctor));
     // String static methods
     let raw_fn = vm.new_native_function("raw", string_raw, 1)?;

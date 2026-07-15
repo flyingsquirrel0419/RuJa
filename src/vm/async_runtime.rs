@@ -1582,15 +1582,15 @@ impl Vm {
             }),
             _ => (false, false, false, false, false),
         };
-        let is_builtin_iterable =
-            matches!(iterable, Value::String(_)) || is_map || is_set || is_gen;
+        let is_builtin_iterable = is_map || is_set || is_gen;
         if !matches!(iterable, Value::Object(_)) {
             let sym_key = crate::value::PropertyKey::Symbol(self.well_known_symbols.iterator);
             let iter_method = self.get_property_by_key(iterable, &sym_key)?;
-            if !iter_method.is_nullish() {
-                let iter_obj = self.call_function(&iter_method, &[], Some(iterable.clone()))?;
-                return self.new_lazy_iterator(iter_obj);
+            if iter_method.is_nullish() {
+                return Err(Error::type_err("value is not iterable"));
             }
+            let iter_obj = self.call_function(&iter_method, &[], Some(iterable.clone()))?;
+            return self.new_lazy_iterator(iter_obj);
         }
         if is_arr && !is_arguments {
             let sym_key = crate::value::PropertyKey::Symbol(self.well_known_symbols.iterator);
@@ -1620,11 +1620,7 @@ impl Vm {
             }
         }
 
-        let items: Vec<Value> = match iterable {
-            Value::String(s) => crate::value::utf16_code_point_strings(s)
-                .into_iter()
-                .map(|s| Value::String(Arc::from(s.as_str())))
-                .collect(),
+        match iterable {
             Value::Object(idx) => {
                 let (is_array, is_map, is_set, is_generator) = self.heap.with_obj(idx.0, |o| {
                     (
@@ -1639,7 +1635,7 @@ impl Vm {
                     // pull. This preserves the generator's return value (needed
                     // by `yield*`) and avoids eagerly draining infinite
                     // generators before the loop even starts.
-                    return self.new_generator_iterator(iterable.clone());
+                    self.new_generator_iterator(iterable.clone())
                 } else if is_array {
                     unreachable!("array iterators are handled lazily above")
                 } else if is_map {
@@ -1648,26 +1644,23 @@ impl Vm {
                         iterable.clone(),
                         crate::value::CollectionIteratorKind::MapEntries,
                     )?;
-                    return self.new_lazy_iterator(iter);
+                    self.new_lazy_iterator(iter)
                 } else if is_set {
                     let iter = crate::builtins::new_collection_iterator(
                         self,
                         iterable.clone(),
                         crate::value::CollectionIteratorKind::SetValues,
                     )?;
-                    return self.new_lazy_iterator(iter);
+                    self.new_lazy_iterator(iter)
                 } else {
-                    return Err(Error::type_err("value is not iterable".to_string()));
+                    Err(Error::type_err("value is not iterable".to_string()))
                 }
             }
-            _ => {
-                return Err(Error::type_err(format!(
-                    "{} is not iterable",
-                    iterable.type_of()
-                )))
-            }
-        };
-        self.new_iterator(items)
+            _ => Err(Error::type_err(format!(
+                "{} is not iterable",
+                iterable.type_of()
+            ))),
+        }
     }
 
     /// Obtain an async iterator for `for await...of`. Prefers a user-defined
@@ -1849,6 +1842,9 @@ impl Vm {
     /// user-defined `Symbol.iterator` method). Each `next()` call invokes the
     /// JS object's `next()` method and reads its `value`/`done` properties.
     pub(crate) fn new_lazy_iterator(&mut self, iter_obj: Value) -> error::Result<Value> {
+        if !matches!(iter_obj, Value::Object(_)) {
+            return Err(Error::type_err("iterator method must return an object"));
+        }
         let next = self.get_property(&iter_obj, "next")?;
         let it = HeapObj::Iterator(crate::value::IteratorData {
             items: Mutex::new(Vec::new()),

@@ -27,3 +27,18 @@ built-ins/Iterator/prototype/constructor/weird-setter.js
 
 # Concrete iterator prototypes admitted with the common base hierarchy.
 built-ins/GeneratorPrototype/Symbol.toStringTag.js
+
+# %StringIteratorPrototype% and its branded next method.
+built-ins/String/prototype/Symbol.iterator/length.js
+built-ins/String/prototype/Symbol.iterator/name.js
+built-ins/String/prototype/Symbol.iterator/not-a-constructor.js
+built-ins/String/prototype/Symbol.iterator/prop-desc.js
+built-ins/String/prototype/Symbol.iterator/this-val-non-obj-coercible.js
+built-ins/String/prototype/Symbol.iterator/this-val-to-str-err.js
+built-ins/StringIteratorPrototype/Symbol.toStringTag.js
+built-ins/StringIteratorPrototype/ancestry.js
+built-ins/StringIteratorPrototype/next/length.js
+built-ins/StringIteratorPrototype/next/name.js
+built-ins/StringIteratorPrototype/next/next-iteration-surrogate-pairs.js
+built-ins/StringIteratorPrototype/next/next-iteration.js
+built-ins/StringIteratorPrototype/next/next-missing-internal-slots.js

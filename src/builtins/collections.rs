@@ -22,6 +22,11 @@ pub(crate) fn new_collection_iterator(
     kind: CollectionIteratorKind,
 ) -> error::Result<Value> {
     let proto = match kind {
+        CollectionIteratorKind::StringValues
+            if matches!(vm.string_iterator_proto, Value::Object(_)) =>
+        {
+            vm.string_iterator_proto.clone()
+        }
         CollectionIteratorKind::ArrayEntries
         | CollectionIteratorKind::ArrayKeys
         | CollectionIteratorKind::ArrayValues
@@ -52,10 +57,152 @@ pub(crate) fn new_collection_iterator(
             index: std::sync::atomic::AtomicUsize::new(0),
             props: Mutex::new(IndexMap::new()),
             proto: Mutex::new(Some(proto)),
+            extensible: std::sync::atomic::AtomicBool::new(true),
         }))?;
     let iterator = Value::Object(GcIdx(obj_idx));
     vm.keep_during_job(&iterator);
     Ok(iterator)
+}
+
+fn active_string_iterator_realm(vm: &Vm) -> GcIdx {
+    vm.native_callee_closure()
+        .map(|closure| env::global_env_root(&vm.heap, closure))
+        .unwrap_or(vm.global)
+}
+
+fn string_iterator_method(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let receiver = this.unwrap_or(Value::Undefined);
+    if receiver.is_nullish() {
+        return Err(Error::type_err(
+            "String.prototype[Symbol.iterator] requires an object-coercible receiver",
+        ));
+    }
+    let string = vm.to_string(&receiver)?;
+    let realm = active_string_iterator_realm(vm);
+    let proto = vm
+        .realm_string_iterator_prototypes
+        .get(&realm.0)
+        .cloned()
+        .ok_or_else(|| Error::internal("missing String Iterator prototype intrinsic"))?;
+    let iterator = Value::Object(GcIdx(vm.heap.allocate(HeapObj::CollectionIterator(
+        CollectionIteratorData {
+            source: Value::String(string),
+            kind: CollectionIteratorKind::StringValues,
+            index: std::sync::atomic::AtomicUsize::new(0),
+            props: Mutex::new(IndexMap::new()),
+            proto: Mutex::new(Some(proto)),
+            extensible: std::sync::atomic::AtomicBool::new(true),
+        },
+    ))?));
+    vm.keep_during_job(&iterator);
+    Ok(iterator)
+}
+
+fn string_iterator_next(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let Some(Value::Object(iter_idx)) = this else {
+        return Err(Error::type_err(
+            "String Iterator next called on incompatible receiver",
+        ));
+    };
+    let Some((string, index)) = vm.heap.with_obj(iter_idx.0, |obj| {
+        let HeapObj::CollectionIterator(iter) = obj else {
+            return None;
+        };
+        if iter.kind != CollectionIteratorKind::StringValues {
+            return None;
+        }
+        let Value::String(string) = &iter.source else {
+            return None;
+        };
+        Some((
+            string.clone(),
+            iter.index.load(std::sync::atomic::Ordering::Relaxed),
+        ))
+    }) else {
+        return Err(Error::type_err(
+            "String Iterator next called on incompatible receiver",
+        ));
+    };
+
+    let len = crate::value::utf16_len(&string);
+    if index == usize::MAX || index >= len {
+        vm.heap.with_obj(iter_idx.0, |obj| {
+            if let HeapObj::CollectionIterator(iter) = obj {
+                iter.index
+                    .store(usize::MAX, std::sync::atomic::Ordering::Relaxed);
+            }
+        });
+        return gen_result(vm, Value::Undefined, true, false);
+    }
+
+    let first = crate::value::utf16_get(&string, index).unwrap();
+    let width = if (0xD800..=0xDBFF).contains(&first)
+        && crate::value::utf16_get(&string, index + 1)
+            .is_some_and(|second| (0xDC00..=0xDFFF).contains(&second))
+    {
+        2
+    } else {
+        1
+    };
+    let start = crate::value::utf16_index_to_byte(&string, index)
+        .ok_or_else(|| Error::internal("invalid String Iterator position"))?;
+    let end = crate::value::utf16_index_to_byte(&string, index + width)
+        .ok_or_else(|| Error::internal("invalid String Iterator position"))?;
+    let value = &string[start..end];
+    vm.heap.with_obj(iter_idx.0, |obj| {
+        if let HeapObj::CollectionIterator(iter) = obj {
+            iter.index
+                .store(index + width, std::sync::atomic::Ordering::Relaxed);
+        }
+    });
+    gen_result(vm, Value::String(Arc::from(value)), false, false)
+}
+
+pub(crate) fn setup_string_iterator_proto_in_env(
+    vm: &mut Vm,
+    realm: GcIdx,
+    string_proto: &Value,
+    iterator_base_proto: Value,
+) -> error::Result<Value> {
+    let next = vm.new_native_function_in_env("next", string_iterator_next, 0, realm)?;
+    let iterator_method =
+        vm.new_native_function_in_env("[Symbol.iterator]", string_iterator_method, 0, realm)?;
+    let proto = Value::Object(GcIdx(vm.heap.allocate(HeapObj::Object(ObjectData {
+        props: Mutex::new(IndexMap::new()),
+        proto: Mutex::new(Some(iterator_base_proto)),
+        extensible: std::sync::atomic::AtomicBool::new(true),
+        class_name: None,
+        private_fields: Mutex::new(std::collections::HashMap::new()),
+        primitive: Mutex::new(None),
+    }))?));
+    if let Value::Object(proto_idx) = &proto {
+        vm.heap.with_obj(proto_idx.0, |obj| {
+            obj.props()
+                .lock()
+                .insert(PropertyKey::from("next"), data_prop(Value::Object(next)));
+            let mut tag = data_prop(Value::String(Arc::from("String Iterator")));
+            tag.writable = false;
+            obj.props().lock().insert(
+                PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
+                tag,
+            );
+        });
+    }
+    vm.define_own_property_or_throw(
+        string_proto,
+        PropertyKey::Symbol(vm.well_known_symbols.iterator),
+        data_prop(Value::Object(iterator_method)),
+    )?;
+    vm.realm_string_iterator_prototypes
+        .insert(realm.0, proto.clone());
+    if realm == vm.global {
+        vm.string_iterator_proto = proto.clone();
+    }
+    Ok(proto)
 }
 
 pub(crate) fn setup_array_iterator_proto(vm: &mut Vm) -> error::Result<()> {
@@ -145,6 +292,7 @@ fn collection_iterator_next(
     let index = raw_index;
 
     let next_value = match (&source, kind) {
+        (_, CollectionIteratorKind::StringValues) => None,
         (
             _,
             kind @ (CollectionIteratorKind::ArrayEntries

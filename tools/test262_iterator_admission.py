@@ -4,17 +4,24 @@ from pathlib import Path, PurePosixPath
 
 
 _MANIFEST = Path(__file__).with_name("test262_iterator_admission.txt")
-_PREFIXES = ("built-ins/Iterator/", "built-ins/GeneratorPrototype/")
+_PREFIXES = (
+    "built-ins/Iterator/",
+    "built-ins/GeneratorPrototype/",
+    "built-ins/String/prototype/Symbol.iterator/",
+    "built-ins/StringIteratorPrototype/",
+)
 
 ITERATOR_CORE_FEATURES = frozenset(
     {
         "Reflect",
+        "Reflect.construct",
         "Symbol",
         "Symbol.iterator",
         "Symbol.toStringTag",
         "explicit-resource-management",
         "generators",
         "iterator-helpers",
+        "arrow-function",
     }
 )
 

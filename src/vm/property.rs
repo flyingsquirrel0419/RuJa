@@ -867,6 +867,9 @@ impl Vm {
             HeapObj::TypedArray(t) => t
                 .extensible
                 .store(false, std::sync::atomic::Ordering::Relaxed),
+            HeapObj::CollectionIterator(iterator) => iterator
+                .extensible
+                .store(false, std::sync::atomic::Ordering::Relaxed),
             HeapObj::WeakRef(wr) => wr
                 .extensible
                 .store(false, std::sync::atomic::Ordering::Relaxed),
@@ -2753,6 +2756,7 @@ impl Vm {
             &self.promise_proto,
             &self.iterator_base_proto,
             &self.iterator_proto,
+            &self.string_iterator_proto,
             &self.map_iterator_proto,
             &self.set_iterator_proto,
             &self.regexp_string_iterator_proto,
@@ -2882,6 +2886,9 @@ impl Vm {
             Self::push_value_roots(&mut roots, v);
         }
         for v in self.realm_iterator_prototypes.values() {
+            Self::push_value_roots(&mut roots, v);
+        }
+        for v in self.realm_string_iterator_prototypes.values() {
             Self::push_value_roots(&mut roots, v);
         }
         for v in self.realm_regexp_prototypes.values() {

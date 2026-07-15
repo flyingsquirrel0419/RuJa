@@ -741,6 +741,7 @@ pub struct SetData {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum CollectionIteratorKind {
+    StringValues,
     ArrayEntries,
     ArrayKeys,
     ArrayValues,
@@ -757,6 +758,7 @@ pub struct CollectionIteratorData {
     pub index: AtomicUsize,
     pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
     pub proto: Mutex<Option<Value>>,
+    pub extensible: AtomicBool,
 }
 
 pub struct RegExpStringIteratorData {
@@ -1138,6 +1140,7 @@ impl HeapObj {
             HeapObj::Map(_) => "Map",
             HeapObj::Set(_) => "Set",
             HeapObj::CollectionIterator(i) => match i.kind {
+                CollectionIteratorKind::StringValues => "String Iterator",
                 CollectionIteratorKind::ArrayEntries
                 | CollectionIteratorKind::ArrayKeys
                 | CollectionIteratorKind::ArrayValues => "Array Iterator",
@@ -1175,6 +1178,7 @@ impl HeapObj {
             HeapObj::Array(a) => a.extensible.load(Ordering::Relaxed),
             HeapObj::Function(f) => f.extensible.load(Ordering::Relaxed),
             HeapObj::TypedArray(t) => t.extensible.load(Ordering::Relaxed),
+            HeapObj::CollectionIterator(iterator) => iterator.extensible.load(Ordering::Relaxed),
             HeapObj::WeakRef(wr) => wr.extensible.load(Ordering::Relaxed),
             HeapObj::FinalizationRegistry(registry) => registry.extensible.load(Ordering::Relaxed),
             HeapObj::ModuleNamespace(_) => false,

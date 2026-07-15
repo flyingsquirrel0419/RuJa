@@ -401,6 +401,157 @@ fn string_methods() {
 }
 
 #[test]
+fn string_iterator_iterates_primitives_boxed_strings_and_utf16_code_points() {
+    assert_eq!(
+        run(r#"
+            var text = "A\uD83D\uDE00\uD800B\uDC00";
+            function describe(iterable) {
+                return [...iterable].map(function(value) {
+                    return [
+                        value.length,
+                        value.charCodeAt(0).toString(16),
+                        value.charCodeAt(value.length - 1).toString(16)
+                    ].join(":");
+                }).join(",");
+            }
+            var boxed = new String("ignored");
+            boxed.toString = function() { return text; };
+            [describe(text), describe(new String(text)), describe(boxed)].join("|");
+        "#),
+        Value::String(Arc::from(
+            "1:41:41,2:d83d:de00,1:d800:d800,1:42:42,1:dc00:dc00|1:41:41,2:d83d:de00,1:d800:d800,1:42:42,1:dc00:dc00|1:41:41,2:d83d:de00,1:d800:d800,1:42:42,1:dc00:dc00"
+        ))
+    );
+}
+
+#[test]
+fn string_iterator_prototype_has_spec_shape() {
+    assert_eq!(
+        run(r#"
+            var iterator = "x"[Symbol.iterator]();
+            var prototype = Object.getPrototypeOf(iterator);
+            var next = Object.getOwnPropertyDescriptor(prototype, "next");
+            var tag = Object.getOwnPropertyDescriptor(prototype, Symbol.toStringTag);
+            var extensibleBefore = Object.isExtensible(iterator);
+            Object.preventExtensions(iterator);
+            [
+                Object.getPrototypeOf(prototype) === Iterator.prototype,
+                Object.prototype.toString.call(iterator),
+                tag.value, tag.writable, tag.enumerable, tag.configurable,
+                typeof next.value, next.value.length, next.value.name,
+                next.writable, next.enumerable, next.configurable,
+                iterator[Symbol.iterator]() === iterator,
+                extensibleBefore, Object.isExtensible(iterator)
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "true|[object String Iterator]|String Iterator|false|false|true|function|0|next|true|false|true|true|true|false"
+        ))
+    );
+}
+
+#[test]
+fn string_iterator_next_checks_brand_and_stays_exhausted() {
+    assert_eq!(
+        run(r#"
+            var iterator = "x"[Symbol.iterator]();
+            var next = Object.getPrototypeOf(iterator).next;
+            function typeError(receiver) {
+                try { next.call(receiver); }
+                catch (error) { return error instanceof TypeError; }
+                return false;
+            }
+            var first = iterator.next();
+            var second = iterator.next();
+            var third = iterator.next();
+            [
+                typeError(undefined), typeError(null), typeError({}),
+                typeError(Object.create(Object.getPrototypeOf(iterator))),
+                first.value, first.done,
+                second.value === undefined, second.done,
+                third.value === undefined, third.done
+            ].join("|");
+        "#),
+        Value::String(Arc::from("true|true|true|true|x|false|true|true|true|true"))
+    );
+}
+
+#[test]
+fn string_iterator_observes_symbol_iterator_override_and_deletion() {
+    assert_eq!(
+        run(r#"
+            var original = String.prototype[Symbol.iterator];
+            var calls = 0;
+            String.prototype[Symbol.iterator] = function() {
+                calls += 1;
+                return original.call(this);
+            };
+            var primitive = [..."ab"].join(",");
+            var boxed = [...new String("cd")].join(",");
+            var deleted = delete String.prototype[Symbol.iterator];
+            var missing = false;
+            try { [..."e"]; }
+            catch (error) { missing = error instanceof TypeError; }
+            String.prototype[Symbol.iterator] = function() { return 1; };
+            var primitiveResult = false;
+            try { [..."f"]; }
+            catch (error) { primitiveResult = error instanceof TypeError; }
+            String.prototype[Symbol.iterator] = original;
+            [primitive, boxed, calls, deleted, missing, primitiveResult].join("|");
+        "#),
+        Value::String(Arc::from("a,b|c,d|2|true|true|true"))
+    );
+}
+
+#[test]
+fn string_iterator_uses_its_realm_intrinsics_and_survives_gc() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+    assert_eq!(
+        vm.run(
+            r#"
+            var other = $262.createRealm().global;
+            var foreignIterator = other.String.prototype[other.Symbol.iterator].call(
+                "\uD83D\uDE00x"
+            );
+            var foreignPrototype = Object.getPrototypeOf(foreignIterator);
+            var foreignNext = foreignPrototype.next;
+            var foreignTypeError = false;
+            try { foreignNext.call({}); }
+            catch (error) {
+                foreignTypeError = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            forceGc();
+            var first = foreignIterator.next();
+            var second = foreignIterator.next();
+            var done = foreignIterator.next();
+            [
+                Object.getPrototypeOf(foreignPrototype) === other.Iterator.prototype,
+                Object.getPrototypeOf(foreignNext) === other.Function.prototype,
+                Object.prototype.toString.call(foreignIterator),
+                foreignTypeError,
+                first.value.length, first.value.charCodeAt(0).toString(16),
+                first.value.charCodeAt(1).toString(16), first.done,
+                second.value, second.done, done.value === undefined, done.done
+            ].join("|");
+            "#,
+        )
+        .expect("foreign String iterator intrinsic should survive GC"),
+        Value::String(Arc::from(
+            "true|true|[object String Iterator]|true|2|d83d|de00|false|x|false|true|true"
+        ))
+    );
+}
+
+#[test]
 fn string_constructor_observes_object_to_primitive_string_hint() {
     assert_eq!(
         run(r#"var old = Array.prototype.toString;

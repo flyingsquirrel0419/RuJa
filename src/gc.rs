@@ -97,6 +97,9 @@ pub fn trace_obj(obj: &HeapObj, marked: &[bool], worklist: &mut Vec<usize>) {
         if let Some(lazy) = it.lazy_iter.lock().as_ref() {
             push_value(lazy, worklist);
         }
+        if let Some(next) = it.lazy_next.lock().as_ref() {
+            push_value(next, worklist);
+        }
         if let Some(gen) = it.generator.lock().as_ref() {
             push_value(gen, worklist);
         }
@@ -329,6 +332,9 @@ pub fn trace_obj(obj: &HeapObj, marked: &[bool], worklist: &mut Vec<usize>) {
             }
             if let Some(lazy) = it.lazy_iter.lock().as_ref() {
                 push_value(lazy, worklist);
+            }
+            if let Some(next) = it.lazy_next.lock().as_ref() {
+                push_value(next, worklist);
             }
             if let Some(gen) = it.generator.lock().as_ref() {
                 push_value(gen, worklist);
