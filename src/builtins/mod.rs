@@ -7231,6 +7231,62 @@ fn iterator_reduce(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::R
     result
 }
 
+fn iterator_for_each(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
+
+    let Some(iterator @ Value::Object(_)) = this else {
+        return Err(Error::type_err(
+            "Iterator.prototype.forEach requires an object",
+        ));
+    };
+    let procedure = args.first().cloned().unwrap_or(Value::Undefined);
+    if !is_callable(&procedure, &vm.heap) {
+        return close_iterator_after_error(
+            vm,
+            &iterator,
+            Error::type_err("Iterator.prototype.forEach callback is not callable"),
+        );
+    }
+
+    let mut pin_count = vm.pin_many(&[iterator.clone(), procedure.clone()]);
+    let result = (|| -> error::Result<Value> {
+        let next_method = vm.get_property(&iterator, "next")?;
+        pin_count += vm.pin(&next_method);
+        let mut counter = 0;
+        loop {
+            let Some(value) = iterator_helper_step(vm, &iterator, &next_method, true)? else {
+                return Ok(Value::Undefined);
+            };
+            let value_pin = vm.pin(&value);
+            if counter >= MAX_SAFE_INTEGER {
+                let outcome = close_iterator_after_error(
+                    vm,
+                    &iterator,
+                    Error::type_err("Iterator helper counter exceeded safe integer"),
+                );
+                vm.unpin_many(value_pin);
+                return outcome;
+            }
+            let call_result = vm.call_function(
+                &procedure,
+                &[value, Value::Number(counter as f64)],
+                Some(Value::Undefined),
+            );
+            match call_result {
+                Ok(_) => vm.unpin_many(value_pin),
+                Err(error) => {
+                    let outcome = close_iterator_after_error(vm, &iterator, error);
+                    vm.unpin_many(value_pin);
+                    return outcome;
+                }
+            }
+            counter += 1;
+        }
+    })();
+    vm.unpin_many(pin_count);
+    result
+}
+
 fn iterator_to_array(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
     const MAX_ITERATOR_TO_ARRAY_LEN: usize = 1 << 16;
 
@@ -7481,6 +7537,8 @@ fn install_iterator_intrinsic_in_env(
     pin_count += vm.pin(&Value::Object(drop));
     let reduce = vm.new_native_function_in_env("reduce", iterator_reduce, 1, realm)?;
     pin_count += vm.pin(&Value::Object(reduce));
+    let for_each = vm.new_native_function_in_env("forEach", iterator_for_each, 1, realm)?;
+    pin_count += vm.pin(&Value::Object(for_each));
     let to_array = vm.new_native_function_in_env("toArray", iterator_to_array, 0, realm)?;
     pin_count += vm.pin(&Value::Object(to_array));
     let constructor = vm.new_native_function_in_env("Iterator", iterator_constructor, 0, realm)?;
@@ -7535,6 +7593,10 @@ fn install_iterator_intrinsic_in_env(
             props.insert(
                 PropertyKey::from("reduce"),
                 data_prop(Value::Object(reduce)),
+            );
+            props.insert(
+                PropertyKey::from("forEach"),
+                data_prop(Value::Object(for_each)),
             );
             props.insert(
                 PropertyKey::from("toArray"),

@@ -1242,6 +1242,114 @@ fn iterator_reduce_roots_accumulator_and_uses_the_method_realm() {
 }
 
 #[test]
+fn iterator_for_each_visits_values_with_indices_and_returns_undefined() {
+    assert_eq!(
+        run(r#"
+            var calls = [];
+            var expectedThis = function() { return this; }.call(undefined);
+            var result = [4, 5, 6].values().forEach(function(value, index) {
+              calls.push([value, index, this === expectedThis].join(","));
+              return value * 10;
+            });
+            [calls.join(";"), result === undefined].join("|");
+        "#),
+        Value::String(Arc::from("4,0,true;5,1,true;6,2,true|true"))
+    );
+}
+
+#[test]
+fn iterator_for_each_closes_only_callback_abrupt_completions() {
+    assert_eq!(
+        run(r#"
+            var invalidNextGets = 0;
+            var invalidCloses = 0;
+            var invalidType = false;
+            try {
+              Iterator.prototype.forEach.call({
+                get next() { invalidNextGets += 1; throw "next"; },
+                return: function() { invalidCloses += 1; throw "close"; }
+              }, null);
+            } catch (error) { invalidType = error instanceof TypeError; }
+
+            var original = { marker: 1 };
+            var callbackCloses = 0;
+            var callbackError;
+            try {
+              Iterator.prototype.forEach.call({
+                next: function() { return { value: 1, done: false }; },
+                return: function() { callbackCloses += 1; throw "ignored-close"; }
+              }, function() { throw original; });
+            } catch (error) { callbackError = error; }
+
+            var stepCloses = 0;
+            var stepError;
+            try {
+              Iterator.prototype.forEach.call({
+                next: function() {
+                  return {
+                    done: false,
+                    get value() { throw original; }
+                  };
+                },
+                return: function() { stepCloses += 1; return {}; }
+              }, function() {});
+            } catch (error) { stepError = error; }
+            [
+              invalidType, invalidNextGets, invalidCloses,
+              callbackError === original, callbackCloses,
+              stepError === original, stepCloses
+            ].join("|");
+        "#),
+        Value::String(Arc::from("true|0|1|true|1|true|0"))
+    );
+}
+
+#[test]
+fn iterator_for_each_roots_callback_and_uses_the_method_realm() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+    assert_eq!(
+        vm.run(
+            r#"
+            var other = $262.createRealm().global;
+            var state = { value: 1, total: 0 };
+            var source = {
+              get next() {
+                forceGc();
+                return function() {
+                  forceGc();
+                  return state.value <= 3
+                    ? { value: { amount: state.value++ }, done: false }
+                    : { done: true };
+                };
+              }
+            };
+            var result = other.Iterator.prototype.forEach.call(source, function(value) {
+              forceGc();
+              state.total += value.amount;
+            });
+            var realmError = false;
+            try { other.Iterator.prototype.forEach.call({}, null); }
+            catch (error) {
+              realmError = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            [state.total, result === undefined, realmError].join("|");
+            "#,
+        )
+        .expect("Iterator forEach should retain callbacks and method Realm"),
+        Value::String(Arc::from("6|true|true"))
+    );
+}
+
+#[test]
 fn array_map_reduce() {
     assert_eq!(
         run("[1,2,3].map(x => x*2).join(',');"),

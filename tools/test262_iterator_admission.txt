@@ -288,6 +288,35 @@ built-ins/Iterator/prototype/reduce/this-non-callable-next.js
 built-ins/Iterator/prototype/reduce/this-non-object.js
 built-ins/Iterator/prototype/reduce/this-plain-iterator.js
 
+# Eager side-effect helper.
+built-ins/Iterator/prototype/forEach/argument-effect-order.js
+built-ins/Iterator/prototype/forEach/argument-validation-failure-closes-underlying.js
+built-ins/Iterator/prototype/forEach/callable.js
+built-ins/Iterator/prototype/forEach/fn-args.js
+built-ins/Iterator/prototype/forEach/fn-called-for-each-yielded-value.js
+built-ins/Iterator/prototype/forEach/fn-this.js
+built-ins/Iterator/prototype/forEach/fn-throws-then-closing-iterator-also-throws.js
+built-ins/Iterator/prototype/forEach/fn-throws.js
+built-ins/Iterator/prototype/forEach/get-next-method-only-once.js
+built-ins/Iterator/prototype/forEach/get-next-method-throws.js
+built-ins/Iterator/prototype/forEach/is-function.js
+built-ins/Iterator/prototype/forEach/iterator-already-exhausted.js
+built-ins/Iterator/prototype/forEach/length.js
+built-ins/Iterator/prototype/forEach/name.js
+built-ins/Iterator/prototype/forEach/next-method-returns-non-object.js
+built-ins/Iterator/prototype/forEach/next-method-returns-throwing-done.js
+built-ins/Iterator/prototype/forEach/next-method-returns-throwing-value-done.js
+built-ins/Iterator/prototype/forEach/next-method-returns-throwing-value.js
+built-ins/Iterator/prototype/forEach/next-method-throws.js
+built-ins/Iterator/prototype/forEach/non-callable-predicate.js
+built-ins/Iterator/prototype/forEach/non-constructible.js
+built-ins/Iterator/prototype/forEach/prop-desc.js
+built-ins/Iterator/prototype/forEach/proto.js
+built-ins/Iterator/prototype/forEach/result-is-undefined.js
+built-ins/Iterator/prototype/forEach/this-non-callable-next.js
+built-ins/Iterator/prototype/forEach/this-non-object.js
+built-ins/Iterator/prototype/forEach/this-plain-iterator.js
+
 # Concrete iterator prototypes admitted with the common base hierarchy.
 built-ins/GeneratorPrototype/Symbol.toStringTag.js
 
