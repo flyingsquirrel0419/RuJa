@@ -957,6 +957,158 @@ fn iterator_limit_helpers_preserve_realm_gc_and_yielded_close_state() {
 }
 
 #[test]
+fn iterator_flat_map_flattens_one_level_and_tracks_outer_indices() {
+    assert_eq!(
+        run(r#"
+            var indices = [];
+            var helper = [1, 2, 3].values().flatMap(function(value, index) {
+              indices.push(index);
+              if (value === 1) return [value, value * 10];
+              if (value === 2) return [value].values();
+              return { next: function() { return { done: true }; } };
+            });
+            var values = helper.toArray();
+            var primitiveError = false;
+            try { [1].values().flatMap(function() { return "ab"; }).next(); }
+            catch (error) { primitiveError = error instanceof TypeError; }
+            [values.join(","), indices.join(","), primitiveError].join("|");
+        "#),
+        Value::String(Arc::from("1,10,2|0,1,2|true"))
+    );
+}
+
+#[test]
+fn iterator_flat_map_closes_inner_then_outer_and_preserves_abrupt_errors() {
+    assert_eq!(
+        run(r#"
+            var order = [];
+            var helper;
+            var outer = {
+              next: function() { return { value: 1, done: false }; },
+              return: function() {
+                order.push("outer");
+                try { helper.next(); }
+                catch (error) { order.push(error instanceof TypeError ? "outer-running" : "bad"); }
+                throw "outer-close";
+              }
+            };
+            helper = Iterator.prototype.flatMap.call(outer, function() {
+              return {
+                next: function() { return { value: 2, done: false }; },
+                return: function() {
+                  order.push("inner");
+                  try { helper.next(); }
+                  catch (error) { order.push(error instanceof TypeError ? "inner-running" : "bad"); }
+                  throw "inner-close";
+                }
+              };
+            });
+            helper.next();
+            var closeError;
+            try { helper.return(); } catch (error) { closeError = error; }
+
+            var mapperOuterClosed = 0;
+            var mapperHelper = Iterator.prototype.flatMap.call({
+              next: function() { return { value: 3, done: false }; },
+              return: function() { mapperOuterClosed += 1; throw "ignored-close"; }
+            }, function() { throw "mapper-error"; });
+            var mapperError;
+            try { mapperHelper.next(); } catch (error) { mapperError = error; }
+
+            var reentrantHelper;
+            var innerCalls = 0;
+            var returnReentryError = false;
+            reentrantHelper = [0].values().flatMap(function() {
+              return {
+                next: function() {
+                  innerCalls += 1;
+                  if (innerCalls === 2) {
+                    try { reentrantHelper.return(); }
+                    catch (error) { returnReentryError = error instanceof TypeError; }
+                  }
+                  return innerCalls < 3
+                    ? { value: innerCalls, done: false }
+                    : { done: true };
+                }
+              };
+            });
+            reentrantHelper.next();
+            reentrantHelper.next();
+            var reentrantDone = reentrantHelper.next().done;
+            [
+              order.join(","), closeError, mapperError, mapperOuterClosed,
+              returnReentryError, innerCalls, reentrantDone
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "inner,inner-running,outer,outer-running|inner-close|mapper-error|1|true|3|true"
+        ))
+    );
+}
+
+#[test]
+fn iterator_flat_map_keeps_nested_iterator_state_alive_across_gc_and_realms() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+    assert_eq!(
+        vm.run(
+            r#"
+            var other = $262.createRealm().global;
+            var helper = other.Iterator.prototype.flatMap.call([4].values(), function(value) {
+              var state = { value: value };
+              var inner = {
+                get next() {
+                  forceGc();
+                  return function() {
+                    forceGc();
+                    var result = {};
+                    Object.defineProperty(result, "done", {
+                      get: function() { forceGc(); return state.value > 5; }
+                    });
+                    Object.defineProperty(result, "value", {
+                      get: function() { forceGc(); return state.value++; }
+                    });
+                    return result;
+                  };
+                }
+              };
+              Object.defineProperty(inner, Symbol.iterator, {
+                get: function() {
+                  forceGc();
+                  return function() { forceGc(); return inner; };
+                }
+              });
+              return inner;
+            });
+            forceGc();
+            var first = helper.next();
+            forceGc();
+            var second = helper.next();
+            forceGc();
+            var done = helper.next();
+            var proto = Object.getPrototypeOf(helper);
+            [
+              first.value, second.value, done.done,
+              helper instanceof other.Iterator, helper instanceof Iterator,
+              Object.getPrototypeOf(proto) === other.Iterator.prototype,
+              Object.getPrototypeOf(first) === other.Object.prototype
+            ].join("|");
+            "#,
+        )
+        .expect("flatMap should retain nested iterator state across GC"),
+        Value::String(Arc::from("4|5|true|true|false|true|true"))
+    );
+}
+
+#[test]
 fn array_map_reduce() {
     assert_eq!(
         run("[1,2,3].map(x => x*2).join(',');"),

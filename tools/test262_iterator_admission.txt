@@ -210,6 +210,52 @@ built-ins/Iterator/prototype/drop/underlying-iterator-advanced-in-parallel.js
 built-ins/Iterator/prototype/drop/underlying-iterator-closed-in-parallel.js
 built-ins/Iterator/prototype/drop/underlying-iterator-closed.js
 
+# Lazy one-level flattening helper.
+built-ins/Iterator/prototype/flatMap/argument-effect-order.js
+built-ins/Iterator/prototype/flatMap/argument-validation-failure-closes-underlying.js
+built-ins/Iterator/prototype/flatMap/callable.js
+built-ins/Iterator/prototype/flatMap/exhaustion-does-not-call-return.js
+built-ins/Iterator/prototype/flatMap/flattens-iterable.js
+built-ins/Iterator/prototype/flatMap/flattens-iterator.js
+built-ins/Iterator/prototype/flatMap/flattens-only-depth-1.js
+built-ins/Iterator/prototype/flatMap/get-next-method-only-once.js
+built-ins/Iterator/prototype/flatMap/get-next-method-throws.js
+built-ins/Iterator/prototype/flatMap/get-return-method-throws.js
+built-ins/Iterator/prototype/flatMap/is-function.js
+built-ins/Iterator/prototype/flatMap/iterable-primitives-are-not-flattened.js
+built-ins/Iterator/prototype/flatMap/iterable-to-iterator-fallback.js
+built-ins/Iterator/prototype/flatMap/iterator-already-exhausted.js
+built-ins/Iterator/prototype/flatMap/iterator-return-method-throws.js
+built-ins/Iterator/prototype/flatMap/length.js
+built-ins/Iterator/prototype/flatMap/mapper-args.js
+built-ins/Iterator/prototype/flatMap/mapper-returns-closed-iterator.js
+built-ins/Iterator/prototype/flatMap/mapper-returns-non-object.js
+built-ins/Iterator/prototype/flatMap/mapper-this.js
+built-ins/Iterator/prototype/flatMap/mapper-throws-then-closing-iterator-also-throws.js
+built-ins/Iterator/prototype/flatMap/mapper-throws.js
+built-ins/Iterator/prototype/flatMap/name.js
+built-ins/Iterator/prototype/flatMap/next-method-returns-non-object.js
+built-ins/Iterator/prototype/flatMap/next-method-returns-throwing-done.js
+built-ins/Iterator/prototype/flatMap/next-method-returns-throwing-value-done.js
+built-ins/Iterator/prototype/flatMap/next-method-returns-throwing-value.js
+built-ins/Iterator/prototype/flatMap/next-method-throws.js
+built-ins/Iterator/prototype/flatMap/non-callable-mapper.js
+built-ins/Iterator/prototype/flatMap/non-constructible.js
+built-ins/Iterator/prototype/flatMap/prop-desc.js
+built-ins/Iterator/prototype/flatMap/proto.js
+built-ins/Iterator/prototype/flatMap/result-is-iterator.js
+built-ins/Iterator/prototype/flatMap/return-is-forwarded-to-mapper-result.js
+built-ins/Iterator/prototype/flatMap/return-is-forwarded-to-underlying-iterator.js
+built-ins/Iterator/prototype/flatMap/return-is-not-forwarded-after-exhaustion.js
+built-ins/Iterator/prototype/flatMap/strings-are-not-flattened.js
+built-ins/Iterator/prototype/flatMap/this-non-callable-next.js
+built-ins/Iterator/prototype/flatMap/this-non-object.js
+built-ins/Iterator/prototype/flatMap/this-plain-iterator.js
+built-ins/Iterator/prototype/flatMap/throws-typeerror-when-generator-is-running.js
+built-ins/Iterator/prototype/flatMap/underlying-iterator-advanced-in-parallel.js
+built-ins/Iterator/prototype/flatMap/underlying-iterator-closed-in-parallel.js
+built-ins/Iterator/prototype/flatMap/underlying-iterator-closed.js
+
 # Concrete iterator prototypes admitted with the common base hierarchy.
 built-ins/GeneratorPrototype/Symbol.toStringTag.js
 

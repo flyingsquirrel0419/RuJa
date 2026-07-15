@@ -41,8 +41,9 @@ use crate::error::{self, Error};
 use crate::gc::Heap;
 use crate::value::{
     ArrayData, BindingKind, CollectionIteratorData, CollectionIteratorKind, FunctionData,
-    FunctionKind, GcIdx, HeapObj, IteratorHelperData, IteratorHelperKind, MapData, MapKey,
-    ObjectData, PropertyDescriptor, PropertyKey, RegExpStringIteratorData, SetData, Value,
+    FunctionKind, GcIdx, HeapObj, IteratorHelperData, IteratorHelperInner, IteratorHelperKind,
+    MapData, MapKey, ObjectData, PropertyDescriptor, PropertyKey, RegExpStringIteratorData,
+    SetData, Value,
 };
 use crate::vm::{NativeFn, Vm};
 use indexmap::{IndexMap, IndexSet};
@@ -6657,6 +6658,22 @@ fn close_iterator_preserving_abrupt(vm: &mut Vm, iterator: &Value) -> error::Res
     }
 }
 
+fn close_iterator_after_error<T>(
+    vm: &mut Vm,
+    iterator: &Value,
+    error: Arc<Error>,
+) -> error::Result<T> {
+    let error_pin = error
+        .thrown_value
+        .as_ref()
+        .map(|value| vm.pin(value))
+        .unwrap_or(0);
+    let close_result = close_iterator_preserving_abrupt(vm, iterator);
+    vm.unpin_many(error_pin);
+    close_result?;
+    Err(error)
+}
+
 fn close_iterator_normally(vm: &mut Vm, iterator: &Value) -> error::Result<()> {
     let return_method = vm.get_property(iterator, "return")?;
     if return_method.is_nullish() {
@@ -6698,6 +6715,7 @@ fn allocate_iterator_helper(
             callback,
             kind,
             counter: std::sync::atomic::AtomicU64::new(0),
+            inner_iterator: Mutex::new(None),
             remaining: Mutex::new(remaining),
             state: std::sync::atomic::AtomicU8::new(0),
             props: Mutex::new(IndexMap::new()),
@@ -6783,6 +6801,10 @@ fn iterator_filter(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::R
     iterator_callback_helper_start(vm, args, this, IteratorHelperKind::Filter)
 }
 
+fn iterator_flat_map(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    iterator_callback_helper_start(vm, args, this, IteratorHelperKind::FlatMap)
+}
+
 fn iterator_take(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     iterator_limit_helper_start(vm, args, this, IteratorHelperKind::Take)
 }
@@ -6815,6 +6837,77 @@ fn iterator_helper_consume_remaining(vm: &Vm, idx: GcIdx) -> bool {
             true
         }
     })
+}
+
+fn iterator_helper_inner(vm: &Vm, idx: GcIdx) -> Option<(Value, Value)> {
+    vm.heap.with_obj(idx.0, |obj| {
+        let HeapObj::IteratorHelper(helper) = obj else {
+            return None;
+        };
+        helper
+            .inner_iterator
+            .lock()
+            .as_ref()
+            .map(|inner| (inner.iterator.clone(), inner.next_method.clone()))
+    })
+}
+
+fn iterator_helper_set_inner(vm: &Vm, idx: GcIdx, inner: Option<(Value, Value)>) {
+    vm.heap.with_obj(idx.0, |obj| {
+        if let HeapObj::IteratorHelper(helper) = obj {
+            *helper.inner_iterator.lock() =
+                inner.map(|(iterator, next_method)| IteratorHelperInner {
+                    iterator,
+                    next_method,
+                });
+        }
+    });
+}
+
+fn get_iterator_flattenable_reject_primitives(
+    vm: &mut Vm,
+    mapped: Value,
+) -> error::Result<(Value, Value)> {
+    if !matches!(mapped, Value::Object(_)) {
+        return Err(Error::type_err(
+            "Iterator.prototype.flatMap mapper must return an object",
+        ));
+    }
+    let mapped_pin = vm.pin(&mapped);
+    let iterator_key = PropertyKey::Symbol(vm.well_known_symbols.iterator);
+    let method = match vm.get_property_by_key(&mapped, &iterator_key) {
+        Ok(method) => method,
+        Err(error) => {
+            vm.unpin_many(mapped_pin);
+            return Err(error);
+        }
+    };
+    let iterator = if method.is_nullish() {
+        mapped.clone()
+    } else {
+        if !is_callable(&method, &vm.heap) {
+            vm.unpin_many(mapped_pin);
+            return Err(Error::type_err("iterator method is not callable"));
+        }
+        let method_pin = vm.pin(&method);
+        let result = vm.call_function(&method, &[], Some(mapped.clone()));
+        vm.unpin_many(method_pin);
+        match result {
+            Ok(iterator @ Value::Object(_)) => iterator,
+            Ok(_) => {
+                vm.unpin_many(mapped_pin);
+                return Err(Error::type_err("iterator method must return an object"));
+            }
+            Err(error) => {
+                vm.unpin_many(mapped_pin);
+                return Err(error);
+            }
+        }
+    };
+    let iterator_pin = vm.pin(&iterator);
+    let next_result = vm.get_property(&iterator, "next");
+    vm.unpin_many(iterator_pin + mapped_pin);
+    next_result.map(|next_method| (iterator, next_method))
 }
 
 fn iterator_helper_step(
@@ -6922,17 +7015,7 @@ fn iterator_helper_next(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> er
                     );
                     let selected = match callback_result {
                         Ok(result) => result,
-                        Err(error) => {
-                            let error_pin = error
-                                .thrown_value
-                                .as_ref()
-                                .map(|value| vm.pin(value))
-                                .unwrap_or(0);
-                            let close_result = close_iterator_preserving_abrupt(vm, &iterator);
-                            vm.unpin_many(error_pin);
-                            close_result?;
-                            return Err(error);
-                        }
+                        Err(error) => return close_iterator_after_error(vm, &iterator, error),
                     };
                     counter += 1;
                     vm.heap.with_obj(idx.0, |obj| {
@@ -6948,6 +7031,55 @@ fn iterator_helper_next(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> er
                         None
                     }
                 }
+                IteratorHelperKind::FlatMap => loop {
+                    if let Some((inner_iterator, inner_next)) = iterator_helper_inner(vm, idx) {
+                        match iterator_helper_step(vm, &inner_iterator, &inner_next, true) {
+                            Ok(Some(value)) => break Some(value),
+                            Ok(None) => {
+                                iterator_helper_set_inner(vm, idx, None);
+                                counter += 1;
+                                vm.heap.with_obj(idx.0, |obj| {
+                                    if let HeapObj::IteratorHelper(helper) = obj {
+                                        helper.counter.store(counter, Ordering::Relaxed);
+                                    }
+                                });
+                                continue;
+                            }
+                            Err(error) => {
+                                iterator_helper_set_inner(vm, idx, None);
+                                return close_iterator_after_error(vm, &iterator, error);
+                            }
+                        }
+                    }
+
+                    let Some(value) = iterator_helper_step(vm, &iterator, &next_method, true)?
+                    else {
+                        iterator_helper_set_state(vm, idx, 2);
+                        return create_iterator_result(vm, Value::Undefined, true);
+                    };
+                    if counter >= MAX_SAFE_INTEGER {
+                        close_iterator_preserving_abrupt(vm, &iterator)?;
+                        return Err(Error::type_err(
+                            "Iterator helper counter exceeded safe integer",
+                        ));
+                    }
+                    let callback = callback.as_ref().ok_or_else(|| {
+                        Error::internal("Iterator flatMap helper is missing its mapper")
+                    })?;
+                    let mapped = match vm.call_function(
+                        callback,
+                        &[value, Value::Number(counter as f64)],
+                        Some(Value::Undefined),
+                    ) {
+                        Ok(mapped) => mapped,
+                        Err(error) => return close_iterator_after_error(vm, &iterator, error),
+                    };
+                    let inner = match get_iterator_flattenable_reject_primitives(vm, mapped) {
+                        Ok(inner) => inner,
+                        Err(error) => return close_iterator_after_error(vm, &iterator, error),
+                    };
+                    iterator_helper_set_inner(vm, idx, Some(inner));
+                },
             };
             if let Some(yielded) = yielded {
                 let result = create_iterator_result(vm, yielded, false)?;
@@ -6985,9 +7117,18 @@ fn iterator_helper_return(
             3 => helper.state.store(1, Ordering::Relaxed),
             _ => {}
         }
-        Some((previous, helper.iterator.clone()))
+        let inner = if matches!(previous, 0 | 3) {
+            helper
+                .inner_iterator
+                .lock()
+                .take()
+                .map(|inner| (inner.iterator, inner.next_method))
+        } else {
+            None
+        };
+        Some((previous, helper.iterator.clone(), inner))
     });
-    let Some((previous, iterator)) = record else {
+    let Some((previous, iterator, inner)) = record else {
         return Err(Error::type_err(
             "Iterator Helper return called on incompatible receiver",
         ));
@@ -6998,7 +7139,21 @@ fn iterator_helper_return(
     if previous == 2 {
         return create_iterator_result(vm, Value::Undefined, true);
     }
-    let close_result = close_iterator_normally(vm, &iterator);
+    let inner_pin = inner
+        .as_ref()
+        .map(|(inner_iterator, inner_next)| {
+            vm.pin_many(&[inner_iterator.clone(), inner_next.clone()])
+        })
+        .unwrap_or(0);
+    let close_result = if let Some((inner_iterator, _)) = inner {
+        match close_iterator_normally(vm, &inner_iterator) {
+            Ok(()) => close_iterator_normally(vm, &iterator),
+            Err(error) => close_iterator_after_error(vm, &iterator, error),
+        }
+    } else {
+        close_iterator_normally(vm, &iterator)
+    };
+    vm.unpin_many(inner_pin);
     iterator_helper_set_state(vm, idx, 2);
     close_result?;
     create_iterator_result(vm, Value::Undefined, true)
@@ -7246,6 +7401,8 @@ fn install_iterator_intrinsic_in_env(
     pin_count += vm.pin(&Value::Object(map));
     let filter = vm.new_native_function_in_env("filter", iterator_filter, 1, realm)?;
     pin_count += vm.pin(&Value::Object(filter));
+    let flat_map = vm.new_native_function_in_env("flatMap", iterator_flat_map, 1, realm)?;
+    pin_count += vm.pin(&Value::Object(flat_map));
     let take = vm.new_native_function_in_env("take", iterator_take, 1, realm)?;
     pin_count += vm.pin(&Value::Object(take));
     let drop = vm.new_native_function_in_env("drop", iterator_drop, 1, realm)?;
@@ -7294,6 +7451,10 @@ fn install_iterator_intrinsic_in_env(
             props.insert(
                 PropertyKey::from("filter"),
                 data_prop(Value::Object(filter)),
+            );
+            props.insert(
+                PropertyKey::from("flatMap"),
+                data_prop(Value::Object(flat_map)),
             );
             props.insert(PropertyKey::from("take"), data_prop(Value::Object(take)));
             props.insert(PropertyKey::from("drop"), data_prop(Value::Object(drop)));

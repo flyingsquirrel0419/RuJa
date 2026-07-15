@@ -237,6 +237,10 @@ pub fn trace_obj(obj: &HeapObj, marked: &[bool], worklist: &mut Vec<usize>) {
             if let Some(callback) = &it.callback {
                 push_value(callback, worklist);
             }
+            if let Some(inner) = it.inner_iterator.lock().as_ref() {
+                push_value(&inner.iterator, worklist);
+                push_value(&inner.next_method, worklist);
+            }
         }
         HeapObj::RegExpStringIterator(it) => {
             push_value(&it.matcher, worklist);

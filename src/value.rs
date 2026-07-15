@@ -768,8 +768,14 @@ pub struct CollectionIteratorData {
 pub enum IteratorHelperKind {
     Map,
     Filter,
+    FlatMap,
     Take,
     Drop,
+}
+
+pub struct IteratorHelperInner {
+    pub iterator: Value,
+    pub next_method: Value,
 }
 
 pub struct IteratorHelperData {
@@ -778,6 +784,7 @@ pub struct IteratorHelperData {
     pub callback: Option<Value>,
     pub kind: IteratorHelperKind,
     pub counter: AtomicU64,
+    pub inner_iterator: Mutex<Option<IteratorHelperInner>>,
     /// Exact mathematical remaining count; `None` represents +Infinity.
     pub remaining: Mutex<Option<BigUint>>,
     /// 0 = suspended-start, 1 = executing, 2 = completed, 3 = suspended-yield.
