@@ -185,7 +185,7 @@ MODULE_NAMESPACE_FEATURES = {
 SKIP_FEATURES = {
     "AggregateError", "ArrayBuffer", "Atomics", "Atomics.pause", "Atomics.waitAsync", "DataView",
     "Float16Array", "Float32Array", "Float64Array", "Int8Array", "Int16Array",
-    "Int32Array", "Intl", "Promise", "SharedArrayBuffer",
+    "Int32Array", "Intl", "IsHTMLDDA", "Promise", "SharedArrayBuffer",
     "Symbol", "Symbol.asyncIterator", "Symbol.iterator",
     "TypedArray", "Uint8Array", "Uint8Array-base64", "Uint8Array-hex",
     "Uint8ClampedArray", "Uint16Array", "Uint32Array", "WeakMap", "WeakRef",

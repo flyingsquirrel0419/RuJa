@@ -109,6 +109,15 @@ class CanBlockEnvironmentTests(unittest.TestCase):
                 )
 
 
+class UnsupportedFeatureTests(unittest.TestCase):
+    def test_is_htmldda_is_skipped_by_runner_and_analyzer(self):
+        meta = {"features": ["class", "IsHTMLDDA"]}
+        path = Path("test/annexB/language/statements/class/is-htmldda.js")
+
+        for tool in (test262_runner, test262_analyze):
+            self.assertTrue(tool.should_skip(meta, path))
+
+
 class ModuleStagingTests(unittest.TestCase):
     def test_module_graph_is_staged_without_writing_to_the_source_tree(self):
         with tempfile.TemporaryDirectory() as temp_dir:
