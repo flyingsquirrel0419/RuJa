@@ -808,7 +808,7 @@ impl Vm {
             if let Some(result) = proxy_info {
                 let (target, handler) = result?;
                 let trap = self.get_property(&handler, "has")?;
-                if !trap.is_undefined() {
+                if !trap.is_nullish() {
                     let key_val = Self::property_key_to_value(key);
                     let trap_result =
                         self.call_function(&trap, &[target.clone(), key_val], Some(handler))?;

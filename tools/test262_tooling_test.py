@@ -21,6 +21,10 @@ from test262_class_private_admission import (
 from test262_class_public_field_admission import CLASS_PUBLIC_FIELD_FILES
 from test262_date_to_primitive_admission import DATE_TO_PRIMITIVE_FILES
 from test262_proxy_get_admission import PROXY_GET_FEATURES, PROXY_GET_FILES
+from test262_proxy_own_keys_admission import (
+    PROXY_OWN_KEYS_FEATURES,
+    PROXY_OWN_KEYS_FILES,
+)
 from test262_reference_primitive_admission import REFERENCE_PRIMITIVE_FILES
 from test262_dynamic_import_admission import DYNAMIC_IMPORT_FILES
 from test262_import_meta_admission import IMPORT_META_FILES
@@ -941,6 +945,50 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                 finally:
                     tool.TEST262 = original_root
 
+    def test_proxy_own_keys_manifest_is_exact_live_and_shared(self):
+        self.assertEqual(len(PROXY_OWN_KEYS_FILES), 40)
+        proxy = "built-ins/Proxy/ownKeys/return-not-list-object-throws-realm.js"
+        reflected = "built-ins/Reflect/ownKeys/not-a-constructor.js"
+        outside = "built-ins/Proxy/ownKeys/future.js"
+        self.assertEqual(
+            PROXY_OWN_KEYS_FEATURES[proxy],
+            {"Proxy", "Symbol", "cross-realm"},
+        )
+        self.assertEqual(
+            PROXY_OWN_KEYS_FEATURES[reflected],
+            {"Reflect", "Reflect.construct", "arrow-function"},
+        )
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        if test_root.is_dir():
+            for relative in PROXY_OWN_KEYS_FILES:
+                path = test_root / relative
+                self.assertTrue(path.is_file(), relative)
+                features = set(test262_runner.parse_meta(path.read_text()).get("features", []))
+                self.assertEqual(features, set(PROXY_OWN_KEYS_FEATURES[relative]), relative)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for relative in PROXY_OWN_KEYS_FILES:
+                        path = root / "test" / relative
+                        features = list(PROXY_OWN_KEYS_FEATURES[relative])
+                        self.assertTrue(tool.proxy_own_keys_path(path), relative)
+                        self.assertFalse(
+                            tool.should_skip({"features": features}, path),
+                            relative,
+                        )
+                    outside_path = root / "test" / outside
+                    self.assertFalse(tool.proxy_own_keys_path(outside_path))
+                    self.assertTrue(
+                        tool.should_skip({"features": ["Proxy"]}, outside_path)
+                    )
+                finally:
+                    tool.TEST262 = original_root
+
 class TypedArrayResizableAdmissionTests(unittest.TestCase):
     def test_typed_array_static_features_are_frozen_to_audited_files(self):
         expected = {
@@ -1699,7 +1747,7 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
                 test262_analyze.TEST262 = original_analyze_root
 
     def test_iterator_core_admission_is_exact(self):
-        self.assertEqual(len(ITERATOR_CORE_FILES), 483)
+        self.assertEqual(len(ITERATOR_CORE_FILES), 527)
         self.assertEqual(
             sum("/prototype/Symbol.dispose/" in path for path in ITERATOR_CORE_FILES),
             6,
@@ -1783,6 +1831,10 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
         self.assertEqual(
             sum("/Iterator/zip/" in path for path in ITERATOR_CORE_FILES),
             38,
+        )
+        self.assertEqual(
+            sum("/Iterator/zipKeyed/" in path for path in ITERATOR_CORE_FILES),
+            44,
         )
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1880,6 +1932,7 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
                     self.assertTrue(tool.iterator_core_path(iterator_find))
                     self.assertTrue(tool.iterator_core_path(iterator_concat))
                     self.assertTrue(tool.iterator_core_path(joint))
+                    self.assertTrue(tool.iterator_core_path(joint_keyed))
                     self.assertFalse(
                         tool.should_skip(
                             {"flags": [], "features": ["iterator-helpers"]},
@@ -1898,7 +1951,7 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
                             joint,
                         )
                     )
-                    self.assertTrue(
+                    self.assertFalse(
                         tool.should_skip(
                             {"flags": [], "features": ["joint-iteration"]},
                             joint_keyed,

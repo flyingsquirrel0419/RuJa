@@ -3734,7 +3734,14 @@ fn promise_static_keyed(
         return result;
     }
 
-    let property_keys = own_property_keys(vm, &promises, true, true, true);
+    let property_keys = match own_property_keys_or_throw(vm, &promises, true, true, true) {
+        Ok(keys) => keys,
+        Err(err) => {
+            let result = promise_capability_reject_and_return(vm, &capability, err);
+            vm.unpin_many(pins);
+            return result;
+        }
+    };
     let key_values: Vec<Value> = property_keys.iter().map(property_key_to_value).collect();
     let values_init = vec![Value::Undefined; key_values.len()];
     let keys_array = make_value_array(vm, key_values)?;

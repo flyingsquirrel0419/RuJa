@@ -2585,6 +2585,163 @@ fn iterator_zip_treats_duplicate_records_separately_and_preserves_close_priority
 }
 
 #[test]
+fn iterator_zip_keyed_retains_inputs_padding_and_results_across_forced_gc() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+    assert_eq!(
+        vm.run(
+            r#"
+            var symbol = Symbol("slot");
+            var target = { text: null };
+            target[symbol] = null;
+            var iterables = new Proxy(target, {
+              ownKeys: function(object) {
+                forceGc();
+                var keys = Reflect.ownKeys(object);
+                return {
+                  get 0() { forceGc(); return keys[0]; },
+                  get 1() { forceGc(); return keys[1]; },
+                  get length() {
+                    forceGc();
+                    return {
+                      valueOf: function() { forceGc(); return keys.length; }
+                    };
+                  }
+                };
+              },
+              getOwnPropertyDescriptor: function(object, key) {
+                forceGc();
+                return Reflect.getOwnPropertyDescriptor(object, key);
+              },
+              get: function(_object, key) {
+                forceGc();
+                if (key === "text") {
+                  var empty = {};
+                  Object.defineProperty(empty, "next", {
+                    get: function() {
+                      forceGc();
+                      return function() { forceGc(); return { done: true }; };
+                    }
+                  });
+                  return empty;
+                }
+                return {
+                  [Symbol.iterator]: function() {
+                    forceGc();
+                    var emitted = false;
+                    return {
+                      next: function() {
+                        forceGc();
+                        if (emitted) return { done: true };
+                        emitted = true;
+                        return { value: 7, done: false };
+                      }
+                    };
+                  }
+                };
+              }
+            });
+            var padding = new Proxy({}, {
+              get: function(_object, key) {
+                forceGc();
+                return { key: key };
+              }
+            });
+            var helper = Iterator.zipKeyed(iterables, {
+              mode: "longest",
+              padding: padding
+            });
+            forceGc();
+            var result = helper.next();
+            forceGc();
+            var textDescriptor = Object.getOwnPropertyDescriptor(result.value, "text");
+            [
+              result.value.text.key,
+              result.value[symbol],
+              Object.getPrototypeOf(result.value) === null,
+              textDescriptor.writable,
+              textDescriptor.enumerable,
+              textDescriptor.configurable,
+              result.done
+            ].join("|");
+        "#,
+        )
+        .expect("Iterator.zipKeyed GC regression failed"),
+        Value::String(Arc::from("text|7|true|true|true|true|false"))
+    );
+}
+
+#[test]
+fn iterator_zip_keyed_uses_creation_and_borrowed_method_realms() {
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var mainHelperPrototype = Object.getPrototypeOf(Iterator.zipKeyed({}));
+            var helper = other.Iterator.zipKeyed({ key: [1] });
+            var yielded = helper.next();
+            helper.next();
+            var completed = mainHelperPrototype.next.call(helper);
+
+            var strictRealm = false;
+            try {
+              other.Iterator.zipKeyed({ empty: [], live: [1] }, { mode: "strict" }).next();
+            } catch (error) {
+              strictRealm = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+
+            var borrowedCloseRealm = false;
+            var start = other.Iterator.zipKeyed({
+              key: {
+                next: function() { return { done: true }; },
+                return: 1
+              }
+            });
+            try { mainHelperPrototype.return.call(start); }
+            catch (error) {
+              borrowedCloseRealm = error instanceof TypeError &&
+                !(error instanceof other.TypeError);
+            }
+
+            [
+              helper instanceof other.Iterator,
+              Object.getPrototypeOf(yielded) === other.Object.prototype,
+              Object.getPrototypeOf(yielded.value) === null,
+              Object.getPrototypeOf(completed) === Object.prototype,
+              strictRealm,
+              borrowedCloseRealm
+            ].join("|");
+        "#),
+        Value::String(Arc::from("true|true|true|true|true|true"))
+    );
+}
+
+#[test]
+fn iterator_zip_keyed_accepts_null_traps_and_array_like_own_keys_results() {
+    assert_eq!(
+        run(r#"
+            var nullTrap = new Proxy({ key: [1] }, { ownKeys: null });
+            var arrayLike = new Proxy({ key: [2] }, {
+              ownKeys: function() {
+                return { 0: "key", length: 1 };
+              }
+            });
+            var first = Iterator.zipKeyed(nullTrap).next().value;
+            var second = Iterator.zipKeyed(arrayLike).next().value;
+            [first.key, second.key].join("|");
+        "#),
+        Value::String(Arc::from("1|2"))
+    );
+}
+
+#[test]
 fn array_map_reduce() {
     assert_eq!(
         run("[1,2,3].map(x => x*2).join(',');"),
@@ -7916,6 +8073,307 @@ fn object_assign_copies_symbols_after_strings() {
 }
 
 #[test]
+fn object_assign_roots_boxed_targets_across_proxy_callbacks() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+    assert_eq!(
+        vm.run(
+            r#"
+            var sourceTarget = { kept: 2 };
+            var source = new Proxy(sourceTarget, {
+              ownKeys: function(target) {
+                forceGc();
+                return Reflect.ownKeys(target);
+              },
+              getOwnPropertyDescriptor: function(target, key) {
+                forceGc();
+                return Reflect.getOwnPropertyDescriptor(target, key);
+              },
+              get: function(target, key) {
+                forceGc();
+                return target[key];
+              }
+            });
+            var assigned = Object.assign(1, source);
+            forceGc();
+            [assigned.valueOf(), assigned.kept].join("|");
+        "#,
+        )
+        .expect("Object.assign boxed target GC regression failed"),
+        Value::String(Arc::from("1|2"))
+    );
+}
+
+#[test]
+fn object_define_properties_validates_and_converts_before_defining() {
+    assert!(run_err("Object.defineProperties(1, {});").contains("TypeError"));
+    assert_eq!(
+        run(r#"
+            var emptyString = Object.defineProperties({}, "");
+            var number = Object.defineProperties({}, 1);
+            var boolean = Object.defineProperties({}, false);
+            var inherited = Object.create({ value: 4, enumerable: true });
+            var nullHas = new Proxy({ value: 5, enumerable: true }, { has: null });
+            var target = Object.defineProperties({}, {
+              inherited: inherited,
+              nullHas: nullHas
+            });
+            [
+              Object.keys(emptyString).length,
+              Object.keys(number).length,
+              Object.keys(boolean).length,
+              target.inherited,
+              target.nullHas,
+              Object.keys(target).join(",")
+            ].join("|");
+        "#),
+        Value::String(Arc::from("0|0|0|4|5|inherited,nullHas"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var dataKeys;
+            var accessorKeys;
+            var target = new Proxy({}, {
+              defineProperty: function(object, key, descriptor) {
+                if (key === "data") dataKeys = Reflect.ownKeys(descriptor).join(",");
+                else accessorKeys = Reflect.ownKeys(descriptor).join(",");
+                return Reflect.defineProperty(object, key, descriptor);
+              }
+            });
+            Object.defineProperties(target, {
+              data: {
+                configurable: true,
+                enumerable: true,
+                writable: true,
+                value: 1
+              },
+              accessor: {
+                configurable: true,
+                enumerable: true,
+                set: undefined,
+                get: function() { return 2; }
+              }
+            });
+            [dataKeys, accessorKeys, target.data, target.accessor].join("|");
+        "#),
+        Value::String(Arc::from(
+            "value,writable,enumerable,configurable|get,set,enumerable,configurable|1|2"
+        ))
+    );
+
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+    assert_eq!(
+        vm.run(
+            r#"
+            var atomicTarget = {};
+            var invalidDescriptors = {};
+            Object.defineProperty(invalidDescriptors, "first", {
+              enumerable: true,
+              get: function() { return { value: 1 }; }
+            });
+            Object.defineProperty(invalidDescriptors, "second", {
+              enumerable: true,
+              get: function() {
+                forceGc();
+                return { value: 2, get: function() {} };
+              }
+            });
+            var atomic = false;
+            try { Object.defineProperties(atomicTarget, invalidDescriptors); }
+            catch (error) {
+              atomic = error instanceof TypeError && !("first" in atomicTarget);
+            }
+
+            var rootedTarget = {};
+            var validDescriptors = {};
+            Object.defineProperty(validDescriptors, "first", {
+              enumerable: true,
+              get: function() { return { value: { alive: 7 } }; }
+            });
+            Object.defineProperty(validDescriptors, "second", {
+              enumerable: true,
+              get: function() { forceGc(); return { value: 2 }; }
+            });
+            Object.defineProperties(rootedTarget, validDescriptors);
+            forceGc();
+            [atomic, rootedTarget.first.alive, rootedTarget.second].join("|");
+        "#,
+        )
+        .expect("Object.defineProperties conversion regression failed"),
+        Value::String(Arc::from("true|7|2"))
+    );
+}
+
+#[test]
+fn object_define_property_normalizes_proxy_descriptors_and_null_traps() {
+    assert_eq!(
+        run(r#"
+            var keyCalls = 0;
+            var key = {
+              [Symbol.toPrimitive]: function() { keyCalls += 1; return "key"; }
+            };
+            var primitiveTargetError = false;
+            try { Object.defineProperty(1, key, {}); }
+            catch (error) { primitiveTargetError = error instanceof TypeError; }
+
+            var original = {
+              configurable: true,
+              extra: 9,
+              enumerable: true,
+              writable: true,
+              value: 1
+            };
+            var fresh = false;
+            var descriptorKeys;
+            var target = new Proxy({}, {
+              defineProperty: function(object, property, descriptor) {
+                fresh = descriptor !== original && !("extra" in descriptor);
+                descriptorKeys = Reflect.ownKeys(descriptor).join(",");
+                return Reflect.defineProperty(object, property, descriptor);
+              }
+            });
+            Object.defineProperty(target, "data", original);
+
+            var fallbackTarget = {};
+            var fallback = new Proxy(fallbackTarget, { defineProperty: null });
+            Object.defineProperty(fallback, "forwarded", { value: 2 });
+
+            var invariantTarget = Object.preventExtensions({});
+            var invariantProxy = new Proxy(invariantTarget, {
+              defineProperty: function() { return true; }
+            });
+            var invariantError = false;
+            try { Object.defineProperty(invariantProxy, "new", { value: 1 }); }
+            catch (error) { invariantError = error instanceof TypeError; }
+
+            var fixedNaN = {};
+            Object.defineProperty(fixedNaN, "value", {
+              value: NaN,
+              writable: false,
+              configurable: false
+            });
+            var ordinaryNaNAccepted = Object.defineProperty(
+              fixedNaN,
+              "value",
+              { value: NaN }
+            ) === fixedNaN;
+            var nanProxy = new Proxy(fixedNaN, {
+              defineProperty: function() { return true; }
+            });
+            var nanAccepted = Object.defineProperty(
+              nanProxy,
+              "value",
+              { value: NaN }
+            ) === nanProxy;
+
+            var fixedNegativeZero = {};
+            Object.defineProperty(fixedNegativeZero, "value", {
+              value: -0,
+              writable: false,
+              configurable: false
+            });
+            var ordinaryZeroRejected = false;
+            try { Object.defineProperty(fixedNegativeZero, "value", { value: 0 }); }
+            catch (error) { ordinaryZeroRejected = error instanceof TypeError; }
+            var zeroProxy = new Proxy(fixedNegativeZero, {
+              defineProperty: function() { return true; }
+            });
+            var zeroRejected = false;
+            try { Object.defineProperty(zeroProxy, "value", { value: 0 }); }
+            catch (error) { zeroRejected = error instanceof TypeError; }
+            [
+              primitiveTargetError,
+              keyCalls,
+              fresh,
+              descriptorKeys,
+              target.data,
+              fallbackTarget.forwarded,
+              invariantError,
+              ordinaryNaNAccepted,
+              ordinaryZeroRejected,
+              nanAccepted,
+              zeroRejected
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "true|0|true|value,writable,enumerable,configurable|1|2|true|true|true|true|true"
+        ))
+    );
+}
+
+#[test]
+fn object_define_property_roots_ephemeral_native_arguments_across_gc() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+    assert_eq!(
+        vm.run(
+            r#"
+            var result = Object.defineProperty(
+              new Proxy({}, {
+                get defineProperty() {
+                  forceGc();
+                  return function(target, key, descriptor) {
+                    forceGc();
+                    return Reflect.defineProperty(target, key, descriptor);
+                  };
+                }
+              }),
+              {
+                [Symbol.toPrimitive]: function() {
+                  forceGc();
+                  return "kept";
+                }
+              },
+              new Proxy(
+                { value: { alive: 7 }, configurable: true },
+                {
+                  has: function(target, key) {
+                    forceGc();
+                    return key in target;
+                  },
+                  get: function(target, key) {
+                    forceGc();
+                    return target[key];
+                  }
+                }
+              )
+            );
+            forceGc();
+            [result.kept.alive, Object.getOwnPropertyDescriptor(result, "kept").configurable].join("|");
+        "#,
+        )
+        .expect("Object.defineProperty native argument GC regression failed"),
+        Value::String(Arc::from("7|true"))
+    );
+}
+
+#[test]
 fn object_spread_copies_symbols_in_own_property_key_order() {
     assert_eq!(
         run(r#"
@@ -10026,19 +10484,126 @@ fn reflect_own_keys_includes_symbols_and_non_enumerables_in_spec_order() {
 }
 
 #[test]
-fn reflect_own_keys_propagates_proxy_trap_result_errors() {
-    assert!(run_err(
-        r#"
-        var key = {};
-        Object.defineProperty(key, Symbol.toPrimitive, {
-          get: function() { throw new Error("key-coercion"); }
-        });
-        Reflect.ownKeys(new Proxy({}, {
-          ownKeys: function() { return [key]; }
-        }));
-        "#,
-    )
-    .contains("key-coercion"));
+fn reflect_own_keys_rejects_non_keys_without_coercion_after_reading_the_list() {
+    assert_eq!(
+        run(r#"
+            var coercions = 0;
+            var reads = [];
+            var key = {
+              [Symbol.toPrimitive]: function() {
+                coercions += 1;
+                return "coerced";
+              }
+            };
+            var result = "none";
+            try {
+              Reflect.ownKeys(new Proxy({}, {
+                ownKeys: function() {
+                  return {
+                    get 0() { reads.push(0); return "duplicate"; },
+                    get 1() { reads.push(1); return "duplicate"; },
+                    get 2() { reads.push(2); return key; },
+                    length: 3
+                  };
+                }
+              }));
+            } catch (error) {
+              result = error.name;
+            }
+            [result, coercions, reads.join(",")].join("|");
+        "#),
+        Value::String(Arc::from("TypeError|0|0,1,2"))
+    );
+}
+
+#[test]
+fn proxy_own_keys_validates_duplicates_before_enumerability_traps() {
+    assert_eq!(
+        run(r#"
+            var descriptorCalls = 0;
+            var duplicateTypeError = false;
+            try {
+              JSON.stringify(new Proxy({}, {
+                ownKeys: function() { return ["key", "key"]; },
+                getOwnPropertyDescriptor: function() {
+                  descriptorCalls += 1;
+                  throw new Error("descriptor must not run");
+                }
+              }));
+            } catch (error) {
+              duplicateTypeError = error instanceof TypeError;
+            }
+            [duplicateTypeError, descriptorCalls].join("|");
+        "#),
+        Value::String(Arc::from("true|0"))
+    );
+}
+
+#[test]
+fn proxy_own_keys_filters_key_types_before_enumerability_traps() {
+    assert_eq!(
+        run(r#"
+            var symbol = Symbol("ignored");
+            var target = {};
+            target[symbol] = 1;
+            var descriptorCalls = 0;
+            var proxy = new Proxy(target, {
+              ownKeys: function() { return [symbol]; },
+              getOwnPropertyDescriptor: function() {
+                descriptorCalls += 1;
+                throw new Error("symbol descriptor must not run");
+              }
+            });
+            [JSON.stringify(proxy), descriptorCalls].join("|");
+        "#),
+        Value::String(Arc::from("{}|0"))
+    );
+}
+
+#[test]
+fn public_own_key_consumers_use_structured_proxy_semantics() {
+    assert_eq!(
+        run(r#"
+            var symbol = Symbol("symbol");
+            var source = { text: 1 };
+            source[symbol] = 2;
+            var arrayLike = new Proxy(source, {
+              ownKeys: function() {
+                return { 0: "text", 1: symbol, length: 2 };
+              }
+            });
+            var assigned = Object.assign({}, arrayLike);
+            var names = Object.getOwnPropertyNames(arrayLike);
+            var symbols = Object.getOwnPropertySymbols(arrayLike);
+
+            var descriptorSource = {};
+            descriptorSource[symbol] = { value: 3, enumerable: true };
+            var descriptors = new Proxy(descriptorSource, {
+              ownKeys: function() { return { 0: symbol, length: 1 }; }
+            });
+            var defined = Object.defineProperties({}, descriptors);
+
+            var marker = {};
+            var abrupt = false;
+            try {
+              Object.assign({}, new Proxy({}, {
+                ownKeys: function() { throw marker; }
+              }));
+            } catch (error) {
+              abrupt = error === marker;
+            }
+            [
+              assigned.text,
+              assigned[symbol],
+              names.join(","),
+              symbols.length,
+              symbols[0] === symbol,
+              defined[symbol],
+              abrupt
+            ].join("|");
+        "#),
+        Value::String(Arc::from("1|2|text|1|true|3|true"))
+    );
 }
 
 #[test]
@@ -10771,6 +11336,23 @@ fn promise_all_keyed_preserves_symbols_and_rejects_non_object() {
     assert_eq!(
         vm.run("rejected instanceof TypeError;")
             .expect("evaluation errored"),
+        Value::Bool(true)
+    );
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        "var marker = {};
+         var proxyRejected;
+         var input = new Proxy({}, {
+           ownKeys: function() { throw marker; }
+         });
+         Promise.allKeyed(input).then(
+           function() {},
+           function(error) { proxyRejected = error === marker; }
+         );",
+    )
+    .expect("evaluation errored");
+    assert_eq!(
+        vm.run("proxyRejected;").expect("evaluation errored"),
         Value::Bool(true)
     );
 }

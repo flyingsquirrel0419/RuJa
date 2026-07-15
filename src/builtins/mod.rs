@@ -4176,78 +4176,13 @@ fn push_unique_key(
     }
 }
 
-pub(crate) fn own_property_keys(
+fn ordinary_own_property_keys(
     vm: &mut Vm,
     obj: &Value,
     enumerable_only: bool,
     include_strings: bool,
     include_symbols: bool,
 ) -> Vec<PropertyKey> {
-    if let Value::Object(idx) = obj {
-        if let Some((target, handler)) = vm.heap.with_obj(idx.0, |heap_obj| {
-            if let HeapObj::Proxy(proxy) = heap_obj {
-                if *proxy.revoked.lock() {
-                    None
-                } else {
-                    Some((proxy.target.clone(), proxy.handler.clone()))
-                }
-            } else {
-                None
-            }
-        }) {
-            if let Ok(trap) = vm.get_property(&handler, "ownKeys") {
-                if !trap.is_undefined() {
-                    if let Ok(key_list) =
-                        vm.call_function(&trap, std::slice::from_ref(&target), Some(handler))
-                    {
-                        let items = if let Value::Object(list_idx) = &key_list {
-                            vm.heap.with_obj(list_idx.0, |o| {
-                                if let HeapObj::Array(a) = o {
-                                    return Some(a.items.lock().clone());
-                                }
-                                None
-                            })
-                        } else {
-                            None
-                        };
-                        if let Some(items) = items {
-                            let mut keys = Vec::new();
-                            let mut seen = IndexSet::new();
-                            for item in items {
-                                let Ok(key) = to_property_key_descriptor(vm, &item) else {
-                                    continue;
-                                };
-                                if enumerable_only
-                                    && !own_property_descriptor_for_key(vm, &target, &key)
-                                        .is_some_and(|desc| desc.enumerable)
-                                {
-                                    continue;
-                                }
-                                match key {
-                                    PropertyKey::Str(_) if include_strings => {
-                                        push_unique_key(&mut keys, &mut seen, key);
-                                    }
-                                    PropertyKey::Symbol(_) if include_symbols => {
-                                        push_unique_key(&mut keys, &mut seen, key);
-                                    }
-                                    _ => {}
-                                }
-                            }
-                            return keys;
-                        }
-                    }
-                }
-            }
-            return own_property_keys(
-                vm,
-                &target,
-                enumerable_only,
-                include_strings,
-                include_symbols,
-            );
-        }
-    }
-
     let mut keys = Vec::new();
     let mut seen = IndexSet::new();
     let typed_array_index_count = include_strings
@@ -4361,17 +4296,6 @@ pub(crate) fn own_property_keys(
         _ => {}
     }
     keys
-}
-
-/// Collect an object's own enumerable string keys in array-index-first then property order.
-pub(crate) fn own_string_keys(vm: &mut Vm, obj: &Value) -> Vec<Arc<str>> {
-    own_property_keys(vm, obj, true, true, false)
-        .into_iter()
-        .filter_map(|key| match key {
-            PropertyKey::Str(s) => Some(s),
-            PropertyKey::Symbol(_) => None,
-        })
-        .collect()
 }
 
 pub(crate) fn make_value_array(vm: &mut Vm, items: Vec<Value>) -> error::Result<Value> {
@@ -4547,23 +4471,36 @@ fn object_assign(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Re
         ));
     }
     let to = vm.to_object(&target)?;
-    for src in &args[1..] {
-        if src.is_nullish() {
-            continue;
-        }
-        let from = vm.to_object(src)?;
-        let keys = own_property_keys(vm, &from, false, true, true);
-        for k in keys {
-            if !own_property_descriptor_for_key(vm, &from, &k).is_some_and(|desc| desc.enumerable) {
+    let to_pin = vm.pin(&to);
+    let result = (|| -> error::Result<Value> {
+        for src in &args[1..] {
+            if src.is_nullish() {
                 continue;
             }
-            let v = vm.get_property_by_key(&from, &k)?;
-            if !vm.try_set_property_key_with_receiver(&to, &k, v, &to)? {
-                return Err(Error::type_err("Cannot assign to read only property"));
-            }
+            let from = vm.to_object(src)?;
+            let from_pin = vm.pin(&from);
+            let source_result = (|| -> error::Result<()> {
+                let keys = own_property_keys_or_throw(vm, &from, false, true, true)?;
+                for k in keys {
+                    if !own_property_descriptor_for_key_or_throw(vm, &from, &k)?
+                        .is_some_and(|desc| desc.enumerable)
+                    {
+                        continue;
+                    }
+                    let v = vm.get_property_by_key(&from, &k)?;
+                    if !vm.try_set_property_key_with_receiver(&to, &k, v, &to)? {
+                        return Err(Error::type_err("Cannot assign to read only property"));
+                    }
+                }
+                Ok(())
+            })();
+            vm.unpin_many(from_pin);
+            source_result?;
         }
-    }
-    Ok(to)
+        Ok(to.clone())
+    })();
+    vm.unpin_many(to_pin);
+    result
 }
 
 fn object_is(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
@@ -4674,7 +4611,7 @@ fn object_get_own_property_names(
         ));
     }
     let obj = vm.to_object(object)?;
-    let keys: Vec<Arc<str>> = own_property_keys(vm, &obj, false, true, false)
+    let keys: Vec<Arc<str>> = own_property_keys_or_throw(vm, &obj, false, true, false)?
         .into_iter()
         .filter_map(|key| match key {
             PropertyKey::Str(s) => Some(s),
@@ -4696,7 +4633,7 @@ fn object_get_own_property_symbols(
         ));
     }
     let obj = vm.to_object(object)?;
-    let symbols: Vec<Value> = own_property_keys(vm, &obj, false, false, true)
+    let symbols: Vec<Value> = own_property_keys_or_throw(vm, &obj, false, false, true)?
         .into_iter()
         .filter_map(|key| match key {
             PropertyKey::Symbol(id) => Some(Value::Symbol(id)),
@@ -4920,6 +4857,50 @@ fn is_proxy_value(vm: &Vm, obj: &Value) -> bool {
     matches!(obj, Value::Object(idx) if vm.heap.with_obj(idx.0, |o| matches!(o, HeapObj::Proxy(_))))
 }
 
+fn proxy_own_keys_from_array_like(
+    vm: &mut Vm,
+    key_list: &Value,
+) -> error::Result<Vec<PropertyKey>> {
+    const MAX_SAFE_LENGTH: f64 = 9_007_199_254_740_991.0;
+
+    if !matches!(key_list, Value::Object(_)) {
+        return Err(Error::type_err(
+            "Proxy ownKeys trap result must be an object",
+        ));
+    }
+    let list_pin = vm.pin(key_list);
+    let result = (|| -> error::Result<Vec<PropertyKey>> {
+        let length_value = vm.get_property(key_list, "length")?;
+        let length_pin = vm.pin(&length_value);
+        let length_result = vm.to_number(&length_value);
+        vm.unpin_many(length_pin);
+        let length_number = length_result?;
+        let length = if length_number.is_nan() || length_number <= 0.0 {
+            0
+        } else {
+            length_number.trunc().min(MAX_SAFE_LENGTH) as usize
+        };
+        let mut keys = Vec::new();
+        for index in 0..length {
+            vm.consume_fuel()?;
+            let item = vm.get_property(key_list, &index.to_string())?;
+            let key = match item {
+                Value::String(value) => PropertyKey::Str(value),
+                Value::Symbol(id) => PropertyKey::Symbol(id),
+                _ => {
+                    return Err(Error::type_err(
+                        "Proxy ownKeys trap entries must be strings or symbols",
+                    ));
+                }
+            };
+            keys.push(key);
+        }
+        Ok(keys)
+    })();
+    vm.unpin_many(list_pin);
+    result
+}
+
 pub(crate) fn own_property_keys_or_throw(
     vm: &mut Vm,
     obj: &Value,
@@ -4942,7 +4923,7 @@ pub(crate) fn own_property_keys_or_throw(
         }) {
             let (target, handler) = proxy_result?;
             let trap = vm.get_property(&handler, "ownKeys")?;
-            if trap.is_undefined() {
+            if trap.is_nullish() {
                 return own_property_keys_or_throw(
                     vm,
                     &target,
@@ -4952,40 +4933,18 @@ pub(crate) fn own_property_keys_or_throw(
                 );
             }
             let key_list = vm.call_function(&trap, std::slice::from_ref(&target), Some(handler))?;
-            let items = if let Value::Object(list_idx) = &key_list {
-                vm.heap.with_obj(list_idx.0, |o| {
-                    if let HeapObj::Array(a) = o {
-                        return Some(a.items.lock().clone());
-                    }
-                    None
-                })
-            } else {
-                None
-            }
-            .ok_or_else(|| Error::type_err("Proxy ownKeys trap must return an array"))?;
-            let mut keys = Vec::new();
+            let trap_keys = proxy_own_keys_from_array_like(vm, &key_list)?;
             let mut seen = IndexSet::new();
-            for item in items {
-                let key = to_property_key_descriptor(vm, &item)?;
+            for key in &trap_keys {
                 if !seen.insert(key.clone()) {
                     return Err(Error::type_err(
                         "Proxy ownKeys trap returned duplicate entries",
                     ));
                 }
-                if enumerable_only
-                    && !own_property_descriptor_for_key_or_throw(vm, obj, &key)?
-                        .is_some_and(|desc| desc.enumerable)
-                {
-                    continue;
-                }
-                match key {
-                    PropertyKey::Str(_) if include_strings => keys.push(key),
-                    PropertyKey::Symbol(_) if include_symbols => keys.push(key),
-                    _ => {}
-                }
             }
             let target_keys = own_property_keys_or_throw(vm, &target, false, true, true)?;
             for target_key in &target_keys {
+                vm.consume_fuel()?;
                 let descriptor = own_property_descriptor_for_key_or_throw(vm, &target, target_key)?;
                 if descriptor.is_some_and(|descriptor| !descriptor.configurable)
                     && !seen.contains(target_key)
@@ -5003,10 +4962,26 @@ pub(crate) fn own_property_keys_or_throw(
                     ));
                 }
             }
+            let mut keys = Vec::new();
+            for key in trap_keys {
+                vm.consume_fuel()?;
+                let included = matches!(&key, PropertyKey::Str(_) if include_strings)
+                    || matches!(&key, PropertyKey::Symbol(_) if include_symbols);
+                if !included {
+                    continue;
+                }
+                if enumerable_only
+                    && !own_property_descriptor_for_key_or_throw(vm, obj, &key)?
+                        .is_some_and(|desc| desc.enumerable)
+                {
+                    continue;
+                }
+                keys.push(key);
+            }
             return Ok(keys);
         }
     }
-    Ok(own_property_keys(
+    Ok(ordinary_own_property_keys(
         vm,
         obj,
         enumerable_only,
@@ -5274,30 +5249,154 @@ fn object_get_own_property_descriptors(
     Ok(Value::Object(GcIdx(result_idx)))
 }
 
-fn object_define_properties(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
-    let obj = args.first().cloned().unwrap_or(Value::Undefined);
-    let props = args.get(1).cloned().unwrap_or(Value::Undefined);
-    // Collect (key, descriptor) pairs first to avoid borrowing vm during iteration.
-    let pairs: Vec<(String, Value)> = if let Value::Object(_) = &props {
-        let keys = own_string_keys(vm, &props);
-        keys.into_iter()
-            .filter_map(|k| {
-                let desc = vm.get_property(&props, &k).ok()?;
-                if desc.is_undefined() {
-                    None
-                } else {
-                    Some((k.to_string(), desc))
-                }
-            })
-            .collect()
-    } else {
-        Vec::new()
-    };
-    for (key, desc) in pairs {
-        let dp = vec![obj.clone(), Value::String(Arc::from(key.as_str())), desc];
-        object_define_property(vm, &dp, None)?;
+fn normalize_property_descriptor_object(vm: &mut Vm, desc: &Value) -> error::Result<Value> {
+    if !matches!(desc, Value::Object(_)) {
+        return Err(Error::type_err("Property description must be an object"));
     }
-    Ok(obj)
+    let realm = vm
+        .native_callee_closure()
+        .map(|closure| env::global_env_root(&vm.heap, closure))
+        .unwrap_or(vm.global);
+    let prototype = vm
+        .realm_object_prototypes
+        .get(&realm.0)
+        .cloned()
+        .ok_or_else(|| Error::internal("missing Object prototype intrinsic"))?;
+    let base_pins = vm.pin_many(&[desc.clone(), prototype.clone()]);
+    let normalized_idx = match vm.alloc(HeapObj::Object(ObjectData {
+        props: Mutex::new(IndexMap::new()),
+        proto: Mutex::new(Some(prototype)),
+        extensible: AtomicBool::new(true),
+        class_name: None,
+        private_fields: Mutex::new(std::collections::HashMap::new()),
+        primitive: Mutex::new(None),
+    })) {
+        Ok(idx) => idx,
+        Err(error) => {
+            vm.unpin_many(base_pins);
+            return Err(error);
+        }
+    };
+    let normalized = Value::Object(normalized_idx);
+    let normalized_pin = vm.pin(&normalized);
+    let result = (|| -> error::Result<()> {
+        let mut has_data = false;
+        let mut has_accessor = false;
+        for name in [
+            "enumerable",
+            "configurable",
+            "value",
+            "writable",
+            "get",
+            "set",
+        ] {
+            let key = PropertyKey::from(name);
+            if !vm.has_property_key(desc, &key)? {
+                continue;
+            }
+            let mut value = vm.get_property_by_key(desc, &key)?;
+            match name {
+                "enumerable" | "configurable" | "writable" => {
+                    value = Value::Bool(vm.to_boolean(&value));
+                }
+                "value" => has_data = true,
+                "get" | "set" => {
+                    has_accessor = true;
+                    if !value.is_undefined() && !is_callable(&value, &vm.heap) {
+                        return Err(Error::type_err(if name == "get" {
+                            "Getter must be a function"
+                        } else {
+                            "Setter must be a function"
+                        }));
+                    }
+                }
+                _ => unreachable!(),
+            }
+            if name == "writable" {
+                has_data = true;
+            }
+            vm.heap.with_obj(normalized_idx.0, |object| {
+                object
+                    .props()
+                    .lock()
+                    .insert(key, PropertyDescriptor::data(value));
+            });
+        }
+        if has_data && has_accessor {
+            return Err(Error::type_err(
+                "Invalid property descriptor. Cannot both specify accessors and a value or writable attribute",
+            ));
+        }
+        let order: &[&str] = if has_data {
+            &["value", "writable", "enumerable", "configurable"]
+        } else if has_accessor {
+            &["get", "set", "enumerable", "configurable"]
+        } else {
+            &["enumerable", "configurable"]
+        };
+        vm.heap.with_obj(normalized_idx.0, |object| {
+            let props = object.props();
+            let mut props = props.lock();
+            let mut ordered = IndexMap::new();
+            for name in order {
+                let key = PropertyKey::from(*name);
+                if let Some(descriptor) = props.get(&key).cloned() {
+                    ordered.insert(key, descriptor);
+                }
+            }
+            *props = ordered;
+        });
+        Ok(())
+    })();
+    vm.unpin_many(normalized_pin + base_pins);
+    result.map(|_| normalized)
+}
+
+fn descriptor_same_value(left: &Value, right: &Value) -> bool {
+    match (left, right) {
+        (Value::Number(left), Value::Number(right)) => {
+            (left.is_nan() && right.is_nan()) || left.to_bits() == right.to_bits()
+        }
+        _ => left == right,
+    }
+}
+
+fn object_define_properties(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    let target = args.first().cloned().unwrap_or(Value::Undefined);
+    if !matches!(target, Value::Object(_)) {
+        return Err(Error::type_err(
+            "Object.defineProperties target must be an object",
+        ));
+    }
+    let properties = vm.to_object(&args.get(1).cloned().unwrap_or(Value::Undefined))?;
+    let base_pins = vm.pin_many(&[target.clone(), properties.clone()]);
+    let mut descriptor_pins = 0;
+    let result = (|| -> error::Result<Value> {
+        let keys = own_property_keys_or_throw(vm, &properties, false, true, true)?;
+        let mut descriptors = Vec::new();
+        for key in keys {
+            if !own_property_descriptor_for_key_or_throw(vm, &properties, &key)?
+                .is_some_and(|descriptor| descriptor.enumerable)
+            {
+                continue;
+            }
+            let descriptor_object = vm.get_property_by_key(&properties, &key)?;
+            let descriptor = normalize_property_descriptor_object(vm, &descriptor_object)?;
+            descriptor_pins += vm.pin(&descriptor);
+            descriptors.push((key, descriptor));
+        }
+        for (key, descriptor) in descriptors {
+            object_define_property_result(
+                vm,
+                &[target.clone(), property_key_to_value(&key), descriptor],
+                true,
+            )?;
+        }
+        Ok(target.clone())
+    })();
+    vm.unpin_many(descriptor_pins);
+    vm.unpin_many(base_pins);
+    result
 }
 
 pub(crate) fn canonical_string_index(key: &PropertyKey) -> Option<usize> {
@@ -5782,336 +5881,391 @@ pub(crate) fn object_define_property_result(
     throw_on_failure: bool,
 ) -> error::Result<bool> {
     let target = args.first().cloned().unwrap_or(Value::Undefined);
-    let key = args
-        .get(1)
-        .map(|v| to_property_key_descriptor(vm, v))
-        .transpose()?
-        .unwrap_or_else(|| PropertyKey::from(""));
-    let desc = args.get(2).cloned().unwrap_or(Value::Undefined);
-    if let Value::Object(idx) = target {
-        let mut value = Value::Undefined;
-        let mut writable = false;
-        let mut enumerable = false;
-        let mut configurable = false;
-        let mut get = None;
-        let mut set = None;
-        let mut has_value = false;
-        let mut has_writable = false;
-        let mut has_enumerable = false;
-        let mut has_configurable = false;
-        let mut has_get = false;
-        let mut has_set = false;
-        // ToPropertyDescriptor: the descriptor must be an Object, else a
-
-        // TypeError. Without this, Object.defineProperty(o, "x", true)
-
-        // silently succeeded instead of throwing (diverging from V8/Node).
-
-        if !matches!(desc, Value::Object(_)) {
-            return Err(Error::type_err(format!(
-                "Property description must be an object: {}",
-                crate::value::value_to_debug_string(&desc)
-            )));
-        }
-
-        if let Some(proxy_result) = vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Proxy(proxy) = obj {
-                if *proxy.revoked.lock() {
-                    return Some(Err(Error::type_err(
-                        "Cannot perform 'defineProperty' on a proxy that has been revoked",
-                    )));
-                }
-                Some(Ok((proxy.target.clone(), proxy.handler.clone())))
-            } else {
-                None
-            }
-        }) {
-            let (proxy_target, proxy_handler) = proxy_result?;
-            let trap = vm.get_property(&proxy_handler, "defineProperty")?;
-            let key_value = property_key_to_value(&key);
-            if trap.is_undefined() {
-                return object_define_property_result(
-                    vm,
-                    &[proxy_target, key_value, desc.clone()],
-                    throw_on_failure,
-                );
-            }
-
-            let trap_result = vm.call_function(
-                &trap,
-                &[proxy_target, key_value, desc.clone()],
-                Some(proxy_handler),
-            )?;
-            if !trap_result.is_truthy() {
-                if throw_on_failure {
-                    return Err(Error::type_err("Proxy defineProperty trap returned false"));
-                }
-                return Ok(false);
-            }
-            return Ok(true);
-        }
-
-        if let Value::Object(_) = desc {
-            // Presence of each field is determined by an OWN property on the
-            // descriptor object, mirroring ToPropertyDescriptor: a missing
-            // field must NOT flip the has_* flags, otherwise a plain
-            // `{value: 1, writable: false}` descriptor would be misread as
-            // an accessor (get/set absent but `get_property` returns
-            // `Ok(undefined)`).
-            if vm.has_own(&desc, "value") {
-                value = vm.get_property(&desc, "value")?;
-                has_value = true;
-            }
-            if vm.has_own(&desc, "writable") {
-                writable = vm.get_property(&desc, "writable")?.is_truthy();
-                has_writable = true;
-            }
-            if vm.has_own(&desc, "get") {
-                let v = vm.get_property(&desc, "get")?;
-                if !v.is_undefined() && !is_callable(&v, &vm.heap) {
-                    return Err(Error::type_err("Getter must be a function"));
-                }
-                get = if v.is_undefined() { None } else { Some(v) };
-                has_get = true;
-            }
-            if vm.has_own(&desc, "set") {
-                let v = vm.get_property(&desc, "set")?;
-                if !v.is_undefined() && !is_callable(&v, &vm.heap) {
-                    return Err(Error::type_err("Setter must be a function"));
-                }
-                set = if v.is_undefined() { None } else { Some(v) };
-                has_set = true;
-            }
-            if vm.has_own(&desc, "enumerable") {
-                enumerable = vm.get_property(&desc, "enumerable")?.is_truthy();
-                has_enumerable = true;
-            }
-            if vm.has_own(&desc, "configurable") {
-                configurable = vm.get_property(&desc, "configurable")?.is_truthy();
-                has_configurable = true;
-            }
-        }
-        // A descriptor is an accessor descriptor if it has get/set, and a
-        // data descriptor if it has value/writable. Mixing the two is a
-        // TypeError per [[DefineOwnProperty]].
-        let is_accessor = has_get || has_set;
-        let is_data = has_value || has_writable;
-        if is_accessor && is_data {
+    let key_input = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let desc_input = args.get(2).cloned().unwrap_or(Value::Undefined);
+    let argument_pins = vm.pin_many(&[target.clone(), key_input.clone(), desc_input.clone()]);
+    let result = (|| -> error::Result<bool> {
+        if !matches!(target, Value::Object(_)) {
             return Err(Error::type_err(
-                "Invalid property descriptor. Cannot both specify accessors and a value or writable attribute",
+                "Object.defineProperty target must be an object",
             ));
         }
-        let is_namespace = vm.heap.with_obj(idx.0, |object| {
-            matches!(object, HeapObj::ModuleNamespace(_))
-        });
-        if is_namespace {
-            let current = own_property_descriptor_for_key_or_throw(vm, &target, &key)?;
-            let success = current.is_some_and(|current| {
-                !is_accessor
-                    && (!has_value || value == current.value)
-                    && (!has_writable || writable == current.writable)
-                    && (!has_enumerable || enumerable == current.enumerable)
-                    && (!has_configurable || configurable == current.configurable)
-            });
-            if !success && throw_on_failure {
-                return Err(Error::type_err("Cannot redefine module namespace property"));
-            }
-            return Ok(success);
-        }
-        if let Some(success) = vm.define_typed_array_integer_index_property(
-            &target,
-            &key,
-            crate::vm::TypedArrayDefineDescriptor {
-                value: has_value.then_some(&value),
-                has_configurable,
-                configurable,
-                has_enumerable,
-                enumerable,
-                is_accessor,
-                has_writable,
-                writable,
-            },
-        )? {
-            if !success && throw_on_failure {
-                return Err(Error::type_err("Cannot define TypedArray integer index"));
-            }
-            return Ok(success);
-        }
-        let current = own_property_descriptor_for_key(vm, &target, &key);
-        let mapped_arguments_index = key
-            .as_str()
-            .and_then(crate::value::parse_array_index)
-            .and_then(|i| {
-                vm.arguments_mapped_binding_for_index(idx.0, i)
-                    .map(|mapped| (i, mapped))
-            });
-        if current.is_none() {
-            let extensible = vm.heap.with_obj(idx.0, |obj| obj.is_extensible());
-            if !extensible {
-                if throw_on_failure {
-                    return Err(Error::type_err(format!(
-                        "Cannot define property '{}', object is not extensible",
-                        key.as_str().unwrap_or("Symbol")
-                    )));
-                }
-                return Ok(false);
-            }
-        }
-        let map_value = value.clone();
-        let descriptor = if let Some(mut current) = current {
-            if !current.configurable {
-                if has_configurable && configurable {
-                    if throw_on_failure {
-                        return Err(Error::type_err("Cannot redefine non-configurable property"));
+        let key = to_property_key_descriptor(vm, &key_input)?;
+        let desc = normalize_property_descriptor_object(vm, &desc_input)?;
+        let desc_pin = vm.pin(&desc);
+        let define_result = (|| -> error::Result<bool> {
+            if let Value::Object(idx) = target {
+                let mut value = Value::Undefined;
+                let mut writable = false;
+                let mut enumerable = false;
+                let mut configurable = false;
+                let mut get = None;
+                let mut set = None;
+                let mut has_value = false;
+                let mut has_writable = false;
+                let mut has_enumerable = false;
+                let mut has_configurable = false;
+                let mut has_get = false;
+                let mut has_set = false;
+                if let Value::Object(_) = desc {
+                    // Presence of each field is determined by an OWN property on the
+                    // descriptor object, mirroring ToPropertyDescriptor: a missing
+                    // field must NOT flip the has_* flags, otherwise a plain
+                    // `{value: 1, writable: false}` descriptor would be misread as
+                    // an accessor (get/set absent but `get_property` returns
+                    // `Ok(undefined)`).
+                    if vm.has_own(&desc, "value") {
+                        value = vm.get_property(&desc, "value")?;
+                        has_value = true;
                     }
-                    return Ok(false);
-                }
-                if has_enumerable && enumerable != current.enumerable {
-                    if throw_on_failure {
-                        return Err(Error::type_err("Cannot redefine non-configurable property"));
+                    if vm.has_own(&desc, "writable") {
+                        writable = vm.get_property(&desc, "writable")?.is_truthy();
+                        has_writable = true;
                     }
-                    return Ok(false);
-                }
-                if is_accessor != current.is_accessor && (is_accessor || is_data) {
-                    if throw_on_failure {
-                        return Err(Error::type_err("Cannot redefine non-configurable property"));
+                    if vm.has_own(&desc, "get") {
+                        let v = vm.get_property(&desc, "get")?;
+                        if !v.is_undefined() && !is_callable(&v, &vm.heap) {
+                            return Err(Error::type_err("Getter must be a function"));
+                        }
+                        get = if v.is_undefined() { None } else { Some(v) };
+                        has_get = true;
                     }
-                    return Ok(false);
+                    if vm.has_own(&desc, "set") {
+                        let v = vm.get_property(&desc, "set")?;
+                        if !v.is_undefined() && !is_callable(&v, &vm.heap) {
+                            return Err(Error::type_err("Setter must be a function"));
+                        }
+                        set = if v.is_undefined() { None } else { Some(v) };
+                        has_set = true;
+                    }
+                    if vm.has_own(&desc, "enumerable") {
+                        enumerable = vm.get_property(&desc, "enumerable")?.is_truthy();
+                        has_enumerable = true;
+                    }
+                    if vm.has_own(&desc, "configurable") {
+                        configurable = vm.get_property(&desc, "configurable")?.is_truthy();
+                        has_configurable = true;
+                    }
                 }
-                if current.is_accessor {
-                    if has_get && get != current.get {
+                // A descriptor is an accessor descriptor if it has get/set, and a
+                // data descriptor if it has value/writable. Mixing the two is a
+                // TypeError per [[DefineOwnProperty]].
+                let is_accessor = has_get || has_set;
+                let is_data = has_value || has_writable;
+                if is_accessor && is_data {
+                    return Err(Error::type_err(
+                "Invalid property descriptor. Cannot both specify accessors and a value or writable attribute",
+            ));
+                }
+                if let Some(proxy_result) = vm.heap.with_obj(idx.0, |obj| {
+                    if let HeapObj::Proxy(proxy) = obj {
+                        if *proxy.revoked.lock() {
+                            return Some(Err(Error::type_err(
+                                "Cannot perform 'defineProperty' on a proxy that has been revoked",
+                            )));
+                        }
+                        Some(Ok((proxy.target.clone(), proxy.handler.clone())))
+                    } else {
+                        None
+                    }
+                }) {
+                    let (proxy_target, proxy_handler) = proxy_result?;
+                    let trap = vm.get_property(&proxy_handler, "defineProperty")?;
+                    let key_value = property_key_to_value(&key);
+                    if trap.is_nullish() {
+                        return object_define_property_result(
+                            vm,
+                            &[proxy_target, key_value, desc.clone()],
+                            throw_on_failure,
+                        );
+                    }
+
+                    let trap_pin = vm.pin(&trap);
+                    let trap_result = vm.call_function(
+                        &trap,
+                        &[proxy_target.clone(), key_value, desc.clone()],
+                        Some(proxy_handler),
+                    );
+                    vm.unpin_many(trap_pin);
+                    let trap_result = trap_result?;
+                    if !trap_result.is_truthy() {
                         if throw_on_failure {
                             return Err(Error::type_err(
-                                "Cannot redefine non-configurable property",
+                                "Proxy defineProperty trap returned false",
                             ));
                         }
                         return Ok(false);
                     }
-                    if has_set && set != current.set {
-                        if throw_on_failure {
-                            return Err(Error::type_err(
-                                "Cannot redefine non-configurable property",
-                            ));
-                        }
-                        return Ok(false);
-                    }
-                } else if is_data && !current.writable {
-                    if has_writable && writable {
-                        if throw_on_failure {
-                            return Err(Error::type_err(
-                                "Cannot redefine non-configurable property",
-                            ));
-                        }
-                        return Ok(false);
-                    }
-                    if has_value && value != current.value {
-                        if throw_on_failure {
-                            return Err(Error::type_err(
-                                "Cannot redefine non-configurable property",
-                            ));
-                        }
-                        return Ok(false);
-                    }
-                }
-            }
-            if has_enumerable {
-                current.enumerable = enumerable;
-            }
-            if has_configurable {
-                current.configurable = configurable;
-            }
-            if is_accessor {
-                current.value = Value::Undefined;
-                current.writable = false;
-                if has_get {
-                    current.get = get;
-                }
-                if has_set {
-                    current.set = set;
-                }
-                current.is_accessor = true;
-            } else if is_data {
-                if has_value {
-                    current.value = value;
-                }
-                if has_writable {
-                    current.writable = writable;
-                }
-                current.get = None;
-                current.set = None;
-                current.is_accessor = false;
-            }
-            current
-        } else if is_accessor {
-            PropertyDescriptor {
-                value: Value::Undefined,
-                writable: false,
-                enumerable,
-                configurable,
-                get,
-                set,
-                is_accessor: true,
-            }
-        } else if is_data {
-            PropertyDescriptor {
-                value,
-                writable,
-                enumerable,
-                configurable,
-                get: None,
-                set: None,
-                is_accessor: false,
-            }
-        } else {
-            // Generic descriptor (only enumerable/configurable).
-            PropertyDescriptor {
-                value: Value::Undefined,
-                writable: false,
-                enumerable,
-                configurable,
-                get: None,
-                set: None,
-                is_accessor: false,
-            }
-        };
-        vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Array(a) = obj {
-                if let Some(i) = key.as_str().and_then(crate::value::parse_array_index) {
-                    if i >= a.items.lock().len() {
-                        let new_len = i + 1;
-                        if new_len <= crate::value::MAX_DENSE_ARRAY_LEN {
-                            let mut items = a.items.lock();
-                            let mut present = a.present.lock();
-                            while items.len() < new_len {
-                                items.push(Value::Undefined);
-                                present.push(false);
+
+                    let target_desc =
+                        own_property_descriptor_for_key_or_throw(vm, &proxy_target, &key)?;
+                    let extensible = vm.is_extensible(&proxy_target)?;
+                    let setting_configurable_false = has_configurable && !configurable;
+                    match target_desc {
+                        None => {
+                            if !extensible || setting_configurable_false {
+                                return Err(Error::type_err(
+                                    "Proxy defineProperty trap violated the target invariant",
+                                ));
                             }
-                            *a.sparse_max.lock() = None;
-                        } else {
-                            *a.sparse_max.lock() = Some(new_len);
+                        }
+                        Some(current) => {
+                            let incompatible_non_configurable = !current.configurable
+                                && ((has_configurable && configurable)
+                                    || (has_enumerable && enumerable != current.enumerable)
+                                    || ((is_accessor || is_data)
+                                        && is_accessor != current.is_accessor)
+                                    || (current.is_accessor
+                                        && ((has_get && get != current.get)
+                                            || (has_set && set != current.set)))
+                                    || (!current.is_accessor
+                                        && is_data
+                                        && !current.writable
+                                        && ((has_writable && writable)
+                                            || (has_value
+                                                && !descriptor_same_value(
+                                                    &value,
+                                                    &current.value,
+                                                )))));
+                            let forbidden_tightening = setting_configurable_false
+                                && current.configurable
+                                || (!current.configurable
+                                    && !current.is_accessor
+                                    && current.writable
+                                    && has_writable
+                                    && !writable);
+                            if incompatible_non_configurable || forbidden_tightening {
+                                return Err(Error::type_err(
+                                    "Proxy defineProperty trap violated the target invariant",
+                                ));
+                            }
+                        }
+                    }
+                    return Ok(true);
+                }
+                let is_namespace = vm.heap.with_obj(idx.0, |object| {
+                    matches!(object, HeapObj::ModuleNamespace(_))
+                });
+                if is_namespace {
+                    let current = own_property_descriptor_for_key_or_throw(vm, &target, &key)?;
+                    let success = current.is_some_and(|current| {
+                        !is_accessor
+                            && (!has_value || descriptor_same_value(&value, &current.value))
+                            && (!has_writable || writable == current.writable)
+                            && (!has_enumerable || enumerable == current.enumerable)
+                            && (!has_configurable || configurable == current.configurable)
+                    });
+                    if !success && throw_on_failure {
+                        return Err(Error::type_err("Cannot redefine module namespace property"));
+                    }
+                    return Ok(success);
+                }
+                if let Some(success) = vm.define_typed_array_integer_index_property(
+                    &target,
+                    &key,
+                    crate::vm::TypedArrayDefineDescriptor {
+                        value: has_value.then_some(&value),
+                        has_configurable,
+                        configurable,
+                        has_enumerable,
+                        enumerable,
+                        is_accessor,
+                        has_writable,
+                        writable,
+                    },
+                )? {
+                    if !success && throw_on_failure {
+                        return Err(Error::type_err("Cannot define TypedArray integer index"));
+                    }
+                    return Ok(success);
+                }
+                let current = own_property_descriptor_for_key(vm, &target, &key);
+                let mapped_arguments_index = key
+                    .as_str()
+                    .and_then(crate::value::parse_array_index)
+                    .and_then(|i| {
+                        vm.arguments_mapped_binding_for_index(idx.0, i)
+                            .map(|mapped| (i, mapped))
+                    });
+                if current.is_none() {
+                    let extensible = vm.heap.with_obj(idx.0, |obj| obj.is_extensible());
+                    if !extensible {
+                        if throw_on_failure {
+                            return Err(Error::type_err(format!(
+                                "Cannot define property '{}', object is not extensible",
+                                key.as_str().unwrap_or("Symbol")
+                            )));
+                        }
+                        return Ok(false);
+                    }
+                }
+                let map_value = value.clone();
+                let descriptor = if let Some(mut current) = current {
+                    if !current.configurable {
+                        if has_configurable && configurable {
+                            if throw_on_failure {
+                                return Err(Error::type_err(
+                                    "Cannot redefine non-configurable property",
+                                ));
+                            }
+                            return Ok(false);
+                        }
+                        if has_enumerable && enumerable != current.enumerable {
+                            if throw_on_failure {
+                                return Err(Error::type_err(
+                                    "Cannot redefine non-configurable property",
+                                ));
+                            }
+                            return Ok(false);
+                        }
+                        if is_accessor != current.is_accessor && (is_accessor || is_data) {
+                            if throw_on_failure {
+                                return Err(Error::type_err(
+                                    "Cannot redefine non-configurable property",
+                                ));
+                            }
+                            return Ok(false);
+                        }
+                        if current.is_accessor {
+                            if has_get && get != current.get {
+                                if throw_on_failure {
+                                    return Err(Error::type_err(
+                                        "Cannot redefine non-configurable property",
+                                    ));
+                                }
+                                return Ok(false);
+                            }
+                            if has_set && set != current.set {
+                                if throw_on_failure {
+                                    return Err(Error::type_err(
+                                        "Cannot redefine non-configurable property",
+                                    ));
+                                }
+                                return Ok(false);
+                            }
+                        } else if is_data && !current.writable {
+                            if has_writable && writable {
+                                if throw_on_failure {
+                                    return Err(Error::type_err(
+                                        "Cannot redefine non-configurable property",
+                                    ));
+                                }
+                                return Ok(false);
+                            }
+                            if has_value && !descriptor_same_value(&value, &current.value) {
+                                if throw_on_failure {
+                                    return Err(Error::type_err(
+                                        "Cannot redefine non-configurable property",
+                                    ));
+                                }
+                                return Ok(false);
+                            }
+                        }
+                    }
+                    if has_enumerable {
+                        current.enumerable = enumerable;
+                    }
+                    if has_configurable {
+                        current.configurable = configurable;
+                    }
+                    if is_accessor {
+                        current.value = Value::Undefined;
+                        current.writable = false;
+                        if has_get {
+                            current.get = get;
+                        }
+                        if has_set {
+                            current.set = set;
+                        }
+                        current.is_accessor = true;
+                    } else if is_data {
+                        if has_value {
+                            current.value = value;
+                        }
+                        if has_writable {
+                            current.writable = writable;
+                        }
+                        current.get = None;
+                        current.set = None;
+                        current.is_accessor = false;
+                    }
+                    current
+                } else if is_accessor {
+                    PropertyDescriptor {
+                        value: Value::Undefined,
+                        writable: false,
+                        enumerable,
+                        configurable,
+                        get,
+                        set,
+                        is_accessor: true,
+                    }
+                } else if is_data {
+                    PropertyDescriptor {
+                        value,
+                        writable,
+                        enumerable,
+                        configurable,
+                        get: None,
+                        set: None,
+                        is_accessor: false,
+                    }
+                } else {
+                    // Generic descriptor (only enumerable/configurable).
+                    PropertyDescriptor {
+                        value: Value::Undefined,
+                        writable: false,
+                        enumerable,
+                        configurable,
+                        get: None,
+                        set: None,
+                        is_accessor: false,
+                    }
+                };
+                vm.heap.with_obj(idx.0, |obj| {
+                    if let HeapObj::Array(a) = obj {
+                        if let Some(i) = key.as_str().and_then(crate::value::parse_array_index) {
+                            if i >= a.items.lock().len() {
+                                let new_len = i + 1;
+                                if new_len <= crate::value::MAX_DENSE_ARRAY_LEN {
+                                    let mut items = a.items.lock();
+                                    let mut present = a.present.lock();
+                                    while items.len() < new_len {
+                                        items.push(Value::Undefined);
+                                        present.push(false);
+                                    }
+                                    *a.sparse_max.lock() = None;
+                                } else {
+                                    *a.sparse_max.lock() = Some(new_len);
+                                }
+                            }
+                        }
+                    }
+                    obj.props().lock().insert(key.clone(), descriptor);
+                });
+                if let Some((i, (env, name))) = mapped_arguments_index {
+                    if is_accessor {
+                        vm.remove_arguments_mapping_for_index(idx.0, i);
+                    } else {
+                        if has_value {
+                            crate::environment::set(&vm.heap, env, &name, map_value);
+                        }
+                        if has_writable && !writable {
+                            vm.remove_arguments_mapping_for_index(idx.0, i);
                         }
                     }
                 }
-            }
-            obj.props().lock().insert(key.clone(), descriptor);
-        });
-        if let Some((i, (env, name))) = mapped_arguments_index {
-            if is_accessor {
-                vm.remove_arguments_mapping_for_index(idx.0, i);
-            } else {
-                if has_value {
-                    crate::environment::set(&vm.heap, env, &name, map_value);
-                }
-                if has_writable && !writable {
-                    vm.remove_arguments_mapping_for_index(idx.0, i);
+                if let Some(key) = key.as_str() {
+                    vm.ic_invalidate(idx.0, key);
                 }
             }
-        }
-        if let Some(key) = key.as_str() {
-            vm.ic_invalidate(idx.0, key);
-        }
-    }
-    Ok(true)
+            Ok(true)
+        })();
+        vm.unpin_many(desc_pin);
+        define_result
+    })();
+    vm.unpin_many(argument_pins);
+    result
 }
 
 // Minimal stubs to keep the crate compiling while parser/lexer work is in progress.
@@ -6760,6 +6914,35 @@ fn create_array_from_values_in_realm(
     result
 }
 
+fn create_keyed_object_from_values(
+    vm: &mut Vm,
+    keys: &[PropertyKey],
+    values: Vec<Value>,
+) -> error::Result<Value> {
+    if keys.len() != values.len() {
+        return Err(Error::internal("Iterator.zipKeyed result length mismatch"));
+    }
+    let pin_count = vm.pin_many(&values);
+    let props = keys
+        .iter()
+        .cloned()
+        .zip(values)
+        .map(|(key, value)| (key, PropertyDescriptor::data(value)))
+        .collect();
+    let result = vm
+        .alloc(HeapObj::Object(ObjectData {
+            props: Mutex::new(props),
+            proto: Mutex::new(None),
+            extensible: AtomicBool::new(true),
+            class_name: None,
+            private_fields: Mutex::new(std::collections::HashMap::new()),
+            primitive: Mutex::new(None),
+        }))
+        .map(Value::Object);
+    vm.unpin_many(pin_count);
+    result
+}
+
 fn allocate_iterator_helper(
     vm: &mut Vm,
     iterator: Value,
@@ -6793,6 +6976,7 @@ fn allocate_iterator_helper(
             zip_iterators: Mutex::new(Box::new([])),
             zip_open_count: AtomicUsize::new(0),
             zip_padding: Box::new([]),
+            zip_keys: Box::new([]),
             zip_mode: IteratorZipMode::Shortest,
             remaining: Mutex::new(remaining),
             state: std::sync::atomic::AtomicU8::new(0),
@@ -6836,6 +7020,7 @@ fn allocate_iterator_concat(
             zip_iterators: Mutex::new(Box::new([])),
             zip_open_count: AtomicUsize::new(0),
             zip_padding: Box::new([]),
+            zip_keys: Box::new([]),
             zip_mode: IteratorZipMode::Shortest,
             remaining: Mutex::new(Some(BigUint::zero())),
             state: std::sync::atomic::AtomicU8::new(0),
@@ -6853,7 +7038,15 @@ fn allocate_iterator_zip(
     iterators: Vec<IteratorHelperInner>,
     mode: IteratorZipMode,
     padding: Vec<Value>,
+    kind: IteratorHelperKind,
+    keys: Vec<PropertyKey>,
 ) -> error::Result<Value> {
+    if !matches!(kind, IteratorHelperKind::Zip | IteratorHelperKind::ZipKeyed) {
+        return Err(Error::internal("invalid Iterator zip helper kind"));
+    }
+    if kind == IteratorHelperKind::ZipKeyed && keys.len() != iterators.len() {
+        return Err(Error::internal("Iterator.zipKeyed key count mismatch"));
+    }
     let realm = active_iterator_realm(vm);
     let proto = vm
         .realm_iterator_helper_prototypes
@@ -6880,7 +7073,7 @@ fn allocate_iterator_zip(
             iterator: Value::Undefined,
             next_method: Value::Undefined,
             callback: None,
-            kind: IteratorHelperKind::Zip,
+            kind,
             counter: Mutex::new(BigUint::zero()),
             inner_iterator: Mutex::new(None),
             concat_iterables: Box::new([]),
@@ -6888,6 +7081,7 @@ fn allocate_iterator_zip(
             zip_iterators: Mutex::new(slots),
             zip_open_count: AtomicUsize::new(open_count),
             zip_padding: padding.into_boxed_slice(),
+            zip_keys: keys.into_boxed_slice(),
             zip_mode: mode,
             remaining: Mutex::new(Some(BigUint::zero())),
             state: std::sync::atomic::AtomicU8::new(0),
@@ -6936,15 +7130,14 @@ fn close_iterator_records_after_error<T>(
     unreachable!("an abrupt completion cannot become normal")
 }
 
-fn iterator_zip(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
-    let iterables = args.first().cloned().unwrap_or(Value::Undefined);
-    if !matches!(iterables, Value::Object(_)) {
-        return Err(Error::type_err("Iterator.zip requires an object iterable"));
-    }
-
+fn iterator_joint_options(
+    vm: &mut Vm,
+    args: &[Value],
+    name: &str,
+) -> error::Result<(IteratorZipMode, Value)> {
     let options = args.get(1).cloned().unwrap_or(Value::Undefined);
     if !matches!(options, Value::Undefined | Value::Object(_)) {
-        return Err(Error::type_err("Iterator.zip options must be an object"));
+        return Err(Error::type_err(format!("{name} options must be an object")));
     }
     let mode_value = if matches!(options, Value::Undefined) {
         Value::Undefined
@@ -6956,21 +7149,28 @@ fn iterator_zip(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Res
         Value::String(value) if value.as_ref() == "shortest" => IteratorZipMode::Shortest,
         Value::String(value) if value.as_ref() == "longest" => IteratorZipMode::Longest,
         Value::String(value) if value.as_ref() == "strict" => IteratorZipMode::Strict,
-        _ => return Err(Error::type_err("invalid Iterator.zip mode")),
+        _ => return Err(Error::type_err(format!("invalid {name} mode"))),
     };
-    let padding_option = if mode == IteratorZipMode::Longest && !matches!(options, Value::Undefined)
-    {
+    let padding = if mode == IteratorZipMode::Longest && !matches!(options, Value::Undefined) {
         vm.get_property(&options, "padding")?
     } else {
         Value::Undefined
     };
-    if mode == IteratorZipMode::Longest
-        && !matches!(padding_option, Value::Undefined | Value::Object(_))
-    {
-        return Err(Error::type_err(
-            "Iterator.zip padding must be an object or undefined",
-        ));
+    if mode == IteratorZipMode::Longest && !matches!(padding, Value::Undefined | Value::Object(_)) {
+        return Err(Error::type_err(format!(
+            "{name} padding must be an object or undefined"
+        )));
     }
+    Ok((mode, padding))
+}
+
+fn iterator_zip(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
+    let iterables = args.first().cloned().unwrap_or(Value::Undefined);
+    if !matches!(iterables, Value::Object(_)) {
+        return Err(Error::type_err("Iterator.zip requires an object iterable"));
+    }
+
+    let (mode, padding_option) = iterator_joint_options(vm, args, "Iterator.zip")?;
 
     let mut root_pins = vm.pin(&padding_option);
     let outer = match get_sync_iterator(vm, iterables) {
@@ -7070,7 +7270,112 @@ fn iterator_zip(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Res
         return Err(error);
     }
 
-    let result = allocate_iterator_zip(vm, iterators, mode, padding);
+    let result = allocate_iterator_zip(
+        vm,
+        iterators,
+        mode,
+        padding,
+        IteratorHelperKind::Zip,
+        Vec::new(),
+    );
+    vm.unpin_many(root_pins);
+    result
+}
+
+fn iterator_zip_keyed(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
+    let iterables = args.first().cloned().unwrap_or(Value::Undefined);
+    if !matches!(iterables, Value::Object(_)) {
+        return Err(Error::type_err("Iterator.zipKeyed requires an object"));
+    }
+    let (mode, padding_option) = iterator_joint_options(vm, args, "Iterator.zipKeyed")?;
+    let mut root_pins = vm.pin_many(&[iterables.clone(), padding_option.clone()]);
+    let all_keys = match own_property_keys_or_throw(vm, &iterables, false, true, true) {
+        Ok(keys) => keys,
+        Err(error) => {
+            vm.unpin_many(root_pins);
+            return Err(error);
+        }
+    };
+
+    let mut keys = Vec::new();
+    let mut iterators = Vec::new();
+    let setup = (|| -> error::Result<()> {
+        for key in all_keys {
+            vm.consume_fuel()?;
+            let descriptor = match own_property_descriptor_for_key_or_throw(vm, &iterables, &key) {
+                Ok(descriptor) => descriptor,
+                Err(error) => {
+                    return close_iterator_records_after_error(vm, &iterators, error);
+                }
+            };
+            if !descriptor.is_some_and(|descriptor| descriptor.enumerable) {
+                continue;
+            }
+            let value = match vm.get_property_by_key(&iterables, &key) {
+                Ok(value) => value,
+                Err(error) => {
+                    return close_iterator_records_after_error(vm, &iterators, error);
+                }
+            };
+            if value.is_undefined() {
+                continue;
+            }
+            keys.push(key);
+            let record = match get_iterator_flattenable_reject_primitives(
+                vm,
+                value,
+                "Iterator.zipKeyed inputs must be objects",
+            ) {
+                Ok((iterator, next_method)) => IteratorHelperInner {
+                    iterator,
+                    next_method,
+                },
+                Err(error) => {
+                    return close_iterator_records_after_error(vm, &iterators, error);
+                }
+            };
+            root_pins += vm.pin_many(&[record.iterator.clone(), record.next_method.clone()]);
+            iterators.push(record);
+        }
+        Ok(())
+    })();
+    if let Err(error) = setup {
+        vm.unpin_many(root_pins);
+        return Err(error);
+    }
+
+    let mut padding = Vec::with_capacity(keys.len());
+    let padding_result = (|| -> error::Result<()> {
+        if padding_option.is_undefined() {
+            padding.resize(keys.len(), Value::Undefined);
+            return Ok(());
+        }
+        for key in &keys {
+            vm.consume_fuel()?;
+            let value = match vm.get_property_by_key(&padding_option, key) {
+                Ok(value) => value,
+                Err(error) => {
+                    return close_iterator_records_after_error(vm, &iterators, error);
+                }
+            };
+            root_pins += vm.pin(&value);
+            padding.push(value);
+        }
+        Ok(())
+    })();
+    if let Err(error) = padding_result {
+        vm.unpin_many(root_pins);
+        return Err(error);
+    }
+
+    let result = allocate_iterator_zip(
+        vm,
+        iterators,
+        mode,
+        padding,
+        IteratorHelperKind::ZipKeyed,
+        keys,
+    );
     vm.unpin_many(root_pins);
     result
 }
@@ -7278,12 +7583,28 @@ fn iterator_helper_advance_concat(vm: &Vm, idx: GcIdx) {
     });
 }
 
-fn iterator_helper_zip_snapshot(vm: &Vm, idx: GcIdx) -> Option<(IteratorZipMode, usize)> {
+fn iterator_helper_zip_snapshot(
+    vm: &Vm,
+    idx: GcIdx,
+) -> Option<(IteratorZipMode, IteratorHelperKind, usize)> {
     vm.heap.with_obj(idx.0, |obj| {
         let HeapObj::IteratorHelper(helper) = obj else {
             return None;
         };
-        Some((helper.zip_mode, helper.zip_iterators.lock().len()))
+        Some((
+            helper.zip_mode,
+            helper.kind,
+            helper.zip_iterators.lock().len(),
+        ))
+    })
+}
+
+fn iterator_helper_zip_keys(vm: &Vm, idx: GcIdx) -> Vec<PropertyKey> {
+    vm.heap.with_obj(idx.0, |obj| {
+        let HeapObj::IteratorHelper(helper) = obj else {
+            return Vec::new();
+        };
+        helper.zip_keys.to_vec()
     })
 }
 
@@ -7456,7 +7777,7 @@ fn iterator_helper_step(
 }
 
 fn iterator_zip_step(vm: &mut Vm, idx: GcIdx, realm: GcIdx) -> error::Result<Option<Value>> {
-    let (mode, iter_count) = iterator_helper_zip_snapshot(vm, idx)
+    let (mode, kind, iter_count) = iterator_helper_zip_snapshot(vm, idx)
         .ok_or_else(|| Error::internal("Iterator.zip helper state is missing"))?;
     if iter_count == 0 {
         return Ok(None);
@@ -7562,7 +7883,16 @@ fn iterator_zip_step(vm: &mut Vm, idx: GcIdx, realm: GcIdx) -> error::Result<Opt
                 }
             }
         }
-        create_array_from_values_in_realm(vm, values, realm).map(Some)
+        match kind {
+            IteratorHelperKind::Zip => {
+                create_array_from_values_in_realm(vm, values, realm).map(Some)
+            }
+            IteratorHelperKind::ZipKeyed => {
+                let keys = iterator_helper_zip_keys(vm, idx);
+                create_keyed_object_from_values(vm, &keys, values).map(Some)
+            }
+            _ => Err(Error::internal("invalid Iterator zip helper kind")),
+        }
     })();
     vm.unpin_many(value_pins);
     result
@@ -7718,13 +8048,15 @@ fn iterator_helper_next(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> er
                     let inner = iterator_concat_open_inner(vm, iterable, open_method)?;
                     iterator_helper_set_inner(vm, idx, Some(inner));
                 },
-                IteratorHelperKind::Zip => match iterator_zip_step(vm, idx, realm)? {
-                    Some(values) => Some(values),
-                    None => {
-                        iterator_helper_set_state(vm, idx, 2);
-                        return create_iterator_result(vm, Value::Undefined, true);
+                IteratorHelperKind::Zip | IteratorHelperKind::ZipKeyed => {
+                    match iterator_zip_step(vm, idx, realm)? {
+                        Some(values) => Some(values),
+                        None => {
+                            iterator_helper_set_state(vm, idx, 2);
+                            return create_iterator_result(vm, Value::Undefined, true);
+                        }
                     }
-                },
+                }
             };
             if let Some(yielded) = yielded {
                 let result = create_iterator_result_in_realm(vm, yielded, false, realm)?;
@@ -7796,7 +8128,7 @@ fn iterator_helper_return(
     if previous == 0 && kind == IteratorHelperKind::Concat {
         return create_iterator_result(vm, Value::Undefined, true);
     }
-    let zip_open = if kind == IteratorHelperKind::Zip {
+    let zip_open = if matches!(kind, IteratorHelperKind::Zip | IteratorHelperKind::ZipKeyed) {
         match iterator_helper_take_zip_open(vm, idx) {
             Ok(open) => open,
             Err(error) => {
@@ -7813,7 +8145,7 @@ fn iterator_helper_return(
             vm.pin_many(&[inner_iterator.clone(), inner_next.clone()])
         })
         .unwrap_or(0);
-    let close_result = if kind == IteratorHelperKind::Zip {
+    let close_result = if matches!(kind, IteratorHelperKind::Zip | IteratorHelperKind::ZipKeyed) {
         close_iterator_records(vm, &zip_open, Ok(()))
     } else if kind == IteratorHelperKind::Concat {
         if let Some((inner_iterator, _)) = inner {
@@ -8380,6 +8712,8 @@ fn install_iterator_intrinsic_in_env(
     pin_count += vm.pin(&Value::Object(concat));
     let zip = vm.new_native_function_in_env("zip", iterator_zip, 1, realm)?;
     pin_count += vm.pin(&Value::Object(zip));
+    let zip_keyed = vm.new_native_function_in_env("zipKeyed", iterator_zip_keyed, 1, realm)?;
+    pin_count += vm.pin(&Value::Object(zip_keyed));
     let constructor = vm.new_native_function_in_env("Iterator", iterator_constructor, 0, realm)?;
     let constructor_value = Value::Object(constructor);
     pin_count += vm.pin(&constructor_value);
@@ -8402,6 +8736,10 @@ fn install_iterator_intrinsic_in_env(
         obj.props()
             .lock()
             .insert(PropertyKey::from("zip"), data_prop(Value::Object(zip)));
+        obj.props().lock().insert(
+            PropertyKey::from("zipKeyed"),
+            data_prop(Value::Object(zip_keyed)),
+        );
     });
     if let Value::Object(prototype_idx) = &prototype {
         vm.heap.with_obj(prototype_idx.0, |obj| {

@@ -236,6 +236,148 @@ fn iterator_zip_return_fuel_abort_does_not_leave_helper_running() {
 }
 
 #[test]
+fn iterator_zip_keyed_eager_key_setup_consumes_fuel() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        var keyedInputs = {};
+        for (var i = 0; i < 200; i++) {
+          keyedInputs["key" + i] = {
+            next: function() { return { done: true }; }
+          };
+        }
+        "#,
+    )
+    .expect("failed to create wide keyed input object");
+    vm.set_fuel(Some(100));
+    let error = vm
+        .run("Iterator.zipKeyed(keyedInputs)")
+        .expect_err("wide Iterator.zipKeyed setup should exhaust fuel");
+    assert!(
+        error.to_string().contains("fuel exhausted"),
+        "expected keyed setup fuel exhaustion, got: {}",
+        error
+    );
+    assert_eq!(vm.fuel_remaining(), Some(0));
+}
+
+#[test]
+fn iterator_zip_keyed_proxy_own_keys_array_like_consumes_fuel() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        var ownKeyReads = 0;
+        var keyList = new Proxy({}, {
+          get: function(_target, key) {
+            if (key === "length") return 10000;
+            ownKeyReads += 1;
+            return "key" + key;
+          }
+        });
+        var proxyInputs = new Proxy({}, {
+          ownKeys: function() { return keyList; }
+        });
+        "#,
+    )
+    .expect("failed to create Proxy ownKeys array-like input");
+    vm.set_fuel(Some(100));
+    let error = vm
+        .run("Iterator.zipKeyed(proxyInputs)")
+        .expect_err("Proxy ownKeys array-like traversal should exhaust fuel");
+    assert!(
+        error.to_string().contains("fuel exhausted"),
+        "expected Proxy ownKeys fuel exhaustion, got: {}",
+        error
+    );
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    vm.set_fuel(None);
+    assert_eq!(
+        vm.run("ownKeyReads > 0 && ownKeyReads < 10000")
+            .expect("failed to inspect bounded Proxy ownKeys traversal"),
+        ruja::Value::Bool(true)
+    );
+}
+
+#[test]
+fn iterator_zip_keyed_padding_collection_consumes_fuel() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        var keyedInputs = {};
+        for (var i = 0; i < 200; i++) {
+          keyedInputs["key" + i] = {
+            next: function() { return { done: true }; }
+          };
+        }
+        var paddingGets = 0;
+        var keyedPadding = new Proxy({}, {
+          get: function() {
+            paddingGets += 1;
+            return undefined;
+          }
+        });
+        "#,
+    )
+    .expect("failed to create keyed padding inputs");
+    vm.set_fuel(Some(300));
+    let error = vm
+        .run(
+            r#"
+            Iterator.zipKeyed(keyedInputs, {
+              mode: "longest",
+              padding: keyedPadding
+            });
+            "#,
+        )
+        .expect_err("wide Iterator.zipKeyed padding collection should exhaust fuel");
+    assert!(
+        error.to_string().contains("fuel exhausted"),
+        "expected keyed padding fuel exhaustion, got: {}",
+        error
+    );
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    vm.set_fuel(None);
+    assert_eq!(
+        vm.run("paddingGets > 0 && paddingGets < 200")
+            .expect("failed to inspect partial keyed padding collection"),
+        ruja::Value::Bool(true)
+    );
+}
+
+#[test]
+fn iterator_zip_keyed_wide_step_consumes_fuel_and_completes() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        var keyedInputs = {};
+        for (var i = 0; i < 200; i++) {
+          keyedInputs["key" + i] = {
+            next: function() { return { value: 1, done: false }; },
+            return: function() { return {}; }
+          };
+        }
+        var keyedZip = Iterator.zipKeyed(keyedInputs);
+        "#,
+    )
+    .expect("failed to create wide keyed zip helper");
+    vm.set_fuel(Some(100));
+    let error = vm
+        .run("keyedZip.next()")
+        .expect_err("wide Iterator.zipKeyed step should exhaust fuel");
+    assert!(
+        error.to_string().contains("fuel exhausted"),
+        "expected keyed step fuel exhaustion, got: {}",
+        error
+    );
+    vm.set_fuel(Some(10_000));
+    assert_eq!(
+        vm.run("keyedZip.next().done")
+            .expect("fuel-aborted keyed step must leave the helper completed"),
+        ruja::Value::Bool(true)
+    );
+}
+
+#[test]
 fn normal_errors_remain_catchable() {
     // Fuel change must not break ordinary try/catch of catchable errors.
     let mut vm = Vm::new().expect("failed to initialize VM");

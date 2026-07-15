@@ -773,6 +773,7 @@ pub enum IteratorHelperKind {
     Drop,
     Concat,
     Zip,
+    ZipKeyed,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -806,6 +807,7 @@ pub struct IteratorHelperData {
     pub zip_iterators: Mutex<Box<[Option<IteratorHelperInner>]>>,
     pub zip_open_count: AtomicUsize,
     pub zip_padding: Box<[Value]>,
+    pub zip_keys: Box<[PropertyKey]>,
     pub zip_mode: IteratorZipMode,
     /// Exact mathematical remaining count; `None` represents +Infinity.
     pub remaining: Mutex<Option<BigUint>>,
