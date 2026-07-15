@@ -256,6 +256,38 @@ built-ins/Iterator/prototype/flatMap/underlying-iterator-advanced-in-parallel.js
 built-ins/Iterator/prototype/flatMap/underlying-iterator-closed-in-parallel.js
 built-ins/Iterator/prototype/flatMap/underlying-iterator-closed.js
 
+# Eager accumulator helper.
+built-ins/Iterator/prototype/reduce/argument-effect-order.js
+built-ins/Iterator/prototype/reduce/argument-validation-failure-closes-underlying.js
+built-ins/Iterator/prototype/reduce/callable.js
+built-ins/Iterator/prototype/reduce/get-next-method-only-once.js
+built-ins/Iterator/prototype/reduce/get-next-method-throws.js
+built-ins/Iterator/prototype/reduce/is-function.js
+built-ins/Iterator/prototype/reduce/iterator-already-exhausted-initial-value.js
+built-ins/Iterator/prototype/reduce/iterator-already-exhausted-no-initial-value.js
+built-ins/Iterator/prototype/reduce/iterator-yields-once-initial-value.js
+built-ins/Iterator/prototype/reduce/iterator-yields-once-no-initial-value.js
+built-ins/Iterator/prototype/reduce/length.js
+built-ins/Iterator/prototype/reduce/name.js
+built-ins/Iterator/prototype/reduce/next-method-returns-non-object.js
+built-ins/Iterator/prototype/reduce/next-method-returns-throwing-done.js
+built-ins/Iterator/prototype/reduce/next-method-returns-throwing-value-done.js
+built-ins/Iterator/prototype/reduce/next-method-returns-throwing-value.js
+built-ins/Iterator/prototype/reduce/next-method-throws.js
+built-ins/Iterator/prototype/reduce/non-callable-reducer.js
+built-ins/Iterator/prototype/reduce/non-constructible.js
+built-ins/Iterator/prototype/reduce/prop-desc.js
+built-ins/Iterator/prototype/reduce/proto.js
+built-ins/Iterator/prototype/reduce/reducer-args-initial-value.js
+built-ins/Iterator/prototype/reduce/reducer-args-no-initial-value.js
+built-ins/Iterator/prototype/reduce/reducer-memo-can-be-any-type.js
+built-ins/Iterator/prototype/reduce/reducer-this.js
+built-ins/Iterator/prototype/reduce/reducer-throws-then-closing-iterator-also-throws.js
+built-ins/Iterator/prototype/reduce/reducer-throws.js
+built-ins/Iterator/prototype/reduce/this-non-callable-next.js
+built-ins/Iterator/prototype/reduce/this-non-object.js
+built-ins/Iterator/prototype/reduce/this-plain-iterator.js
+
 # Concrete iterator prototypes admitted with the common base hierarchy.
 built-ins/GeneratorPrototype/Symbol.toStringTag.js
 

@@ -1109,6 +1109,139 @@ fn iterator_flat_map_keeps_nested_iterator_state_alive_across_gc_and_realms() {
 }
 
 #[test]
+fn iterator_reduce_distinguishes_omitted_and_explicit_initial_values() {
+    assert_eq!(
+        run(r#"
+            var omittedCalls = [];
+            var omitted = [1, 2, 3].values().reduce(function(memo, value, index) {
+              omittedCalls.push([memo, value, index].join(","));
+              return memo + value;
+            });
+            var explicitCalls = [];
+            var explicit = [1, 2].values().reduce(function(memo, value, index) {
+              explicitCalls.push([String(memo), value, index].join(","));
+              return value;
+            }, undefined);
+            var singletonCalls = 0;
+            var singleton = [7].values().reduce(function() {
+              singletonCalls += 1;
+            });
+            [
+              omitted, omittedCalls.join(";"),
+              explicit, explicitCalls.join(";"),
+              singleton, singletonCalls
+            ].join("|");
+        "#),
+        Value::String(Arc::from("6|1,2,1;3,3,2|2|undefined,1,0;1,2,1|7|0"))
+    );
+}
+
+#[test]
+fn iterator_reduce_closes_only_reducer_abrupt_completions() {
+    assert_eq!(
+        run(r#"
+            var invalidNextGets = 0;
+            var invalidCloses = 0;
+            var invalidType = false;
+            try {
+              Iterator.prototype.reduce.call({
+                get next() { invalidNextGets += 1; throw "next"; },
+                return: function() { invalidCloses += 1; throw "close"; }
+              }, {});
+            } catch (error) { invalidType = error instanceof TypeError; }
+
+            var original = { marker: 1 };
+            var reducerCloses = 0;
+            var reducerError;
+            try {
+              Iterator.prototype.reduce.call({
+                next: function() { return { value: 1, done: false }; },
+                return: function() { reducerCloses += 1; throw "ignored-close"; }
+              }, function() { throw original; }, 0);
+            } catch (error) { reducerError = error; }
+
+            var stepCloses = 0;
+            var stepError;
+            try {
+              Iterator.prototype.reduce.call({
+                next: function() {
+                  return {
+                    done: false,
+                    get value() { throw original; }
+                  };
+                },
+                return: function() { stepCloses += 1; return {}; }
+              }, function() {}, 0);
+            } catch (error) { stepError = error; }
+            [
+              invalidType, invalidNextGets, invalidCloses,
+              reducerError === original, reducerCloses,
+              stepError === original, stepCloses
+            ].join("|");
+        "#),
+        Value::String(Arc::from("true|0|1|true|1|true|0"))
+    );
+}
+
+#[test]
+fn iterator_reduce_roots_accumulator_and_uses_the_method_realm() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+    assert_eq!(
+        vm.run(
+            r#"
+            var other = $262.createRealm().global;
+            var source = {
+              value: 1,
+              get next() {
+                forceGc();
+                return function() {
+                  forceGc();
+                  var result = {};
+                  Object.defineProperty(result, "done", {
+                    get: function() { forceGc(); return source.value > 3; }
+                  });
+                  Object.defineProperty(result, "value", {
+                    get: function() { forceGc(); return source.value++; }
+                  });
+                  return result;
+                };
+              }
+            };
+            var initial = { total: 0 };
+            var result = other.Iterator.prototype.reduce.call(
+              source,
+              function(memo, value) {
+                forceGc();
+                return { total: memo.total + value };
+              },
+              initial
+            );
+            var realmError = false;
+            try {
+              other.Iterator.prototype.reduce.call({
+                next: function() { return { done: true }; }
+              }, function() {});
+            } catch (error) {
+              realmError = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            [result.total, realmError].join("|");
+            "#,
+        )
+        .expect("Iterator reduce should retain accumulators and method Realm"),
+        Value::String(Arc::from("6|true"))
+    );
+}
+
+#[test]
 fn array_map_reduce() {
     assert_eq!(
         run("[1,2,3].map(x => x*2).join(',');"),

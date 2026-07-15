@@ -1699,7 +1699,7 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
                 test262_analyze.TEST262 = original_analyze_root
 
     def test_iterator_core_admission_is_exact(self):
-        self.assertEqual(len(ITERATOR_CORE_FILES), 258)
+        self.assertEqual(len(ITERATOR_CORE_FILES), 288)
         self.assertEqual(
             sum("/prototype/Symbol.dispose/" in path for path in ITERATOR_CORE_FILES),
             6,
@@ -1756,6 +1756,10 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
             sum("/Iterator/prototype/flatMap/" in path for path in ITERATOR_CORE_FILES),
             44,
         )
+        self.assertEqual(
+            sum("/Iterator/prototype/reduce/" in path for path in ITERATOR_CORE_FILES),
+            30,
+        )
 
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -1770,7 +1774,8 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
             iterator_take = root / "test/built-ins/Iterator/prototype/take/is-function.js"
             iterator_drop = root / "test/built-ins/Iterator/prototype/drop/is-function.js"
             iterator_flat_map = root / "test/built-ins/Iterator/prototype/flatMap/is-function.js"
-            unrelated = root / "test/built-ins/Iterator/prototype/reduce/is-function.js"
+            iterator_reduce = root / "test/built-ins/Iterator/prototype/reduce/is-function.js"
+            unrelated = root / "test/built-ins/Iterator/prototype/forEach/is-function.js"
             sequencing = root / "test/built-ins/Iterator/concat/is-function.js"
             joint = root / "test/built-ins/Iterator/zip/is-function.js"
             joint_keyed = root / "test/built-ins/Iterator/zipKeyed/is-function.js"
@@ -1841,6 +1846,7 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
                     )
                     self.assertTrue(tool.iterator_core_path(iterator_drop))
                     self.assertTrue(tool.iterator_core_path(iterator_flat_map))
+                    self.assertTrue(tool.iterator_core_path(iterator_reduce))
                     self.assertFalse(
                         tool.should_skip(
                             {"flags": [], "features": ["iterator-helpers"]},
