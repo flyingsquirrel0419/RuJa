@@ -101,9 +101,9 @@ guarantees, run RuJa in a separately killable process as well.
   are implemented, including Realm-specific branded String iterators,
   `Iterator.from`, eager `Iterator.prototype.toArray`, and lazy `map`/`filter`/
   `flatMap`/`take`/`drop` helpers and eager `reduce`/`forEach`/`some`/`every`.
-  Remaining helpers (`find` and related methods),
-  `Iterator.concat`, `Iterator.zip`, and `Iterator.zipKeyed` are not. Async
-  iterator helpers are a separate unsupported surface.
+  Eager `find` completes the current synchronous prototype-helper surface.
+  Static `Iterator.concat`, `Iterator.zip`, and `Iterator.zipKeyed` are not
+  implemented. Async iterator helpers are a separate unsupported surface.
 - `Vm` is `Send` (but not `Sync`): the engine uses `Arc`/`Mutex`/atomics
   for shared ownership and interior mutability, so a `Vm` can be moved
   between threads. Concurrent *shared* access still requires external

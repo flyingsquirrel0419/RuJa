@@ -183,6 +183,17 @@
   files. Commit `fdd6223` passed CI `29420614915` and full matrix
   `29420614912`; only built-ins changes by **+33 pass / -33 skip**, producing
   **29451 pass / 6486 fail / 12368 skip / 12 timeout / 0 error / 48317 total**.
+- `Iterator.prototype.find` now eagerly consumes direct iterators with cached
+  `next`, exact mathematical callback indices, native-loop fuel, and
+  method-Realm errors. It returns the original first matching value, keeping
+  object results rooted through normal close; exhaustion returns undefined
+  without closing. Predicate failures preserve the original abrupt completion,
+  while matches propagate normal-close failures. The exact Iterator manifest
+  expands to **413/413** with all **32 find** files, closing every current
+  synchronous `%Iterator.prototype%` helper directory. Commit `2bbe8e7` passed
+  CI `29426108186` and full matrix `29426108093`; only built-ins changes by
+  **+32 pass / -32 skip**, producing **29483 pass / 6486 fail / 12336 skip /
+  12 timeout / 0 error / 48317 total**.
 - Private instance and static auto-accessor decorators now expose the private
   name and branded `access` functions while keeping their synthetic backing
   storage internal. Optional `get`, `set`, and `init` replacements, extra

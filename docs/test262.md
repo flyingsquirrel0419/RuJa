@@ -5502,7 +5502,7 @@ artifacts are retained at
 
 ## Iterator intrinsic and helper core
 
-`tools/test262_iterator_admission.txt` freezes exactly 381 files: 23
+`tools/test262_iterator_admission.txt` freezes exactly 413 files: 23
 `built-ins/Iterator` files covering the global constructor, subclass
 construction, `%Iterator.prototype%[Symbol.iterator]`,
 `%Iterator.prototype%[Symbol.dispose]`, and the `constructor` and
@@ -5514,8 +5514,9 @@ all 18 `Iterator.prototype.toArray` files; plus all 36
 `Iterator.prototype.take` and 34 `Iterator.prototype.drop` files; plus all 44
 `Iterator.prototype.flatMap` files; all 30 `Iterator.prototype.reduce` files;
 all 27 `Iterator.prototype.forEach` files; all 33 `Iterator.prototype.some`
-files; and all 33 `Iterator.prototype.every` files. The runner and analyzer
-admit only those exact paths. Remaining helpers, sequencing,
+files; all 33 `Iterator.prototype.every` files; and all 32
+`Iterator.prototype.find` files. The runner and analyzer admit only those exact
+paths. Static sequencing,
 `concat`, `zip`, and `zipKeyed` stay behind their feature gates.
 
 The global constructor and prototype are Realm-specific. Direct calls and
@@ -5576,10 +5577,19 @@ abrupt completion closes while preserving the original error; and iterator
 step failures propagate without close. Dedicated Rust regressions cover the
 normal/abrupt close matrix, zero-close step failures, GC, and method-Realm
 TypeErrors beyond the exact Test262 path.
+`Iterator.prototype.find` returns the original first value whose predicate is
+truthy and returns undefined on exhaustion. A found object remains rooted
+through dynamic normal close; close failures override the value. Predicate
+abrupt completion preserves the original error while closing, and iterator
+step failures do not close. Local regressions additionally cover validation
+before next lookup, cached next, callback `this`, done/value ordering,
+no-return continuation, close precedence, GC, Realm errors, and fuel. This
+completes every synchronous `%Iterator.prototype%` helper directory in the
+current Test262 checkout.
 
-Local verification against Test262 `020cb740` is **367 pass / 0 fail / 147
+Local verification against Test262 `020cb740` is **399 pass / 0 fail / 115
 skip / 514 total** for all of `built-ins/Iterator`; the separately admitted
-Generator and String iterator files also pass, for **381/381** exact manifest
+Generator and String iterator files also pass, for **413/413** exact manifest
 members. `built-ins/Array/from` is **27 pass / 0 fail / 20 skip / 47 total**.
 The related String iterator method,
 `StringIteratorPrototype`, `ArrayIteratorPrototype`, `GeneratorPrototype`,
@@ -5671,6 +5681,14 @@ pass / -33 skip**. The aggregate is **29451 pass / 6486 fail / 12368 skip / 12
 timeout / 0 error / 48317 total / 35937 pass-or-fail executed**, or **61.0%**
 of all files and **82.0%** of executed files. Artifacts are retained at
 `/tmp/ruja-artifacts-iterator-every-feature.41ETUd`.
+
+Feature commit `2bbe8e7` passed CI `29426108186` and full matrix
+`29426108093`. Of the 30 downloaded result artifacts, 29 are byte-for-byte
+identical to the every documentation baseline; built-ins moves exactly **+32
+pass / -32 skip**. The aggregate is **29483 pass / 6486 fail / 12336 skip / 12
+timeout / 0 error / 48317 total / 35969 pass-or-fail executed**, or **61.0%**
+of all files and **82.0%** of executed files. Artifacts are retained at
+`/tmp/ruja-artifacts-iterator-find-feature.hwOlff`.
 
 ## Why the full-suite rate is not higher
 
