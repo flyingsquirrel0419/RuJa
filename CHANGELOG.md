@@ -107,6 +107,18 @@
   `a6d3949` passed CI `29386623291` and full matrix `29386623314`; only
   built-ins changes by **+46 pass / -9 fail / -37 skip**, producing **29144
   pass / 6486 fail / 12675 skip / 12 timeout / 0 error / 48317 total**.
+- `Iterator.prototype.map` and `filter` now return lazy, branded,
+  Realm-specific Iterator Helper objects. They cache the source `next`, defer
+  callback execution until stepping, preserve `done`/`value` ordering and
+  callback indices, close dynamically on callback failures, distinguish all
+  helper suspension states during reentrant close, and preserve non-catchable
+  fuel aborts. GC tracing, helper integrity operations, `Iterator Helper`
+  tagging, Realm-specific results/errors, and 32-bit counters are covered by
+  regressions. The exact Iterator manifest expands to **147/147**, including
+  all **36 map** and **37 filter** files. Commit `8c911a5` passed CI
+  `29390731665` and full matrix `29390731676`; only built-ins changes by
+  **+73 pass / -73 skip**, producing **29217 pass / 6486 fail / 12602 skip /
+  12 timeout / 0 error / 48317 total**.
 - Private instance and static auto-accessor decorators now expose the private
   name and branded `access` functions while keeping their synthetic backing
   storage internal. Optional `get`, `set`, and `init` replacements, extra

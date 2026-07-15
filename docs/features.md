@@ -83,7 +83,9 @@
   prototypes inherit from it while retaining their concrete tags, including
   the Generator prototype's own `"Generator"` tag. `Iterator.from` accepts
   iterables and direct iterators through a Realm-specific valid-iterator
-  wrapper, and `Iterator.prototype.toArray` eagerly collects an iterator.
+  wrapper, `Iterator.prototype.toArray` eagerly collects an iterator, and the
+  Realm-specific Iterator Helper machinery powers lazy `map` and `filter`
+  pipelines with dynamic close and reentrancy semantics.
 
 ## Property model
 
