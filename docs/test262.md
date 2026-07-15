@@ -5502,7 +5502,7 @@ artifacts are retained at
 
 ## Iterator intrinsic and helper core
 
-`tools/test262_iterator_admission.txt` freezes exactly 445 files: 23
+`tools/test262_iterator_admission.txt` freezes exactly 483 files: 23
 `built-ins/Iterator` files covering the global constructor, subclass
 construction, `%Iterator.prototype%[Symbol.iterator]`,
 `%Iterator.prototype%[Symbol.dispose]`, and the `constructor` and
@@ -5515,9 +5515,9 @@ all 18 `Iterator.prototype.toArray` files; plus all 36
 `Iterator.prototype.flatMap` files; all 30 `Iterator.prototype.reduce` files;
 all 27 `Iterator.prototype.forEach` files; all 33 `Iterator.prototype.some`
 files; all 33 `Iterator.prototype.every` files; all 32
-`Iterator.prototype.find` files; and all 32 static `Iterator.concat` files.
-The runner and analyzer admit only those exact paths. `Iterator.zip` and
-`Iterator.zipKeyed` stay behind their joint-iteration feature gates.
+`Iterator.prototype.find` files; all 32 static `Iterator.concat` files; and all
+38 static `Iterator.zip` files. The runner and analyzer admit only those exact
+paths. `Iterator.zipKeyed` stays behind its joint-iteration feature gate.
 
 The global constructor and prototype are Realm-specific. Direct calls and
 construction reject, subclass construction allocates with the derived
@@ -5595,10 +5595,21 @@ Captured records, active iterator methods, and the helper creation Realm are
 GC-traced, and empty-source scans consume fuel. Shared Iterator Helper Realm
 handling now distinguishes creation-Realm yielded results and resumed protocol
 errors from borrowed-method-Realm terminal results and direct validation.
+`Iterator.zip` validates options before eagerly exhausting the outer iterable,
+opens and caches each direct input record, and eagerly snapshots longest-mode
+padding. Its helper steps records in ascending order for shortest, longest,
+and strict modes while tracking open records independently and applying
+reverse `IteratorCloseAll` completion priority. Fresh tuple arrays and resumed
+errors use the creation Realm; open records, cached methods, and padding values
+are traced by GC. Native setup, inactive-slot, strict-check, extraction, and
+close loops charge fuel, and extraction is failure-atomic so a fuel-aborted
+`return()` leaves the helper completed. The supporting `Array.prototype.fill`
+path now marks replaced sparse slots present, as required by the upstream zip
+padding and input fixtures.
 
-Local verification against Test262 `020cb740` is **431 pass / 0 fail / 83
+Local verification against Test262 `020cb740` is **469 pass / 0 fail / 45
 skip / 514 total** for all of `built-ins/Iterator`; the separately admitted
-Generator and String iterator files also pass, for **445/445** exact manifest
+Generator and String iterator files also pass, for **483/483** exact manifest
 members. `built-ins/Array/from` is **27 pass / 0 fail / 20 skip / 47 total**.
 The related String iterator method,
 `StringIteratorPrototype`, `ArrayIteratorPrototype`, `GeneratorPrototype`,
@@ -5706,6 +5717,20 @@ pass / -32 skip**. The aggregate is **29515 pass / 6486 fail / 12304 skip / 12
 timeout / 0 error / 48317 total / 36001 pass-or-fail executed**, or **61.1%**
 of all files and **82.0%** of executed files. Artifacts are retained at
 `/tmp/ruja-artifacts-iterator-concat-feature.35pEbB`.
+
+Feature commit `6f8c291` admits all 38 static `Iterator.zip` files. Local
+verification is **38/38** for zip, **483/483** for the exact Iterator manifest,
+**469 pass / 0 fail / 45 skip** for `built-ins/Iterator`, and **12751 pass / 0
+fail / 7687 skip / 20438 total** for the supported subset. CI `29438450582`
+and full matrix `29438450881` succeeded. Of the 30 result artifacts at
+`/tmp/ruja-artifacts-iterator-zip-feature.9FadMn`, 29 are byte-for-byte
+identical to the concat documentation baseline; built-ins moves exactly **+39
+pass / -1 fail / -38 skip**, combining 38 newly admitted zip files with the
+sparse `Array.prototype.fill` correction. The normalized aggregate is **29554
+pass / 6485 fail / 12266 skip / 12 timeout / 0 error / 48317 total / 36039
+pass-or-fail executed**, or **61.2%** of all files and **82.0%** of executed
+files. The raw CI artifacts additionally contain 150 unsupported built-ins
+skips and therefore total 48467 files.
 
 ## Why the full-suite rate is not higher
 

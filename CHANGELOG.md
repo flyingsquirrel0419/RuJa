@@ -205,6 +205,21 @@
   `decf8d5` passed CI `29432285167` and full matrix `29432285229`; only
   built-ins changes by **+32 pass / -32 skip**, producing **29515 pass / 6486
   fail / 12304 skip / 12 timeout / 0 error / 48317 total**.
+- Static `Iterator.zip` now eagerly opens and caches input iterators, then
+  produces fresh Realm-specific tuple arrays in `shortest`, `longest`, and
+  `strict` modes. Construction observes options before inputs, materializes
+  per-input padding, and applies reverse `IteratorCloseAll` ordering with the
+  specified abrupt-completion priority. Open records and padding are
+  GC-traced, wide native scans charge fuel, and a fuel-aborted `return()`
+  cannot leave the helper executing. `Array.prototype.fill` now materializes
+  sparse holes, fixing the array inputs used by the joint-iteration tests.
+  Exact Iterator admission expands to **483/483** with all **38 zip** files;
+  all of `built-ins/Iterator` is **469 pass / 0 fail / 45 skip**, and the
+  supported subset remains **12751 pass / 0 fail / 7687 skip / 20438 total**.
+  Feature commit `6f8c291` passed CI `29438450582` and full matrix
+  `29438450881`; built-ins moves by exactly **+39 pass / -1 fail / -38 skip**,
+  including the `fill` correction. The normalized aggregate is **29554 pass /
+  6485 fail / 12266 skip / 12 timeout / 0 error / 48317 total**.
 - Private instance and static auto-accessor decorators now expose the private
   name and branded `access` functions while keeping their synthetic backing
   storage internal. Optional `get`, `set`, and `init` replacements, extra
