@@ -756,6 +756,207 @@ fn iterator_helper_tag_and_integrity_operations_are_spec_shaped() {
 }
 
 #[test]
+fn iterator_take_and_drop_apply_limits_lazily() {
+    assert_eq!(
+        run(r#"
+            function values() { return [0, 1, 2, 3, 4].values(); }
+            var chain = values().drop(1.9).take(2.9).toArray();
+            var zeroClosed = 0;
+            var zero = Iterator.prototype.take.call({
+              next: function() { throw new Error("must not step"); },
+              return: function() { zeroClosed += 1; return {}; }
+            }, -0.5);
+            var zeroResult = zero.next();
+            var infinity = values().drop(2).take(Infinity).toArray();
+            var huge = values().take(Number.MAX_VALUE).toArray();
+            [
+              chain.join(","), zeroResult.done, zeroClosed,
+              infinity.join(","), huge.join(","),
+              values().take(null).next().done
+            ].join("|");
+        "#),
+        Value::String(Arc::from("1,2|true|1|2,3,4|0,1,2,3,4|true"))
+    );
+}
+
+#[test]
+fn iterator_drop_never_reads_values_while_skipping() {
+    assert_eq!(
+        run(r#"
+            var calls = 0;
+            var skippedValueGets = 0;
+            var source = {
+              next: function() {
+                calls += 1;
+                if (calls === 1) {
+                  return {
+                    done: false,
+                    get value() {
+                      skippedValueGets += 1;
+                      throw new Error("skipped value was read");
+                    }
+                  };
+                }
+                if (calls === 2) return { value: "kept", done: false };
+                return { done: true };
+              }
+            };
+            var helper = Iterator.prototype.drop.call(source, 1);
+            var first = helper.next();
+            var done = helper.next();
+            [first.value, first.done, done.done, calls, skippedValueGets].join("|");
+        "#),
+        Value::String(Arc::from("kept|false|true|3|0"))
+    );
+}
+
+#[test]
+fn iterator_limit_validation_closes_without_reading_next_and_preserves_errors() {
+    assert_eq!(
+        run(r#"
+            class LimitError extends Error {}
+            class CloseError extends Error {}
+            function conversionCase(name) {
+              var nextGets = 0;
+              var returnGets = 0;
+              var source = {
+                get next() { nextGets += 1; throw new Error("next"); },
+                get return() {
+                  returnGets += 1;
+                  throw new CloseError();
+                }
+              };
+              var original = false;
+              try {
+                Iterator.prototype[name].call(source, {
+                  valueOf: function() { throw new LimitError(); }
+                });
+              } catch (error) {
+                original = error instanceof LimitError;
+              }
+              return [original, nextGets, returnGets].join(",");
+            }
+            function rangeCase(name, limit) {
+              var nextGets = 0;
+              var closes = 0;
+              var source = {
+                get next() { nextGets += 1; throw new Error("next"); },
+                return: function() { closes += 1; return 0; }
+              };
+              var range = false;
+              try { Iterator.prototype[name].call(source, limit); }
+              catch (error) { range = error instanceof RangeError; }
+              return [range, nextGets, closes].join(",");
+            }
+            function typeCase(name, limit) {
+              var closes = 0;
+              var source = {
+                get next() { throw new Error("next"); },
+                return: function() { closes += 1; return {}; }
+              };
+              var type = false;
+              try { Iterator.prototype[name].call(source, limit); }
+              catch (error) { type = error instanceof TypeError; }
+              return [type, closes].join(",");
+            }
+            var radixCloses = 0;
+            var radixSource = {
+              yielded: false,
+              next: function() {
+                if (this.yielded) return { done: true };
+                this.yielded = true;
+                return { value: "radix", done: false };
+              },
+              return: function() { radixCloses += 1; return {}; }
+            };
+            var radixStep = Iterator.prototype.take.call(
+              radixSource,
+              "0x10000000000000000"
+            ).next();
+            function invalidStringCase(name, limit) {
+              var closes = 0;
+              var source = {
+                get next() { throw new Error("next"); },
+                return: function() { closes += 1; return {}; }
+              };
+              var range = false;
+              try { Iterator.prototype[name].call(source, limit); }
+              catch (error) { range = error instanceof RangeError; }
+              return [range, closes].join(",");
+            }
+            [
+              conversionCase("take"), conversionCase("drop"),
+              rangeCase("take", -Infinity), rangeCase("drop", NaN),
+              typeCase("take", 1n), typeCase("drop", Symbol()),
+              Number("0x10000000000000000") === 18446744073709552000,
+              Number("0b10000000000000000000000000000000000000000000000000000000000000000") === 18446744073709552000,
+              Number("0o2000000000000000000000") === 18446744073709552000,
+              radixStep.value, radixStep.done, radixCloses,
+              invalidStringCase("take", "0x1_0"),
+              invalidStringCase("drop", "0x+10"),
+              invalidStringCase("take", "inf")
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "true,0,1|true,0,1|true,0,1|true,0,1|true,1|true,1|true|true|true|radix|false|0|true,1|true,1|true,1"
+        ))
+    );
+}
+
+#[test]
+fn iterator_limit_helpers_preserve_realm_gc_and_yielded_close_state() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+    assert_eq!(
+        vm.run(
+            r#"
+            var other = $262.createRealm().global;
+            var closes = 0;
+            var helper = (function() {
+              var state = { value: 0 };
+              var source = {
+                get next() {
+                  forceGc();
+                  return function() {
+                    forceGc();
+                    return state.value < 4
+                      ? { value: state.value++, done: false }
+                      : { done: true };
+                  };
+                },
+                return: function() { closes += 1; return {}; }
+              };
+              return other.Iterator.prototype.drop.call(source, 1).take(2);
+            })();
+            forceGc();
+            var proto = Object.getPrototypeOf(helper);
+            var first = helper.next();
+            forceGc();
+            var returned = helper.return();
+            forceGc();
+            var done = helper.next();
+            [
+              first.value, first.done, returned.done, done.done, closes,
+              helper instanceof other.Iterator, helper instanceof Iterator,
+              Object.getPrototypeOf(proto) === other.Iterator.prototype,
+              Object.getPrototypeOf(first) === other.Object.prototype
+            ].join("|");
+            "#,
+        )
+        .expect("Iterator limit helpers should preserve Realm and GC state"),
+        Value::String(Arc::from("1|false|true|true|1|true|false|true|true"))
+    );
+}
+
+#[test]
 fn array_map_reduce() {
     assert_eq!(
         run("[1,2,3].map(x => x*2).join(',');"),

@@ -81,6 +81,36 @@ fn iterator_helper_close_does_not_suppress_fuel_exhaustion() {
 }
 
 #[test]
+fn iterator_helper_native_loops_consume_fuel() {
+    for expression in [
+        "Iterator.prototype.drop.call(source, Infinity).next()",
+        "Iterator.prototype.filter.call(source, Boolean).next()",
+    ] {
+        let mut vm = Vm::new().expect("failed to initialize VM");
+        vm.set_fuel(Some(100));
+        let source = format!(
+            r#"
+            var source = {{
+              next: Iterator.prototype[Symbol.iterator],
+              done: false,
+              value: 0
+            }};
+            {expression};
+            "#
+        );
+        let error = vm
+            .run(&source)
+            .expect_err("native Iterator helper loop must exhaust fuel");
+        assert!(
+            error.to_string().contains("fuel exhausted"),
+            "expected helper fuel exhaustion, got: {}",
+            error
+        );
+        assert_eq!(vm.fuel_remaining(), Some(0));
+    }
+}
+
+#[test]
 fn normal_errors_remain_catchable() {
     // Fuel change must not break ordinary try/catch of catchable errors.
     let mut vm = Vm::new().expect("failed to initialize VM");

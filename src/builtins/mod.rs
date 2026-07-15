@@ -49,7 +49,7 @@ use indexmap::{IndexMap, IndexSet};
 use num_bigint::{BigInt, BigUint};
 use num_integer::Integer;
 use num_rational::Ratio;
-use num_traits::{Signed, ToPrimitive, Zero};
+use num_traits::{FromPrimitive, Signed, ToPrimitive, Zero};
 use regex::{Regex as RustRegex, RegexBuilder as RustRegexBuilder};
 use std::borrow::Cow;
 
@@ -6672,7 +6672,44 @@ fn close_iterator_normally(vm: &mut Vm, iterator: &Value) -> error::Result<()> {
     Ok(())
 }
 
-fn iterator_helper_start(
+fn allocate_iterator_helper(
+    vm: &mut Vm,
+    iterator: Value,
+    next_method: Value,
+    callback: Option<Value>,
+    kind: IteratorHelperKind,
+    remaining: Option<BigUint>,
+) -> error::Result<Value> {
+    let realm = active_iterator_realm(vm);
+    let proto = vm
+        .realm_iterator_helper_prototypes
+        .get(&realm.0)
+        .cloned()
+        .ok_or_else(|| Error::internal("missing Iterator Helper prototype intrinsic"))?;
+    let mut roots = vec![iterator.clone(), next_method.clone(), proto.clone()];
+    if let Some(callback) = &callback {
+        roots.push(callback.clone());
+    }
+    let pin_count = vm.pin_many(&roots);
+    let helper = vm
+        .alloc(HeapObj::IteratorHelper(IteratorHelperData {
+            iterator,
+            next_method,
+            callback,
+            kind,
+            counter: std::sync::atomic::AtomicU64::new(0),
+            remaining: Mutex::new(remaining),
+            state: std::sync::atomic::AtomicU8::new(0),
+            props: Mutex::new(IndexMap::new()),
+            proto: Mutex::new(Some(proto)),
+            extensible: AtomicBool::new(true),
+        }))
+        .map(Value::Object);
+    vm.unpin_many(pin_count);
+    helper
+}
+
+fn iterator_callback_helper_start(
     vm: &mut Vm,
     args: &[Value],
     this: Option<Value>,
@@ -6687,41 +6724,71 @@ fn iterator_helper_start(
         return Err(Error::type_err("Iterator helper callback is not callable"));
     }
     let next_method = vm.get_property(&iterator, "next")?;
-    let realm = active_iterator_realm(vm);
-    let proto = vm
-        .realm_iterator_helper_prototypes
-        .get(&realm.0)
-        .cloned()
-        .ok_or_else(|| Error::internal("missing Iterator Helper prototype intrinsic"))?;
-    let pin_count = vm.pin_many(&[
-        iterator.clone(),
-        next_method.clone(),
-        callback.clone(),
-        proto.clone(),
-    ]);
-    let helper = vm
-        .alloc(HeapObj::IteratorHelper(IteratorHelperData {
-            iterator,
-            next_method,
-            callback,
-            kind,
-            counter: std::sync::atomic::AtomicU64::new(0),
-            state: std::sync::atomic::AtomicU8::new(0),
-            props: Mutex::new(IndexMap::new()),
-            proto: Mutex::new(Some(proto)),
-            extensible: AtomicBool::new(true),
-        }))
-        .map(Value::Object);
-    vm.unpin_many(pin_count);
-    helper
+    allocate_iterator_helper(
+        vm,
+        iterator,
+        next_method,
+        Some(callback),
+        kind,
+        Some(BigUint::zero()),
+    )
+}
+
+fn iterator_limit_helper_start(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+    kind: IteratorHelperKind,
+) -> error::Result<Value> {
+    let Some(iterator @ Value::Object(_)) = this else {
+        return Err(Error::type_err("Iterator helper requires an object"));
+    };
+    let limit = args.first().cloned().unwrap_or(Value::Undefined);
+    let number = match vm.to_number(&limit) {
+        Ok(number) => number,
+        Err(error) => {
+            let error_pin = error
+                .thrown_value
+                .as_ref()
+                .map(|value| vm.pin(value))
+                .unwrap_or(0);
+            let close_result = close_iterator_preserving_abrupt(vm, &iterator);
+            vm.unpin_many(error_pin);
+            close_result?;
+            return Err(error);
+        }
+    };
+    let integer = number.trunc();
+    if number.is_nan() || integer < 0.0 {
+        close_iterator_preserving_abrupt(vm, &iterator)?;
+        return Err(Error::range("Iterator helper limit must be non-negative"));
+    }
+    let remaining = if integer == f64::INFINITY {
+        None
+    } else {
+        Some(
+            BigUint::from_f64(integer)
+                .ok_or_else(|| Error::internal("invalid finite Iterator helper limit"))?,
+        )
+    };
+    let next_method = vm.get_property(&iterator, "next")?;
+    allocate_iterator_helper(vm, iterator, next_method, None, kind, remaining)
 }
 
 fn iterator_map(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    iterator_helper_start(vm, args, this, IteratorHelperKind::Map)
+    iterator_callback_helper_start(vm, args, this, IteratorHelperKind::Map)
 }
 
 fn iterator_filter(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    iterator_helper_start(vm, args, this, IteratorHelperKind::Filter)
+    iterator_callback_helper_start(vm, args, this, IteratorHelperKind::Filter)
+}
+
+fn iterator_take(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    iterator_limit_helper_start(vm, args, this, IteratorHelperKind::Take)
+}
+
+fn iterator_drop(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    iterator_limit_helper_start(vm, args, this, IteratorHelperKind::Drop)
 }
 
 fn iterator_helper_set_state(vm: &Vm, idx: GcIdx, state: u8) {
@@ -6730,6 +6797,51 @@ fn iterator_helper_set_state(vm: &Vm, idx: GcIdx, state: u8) {
             helper.state.store(state, Ordering::Relaxed);
         }
     });
+}
+
+fn iterator_helper_consume_remaining(vm: &Vm, idx: GcIdx) -> bool {
+    vm.heap.with_obj(idx.0, |obj| {
+        let HeapObj::IteratorHelper(helper) = obj else {
+            return false;
+        };
+        let mut slot = helper.remaining.lock();
+        let Some(remaining) = slot.as_mut() else {
+            return true;
+        };
+        if remaining.is_zero() {
+            false
+        } else {
+            *remaining -= 1u8;
+            true
+        }
+    })
+}
+
+fn iterator_helper_step(
+    vm: &mut Vm,
+    iterator: &Value,
+    next_method: &Value,
+    read_value: bool,
+) -> error::Result<Option<Value>> {
+    vm.consume_fuel()?;
+    let step = vm.call_function(next_method, &[], Some(iterator.clone()))?;
+    if !matches!(step, Value::Object(_)) {
+        return Err(Error::type_err("Iterator result is not an object"));
+    }
+    let step_pin = vm.pin(&step);
+    let result = (|| -> error::Result<Option<Value>> {
+        let done = vm.get_property(&step, "done")?;
+        if vm.to_boolean(&done) {
+            return Ok(None);
+        }
+        if read_value {
+            Ok(Some(vm.get_property(&step, "value")?))
+        } else {
+            Ok(Some(Value::Undefined))
+        }
+    })();
+    vm.unpin_many(step_pin);
+    result
 }
 
 fn iterator_helper_next(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
@@ -6770,65 +6882,80 @@ fn iterator_helper_next(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> er
 
     let result = (|| -> error::Result<Value> {
         loop {
-            let step = vm.call_function(&next_method, &[], Some(iterator.clone()))?;
-            if !matches!(step, Value::Object(_)) {
-                return Err(Error::type_err("Iterator result is not an object"));
-            }
-            let step_pin = vm.pin(&step);
-            let step_result = (|| -> error::Result<Option<Value>> {
-                let done = vm.get_property(&step, "done")?;
-                if vm.to_boolean(&done) {
-                    return Ok(None);
-                }
-                Ok(Some(vm.get_property(&step, "value")?))
-            })();
-            vm.unpin_many(step_pin);
-            let Some(value) = step_result? else {
-                iterator_helper_set_state(vm, idx, 2);
-                return create_iterator_result(vm, Value::Undefined, true);
-            };
-
-            if counter >= MAX_SAFE_INTEGER {
-                close_iterator_preserving_abrupt(vm, &iterator)?;
-                return Err(Error::type_err(
-                    "Iterator helper counter exceeded safe integer",
-                ));
-            }
-            let callback_result = vm.call_function(
-                &callback,
-                &[value.clone(), Value::Number(counter as f64)],
-                Some(Value::Undefined),
-            );
-            let selected = match callback_result {
-                Ok(result) => result,
-                Err(error) => {
-                    let error_pin = error
-                        .thrown_value
-                        .as_ref()
-                        .map(|value| vm.pin(value))
-                        .unwrap_or(0);
-                    let close_result = close_iterator_preserving_abrupt(vm, &iterator);
-                    vm.unpin_many(error_pin);
-                    close_result?;
-                    return Err(error);
-                }
-            };
-            counter += 1;
-            vm.heap.with_obj(idx.0, |obj| {
-                if let HeapObj::IteratorHelper(helper) = obj {
-                    helper.counter.store(counter, Ordering::Relaxed);
-                }
-            });
-
             let yielded = match kind {
-                IteratorHelperKind::Map => Some(selected),
-                IteratorHelperKind::Filter if vm.to_boolean(&selected) => Some(value),
-                IteratorHelperKind::Filter => None,
+                IteratorHelperKind::Take => {
+                    if !iterator_helper_consume_remaining(vm, idx) {
+                        close_iterator_normally(vm, &iterator)?;
+                        iterator_helper_set_state(vm, idx, 2);
+                        return create_iterator_result(vm, Value::Undefined, true);
+                    }
+                    iterator_helper_step(vm, &iterator, &next_method, true)?
+                }
+                IteratorHelperKind::Drop => {
+                    while iterator_helper_consume_remaining(vm, idx) {
+                        if iterator_helper_step(vm, &iterator, &next_method, false)?.is_none() {
+                            iterator_helper_set_state(vm, idx, 2);
+                            return create_iterator_result(vm, Value::Undefined, true);
+                        }
+                    }
+                    iterator_helper_step(vm, &iterator, &next_method, true)?
+                }
+                IteratorHelperKind::Map | IteratorHelperKind::Filter => {
+                    let Some(value) = iterator_helper_step(vm, &iterator, &next_method, true)?
+                    else {
+                        iterator_helper_set_state(vm, idx, 2);
+                        return create_iterator_result(vm, Value::Undefined, true);
+                    };
+                    if counter >= MAX_SAFE_INTEGER {
+                        close_iterator_preserving_abrupt(vm, &iterator)?;
+                        return Err(Error::type_err(
+                            "Iterator helper counter exceeded safe integer",
+                        ));
+                    }
+                    let callback = callback.as_ref().ok_or_else(|| {
+                        Error::internal("Iterator callback helper is missing its callback")
+                    })?;
+                    let callback_result = vm.call_function(
+                        callback,
+                        &[value.clone(), Value::Number(counter as f64)],
+                        Some(Value::Undefined),
+                    );
+                    let selected = match callback_result {
+                        Ok(result) => result,
+                        Err(error) => {
+                            let error_pin = error
+                                .thrown_value
+                                .as_ref()
+                                .map(|value| vm.pin(value))
+                                .unwrap_or(0);
+                            let close_result = close_iterator_preserving_abrupt(vm, &iterator);
+                            vm.unpin_many(error_pin);
+                            close_result?;
+                            return Err(error);
+                        }
+                    };
+                    counter += 1;
+                    vm.heap.with_obj(idx.0, |obj| {
+                        if let HeapObj::IteratorHelper(helper) = obj {
+                            helper.counter.store(counter, Ordering::Relaxed);
+                        }
+                    });
+                    if kind == IteratorHelperKind::Map {
+                        Some(selected)
+                    } else if vm.to_boolean(&selected) {
+                        Some(value)
+                    } else {
+                        None
+                    }
+                }
             };
             if let Some(yielded) = yielded {
                 let result = create_iterator_result(vm, yielded, false)?;
                 iterator_helper_set_state(vm, idx, 3);
                 return Ok(result);
+            } else if matches!(kind, IteratorHelperKind::Take | IteratorHelperKind::Drop) {
+                iterator_helper_set_state(vm, idx, 2);
+                return create_iterator_result(vm, Value::Undefined, true);
             }
         }
     })();
@@ -7119,6 +7246,10 @@ fn install_iterator_intrinsic_in_env(
     pin_count += vm.pin(&Value::Object(map));
     let filter = vm.new_native_function_in_env("filter", iterator_filter, 1, realm)?;
     pin_count += vm.pin(&Value::Object(filter));
+    let take = vm.new_native_function_in_env("take", iterator_take, 1, realm)?;
+    pin_count += vm.pin(&Value::Object(take));
+    let drop = vm.new_native_function_in_env("drop", iterator_drop, 1, realm)?;
+    pin_count += vm.pin(&Value::Object(drop));
     let to_array = vm.new_native_function_in_env("toArray", iterator_to_array, 0, realm)?;
     pin_count += vm.pin(&Value::Object(to_array));
     let constructor = vm.new_native_function_in_env("Iterator", iterator_constructor, 0, realm)?;
@@ -7164,6 +7295,8 @@ fn install_iterator_intrinsic_in_env(
                 PropertyKey::from("filter"),
                 data_prop(Value::Object(filter)),
             );
+            props.insert(PropertyKey::from("take"), data_prop(Value::Object(take)));
+            props.insert(PropertyKey::from("drop"), data_prop(Value::Object(drop)));
             props.insert(
                 PropertyKey::from("toArray"),
                 data_prop(Value::Object(to_array)),

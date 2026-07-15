@@ -179,12 +179,7 @@ impl Vm {
         loop {
             // Execution fuel: bound untrusted code. Checked before each
             // opcode so a tight loop cannot run forever. None = unbounded.
-            if let Some(f) = self.fuel.as_mut() {
-                if *f <= 0 {
-                    return Err(Error::fuel("fuel exhausted".to_string()));
-                }
-                *f -= 1;
-            }
+            self.consume_fuel()?;
             // Generator `throw(e)` resume: if the current frame has a pending
             // forced throw (set by resume_generator on a Throw resume), raise
             // it now at the suspended `yield` point. This lets the generator

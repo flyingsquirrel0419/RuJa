@@ -86,7 +86,7 @@ impl PartialEq for PropertyKey {
 
 impl Eq for PropertyKey {}
 
-use num_bigint::BigInt;
+use num_bigint::{BigInt, BigUint};
 use num_traits::Zero;
 
 /// A handle into the GC heap.
@@ -768,14 +768,18 @@ pub struct CollectionIteratorData {
 pub enum IteratorHelperKind {
     Map,
     Filter,
+    Take,
+    Drop,
 }
 
 pub struct IteratorHelperData {
     pub iterator: Value,
     pub next_method: Value,
-    pub callback: Value,
+    pub callback: Option<Value>,
     pub kind: IteratorHelperKind,
     pub counter: AtomicU64,
+    /// Exact mathematical remaining count; `None` represents +Infinity.
+    pub remaining: Mutex<Option<BigUint>>,
     /// 0 = suspended-start, 1 = executing, 2 = completed, 3 = suspended-yield.
     pub state: AtomicU8,
     pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,

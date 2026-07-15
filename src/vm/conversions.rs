@@ -5,6 +5,7 @@ use super::*;
 use crate::error::{self, Error};
 use crate::value::HeapObj;
 use crate::value::Value;
+use num_traits::ToPrimitive;
 use std::sync::Arc;
 
 /// ES `ToInt32`: convert an f64 to a 32-bit signed integer using the spec's
@@ -50,6 +51,9 @@ impl Vm {
         if t.eq_ignore_ascii_case("Infinity")
             || t.eq_ignore_ascii_case("+Infinity")
             || t.eq_ignore_ascii_case("-Infinity")
+            || t.eq_ignore_ascii_case("inf")
+            || t.eq_ignore_ascii_case("+inf")
+            || t.eq_ignore_ascii_case("-inf")
         {
             return f64::NAN;
         }
@@ -64,12 +68,18 @@ impl Vm {
         } else {
             return t.parse::<f64>().unwrap_or(f64::NAN);
         };
-        if digits.is_empty() {
+        let valid_digits = match radix {
+            2 => digits.bytes().all(|byte| matches!(byte, b'0' | b'1')),
+            8 => digits.bytes().all(|byte| matches!(byte, b'0'..=b'7')),
+            16 => digits.bytes().all(|byte| byte.is_ascii_hexdigit()),
+            _ => false,
+        };
+        if digits.is_empty() || !valid_digits {
             return f64::NAN;
         }
-        match u64::from_str_radix(digits, radix) {
-            Ok(n) => n as f64,
-            Err(_) => f64::NAN,
+        match num_bigint::BigUint::parse_bytes(digits.as_bytes(), radix) {
+            Some(number) => number.to_f64().unwrap_or(f64::INFINITY),
+            None => f64::NAN,
         }
     }
 

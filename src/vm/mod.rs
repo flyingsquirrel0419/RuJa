@@ -676,6 +676,16 @@ impl Vm {
         self.fuel = fuel;
     }
 
+    pub(crate) fn consume_fuel(&mut self) -> error::Result<()> {
+        if let Some(fuel) = self.fuel.as_mut() {
+            if *fuel <= 0 {
+                return Err(crate::error::Error::fuel("fuel exhausted"));
+            }
+            *fuel -= 1;
+        }
+        Ok(())
+    }
+
     /// Configure whether the current agent may synchronously suspend in
     /// `Atomics.wait`. Browser main agents normally disable this while worker
     /// agents enable it.
