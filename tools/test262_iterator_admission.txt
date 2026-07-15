@@ -352,6 +352,41 @@ built-ins/Iterator/prototype/some/this-non-callable-next.js
 built-ins/Iterator/prototype/some/this-non-object.js
 built-ins/Iterator/prototype/some/this-plain-iterator.js
 
+# Eager universal predicate helper.
+built-ins/Iterator/prototype/every/argument-effect-order.js
+built-ins/Iterator/prototype/every/argument-validation-failure-closes-underlying.js
+built-ins/Iterator/prototype/every/callable.js
+built-ins/Iterator/prototype/every/get-next-method-only-once.js
+built-ins/Iterator/prototype/every/get-next-method-throws.js
+built-ins/Iterator/prototype/every/get-return-method-throws.js
+built-ins/Iterator/prototype/every/is-function.js
+built-ins/Iterator/prototype/every/iterator-already-exhausted.js
+built-ins/Iterator/prototype/every/iterator-has-no-return.js
+built-ins/Iterator/prototype/every/iterator-return-method-throws.js
+built-ins/Iterator/prototype/every/length.js
+built-ins/Iterator/prototype/every/name.js
+built-ins/Iterator/prototype/every/next-method-returns-non-object.js
+built-ins/Iterator/prototype/every/next-method-returns-throwing-done.js
+built-ins/Iterator/prototype/every/next-method-returns-throwing-value-done.js
+built-ins/Iterator/prototype/every/next-method-returns-throwing-value.js
+built-ins/Iterator/prototype/every/next-method-throws.js
+built-ins/Iterator/prototype/every/non-callable-predicate.js
+built-ins/Iterator/prototype/every/non-constructible.js
+built-ins/Iterator/prototype/every/predicate-args.js
+built-ins/Iterator/prototype/every/predicate-returns-falsey.js
+built-ins/Iterator/prototype/every/predicate-returns-non-boolean.js
+built-ins/Iterator/prototype/every/predicate-returns-truthy-then-falsey.js
+built-ins/Iterator/prototype/every/predicate-returns-truthy.js
+built-ins/Iterator/prototype/every/predicate-this.js
+built-ins/Iterator/prototype/every/predicate-throws-then-closing-iterator-also-throws.js
+built-ins/Iterator/prototype/every/predicate-throws.js
+built-ins/Iterator/prototype/every/prop-desc.js
+built-ins/Iterator/prototype/every/proto.js
+built-ins/Iterator/prototype/every/result-is-boolean.js
+built-ins/Iterator/prototype/every/this-non-callable-next.js
+built-ins/Iterator/prototype/every/this-non-object.js
+built-ins/Iterator/prototype/every/this-plain-iterator.js
+
 # Concrete iterator prototypes admitted with the common base hierarchy.
 built-ins/GeneratorPrototype/Symbol.toStringTag.js
 

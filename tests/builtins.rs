@@ -1472,6 +1472,247 @@ fn iterator_some_roots_values_and_uses_the_method_realm() {
 }
 
 #[test]
+fn iterator_every_short_circuits_falsey_values_and_closes_normally() {
+    assert_eq!(
+        run(r#"
+            var calls = [];
+            var closes = 0;
+            var source = {
+              value: 0,
+              next: function() {
+                return this.value < 5
+                  ? { value: this.value++, done: false }
+                  : { done: true };
+              },
+              return: function() { closes += 1; return {}; }
+            };
+            var result = Iterator.prototype.every.call(source, function(value, index) {
+              calls.push([value, index].join(","));
+              return value < 2 ? {} : 0;
+            });
+            var exhaustedCloses = 0;
+            var exhausted = Iterator.prototype.every.call({
+              next: function() { return { done: true }; },
+              return: function() { exhaustedCloses += 1; return {}; }
+            }, function() { return false; });
+            [result, calls.join(";"), closes, exhausted, exhaustedCloses].join("|");
+        "#),
+        Value::String(Arc::from("false|0,0;1,1;2,2|1|true|0"))
+    );
+}
+
+#[test]
+fn iterator_every_distinguishes_normal_close_and_predicate_abrupt_errors() {
+    assert_eq!(
+        run(r#"
+            var normalCloseType = false;
+            try {
+              Iterator.prototype.every.call({
+                next: function() { return { value: 1, done: false }; },
+                return: function() { return 0; }
+              }, function() { return false; });
+            } catch (error) { normalCloseType = error instanceof TypeError; }
+
+            var original = { marker: 1 };
+            var callbackCloses = 0;
+            var callbackError;
+            try {
+              Iterator.prototype.every.call({
+                next: function() { return { value: 1, done: false }; },
+                return: function() { callbackCloses += 1; throw "ignored-close"; }
+              }, function() { throw original; });
+            } catch (error) { callbackError = error; }
+
+            var stepCloses = 0;
+            var stepError;
+            try {
+              Iterator.prototype.every.call({
+                next: function() {
+                  return { done: false, get value() { throw original; } };
+                },
+                return: function() { stepCloses += 1; return {}; }
+              }, function() { return true; });
+            } catch (error) { stepError = error; }
+            [
+              normalCloseType,
+              callbackError === original, callbackCloses,
+              stepError === original, stepCloses
+            ].join("|");
+        "#),
+        Value::String(Arc::from("true|true|1|true|0"))
+    );
+}
+
+#[test]
+fn iterator_every_roots_values_and_uses_the_method_realm() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+    assert_eq!(
+        vm.run(
+            r#"
+            var other = $262.createRealm().global;
+            var state = { value: 1 };
+            var source = {
+              get next() {
+                forceGc();
+                return function() {
+                  forceGc();
+                  return state.value <= 3
+                    ? { value: { amount: state.value++ }, done: false }
+                    : { done: true };
+                };
+              },
+              return: function() { forceGc(); return {}; }
+            };
+            var result = other.Iterator.prototype.every.call(source, function(value) {
+              forceGc();
+              return value.amount < 3;
+            });
+            var realmError = false;
+            try {
+              other.Iterator.prototype.every.call({
+                next: function() { return { value: 1, done: false }; },
+                return: function() { return 0; }
+              }, function() { return false; });
+            } catch (error) {
+              realmError = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            [result, realmError].join("|");
+            "#,
+        )
+        .expect("Iterator every should retain values and method Realm"),
+        Value::String(Arc::from("false|true"))
+    );
+}
+
+#[test]
+fn iterator_every_never_closes_step_abrupt_completions() {
+    assert_eq!(
+        run(r#"
+            var original = { marker: 1 };
+            var closes = 0;
+            function check(source, expectTypeError) {
+              source.return = function() { closes += 1; return {}; };
+              var caught;
+              try {
+                Iterator.prototype.every.call(source, function() { return true; });
+              } catch (error) { caught = error; }
+              return expectTypeError ? caught instanceof TypeError : caught === original;
+            }
+            var getterSource = {
+              get next() { throw original; }
+            };
+            var callSource = {
+              next: function() { throw original; }
+            };
+            var primitiveSource = {
+              next: function() { return 0; }
+            };
+            var doneSource = {
+              next: function() {
+                return { get done() { throw original; } };
+              }
+            };
+            [
+              check(getterSource, false),
+              check(callSource, false),
+              check(primitiveSource, true),
+              check(doneSource, false),
+              closes
+            ].join("|");
+        "#),
+        Value::String(Arc::from("true|true|true|true|0"))
+    );
+}
+
+#[test]
+fn iterator_every_preserves_abrupt_close_priority_and_validates_normal_close() {
+    assert_eq!(
+        run(r#"
+            var original = { marker: 1 };
+            var getterCalls = 0;
+            function predicateThrows() { throw original; }
+            function catchesOriginal(source) {
+              try {
+                Iterator.prototype.every.call(source, predicateThrows);
+              } catch (error) { return error === original; }
+              return false;
+            }
+            function sourceWithReturn(returnValue) {
+              return {
+                next: function() { return { value: 1, done: false }; },
+                return: returnValue
+              };
+            }
+            var getterSource = {
+              next: function() { return { value: 1, done: false }; },
+              get return() { getterCalls += 1; throw "ignored"; }
+            };
+            var normalNonCallable = false;
+            try {
+              Iterator.prototype.every.call(sourceWithReturn(0), function() { return false; });
+            } catch (error) { normalNonCallable = error instanceof TypeError; }
+            [
+              catchesOriginal(getterSource), getterCalls,
+              catchesOriginal(sourceWithReturn(0)),
+              catchesOriginal(sourceWithReturn(function() { return 0; })),
+              normalNonCallable
+            ].join("|");
+        "#),
+        Value::String(Arc::from("true|1|true|true|true"))
+    );
+}
+
+#[test]
+fn iterator_every_generated_errors_use_the_method_realm() {
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            function isOtherTypeError(thunk) {
+              try { thunk(); } catch (error) {
+                return error instanceof other.TypeError && !(error instanceof TypeError);
+              }
+              return false;
+            }
+            var method = other.Iterator.prototype.every;
+            [
+              isOtherTypeError(function() { method.call(1, function() {}); }),
+              isOtherTypeError(function() {
+                method.call({ return: function() { return {}; } }, null);
+              }),
+              isOtherTypeError(function() {
+                method.call({ next: 0 }, function() { return true; });
+              }),
+              isOtherTypeError(function() {
+                method.call({ next: function() { return 0; } }, function() { return true; });
+              }),
+              isOtherTypeError(function() {
+                method.call({
+                  next: function() { return { value: 1, done: false }; },
+                  return: 0
+                }, function() { return false; });
+              }),
+              isOtherTypeError(function() {
+                method.call({
+                  next: function() { return { value: 1, done: false }; },
+                  return: function() { return 0; }
+                }, function() { return false; });
+              })
+            ].join("|");
+        "#),
+        Value::String(Arc::from("true|true|true|true|true|true"))
+    );
+}
+
+#[test]
 fn array_map_reduce() {
     assert_eq!(
         run("[1,2,3].map(x => x*2).join(',');"),
