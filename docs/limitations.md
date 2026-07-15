@@ -105,6 +105,12 @@ guarantees, run RuJa in a separately killable process as well.
   static `Iterator.concat`, `Iterator.zip`, and `Iterator.zipKeyed` provide
   iterator sequencing and joint iteration. Async iterator helpers are a
   separate unsupported surface.
+- Foreign Realm `Object` static methods and their generated results/errors are
+  Realm-specific. Two related bootstrap gaps remain: calling a foreign
+  `Object` constructor as a function still uses the main Realm's default
+  `%Object.prototype%`, and foreign `%Object.prototype%` method/accessor
+  descriptors still clone main-Realm function values. Constructor-call and
+  prototype-method isolation are tracked as separate follow-up units.
 - `Vm` is `Send` (but not `Sync`): the engine uses `Arc`/`Mutex`/atomics
   for shared ownership and interior mutability, so a `Vm` can be moved
   between threads. Concurrent *shared* access still requires external

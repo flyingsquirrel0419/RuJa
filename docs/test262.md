@@ -5765,6 +5765,29 @@ while the corrected `IsHTMLDDA` policy moves annexB **-11 pass / -13 fail /
 files and **82.4%** of executed files. Artifacts are retained at
 `/tmp/ruja-artifacts-iterator-zip-keyed-feature-final.CJEoTi`.
 
+Feature commit `6dad4e3` makes every foreign Realm `Object` static method a
+distinct native function with that Realm's `%Function.prototype%`, native
+errors, Array results, ordinary-object results, descriptor normalization, and
+primitive wrappers. Object-specific allocation paths retain original Realm
+intrinsics even after mutable global bindings are replaced. Forced-GC Rust
+regressions cover values/entries accumulation, fresh `groupBy` iterators and
+coercible keys, accessor-produced `fromEntries` keys and values, Proxy
+descriptor aggregation, and retained methods across explicit collection.
+
+Local final gates pass: Rust all-target/all-feature tests including builtins
+**429/429** and fuel **19/19**, Clippy with warnings denied, formatting,
+release and wasm32 builds, Python tooling **86/86**, `built-ins/Object`
+**3120 pass / 121 fail / 170 skip / 3411 total**, and the current full-clone
+supported subset **12752 pass / 0 fail / 7687 skip / 20439 total**. Upstream
+Test262 currently contains only one cross-Realm Object file, which covers
+NewTarget prototype fallback rather than static method Realm, so no matrix
+test changes are expected. CI `29454210263` and full matrix `29454210292`
+succeeded; all 30 artifacts at
+`/tmp/ruja-artifacts-object-statics-feature.kgM3Qv` are byte-for-byte identical
+to the Iterator.zipKeyed documentation baseline and retain **29751 pass / 6348
+fail / 12206 skip / 12 timeout / 0 error / 48317 total / 36099 pass-or-fail
+executed** (**61.6%** of all files, **82.4%** of executed files).
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is

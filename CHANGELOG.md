@@ -235,6 +235,17 @@
   `29448974428`. The final aggregate is **29751 pass / 6348 fail / 12206 skip /
   12 timeout / 0 error / 48317 total**, or **61.6%** of all files and **82.4%**
   of executed files.
+- Foreign Realm `Object` constructors now own distinct copies of all 23 static
+  methods with their Realm's `%Function.prototype%` and native error Realm.
+  `keys`/`values`/`entries`, own-key lists, `groupBy`, `fromEntries`, and
+  descriptor helpers allocate Arrays and ordinary objects from the method
+  Realm; Proxy descriptor normalization and primitive boxing follow the same
+  rule. Iterator records, accumulated values, entry getter results, keys, and
+  descriptor objects remain rooted across user callbacks, coercion, and forced
+  GC. Commit `6dad4e3` passed CI `29454210263` and full matrix `29454210292`;
+  all 30 result artifacts are unchanged at **29751 pass / 6348 fail / 12206
+  skip / 12 timeout / 0 error / 48317 total** because current upstream
+  Test262 has no direct Object-static method-Realm case.
 - Private instance and static auto-accessor decorators now expose the private
   name and branded `access` functions while keeping their synthetic backing
   storage internal. Optional `get`, `set`, and `init` replacements, extra

@@ -127,7 +127,9 @@
   `getPrototypeOf`/`setPrototypeOf`, `preventExtensions`/`isExtensible`,
   `seal`/`isSealed`, `freeze`/`isFrozen`,
   `getOwnPropertyDescriptor`/`getOwnPropertyDescriptors`,
-  `getOwnPropertyNames`
+  `getOwnPropertyNames`; static methods, their Array/Object results, Proxy
+  descriptor objects, primitive wrappers, and generated errors use the method
+  Realm and survive callback/coercion GC
 - **Number**: `parseInt`/`parseFloat`, `isNaN`, `isFinite`; `Number` statics
   (`isInteger`, `isFinite`, `isNaN`, `isSafeInteger`, constants) and
   `toString(radix)`/`toFixed`/`toPrecision`/`toExponential`
