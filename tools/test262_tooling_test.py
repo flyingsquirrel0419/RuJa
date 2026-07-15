@@ -1699,7 +1699,7 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
                 test262_analyze.TEST262 = original_analyze_root
 
     def test_iterator_core_admission_is_exact(self):
-        self.assertEqual(len(ITERATOR_CORE_FILES), 315)
+        self.assertEqual(len(ITERATOR_CORE_FILES), 348)
         self.assertEqual(
             sum("/prototype/Symbol.dispose/" in path for path in ITERATOR_CORE_FILES),
             6,
@@ -1764,6 +1764,10 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
             sum("/Iterator/prototype/forEach/" in path for path in ITERATOR_CORE_FILES),
             27,
         )
+        self.assertEqual(
+            sum("/Iterator/prototype/some/" in path for path in ITERATOR_CORE_FILES),
+            33,
+        )
 
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -1780,7 +1784,8 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
             iterator_flat_map = root / "test/built-ins/Iterator/prototype/flatMap/is-function.js"
             iterator_reduce = root / "test/built-ins/Iterator/prototype/reduce/is-function.js"
             iterator_for_each = root / "test/built-ins/Iterator/prototype/forEach/is-function.js"
-            unrelated = root / "test/built-ins/Iterator/prototype/some/is-function.js"
+            iterator_some = root / "test/built-ins/Iterator/prototype/some/is-function.js"
+            unrelated = root / "test/built-ins/Iterator/prototype/every/is-function.js"
             sequencing = root / "test/built-ins/Iterator/concat/is-function.js"
             joint = root / "test/built-ins/Iterator/zip/is-function.js"
             joint_keyed = root / "test/built-ins/Iterator/zipKeyed/is-function.js"
@@ -1853,6 +1858,7 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
                     self.assertTrue(tool.iterator_core_path(iterator_flat_map))
                     self.assertTrue(tool.iterator_core_path(iterator_reduce))
                     self.assertTrue(tool.iterator_core_path(iterator_for_each))
+                    self.assertTrue(tool.iterator_core_path(iterator_some))
                     self.assertFalse(
                         tool.should_skip(
                             {"flags": [], "features": ["iterator-helpers"]},

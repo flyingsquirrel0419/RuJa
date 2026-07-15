@@ -7,7 +7,7 @@
 use crate::ast::FunctionExpr;
 use indexmap::{IndexMap, IndexSet};
 use parking_lot::{Condvar, Mutex};
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, AtomicUsize, Ordering};
 
 use std::fmt;
 use std::sync::Arc;
@@ -783,7 +783,7 @@ pub struct IteratorHelperData {
     pub next_method: Value,
     pub callback: Option<Value>,
     pub kind: IteratorHelperKind,
-    pub counter: AtomicU64,
+    pub counter: Mutex<BigUint>,
     pub inner_iterator: Mutex<Option<IteratorHelperInner>>,
     /// Exact mathematical remaining count; `None` represents +Infinity.
     pub remaining: Mutex<Option<BigUint>>,
