@@ -119,6 +119,18 @@
   `29390731665` and full matrix `29390731676`; only built-ins changes by
   **+73 pass / -73 skip**, producing **29217 pass / 6486 fail / 12602 skip /
   12 timeout / 0 error / 48317 total**.
+- `Iterator.prototype.take` and `drop` now use the same branded,
+  Realm-specific lazy helper machinery. Exact `BigUint` limits preserve large
+  finite values, infinity remains unbounded, limit conversion closes the
+  provisional iterator on abrupt or invalid input, `take` closes at its
+  boundary, and `drop` does not read skipped values. Native helper loops now
+  charge VM fuel, and radix-prefixed string-to-number conversion accepts large
+  valid inputs while rejecting non-JavaScript spellings. The exact Iterator
+  manifest expands to **214/214**, including all **33 take** and **34 drop**
+  files. Commit `d36456b` passed CI `29396353550` and full matrix
+  `29396353596`; only built-ins changes by **+67 pass / -67 skip**, producing
+  **29284 pass / 6486 fail / 12535 skip / 12 timeout / 0 error / 48317
+  total**.
 - Private instance and static auto-accessor decorators now expose the private
   name and branded `access` functions while keeping their synthetic backing
   storage internal. Optional `get`, `set`, and `init` replacements, extra

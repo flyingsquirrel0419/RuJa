@@ -30,7 +30,7 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 60.5% of all matrix files; 81.8% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 60.6% of all matrix files; 81.9% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (12751 pass / 0 fail on current Test262; 12752 / 0 on the pinned checkout) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
@@ -5502,7 +5502,7 @@ artifacts are retained at
 
 ## Iterator intrinsic and helper core
 
-`tools/test262_iterator_admission.txt` freezes exactly 147 files: 23
+`tools/test262_iterator_admission.txt` freezes exactly 214 files: 23
 `built-ins/Iterator` files covering the global constructor, subclass
 construction, `%Iterator.prototype%[Symbol.iterator]`,
 `%Iterator.prototype%[Symbol.dispose]`, and the `constructor` and
@@ -5510,7 +5510,8 @@ construction, `%Iterator.prototype%[Symbol.iterator]`,
 `Symbol.toStringTag`; all six `String.prototype[Symbol.iterator]` files; and
 all seven `%StringIteratorPrototype%` files; all 19 `Iterator.from` files; and
 all 18 `Iterator.prototype.toArray` files; plus all 36
-`Iterator.prototype.map` and 37 `Iterator.prototype.filter` files. The runner
+`Iterator.prototype.map` and 37 `Iterator.prototype.filter` files; plus all 33
+`Iterator.prototype.take` and 34 `Iterator.prototype.drop` files. The runner
 and analyzer admit only those exact paths. Remaining helpers, sequencing,
 `concat`, `zip`, and `zipKeyed` stay behind their feature gates.
 
@@ -5537,10 +5538,15 @@ ToBoolean filtering, dynamic IteratorClose, and distinct suspended-start,
 executing, suspended-yield, and completed states. Helper GC slots, integrity
 operations, result/error Realms, `Iterator Helper` tagging, close-time fuel
 aborts, and 32-bit portability are covered by Rust regressions.
+`Iterator.prototype.take` and `drop` reuse those branded helpers with exact
+finite `BigUint` limits and an explicit positive-infinity state. Limit
+conversion and close ordering, boundary close, skipped-value elision, native
+loop fuel consumption, large radix-prefixed numeric strings, Realm behavior,
+and GC retention are covered by Rust and Test262 regressions.
 
-Local verification against Test262 `020cb740` is **133 pass / 0 fail / 381
+Local verification against Test262 `020cb740` is **200 pass / 0 fail / 314
 skip / 514 total** for all of `built-ins/Iterator`; the separately admitted
-Generator and String iterator files also pass, for **147/147** exact manifest
+Generator and String iterator files also pass, for **214/214** exact manifest
 members. `built-ins/Array/from` is **27 pass / 0 fail / 20 skip / 47 total**.
 The related String iterator method,
 `StringIteratorPrototype`, `ArrayIteratorPrototype`, `GeneratorPrototype`,
@@ -5584,6 +5590,14 @@ identical to the Iterator.from documentation baseline; built-ins moves exactly
 skip / 12 timeout / 0 error / 48317 total / 35703 pass-or-fail executed**, or
 **60.5%** of all files and **81.8%** of executed files. Artifacts are retained
 at `/tmp/ruja-artifacts-iterator-map-filter-feature.ZSWPOC`.
+
+Feature commit `d36456b` passed CI `29396353550` and full matrix
+`29396353596`. Of the 30 downloaded result artifacts, 29 are byte-for-byte
+identical to the map/filter documentation baseline; built-ins moves exactly
+**+67 pass / -67 skip**. The aggregate is **29284 pass / 6486 fail / 12535
+skip / 12 timeout / 0 error / 48317 total / 35770 pass-or-fail executed**, or
+**60.6%** of all files and **81.9%** of executed files. Artifacts are retained
+at `/tmp/ruja-artifacts-iterator-take-drop-feature.1nIWLD`.
 
 ## Why the full-suite rate is not higher
 
