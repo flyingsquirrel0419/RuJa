@@ -85,7 +85,7 @@ guarantees, run RuJa in a separately killable process as well.
   scoped subset of ES5.1 + selected ES2015+ features (see
   [test262.md](test262.md#supported-subset) for the exact list). The full
   suite is run in CI (excluding `intl402`/`staging`) with a baseline pass
-  rate of 60.2% of all matrix files and 81.7% of executed files; within the
+  rate of 60.3% of all matrix files and 81.8% of executed files; within the
   supported subset, tests currently run at 100%.
   Full ES conformance is not claimed. See
   [test262.md](test262.md) for current numbers and the failure breakdown.
@@ -98,10 +98,11 @@ guarantees, run RuJa in a separately killable process as well.
   rather than admitted into the current-main runner early; the broad current-
   main gate remains closed until the files land upstream.
 - The global `Iterator` and common synchronous iterator prototype hierarchy
-  are implemented, including Realm-specific branded String iterators. Iterator
+  are implemented, including Realm-specific branded String iterators,
+  `Iterator.from`, and the eager `Iterator.prototype.toArray` helper. Remaining
   helpers (`map`, `filter`, `take`, `drop`, and related methods),
-  `Iterator.from`, `Iterator.concat`, `Iterator.zip`, and `Iterator.zipKeyed`
-  are not. Async iterator helpers are a separate unsupported surface.
+  `Iterator.concat`, `Iterator.zip`, and `Iterator.zipKeyed` are not. Async
+  iterator helpers are a separate unsupported surface.
 - `Vm` is `Send` (but not `Sync`): the engine uses `Arc`/`Mutex`/atomics
   for shared ownership and interior mutability, so a `Vm` can be moved
   between threads. Concurrent *shared* access still requires external

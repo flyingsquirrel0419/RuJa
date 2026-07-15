@@ -30,7 +30,7 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 60.2% of all matrix files; 81.7% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 60.3% of all matrix files; 81.8% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (12751 pass / 0 fail on current Test262; 12752 / 0 on the pinned checkout) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
@@ -5502,13 +5502,14 @@ artifacts are retained at
 
 ## Iterator intrinsic core
 
-`tools/test262_iterator_admission.txt` freezes exactly 37 files: 23
+`tools/test262_iterator_admission.txt` freezes exactly 74 files: 23
 `built-ins/Iterator` files covering the global constructor, subclass
 construction, `%Iterator.prototype%[Symbol.iterator]`,
 `%Iterator.prototype%[Symbol.dispose]`, and the `constructor` and
 `Symbol.toStringTag` accessors; the Generator prototype's own
 `Symbol.toStringTag`; all six `String.prototype[Symbol.iterator]` files; and
-all seven `%StringIteratorPrototype%` files. The runner and analyzer admit only
+all seven `%StringIteratorPrototype%` files; all 19 `Iterator.from` files; and
+all 18 `Iterator.prototype.toArray` files. The runner and analyzer admit only
 those exact paths.
 Iterator helpers, sequencing, `concat`, `zip`, and `zipKeyed` remain
 behind their feature gates, including 114 proposal files that previously ran
@@ -5524,11 +5525,19 @@ check. Primitive and boxed strings use the public iterator protocol and a
 Realm-specific `%StringIteratorPrototype%`; replacement/deletion, normal
 `ToString`, UTF-16 surrogate representation, branding, exhaustion,
 extensibility, and GC retention are observable as specified.
+`Iterator.from` implements GetIteratorFlattenable, intrinsic identity
+preservation, cached `next`, and a branded Realm-specific wrapper whose
+`return` lookup remains dynamic. `Iterator.prototype.toArray` caches `next`,
+reads `done` before `value`, and allocates from the method Realm. Its
+host-safety materialization cap closes the source iterator before throwing.
+The shared `Array.from` path also follows iterable-first generic-constructor
+and per-step mapping semantics with IteratorClose on abrupt completion.
 
-Local verification against Test262 `020cb740` is **23 pass / 0 fail / 491
-skip / 514 total** for all of `built-ins/Iterator`; all 23 Iterator files and
-the separately admitted Generator and 13 String iterator files pass, for
-**37/37** exact manifest members. The related String iterator method,
+Local verification against Test262 `020cb740` is **60 pass / 0 fail / 454
+skip / 514 total** for all of `built-ins/Iterator`; the separately admitted
+Generator and String iterator files also pass, for **74/74** exact manifest
+members. `built-ins/Array/from` is **27 pass / 0 fail / 20 skip / 47 total**.
+The related String iterator method,
 `StringIteratorPrototype`, `ArrayIteratorPrototype`, `GeneratorPrototype`,
 `MapIteratorPrototype`, `SetIteratorPrototype`, and
 `RegExpStringIteratorPrototype` directories are **44 pass / 0 fail / 96 skip /
@@ -5553,6 +5562,15 @@ identical to the private-auto-accessor docs baseline; built-ins moves exactly
 skip / 12 timeout / 0 error / 48317 total / 35593 pass-or-fail executed**.
 Artifacts are retained at
 `/tmp/ruja-artifacts-string-iterator-feature.refyfB`.
+
+Feature commit `a6d3949` passed CI `29386623291` and full matrix
+`29386623314`. Of the 30 downloaded result artifacts, 29 are byte-for-byte
+identical to the String Iterator documentation baseline; built-ins moves
+exactly **+46 pass / -9 fail / -37 skip**. The aggregate is **29144 pass /
+6486 fail / 12675 skip / 12 timeout / 0 error / 48317 total / 35630
+pass-or-fail executed**, or **60.3%** of all files and **81.8%** of executed
+files. Artifacts are retained at
+`/tmp/ruja-artifacts-iterator-from-feature.hvj9Nr`.
 
 ## Why the full-suite rate is not higher
 

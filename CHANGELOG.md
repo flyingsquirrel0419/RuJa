@@ -95,6 +95,18 @@
   full matrix `29381725849`; 29 artifacts are unchanged and built-ins moves
   exactly **+13 pass / -13 skip**, producing **29098 pass / 6495 fail / 12712
   skip / 12 timeout / 0 error / 48317 total**.
+- `Iterator.from` now accepts iterable and direct iterator inputs, preserves
+  intrinsic Iterator instances, and otherwise returns a Realm-specific
+  branded wrapper with cached `next` and dynamic `return` forwarding.
+  `Iterator.prototype.toArray` is the first eager helper, with cached `next`,
+  specified `done`/`value` ordering, Realm-correct Array allocation, GC-safe
+  iterator results, and bounded materialization with iterator cleanup.
+  Supporting `Array.from` iterable/generic-constructor ordering, mapping,
+  abrupt IteratorClose, primitive iterators, and array-like property reads are
+  corrected. The exact Iterator manifest expands to **74/74**. Commit
+  `a6d3949` passed CI `29386623291` and full matrix `29386623314`; only
+  built-ins changes by **+46 pass / -9 fail / -37 skip**, producing **29144
+  pass / 6486 fail / 12675 skip / 12 timeout / 0 error / 48317 total**.
 - Private instance and static auto-accessor decorators now expose the private
   name and branded `access` functions while keeping their synthetic backing
   storage internal. Optional `get`, `set`, and `init` replacements, extra

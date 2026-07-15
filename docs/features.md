@@ -81,7 +81,9 @@
   `Symbol.iterator`, `Symbol.dispose`, `constructor`, and
   `Symbol.toStringTag`; generator, Array, Map, Set, and RegExp String iterator
   prototypes inherit from it while retaining their concrete tags, including
-  the Generator prototype's own `"Generator"` tag.
+  the Generator prototype's own `"Generator"` tag. `Iterator.from` accepts
+  iterables and direct iterators through a Realm-specific valid-iterator
+  wrapper, and `Iterator.prototype.toArray` eagerly collects an iterator.
 
 ## Property model
 
