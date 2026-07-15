@@ -9931,6 +9931,168 @@ fn parse_int_radix_to_int32_and_large_prefix() {
 }
 
 #[test]
+fn object_static_methods_are_realm_specific() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+
+    assert_eq!(
+        vm.run(
+            r#"
+            var other = $262.createRealm().global;
+            var second = $262.createRealm().global;
+            var names = [
+              "keys", "values", "entries", "assign", "is", "hasOwn",
+              "fromEntries", "groupBy", "create", "freeze",
+              "getOwnPropertyNames", "getOwnPropertySymbols",
+              "getOwnPropertyDescriptor", "defineProperty", "defineProperties",
+              "getPrototypeOf", "setPrototypeOf", "preventExtensions",
+              "isExtensible", "seal", "isSealed", "isFrozen",
+              "getOwnPropertyDescriptors"
+            ];
+            forceGc();
+
+            var distinct = names.every(function(name) {
+              return other.Object[name] !== Object[name] &&
+                Object.getPrototypeOf(other.Object[name]) === other.Function.prototype;
+            });
+            var methodShape = other.Object.keys !== second.Object.keys &&
+              Object.getPrototypeOf(second.Object.keys) === second.Function.prototype &&
+              other.Object.keys.name === "keys" && other.Object.keys.length === 1 &&
+              other.Object.keys.prototype === undefined;
+            var keys = other.Object.keys({ value: 1 });
+            var valueSource = { first: { value: 1 } };
+            Object.defineProperty(valueSource, "second", {
+              enumerable: true,
+              get: function() { forceGc(); return { value: 2 }; }
+            });
+            var values = other.Object.values(valueSource);
+            var entrySource = { first: 1 };
+            Object.defineProperty(entrySource, "second", {
+              enumerable: true,
+              get: function() { forceGc(); return 2; }
+            });
+            var entries = other.Object.entries(entrySource);
+            var descriptor = other.Object.getOwnPropertyDescriptor({ value: 1 }, "value");
+            var descriptorTarget = { first: 1, second: 2 };
+            var descriptors = other.Object.getOwnPropertyDescriptors(new Proxy(descriptorTarget, {
+              ownKeys: function(target) { return Reflect.ownKeys(target); },
+              getOwnPropertyDescriptor: function(target, key) {
+                if (key === "second") forceGc();
+                return Reflect.getOwnPropertyDescriptor(target, key);
+              }
+            }));
+            var entry = {};
+            Object.defineProperty(entry, "0", {
+              get: function() {
+                return { toString: function() { forceGc(); return "value"; } };
+              }
+            });
+            Object.defineProperty(entry, "1", {
+              get: function() { forceGc(); return { nested: 1 }; }
+            });
+            var fromEntries = other.Object.fromEntries([entry]);
+            var assigned = other.Object.assign(1, { value: 1 });
+            var ownNames = other.Object.getOwnPropertyNames({ value: 1 });
+            var symbol = Symbol("value");
+            var ownSymbols = other.Object.getOwnPropertySymbols({ [symbol]: 1 });
+            var nextValue = 0;
+            var grouped = other.Object.groupBy({
+              [Symbol.iterator]: function() {
+                return {
+                  next: function() {
+                    nextValue++;
+                    return nextValue <= 2
+                      ? { value: { value: nextValue }, done: false }
+                      : { value: undefined, done: true };
+                  }
+                };
+              }
+            }, function() {
+              return { toString: function() { forceGc(); return "all"; } };
+            });
+            var proxyDescriptorRealm = false;
+            var proxy = new Proxy({}, {
+              defineProperty: function(target, key, desc) {
+                proxyDescriptorRealm = Object.getPrototypeOf(desc) === other.Object.prototype;
+                return Reflect.defineProperty(target, key, desc);
+              }
+            });
+            other.Object.defineProperty(proxy, "value", { value: 1 });
+            var errorRealm = false;
+            try {
+              other.Object.defineProperty(undefined, "value", {});
+            } catch (error) {
+              errorRealm = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+
+            [
+              distinct,
+              methodShape,
+              Object.getPrototypeOf(keys) === other.Array.prototype,
+              Object.getPrototypeOf(values) === other.Array.prototype &&
+                values[0] && values[1] &&
+                values[0].value === 1 && values[1].value === 2,
+              Object.getPrototypeOf(entries) === other.Array.prototype,
+              entries[0] && entries[1] &&
+                Object.getPrototypeOf(entries[0]) === other.Array.prototype &&
+                entries[0].join(":") === "first:1" &&
+                entries[1].join(":") === "second:2",
+              Object.getPrototypeOf(descriptor) === other.Object.prototype,
+              Object.getPrototypeOf(descriptors) === other.Object.prototype,
+              descriptors.first &&
+                Object.getPrototypeOf(descriptors.first) === other.Object.prototype &&
+                descriptors.first.value === 1,
+              Object.getPrototypeOf(fromEntries) === other.Object.prototype &&
+                fromEntries.value && fromEntries.value.nested === 1,
+              Object.getPrototypeOf(assigned) === other.Number.prototype &&
+                assigned.value === 1 &&
+                other.Object.getPrototypeOf(1) === other.Number.prototype,
+              Object.getPrototypeOf(ownNames) === other.Array.prototype &&
+                Object.getPrototypeOf(ownSymbols) === other.Array.prototype,
+              grouped.all &&
+                Object.getPrototypeOf(grouped.all) === other.Array.prototype &&
+                Object.getPrototypeOf(grouped) === null &&
+                grouped.all[0] && grouped.all[1] &&
+                grouped.all[0].value === 1 && grouped.all[1].value === 2,
+              proxyDescriptorRealm,
+              errorRealm
+            ].join("|");
+        "#,
+        )
+        .expect("foreign Realm Object statics should remain live across GC"),
+        Value::String(Arc::from(
+            "true|true|true|true|true|true|true|true|true|true|true|true|true|true|true"
+        ))
+    );
+
+    vm.run(
+        r#"
+        var retainedObjectKeys = other.Object.keys;
+        var retainedArrayPrototype = other.Array.prototype;
+        other.Object = null;
+        other.Array = null;
+        "#,
+    )
+    .expect("failed to retain foreign Realm intrinsics");
+    vm.gc();
+    assert_eq!(
+        vm.run(
+            "Object.getPrototypeOf(retainedObjectKeys({ value: 1 })) === retainedArrayPrototype;"
+        )
+        .expect("retained foreign Object method should survive GC"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn object_statics() {
     assert_eq!(run("Object.is(NaN, NaN);"), Value::Bool(true));
     assert_eq!(run("Object.is(0, -0);"), Value::Bool(false));

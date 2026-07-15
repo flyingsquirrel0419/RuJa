@@ -2935,6 +2935,7 @@ fn make_test262_realm(vm: &mut Vm) -> error::Result<Value> {
             }
         });
         set_function_object_proto(vm, realm_object_idx, &realm_function_proto);
+        install_object_static_methods_in_env(vm, realm_object_idx, realm_env)?;
         vm.heap.with_obj(realm_object_prototype_idx.0, |object| {
             object.props().lock().insert(
                 PropertyKey::from("constructor"),
@@ -4335,7 +4336,8 @@ fn object_keys(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Resu
             }
         }
     }
-    make_str_array(vm, strings)
+    let realm = vm.current_realm_global_env();
+    create_array_from_values_in_realm(vm, strings.into_iter().map(Value::String).collect(), realm)
 }
 
 fn object_values(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
@@ -4348,19 +4350,26 @@ fn object_values(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Re
     let obj = vm.to_object(object)?;
     let keys = own_property_keys_or_throw(vm, &obj, false, true, false)?;
     let mut vals = Vec::with_capacity(keys.len());
-    for key in &keys {
-        let Some(k) = key.as_str() else {
-            continue;
-        };
-        if !own_property_descriptor_for_key_or_throw(vm, &obj, key)?
-            .is_some_and(|desc| desc.enumerable)
-        {
-            continue;
+    let mut value_pins = 0;
+    let result = (|| {
+        for key in &keys {
+            let Some(k) = key.as_str() else {
+                continue;
+            };
+            if !own_property_descriptor_for_key_or_throw(vm, &obj, key)?
+                .is_some_and(|desc| desc.enumerable)
+            {
+                continue;
+            }
+            let value = vm.get_property(&obj, k)?;
+            value_pins += vm.pin(&value);
+            vals.push(value);
         }
-        vals.push(vm.get_property(&obj, k)?);
-    }
-    let arr = HeapObj::Array(ArrayData::new(vals, Some(vm.array_proto.clone())));
-    Ok(Value::Object(GcIdx(vm.heap.allocate(arr)?)))
+        let realm = vm.current_realm_global_env();
+        create_array_from_values_in_realm(vm, vals, realm)
+    })();
+    vm.unpin_many(value_pins);
+    result
 }
 
 fn object_entries(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
@@ -4372,25 +4381,32 @@ fn object_entries(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::R
     }
     let obj = vm.to_object(object)?;
     let keys = own_property_keys_or_throw(vm, &obj, false, true, false)?;
+    let realm = vm.current_realm_global_env();
     let mut pairs = Vec::new();
-    for k in keys {
-        if !own_property_descriptor_for_key_or_throw(vm, &obj, &k)?
-            .is_some_and(|desc| desc.enumerable)
-        {
-            continue;
+    let mut pair_pins = 0;
+    let result = (|| {
+        for k in keys {
+            if !own_property_descriptor_for_key_or_throw(vm, &obj, &k)?
+                .is_some_and(|desc| desc.enumerable)
+            {
+                continue;
+            }
+            let Some(name) = k.as_str() else {
+                continue;
+            };
+            let value = vm.get_property(&obj, name)?;
+            let pair = create_array_from_values_in_realm(
+                vm,
+                vec![Value::String(Arc::from(name)), value],
+                realm,
+            )?;
+            pair_pins += vm.pin(&pair);
+            pairs.push(pair);
         }
-        let Some(name) = k.as_str() else {
-            continue;
-        };
-        let v = vm.get_property(&obj, name)?;
-        let pair = HeapObj::Array(ArrayData::new(
-            vec![Value::String(Arc::from(name)), v],
-            Some(vm.array_proto.clone()),
-        ));
-        pairs.push(Value::Object(GcIdx(vm.heap.allocate(pair)?)));
-    }
-    let arr = HeapObj::Array(ArrayData::new(pairs, Some(vm.array_proto.clone())));
-    Ok(Value::Object(GcIdx(vm.heap.allocate(arr)?)))
+        create_array_from_values_in_realm(vm, pairs, realm)
+    })();
+    vm.unpin_many(pair_pins);
+    result
 }
 
 fn object_group_by(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
@@ -4406,61 +4422,76 @@ fn object_group_by(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::
     }
 
     let iterator = vm.make_iterator(&items)?;
+    let iterator_pin = vm.pin(&iterator);
     let mut groups: IndexMap<PropertyKey, Vec<Value>> = IndexMap::new();
-    let mut k = 0usize;
-    loop {
-        let (value, done) = vm.iterator_next(&iterator)?;
-        if done {
-            break;
+    let mut group_pins = 0;
+    let result = (|| {
+        let mut k = 0usize;
+        loop {
+            let (value, done) = vm.iterator_next(&iterator)?;
+            if done {
+                break;
+            }
+            group_pins += vm.pin(&value);
+            let key_value = match vm.call_function(
+                &callback,
+                &[value.clone(), Value::Number(k as f64)],
+                Some(Value::Undefined),
+            ) {
+                Ok(value) => value,
+                Err(err) => {
+                    vm.iterator_close(&iterator)?;
+                    return Err(err);
+                }
+            };
+            group_pins += vm.pin(&key_value);
+            let key = match to_property_key_descriptor(vm, &key_value) {
+                Ok(key) => key,
+                Err(err) => {
+                    vm.iterator_close(&iterator)?;
+                    return Err(err);
+                }
+            };
+            groups.entry(key).or_default().push(value);
+            k += 1;
         }
-        let key_value = match vm.call_function(
-            &callback,
-            &[value.clone(), Value::Number(k as f64)],
-            Some(Value::Undefined),
-        ) {
-            Ok(value) => value,
-            Err(err) => {
-                vm.iterator_close(&iterator)?;
-                return Err(err);
-            }
-        };
-        let key = match to_property_key_descriptor(vm, &key_value) {
-            Ok(key) => key,
-            Err(err) => {
-                vm.iterator_close(&iterator)?;
-                return Err(err);
-            }
-        };
-        groups.entry(key).or_default().push(value);
-        k += 1;
-    }
 
-    let obj_idx = vm.heap.allocate(HeapObj::Object(ObjectData {
-        props: Mutex::new(IndexMap::new()),
-        proto: Mutex::new(None),
-        extensible: AtomicBool::new(true),
-        class_name: Some(Arc::from("Object")),
-        private_fields: Mutex::new(std::collections::HashMap::new()),
-        primitive: Mutex::new(None),
-    }))?;
-    for (key, values) in groups {
-        let array = make_value_array(vm, values)?;
-        vm.heap.with_obj(obj_idx, |o| {
-            o.props().lock().insert(
-                key,
-                PropertyDescriptor {
-                    value: array,
-                    writable: true,
-                    enumerable: true,
-                    configurable: true,
-                    get: None,
-                    set: None,
-                    is_accessor: false,
-                },
-            );
-        });
-    }
-    Ok(Value::Object(GcIdx(obj_idx)))
+        let realm = vm.current_realm_global_env();
+        let obj_idx = vm.alloc(HeapObj::Object(ObjectData {
+            props: Mutex::new(IndexMap::new()),
+            proto: Mutex::new(None),
+            extensible: AtomicBool::new(true),
+            class_name: Some(Arc::from("Object")),
+            private_fields: Mutex::new(std::collections::HashMap::new()),
+            primitive: Mutex::new(None),
+        }))?;
+        let result = Value::Object(obj_idx);
+        let result_pin = vm.pin(&result);
+        let completion = (|| {
+            for (key, values) in groups {
+                let array = create_array_from_values_in_realm(vm, values, realm)?;
+                vm.heap.with_obj(obj_idx.0, |o| {
+                    o.props().lock().insert(
+                        key,
+                        PropertyDescriptor {
+                            value: array,
+                            writable: true,
+                            enumerable: true,
+                            configurable: true,
+                            get: None,
+                            set: None,
+                            is_accessor: false,
+                        },
+                    );
+                });
+            }
+            Ok(result)
+        })();
+        vm.unpin_many(result_pin);
+        completion
+    })();
+    vm.unpin_many(group_pins + iterator_pin);
+    result
 }
 
 fn object_assign(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
@@ -4528,53 +4559,76 @@ fn object_from_entries(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::
             "Cannot convert undefined or null to object",
         ));
     }
-    let obj_idx = vm.heap.allocate(HeapObj::Object(crate::value::ObjectData {
+    let realm = vm.current_realm_global_env();
+    let prototype = vm
+        .realm_object_prototypes
+        .get(&realm.0)
+        .cloned()
+        .unwrap_or_else(|| vm.object_proto.clone());
+    let allocation_pins = vm.pin_many(&[entries.clone(), prototype.clone()]);
+    let allocation = vm.alloc(HeapObj::Object(crate::value::ObjectData {
         props: Mutex::new(IndexMap::new()),
-        proto: Mutex::new(Some(vm.object_proto.clone())),
+        proto: Mutex::new(Some(prototype)),
         extensible: AtomicBool::new(true),
         class_name: None,
         private_fields: Mutex::new(std::collections::HashMap::new()),
         primitive: Mutex::new(None),
-    }))?;
-    // Accept an array (or array-like) of [key, value] pairs.
-    if let Value::Object(arr_idx) = &entries {
-        let pairs: Vec<Value> = vm.heap.with_obj(arr_idx.0, |o| {
-            if let HeapObj::Array(a) = o {
-                a.items.lock().clone()
-            } else {
-                Vec::new()
-            }
-        });
-        for pair in &pairs {
-            // Each entry object is read through Get(entry, "0") / Get(entry, "1").
-            if !matches!(pair, Value::Object(_)) {
-                return Err(Error::type_err("Iterator value is not an entry object"));
-            }
-            let key = vm.get_property_by_key(pair, &PropertyKey::from("0"))?;
-            let value = vm.get_property_by_key(pair, &PropertyKey::from("1"))?;
-            let key = to_property_key_descriptor(vm, &key)?;
-            vm.heap.with_obj(obj_idx, |o| {
-                if let HeapObj::Object(obj) = o {
-                    // Own enumerable data property (data_prop is
-                    // non-enumerable, which would hide it from
-                    // Object.keys / JSON.stringify).
-                    obj.props.lock().insert(
-                        key,
-                        PropertyDescriptor {
-                            value,
-                            writable: true,
-                            enumerable: true,
-                            configurable: true,
-                            get: None,
-                            set: None,
-                            is_accessor: false,
-                        },
-                    );
+    }));
+    vm.unpin_many(allocation_pins);
+    let obj_idx = allocation?;
+    let object = Value::Object(obj_idx);
+    let object_pin = vm.pin(&object);
+    let result = (|| {
+        // Accept an array (or array-like) of [key, value] pairs.
+        if let Value::Object(arr_idx) = &entries {
+            let pairs: Vec<Value> = vm.heap.with_obj(arr_idx.0, |o| {
+                if let HeapObj::Array(a) = o {
+                    a.items.lock().clone()
+                } else {
+                    Vec::new()
                 }
             });
+            for pair in &pairs {
+                // Each entry object is read through Get(entry, "0") / Get(entry, "1").
+                if !matches!(pair, Value::Object(_)) {
+                    return Err(Error::type_err("Iterator value is not an entry object"));
+                }
+                let mut entry_pins = 0;
+                let entry_result: error::Result<()> = (|| {
+                    let key = vm.get_property_by_key(pair, &PropertyKey::from("0"))?;
+                    entry_pins += vm.pin(&key);
+                    let value = vm.get_property_by_key(pair, &PropertyKey::from("1"))?;
+                    entry_pins += vm.pin(&value);
+                    let key = to_property_key_descriptor(vm, &key)?;
+                    vm.heap.with_obj(obj_idx.0, |o| {
+                        if let HeapObj::Object(obj) = o {
+                            // Own enumerable data property (data_prop is
+                            // non-enumerable, which would hide it from
+                            // Object.keys / JSON.stringify).
+                            obj.props.lock().insert(
+                                key,
+                                PropertyDescriptor {
+                                    value,
+                                    writable: true,
+                                    enumerable: true,
+                                    configurable: true,
+                                    get: None,
+                                    set: None,
+                                    is_accessor: false,
+                                },
+                            );
+                        }
+                    });
+                    Ok(())
+                })();
+                vm.unpin_many(entry_pins);
+                entry_result?;
+            }
         }
-    }
-    Ok(Value::Object(GcIdx(obj_idx)))
+        Ok(object)
+    })();
+    vm.unpin_many(object_pin);
+    result
 }
 fn object_create(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     let proto = args.first().cloned().unwrap_or(Value::Undefined);
@@ -4618,7 +4672,8 @@ fn object_get_own_property_names(
             PropertyKey::Symbol(_) => None,
         })
         .collect();
-    make_str_array(vm, keys)
+    let realm = vm.current_realm_global_env();
+    create_array_from_values_in_realm(vm, keys.into_iter().map(Value::String).collect(), realm)
 }
 
 fn object_get_own_property_symbols(
@@ -4640,7 +4695,8 @@ fn object_get_own_property_symbols(
             PropertyKey::Str(_) => None,
         })
         .collect();
-    make_value_array(vm, symbols)
+    let realm = vm.current_realm_global_env();
+    create_array_from_values_in_realm(vm, symbols, realm)
 }
 
 fn object_get_prototype_of(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
@@ -5223,30 +5279,50 @@ fn object_get_own_property_descriptors(
         ));
     }
     let obj = vm.to_object(object)?;
-    let result_idx = vm.heap.allocate(HeapObj::Object(crate::value::ObjectData {
+    let realm = vm.current_realm_global_env();
+    let prototype = vm
+        .realm_object_prototypes
+        .get(&realm.0)
+        .cloned()
+        .unwrap_or_else(|| vm.object_proto.clone());
+    let allocation_pins = vm.pin_many(&[obj.clone(), prototype.clone()]);
+    let allocation = vm.alloc(HeapObj::Object(crate::value::ObjectData {
         props: Mutex::new(IndexMap::new()),
-        proto: Mutex::new(Some(vm.object_proto.clone())),
+        proto: Mutex::new(Some(prototype)),
         extensible: AtomicBool::new(true),
         class_name: None,
         private_fields: Mutex::new(std::collections::HashMap::new()),
         primitive: Mutex::new(None),
-    }))?;
-    let keys = own_property_keys_or_throw(vm, &obj, false, true, true)?;
-    let mut props = IndexMap::new();
-    for key in keys {
-        if let Some(desc) = own_property_descriptor_for_key_or_throw(vm, &obj, &key)? {
-            props.insert(
-                key,
-                PropertyDescriptor::data(from_property_descriptor(vm, desc)?),
-            );
+    }));
+    let result_idx = match allocation {
+        Ok(result_idx) => result_idx,
+        Err(error) => {
+            vm.unpin_many(allocation_pins);
+            return Err(error);
         }
-    }
-    vm.heap.with_obj(result_idx, |o| {
-        if let HeapObj::Object(od) = o {
-            *od.props.lock() = props;
+    };
+    let result_value = Value::Object(result_idx);
+    let result_pin = vm.pin(&result_value);
+    let mut descriptor_pins = 0;
+    let result = (|| {
+        let keys = own_property_keys_or_throw(vm, &obj, false, true, true)?;
+        let mut props = IndexMap::new();
+        for key in keys {
+            if let Some(desc) = own_property_descriptor_for_key_or_throw(vm, &obj, &key)? {
+                let descriptor = from_property_descriptor(vm, desc)?;
+                descriptor_pins += vm.pin(&descriptor);
+                props.insert(key, PropertyDescriptor::data(descriptor));
+            }
         }
-    });
-    Ok(Value::Object(GcIdx(result_idx)))
+        vm.heap.with_obj(result_idx.0, |o| {
+            if let HeapObj::Object(od) = o {
+                *od.props.lock() = props;
+            }
+        });
+        Ok(result_value)
+    })();
+    vm.unpin_many(descriptor_pins + result_pin + allocation_pins);
+    result
 }
 
 fn normalize_property_descriptor_object(vm: &mut Vm, desc: &Value) -> error::Result<Value> {
@@ -5738,14 +5814,16 @@ pub(crate) fn own_property_descriptor_for_key_or_throw(
 }
 
 fn from_property_descriptor(vm: &mut Vm, desc: PropertyDescriptor) -> error::Result<Value> {
-    let desc_obj = vm.heap.allocate(HeapObj::Object(crate::value::ObjectData {
-        props: Mutex::new(IndexMap::new()),
-        proto: Mutex::new(Some(vm.object_proto.clone())),
-        extensible: AtomicBool::new(true),
-        class_name: None,
-        private_fields: Mutex::new(std::collections::HashMap::new()),
-        primitive: Mutex::new(None),
-    }))?;
+    let realm = vm.current_realm_global_env();
+    let prototype = vm
+        .realm_object_prototypes
+        .get(&realm.0)
+        .cloned()
+        .unwrap_or_else(|| vm.object_proto.clone());
+    let mut roots = vec![prototype.clone(), desc.value.clone()];
+    roots.extend(desc.get.iter().cloned());
+    roots.extend(desc.set.iter().cloned());
+    let pin_count = vm.pin_many(&roots);
     let mut props = IndexMap::new();
     if desc.is_accessor {
         props.insert(
@@ -5774,12 +5852,18 @@ fn from_property_descriptor(vm: &mut Vm, desc: PropertyDescriptor) -> error::Res
         PropertyKey::from("configurable"),
         PropertyDescriptor::data(Value::Bool(desc.configurable)),
     );
-    vm.heap.with_obj(desc_obj, |o| {
-        if let HeapObj::Object(od) = o {
-            *od.props.lock() = props;
-        }
-    });
-    Ok(Value::Object(GcIdx(desc_obj)))
+    let result = vm
+        .alloc(HeapObj::Object(crate::value::ObjectData {
+            props: Mutex::new(props),
+            proto: Mutex::new(Some(prototype)),
+            extensible: AtomicBool::new(true),
+            class_name: None,
+            private_fields: Mutex::new(std::collections::HashMap::new()),
+            primitive: Mutex::new(None),
+        }))
+        .map(Value::Object);
+    vm.unpin_many(pin_count);
+    result
 }
 
 fn object_get_own_property_descriptor(
@@ -6431,6 +6515,63 @@ fn aggregate_error_constructor(
     Ok(Value::Object(idx))
 }
 
+const OBJECT_STATIC_METHODS: &[(&str, NativeFn, usize)] = &[
+    ("keys", object_keys, 1),
+    ("values", object_values, 1),
+    ("entries", object_entries, 1),
+    ("assign", object_assign, 2),
+    ("is", object_is, 2),
+    ("hasOwn", object_has_own, 2),
+    ("fromEntries", object_from_entries, 1),
+    ("groupBy", object_group_by, 2),
+    ("create", object_create, 2),
+    ("freeze", object_freeze, 1),
+    ("getOwnPropertyNames", object_get_own_property_names, 1),
+    ("getOwnPropertySymbols", object_get_own_property_symbols, 1),
+    (
+        "getOwnPropertyDescriptor",
+        object_get_own_property_descriptor,
+        2,
+    ),
+    ("defineProperty", object_define_property, 3),
+    ("defineProperties", object_define_properties, 2),
+    ("getPrototypeOf", object_get_prototype_of, 1),
+    ("setPrototypeOf", object_set_prototype_of, 2),
+    ("preventExtensions", object_prevent_extensions, 1),
+    ("isExtensible", object_is_extensible, 1),
+    ("seal", object_seal, 1),
+    ("isSealed", object_is_sealed, 1),
+    ("isFrozen", object_is_frozen, 1),
+    (
+        "getOwnPropertyDescriptors",
+        object_get_own_property_descriptors,
+        1,
+    ),
+];
+
+fn install_object_static_methods_in_env(
+    vm: &mut Vm,
+    object_ctor: GcIdx,
+    env: GcIdx,
+) -> error::Result<()> {
+    let constructor = Value::Object(object_ctor);
+    let pin_count = vm.pin(&constructor);
+    let result = (|| {
+        for &(name, function, length) in OBJECT_STATIC_METHODS {
+            let method = vm.new_native_function_in_env(name, function, length, env)?;
+            vm.heap.with_obj(object_ctor.0, |object| {
+                object
+                    .props()
+                    .lock()
+                    .insert(PropertyKey::from(name), data_prop(Value::Object(method)));
+            });
+        }
+        Ok(())
+    })();
+    vm.unpin_many(pin_count);
+    result
+}
+
 pub fn setup(vm: &mut Vm) -> error::Result<()> {
     let (object_ctor, object_proto) = make_builtin_constructor(
         vm,
@@ -6448,59 +6589,7 @@ pub fn setup(vm: &mut Vm) -> error::Result<()> {
             ("__lookupSetter__", object_lookup_setter, 1),
         ],
     )?;
-    // Object static methods
-    for (n, f, len) in [
-        ("keys", object_keys as NativeFn, 1),
-        ("values", object_values as NativeFn, 1),
-        ("entries", object_entries as NativeFn, 1),
-        ("assign", object_assign as NativeFn, 2),
-        ("is", object_is as NativeFn, 2),
-        ("hasOwn", object_has_own as NativeFn, 2),
-        ("fromEntries", object_from_entries as NativeFn, 1),
-        ("groupBy", object_group_by as NativeFn, 2),
-        ("create", object_create as NativeFn, 2),
-        ("freeze", object_freeze as NativeFn, 1),
-        (
-            "getOwnPropertyNames",
-            object_get_own_property_names as NativeFn,
-            1,
-        ),
-        (
-            "getOwnPropertySymbols",
-            object_get_own_property_symbols as NativeFn,
-            1,
-        ),
-        (
-            "getOwnPropertyDescriptor",
-            object_get_own_property_descriptor as NativeFn,
-            2,
-        ),
-        ("defineProperty", object_define_property as NativeFn, 3),
-        ("defineProperties", object_define_properties as NativeFn, 2),
-        ("getPrototypeOf", object_get_prototype_of as NativeFn, 1),
-        ("setPrototypeOf", object_set_prototype_of as NativeFn, 2),
-        (
-            "preventExtensions",
-            object_prevent_extensions as NativeFn,
-            1,
-        ),
-        ("isExtensible", object_is_extensible as NativeFn, 1),
-        ("seal", object_seal as NativeFn, 1),
-        ("isSealed", object_is_sealed as NativeFn, 1),
-        ("isFrozen", object_is_frozen as NativeFn, 1),
-        (
-            "getOwnPropertyDescriptors",
-            object_get_own_property_descriptors as NativeFn,
-            1,
-        ),
-    ] {
-        let m = vm.new_native_function(n, f, len)?;
-        vm.heap.with_obj(object_ctor.0, |obj| {
-            obj.props()
-                .lock()
-                .insert(PropertyKey::from(n), data_prop(Value::Object(m)));
-        });
-    }
+    install_object_static_methods_in_env(vm, object_ctor, vm.global)?;
     define_global(vm, "Object", Value::Object(object_ctor));
     vm.object_proto = Value::Object(object_proto);
     let proto_get = vm.new_native_function("get __proto__", object_proto_get, 0)?;
