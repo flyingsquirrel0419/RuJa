@@ -83,6 +83,17 @@
   `3b6da8a` and `5a9ff6f` passed CI `29364732026` and full matrix
   `29364732182`; only the built-ins result changed, producing **29085 pass /
   6495 fail / 12725 skip / 12 timeout / 0 error / 48317 total**.
+- Private instance and static auto-accessor decorators now expose the private
+  name and branded `access` functions while keeping their synthetic backing
+  storage internal. Optional `get`, `set`, and `init` replacements, extra
+  initializers, source-order backing initialization, static class replacement,
+  GC retention, and Realm-specific errors are covered. The complete pending
+  Test262 decorator PR #5048 now passes **657/657**; its files remain outside
+  the current-main admission, which stays **24/24**, while the supported subset
+  remains **12751 pass / 0 fail / 7687 skip / 20438 total**. Commit `e7cdaf2`
+  passed CI `29378359326` and full matrix `29378359319`; all 30 result artifacts
+  are byte-for-byte identical to the preceding baseline, retaining **29085
+  pass / 6495 fail / 12725 skip / 12 timeout / 0 error / 48317 total**.
 - Decorated computed class elements no longer let `@decorators[0]` escape the
   restricted decorator grammar by being reparsed as an initializer-free
   computed field followed by an ASI boundary. The parser rejects only that

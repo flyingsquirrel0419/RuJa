@@ -37,8 +37,8 @@ ES5.1 + classes, async/await, generators, Promises with static combinators
 and `withResolvers`,
 destructuring,
 getters/setters, auto-accessors, audited public and private
-field/method/getter/setter decorator context/access,
-method/field/auto-accessor replacement, initializer semantics, and restricted
+field/method/getter/setter/auto-accessor decorator context/access and
+replacement, initializer semantics, and restricted
 decorator-expression early errors, tagged
 templates, Symbols, Map/Set,
 WeakMap/WeakSet,

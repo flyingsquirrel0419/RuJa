@@ -5411,14 +5411,14 @@ skip / 20439 total**. Pending-PR private decorator families remain explicitly
 outside this current-main admission.
 
 The next runtime corpus is pending in Test262 PR #5048. Against pinned PR head
-`58b825d0eb50f66bc171d7254d19d0e2928d2d3a`, the audited
-public-plus-private-callable diagnostic is **509 pass / 0 fail / 0 skip / 509
-total**: 31 class, 116 method (40 public and 76 private), 64 getter (32 public
-and 32 private), 72 setter (36 public and 36 private), 136 field (68 public and
-68 private), 88 public auto-accessor, and two late-`addInitializer` tests
-across class expressions and declarations. The full 657-file PR diagnostic is
-**569 pass / 88 fail / 0 skip**. Both computed-member early-error files pass;
-all 88 remaining failures are private auto-accessor decorators.
+`58b825d0eb50f66bc171d7254d19d0e2928d2d3a`, the complete diagnostic is **657
+pass / 0 fail / 0 skip / 657 total**. Its audited 509-file runtime slice covers
+31 class, 116 method (40 public and 76 private), 64 getter (32 public and 32
+private), 72 setter (36 public and 36 private), 136 field (68 public and 68
+private), 88 public auto-accessor, and two late-`addInitializer` tests. The
+complete diagnostic additionally includes all 88 private auto-accessor files,
+both computed-member early-error files, and the PR's remaining parser and
+expression coverage across class expressions and declarations.
 
 That boundary verifies fresh context objects, receiver-argument
 `access.has/get/set`, per-decorator `addInitializer` lifetime and callable
@@ -5433,8 +5433,13 @@ names, wrong-brand behavior, and instance/static initializer ordering. Private
 callables additionally verify mutable replacement bindings, ordinary/async/
 generator/async-generator forms, accessor merging, `super` home objects,
 instance/static installation, and static private slots on class decorator
-replacements. The class's inner binding exposes the original constructor while
-class decorators run and the final replacement before static initialization.
+replacements. Private auto-accessors additionally verify private-name identity,
+branded access, `get`/`set`/`init` replacement composition, named-slot
+installation before instance fields, source-order backing initialization,
+static installation on the original and replacement classes, GC retention,
+and cross-Realm errors. The class's inner binding exposes the original
+constructor while class decorators run and the final replacement before static
+initialization.
 Because these files do not exist in current Test262 main (`020cb740`), the
 runner keeps its broad `decorators` gate and does not claim an admission count
 before upstream merge.
@@ -5448,6 +5453,13 @@ result artifacts are byte-for-byte identical to the Reference-routing
 baseline, retaining **29085 pass / 6495 fail / 12725 skip / 12 timeout / 0
 error / 48317 total / 35580 pass-or-fail executed**. Artifacts are retained at
 `/tmp/ruja-artifacts-decorator-early-feature.jfQCql`.
+
+Feature commit `e7cdaf2` completes private instance and static auto-accessor
+decorators. CI `29378359326` and full matrix `29378359319` succeeded. All 30
+downloaded result artifacts are byte-for-byte identical to the preceding
+decorator baseline, retaining **29085 pass / 6495 fail / 12725 skip / 12
+timeout / 0 error / 48317 total / 35580 pass-or-fail executed**. Artifacts are
+retained at `/tmp/ruja-artifacts-private-auto-feature.W6Uh7X`.
 
 Feature commit `d31bbb4` passed CI `29353983772` and full matrix
 `29353983750`. All 30 downloaded result artifacts are byte-for-byte identical

@@ -89,18 +89,14 @@ guarantees, run RuJa in a separately killable process as well.
   supported subset, tests currently run at 100%.
   Full ES conformance is not claimed. See
   [test262.md](test262.md) for current numbers and the failure breakdown.
-- Decorator support covers audited class and public
-  method/getter/setter/field/auto-accessor semantics plus private
-  field/method/getter/setter decorators, including private async, generator,
-  and async-generator methods. Private auto-accessor decorators remain
-  unimplemented, and the broader gate stays closed until every pending family
-  is audited. The current pending-PR public-plus-private-callable diagnostic
-  passes all **509/509** files after adding the global `Iterator` intrinsic.
-  These files are still pending upstream in Test262 PR #5048, so they are
-  verified against its pinned head rather than admitted into the current-main
-  runner early. Both computed-member early-error cases also pass; the full PR
-  diagnostic is **569 pass / 88 fail**, and every remaining failure is in the
-  private auto-accessor corpus.
+- Decorator support covers audited class and public/private
+  method/getter/setter/field/auto-accessor semantics, including private async,
+  generator, and async-generator methods. The complete pending Test262 PR
+  #5048 diagnostic passes **657/657**, including both computed-member
+  early-error cases and all 88 private auto-accessor files. These files are
+  still pending upstream, so they are verified against the PR's pinned head
+  rather than admitted into the current-main runner early; the broad current-
+  main gate remains closed until the files land upstream.
 - The global `Iterator` and common synchronous iterator prototype hierarchy
   are implemented, but Iterator helpers (`map`, `filter`, `take`, `drop`, and
   related methods), `Iterator.from`, `Iterator.concat`, `Iterator.zip`, and
