@@ -173,6 +173,16 @@
   passed CI `29415121304` and full matrix `29415121337`; only built-ins changes
   by **+33 pass / -33 skip**, producing **29418 pass / 6486 fail / 12401 skip /
   12 timeout / 0 error / 48317 total**.
+- `Iterator.prototype.every` now eagerly consumes direct iterators with cached
+  `next`, exact mathematical callback indices, method-Realm errors, native-loop
+  fuel, and GC-rooted object values. Exhaustion returns true without closing;
+  predicate failures preserve the original abrupt completion while closing;
+  falsey results perform normal close and propagate close failures. Rust
+  regressions cover zero-close step errors and the full close/Realm matrix.
+  The exact Iterator manifest expands to **381/381** with all **33 every**
+  files. Commit `fdd6223` passed CI `29420614915` and full matrix
+  `29420614912`; only built-ins changes by **+33 pass / -33 skip**, producing
+  **29451 pass / 6486 fail / 12368 skip / 12 timeout / 0 error / 48317 total**.
 - Private instance and static auto-accessor decorators now expose the private
   name and branded `access` functions while keeping their synthetic backing
   storage internal. Optional `get`, `set`, and `init` replacements, extra

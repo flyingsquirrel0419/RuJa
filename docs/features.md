@@ -86,7 +86,7 @@
   wrapper, `Iterator.prototype.toArray` eagerly collects an iterator, and the
   eager `Iterator.prototype.reduce` accumulates iterator values,
   `Iterator.prototype.forEach` visits each value for side effects, and
-  `Iterator.prototype.some` short-circuits on the first truthy predicate. The
+  `Iterator.prototype.some` and `every` short-circuit predicate results. The
   Realm-specific Iterator Helper machinery powers lazy `map`, `filter`,
   `flatMap`, `take`, and `drop` pipelines with dynamic close and reentrancy
   semantics.
