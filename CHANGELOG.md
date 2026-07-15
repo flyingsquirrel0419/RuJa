@@ -83,6 +83,18 @@
   `3b6da8a` and `5a9ff6f` passed CI `29364732026` and full matrix
   `29364732182`; only the built-ins result changed, producing **29085 pass /
   6495 fail / 12725 skip / 12 timeout / 0 error / 48317 total**.
+- Primitive and boxed strings now expose the Realm-specific
+  `String.prototype[Symbol.iterator]` and `%StringIteratorPrototype%` through
+  the public iterator protocol instead of an internal snapshot fallback.
+  The branded iterator preserves UTF-16 surrogate representation, has the
+  specified ancestry, tag, descriptors, exhaustion, and extensibility, and
+  observes method replacement/deletion and boxed-string coercion. Realm
+  prototypes, native errors, and cached `next` methods remain live across GC.
+  The exact Iterator manifest expands from 24 to **37/37**, covering all 13
+  current String iterator files. Commit `4af8c31` passed CI `29381725859` and
+  full matrix `29381725849`; 29 artifacts are unchanged and built-ins moves
+  exactly **+13 pass / -13 skip**, producing **29098 pass / 6495 fail / 12712
+  skip / 12 timeout / 0 error / 48317 total**.
 - Private instance and static auto-accessor decorators now expose the private
   name and branded `access` functions while keeping their synthetic backing
   storage internal. Optional `get`, `set`, and `init` replacements, extra

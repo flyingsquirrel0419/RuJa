@@ -98,11 +98,10 @@ guarantees, run RuJa in a separately killable process as well.
   rather than admitted into the current-main runner early; the broad current-
   main gate remains closed until the files land upstream.
 - The global `Iterator` and common synchronous iterator prototype hierarchy
-  are implemented, but Iterator helpers (`map`, `filter`, `take`, `drop`, and
-  related methods), `Iterator.from`, `Iterator.concat`, `Iterator.zip`, and
-  `Iterator.zipKeyed` are not. Primitive strings still use an internal
-  snapshot iterator rather than a JavaScript-visible String Iterator
-  prototype. Async iterator helpers are a separate unsupported surface.
+  are implemented, including Realm-specific branded String iterators. Iterator
+  helpers (`map`, `filter`, `take`, `drop`, and related methods),
+  `Iterator.from`, `Iterator.concat`, `Iterator.zip`, and `Iterator.zipKeyed`
+  are not. Async iterator helpers are a separate unsupported surface.
 - `Vm` is `Send` (but not `Sync`): the engine uses `Arc`/`Mutex`/atomics
   for shared ownership and interior mutability, so a `Vm` can be moved
   between threads. Concurrent *shared* access still requires external

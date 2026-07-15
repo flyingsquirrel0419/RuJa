@@ -46,8 +46,8 @@ WeakRef/FinalizationRegistry, Reflect, Proxy, resizable ArrayBuffer and growable
 SharedArrayBuffer cores, Atomics including worker `wait`/`notify`, `waitAsync`,
 and `pause`, file-backed ES Module graphs with named imports/exports and live
 bindings, relative dynamic imports, and JSON/text import attributes,
-the realm-specific global `Iterator` and the common synchronous iterator
-prototype hierarchy,
+the realm-specific global `Iterator`, common synchronous iterator prototype
+hierarchy, and branded Realm-specific String iterators,
 length-tracking TypedArray/DataView views, TypedArray constructors,
 indexing, `at`/`copyWithin`/`entries`/`fill`/`filter`/`find`/`findIndex`/
 `findLast`/`findLastIndex`/`forEach`/`includes`/`indexOf`/`join`/`keys`/

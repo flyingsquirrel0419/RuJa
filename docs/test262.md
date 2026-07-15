@@ -5502,12 +5502,14 @@ artifacts are retained at
 
 ## Iterator intrinsic core
 
-`tools/test262_iterator_admission.txt` freezes exactly 24 files: 23
+`tools/test262_iterator_admission.txt` freezes exactly 37 files: 23
 `built-ins/Iterator` files covering the global constructor, subclass
 construction, `%Iterator.prototype%[Symbol.iterator]`,
 `%Iterator.prototype%[Symbol.dispose]`, and the `constructor` and
-`Symbol.toStringTag` accessors, plus the Generator prototype's own
-`Symbol.toStringTag`. The runner and analyzer admit only those exact paths.
+`Symbol.toStringTag` accessors; the Generator prototype's own
+`Symbol.toStringTag`; all six `String.prototype[Symbol.iterator]` files; and
+all seven `%StringIteratorPrototype%` files. The runner and analyzer admit only
+those exact paths.
 Iterator helpers, sequencing, `concat`, `zip`, and `zipKeyed` remain
 behind their feature gates, including 114 proposal files that previously ran
 outside the intended boundary.
@@ -5518,15 +5520,19 @@ prototype, and cross-Realm `NewTarget` fallback uses the active Realm's
 intrinsic. Generator, Array, Map, Set, and RegExp String iterator prototypes
 now inherit from `%Iterator.prototype%`; concrete prototypes retain their own
 tags. RegExp String Iterator `next` also performs the required receiver brand
-check.
+check. Primitive and boxed strings use the public iterator protocol and a
+Realm-specific `%StringIteratorPrototype%`; replacement/deletion, normal
+`ToString`, UTF-16 surrogate representation, branding, exhaustion,
+extensibility, and GC retention are observable as specified.
 
 Local verification against Test262 `020cb740` is **23 pass / 0 fail / 491
 skip / 514 total** for all of `built-ins/Iterator`; all 23 Iterator files and
-the separately admitted Generator tag pass, for **24/24** exact manifest
-members. The related `ArrayIteratorPrototype`, `GeneratorPrototype`,
+the separately admitted Generator and 13 String iterator files pass, for
+**37/37** exact manifest members. The related String iterator method,
+`StringIteratorPrototype`, `ArrayIteratorPrototype`, `GeneratorPrototype`,
 `MapIteratorPrototype`, `SetIteratorPrototype`, and
-`RegExpStringIteratorPrototype` directories are **31 pass / 0 fail / 96 skip /
-127 total**. Against pending Test262 PR #5048 at `58b825d0`, the complete
+`RegExpStringIteratorPrototype` directories are **44 pass / 0 fail / 96 skip /
+140 total**. Against pending Test262 PR #5048 at `58b825d0`, the complete
 public-plus-private-callable decorator boundary is now **509/509**; the eight
 private generator assertions previously blocked by the absent global
 `Iterator` all pass. The current-main decorator manifest remains **24/24**,
@@ -5540,10 +5546,18 @@ skip / 12 timeout / 0 error / 48317 total / 35580 pass-or-fail executed**, or
 **60.2%** of all files and **81.7%** of executed files. Downloaded artifacts
 are retained at `/tmp/ruja-artifacts-iterator-feature.FIhF0c`.
 
+Feature commit `4af8c31` passed CI `29381725859` and full matrix
+`29381725849`. Of the 30 downloaded result artifacts, 29 are byte-for-byte
+identical to the private-auto-accessor docs baseline; built-ins moves exactly
+**+13 pass / -13 skip**. The aggregate is **29098 pass / 6495 fail / 12712
+skip / 12 timeout / 0 error / 48317 total / 35593 pass-or-fail executed**.
+Artifacts are retained at
+`/tmp/ruja-artifacts-string-iterator-feature.refyfB`.
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is
 still much lower because the full matrix includes unsupported features such as
-Intl, Iterator helpers, private auto-accessor decorators, remaining RegExp
-semantics, and tail-call optimization. Those larger feature areas are tracked
+Intl, Iterator helpers, remaining RegExp semantics, and tail-call
+optimization. Those larger feature areas are tracked
 in `HANDOFF.md` and will be pulled into support in later milestones.
