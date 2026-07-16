@@ -4,6 +4,20 @@
 
 ### Fixed
 
+- `%AsyncFromSyncIteratorPrototype%` now completes `next`, `return`, and
+  `throw` through intrinsic Promise capabilities and reaction jobs instead of
+  synchronously draining the microtask queue during async-generator `yield*`.
+  The adapter observes Promise `constructor` access, unwraps iterator values,
+  closes unfinished sync iterators on rejected `next`/`throw` values while
+  preserving the original rejection, and does not close a second time for
+  `return`. Generator wrappers, Realm-local Promises/results, queued resume
+  phases, and GC-held rejection state are covered by regressions. The exact
+  Test262 corpus is **38/38**, the supported subset remains
+  **12751/0/7687**, tooling is **93/93**, and focused async iterator/generator
+  tests are **91/91**. Feature commit `a257066` passed CI `29503902319` and
+  full matrix `29503902678`; only built-ins changes by **+38 pass / -38
+  skip**, producing **29957 pass / 6334 fail / 12014 skip / 12 timeout / 0
+  error / 48317 total** (**62.0%** of all files, **82.5%** of executed files).
 - Math now exposes the standard non-writable, non-enumerable, configurable
   `Symbol.toStringTag` data property, so direct and borrowed string conversion
   produce `[object Math]` while deletion falls back to `[object Object]`.

@@ -118,6 +118,9 @@ guarantees, run RuJa in a separately killable process as well.
   Realm-correct Promise and abrupt-completion behavior. `Array.fromAsync`
   consumes async, sync, and array-like sources through intrinsic Promise jobs,
   including Realm-correct `AsyncFromSyncIterator` and iterator-close behavior.
+  The complete current `%AsyncFromSyncIteratorPrototype%` corpus is admitted;
+  async-generator `yield*` suspends on adapter Promise reactions without
+  synchronously draining host jobs.
   Async iterator helpers remain a separate unsupported surface.
 - `Vm` is `Send` (but not `Sync`): the engine uses `Arc`/`Mutex`/atomics
   for shared ownership and interior mutability, so a `Vm` can be moved

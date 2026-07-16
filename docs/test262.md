@@ -6311,6 +6311,72 @@ report 48467 total files.
   own their method identities. Realm bootstrap allocates one additional Math
   object and its native method set per created Realm.
 
+## Async-from-Sync iterator completion
+
+The internal Async-from-Sync adapter now implements `next`, `return`, and
+`throw` through one Realm-explicit Promise capability path. It reads `done`
+before `value`, applies intrinsic PromiseResolve to the value, and creates the
+iterator-result object only from the resulting reaction. A rejected unfinished
+`next` or `throw` value performs IteratorClose but preserves the original
+rejection over catchable close failures; `return` deliberately disables that
+second close. A missing sync `throw` instead closes with a normal completion,
+so close failures retain their required precedence over the generated
+TypeError.
+
+Async-generator `yield*` no longer calls the embedding-only `await_value`
+helper or drains the global microtask queue. `YieldDelegateAsync` stores a
+small persisted resume phase, suspends the generator on the adapter method's
+Promise, and resumes with a distinct fulfilled-result, rejected-result, or
+missing-throw completion. Fulfilled delegated values are rewrapped in the
+generator Realm and settle the active async-generator request without an
+extra forwarded-result job. This preserves Promise FIFO ordering while
+keeping adapter rejection, iterator, cached methods, request capabilities,
+and Realm roots live across observable GC.
+
+`tools/test262_async_from_sync_iterator_admission.txt` freezes all 38 current
+`built-ins/AsyncFromSyncIteratorPrototype` files. The normal runner passes
+**38/38** with no skips. The supported subset remains **12751 pass / 0 fail /
+7687 skip / 20438 total**, Python tooling is **93/93**, and the focused async
+iterator plus generator suites are **91/91**. Rust all-target/all-feature
+tests, Clippy with warnings denied, formatting, release, and wasm32 checks
+pass. Independent GPT and Umans reviews reproduced the original **31/7**
+baseline; the final GPT review found no remaining high- or medium-severity
+issue in suspension, close precedence, Realm selection, or GC tracing.
+
+Feature commit `a257066` passed CI `29503902319` and full matrix
+`29503902678`. Against the Math documentation baseline, 29 of 30 result
+artifacts at `/tmp/ruja-artifacts-async-from-sync-feature.ykDk8Q` are
+byte-for-byte identical. Only built-ins changes, by exactly **+38 pass / -38
+skip**. The aggregate is **29957 pass / 6334 fail / 12014 skip / 12 timeout /
+0 error / 48317 total / 36291 pass-or-fail executed**, or **62.0%** of all
+files and **82.5%** of executed files.
+
+[Decision Log]
+- 목적과 의도: complete the shared Async-from-Sync adapter and make async
+  generator delegation obey Promise job, close, Realm, and GC semantics.
+- 기존 구현 및 제약 조건: `for await` and `Array.fromAsync` already used an
+  internal continuation, but generator-backed wrappers were not recognized
+  consistently and async `yield*` synchronously called `await_value`, which
+  collapsed job ordering and bypassed PromiseResolve/close-on-rejection.
+- 검토한 주요 대안: keep the synchronous helper and add close handling;
+  duplicate value-unwrapping logic in `YieldDelegateAsync`; expose a synthetic
+  JavaScript adapter object; or suspend on the existing internal adapter
+  Promise and persist only the delegated resume phase.
+- 선택한 방식: share a Realm-explicit `next`/`return`/`throw` adapter path,
+  attach the existing AsyncFromSync continuation, and route its Promise through
+  the async-generator queue with dedicated internal resume completions.
+- 다른 대안 대신 이 방식을 선택한 이유: close handling around a synchronous
+  drain still violates observable FIFO ordering; duplicated bytecode logic
+  would diverge from `for await` and `Array.fromAsync`; and a synthetic public
+  object would add observable identity and prototype behavior that the VM does
+  not otherwise need.
+- 장점, 단점 및 영향: all current prototype tests are admitted, original
+  rejection identity and close precedence are shared across consumers, and
+  generator Realm/GC behavior is explicit. The generator frame gains one
+  compact internal phase byte and additional resume variants; async iterator
+  helpers and absent-argument tracking for broader delegation remain separate
+  follow-up surfaces.
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is
