@@ -5951,6 +5951,75 @@ exactly **+1 pass / -1 skip**. The aggregate is **29803 pass / 6346 fail /
 12156 skip / 12 timeout / 0 error / 48317 total / 36149 pass-or-fail
 executed**, or **61.7%** of all files and **82.4%** of executed files.
 
+## Synchronous Generator Realm isolation
+
+Feature commit `c768189` installs independent `%GeneratorFunction%`,
+`%GeneratorFunction.prototype%`, and `%Generator.prototype%` graphs for every
+created Realm. The constructor inherits from that Realm's `%Function%`, the
+function prototype inherits from `%Function.prototype%`, and the generator
+prototype inherits from `%Iterator.prototype%`. Constructor, function
+prototype, and generator prototype are all direct GC roots because their
+configurable graph properties may be deleted independently.
+
+Source `function*` creation selects the defining Realm for both the function
+object and its fresh own `prototype` object. Dynamic `GeneratorFunction`
+construction keeps the fresh own prototype and global scope in the active
+constructor Realm while obtaining a non-object `NewTarget.prototype` fallback
+from the `NewTarget` Realm. Calling a generator with a non-object own
+`prototype` falls back through the generator function's Realm, and iterator
+result objects use the borrowed native method's Realm `%Object.prototype%`.
+
+The frozen admission opens only the three cross-Realm files in
+`tools/test262_generator_function_admission.txt`. They pass **3/3**; all 23
+`built-ins/GeneratorFunction` files also pass in a direct diagnostic, and
+`language/expressions/generators` is **290/290**. The supported subset remains
+**12751 pass / 0 fail / 7687 skip / 20438 total**, Python tooling is **90/90**,
+and Rust generator tests are **74/74** with builtins **437/437**. Rust
+all-target/all-feature tests, Clippy with warnings denied, formatting,
+release, and wasm32 checks pass. Both final reviews report no high- or
+medium-severity finding in the stated synchronous-only boundary.
+
+The initial feature commit `c768189` passed all local gates but CI
+`29475087099` found that the optional live-Test262 metadata probe could raise
+`PermissionError` while checking an unavailable checkout; its corresponding
+full run `29475087079` was cancelled. Follow-up `935df28` treats any filesystem
+lookup error as "metadata unavailable", matching the existing optional probe
+contract. Final CI `29475407227` and full matrix `29475407238` succeeded.
+
+Against the Promise documentation baseline, 29 of 30 result artifacts at
+`/tmp/ruja-artifacts-generator-feature.dT0FGu` are byte-for-byte identical.
+Only built-ins changes, by exactly **+2 pass / -2 skip**. The admitted
+`language/expressions/generators/eval-body-proto-realm.js` was already executed
+and passing through the broader generator-prefix admission, so the three-file
+manifest intentionally produces only two newly executed matrix files. The
+aggregate is **29805 pass / 6346 fail / 12154 skip / 12 timeout / 0 error /
+48317 total / 36151 pass-or-fail executed**, or **61.7%** of all files and
+**82.4%** of executed files.
+
+[Decision Log]
+- 목적과 의도: give each Realm a complete synchronous generator intrinsic
+  graph and make every syntax, dynamic-construction, call, and result path use
+  the specification's defining, constructor, or method Realm.
+- 기존 구현 및 제약 조건: all synchronous generator objects referenced two
+  main-Realm VM fields; configurable constructor/prototype properties also
+  meant graph reachability alone could not preserve every intrinsic through
+  GC.
+- 검토한 주요 대안: clone main-Realm graph objects, infer intrinsics from
+  mutable global properties, combine synchronous and asynchronous generator
+  support in one patch, or install and root an explicit synchronous graph per
+  Realm.
+- 선택한 방식: add a per-Realm installer and direct roots for all three
+  intrinsic identities, select maps from lexical/native/NewTarget Realms, and
+  admit only the three cross-Realm Test262 files covered by this unit.
+- 다른 대안 대신 이 방식을 선택한 이유: cloning keeps the wrong native
+  `[[Realm]]`; global lookup is mutable; and async generators have a separate
+  AsyncIterator and Promise allocation graph whose risk and Test262 boundary
+  should be verified independently.
+- 장점, 단점 및 영향: synchronous generator identity, fallback, result
+  allocation, and GC behavior now match Realm boundaries. Each created Realm
+  retains three additional intrinsic roots. AsyncGeneratorFunction,
+  AsyncGenerator, and AsyncIterator remain the next explicit bootstrap unit.
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is

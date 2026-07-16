@@ -4,6 +4,27 @@
 
 ### Fixed
 
+- Created Realms now own rooted synchronous `%GeneratorFunction%`,
+  `%GeneratorFunction.prototype%`, and `%Generator.prototype%` intrinsic
+  graphs. Source and dynamic generator functions, distinct-`NewTarget`
+  fallback, generator-instance fallback, native method identities, and
+  iterator-result objects select the defining or method Realm. The
+  constructor remains rooted after all configurable graph links are deleted,
+  and `%GeneratorPrototype%.next.length` is corrected to `1`. Exact frozen
+  admission adds three cross-Realm files at **3/3**; all 23
+  `built-ins/GeneratorFunction` files pass diagnostically, the generator
+  expression subtree is **290/290**, the supported subset remains
+  **12751/0/7687**, tooling is **90/90**, generators are **74/74**, and Rust
+  builtins remain **437/437**. Feature commit `c768189` exposed a CI-only
+  permission assumption while probing an unavailable Test262 checkout; fix
+  commit `935df28` makes the optional live-metadata check tolerate filesystem
+  lookup errors. Final CI `29475407227` and full matrix `29475407238`
+  succeeded. Of the 30 result artifacts, only built-ins changes by **+2 pass /
+  -2 skip**, producing **29805 pass / 6346 fail / 12154 skip / 12 timeout / 0
+  error / 48317 total** (**61.7%** of all files, **82.4%** of executed files).
+  The third admitted language-expression test was already executed by the
+  broader generator-prefix rule, so it adds coverage without changing the
+  aggregate.
 - Created Realms now own rooted `%Promise%` and `%Promise.prototype%`
   intrinsic graphs. Promise construction, species defaults, async functions,
   `await`, dynamic import, resolving/capability functions, combinator result
