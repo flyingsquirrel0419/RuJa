@@ -4,6 +4,24 @@
 
 ### Fixed
 
+- `Array.fromAsync` now implements async-iterable, sync-iterable, and
+  array-like collection through a GC-traced Promise continuation state
+  machine. It awaits iterator values and mapper results at the required
+  boundaries, performs `AsyncIteratorClose` only for the completion classes
+  that require it, preserves direct-`next` versus yielded-rejection
+  provenance, and creates Promises, arrays, iterator results, and native
+  errors in the required Realm without consulting mutable globals. Native
+  `[[Set]]` and `CreateDataProperty` writes now invalidate inline caches, and
+  `Array.prototype.splice(start)` correctly treats omitted `deleteCount` as
+  deletion through the tail. Exact Test262 admission is **95/95**, the
+  supported subset remains **12751/0/7687**, tooling is **92/92**, and Rust
+  builtins are **446/446**. Feature commit `1a48969` passed CI `29493228430`
+  and full matrix `29493228431`. Only built-ins changes: the 95-file cohort
+  moves **+95 pass / -4 fail / -91 skip**, while two existing splice and two
+  Function/cache tests move from fail to pass, for a total **+99 pass / -8
+  fail / -91 skip**. The normalized aggregate is **29915 pass / 6338 fail /
+  12052 skip / 12 timeout / 0 error / 48317 total** (**61.9%** of all files,
+  **82.5%** of executed files).
 - `%AsyncIteratorPrototype%[Symbol.asyncDispose]` is now installed separately
   in every Realm. It creates its result Promise and generated native errors in
   the method Realm, performs dynamic `GetMethod("return")`, invokes the method

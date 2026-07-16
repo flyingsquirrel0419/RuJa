@@ -74,6 +74,10 @@
   with a value; `return` ends the generator
 - `yield*` delegation to generators, arrays, and strings (nestable)
 - `async function*`: `next()` returns a Promise; `await` works in the body
+- `Array.fromAsync` collects async iterables, sync iterables, and array-like
+  inputs, optionally maps each value, awaits values and mapper results, closes
+  iterators on the specified abrupt completions, and uses Realm-local Promise
+  and result allocation
 - Per-frame generator isolation: a generator body may call `next()` on another
   generator without corrupting either's run-state
 - Realm-specific global `Iterator`: direct construction is rejected while
@@ -116,7 +120,8 @@
   `reduce`, `forEach`, `find`, `findIndex`, `findLast`, `fill`, `some`,
   `every`, `includes`, `indexOf`, `lastIndexOf`, `slice`, `concat`, `join`,
   `flat`, `flatMap`, `at`, `sort`, `reverse`, `copyWithin`, `reduceRight`,
-  `toReversed`, `toSorted`, `toSpliced`, `with`; `Array.from`/`of`/`isArray`
+  `toReversed`, `toSorted`, `toSpliced`, `with`; `Array.from`/`fromAsync`/`of`/
+  `isArray`
 - **String**: `charAt`, `charCodeAt`, `slice`, `split`, `replace` (regex
   supported), `replaceAll`, `includes`, `startsWith`, `endsWith`, `repeat`,
   `padStart`/`padEnd`, `at`, `trim`/`trimStart`/`trimEnd`, `substring`, case

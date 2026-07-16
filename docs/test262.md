@@ -6161,6 +6161,91 @@ and **82.5%** of executed files.
   specification. Each Realm gains one native method identity; async iterator
   helpers and broader explicit resource management remain separately bounded.
 
+## Array.fromAsync
+
+`Array.fromAsync` now selects an async iterator first, falls back through the
+specification's Async-from-Sync wrapper, and otherwise reads an array-like
+length. A traced continuation record carries the source, iterator record,
+mapper, `thisArg`, result object, index, Promise capability, pending await
+kind, and close completion across Promise jobs. The operation therefore
+returns its result Promise before iterator, element, mapper, or thenable
+failures settle it, while errors that precede capability creation retain their
+specified synchronous behavior.
+
+Each await boundary uses intrinsic Promise machinery from the native method
+Realm. Async-from-Sync `next` is called with zero arguments, reads `value` even
+when `done` is true, and creates iterator-result objects in the wrapper
+method's Realm. A direct `next` throw rejects without closing; rejection while
+awaiting a yielded sync-iterator value closes synchronously and preserves the
+original throw completion. Mapping and result-property failures use
+`AsyncIteratorClose` with the required original-completion precedence. The
+constructor is invoked before `next` callability is validated, and ordinary
+Array creation uses sparse length representation instead of imposing a
+non-standard semantic element cap.
+
+Observable values are pinned at native entry points and represented in GC
+traces while suspended. This covers primitive array-like wrappers, iterator
+and mapper callbacks, thenables, close reasons, PromiseResolve abrupt reasons,
+and queued continuations. Native `[[Set]]` and `CreateDataProperty` paths now
+invalidate matching inline-cache entries, preventing a cached array length or
+element from surviving continuation writes. The same audit exposed and fixed
+`Array.prototype.splice(start)`, whose omitted `deleteCount` must delete
+through the array tail.
+
+`tools/test262_array_from_async_admission.txt` freezes the complete current
+95-file `built-ins/Array/fromAsync` corpus. It passes **95/95** with no skip.
+Combined diagnostics for `Array.fromAsync`, `for-await-of`, and
+`AsyncIteratorPrototype` are **127 pass / 0 fail / 1215 skip / 1342 total**.
+The supported subset remains **12751 pass / 0 fail / 7687 skip / 20438
+total**, Python tooling is **92/92**, Rust builtins are **446/446**, and Rust
+all-target/all-feature tests, Clippy with warnings denied, formatting, release,
+and wasm32 checks pass. Independent GPT and Umans final reviews found no
+remaining high- or medium-severity issue after the Promise timing, close
+provenance, Realm allocation, cache invalidation, and GC-rooting findings were
+corrected.
+
+Feature commit `1a48969` passed CI `29493228430` and full matrix
+`29493228431`. Against the AsyncIterator-disposal documentation baseline, 29
+of 30 result artifacts at
+`/tmp/ruja-artifacts-array-from-async-feature.Zw21Ge` are byte-for-byte
+identical. Only built-ins changes. Within the 95-file cohort, 91 skipped files
+and four previously executing failures all move to pass: **+95 pass / -4 fail
+/ -91 skip**. `splice/called_with_one_argument.js`,
+`splice/target-array-with-non-writable-property.js`, and Function
+`S15.3_A3_T5.js`/`S15.3_A3_T6.js` also move from fail to pass through the
+shared splice and native-property cache fixes. The complete built-ins delta is
+therefore **+99 pass / -8 fail / -91 skip**. The normalized aggregate is
+**29915 pass / 6338 fail / 12052 skip / 12 timeout / 0 error / 48317 total /
+36253 pass-or-fail executed**, or **61.9%** of all files and **82.5%** of
+executed files. Raw artifacts retain the baseline's 150 extra unsupported
+built-ins skips and report 48467 total files.
+
+[Decision Log]
+- 목적과 의도: implement the complete current `Array.fromAsync` surface as a
+  specification-ordered async operation and use it to harden shared Promise,
+  Async-from-Sync, iterator-close, Realm, cache, and GC machinery.
+- 기존 구현 및 제약 조건: `Array.fromAsync` was absent, while the VM already
+  had Promise jobs and `for await` support whose helper paths did not preserve
+  every observable job boundary, completion provenance, Realm, or suspended
+  root required by this algorithm.
+- 검토한 주요 대안: translate the operation into an async source wrapper;
+  collect synchronously and wrap only the final array; reuse `for await`
+  bytecode directly; or model each specification await and close transition
+  with a native continuation record.
+- 선택한 방식: install a Realm-local native method, create the result
+  capability before async-body work, represent every await/close stage in a
+  traced continuation, and share corrected Realm-explicit Async-from-Sync
+  primitives with the existing async runtime.
+- 다른 대안 대신 이 방식을 선택한 이유: source wrappers add parser and
+  execution-context artifacts, synchronous collection collapses observable
+  jobs, and direct bytecode reuse cannot preserve the distinct direct-throw,
+  yielded-rejection, mapping, property-creation, and close completion rules.
+- 장점, 단점 및 영향: the complete current Test262 corpus is admitted and
+  shared async iteration behavior is more specification-correct. The VM gains
+  additional continuation variants and explicit Realm/root plumbing; async
+  iterator helper methods remain a separate unsupported family rather than
+  being claimed through this consumer.
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is
