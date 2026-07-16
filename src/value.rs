@@ -902,6 +902,29 @@ pub struct PromiseHandler {
     pub continuation: Option<PromiseContinuation>,
 }
 
+pub enum ArrayFromAsyncAwaitKind {
+    IteratorNext,
+    MappedValue,
+    ArrayLikeValue,
+    ArrayLikeMappedValue,
+    IteratorClose { original_reason: Value },
+}
+
+pub struct ArrayFromAsyncContinuation {
+    pub capability: PromiseReactionCapability,
+    pub realm: GcIdx,
+    pub target: Value,
+    pub source: Value,
+    pub iterator: Value,
+    pub next_method: Value,
+    pub sync_iterator: bool,
+    pub mapper: Value,
+    pub this_arg: Value,
+    pub index: usize,
+    pub length: usize,
+    pub await_kind: ArrayFromAsyncAwaitKind,
+}
+
 pub enum PromiseContinuation {
     DynamicImport {
         target: std::path::PathBuf,
@@ -914,7 +937,11 @@ pub enum PromiseContinuation {
     AsyncFromSyncIterator {
         capability: PromiseReactionCapability,
         done: bool,
+        iterator: Option<Value>,
+        close_on_rejection: bool,
+        realm: GcIdx,
     },
+    ArrayFromAsync(Box<ArrayFromAsyncContinuation>),
     AsyncFunction(Box<AsyncFunctionContinuation>),
 }
 

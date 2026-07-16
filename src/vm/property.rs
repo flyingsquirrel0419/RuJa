@@ -667,6 +667,9 @@ impl Vm {
         desc: crate::value::PropertyDescriptor,
     ) -> error::Result<bool> {
         if let Value::Object(idx) = obj {
+            if let Some(name) = key.as_str() {
+                self.ic_invalidate(idx.0, name);
+            }
             let proxy_info = self.heap.with_obj(idx.0, |o| {
                 if let HeapObj::Proxy(proxy) = o {
                     if *proxy.revoked.lock() {
@@ -940,6 +943,9 @@ impl Vm {
         // logic below before falling back to ordinary object semantics.
         match obj {
             Value::Object(idx) => {
+                // Native abstract operations bypass the bytecode store opcodes,
+                // so invalidate their receiver cache entry here as well.
+                self.ic_invalidate(idx.0, key);
                 let is_global_this = self.heap.with_obj(idx.0, |o| {
                     matches!(o, HeapObj::Object(od) if od.class_name.as_deref() == Some("global"))
                 });
@@ -2808,11 +2814,39 @@ impl Vm {
                             } => roots.push(generator.0),
                             crate::value::PromiseContinuation::AsyncFromSyncIterator {
                                 capability,
+                                iterator,
+                                realm,
                                 ..
                             } => {
                                 Self::push_value_roots(&mut roots, &capability.promise);
                                 Self::push_value_roots(&mut roots, &capability.resolve);
                                 Self::push_value_roots(&mut roots, &capability.reject);
+                                if let Some(iterator) = iterator {
+                                    Self::push_value_roots(&mut roots, iterator);
+                                }
+                                roots.push(realm.0);
+                            }
+                            crate::value::PromiseContinuation::ArrayFromAsync(frame) => {
+                                Self::push_value_roots(&mut roots, &frame.capability.promise);
+                                Self::push_value_roots(&mut roots, &frame.capability.resolve);
+                                Self::push_value_roots(&mut roots, &frame.capability.reject);
+                                roots.push(frame.realm.0);
+                                for value in [
+                                    &frame.target,
+                                    &frame.source,
+                                    &frame.iterator,
+                                    &frame.next_method,
+                                    &frame.mapper,
+                                    &frame.this_arg,
+                                ] {
+                                    Self::push_value_roots(&mut roots, value);
+                                }
+                                if let crate::value::ArrayFromAsyncAwaitKind::IteratorClose {
+                                    original_reason,
+                                } = &frame.await_kind
+                                {
+                                    Self::push_value_roots(&mut roots, original_reason);
+                                }
                             }
                             crate::value::PromiseContinuation::AsyncFunction(frame) => {
                                 Self::push_value_roots(&mut roots, &frame.capability.promise);
@@ -3222,7 +3256,20 @@ impl Vm {
                 Some(crate::value::PromiseContinuation::AsyncFromSyncIterator {
                     capability,
                     done,
-                }) => self.run_async_from_sync_iterator_reaction(capability, done, promise),
+                    iterator,
+                    close_on_rejection,
+                    realm,
+                }) => self.run_async_from_sync_iterator_reaction(
+                    capability,
+                    done,
+                    iterator,
+                    close_on_rejection,
+                    realm,
+                    promise,
+                ),
+                Some(crate::value::PromiseContinuation::ArrayFromAsync(frame)) => {
+                    crate::builtins::array::run_array_from_async_reaction(self, *frame, promise)
+                }
                 Some(crate::value::PromiseContinuation::AsyncFunction(frame)) => {
                     self.run_async_function_reaction(*frame, promise)
                 }

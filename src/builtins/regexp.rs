@@ -1773,7 +1773,7 @@ pub(crate) fn gen_result(
     gen_result_in_env(vm, value, done, is_async_gen, env)
 }
 
-fn gen_result_in_env(
+pub(crate) fn gen_result_in_env(
     vm: &mut Vm,
     value: Value,
     done: bool,

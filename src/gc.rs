@@ -291,11 +291,39 @@ pub fn trace_obj(obj: &HeapObj, marked: &[bool], worklist: &mut Vec<usize>) {
                         }
                         crate::value::PromiseContinuation::AsyncFromSyncIterator {
                             capability,
+                            iterator,
+                            realm,
                             ..
                         } => {
                             push_value(&capability.promise, worklist);
                             push_value(&capability.resolve, worklist);
                             push_value(&capability.reject, worklist);
+                            if let Some(iterator) = iterator {
+                                push_value(iterator, worklist);
+                            }
+                            worklist.push(realm.0);
+                        }
+                        crate::value::PromiseContinuation::ArrayFromAsync(frame) => {
+                            push_value(&frame.capability.promise, worklist);
+                            push_value(&frame.capability.resolve, worklist);
+                            push_value(&frame.capability.reject, worklist);
+                            worklist.push(frame.realm.0);
+                            for value in [
+                                &frame.target,
+                                &frame.source,
+                                &frame.iterator,
+                                &frame.next_method,
+                                &frame.mapper,
+                                &frame.this_arg,
+                            ] {
+                                push_value(value, worklist);
+                            }
+                            if let crate::value::ArrayFromAsyncAwaitKind::IteratorClose {
+                                original_reason,
+                            } = &frame.await_kind
+                            {
+                                push_value(original_reason, worklist);
+                            }
                         }
                         crate::value::PromiseContinuation::AsyncFunction(frame) => {
                             push_value(&frame.capability.promise, worklist);

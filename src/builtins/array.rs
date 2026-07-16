@@ -4,6 +4,596 @@ use super::*;
 // Array prototype + constructor
 // =========================================================================
 
+fn array_from_async_error_reason(
+    vm: &mut Vm,
+    error: &Arc<Error>,
+    realm: GcIdx,
+) -> error::Result<Value> {
+    match error.thrown_value.clone() {
+        Some(reason) => Ok(reason),
+        None => vm.make_error_value_in_realm(error, realm),
+    }
+}
+
+fn settle_array_from_async(
+    vm: &mut Vm,
+    frame: &crate::value::ArrayFromAsyncContinuation,
+    value: Value,
+    reject: bool,
+) -> error::Result<()> {
+    let function = if reject {
+        &frame.capability.reject
+    } else {
+        &frame.capability.resolve
+    };
+    let pins = vm.pin_many(&[
+        frame.capability.promise.clone(),
+        function.clone(),
+        value.clone(),
+    ]);
+    let result = vm.call_function(function, &[value], Some(Value::Undefined));
+    vm.unpin_many(pins);
+    result.map(|_| ())
+}
+
+fn reject_array_from_async_error(
+    vm: &mut Vm,
+    frame: &crate::value::ArrayFromAsyncContinuation,
+    error: &Arc<Error>,
+) -> error::Result<()> {
+    let reason = array_from_async_error_reason(vm, error, frame.realm)?;
+    settle_array_from_async(vm, frame, reason, true)
+}
+
+fn await_array_from_async(
+    vm: &mut Vm,
+    mut frame: crate::value::ArrayFromAsyncContinuation,
+    value: Value,
+    await_kind: crate::value::ArrayFromAsyncAwaitKind,
+) -> error::Result<()> {
+    frame.await_kind = await_kind;
+    let realm = frame.realm;
+    let pins = vm.pin_many(&[
+        frame.capability.promise.clone(),
+        frame.capability.resolve.clone(),
+        frame.capability.reject.clone(),
+        frame.target.clone(),
+        frame.source.clone(),
+        frame.iterator.clone(),
+        frame.next_method.clone(),
+        frame.mapper.clone(),
+        frame.this_arg.clone(),
+        value.clone(),
+    ]);
+    let result = (|| -> error::Result<()> {
+        let wrapper = vm.promise_resolve_for_await_in_env(value, realm)?;
+        let handler = crate::value::PromiseHandler {
+            on_fulfilled: Value::Undefined,
+            on_rejected: Value::Undefined,
+            derived: None,
+            continuation: Some(crate::value::PromiseContinuation::ArrayFromAsync(Box::new(
+                frame,
+            ))),
+        };
+        let status = vm.heap.with_obj(wrapper.0, |object| {
+            if let HeapObj::Promise(data) = object {
+                *data.state.lock()
+            } else {
+                crate::value::PromiseStatus::Fulfilled
+            }
+        });
+        if status == crate::value::PromiseStatus::Pending {
+            vm.heap.with_obj(wrapper.0, |object| {
+                if let HeapObj::Promise(data) = object {
+                    data.handlers.lock().push(handler);
+                }
+            });
+        } else {
+            vm.microtask_queue.push_back(crate::vm::Microtask::Then {
+                promise: wrapper,
+                on_fulfilled: Value::Undefined,
+                on_rejected: Value::Undefined,
+                derived: None,
+                continuation: handler.continuation,
+            });
+        }
+        Ok(())
+    })();
+    vm.unpin_many(pins);
+    result
+}
+
+fn array_from_async_create_array(vm: &mut Vm, length: usize, realm: GcIdx) -> error::Result<Value> {
+    if length > u32::MAX as usize {
+        return Err(Error::range("Invalid array length"));
+    }
+    let prototype = vm
+        .realm_array_prototypes
+        .get(&realm.0)
+        .cloned()
+        .unwrap_or_else(|| vm.array_proto.clone());
+    let array = vm.alloc(HeapObj::Array(ArrayData::new(Vec::new(), Some(prototype))))?;
+    if length != 0 {
+        vm.set_array_length(array.0, Value::Number(length as f64))?;
+    }
+    Ok(Value::Object(array))
+}
+
+fn pin_array_from_async_frame(
+    vm: &mut Vm,
+    frame: &crate::value::ArrayFromAsyncContinuation,
+) -> usize {
+    vm.pin_many(&[
+        frame.capability.promise.clone(),
+        frame.capability.resolve.clone(),
+        frame.capability.reject.clone(),
+        frame.target.clone(),
+        frame.source.clone(),
+        frame.iterator.clone(),
+        frame.next_method.clone(),
+        frame.mapper.clone(),
+        frame.this_arg.clone(),
+    ])
+}
+
+fn array_from_async_get_method(
+    vm: &mut Vm,
+    value: &Value,
+    key: PropertyKey,
+) -> error::Result<Option<Value>> {
+    let method = vm.get_property_by_key(value, &key)?;
+    if method.is_nullish() {
+        return Ok(None);
+    }
+    if !is_callable(&method, &vm.heap) {
+        return Err(Error::type_err("iterator method is not callable"));
+    }
+    Ok(Some(method))
+}
+
+fn array_from_async_finish(
+    vm: &mut Vm,
+    frame: crate::value::ArrayFromAsyncContinuation,
+) -> error::Result<()> {
+    match vm.set_property_strict(&frame.target, "length", Value::Number(frame.index as f64)) {
+        Ok(()) => settle_array_from_async(vm, &frame, frame.target.clone(), false),
+        Err(error) => reject_array_from_async_error(vm, &frame, &error),
+    }
+}
+
+fn array_from_async_define_and_continue(
+    vm: &mut Vm,
+    mut frame: crate::value::ArrayFromAsyncContinuation,
+    value: Value,
+    iterable: bool,
+) -> error::Result<()> {
+    let key = PropertyKey::from(frame.index.to_string());
+    let define =
+        vm.define_own_property_or_throw(&frame.target, key, PropertyDescriptor::data(value));
+    if let Err(error) = define {
+        if iterable {
+            let reason = array_from_async_error_reason(vm, &error, frame.realm)?;
+            return array_from_async_close(vm, frame, reason);
+        }
+        return reject_array_from_async_error(vm, &frame, &error);
+    }
+    frame.index += 1;
+    if iterable {
+        array_from_async_next(vm, frame)
+    } else if frame.index >= frame.length {
+        array_from_async_finish(vm, frame)
+    } else {
+        let next = match vm.get_property(&frame.source, &frame.index.to_string()) {
+            Ok(value) => value,
+            Err(error) => return reject_array_from_async_error(vm, &frame, &error),
+        };
+        await_array_from_async(
+            vm,
+            frame,
+            next,
+            crate::value::ArrayFromAsyncAwaitKind::ArrayLikeValue,
+        )
+    }
+}
+
+fn array_from_async_map_or_define(
+    vm: &mut Vm,
+    frame: crate::value::ArrayFromAsyncContinuation,
+    value: Value,
+    iterable: bool,
+) -> error::Result<()> {
+    if frame.mapper.is_undefined() {
+        return array_from_async_define_and_continue(vm, frame, value, iterable);
+    }
+    let mapped = vm.call_function(
+        &frame.mapper,
+        &[value, Value::Number(frame.index as f64)],
+        Some(frame.this_arg.clone()),
+    );
+    let mapped = match mapped {
+        Ok(value) => value,
+        Err(error) if iterable => {
+            let reason = array_from_async_error_reason(vm, &error, frame.realm)?;
+            return array_from_async_close(vm, frame, reason);
+        }
+        Err(error) => return reject_array_from_async_error(vm, &frame, &error),
+    };
+    let kind = if iterable {
+        crate::value::ArrayFromAsyncAwaitKind::MappedValue
+    } else {
+        crate::value::ArrayFromAsyncAwaitKind::ArrayLikeMappedValue
+    };
+    await_array_from_async(vm, frame, mapped, kind)
+}
+
+fn array_from_async_next(
+    vm: &mut Vm,
+    frame: crate::value::ArrayFromAsyncContinuation,
+) -> error::Result<()> {
+    let pins = pin_array_from_async_frame(vm, &frame);
+    let result = array_from_async_next_inner(vm, frame);
+    vm.unpin_many(pins);
+    result
+}
+
+fn array_from_async_next_inner(
+    vm: &mut Vm,
+    frame: crate::value::ArrayFromAsyncContinuation,
+) -> error::Result<()> {
+    if frame.index >= MAX_SAFE_ARRAY_LENGTH as usize {
+        let error = Error::type_err("Array.fromAsync result exceeds maximum safe length");
+        let reason = array_from_async_error_reason(vm, &error, frame.realm)?;
+        return array_from_async_close(vm, frame, reason);
+    }
+    if frame.sync_iterator {
+        let next = match vm.iterator_next_await_start_in_env(&frame.iterator, frame.realm) {
+            Ok(value) => value,
+            Err(error) => return reject_array_from_async_error(vm, &frame, &error),
+        };
+        return await_array_from_async(
+            vm,
+            frame,
+            next,
+            crate::value::ArrayFromAsyncAwaitKind::IteratorNext,
+        );
+    }
+    let next = vm.call_function(&frame.next_method, &[], Some(frame.iterator.clone()));
+    let next = match next {
+        Ok(value) => value,
+        Err(error) => return reject_array_from_async_error(vm, &frame, &error),
+    };
+    await_array_from_async(
+        vm,
+        frame,
+        next,
+        crate::value::ArrayFromAsyncAwaitKind::IteratorNext,
+    )
+}
+
+fn array_from_async_close(
+    vm: &mut Vm,
+    frame: crate::value::ArrayFromAsyncContinuation,
+    original_reason: Value,
+) -> error::Result<()> {
+    let pins = pin_array_from_async_frame(vm, &frame) + vm.pin(&original_reason);
+    let result = array_from_async_close_inner(vm, frame, original_reason);
+    vm.unpin_many(pins);
+    result
+}
+
+fn array_from_async_close_inner(
+    vm: &mut Vm,
+    frame: crate::value::ArrayFromAsyncContinuation,
+    original_reason: Value,
+) -> error::Result<()> {
+    if frame.sync_iterator {
+        let returned =
+            vm.async_from_sync_iterator_close_start_in_env(&frame.iterator, frame.realm)?;
+        return await_array_from_async(
+            vm,
+            frame,
+            returned,
+            crate::value::ArrayFromAsyncAwaitKind::IteratorClose { original_reason },
+        );
+    }
+    let return_method =
+        match array_from_async_get_method(vm, &frame.iterator, PropertyKey::from("return")) {
+            Ok(method) => method,
+            Err(error) if !error.catchable() => return Err(error),
+            Err(_) => return settle_array_from_async(vm, &frame, original_reason, true),
+        };
+    let Some(return_method) = return_method else {
+        return settle_array_from_async(vm, &frame, original_reason, true);
+    };
+    let returned = match vm.call_function(&return_method, &[], Some(frame.iterator.clone())) {
+        Ok(value) => value,
+        Err(error) if !error.catchable() => return Err(error),
+        Err(_) => return settle_array_from_async(vm, &frame, original_reason, true),
+    };
+    await_array_from_async(
+        vm,
+        frame,
+        returned,
+        crate::value::ArrayFromAsyncAwaitKind::IteratorClose { original_reason },
+    )
+}
+
+pub(crate) fn run_array_from_async_reaction(
+    vm: &mut Vm,
+    frame: crate::value::ArrayFromAsyncContinuation,
+    promise: GcIdx,
+) -> error::Result<()> {
+    let pins = vm.pin_many(&[
+        Value::Object(promise),
+        frame.capability.promise.clone(),
+        frame.capability.resolve.clone(),
+        frame.capability.reject.clone(),
+        frame.target.clone(),
+        frame.source.clone(),
+        frame.iterator.clone(),
+        frame.next_method.clone(),
+        frame.mapper.clone(),
+        frame.this_arg.clone(),
+    ]);
+    let result = run_array_from_async_reaction_inner(vm, frame, promise);
+    vm.unpin_many(pins);
+    result
+}
+
+fn run_array_from_async_reaction_inner(
+    vm: &mut Vm,
+    frame: crate::value::ArrayFromAsyncContinuation,
+    promise: GcIdx,
+) -> error::Result<()> {
+    let (status, result) = vm.heap.with_obj(promise.0, |object| {
+        if let HeapObj::Promise(data) = object {
+            (*data.state.lock(), data.result.lock().clone())
+        } else {
+            (crate::value::PromiseStatus::Rejected, Value::Undefined)
+        }
+    });
+    let rejected = status == crate::value::PromiseStatus::Rejected;
+    use crate::value::ArrayFromAsyncAwaitKind as AwaitKind;
+    match frame.await_kind {
+        AwaitKind::IteratorNext => {
+            if rejected {
+                return settle_array_from_async(vm, &frame, result, true);
+            }
+            if !matches!(result, Value::Object(_)) {
+                let error = Error::type_err("Iterator result is not an object");
+                return reject_array_from_async_error(vm, &frame, &error);
+            }
+            let result_pin = vm.pin(&result);
+            let fields = (|| -> error::Result<(Value, bool)> {
+                let done = vm.get_property(&result, "done")?.is_truthy();
+                if done {
+                    Ok((Value::Undefined, true))
+                } else {
+                    Ok((vm.get_property(&result, "value")?, false))
+                }
+            })();
+            vm.unpin_many(result_pin);
+            match fields {
+                Ok((_, true)) => array_from_async_finish(vm, frame),
+                Ok((value, false)) => array_from_async_map_or_define(vm, frame, value, true),
+                Err(error) => reject_array_from_async_error(vm, &frame, &error),
+            }
+        }
+        AwaitKind::MappedValue => {
+            if rejected {
+                array_from_async_close(vm, frame, result)
+            } else {
+                array_from_async_define_and_continue(vm, frame, result, true)
+            }
+        }
+        AwaitKind::ArrayLikeValue => {
+            if rejected {
+                settle_array_from_async(vm, &frame, result, true)
+            } else {
+                array_from_async_map_or_define(vm, frame, result, false)
+            }
+        }
+        AwaitKind::ArrayLikeMappedValue => {
+            if rejected {
+                settle_array_from_async(vm, &frame, result, true)
+            } else {
+                array_from_async_define_and_continue(vm, frame, result, false)
+            }
+        }
+        AwaitKind::IteratorClose {
+            ref original_reason,
+        } => settle_array_from_async(vm, &frame, original_reason.clone(), true),
+    }
+}
+
+pub(crate) fn array_from_async(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let realm = env::global_env_root(&vm.heap, vm.native_callee_closure().unwrap_or(vm.global));
+    let constructor = vm.promise_constructor_for_env(realm);
+    let capability = new_promise_capability_in_env(vm, constructor, realm)?;
+    let promise = capability.promise.clone();
+    let items = args.first().cloned().unwrap_or(Value::Undefined);
+    let mapper = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let this_arg = args.get(2).cloned().unwrap_or(Value::Undefined);
+    let array_constructor = this.unwrap_or(Value::Undefined);
+    let reaction_capability = crate::value::PromiseReactionCapability {
+        promise: capability.promise,
+        resolve: capability.resolve,
+        reject: capability.reject,
+    };
+    let pins = vm.pin_many(&[
+        promise.clone(),
+        reaction_capability.resolve.clone(),
+        reaction_capability.reject.clone(),
+        items.clone(),
+        mapper.clone(),
+        this_arg.clone(),
+        array_constructor.clone(),
+    ]);
+    let setup = (|| -> error::Result<()> {
+        let initial = crate::value::ArrayFromAsyncContinuation {
+            capability: reaction_capability,
+            realm,
+            target: Value::Undefined,
+            source: Value::Undefined,
+            iterator: Value::Undefined,
+            next_method: Value::Undefined,
+            sync_iterator: false,
+            mapper,
+            this_arg,
+            index: 0,
+            length: 0,
+            await_kind: crate::value::ArrayFromAsyncAwaitKind::IteratorNext,
+        };
+        if !initial.mapper.is_undefined() && !is_callable(&initial.mapper, &vm.heap) {
+            let error = Error::type_err("Array.fromAsync mapper is not callable");
+            return reject_array_from_async_error(vm, &initial, &error);
+        }
+        let async_method = array_from_async_get_method(
+            vm,
+            &items,
+            PropertyKey::Symbol(vm.well_known_symbols.async_iterator),
+        );
+        let async_method = match async_method {
+            Ok(method) => method,
+            Err(error) => return reject_array_from_async_error(vm, &initial, &error),
+        };
+        let (iterator_method, sync_iterator) = if let Some(method) = async_method {
+            (Some(method), false)
+        } else {
+            let method = array_from_async_get_method(
+                vm,
+                &items,
+                PropertyKey::Symbol(vm.well_known_symbols.iterator),
+            );
+            match method {
+                Ok(method) => (method, true),
+                Err(error) => return reject_array_from_async_error(vm, &initial, &error),
+            }
+        };
+        if let Some(iterator_method) = iterator_method {
+            let iterator = match vm.call_function(&iterator_method, &[], Some(items.clone())) {
+                Ok(value) if matches!(value, Value::Object(_)) => value,
+                Ok(_) => {
+                    let error = Error::type_err("iterator method must return an object");
+                    return reject_array_from_async_error(vm, &initial, &error);
+                }
+                Err(error) => return reject_array_from_async_error(vm, &initial, &error),
+            };
+            let iterator_pin = vm.pin(&iterator);
+            let next_method = vm.get_property(&iterator, "next");
+            vm.unpin_many(iterator_pin);
+            let next_method = match next_method {
+                Ok(method) => method,
+                Err(error) => return reject_array_from_async_error(vm, &initial, &error),
+            };
+            let iterator = if sync_iterator {
+                let record_pins = vm.pin_many(&[iterator.clone(), next_method.clone()]);
+                let record = vm.new_async_from_sync_iterator(iterator, next_method.clone());
+                vm.unpin_many(record_pins);
+                match record {
+                    Ok(iterator) => iterator,
+                    Err(error) => return reject_array_from_async_error(vm, &initial, &error),
+                }
+            } else {
+                iterator
+            };
+            let iterator_pins = vm.pin_many(&[iterator.clone(), next_method.clone()]);
+            let target = if vm.is_constructor_value(&array_constructor) {
+                match vm.construct(&array_constructor, &[]) {
+                    Ok(value) => value,
+                    Err(error) => {
+                        vm.unpin_many(iterator_pins);
+                        return reject_array_from_async_error(vm, &initial, &error);
+                    }
+                }
+            } else {
+                match array_from_async_create_array(vm, 0, realm) {
+                    Ok(value) => value,
+                    Err(error) => {
+                        vm.unpin_many(iterator_pins);
+                        return reject_array_from_async_error(vm, &initial, &error);
+                    }
+                }
+            };
+            let result = array_from_async_next(
+                vm,
+                crate::value::ArrayFromAsyncContinuation {
+                    target,
+                    iterator,
+                    next_method,
+                    sync_iterator,
+                    ..initial
+                },
+            );
+            vm.unpin_many(iterator_pins);
+            return result;
+        }
+
+        if items.is_nullish() {
+            let error = Error::type_err("Cannot convert undefined or null to object");
+            return reject_array_from_async_error(vm, &initial, &error);
+        }
+        let source = match vm.to_object(&items) {
+            Ok(value) => value,
+            Err(error) => return reject_array_from_async_error(vm, &initial, &error),
+        };
+        let source_pin = vm.pin(&source);
+        let result = (|| -> error::Result<()> {
+            let length = match length_of_array_like(vm, &source) {
+                Ok(length) => length,
+                Err(error) => return reject_array_from_async_error(vm, &initial, &error),
+            };
+            let target = if vm.is_constructor_value(&array_constructor) {
+                match vm.construct(&array_constructor, &[Value::Number(length as f64)]) {
+                    Ok(value) => value,
+                    Err(error) => return reject_array_from_async_error(vm, &initial, &error),
+                }
+            } else {
+                match array_from_async_create_array(vm, length, realm) {
+                    Ok(value) => value,
+                    Err(error) => return reject_array_from_async_error(vm, &initial, &error),
+                }
+            };
+            let frame = crate::value::ArrayFromAsyncContinuation {
+                target,
+                source,
+                length,
+                ..initial
+            };
+            let frame_pins = pin_array_from_async_frame(vm, &frame);
+            let result = if length == 0 {
+                array_from_async_finish(vm, frame)
+            } else {
+                let first = match vm.get_property(&frame.source, "0") {
+                    Ok(value) => value,
+                    Err(error) => {
+                        let result = reject_array_from_async_error(vm, &frame, &error);
+                        vm.unpin_many(frame_pins);
+                        return result;
+                    }
+                };
+                await_array_from_async(
+                    vm,
+                    frame,
+                    first,
+                    crate::value::ArrayFromAsyncAwaitKind::ArrayLikeValue,
+                )
+            };
+            vm.unpin_many(frame_pins);
+            result
+        })();
+        vm.unpin(source_pin);
+        result
+    })();
+    vm.unpin_many(pins);
+    setup?;
+    Ok(promise)
+}
+
 pub(crate) fn array_from(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let src_val = args.first().cloned().unwrap_or(Value::Undefined);
     let constructor = this.unwrap_or(Value::Undefined);
@@ -1034,7 +1624,7 @@ pub(crate) fn array_splice(
         };
         let delete_count = match args.get(1) {
             Some(v) => vm.to_number(v)?,
-            None => 0.0,
+            None => (items_clone.len() - start) as f64,
         };
         let delete_count = if delete_count < 0.0 {
             0

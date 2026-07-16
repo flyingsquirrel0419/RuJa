@@ -22,6 +22,9 @@ try:
     from test262_async_iterator_dispose_admission import (
         ASYNC_ITERATOR_DISPOSE_FEATURES, ASYNC_ITERATOR_DISPOSE_FILES,
     )
+    from test262_array_from_async_admission import (
+        ARRAY_FROM_ASYNC_FEATURES, ARRAY_FROM_ASYNC_FILES,
+    )
     from test262_object_constructor_admission import (
         OBJECT_CONSTRUCTOR_FEATURES, OBJECT_CONSTRUCTOR_FILES,
     )
@@ -62,6 +65,9 @@ except ModuleNotFoundError:
     )
     from tools.test262_async_iterator_dispose_admission import (
         ASYNC_ITERATOR_DISPOSE_FEATURES, ASYNC_ITERATOR_DISPOSE_FILES,
+    )
+    from tools.test262_array_from_async_admission import (
+        ARRAY_FROM_ASYNC_FEATURES, ARRAY_FROM_ASYNC_FILES,
     )
     from tools.test262_object_constructor_admission import (
         OBJECT_CONSTRUCTOR_FEATURES, OBJECT_CONSTRUCTOR_FILES,
@@ -2187,6 +2193,20 @@ def async_iterator_dispose_features(path):
         return frozenset()
     return ASYNC_ITERATOR_DISPOSE_FEATURES.get(rel.as_posix(), frozenset())
 
+def array_from_async_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except (OSError, ValueError):
+        return False
+    return rel.as_posix() in ARRAY_FROM_ASYNC_FILES
+
+def array_from_async_features(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except (OSError, ValueError):
+        return frozenset()
+    return ARRAY_FROM_ASYNC_FEATURES.get(rel.as_posix(), frozenset())
+
 def should_skip(meta, path=None):
     feats = set(meta.get('features', []))
     if path is not None and module_core_path(path):
@@ -2240,6 +2260,8 @@ def should_skip(meta, path=None):
         feats.difference_update(async_generator_realm_features(path))
     if path is not None and async_iterator_dispose_path(path):
         feats.difference_update(async_iterator_dispose_features(path))
+    if path is not None and array_from_async_path(path):
+        feats.difference_update(array_from_async_features(path))
     if path is not None and explicit_resource_management_symbols_path(path):
         feats.discard("explicit-resource-management")
     if path is not None and symbol_function_name_path(path):
@@ -2414,6 +2436,7 @@ def should_skip(meta, path=None):
         or for_await_of_path(path)
         or async_generator_path(path)
         or async_iterator_dispose_path(path)
+        or array_from_async_path(path)
         or atomics_sync_path(path)
         or module_tla_runtime_path(path)
         or dynamic_import_path(path)

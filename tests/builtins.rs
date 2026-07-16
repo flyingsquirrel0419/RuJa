@@ -13607,6 +13607,325 @@ fn division_not_regex() {
 // --- Array.from / Array.of ---
 
 #[test]
+fn array_from_async_handles_iterators_array_likes_mapping_and_close() {
+    assert_eq!(
+        run(r#"
+            var closed = 0;
+            var sync = {
+              [Symbol.iterator]: function () {
+                var index = 0;
+                return {
+                  next: function () {
+                    return index < 2
+                      ? { value: Promise.resolve(++index), done: false }
+                      : { done: true };
+                  },
+                  return: function () { closed++; return { done: true }; }
+                };
+              }
+            };
+            var values = await Array.fromAsync(sync, async function (value, index) {
+              return value * 2 + index;
+            });
+            var arrayLike = await Array.fromAsync({ 0: Promise.resolve("a"), length: 1 });
+            var marker = {};
+            var rejected = await Array.fromAsync(sync, function () { throw marker; }).then(
+              function () { return false; },
+              function (reason) { return reason === marker; }
+            );
+            [
+              values.join(","), arrayLike.join(","), rejected, closed,
+              Array.fromAsync.length, Array.fromAsync.name,
+              Object.getPrototypeOf(Array.fromAsync) === Function.prototype,
+              Object.getOwnPropertyDescriptor(Array, "fromAsync").enumerable
+            ].join("|");
+        "#),
+        Value::String(Arc::from("2,5|a|true|1|1|fromAsync|true|false"))
+    );
+}
+
+#[test]
+fn array_from_async_native_length_set_invalidates_inline_cache() {
+    assert_eq!(
+        run(r#"
+            function Custom() {
+              this.length = 4;
+              for (let index = 0; index < this.length; index++) {
+                Object.defineProperty(this, index, {
+                  value: 99, writable: false, enumerable: true, configurable: true
+                });
+              }
+              this.cached = this[0];
+            }
+            var result = await Array.fromAsync.call(Custom, [0, 1, 2]);
+            [result.length, result[0], result[2], result[3], result.cached].join("|");
+        "#),
+        Value::String(Arc::from("3|0|2|99|99"))
+    );
+}
+
+#[test]
+fn array_from_async_preserves_async_from_sync_rejection_provenance() {
+    assert_eq!(
+        run(r#"
+            var directReason = {};
+            var directLog = [];
+            var direct = {
+              [Symbol.iterator]: function () {
+                return {
+                  next: function () { directLog.push("next"); throw directReason; },
+                  return: function () { directLog.push("return"); return {}; }
+                };
+              }
+            };
+            var directRejected = await Array.fromAsync(direct).then(
+              function () { return false; },
+              function (reason) { return reason === directReason; }
+            );
+
+            var yieldedReason = {};
+            var yieldedLog = [];
+            var yielded = {
+              [Symbol.iterator]: function () {
+                return {
+                  next: function () {
+                    yieldedLog.push("next:" + arguments.length);
+                    return { value: Promise.reject(yieldedReason), done: false };
+                  },
+                  return: function () {
+                    yieldedLog.push("return");
+                    return {
+                      get done() { yieldedLog.push("done"); return true; },
+                      get value() { yieldedLog.push("value"); return 0; }
+                    };
+                  }
+                };
+              }
+            };
+            var yieldedRejected = await Array.fromAsync(yielded).then(
+              function () { return false; },
+              function (reason) { return reason === yieldedReason; }
+            );
+
+            var doneReason = {};
+            var doneLog = [];
+            var doneValue = {
+              [Symbol.iterator]: function () {
+                return {
+                  next: function () {
+                    doneLog.push("next:" + arguments.length);
+                    return {
+                      done: true,
+                      get value() { doneLog.push("value"); throw doneReason; }
+                    };
+                  }
+                };
+              }
+            };
+            var doneRejected = await Array.fromAsync(doneValue).then(
+              function () { return false; },
+              function (reason) { return reason === doneReason; }
+            );
+            [
+              directRejected, directLog.join(","),
+              yieldedRejected, yieldedLog.join(","),
+              doneRejected, doneLog.join(",")
+            ].join("|");
+        "#),
+        Value::String(Arc::from("true|next|true|next:0,return|true|next:0,value"))
+    );
+}
+
+#[test]
+fn array_from_async_rejects_await_and_next_errors_after_returning_a_promise() {
+    assert_eq!(
+        run(r#"
+            var awaitReason = {};
+            var value = Promise.resolve(1);
+            Object.defineProperty(value, "constructor", {
+              get: function () { throw awaitReason; }
+            });
+            var threwSynchronously = false;
+            var promise;
+            try {
+              promise = Array.fromAsync({ 0: value, length: 1 });
+            } catch (_) {
+              threwSynchronously = true;
+            }
+            var awaitRejected = await promise.then(
+              function () { return false; },
+              function (reason) { return reason === awaitReason; }
+            );
+
+            var constructorCalls = 0;
+            function Custom() { constructorCalls++; }
+            var badIterator = {
+              [Symbol.iterator]: function () { return { next: 0 }; }
+            };
+            var nextRejected = await Array.fromAsync.call(Custom, badIterator).then(
+              function () { return false; },
+              function (reason) { return reason instanceof TypeError; }
+            );
+            [
+              threwSynchronously, promise instanceof Promise, awaitRejected,
+              constructorCalls, nextRejected
+            ].join("|");
+        "#),
+        Value::String(Arc::from("false|true|true|1|true"))
+    );
+}
+
+#[test]
+fn array_from_async_uses_the_method_realm_for_promises_and_errors() {
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var ForeignPromise = other.Promise;
+            var foreignFromAsync = other.Array.fromAsync;
+            other.Promise = null;
+            var foreignPromise = foreignFromAsync([1]);
+            var mainPromise = Array.fromAsync.call(other.Array, [2]);
+            var foreignResult = await foreignPromise;
+            var mainResult = await mainPromise;
+            var inheritedThenCalls = 0;
+            other.Object.prototype.then = function (resolve) {
+              inheritedThenCalls++;
+              delete other.Object.prototype.then;
+              resolve(this);
+            };
+            var crossRealmResult = await foreignFromAsync.call(Array, [3]);
+            var foreignError = await foreignFromAsync({
+              [Symbol.iterator]: function () { return { next: 0 }; }
+            }).then(
+              function () { return false; },
+              function (error) { return error instanceof other.TypeError; }
+            );
+            [
+              foreignPromise instanceof ForeignPromise,
+              !(foreignPromise instanceof Promise),
+              mainPromise instanceof Promise,
+              !(mainPromise instanceof ForeignPromise),
+              foreignResult.join(","),
+              Object.getPrototypeOf(mainResult) === other.Array.prototype,
+              inheritedThenCalls, crossRealmResult.join(","),
+              foreignError
+            ].join("|");
+        "#),
+        Value::String(Arc::from("true|true|true|true|1|true|1|3|true"))
+    );
+}
+
+#[test]
+fn array_from_async_roots_continuation_state_across_observable_gc() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+    assert_eq!(
+        vm.run(r#"
+            var source = {
+              [Symbol.iterator]: function () {
+                forceGc();
+                var index = 0;
+                return {
+                  next: function () {
+                    forceGc();
+                    return index++ === 0
+                      ? { value: { then: function (resolve) { forceGc(); resolve(7); } }, done: false }
+                      : { done: true };
+                  },
+                  return: function () { forceGc(); return { done: true }; }
+                };
+              }
+            };
+            var promise = Array.fromAsync(source, function (value) {
+              forceGc();
+              return { then: function (resolve) { forceGc(); resolve(value + 1); } };
+            });
+            forceGc();
+            var result = await promise;
+
+            Object.defineProperty(Boolean.prototype, "length", {
+              configurable: true,
+              get: function () { forceGc(); return 1; }
+            });
+            Object.defineProperty(Boolean.prototype, "0", {
+              configurable: true,
+              get: function () { forceGc(); return 9; }
+            });
+            function Custom() { forceGc(); }
+            var boxed = await Array.fromAsync.call(Custom, true);
+
+            var closeReason = {};
+            var closeSource = {
+              [Symbol.iterator]: function () {
+                var done = false;
+                return {
+                  next: function () {
+                    return done ? { done: true } : (done = true, { value: 1, done: false });
+                  },
+                  return: function () { forceGc(); return { done: true }; }
+                };
+              }
+            };
+            var closePreserved = await Array.fromAsync(closeSource, function () {
+              forceGc();
+              throw closeReason;
+            }).then(
+              function () { return false; },
+              function (reason) { return reason === closeReason; }
+            );
+
+            var resolveReason;
+            var abruptValue = Promise.resolve(1);
+            Object.defineProperty(abruptValue, "constructor", {
+              get: function () { resolveReason = {}; throw resolveReason; }
+            });
+            var abruptSource = {
+              [Symbol.iterator]: function () {
+                var done = false;
+                return {
+                  next: function () {
+                    return done ? { done: true } : (done = true, { value: abruptValue, done: false });
+                  },
+                  return: function () { forceGc(); return {}; }
+                };
+              }
+            };
+            var resolvePreserved = await Array.fromAsync(abruptSource).then(
+              function () { return false; },
+              function (reason) { return reason === resolveReason; }
+            );
+            forceGc();
+            [
+              result.join(","), boxed[0], boxed.length,
+              closePreserved, resolvePreserved
+            ].join("|");
+        "#)
+        .expect("Array.fromAsync continuation should survive observable GC"),
+        Value::String(Arc::from("8|9|1|true|true"))
+    );
+}
+
+#[test]
+fn array_splice_omitted_delete_count_removes_the_tail() {
+    assert_eq!(
+        run(r#"
+            var values = [1, 2, 3, 4];
+            var removed = values.splice(1);
+            [values.join(","), removed.join(",")].join("|");
+        "#),
+        Value::String(Arc::from("1|2,3,4"))
+    );
+}
+
+#[test]
 fn array_from_iterable_and_map() {
     assert_eq!(
         run("Array.from('abc').join(',');"),

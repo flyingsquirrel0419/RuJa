@@ -2745,6 +2745,7 @@ fn install_array_intrinsic_in_env(
     for (name, function, length) in [
         ("isArray", array_is_array as NativeFn, 1),
         ("from", array_from as NativeFn, 1),
+        ("fromAsync", array_from_async as NativeFn, 1),
         ("of", array_of as NativeFn, 0),
     ] {
         let method = vm.new_native_function_in_env(name, function, length, env)?;

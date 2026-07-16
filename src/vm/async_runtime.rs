@@ -493,6 +493,9 @@ impl Vm {
         &mut self,
         capability: PromiseReactionCapability,
         done: bool,
+        iterator: Option<Value>,
+        close_on_rejection: bool,
+        realm: GcIdx,
         promise: GcIdx,
     ) -> error::Result<()> {
         let (state, result) = self.heap.with_obj(promise.0, |object| {
@@ -508,11 +511,22 @@ impl Vm {
             capability.resolve.clone(),
             capability.reject.clone(),
             result.clone(),
+            iterator.clone().unwrap_or(Value::Undefined),
         ]);
         let settled = if state == PromiseStatus::Rejected {
+            if close_on_rejection {
+                if let Some(iterator) = &iterator {
+                    if let Err(error) = self.iterator_close(iterator) {
+                        if !error.catchable() {
+                            self.unpin_many(pins);
+                            return Err(error);
+                        }
+                    }
+                }
+            }
             self.settle_promise_capability(&capability, result, true)
         } else {
-            match crate::builtins::regexp::gen_result(self, result, done, false) {
+            match crate::builtins::regexp::gen_result_in_env(self, result, done, false, realm) {
                 Ok(iterator_result) => {
                     self.settle_promise_capability(&capability, iterator_result, false)
                 }
@@ -1952,6 +1966,29 @@ impl Vm {
         result
     }
 
+    pub(crate) fn new_async_from_sync_iterator(
+        &mut self,
+        iter_obj: Value,
+        next: Value,
+    ) -> error::Result<Value> {
+        if !matches!(iter_obj, Value::Object(_)) {
+            return Err(Error::type_err("iterator method must return an object"));
+        }
+        let iterator = HeapObj::Iterator(crate::value::IteratorData {
+            items: Mutex::new(Vec::new()),
+            index: std::sync::atomic::AtomicUsize::new(0),
+            lazy_iter: Mutex::new(Some(iter_obj)),
+            lazy_next: Mutex::new(Some(next)),
+            generator: Mutex::new(None),
+            array_like: Mutex::new(None),
+            for_in_source: Mutex::new(None),
+            for_in_key_sources: Mutex::new(Vec::new()),
+            async_from_sync: AtomicBool::new(true),
+            done: std::sync::atomic::AtomicBool::new(false),
+        });
+        self.alloc(iterator).map(Value::Object)
+    }
+
     /// Build a lazy iterator wrapping a generator object. Each `next()` resumes
     /// the generator via `resume_generator`, preserving its return value (so
     /// `yield* gen()` yields the generator's return value as the result).
@@ -2460,8 +2497,12 @@ impl Vm {
         }
     }
 
-    fn async_from_sync_iterator_next(&mut self, it: &Value) -> error::Result<Value> {
-        let capability = self.new_intrinsic_promise_capability()?;
+    fn async_from_sync_iterator_next_in_env(
+        &mut self,
+        it: &Value,
+        realm: GcIdx,
+    ) -> error::Result<Value> {
+        let capability = self.new_intrinsic_promise_capability_in_env(realm)?;
         let promise = capability.promise.clone();
         let pins = self.pin_many(&[
             promise.clone(),
@@ -2470,52 +2511,224 @@ impl Vm {
             it.clone(),
         ]);
         let setup = (|| -> error::Result<()> {
-            let (value, done) = match self.iterator_next(it) {
-                Ok(result) => result,
+            let (iterator, next_method) = match it {
+                Value::Object(idx) => self.heap.with_obj(idx.0, |object| {
+                    if let HeapObj::Iterator(data) = object {
+                        (data.lazy_iter.lock().clone(), data.lazy_next.lock().clone())
+                    } else {
+                        (None, None)
+                    }
+                }),
+                _ => (None, None),
+            };
+            let Some(iterator) = iterator else {
+                let error = Error::type_err("not an async-from-sync iterator");
+                self.reject_promise_capability_error_in_env(&capability, &error, realm)?;
+                return Ok(());
+            };
+            let next_method = next_method.unwrap_or(Value::Undefined);
+            if !crate::builtins::is_callable(&next_method, &self.heap) {
+                let error = Error::type_err("Iterator next is not callable");
+                self.reject_promise_capability_error_in_env(&capability, &error, realm)?;
+                return Ok(());
+            }
+            let result = match self.call_function(&next_method, &[], Some(iterator)) {
+                Ok(result) if matches!(result, Value::Object(_)) => result,
+                Ok(_) => {
+                    let error = Error::type_err("Iterator result is not an object");
+                    self.reject_promise_capability_error_in_env(&capability, &error, realm)?;
+                    return Ok(());
+                }
                 Err(error) => {
-                    self.reject_promise_capability_error(&capability, &error)?;
+                    self.reject_promise_capability_error_in_env(&capability, &error, realm)?;
                     return Ok(());
                 }
             };
-            let value_wrapper = match self.promise_resolve_intrinsic(value) {
-                Ok(promise) => promise,
+            let result_pin = self.pin(&result);
+            let fields = (|| -> error::Result<(Value, bool)> {
+                let done = self.get_property(&result, "done")?.is_truthy();
+                let value = self.get_property(&result, "value")?;
+                Ok((value, done))
+            })();
+            self.unpin_many(result_pin);
+            let (value, done) = match fields {
+                Ok(fields) => fields,
                 Err(error) => {
-                    self.reject_promise_capability_error(&capability, &error)?;
+                    self.reject_promise_capability_error_in_env(&capability, &error, realm)?;
                     return Ok(());
                 }
             };
-            let state = self.heap.with_obj(value_wrapper.0, |object| {
+            if done {
+                self.mark_iterator_done(it);
+            }
+            self.attach_async_from_sync_iterator_continuation(
+                &capability,
+                value,
+                done,
+                Some(it.clone()),
+                true,
+                realm,
+            )
+        })();
+        self.unpin_many(pins);
+        setup?;
+        Ok(promise)
+    }
+
+    fn attach_async_from_sync_iterator_continuation(
+        &mut self,
+        capability: &PromiseReactionCapability,
+        value: Value,
+        done: bool,
+        iterator: Option<Value>,
+        close_on_rejection: bool,
+        realm: GcIdx,
+    ) -> error::Result<()> {
+        let value_wrapper = match self.promise_resolve_intrinsic_in_env(value, realm) {
+            Ok(promise) => promise,
+            Err(error) => {
+                let reason = match error.thrown_value.clone() {
+                    Some(reason) => reason,
+                    None => self.make_error_value_in_realm(&error, realm)?,
+                };
+                let reason_pin = self.pin(&reason);
+                if !done && close_on_rejection {
+                    if let Some(iterator) = &iterator {
+                        if let Err(close_error) = self.iterator_close(iterator) {
+                            if !close_error.catchable() {
+                                self.unpin(reason_pin);
+                                return Err(close_error);
+                            }
+                        }
+                    }
+                }
+                let result = self.settle_promise_capability(capability, reason, true);
+                self.unpin(reason_pin);
+                return result;
+            }
+        };
+        let state = self.heap.with_obj(value_wrapper.0, |object| {
+            if let HeapObj::Promise(data) = object {
+                *data.state.lock()
+            } else {
+                PromiseStatus::Fulfilled
+            }
+        });
+        let handler = crate::value::PromiseHandler {
+            on_fulfilled: Value::Undefined,
+            on_rejected: Value::Undefined,
+            derived: None,
+            continuation: Some(crate::value::PromiseContinuation::AsyncFromSyncIterator {
+                capability: capability.clone(),
+                done,
+                iterator,
+                close_on_rejection: close_on_rejection && !done,
+                realm,
+            }),
+        };
+        if state == PromiseStatus::Pending {
+            self.heap.with_obj(value_wrapper.0, |object| {
                 if let HeapObj::Promise(data) = object {
-                    *data.state.lock()
-                } else {
-                    PromiseStatus::Fulfilled
+                    data.handlers.lock().push(handler);
                 }
             });
-            let handler = crate::value::PromiseHandler {
+        } else {
+            self.microtask_queue.push_back(Microtask::Then {
+                promise: value_wrapper,
                 on_fulfilled: Value::Undefined,
                 on_rejected: Value::Undefined,
                 derived: None,
-                continuation: Some(crate::value::PromiseContinuation::AsyncFromSyncIterator {
-                    capability: capability.clone(),
-                    done,
-                }),
-            };
-            if state == PromiseStatus::Pending {
-                self.heap.with_obj(value_wrapper.0, |object| {
-                    if let HeapObj::Promise(data) = object {
-                        data.handlers.lock().push(handler);
+                continuation: handler.continuation,
+            });
+        }
+        Ok(())
+    }
+
+    pub(crate) fn async_from_sync_iterator_close_start_in_env(
+        &mut self,
+        it: &Value,
+        realm: GcIdx,
+    ) -> error::Result<Value> {
+        let capability = self.new_intrinsic_promise_capability_in_env(realm)?;
+        let promise = capability.promise.clone();
+        let pins = self.pin_many(&[
+            promise.clone(),
+            capability.resolve.clone(),
+            capability.reject.clone(),
+            it.clone(),
+        ]);
+        let setup = (|| -> error::Result<()> {
+            let iterator = match it {
+                Value::Object(idx) => self.heap.with_obj(idx.0, |object| {
+                    if let HeapObj::Iterator(data) = object {
+                        data.lazy_iter.lock().clone()
+                    } else {
+                        None
                     }
-                });
-            } else {
-                self.microtask_queue.push_back(Microtask::Then {
-                    promise: value_wrapper,
-                    on_fulfilled: Value::Undefined,
-                    on_rejected: Value::Undefined,
-                    derived: None,
-                    continuation: handler.continuation,
-                });
+                }),
+                _ => None,
             }
-            Ok(())
+            .ok_or_else(|| Error::type_err("not an async-from-sync iterator"))?;
+            let return_method = match self.get_property(&iterator, "return") {
+                Ok(method) => method,
+                Err(error) => {
+                    self.reject_promise_capability_error_in_env(&capability, &error, realm)?;
+                    return Ok(());
+                }
+            };
+            if return_method.is_nullish() {
+                let iterator_result = crate::builtins::regexp::gen_result_in_env(
+                    self,
+                    Value::Undefined,
+                    true,
+                    false,
+                    realm,
+                )?;
+                self.mark_iterator_done(it);
+                return self.resolve_promise_capability_value(&capability, iterator_result);
+            }
+            let (value, done) = {
+                if !crate::builtins::is_callable(&return_method, &self.heap) {
+                    let error = Error::type_err("Iterator return is not callable");
+                    self.reject_promise_capability_error_in_env(&capability, &error, realm)?;
+                    return Ok(());
+                }
+                let returned = match self.call_function(&return_method, &[], Some(iterator)) {
+                    Ok(value) => value,
+                    Err(error) => {
+                        self.reject_promise_capability_error_in_env(&capability, &error, realm)?;
+                        return Ok(());
+                    }
+                };
+                if !matches!(returned, Value::Object(_)) {
+                    let error = Error::type_err("Iterator return result is not an object");
+                    self.reject_promise_capability_error_in_env(&capability, &error, realm)?;
+                    return Ok(());
+                }
+                let returned_pin = self.pin(&returned);
+                let fields = (|| -> error::Result<(Value, bool)> {
+                    let done = self.get_property(&returned, "done")?.is_truthy();
+                    let value = self.get_property(&returned, "value")?;
+                    Ok((value, done))
+                })();
+                self.unpin_many(returned_pin);
+                match fields {
+                    Ok(fields) => fields,
+                    Err(error) => {
+                        self.reject_promise_capability_error_in_env(&capability, &error, realm)?;
+                        return Ok(());
+                    }
+                }
+            };
+            self.mark_iterator_done(it);
+            self.attach_async_from_sync_iterator_continuation(
+                &capability,
+                value,
+                done,
+                None,
+                false,
+                realm,
+            )
         })();
         self.unpin_many(pins);
         setup?;
@@ -2525,8 +2738,17 @@ impl Vm {
     /// Call the next method used by `for await`, leaving Await to the bytecode
     /// interpreter so an async frame can suspend instead of draining jobs.
     pub(crate) fn iterator_next_await_start(&mut self, it: &Value) -> error::Result<Value> {
+        let realm = self.current_realm_global_env();
+        self.iterator_next_await_start_in_env(it, realm)
+    }
+
+    pub(crate) fn iterator_next_await_start_in_env(
+        &mut self,
+        it: &Value,
+        realm: GcIdx,
+    ) -> error::Result<Value> {
         if self.is_async_from_sync(it) {
-            return self.async_from_sync_iterator_next(it);
+            return self.async_from_sync_iterator_next_in_env(it, realm);
         }
         let lazy_or_gen = if let Value::Object(idx) = it {
             self.heap.with_obj(idx.0, |o| {
