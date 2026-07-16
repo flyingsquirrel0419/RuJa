@@ -832,6 +832,219 @@ fn async_generator_intrinsics_are_isolated_from_object_prototype() {
 }
 
 #[test]
+fn async_generator_intrinsics_and_completion_values_are_isolated_per_realm() {
+    assert_eq!(
+        run(r#"
+            var a = $262.createRealm().global;
+            var b = $262.createRealm().global;
+            var aFunction = a.eval(
+                "(async function* (value) { await 0; yield value; return value + 1; })"
+            );
+            var bFunction = b.eval("(async function* () {})");
+            var AAsyncGeneratorFunction = Object.getPrototypeOf(aFunction).constructor;
+            var BAsyncGeneratorFunction = Object.getPrototypeOf(bFunction).constructor;
+            var aGeneratorPrototype = AAsyncGeneratorFunction.prototype.prototype;
+            var bGeneratorPrototype = BAsyncGeneratorFunction.prototype.prototype;
+            var aIteratorPrototype = Object.getPrototypeOf(aGeneratorPrototype);
+            var bIteratorPrototype = Object.getPrototypeOf(bGeneratorPrototype);
+            var mainGeneratorPrototype = (async function* () {}).constructor.prototype.prototype;
+
+            var aGenerator = aFunction(7);
+            var aPromise = aGenerator.next();
+            var aResult = await aPromise;
+            var borrowedMainPromise = mainGeneratorPrototype.next.call(aFunction(8));
+            var borrowedMainResult = await borrowedMainPromise;
+            var mainGenerator = (async function* () { await 0; yield 9; })();
+            var borrowedForeignPromise = aGeneratorPrototype.next.call(mainGenerator);
+            var borrowedForeignResult = await borrowedForeignPromise;
+            var borrowedReturnPromise = mainGeneratorPrototype.return.call(
+                aFunction(10),
+                11
+            );
+            var borrowedReturnResult = await borrowedReturnPromise;
+            var borrowedThrowPromise = mainGeneratorPrototype.throw.call(
+                aFunction(12),
+                "stop"
+            );
+            var borrowedThrowReason = await borrowedThrowPromise.then(
+                function () { return false; },
+                function (reason) { return reason === "stop"; }
+            );
+            var incompatibleError = await aGeneratorPrototype.next.call({}).then(
+                function () { return false; },
+                function (error) { return error instanceof a.TypeError; }
+            );
+            var delayedError = await a.eval(
+                "(async function* () { await 0; null.missing; })"
+            )().next().then(
+                function () { return false; },
+                function (error) { return error instanceof a.TypeError; }
+            );
+            var constructorDescriptor = Object.getOwnPropertyDescriptor(
+                AAsyncGeneratorFunction.prototype,
+                "constructor"
+            );
+            var prototypeDescriptor = Object.getOwnPropertyDescriptor(
+                AAsyncGeneratorFunction.prototype,
+                "prototype"
+            );
+            [
+                AAsyncGeneratorFunction !== BAsyncGeneratorFunction,
+                AAsyncGeneratorFunction.prototype !== BAsyncGeneratorFunction.prototype,
+                aGeneratorPrototype !== bGeneratorPrototype,
+                aIteratorPrototype !== bIteratorPrototype,
+                Object.getPrototypeOf(AAsyncGeneratorFunction) === a.Function,
+                Object.getPrototypeOf(aFunction) === AAsyncGeneratorFunction.prototype,
+                Object.getPrototypeOf(aFunction.prototype) === aGeneratorPrototype,
+                Object.getPrototypeOf(aGenerator) === aFunction.prototype,
+                aGeneratorPrototype.next !== bGeneratorPrototype.next,
+                aIteratorPrototype[Symbol.asyncIterator] !==
+                    bIteratorPrototype[Symbol.asyncIterator],
+                Object.getPrototypeOf(aIteratorPrototype) === a.Object.prototype,
+                aPromise instanceof a.Promise,
+                Object.getPrototypeOf(aResult) === a.Object.prototype,
+                borrowedMainPromise instanceof Promise,
+                !(borrowedMainPromise instanceof a.Promise),
+                Object.getPrototypeOf(borrowedMainResult) === a.Object.prototype,
+                borrowedForeignPromise instanceof a.Promise,
+                !(borrowedForeignPromise instanceof Promise),
+                Object.getPrototypeOf(borrowedForeignResult) === Object.prototype,
+                borrowedReturnPromise instanceof Promise,
+                !(borrowedReturnPromise instanceof a.Promise),
+                Object.getPrototypeOf(borrowedReturnResult) === a.Object.prototype,
+                borrowedThrowPromise instanceof Promise,
+                !(borrowedThrowPromise instanceof a.Promise),
+                borrowedThrowReason,
+                incompatibleError,
+                delayedError,
+                constructorDescriptor.writable,
+                constructorDescriptor.enumerable,
+                constructorDescriptor.configurable,
+                prototypeDescriptor.writable,
+                prototypeDescriptor.enumerable,
+                prototypeDescriptor.configurable,
+                aResult.value,
+                borrowedMainResult.value,
+                borrowedForeignResult.value,
+                borrowedReturnResult.value,
+                borrowedReturnResult.done
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "true|true|true|true|true|true|true|true|true|true|true|true|true|true|true|true|true|true|true|true|true|true|true|true|true|true|true|false|false|true|false|false|true|7|8|9|11|true"
+        ))
+    );
+}
+
+#[test]
+fn async_generator_realm_fallbacks_ignore_mutable_globals_and_survive_gc() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+    vm.run(
+        r#"
+        var mainAsyncGeneratorFunction = Object.getPrototypeOf(async function* () {}).constructor;
+        var mainAsyncGeneratorPrototype = mainAsyncGeneratorFunction.prototype.prototype;
+        var other = $262.createRealm().global;
+        var otherEval = other.eval;
+        var foreignPromise = other.Promise;
+        var foreignObjectPrototype = other.Object.prototype;
+        var foreignFunction = otherEval("(async function* () {})");
+        var foreignConstructor = Object.getPrototypeOf(foreignFunction).constructor;
+        var foreignFunctionPrototype = foreignConstructor.prototype;
+        var foreignGeneratorPrototype = foreignFunctionPrototype.prototype;
+        var foreignIteratorPrototype = Object.getPrototypeOf(foreignGeneratorPrototype);
+        var constructorRef = new WeakRef(foreignConstructor);
+        var functionPrototypeRef = new WeakRef(foreignFunctionPrototype);
+        var generatorPrototypeRef = new WeakRef(foreignGeneratorPrototype);
+        var iteratorPrototypeRef = new WeakRef(foreignIteratorPrototype);
+        var target = new other.Function();
+        var newTarget = new Proxy(target, {
+            get: function (target, key, receiver) {
+                if (key === "prototype") {
+                    forceGc();
+                    return null;
+                }
+                return Reflect.get(target, key, receiver);
+            }
+        });
+        delete foreignFunctionPrototype.constructor;
+        delete foreignFunctionPrototype.prototype;
+        delete foreignGeneratorPrototype.constructor;
+        delete foreignIteratorPrototype[Symbol.asyncIterator];
+        Object.setPrototypeOf(foreignGeneratorPrototype, null);
+        foreignFunction = null;
+        foreignConstructor = null;
+        foreignFunctionPrototype = null;
+        foreignGeneratorPrototype = null;
+        foreignIteratorPrototype = null;
+        other.Function = null;
+        other.Object = null;
+        other.Promise = null;
+    "#,
+    )
+    .expect("failed to prepare foreign async generator Realm");
+
+    vm.gc();
+    assert_eq!(
+        vm.run(
+            r#"
+            var dynamic = Reflect.construct(mainAsyncGeneratorFunction, [], newTarget);
+            var rootedConstructor = constructorRef.deref();
+            var rootedFunctionPrototype = functionPrototypeRef.deref();
+            var rootedGeneratorPrototype = generatorPrototypeRef.deref();
+            var rootedIteratorPrototype = iteratorPrototypeRef.deref();
+            var fresh = otherEval("(async function* () { await 0; yield 1; })");
+            fresh.prototype = null;
+            var fallbackInstance = fresh();
+            var promise = fallbackInstance.next();
+            var result = await promise;
+            [
+                rootedConstructor !== undefined,
+                rootedFunctionPrototype !== undefined,
+                rootedGeneratorPrototype !== undefined,
+                rootedIteratorPrototype !== undefined,
+                Object.getPrototypeOf(dynamic) === rootedFunctionPrototype,
+                Object.getPrototypeOf(dynamic.prototype) === mainAsyncGeneratorPrototype,
+                Object.getPrototypeOf(fallbackInstance) === rootedGeneratorPrototype,
+                Object.getPrototypeOf(fresh) === rootedFunctionPrototype,
+                Object.getPrototypeOf(rootedGeneratorPrototype) === null,
+                promise instanceof foreignPromise,
+                Object.getPrototypeOf(result) === foreignObjectPrototype,
+                !Object.prototype.hasOwnProperty.call(
+                    rootedFunctionPrototype,
+                    "constructor"
+                ),
+                !Object.prototype.hasOwnProperty.call(
+                    rootedFunctionPrototype,
+                    "prototype"
+                ),
+                !Object.prototype.hasOwnProperty.call(
+                    rootedGeneratorPrototype,
+                    "constructor"
+                ),
+                !Object.prototype.hasOwnProperty.call(
+                    rootedIteratorPrototype,
+                    Symbol.asyncIterator
+                )
+            ].join("|");
+        "#,
+        )
+        .expect("failed to inspect rooted async generator intrinsics"),
+        Value::String(Arc::from(
+            "true|true|true|true|true|true|true|true|true|true|true|true|true|true|true"
+        ))
+    );
+}
+
+#[test]
 fn async_generator_yield_star_only_unwraps_async_from_sync_values() {
     let src = r#"
         let nativePromise = Promise.resolve("native");

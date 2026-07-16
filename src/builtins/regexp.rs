@@ -1296,6 +1296,19 @@ fn validate_async_generator_receiver(
     )?))
 }
 
+fn async_generator_realm(vm: &Vm, generator: GcIdx) -> GcIdx {
+    let closure = vm.heap.with_obj(generator.0, |object| {
+        if let HeapObj::LazyGenerator(data) = object {
+            Some(data.closure)
+        } else {
+            None
+        }
+    });
+    closure
+        .map(|env| crate::environment::global_env_root(&vm.heap, env))
+        .unwrap_or(vm.global)
+}
+
 pub(crate) fn async_generator_next(
     vm: &mut Vm,
     args: &[Value],
@@ -1461,7 +1474,7 @@ fn handle_async_generator_resume(
     let (value, done, forwarded_result, awaiting) = match resumed {
         Ok(result) => result,
         Err(error) => {
-            let reason = generator_error_reason(vm, &error)?;
+            let reason = generator_error_reason(vm, generator, &error)?;
             finish_async_generator_request(vm, generator, reason, true, true)?;
             return Ok(false);
         }
@@ -1531,7 +1544,8 @@ fn begin_async_generator_await_pinned(
     value: Value,
     kind: crate::value::AsyncGeneratorAwaitKind,
 ) -> error::Result<()> {
-    let promise = vm.promise_resolve_for_await(value)?;
+    let generator_realm = async_generator_realm(vm, generator);
+    let promise = vm.promise_resolve_for_await_in_env(value, generator_realm)?;
 
     let state = vm.heap.with_obj(promise.0, |obj| {
         if let HeapObj::Promise(data) = obj {
@@ -1577,7 +1591,7 @@ fn finish_async_generator_request(
     let settled_value = if rejected {
         value
     } else {
-        gen_result(vm, value, done, false)?
+        gen_result_in_env(vm, value, done, false, async_generator_realm(vm, generator))?
     };
     settle_async_generator_request(vm, generator, settled_value, rejected)
 }
@@ -1625,10 +1639,14 @@ fn settle_async_generator_request(
     Ok(())
 }
 
-fn generator_error_reason(vm: &mut Vm, error: &Arc<Error>) -> error::Result<Value> {
+fn generator_error_reason(
+    vm: &mut Vm,
+    generator: GcIdx,
+    error: &Arc<Error>,
+) -> error::Result<Value> {
     match error.thrown_value.clone() {
         Some(value) => Ok(value),
-        None => vm.make_error_value(error),
+        None => vm.make_error_value_in_realm(error, async_generator_realm(vm, generator)),
     }
 }
 
@@ -1751,7 +1769,18 @@ pub(crate) fn gen_result(
     done: bool,
     is_async_gen: bool,
 ) -> error::Result<Value> {
-    let object_prototype = vm.object_prototype_for_env(vm.current_realm_global_env());
+    let env = vm.current_realm_global_env();
+    gen_result_in_env(vm, value, done, is_async_gen, env)
+}
+
+fn gen_result_in_env(
+    vm: &mut Vm,
+    value: Value,
+    done: bool,
+    is_async_gen: bool,
+    env: GcIdx,
+) -> error::Result<Value> {
+    let object_prototype = vm.object_prototype_for_env(env);
     let obj_idx = vm.heap.allocate(HeapObj::Object(crate::value::ObjectData {
         props: Mutex::new(IndexMap::new()),
         proto: Mutex::new(Some(object_prototype)),
@@ -1773,7 +1802,11 @@ pub(crate) fn gen_result(
     });
     let result_obj = Value::Object(GcIdx(obj_idx));
     vm.keep_during_job(&result_obj);
-    wrap_generator_result(vm, result_obj, is_async_gen)
+    if is_async_gen {
+        wrap_generator_result_in_env(vm, result_obj, env)
+    } else {
+        Ok(result_obj)
+    }
 }
 
 fn wrap_generator_result(
@@ -1782,20 +1815,29 @@ fn wrap_generator_result(
     is_async_gen: bool,
 ) -> error::Result<Value> {
     if is_async_gen {
-        let prototype = vm.current_realm_promise_prototype();
-        let p_idx = vm
-            .heap
-            .allocate(HeapObj::Promise(crate::value::PromiseData {
-                state: Mutex::new(crate::value::PromiseStatus::Fulfilled),
-                result: Mutex::new(result_obj),
-                handlers: Mutex::new(Vec::new()),
-                props: Mutex::new(IndexMap::new()),
-                proto: Mutex::new(Some(prototype)),
-            }))?;
-        Ok(Value::Object(GcIdx(p_idx)))
+        let env = vm.current_realm_global_env();
+        wrap_generator_result_in_env(vm, result_obj, env)
     } else {
         Ok(result_obj)
     }
+}
+
+fn wrap_generator_result_in_env(
+    vm: &mut Vm,
+    result_obj: Value,
+    env: GcIdx,
+) -> error::Result<Value> {
+    let prototype = vm.promise_prototype_for_env(env);
+    let p_idx = vm
+        .heap
+        .allocate(HeapObj::Promise(crate::value::PromiseData {
+            state: Mutex::new(crate::value::PromiseStatus::Fulfilled),
+            result: Mutex::new(result_obj),
+            handlers: Mutex::new(Vec::new()),
+            props: Mutex::new(IndexMap::new()),
+            proto: Mutex::new(Some(prototype)),
+        }))?;
+    Ok(Value::Object(GcIdx(p_idx)))
 }
 
 fn wrap_generator_error(

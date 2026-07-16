@@ -2891,6 +2891,18 @@ impl Vm {
         for v in self.realm_generator_function_prototypes.values() {
             Self::push_value_roots(&mut roots, v);
         }
+        for v in self.realm_async_iterator_prototypes.values() {
+            Self::push_value_roots(&mut roots, v);
+        }
+        for v in self.realm_async_generator_prototypes.values() {
+            Self::push_value_roots(&mut roots, v);
+        }
+        for v in self.realm_async_generator_function_constructors.values() {
+            Self::push_value_roots(&mut roots, v);
+        }
+        for v in self.realm_async_generator_function_prototypes.values() {
+            Self::push_value_roots(&mut roots, v);
+        }
         for v in self.realm_primitive_prototypes.values() {
             Self::push_value_roots(&mut roots, v);
         }

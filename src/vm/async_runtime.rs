@@ -118,9 +118,19 @@ impl Vm {
         capability: &PromiseReactionCapability,
         error: &Arc<Error>,
     ) -> error::Result<()> {
+        let env = self.current_realm_global_env();
+        self.reject_promise_capability_error_in_env(capability, error, env)
+    }
+
+    fn reject_promise_capability_error_in_env(
+        &mut self,
+        capability: &PromiseReactionCapability,
+        error: &Arc<Error>,
+        env: GcIdx,
+    ) -> error::Result<()> {
         let reason = match error.thrown_value.clone() {
             Some(reason) => reason,
-            None => self.make_error_value(error)?,
+            None => self.make_error_value_in_realm(error, env)?,
         };
         let pins = self.pin_many(&[
             capability.promise.clone(),
@@ -133,6 +143,15 @@ impl Vm {
     }
 
     fn promise_resolve_intrinsic(&mut self, value: Value) -> error::Result<GcIdx> {
+        let env = self.current_realm_global_env();
+        self.promise_resolve_intrinsic_in_env(value, env)
+    }
+
+    fn promise_resolve_intrinsic_in_env(
+        &mut self,
+        value: Value,
+        env: GcIdx,
+    ) -> error::Result<GcIdx> {
         let value_pin = self.pin(&value);
         let result = (|| -> error::Result<GcIdx> {
             let native_promise = match &value {
@@ -148,12 +167,12 @@ impl Vm {
 
             if let Some(promise) = native_promise {
                 let constructor = self.get_property(&value, "constructor")?;
-                if constructor == self.current_realm_promise_constructor() {
+                if constructor == self.promise_constructor_for_env(env) {
                     return Ok(promise);
                 }
             }
 
-            let capability = self.new_intrinsic_promise_capability()?;
+            let capability = self.new_intrinsic_promise_capability_in_env(env)?;
             self.resolve_promise_capability_value(&capability, value)?;
             match capability.promise {
                 Value::Object(idx) => Ok(idx),
@@ -165,11 +184,20 @@ impl Vm {
     }
 
     pub(crate) fn promise_resolve_for_await(&mut self, value: Value) -> error::Result<GcIdx> {
-        match self.promise_resolve_intrinsic(value) {
+        let env = self.current_realm_global_env();
+        self.promise_resolve_for_await_in_env(value, env)
+    }
+
+    pub(crate) fn promise_resolve_for_await_in_env(
+        &mut self,
+        value: Value,
+        env: GcIdx,
+    ) -> error::Result<GcIdx> {
+        match self.promise_resolve_intrinsic_in_env(value, env) {
             Ok(promise) => Ok(promise),
             Err(error) => {
-                let capability = self.new_intrinsic_promise_capability()?;
-                self.reject_promise_capability_error(&capability, &error)?;
+                let capability = self.new_intrinsic_promise_capability_in_env(env)?;
+                self.reject_promise_capability_error_in_env(&capability, &error, env)?;
                 match capability.promise {
                     Value::Object(idx) => Ok(idx),
                     _ => Err(Error::internal("Promise capability returned non-object")),
@@ -885,6 +913,13 @@ impl Vm {
                 .cloned()
                 .unwrap_or(fallback));
         }
+        if intrinsic == "AsyncGeneratorFunction" {
+            return Ok(self
+                .realm_async_generator_function_prototypes
+                .get(&realm.0)
+                .cloned()
+                .unwrap_or(fallback));
+        }
         let Some(intrinsic_ctor) = env::get(&self.heap, realm, intrinsic) else {
             return Ok(fallback);
         };
@@ -1349,7 +1384,7 @@ impl Vm {
                             if matches!(proto, Value::Object(_)) {
                                 proto
                             } else if is_async {
-                                self.async_generator_proto.clone()
+                                self.async_generator_prototype_for_env(call_env)
                             } else {
                                 self.generator_prototype_for_env(call_env)
                             }

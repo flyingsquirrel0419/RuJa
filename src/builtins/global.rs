@@ -458,7 +458,7 @@ fn dynamic_function_constructor(
             props: Mutex::new(IndexMap::new()),
             proto: Mutex::new(Some(if is_generator {
                 if is_async {
-                    vm.async_generator_proto.clone()
+                    vm.async_generator_prototype_for_env(function_realm)
                 } else {
                     vm.generator_prototype_for_env(function_realm)
                 }
@@ -476,7 +476,7 @@ fn dynamic_function_constructor(
     };
     let fallback_function_proto = if is_generator {
         let proto = if is_async {
-            vm.async_generator_function_proto.clone()
+            vm.async_generator_function_prototype_for_env(function_realm)
         } else {
             vm.generator_function_prototype_for_env(function_realm)
         };
@@ -502,12 +502,13 @@ fn dynamic_function_constructor(
             .cloned()
             .unwrap_or_else(|| vm.function_proto.clone())
     };
-    let function_object_proto = if is_generator && !is_async {
-        native_constructor_prototype_with_default(
-            vm,
-            "GeneratorFunction",
-            fallback_function_proto.clone(),
-        )?
+    let function_object_proto = if is_generator {
+        let intrinsic = if is_async {
+            "AsyncGeneratorFunction"
+        } else {
+            "GeneratorFunction"
+        };
+        native_constructor_prototype_with_default(vm, intrinsic, fallback_function_proto.clone())?
     } else if let Some(proto) = vm.current_native_new_target_prototype.clone() {
         if matches!(proto, Value::Object(_)) {
             proto

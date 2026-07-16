@@ -3322,7 +3322,7 @@ impl Vm {
                     props: Mutex::new(IndexMap::new()),
                     proto: Mutex::new(Some(if is_generator {
                         if is_async {
-                            self.async_generator_proto.clone()
+                            self.async_generator_prototype_for_env(realm)
                         } else {
                             self.generator_prototype_for_env(realm)
                         }
@@ -3347,7 +3347,7 @@ impl Vm {
             };
             let function_object_proto = if is_generator {
                 if is_async {
-                    self.async_generator_function_proto.clone()
+                    self.async_generator_function_prototype_for_env(realm)
                 } else {
                     self.generator_function_prototype_for_env(realm)
                 }

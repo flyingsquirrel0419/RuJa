@@ -147,6 +147,13 @@ pub struct Vm {
     pub(crate) realm_generator_prototypes: HashMap<usize, Value>,
     pub(crate) realm_generator_function_constructors: HashMap<usize, Value>,
     pub(crate) realm_generator_function_prototypes: HashMap<usize, Value>,
+    /// Realm global environment -> asynchronous generator intrinsics.
+    /// All four identities are direct roots because their configurable graph
+    /// links can be deleted independently.
+    pub(crate) realm_async_iterator_prototypes: HashMap<usize, Value>,
+    pub(crate) realm_async_generator_prototypes: HashMap<usize, Value>,
+    pub(crate) realm_async_generator_function_constructors: HashMap<usize, Value>,
+    pub(crate) realm_async_generator_function_prototypes: HashMap<usize, Value>,
     /// Realm global environment index + primitive kind -> that Realm's
     /// intrinsic wrapper prototype used by ToObject and primitive references.
     pub(crate) realm_primitive_prototypes: HashMap<(usize, PrimitivePrototypeKind), Value>,
@@ -594,6 +601,10 @@ impl Vm {
             realm_generator_prototypes: HashMap::new(),
             realm_generator_function_constructors: HashMap::new(),
             realm_generator_function_prototypes: HashMap::new(),
+            realm_async_iterator_prototypes: HashMap::new(),
+            realm_async_generator_prototypes: HashMap::new(),
+            realm_async_generator_function_constructors: HashMap::new(),
+            realm_async_generator_function_prototypes: HashMap::new(),
             realm_primitive_prototypes: HashMap::new(),
             realm_eval_functions: HashMap::new(),
             realm_throw_type_errors: HashMap::new(),
@@ -1858,7 +1869,11 @@ impl Vm {
         self.make_error_value_in_realm(e, error_env)
     }
 
-    fn make_error_value_in_realm(&mut self, e: &Error, error_env: GcIdx) -> error::Result<Value> {
+    pub(crate) fn make_error_value_in_realm(
+        &mut self,
+        e: &Error,
+        error_env: GcIdx,
+    ) -> error::Result<Value> {
         use crate::value::{ObjectData, PropertyDescriptor};
         let ctor_name = match e.kind {
             crate::error::ErrorKind::Type => "TypeError",
@@ -2196,6 +2211,22 @@ impl Vm {
             .get(&realm.0)
             .cloned()
             .unwrap_or_else(|| self.generator_function_proto.clone())
+    }
+
+    pub(crate) fn async_generator_prototype_for_env(&self, env: GcIdx) -> Value {
+        let realm = crate::environment::global_env_root(&self.heap, env);
+        self.realm_async_generator_prototypes
+            .get(&realm.0)
+            .cloned()
+            .unwrap_or_else(|| self.async_generator_proto.clone())
+    }
+
+    pub(crate) fn async_generator_function_prototype_for_env(&self, env: GcIdx) -> Value {
+        let realm = crate::environment::global_env_root(&self.heap, env);
+        self.realm_async_generator_function_prototypes
+            .get(&realm.0)
+            .cloned()
+            .unwrap_or_else(|| self.async_generator_function_proto.clone())
     }
 
     /// Resolve an identifier to a spec Reference record, using the same
