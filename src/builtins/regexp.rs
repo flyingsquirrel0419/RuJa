@@ -1481,23 +1481,26 @@ fn handle_async_generator_resume(
     };
 
     if awaiting {
+        let delegate_await = vm.heap.with_obj(generator.0, |object| {
+            matches!(object, HeapObj::LazyGenerator(data) if data.async_delegate_await_kind.load(Ordering::Acquire) != 0)
+        });
         begin_async_generator_await(
             vm,
             generator,
             value,
-            crate::value::AsyncGeneratorAwaitKind::Resume,
+            if delegate_await {
+                crate::value::AsyncGeneratorAwaitKind::ResumeDelegate
+            } else {
+                crate::value::AsyncGeneratorAwaitKind::Resume
+            },
         )?;
         return Ok(true);
     }
 
     if forwarded_result {
-        begin_async_generator_await(
-            vm,
-            generator,
-            value,
-            crate::value::AsyncGeneratorAwaitKind::ResolveForwarded,
-        )?;
-        return Ok(true);
+        set_async_generator_suspended_yield(vm, generator, true);
+        settle_async_generator_request(vm, generator, value, false)?;
+        return Ok(false);
     }
 
     if done {
@@ -1676,6 +1679,43 @@ fn run_async_generator_reaction_pinned(
         }
     });
 
+    if matches!(kind, crate::value::AsyncGeneratorAwaitKind::ResumeDelegate) {
+        let phase = vm.heap.with_obj(generator.0, |object| {
+            if let HeapObj::LazyGenerator(data) = object {
+                data.async_delegate_await_kind.load(Ordering::Acquire)
+            } else {
+                0
+            }
+        });
+        let resume = if state == crate::value::PromiseStatus::Rejected {
+            crate::vm::ResumeKind::DelegateThrow(result)
+        } else {
+            match phase {
+                1 => crate::vm::ResumeKind::DelegateResult {
+                    value: result,
+                    return_completion: false,
+                },
+                2 => crate::vm::ResumeKind::DelegateResult {
+                    value: result,
+                    return_completion: true,
+                },
+                3 => crate::vm::ResumeKind::DelegateMissingThrow,
+                _ => {
+                    return Err(Error::internal(
+                        "async generator lost its delegated await phase",
+                    ));
+                }
+            }
+        };
+        let resumed = vm.resume_generator(generator, resume);
+        let waiting = handle_async_generator_resume(vm, generator, resumed, Some(kind))?;
+        return if waiting {
+            Ok(())
+        } else {
+            process_async_generator_queue(vm, generator)
+        };
+    }
+
     if state == crate::value::PromiseStatus::Rejected
         && matches!(kind, crate::value::AsyncGeneratorAwaitKind::ResolveReturn)
     {
@@ -1688,17 +1728,6 @@ fn run_async_generator_reaction_pinned(
     {
         set_async_generator_suspended_yield(vm, generator, true);
         finish_async_generator_request(vm, generator, result, false, false)?;
-        return process_async_generator_queue(vm, generator);
-    }
-
-    if state == crate::value::PromiseStatus::Fulfilled
-        && matches!(
-            kind,
-            crate::value::AsyncGeneratorAwaitKind::ResolveForwarded
-        )
-    {
-        set_async_generator_suspended_yield(vm, generator, true);
-        settle_async_generator_request(vm, generator, result, false)?;
         return process_async_generator_queue(vm, generator);
     }
 

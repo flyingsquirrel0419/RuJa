@@ -32,6 +32,10 @@ from test262_async_iterator_dispose_admission import (
     ASYNC_ITERATOR_DISPOSE_FEATURES,
     ASYNC_ITERATOR_DISPOSE_FILES,
 )
+from test262_async_from_sync_iterator_admission import (
+    ASYNC_FROM_SYNC_ITERATOR_FEATURES,
+    ASYNC_FROM_SYNC_ITERATOR_FILES,
+)
 from test262_object_constructor_admission import (
     OBJECT_CONSTRUCTOR_FEATURES,
     OBJECT_CONSTRUCTOR_FILES,
@@ -1218,6 +1222,67 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
             test_root_available = False
         if test_root_available:
             for relative, features in ASYNC_ITERATOR_DISPOSE_FEATURES.items():
+                path = test_root / relative
+                self.assertTrue(path.is_file(), relative)
+                metadata = test262_runner.parse_meta(path.read_text())
+                self.assertEqual(
+                    frozenset(metadata.get("features", [])), features, relative
+                )
+
+    def test_async_from_sync_iterator_manifest_is_exact_and_shared(self):
+        self.assertEqual(len(ASYNC_FROM_SYNC_ITERATOR_FILES), 38)
+        self.assertEqual(
+            frozenset(ASYNC_FROM_SYNC_ITERATOR_FEATURES),
+            ASYNC_FROM_SYNC_ITERATOR_FILES,
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            outside = root / "test/built-ins/AsyncFromSyncIteratorPrototype/future.js"
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for relative, features in ASYNC_FROM_SYNC_ITERATOR_FEATURES.items():
+                        path = root / "test" / relative
+                        self.assertTrue(tool.async_from_sync_iterator_path(path))
+                        self.assertEqual(
+                            tool.async_from_sync_iterator_features(path), features
+                        )
+                        self.assertFalse(
+                            tool.should_skip(
+                                {"features": sorted(features), "flags": ["async"]},
+                                path,
+                            )
+                        )
+                        self.assertTrue(
+                            tool.should_skip(
+                                {
+                                    "features": sorted(features | {"decorators"}),
+                                    "flags": ["async"],
+                                },
+                                path,
+                            )
+                        )
+                    self.assertFalse(tool.async_from_sync_iterator_path(outside))
+                    self.assertTrue(
+                        tool.should_skip(
+                            {
+                                "features": ["async-iteration"],
+                                "flags": ["async"],
+                            },
+                            outside,
+                        )
+                    )
+                finally:
+                    tool.TEST262 = original_root
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        try:
+            test_root_available = test_root.is_dir()
+        except OSError:
+            test_root_available = False
+        if test_root_available:
+            for relative, features in ASYNC_FROM_SYNC_ITERATOR_FEATURES.items():
                 path = test_root / relative
                 self.assertTrue(path.is_file(), relative)
                 metadata = test262_runner.parse_meta(path.read_text())

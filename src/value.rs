@@ -948,8 +948,8 @@ pub enum PromiseContinuation {
 #[derive(Clone, Copy)]
 pub enum AsyncGeneratorAwaitKind {
     Resume,
+    ResumeDelegate,
     ResolveYield,
-    ResolveForwarded,
     ResumeReturn,
     ResumeReturnDelegated,
     ResolveReturn,
@@ -1050,6 +1050,9 @@ pub struct LazyGeneratorData {
     /// True after AsyncGeneratorYield resolves the current request and the
     /// body is waiting for the next request at the suspended yield point.
     pub async_suspended_yield: AtomicBool,
+    /// Which internal `yield*` continuation is waiting on an async iterator
+    /// method. The bytecode frame restores this phase after the Promise job.
+    pub async_delegate_await_kind: AtomicU8,
     pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
     pub proto: Mutex<Option<Value>>,
 }

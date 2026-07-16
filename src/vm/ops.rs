@@ -2626,6 +2626,7 @@ impl Vm {
                                 frame
                                     .gen_yield_is_iterator_result
                                     .store(false, Ordering::Relaxed);
+                                frame.gen_delegate_await_kind.store(0, Ordering::Relaxed);
                                 return Err(error);
                             }
                         };
@@ -2639,6 +2640,7 @@ impl Vm {
                                 .gen_yield_is_iterator_result
                                 .store(true, Ordering::Relaxed);
                             frame.gen_delegating.store(true, Ordering::Relaxed);
+                            frame.gen_delegate_await_kind.store(0, Ordering::Relaxed);
                             frame.gen_suspended.store(true, Ordering::Relaxed);
                             return Ok(Value::Undefined);
                         }
@@ -2650,6 +2652,7 @@ impl Vm {
                             frame
                                 .gen_yield_is_iterator_result
                                 .store(false, Ordering::Relaxed);
+                            frame.gen_delegate_await_kind.store(0, Ordering::Relaxed);
                         }
                         DelegateOutcome::Return(value) => {
                             self.stack.pop();
@@ -2658,8 +2661,30 @@ impl Vm {
                             frame
                                 .gen_yield_is_iterator_result
                                 .store(false, Ordering::Relaxed);
+                            frame.gen_delegate_await_kind.store(0, Ordering::Relaxed);
                             *frame.force_return.lock() = Some(value);
                             continue;
+                        }
+                        DelegateOutcome::Await(value, kind) => {
+                            let resume_ip = self.current_frame()?.ip.saturating_sub(1);
+                            self.current_frame_mut()?.ip = resume_ip;
+                            let frame = self.current_frame()?;
+                            *frame.gen_yield.lock() = Some(value);
+                            frame
+                                .gen_yield_is_iterator_result
+                                .store(false, Ordering::Relaxed);
+                            frame.gen_delegating.store(true, Ordering::Relaxed);
+                            frame.gen_delegate_await_kind.store(
+                                match kind {
+                                    DelegateAwaitKind::Result => 1,
+                                    DelegateAwaitKind::ReturnResult => 2,
+                                    DelegateAwaitKind::MissingThrow => 3,
+                                },
+                                Ordering::Relaxed,
+                            );
+                            frame.gen_awaiting.store(true, Ordering::Relaxed);
+                            frame.gen_suspended.store(true, Ordering::Relaxed);
+                            return Ok(Value::Undefined);
                         }
                     }
                 }

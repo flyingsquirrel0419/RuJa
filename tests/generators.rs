@@ -1070,6 +1070,116 @@ fn async_generator_yield_star_only_unwraps_async_from_sync_values() {
 }
 
 #[test]
+fn async_generator_yield_star_closes_on_abrupt_value_resolution_across_gc() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+    assert_eq!(
+        vm.run(
+            r#"
+            var closeCount = 0;
+            var reason;
+            var poisoned = Promise.resolve(1);
+            Object.defineProperty(poisoned, "constructor", {
+                get() { reason = {}; throw reason; }
+            });
+            var iterable = {
+                [Symbol.iterator]() {
+                    var done = false;
+                    return {
+                        next() {
+                            if (done) return { done: true };
+                            done = true;
+                            return { value: poisoned, done: false };
+                        },
+                        return() {
+                            closeCount += 1;
+                            forceGc();
+                            return { done: true };
+                        }
+                    };
+                }
+            };
+            async function* delegate() { yield* iterable; }
+            var preserved = await delegate().next().then(
+                function () { return false; },
+                function (error) { return error === reason; }
+            );
+            forceGc();
+            [preserved, closeCount].join("|");
+        "#
+        )
+        .expect("async-from-sync abrupt reason should survive close and GC"),
+        Value::String(Arc::from("true|1"))
+    );
+}
+
+#[test]
+fn async_generator_yield_star_async_from_sync_uses_generator_realm_intrinsics() {
+    let source = r#"
+        var other = $262.createRealm().global;
+        var foreignPromise = other.Promise;
+        var foreignObjectPrototype = other.Object.prototype;
+        var foreignDelegate = other.eval(
+            "(async function* (iterable) { yield* iterable; })"
+        );
+        other.Promise = function PoisonedPromise() { throw new Error("poisoned"); };
+        var iterable = {
+            [Symbol.iterator]() {
+                return {
+                    next() { return { value: 17, done: false }; }
+                };
+            }
+        };
+        var iterator = foreignDelegate(iterable);
+        var promise = iterator.next();
+        var result = await promise;
+        [
+            promise instanceof foreignPromise,
+            Object.getPrototypeOf(result) === foreignObjectPrototype,
+            result.value,
+            result.done
+        ].join("|");
+    "#;
+    assert_eq!(run(source), Value::String(Arc::from("true|true|17|false")));
+}
+
+#[test]
+fn async_generator_yield_star_return_does_not_close_twice_on_value_rejection() {
+    let source = r#"
+        var returnCount = 0;
+        var reason = {};
+        var iterable = {
+            [Symbol.iterator]() {
+                return {
+                    next() { return { value: 1, done: false }; },
+                    return(value) {
+                        returnCount += 1;
+                        return { value: Promise.reject(reason), done: true };
+                    }
+                };
+            }
+        };
+        async function* delegate() { yield* iterable; }
+        var iterator = delegate();
+        await iterator.next();
+        var preserved = await iterator.return(2).then(
+            function () { return false; },
+            function (error) { return error === reason; }
+        );
+        [preserved, returnCount].join("|");
+    "#;
+    assert_eq!(run(source), Value::String(Arc::from("true|1")));
+}
+
+#[test]
 fn async_generator_yield_star_awaits_thenable_and_rewraps_result() {
     let src = r#"
         let log = [];

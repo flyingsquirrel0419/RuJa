@@ -260,6 +260,8 @@ pub struct CallFrame {
     /// A delegated resume is consumed by `Op::YieldDelegate` instead of being
     /// injected as an ordinary yield completion.
     pub gen_delegate_resume: Mutex<Option<ResumeKind>>,
+    /// Internal async `yield*` phase persisted across the adapter Promise job.
+    pub gen_delegate_await_kind: AtomicU8,
     /// `yield*` forwards the delegated iterator result object unchanged.
     pub gen_yield_is_iterator_result: AtomicBool,
     /// Ordinary async functions set this while their frame is executing.
@@ -345,6 +347,7 @@ impl CallFrame {
             gen_resume_value: Mutex::new(Value::Undefined),
             gen_delegating: AtomicBool::new(false),
             gen_delegate_resume: Mutex::new(None),
+            gen_delegate_await_kind: AtomicU8::new(0),
             gen_yield_is_iterator_result: AtomicBool::new(false),
             async_mode: false,
             module_evaluation: false,
@@ -371,12 +374,26 @@ pub enum ResumeKind {
     Next(Value),
     Throw(Value),
     Return(Value),
+    DelegateResult {
+        value: Value,
+        return_completion: bool,
+    },
+    DelegateThrow(Value),
+    DelegateMissingThrow,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum DelegateAwaitKind {
+    Result,
+    ReturnResult,
+    MissingThrow,
 }
 
 pub(crate) enum DelegateOutcome {
     Yield(Value),
     Complete(Value),
     Return(Value),
+    Await(Value, DelegateAwaitKind),
 }
 
 /// Outcome of executing a single bytecode instruction.
@@ -1603,6 +1620,7 @@ impl Vm {
             started,
             done,
             delegating,
+            delegate_await_kind,
         ) = self.heap.with_obj(g_idx.0, |o| {
             if let HeapObj::LazyGenerator(g) = o {
                 (
@@ -1621,6 +1639,7 @@ impl Vm {
                     g.started.load(Ordering::Relaxed),
                     g.done.load(Ordering::Relaxed),
                     g.delegating.load(Ordering::Relaxed),
+                    g.async_delegate_await_kind.load(Ordering::Relaxed),
                 )
             } else {
                 panic!("resume_generator on non-lazy-generator");
@@ -1654,6 +1673,9 @@ impl Vm {
             ResumeKind::Next(v) => v.clone(),
             ResumeKind::Throw(e) => e.clone(),
             ResumeKind::Return(v) => v.clone(),
+            ResumeKind::DelegateResult { value, .. } => value.clone(),
+            ResumeKind::DelegateThrow(value) => value.clone(),
+            ResumeKind::DelegateMissingThrow => Value::Undefined,
         };
 
         // On the first resume, either continue after the call-time generator
@@ -1729,6 +1751,9 @@ impl Vm {
                 .gen_yield_is_iterator_result
                 .store(false, Ordering::Relaxed);
             *frame.gen_delegate_resume.lock() = delegating.then(|| kind.clone());
+            frame
+                .gen_delegate_await_kind
+                .store(delegate_await_kind, Ordering::Relaxed);
             // `throw(e)`: arrange for the next dispatch to raise `e`.
             if !delegating {
                 if let ResumeKind::Throw(e) = &kind {
@@ -1781,6 +1806,7 @@ impl Vm {
                     g.done.store(true, Ordering::Relaxed);
                     g.started.store(true, Ordering::Relaxed);
                     g.delegating.store(false, Ordering::Relaxed);
+                    g.async_delegate_await_kind.store(0, Ordering::Relaxed);
                 }
             });
             return Err(e.clone());
@@ -1827,6 +1853,10 @@ impl Vm {
                         frame.gen_delegating.load(Ordering::Relaxed),
                         Ordering::Relaxed,
                     );
+                    g.async_delegate_await_kind.store(
+                        frame.gen_delegate_await_kind.load(Ordering::Relaxed),
+                        Ordering::Relaxed,
+                    );
                 }
             });
 
@@ -1839,6 +1869,7 @@ impl Vm {
                     g.done.store(true, Ordering::Relaxed);
                     g.started.store(true, Ordering::Relaxed);
                     g.delegating.store(false, Ordering::Relaxed);
+                    g.async_delegate_await_kind.store(0, Ordering::Relaxed);
                 }
             });
             let ret = result.unwrap_or(Value::Undefined);

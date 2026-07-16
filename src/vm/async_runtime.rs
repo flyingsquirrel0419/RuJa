@@ -11,6 +11,13 @@ use indexmap::IndexMap;
 use parking_lot::Mutex;
 use std::sync::Arc;
 
+#[derive(Clone, Copy)]
+enum AsyncFromSyncMethod {
+    Next,
+    Return,
+    Throw,
+}
+
 impl Vm {
     pub(crate) fn evaluate_module_chunk_async(
         &mut self,
@@ -1430,6 +1437,7 @@ impl Vm {
                                 async_queue: Mutex::new(std::collections::VecDeque::new()),
                                 async_processing: AtomicBool::new(false),
                                 async_suspended_yield: AtomicBool::new(false),
+                                async_delegate_await_kind: AtomicU8::new(0),
                                 props: Mutex::new(IndexMap::new()),
                                 proto: Mutex::new(Some(generator_instance_proto)),
                             },
@@ -2163,33 +2171,21 @@ impl Vm {
         it: &Value,
         mut result: Value,
         return_completion: bool,
-        await_result: bool,
+        rewrap_yield: bool,
     ) -> error::Result<DelegateOutcome> {
-        if await_result {
-            result = self.await_value(result)?;
-        }
         if !matches!(result, Value::Object(_)) {
             return Err(Error::type_err("Iterator result is not an object"));
         }
         let done = self.get_property(&result, "done")?.is_truthy();
-        let await_value = await_result && self.is_async_from_sync(it);
         if !done {
-            if await_result {
+            if rewrap_yield {
                 let value = self.get_property(&result, "value")?;
-                let value = if await_value {
-                    self.await_value(value)?
-                } else {
-                    value
-                };
                 result = crate::builtins::regexp::gen_result(self, value, false, false)?;
             }
             return Ok(DelegateOutcome::Yield(result));
         }
         self.mark_iterator_done(it);
-        let mut value = self.get_property(&result, "value")?;
-        if await_value {
-            value = self.await_value(value)?;
-        }
+        let value = self.get_property(&result, "value")?;
         if return_completion {
             Ok(DelegateOutcome::Return(value))
         } else {
@@ -2203,6 +2199,9 @@ impl Vm {
         completion: ResumeKind,
         await_result: bool,
     ) -> error::Result<DelegateOutcome> {
+        if await_result {
+            return self.iterator_delegate_async_step(it, completion);
+        }
         let (target, cached_next) = self.delegate_target_and_next(it);
         match completion {
             ResumeKind::Next(value) => {
@@ -2217,7 +2216,7 @@ impl Vm {
                     let (value, done) = self.iterator_next_resume(it, value)?;
                     crate::builtins::regexp::gen_result(self, value, done, false)?
                 };
-                self.finish_delegate_result(it, result, false, await_result)
+                self.finish_delegate_result(it, result, false, false)
             }
             ResumeKind::Return(value) => {
                 let Some(target) = target else {
@@ -2231,7 +2230,7 @@ impl Vm {
                     return Err(Error::type_err("Iterator return is not callable"));
                 }
                 let result = self.call_function(&method, &[value], Some(target))?;
-                self.finish_delegate_result(it, result, true, await_result)
+                self.finish_delegate_result(it, result, true, false)
             }
             ResumeKind::Throw(value) => {
                 let Some(target) = target else {
@@ -2243,7 +2242,7 @@ impl Vm {
                         return Err(Error::type_err("Iterator throw is not callable"));
                     }
                     let result = self.call_function(&method, &[value], Some(target))?;
-                    return self.finish_delegate_result(it, result, false, await_result);
+                    return self.finish_delegate_result(it, result, false, false);
                 }
 
                 let return_method = self.get_property(&target, "return")?;
@@ -2251,15 +2250,116 @@ impl Vm {
                     if !crate::builtins::is_callable(&return_method, &self.heap) {
                         return Err(Error::type_err("Iterator return is not callable"));
                     }
-                    let mut result = self.call_function(&return_method, &[], Some(target))?;
-                    if await_result {
-                        result = self.await_value(result)?;
-                    }
+                    let result = self.call_function(&return_method, &[], Some(target))?;
                     if !matches!(result, Value::Object(_)) {
                         return Err(Error::type_err("Iterator return result is not an object"));
                     }
                 }
                 Err(Error::type_err("Iterator does not provide a throw method"))
+            }
+            ResumeKind::DelegateResult { .. }
+            | ResumeKind::DelegateThrow(_)
+            | ResumeKind::DelegateMissingThrow => Err(Error::internal(
+                "internal async delegate completion reached sync iterator step",
+            )),
+        }
+    }
+
+    fn iterator_delegate_async_step(
+        &mut self,
+        it: &Value,
+        completion: ResumeKind,
+    ) -> error::Result<DelegateOutcome> {
+        let (target, cached_next) = self.delegate_target_and_next(it);
+        match completion {
+            ResumeKind::DelegateResult {
+                value,
+                return_completion,
+            } => self.finish_delegate_result(it, value, return_completion, true),
+            ResumeKind::DelegateThrow(reason) => Err(Error::thrown(reason, &self.heap)),
+            ResumeKind::DelegateMissingThrow => {
+                Err(Error::type_err("Iterator does not provide a throw method"))
+            }
+            ResumeKind::Next(value) => {
+                let result = if self.is_async_from_sync(it) {
+                    self.async_from_sync_iterator_method_in_env(
+                        it,
+                        AsyncFromSyncMethod::Next,
+                        Some(value),
+                        self.current_realm_global_env(),
+                    )?
+                } else {
+                    let target = target.ok_or_else(|| Error::type_err("not an async iterator"))?;
+                    let next = cached_next
+                        .ok_or_else(|| Error::type_err("Iterator next is not callable"))?;
+                    if !crate::builtins::is_callable(&next, &self.heap) {
+                        return Err(Error::type_err("Iterator next is not callable"));
+                    }
+                    self.call_function(&next, &[value], Some(target))?
+                };
+                Ok(DelegateOutcome::Await(result, DelegateAwaitKind::Result))
+            }
+            ResumeKind::Return(value) => {
+                if self.is_async_from_sync(it) {
+                    let result = self.async_from_sync_iterator_method_in_env(
+                        it,
+                        AsyncFromSyncMethod::Return,
+                        Some(value),
+                        self.current_realm_global_env(),
+                    )?;
+                    return Ok(DelegateOutcome::Await(
+                        result,
+                        DelegateAwaitKind::ReturnResult,
+                    ));
+                }
+                let Some(target) = target else {
+                    return Ok(DelegateOutcome::Return(value));
+                };
+                let method = self.get_property(&target, "return")?;
+                if method.is_nullish() {
+                    return Ok(DelegateOutcome::Return(value));
+                }
+                if !crate::builtins::is_callable(&method, &self.heap) {
+                    return Err(Error::type_err("Iterator return is not callable"));
+                }
+                let result = self.call_function(&method, &[value], Some(target))?;
+                Ok(DelegateOutcome::Await(
+                    result,
+                    DelegateAwaitKind::ReturnResult,
+                ))
+            }
+            ResumeKind::Throw(value) => {
+                if self.is_async_from_sync(it) {
+                    let result = self.async_from_sync_iterator_method_in_env(
+                        it,
+                        AsyncFromSyncMethod::Throw,
+                        Some(value),
+                        self.current_realm_global_env(),
+                    )?;
+                    return Ok(DelegateOutcome::Await(result, DelegateAwaitKind::Result));
+                }
+                let target = target
+                    .ok_or_else(|| Error::type_err("Iterator does not provide a throw method"))?;
+                let method = self.get_property(&target, "throw")?;
+                if !method.is_nullish() {
+                    if !crate::builtins::is_callable(&method, &self.heap) {
+                        return Err(Error::type_err("Iterator throw is not callable"));
+                    }
+                    let result = self.call_function(&method, &[value], Some(target))?;
+                    return Ok(DelegateOutcome::Await(result, DelegateAwaitKind::Result));
+                }
+                let return_method = self.get_property(&target, "return")?;
+                if return_method.is_nullish() {
+                    return Err(Error::type_err("Iterator does not provide a throw method"));
+                }
+                if !crate::builtins::is_callable(&return_method, &self.heap) {
+                    return Err(Error::type_err("Iterator return is not callable"));
+                }
+                let result = self.call_function(&return_method, &[], Some(target))?;
+                Ok(DelegateOutcome::Await(
+                    result,
+                    DelegateAwaitKind::MissingThrow,
+                ))
             }
         }
     }
@@ -2502,37 +2602,88 @@ impl Vm {
         it: &Value,
         realm: GcIdx,
     ) -> error::Result<Value> {
+        self.async_from_sync_iterator_method_in_env(it, AsyncFromSyncMethod::Next, None, realm)
+    }
+
+    fn async_from_sync_iterator_method_in_env(
+        &mut self,
+        it: &Value,
+        kind: AsyncFromSyncMethod,
+        argument: Option<Value>,
+        realm: GcIdx,
+    ) -> error::Result<Value> {
         let capability = self.new_intrinsic_promise_capability_in_env(realm)?;
         let promise = capability.promise.clone();
-        let pins = self.pin_many(&[
+        let mut pins = self.pin_many(&[
             promise.clone(),
             capability.resolve.clone(),
             capability.reject.clone(),
             it.clone(),
         ]);
+        if let Some(argument) = &argument {
+            pins += self.pin(argument);
+        }
         let setup = (|| -> error::Result<()> {
-            let (iterator, next_method) = match it {
-                Value::Object(idx) => self.heap.with_obj(idx.0, |object| {
-                    if let HeapObj::Iterator(data) = object {
-                        (data.lazy_iter.lock().clone(), data.lazy_next.lock().clone())
-                    } else {
-                        (None, None)
-                    }
-                }),
-                _ => (None, None),
-            };
+            let (iterator, cached_next) = self.delegate_target_and_next(it);
             let Some(iterator) = iterator else {
                 let error = Error::type_err("not an async-from-sync iterator");
                 self.reject_promise_capability_error_in_env(&capability, &error, realm)?;
                 return Ok(());
             };
-            let next_method = next_method.unwrap_or(Value::Undefined);
-            if !crate::builtins::is_callable(&next_method, &self.heap) {
-                let error = Error::type_err("Iterator next is not callable");
+
+            let method = match kind {
+                AsyncFromSyncMethod::Next => cached_next.unwrap_or(Value::Undefined),
+                AsyncFromSyncMethod::Return => match self.get_property(&iterator, "return") {
+                    Ok(method) if !method.is_nullish() => method,
+                    Ok(_) => {
+                        let result = crate::builtins::regexp::gen_result_in_env(
+                            self,
+                            argument.clone().unwrap_or(Value::Undefined),
+                            true,
+                            false,
+                            realm,
+                        )?;
+                        self.mark_iterator_done(it);
+                        return self.resolve_promise_capability_value(&capability, result);
+                    }
+                    Err(error) => {
+                        self.reject_promise_capability_error_in_env(&capability, &error, realm)?;
+                        return Ok(());
+                    }
+                },
+                AsyncFromSyncMethod::Throw => match self.get_property(&iterator, "throw") {
+                    Ok(method) if !method.is_nullish() => method,
+                    Ok(_) => {
+                        if let Err(error) = self.iterator_close(it) {
+                            self.reject_promise_capability_error_in_env(
+                                &capability,
+                                &error,
+                                realm,
+                            )?;
+                            return Ok(());
+                        }
+                        let error = Error::type_err("Iterator does not provide a throw method");
+                        self.reject_promise_capability_error_in_env(&capability, &error, realm)?;
+                        return Ok(());
+                    }
+                    Err(error) => {
+                        self.reject_promise_capability_error_in_env(&capability, &error, realm)?;
+                        return Ok(());
+                    }
+                },
+            };
+            if !crate::builtins::is_callable(&method, &self.heap) {
+                let name = match kind {
+                    AsyncFromSyncMethod::Next => "next",
+                    AsyncFromSyncMethod::Return => "return",
+                    AsyncFromSyncMethod::Throw => "throw",
+                };
+                let error = Error::type_err(format!("Iterator {name} is not callable"));
                 self.reject_promise_capability_error_in_env(&capability, &error, realm)?;
                 return Ok(());
             }
-            let result = match self.call_function(&next_method, &[], Some(iterator)) {
+            let args = argument.clone().into_iter().collect::<Vec<_>>();
+            let result = match self.call_function(&method, &args, Some(iterator)) {
                 Ok(result) if matches!(result, Value::Object(_)) => result,
                 Ok(_) => {
                     let error = Error::type_err("Iterator result is not an object");
@@ -2565,8 +2716,9 @@ impl Vm {
                 &capability,
                 value,
                 done,
-                Some(it.clone()),
-                true,
+                matches!(kind, AsyncFromSyncMethod::Next | AsyncFromSyncMethod::Throw)
+                    .then(|| it.clone()),
+                matches!(kind, AsyncFromSyncMethod::Next | AsyncFromSyncMethod::Throw),
                 realm,
             )
         })();
@@ -2658,17 +2810,10 @@ impl Vm {
             it.clone(),
         ]);
         let setup = (|| -> error::Result<()> {
-            let iterator = match it {
-                Value::Object(idx) => self.heap.with_obj(idx.0, |object| {
-                    if let HeapObj::Iterator(data) = object {
-                        data.lazy_iter.lock().clone()
-                    } else {
-                        None
-                    }
-                }),
-                _ => None,
-            }
-            .ok_or_else(|| Error::type_err("not an async-from-sync iterator"))?;
+            let iterator = self
+                .delegate_target_and_next(it)
+                .0
+                .ok_or_else(|| Error::type_err("not an async-from-sync iterator"))?;
             let return_method = match self.get_property(&iterator, "return") {
                 Ok(method) => method,
                 Err(error) => {

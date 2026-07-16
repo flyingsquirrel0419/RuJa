@@ -2735,7 +2735,10 @@ impl Vm {
                 let value = match kind {
                     ResumeKind::Next(value)
                     | ResumeKind::Throw(value)
-                    | ResumeKind::Return(value) => value,
+                    | ResumeKind::Return(value)
+                    | ResumeKind::DelegateThrow(value) => value,
+                    ResumeKind::DelegateResult { value, .. } => value,
+                    ResumeKind::DelegateMissingThrow => Value::Undefined,
                 };
                 Self::push_value_roots(&mut roots, &value);
             }

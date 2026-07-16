@@ -227,6 +227,31 @@ fn async_from_sync_rejects_abrupt_promise_constructor_lookup() {
 }
 
 #[test]
+fn for_await_closes_sync_generator_after_yielded_promise_rejection() {
+    let source = r#"
+        var reason = {};
+        var log = [];
+        function* values() {
+            try {
+                yield Promise.reject(reason);
+            } finally {
+                log.push("close");
+            }
+        }
+        async function iterate() {
+            try {
+                for await (var value of values()) log.push("unreachable");
+            } catch (error) {
+                log.push(error === reason ? "reason" : "wrong");
+            }
+            return log.join("|");
+        }
+        await iterate();
+    "#;
+    assert_eq!(run(source), Value::String(Arc::from("close|reason")));
+}
+
+#[test]
 fn for_await_empty_async_generator() {
     let src = r#"
         async function* gen() {}
