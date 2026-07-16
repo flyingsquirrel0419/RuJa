@@ -10058,6 +10058,177 @@ fn object_constructor_does_not_preallocate_for_object_arguments() {
 }
 
 #[test]
+fn object_prototype_intrinsics_are_isolated_per_realm() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+
+    assert_eq!(
+        vm.run(
+            r#"
+            var mainObject = Object;
+            var getPrototypeOf = Object.getPrototypeOf;
+            var getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+            var mainTypeError = TypeError;
+            var names = [
+              "toString", "toLocaleString", "hasOwnProperty", "isPrototypeOf",
+              "propertyIsEnumerable", "valueOf", "__defineGetter__",
+              "__defineSetter__", "__lookupGetter__", "__lookupSetter__"
+            ];
+            var lengths = [0, 0, 1, 1, 1, 0, 2, 2, 1, 1];
+            var mainMethods = names.map(function(name) {
+              return Object.prototype[name];
+            });
+
+            Object.extraFromMain = true;
+            Object.prototype.extraFromMain = true;
+            Object.prototype.valueOf = null;
+            delete Object.prototype.toLocaleString;
+            Object.defineProperty(Object.prototype, "hasOwnProperty", {
+              value: function() { return "polluted"; },
+              writable: false,
+              enumerable: true,
+              configurable: true
+            });
+            Object.defineProperty(Object.prototype, "__proto__", {
+              get: function() { return "polluted"; },
+              set: function() {},
+              enumerable: true,
+              configurable: true
+            });
+
+            var other = $262.createRealm().global;
+            var second = $262.createRealm().global;
+            var otherMethods = names.map(function(name) {
+              return other.Object.prototype[name];
+            });
+            var secondMethods = names.map(function(name) {
+              return second.Object.prototype[name];
+            });
+            var distinct = otherMethods.every(function(method, index) {
+              var desc = getOwnPropertyDescriptor(other.Object.prototype, names[index]);
+              return method !== mainMethods[index] && method !== secondMethods[index] &&
+                getPrototypeOf(method) === other.Function.prototype &&
+                method.name === names[index] && method.length === lengths[index] &&
+                method.prototype === undefined && desc.value === method &&
+                desc.writable === true && desc.enumerable === false &&
+                desc.configurable === true;
+            });
+            var otherProto = getOwnPropertyDescriptor(other.Object.prototype, "__proto__");
+            var secondProto = getOwnPropertyDescriptor(second.Object.prototype, "__proto__");
+            var protoShape = otherProto.get !== secondProto.get &&
+              otherProto.set !== secondProto.set &&
+              getPrototypeOf(otherProto.get) === other.Function.prototype &&
+              getPrototypeOf(otherProto.set) === other.Function.prototype &&
+              otherProto.get.name === "get __proto__" && otherProto.get.length === 0 &&
+              otherProto.set.name === "set __proto__" && otherProto.set.length === 1 &&
+              otherProto.enumerable === false && otherProto.configurable === true;
+
+            var pristine = !other.Object.extraFromMain &&
+              !other.Object.prototype.extraFromMain &&
+              other.Object.prototype.valueOf !== null &&
+              typeof other.Object.prototype.toLocaleString === "function" &&
+              other.Object.prototype.hasOwnProperty.call({ value: 1 }, "value") === true &&
+              !getOwnPropertyDescriptor(other.Object.prototype, "extraFromMain");
+
+            var graph = getPrototypeOf(other) === other.Object.prototype &&
+              getPrototypeOf(other.Function.prototype) === other.Object.prototype &&
+              getPrototypeOf(other.Error.prototype) === other.Object.prototype &&
+              getPrototypeOf(other.Array.prototype) === other.Object.prototype &&
+              getPrototypeOf(other.String.prototype) === other.Object.prototype &&
+              getPrototypeOf(other.Number.prototype) === other.Object.prototype &&
+              getPrototypeOf(other.Boolean.prototype) === other.Object.prototype &&
+              getPrototypeOf(other.BigInt.prototype) === other.Object.prototype &&
+              getPrototypeOf(other.Symbol.prototype) === other.Object.prototype &&
+              getPrototypeOf(other.RegExp.prototype) === other.Object.prototype &&
+              getPrototypeOf(other.ArrayBuffer.prototype) === other.Object.prototype &&
+              getPrototypeOf(other.SharedArrayBuffer.prototype) === other.Object.prototype &&
+              getPrototypeOf(other.DataView.prototype) === other.Object.prototype &&
+              getPrototypeOf(other.WeakRef.prototype) === other.Object.prototype &&
+              getPrototypeOf(other.FinalizationRegistry.prototype) === other.Object.prototype &&
+              getPrototypeOf(other.Atomics) === other.Object.prototype &&
+              getPrototypeOf(getPrototypeOf(other.Uint8Array.prototype)) ===
+                other.Object.prototype;
+
+            var errorRealm = false;
+            try {
+              other.Object.prototype.valueOf.call(null);
+            } catch (error) {
+              errorRealm = error instanceof other.TypeError &&
+                !(error instanceof mainTypeError);
+            }
+            var boxed = other.Object.prototype.valueOf.call(1);
+            var protoBoxed = otherProto.get.call(1);
+            other.Number.prototype.toString = function() {
+              "use strict";
+              return typeof this;
+            };
+            var localePrimitive = other.Object.prototype.toLocaleString.call(1) === "number";
+
+            var getter = function() { return 1; };
+            var target = {};
+            other.Object.prototype.__defineGetter__.call(target, "value", getter);
+            var proxy = new Proxy(target, {
+              getOwnPropertyDescriptor: function(target, key) {
+                forceGc();
+                return Reflect.getOwnPropertyDescriptor(target, key);
+              },
+              getPrototypeOf: function(target) {
+                forceGc();
+                return Reflect.getPrototypeOf(target);
+              }
+            });
+            var proxyLookup = other.Object.prototype.__lookupGetter__.call(proxy, "value") ===
+              getter;
+            var proxyProto = other.Object.prototype.isPrototypeOf.call(
+              getPrototypeOf(target), proxy
+            );
+
+            var symbol = Symbol();
+            var symbolTarget = {};
+            symbolTarget[symbol] = 1;
+            var symbolKey = {
+              [Symbol.toPrimitive]: function() { forceGc(); return symbol; }
+            };
+            var symbolEnumerable = other.Object.prototype.propertyIsEnumerable.call(
+              symbolTarget, symbolKey
+            );
+
+            var retainedValueOf = other.Object.prototype.valueOf;
+            var retainedProtoGet = otherProto.get;
+            var retainedNumberPrototype = other.Number.prototype;
+            other.Object = null;
+            other.Function = null;
+            other.Number = null;
+            forceGc();
+            var retained = getPrototypeOf(retainedValueOf.call(2)) ===
+                retainedNumberPrototype &&
+              retainedProtoGet.call(2) === retainedNumberPrototype;
+
+            [
+              distinct, protoShape, pristine, graph, errorRealm,
+              getPrototypeOf(boxed) === retainedNumberPrototype,
+              protoBoxed === retainedNumberPrototype, localePrimitive,
+              proxyLookup, proxyProto,
+              symbolEnumerable, retained
+            ].join("|");
+            "#,
+        )
+        .expect("Object prototype Realm isolation should succeed"),
+        Value::String(Arc::from(
+            "true|true|true|true|true|true|true|true|true|true|true|true"
+        ))
+    );
+}
+
+#[test]
 fn object_static_methods_are_realm_specific() {
     let mut vm = Vm::new().expect("failed to initialize VM");
     vm.register_fn(

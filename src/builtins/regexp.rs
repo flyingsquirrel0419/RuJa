@@ -2225,6 +2225,17 @@ fn make_builtin_constructor_with_proto_class_in_env(
     env: GcIdx,
     proto_class_name: Option<&str>,
 ) -> error::Result<(GcIdx, GcIdx)> {
+    let realm = crate::environment::global_env_root(&vm.heap, env);
+    let object_proto = vm
+        .realm_object_prototypes
+        .get(&realm.0)
+        .cloned()
+        .unwrap_or_else(|| vm.object_proto.clone());
+    let function_proto = vm
+        .realm_function_prototypes
+        .get(&realm.0)
+        .cloned()
+        .unwrap_or_else(|| vm.function_proto.clone());
     let mut method_props: IndexMap<PropertyKey, PropertyDescriptor> = IndexMap::new();
     for (n, f, len) in methods {
         let func_idx = vm.new_native_function_in_env(n, *f, *len, env)?;
@@ -2232,7 +2243,7 @@ fn make_builtin_constructor_with_proto_class_in_env(
     }
     let proto_obj = HeapObj::Object(ObjectData {
         props: Mutex::new(method_props),
-        proto: Mutex::new(Some(vm.object_proto.clone())),
+        proto: Mutex::new(Some(object_proto)),
         extensible: AtomicBool::new(true),
         class_name: proto_class_name.map(Arc::from),
         private_fields: Mutex::new(std::collections::HashMap::new()),
@@ -2247,8 +2258,8 @@ fn make_builtin_constructor_with_proto_class_in_env(
         home_object: Mutex::new(None),
         is_class_ctor: std::sync::atomic::AtomicBool::new(false),
         prototype: Mutex::new(Some(Value::Object(proto_idx))),
-        proto: Mutex::new(match vm.function_proto {
-            Value::Object(_) => Some(vm.function_proto.clone()),
+        proto: Mutex::new(match function_proto {
+            Value::Object(_) => Some(function_proto),
             _ => None,
         }),
         props: Mutex::new(builtin_function_own_props(name, length)),

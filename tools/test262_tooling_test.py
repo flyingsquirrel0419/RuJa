@@ -24,6 +24,10 @@ from test262_object_constructor_admission import (
     OBJECT_CONSTRUCTOR_FEATURES,
     OBJECT_CONSTRUCTOR_FILES,
 )
+from test262_object_prototype_admission import (
+    OBJECT_PROTOTYPE_FEATURES_BY_FILE,
+    OBJECT_PROTOTYPE_FILES,
+)
 from test262_proxy_get_admission import PROXY_GET_FEATURES, PROXY_GET_FILES
 from test262_proxy_own_keys_admission import (
     PROXY_OWN_KEYS_FEATURES,
@@ -956,6 +960,58 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                         tool.should_skip(
                             {"features": ["Reflect.construct"]}, outside
                         )
+                    )
+                finally:
+                    tool.TEST262 = original_root
+
+    def test_object_prototype_manifest_is_exact_and_shared(self):
+        self.assertEqual(len(OBJECT_PROTOTYPE_FILES), 40)
+        self.assertEqual(
+            frozenset(OBJECT_PROTOTYPE_FEATURES_BY_FILE), OBJECT_PROTOTYPE_FILES
+        )
+        representative = {
+            "built-ins/Object/prototype/__lookupGetter__/lookup-own-get-err.js": {
+                "Proxy", "__getter__",
+            },
+            "built-ins/Object/prototype/propertyIsEnumerable/symbol_own_property.js": {
+                "Symbol",
+            },
+            "built-ins/Object/prototype/toString/proxy-function-async.js": {
+                "Proxy", "Symbol.toStringTag", "async-functions",
+            },
+        }
+        for path, features in representative.items():
+            self.assertEqual(
+                OBJECT_PROTOTYPE_FEATURES_BY_FILE[path], frozenset(features)
+            )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            outside = root / "test" / "built-ins/Object/prototype/future.js"
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for relative, features in OBJECT_PROTOTYPE_FEATURES_BY_FILE.items():
+                        path = root / "test" / relative
+                        self.assertTrue(tool.object_prototype_path(path))
+                        self.assertEqual(
+                            tool.object_prototype_features(path), features
+                        )
+                        self.assertFalse(
+                            tool.should_skip(
+                                {"features": sorted(features)}, path
+                            )
+                        )
+                        self.assertTrue(
+                            tool.should_skip(
+                                {"features": sorted(features | {"decorators"})},
+                                path,
+                            )
+                        )
+                    self.assertFalse(tool.object_prototype_path(outside))
+                    self.assertTrue(
+                        tool.should_skip({"features": ["Proxy"]}, outside)
                     )
                 finally:
                     tool.TEST262 = original_root

@@ -378,6 +378,35 @@ fn iterator_zip_keyed_wide_step_consumes_fuel_and_completes() {
 }
 
 #[test]
+fn object_prototype_proxy_chain_walks_consume_fuel() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        var cyclicProxy;
+        cyclicProxy = new Proxy({}, {
+          getOwnPropertyDescriptor: function() { return undefined; },
+          getPrototypeOf: function() { return cyclicProxy; }
+        });
+        "#,
+    )
+    .expect("failed to create cyclic prototype proxy");
+
+    for expression in [
+        "Object.prototype.isPrototypeOf.call({}, cyclicProxy)",
+        "Object.prototype.__lookupGetter__.call(cyclicProxy, 'value')",
+    ] {
+        vm.set_fuel(Some(100));
+        let error = vm
+            .run(expression)
+            .expect_err("cyclic Proxy prototype walk should exhaust fuel");
+        assert!(
+            error.to_string().contains("fuel exhausted"),
+            "expected fuel exhaustion for {expression}, got: {error}"
+        );
+    }
+}
+
+#[test]
 fn normal_errors_remain_catchable() {
     // Fuel change must not break ordinary try/catch of catchable errors.
     let mut vm = Vm::new().expect("failed to initialize VM");

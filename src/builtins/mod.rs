@@ -1679,6 +1679,12 @@ fn typed_array_constructor_entries() -> [(&'static str, NativeFn, crate::value::
 }
 
 fn make_typed_array_intrinsic_in_env(vm: &mut Vm, env: GcIdx) -> error::Result<(Value, Value)> {
+    let realm = crate::environment::global_env_root(&vm.heap, env);
+    let object_proto = vm
+        .realm_object_prototypes
+        .get(&realm.0)
+        .cloned()
+        .unwrap_or_else(|| vm.object_proto.clone());
     let typed_array_ctor = Value::Object(vm.new_native_function_in_env(
         "TypedArray",
         typed_array_intrinsic_constructor,
@@ -1688,7 +1694,7 @@ fn make_typed_array_intrinsic_in_env(vm: &mut Vm, env: GcIdx) -> error::Result<(
     let typed_array_proto =
         Value::Object(GcIdx(vm.heap.allocate(HeapObj::Object(ObjectData {
             props: Mutex::new(IndexMap::new()),
-            proto: Mutex::new(Some(vm.object_proto.clone())),
+            proto: Mutex::new(Some(object_proto)),
             extensible: AtomicBool::new(true),
             class_name: Some(Arc::from("TypedArray")),
             private_fields: Mutex::new(std::collections::HashMap::new()),
@@ -2359,12 +2365,29 @@ fn make_error_constructor_in_env(
     name: &str,
     env: GcIdx,
 ) -> error::Result<(GcIdx, GcIdx)> {
+    let realm = crate::environment::global_env_root(&vm.heap, env);
+    let object_proto = vm
+        .realm_object_prototypes
+        .get(&realm.0)
+        .cloned()
+        .unwrap_or_else(|| vm.object_proto.clone());
+    let function_proto = vm
+        .realm_function_prototypes
+        .get(&realm.0)
+        .cloned()
+        .unwrap_or_else(|| vm.function_proto.clone());
     let proto_parent = if name == "Error" {
-        vm.object_proto.clone()
+        object_proto.clone()
+    } else if let Some(error_proto) = vm
+        .realm_error_prototypes
+        .get(&(realm.0, Arc::from("Error")))
+        .cloned()
+    {
+        error_proto
     } else if matches!(vm.error_proto, Value::Object(_)) {
         vm.error_proto.clone()
     } else {
-        vm.object_proto.clone()
+        object_proto
     };
     let proto_obj = HeapObj::Object(ObjectData {
         props: Mutex::new(IndexMap::new()),
@@ -2393,8 +2416,8 @@ fn make_error_constructor_in_env(
         home_object: Mutex::new(None),
         is_class_ctor: std::sync::atomic::AtomicBool::new(false),
         prototype: Mutex::new(Some(Value::Object(proto_idx))),
-        proto: Mutex::new(match vm.function_proto {
-            Value::Object(_) => Some(vm.function_proto.clone()),
+        proto: Mutex::new(match function_proto {
+            Value::Object(_) => Some(function_proto),
             _ => None,
         }),
         props: Mutex::new(builtin_function_own_props(name, ctor_length)),
@@ -2742,7 +2765,7 @@ fn make_test262_realm(vm: &mut Vm) -> error::Result<Value> {
     let realm_env = crate::environment::new_env(&vm.heap, None, true)?;
     let global_idx = vm.heap.allocate(HeapObj::Object(crate::value::ObjectData {
         props: Mutex::new(IndexMap::new()),
-        proto: Mutex::new(Some(vm.object_proto.clone())),
+        proto: Mutex::new(None),
         extensible: AtomicBool::new(true),
         class_name: Some(Arc::from("realm-global")),
         private_fields: Mutex::new(std::collections::HashMap::new()),
@@ -2775,56 +2798,22 @@ fn make_test262_realm(vm: &mut Vm) -> error::Result<Value> {
         "parseInt",
         Value::Object(parse_int_idx),
     );
-    if let Some(object) = crate::environment::get(&vm.heap, vm.global, "Object") {
-        define_realm_global(vm, realm_env, &global, "Object", object);
-    }
-    if let Some(bigint) = crate::environment::get(&vm.heap, vm.global, "BigInt") {
-        define_realm_global(vm, realm_env, &global, "BigInt", bigint);
-    }
     if let Some(proxy) = crate::environment::get(&vm.heap, vm.global, "Proxy") {
         define_realm_global(vm, realm_env, &global, "Proxy", proxy);
-    }
-    let (realm_error_ctor, realm_error_proto) =
-        make_error_constructor_in_env(vm, "Error", realm_env)?;
-    define_realm_global(
-        vm,
-        realm_env,
-        &global,
-        "Error",
-        Value::Object(realm_error_ctor),
-    );
-    let realm_error_ctor_value = Value::Object(realm_error_ctor);
-    let realm_error_proto_value = Value::Object(realm_error_proto);
-    for name in [
-        "EvalError",
-        "RangeError",
-        "ReferenceError",
-        "SyntaxError",
-        "TypeError",
-        "URIError",
-        "AggregateError",
-    ] {
-        let (ctor, proto) = make_error_constructor_in_env(vm, name, realm_env)?;
-        vm.heap.with_obj(ctor.0, |obj| {
-            if let HeapObj::Function(f) = obj {
-                *f.proto.lock() = Some(realm_error_ctor_value.clone());
-            }
-        });
-        vm.heap.with_obj(proto.0, |obj| {
-            *obj.proto().lock() = Some(realm_error_proto_value.clone());
-        });
-        define_realm_global(vm, realm_env, &global, name, Value::Object(ctor));
     }
     let realm_function_proto_idx =
         vm.new_native_function_in_env("Function.prototype", function_proto_noop, 0, realm_env)?;
     let realm_function_proto = Value::Object(realm_function_proto_idx);
     vm.heap.with_obj(realm_function_proto_idx.0, |obj| {
         if let HeapObj::Function(f) = obj {
-            *f.proto.lock() = Some(vm.object_proto.clone());
+            *f.proto.lock() = None;
         }
     });
     vm.realm_function_prototypes
         .insert(realm_env.0, realm_function_proto.clone());
+    for function in [eval_idx, parse_int_idx] {
+        set_function_object_proto(vm, function, &realm_function_proto);
+    }
 
     let function_ctor_idx =
         vm.new_native_function_in_env("Function", function_constructor, 1, realm_env)?;
@@ -2897,62 +2886,82 @@ fn make_test262_realm(vm: &mut Vm) -> error::Result<Value> {
         "Function",
         Value::Object(function_ctor_idx),
     );
-    if let Some(Value::Object(main_object_idx)) =
-        crate::environment::get(&vm.heap, vm.global, "Object")
-    {
-        let mut main_props = vm
-            .heap
-            .with_obj(main_object_idx.0, |obj| obj.props().lock().clone());
-        let main_prototype = main_props
-            .get(&PropertyKey::from("prototype"))
-            .map(|descriptor| descriptor.value.clone())
-            .ok_or_else(|| Error::internal("missing Object prototype intrinsic"))?;
-        let prototype_props = match main_prototype {
-            Value::Object(index) => vm
-                .heap
-                .with_obj(index.0, |object| object.props().lock().clone()),
-            _ => return Err(Error::internal("Object prototype is not an object")),
-        };
-        let realm_object_prototype_idx = vm.alloc(HeapObj::Object(ObjectData {
-            props: Mutex::new(prototype_props),
-            proto: Mutex::new(None),
-            extensible: AtomicBool::new(true),
-            class_name: Some(Arc::from("Object")),
-            private_fields: Mutex::new(std::collections::HashMap::new()),
-            primitive: Mutex::new(None),
-        }))?;
-        let realm_object_prototype = Value::Object(realm_object_prototype_idx);
-        let prototype_pin = vm.pin(&realm_object_prototype);
-        if let Some(descriptor) = main_props.get_mut(&PropertyKey::from("prototype")) {
-            descriptor.value = realm_object_prototype.clone();
+    let realm_object_prototype_idx = vm.alloc(HeapObj::Object(ObjectData {
+        props: Mutex::new(IndexMap::new()),
+        proto: Mutex::new(None),
+        extensible: AtomicBool::new(true),
+        class_name: Some(Arc::from("Object")),
+        private_fields: Mutex::new(std::collections::HashMap::new()),
+        primitive: Mutex::new(None),
+    }))?;
+    let realm_object_prototype = Value::Object(realm_object_prototype_idx);
+    let mut object_pins = vm.pin(&realm_object_prototype);
+    let realm_object_idx =
+        vm.new_native_function_in_env("Object", object_constructor, 1, realm_env)?;
+    let realm_object = Value::Object(realm_object_idx);
+    object_pins += vm.pin(&realm_object);
+    vm.heap.with_obj(realm_object_idx.0, |obj| {
+        obj.props().lock().insert(
+            PropertyKey::from("prototype"),
+            const_prop(realm_object_prototype.clone()),
+        );
+        if let HeapObj::Function(function) = obj {
+            *function.prototype.lock() = Some(realm_object_prototype.clone());
         }
-        let realm_object_idx =
-            vm.new_native_function_in_env("Object", object_constructor, 1, realm_env)?;
-        vm.heap.with_obj(realm_object_idx.0, |obj| {
-            *obj.props().lock() = main_props;
-            if let HeapObj::Function(function) = obj {
-                *function.prototype.lock() = Some(realm_object_prototype.clone());
+    });
+    set_function_object_proto(vm, realm_object_idx, &realm_function_proto);
+    install_object_static_methods_in_env(vm, realm_object_idx, realm_env)?;
+    install_object_prototype_methods_in_env(vm, realm_object_prototype_idx, realm_env)?;
+    vm.heap.with_obj(realm_object_prototype_idx.0, |object| {
+        object.props().lock().insert(
+            PropertyKey::from("constructor"),
+            data_prop(realm_object.clone()),
+        );
+    });
+    install_object_proto_accessor_in_env(vm, realm_object_prototype_idx, realm_env)?;
+    define_realm_global(vm, realm_env, &global, "Object", realm_object);
+    vm.realm_object_prototypes
+        .insert(realm_env.0, realm_object_prototype.clone());
+    vm.heap.with_obj(global_idx, |object| {
+        *object.proto().lock() = Some(realm_object_prototype.clone());
+    });
+    vm.heap.with_obj(realm_function_proto_idx.0, |object| {
+        *object.proto().lock() = Some(realm_object_prototype.clone());
+    });
+    vm.unpin_many(object_pins);
+
+    let (realm_error_ctor, realm_error_proto) =
+        make_error_constructor_in_env(vm, "Error", realm_env)?;
+    define_realm_global(
+        vm,
+        realm_env,
+        &global,
+        "Error",
+        Value::Object(realm_error_ctor),
+    );
+    let realm_error_ctor_value = Value::Object(realm_error_ctor);
+    let realm_error_proto_value = Value::Object(realm_error_proto);
+    for name in [
+        "EvalError",
+        "RangeError",
+        "ReferenceError",
+        "SyntaxError",
+        "TypeError",
+        "URIError",
+        "AggregateError",
+    ] {
+        let (ctor, proto) = make_error_constructor_in_env(vm, name, realm_env)?;
+        vm.heap.with_obj(ctor.0, |obj| {
+            if let HeapObj::Function(f) = obj {
+                *f.proto.lock() = Some(realm_error_ctor_value.clone());
             }
         });
-        set_function_object_proto(vm, realm_object_idx, &realm_function_proto);
-        install_object_static_methods_in_env(vm, realm_object_idx, realm_env)?;
-        vm.heap.with_obj(realm_object_prototype_idx.0, |object| {
-            object.props().lock().insert(
-                PropertyKey::from("constructor"),
-                data_prop(Value::Object(realm_object_idx)),
-            );
+        vm.heap.with_obj(proto.0, |obj| {
+            *obj.proto().lock() = Some(realm_error_proto_value.clone());
         });
-        define_realm_global(
-            vm,
-            realm_env,
-            &global,
-            "Object",
-            Value::Object(realm_object_idx),
-        );
-        vm.realm_object_prototypes
-            .insert(realm_env.0, realm_object_prototype);
-        vm.unpin_many(prototype_pin);
+        define_realm_global(vm, realm_env, &global, name, Value::Object(ctor));
     }
+
     install_async_function_intrinsic(vm, realm_env, &realm_function_proto, function_ctor_idx)?;
     let object_proto = vm
         .realm_object_prototypes
@@ -2960,7 +2969,7 @@ fn make_test262_realm(vm: &mut Vm) -> error::Result<Value> {
         .cloned()
         .ok_or_else(|| Error::internal("missing Object prototype intrinsic"))?;
     let realm_iterator_proto =
-        install_iterator_intrinsic_in_env(vm, realm_env, Some(&global), object_proto)?;
+        install_iterator_intrinsic_in_env(vm, realm_env, Some(&global), object_proto.clone())?;
     install_array_intrinsic_in_env(vm, realm_env, Some(&global))?;
     setup_array_iterator_proto_in_env(vm, realm_env, realm_iterator_proto.clone())?;
     let (str_ctor, str_proto) = make_builtin_constructor_with_in_env(
@@ -3019,7 +3028,7 @@ fn make_test262_realm(vm: &mut Vm) -> error::Result<Value> {
         vm.new_native_function_in_env("asUintN", bigint_as_uint_n, 2, realm_env)?;
     let bigint_proto_idx = vm.heap.allocate(HeapObj::Object(ObjectData {
         props: Mutex::new(IndexMap::new()),
-        proto: Mutex::new(Some(vm.object_proto.clone())),
+        proto: Mutex::new(Some(object_proto.clone())),
         extensible: AtomicBool::new(true),
         class_name: Some(Arc::from("BigInt")),
         private_fields: Mutex::new(std::collections::HashMap::new()),
@@ -3140,7 +3149,7 @@ fn make_test262_realm(vm: &mut Vm) -> error::Result<Value> {
     );
     let symbol_proto_idx = vm.heap.allocate(HeapObj::Object(ObjectData {
         props: Mutex::new(symbol_proto_props),
-        proto: Mutex::new(Some(vm.object_proto.clone())),
+        proto: Mutex::new(Some(object_proto)),
         extensible: AtomicBool::new(true),
         class_name: Some(Arc::from("Symbol")),
         private_fields: Mutex::new(std::collections::HashMap::new()),
@@ -3684,16 +3693,12 @@ fn object_property_is_enumerable(
     this: Option<Value>,
 ) -> error::Result<Value> {
     let this = this.unwrap_or(Value::Undefined);
+    let key = to_property_key_descriptor(vm, args.first().unwrap_or(&Value::Undefined))?;
     if this.is_nullish() {
         return Err(Error::type_err(
             "Cannot convert undefined or null to object",
         ));
     }
-    let key = match args.first() {
-        Some(Value::Symbol(id)) => PropertyKey::Symbol(*id),
-        Some(v) => PropertyKey::from(vm.to_property_key(v)?),
-        None => PropertyKey::from(""),
-    };
     let object = vm.to_object(&this)?;
     Ok(Value::Bool(
         own_property_descriptor_for_key_or_throw(vm, &object, &key)?
@@ -3712,21 +3717,23 @@ fn object_value_of(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::
 }
 
 fn legacy_accessor_descriptor(vm: &mut Vm, slot: &str, accessor: Value) -> error::Result<Value> {
-    let idx = vm.new_object()?;
-    vm.heap.with_obj(idx.0, |obj| {
-        let props = obj.props();
-        let mut props = props.lock();
-        props.insert(PropertyKey::from(slot), data_prop(accessor));
-        props.insert(
-            PropertyKey::from("enumerable"),
-            data_prop(Value::Bool(true)),
-        );
-        props.insert(
-            PropertyKey::from("configurable"),
-            data_prop(Value::Bool(true)),
-        );
-    });
-    Ok(Value::Object(idx))
+    let descriptor = new_object_in_current_realm(vm)?;
+    if let Value::Object(idx) = &descriptor {
+        vm.heap.with_obj(idx.0, |obj| {
+            let props = obj.props();
+            let mut props = props.lock();
+            props.insert(PropertyKey::from(slot), data_prop(accessor));
+            props.insert(
+                PropertyKey::from("enumerable"),
+                data_prop(Value::Bool(true)),
+            );
+            props.insert(
+                PropertyKey::from("configurable"),
+                data_prop(Value::Bool(true)),
+            );
+        });
+    }
+    Ok(descriptor)
 }
 
 fn object_define_legacy_accessor(
@@ -3746,11 +3753,17 @@ fn object_define_legacy_accessor(
     if !is_callable(&accessor, &vm.heap) {
         return Err(Error::type_err("Accessor must be a function".to_string()));
     }
-    let key = get_arg(args, 0);
-    let desc = legacy_accessor_descriptor(vm, slot, accessor)?;
-    let define_args = [object, key, desc];
-    object_define_property_result(vm, &define_args, true)?;
-    Ok(Value::Undefined)
+    let mut pin_count = vm.pin(&object);
+    pin_count += vm.pin(&accessor);
+    let result = (|| {
+        let key = to_property_key_descriptor(vm, &get_arg(args, 0))?;
+        let key = property_key_to_value(&key);
+        let descriptor = legacy_accessor_descriptor(vm, slot, accessor)?;
+        object_define_property_result(vm, &[object.clone(), key, descriptor], true)?;
+        Ok(Value::Undefined)
+    })();
+    vm.unpin_many(pin_count);
+    result
 }
 
 fn object_define_getter(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
@@ -3775,27 +3788,37 @@ fn object_lookup_legacy_accessor(
     }
     let mut object = vm.to_object(&this)?;
     let key = to_property_key_descriptor(vm, &get_arg(args, 0))?;
-    for _ in 0..1024 {
-        if let Some(desc) = own_property_descriptor_for_key(vm, &object, &key) {
-            if desc.is_accessor {
-                return Ok(match slot {
-                    "get" => desc.get.unwrap_or(Value::Undefined),
-                    "set" => desc.set.unwrap_or(Value::Undefined),
-                    _ => Value::Undefined,
-                });
+    loop {
+        vm.consume_fuel()?;
+        let object_pin = vm.pin(&object);
+        let descriptor = own_property_descriptor_for_key_or_throw(vm, &object, &key);
+        match descriptor {
+            Err(error) => {
+                vm.unpin_many(object_pin);
+                return Err(error);
             }
-            return Ok(Value::Undefined);
+            Ok(Some(desc)) => {
+                let result = if desc.is_accessor {
+                    match slot {
+                        "get" => desc.get.unwrap_or(Value::Undefined),
+                        "set" => desc.set.unwrap_or(Value::Undefined),
+                        _ => Value::Undefined,
+                    }
+                } else {
+                    Value::Undefined
+                };
+                vm.unpin_many(object_pin);
+                return Ok(result);
+            }
+            Ok(None) => {}
         }
-        let next = match object {
-            Value::Object(idx) => vm.heap.with_obj(idx.0, |obj| obj.proto().lock().clone()),
-            _ => None,
-        };
-        match next {
-            Some(next @ Value::Object(_)) => object = next,
-            _ => return Ok(Value::Undefined),
+        let next = vm.get_prototype_of(&object);
+        vm.unpin_many(object_pin);
+        match next? {
+            Some(next) => object = next,
+            None => return Ok(Value::Undefined),
         }
     }
-    Ok(Value::Undefined)
 }
 
 fn object_lookup_getter(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
@@ -6555,6 +6578,65 @@ const OBJECT_STATIC_METHODS: &[(&str, NativeFn, usize)] = &[
     ),
 ];
 
+const OBJECT_PROTOTYPE_METHODS: &[(&str, NativeFn, usize)] = &[
+    ("toString", object_to_string_native, 0),
+    ("toLocaleString", object_to_locale_string, 0),
+    ("hasOwnProperty", object_has_own_property, 1),
+    ("isPrototypeOf", object_is_prototype_of, 1),
+    ("propertyIsEnumerable", object_property_is_enumerable, 1),
+    ("valueOf", object_value_of, 0),
+    ("__defineGetter__", object_define_getter, 2),
+    ("__defineSetter__", object_define_setter, 2),
+    ("__lookupGetter__", object_lookup_getter, 1),
+    ("__lookupSetter__", object_lookup_setter, 1),
+];
+
+fn install_object_prototype_methods_in_env(
+    vm: &mut Vm,
+    object_proto: GcIdx,
+    env: GcIdx,
+) -> error::Result<()> {
+    let prototype = Value::Object(object_proto);
+    let pin_count = vm.pin(&prototype);
+    let result = (|| {
+        for &(name, function, length) in OBJECT_PROTOTYPE_METHODS {
+            let method = vm.new_native_function_in_env(name, function, length, env)?;
+            vm.heap.with_obj(object_proto.0, |object| {
+                object
+                    .props()
+                    .lock()
+                    .insert(PropertyKey::from(name), data_prop(Value::Object(method)));
+            });
+        }
+        Ok(())
+    })();
+    vm.unpin_many(pin_count);
+    result
+}
+
+fn install_object_proto_accessor_in_env(
+    vm: &mut Vm,
+    object_proto: GcIdx,
+    env: GcIdx,
+) -> error::Result<()> {
+    let prototype = Value::Object(object_proto);
+    let mut pin_count = vm.pin(&prototype);
+    let result = (|| {
+        let proto_get = vm.new_native_function_in_env("get __proto__", object_proto_get, 0, env)?;
+        pin_count += vm.pin(&Value::Object(proto_get));
+        let proto_set = vm.new_native_function_in_env("set __proto__", object_proto_set, 1, env)?;
+        vm.heap.with_obj(object_proto.0, |object| {
+            object.props().lock().insert(
+                PropertyKey::from("__proto__"),
+                accessor_prop(Value::Object(proto_get), Value::Object(proto_set)),
+            );
+        });
+        Ok(())
+    })();
+    vm.unpin_many(pin_count);
+    result
+}
+
 fn install_object_static_methods_in_env(
     vm: &mut Vm,
     object_ctor: GcIdx,
@@ -6579,34 +6661,24 @@ fn install_object_static_methods_in_env(
 }
 
 pub fn setup(vm: &mut Vm) -> error::Result<()> {
-    let (object_ctor, object_proto) = make_builtin_constructor(
-        vm,
-        "Object",
-        &[
-            ("toString", object_to_string_native, 0),
-            ("toLocaleString", object_to_locale_string, 0),
-            ("hasOwnProperty", object_has_own_property, 1),
-            ("isPrototypeOf", object_is_prototype_of, 1),
-            ("propertyIsEnumerable", object_property_is_enumerable, 1),
-            ("valueOf", object_value_of, 0),
-            ("__defineGetter__", object_define_getter, 2),
-            ("__defineSetter__", object_define_setter, 2),
-            ("__lookupGetter__", object_lookup_getter, 1),
-            ("__lookupSetter__", object_lookup_setter, 1),
-        ],
-    )?;
+    let (object_ctor, object_proto) = make_builtin_constructor(vm, "Object", &[])?;
     install_object_static_methods_in_env(vm, object_ctor, vm.global)?;
     define_global(vm, "Object", Value::Object(object_ctor));
     vm.object_proto = Value::Object(object_proto);
-    let proto_get = vm.new_native_function("get __proto__", object_proto_get, 0)?;
-    let proto_set = vm.new_native_function("set __proto__", object_proto_set, 1)?;
     vm.heap.with_obj(object_proto.0, |obj| {
         *obj.proto().lock() = None;
+        obj.props()
+            .lock()
+            .shift_remove(&PropertyKey::from("constructor"));
+    });
+    install_object_prototype_methods_in_env(vm, object_proto, vm.global)?;
+    vm.heap.with_obj(object_proto.0, |obj| {
         obj.props().lock().insert(
-            PropertyKey::from("__proto__"),
-            accessor_prop(Value::Object(proto_get), Value::Object(proto_set)),
+            PropertyKey::from("constructor"),
+            data_prop(Value::Object(object_ctor)),
         );
     });
+    install_object_proto_accessor_in_env(vm, object_proto, vm.global)?;
 
     let (error_ctor, error_proto) = make_error_constructor(vm, "Error")?;
     vm.error_proto = Value::Object(error_proto);
@@ -9704,32 +9776,25 @@ fn object_is_prototype_of(
         ));
     }
     let this_obj = vm.to_object(&this)?;
-    let Value::Object(this_idx) = this_obj else {
-        return Ok(Value::Bool(false));
-    };
-    let Value::Object(arg_idx) = arg else {
-        return Ok(Value::Bool(false));
-    };
-    let mut cur = vm
-        .heap
-        .with_obj(arg_idx.0, |o| o.proto().lock().clone())
-        .unwrap_or(Value::Null);
-    let mut depth = 0;
-    while let Value::Object(idx) = &cur {
-        if depth > 1024 {
-            break;
+    let this_pin = vm.pin(&this_obj);
+    let result = (|| {
+        let mut current = arg;
+        loop {
+            vm.consume_fuel()?;
+            let current_pin = vm.pin(&current);
+            let next = vm.get_prototype_of(&current);
+            vm.unpin_many(current_pin);
+            let Some(next) = next? else {
+                return Ok(Value::Bool(false));
+            };
+            if vm.strict_eq(&next, &this_obj) {
+                return Ok(Value::Bool(true));
+            }
+            current = next;
         }
-        depth += 1;
-        if *idx == this_idx {
-            return Ok(Value::Bool(true));
-        }
-        let proto = vm.heap.with_obj(idx.0, |o| o.proto().lock().clone());
-        cur = proto.unwrap_or(Value::Null);
-        if cur.is_null() {
-            break;
-        }
-    }
-    Ok(Value::Bool(false))
+    })();
+    vm.unpin_many(this_pin);
+    result
 }
 
 fn error_is_error(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {

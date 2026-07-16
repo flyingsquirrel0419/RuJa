@@ -1418,6 +1418,11 @@ pub(crate) fn install_atomics_in_env(
         .get(&env.0)
         .cloned()
         .unwrap_or_else(|| vm.function_proto.clone());
+    let object_proto = vm
+        .realm_object_prototypes
+        .get(&env.0)
+        .cloned()
+        .unwrap_or_else(|| vm.object_proto.clone());
     let mut props = IndexMap::new();
     for (name, function, length) in entries {
         let function = vm.new_native_function_in_env(name, *function, *length, env)?;
@@ -1432,7 +1437,7 @@ pub(crate) fn install_atomics_in_env(
     );
     let atomics = Value::Object(GcIdx(vm.heap.allocate(HeapObj::Object(ObjectData {
         props: Mutex::new(props),
-        proto: Mutex::new(Some(vm.object_proto.clone())),
+        proto: Mutex::new(Some(object_proto)),
         extensible: AtomicBool::new(true),
         class_name: Some(Arc::from("Atomics")),
         private_fields: Mutex::new(std::collections::HashMap::new()),
