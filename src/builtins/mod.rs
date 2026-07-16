@@ -2974,10 +2974,17 @@ fn install_async_generator_intrinsics_in_env(
         0,
         realm,
     )?;
+    let async_dispose =
+        vm.new_native_function_in_env("[Symbol.asyncDispose]", async_iterator_dispose, 0, realm)?;
     vm.heap.with_obj(async_iterator_prototype.0, |object| {
-        object.props().lock().insert(
+        let mut props = object.props().lock();
+        props.insert(
             PropertyKey::Symbol(vm.well_known_symbols.async_iterator),
             data_prop(Value::Object(async_iterator)),
+        );
+        props.insert(
+            PropertyKey::Symbol(vm.well_known_symbols.async_dispose),
+            data_prop(Value::Object(async_dispose)),
         );
     });
 
@@ -9028,6 +9035,146 @@ fn iterator_dispose(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error:
         vm.call_function(&return_method, &[], Some(receiver))?;
     }
     Ok(Value::Undefined)
+}
+
+fn async_iterator_dispose_unwrap(
+    _vm: &mut Vm,
+    _args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
+    Ok(Value::Undefined)
+}
+
+fn reject_async_iterator_dispose(
+    vm: &mut Vm,
+    capability: &collections::PromiseCapability,
+    error: &Arc<Error>,
+    realm: GcIdx,
+) -> error::Result<()> {
+    let reason = match error.thrown_value.clone() {
+        Some(reason) => reason,
+        None => vm.make_error_value_in_realm(error, realm)?,
+    };
+    let pins = vm.pin_many(&[
+        capability.promise.clone(),
+        capability.resolve.clone(),
+        capability.reject.clone(),
+        reason.clone(),
+    ]);
+    let result = vm.call_function(
+        &capability.reject,
+        std::slice::from_ref(&reason),
+        Some(Value::Undefined),
+    );
+    vm.unpin_many(pins);
+    result.map(|_| ())
+}
+
+fn async_iterator_dispose(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let realm = vm.native_callee_closure().unwrap_or(vm.global);
+    let realm = env::global_env_root(&vm.heap, realm);
+    let constructor = vm.promise_constructor_for_env(realm);
+    let capability = new_promise_capability_in_env(vm, constructor, realm)?;
+    let promise = capability.promise.clone();
+    let receiver = this.unwrap_or(Value::Undefined);
+    let pins = vm.pin_many(&[
+        receiver.clone(),
+        capability.promise.clone(),
+        capability.resolve.clone(),
+        capability.reject.clone(),
+    ]);
+
+    let result = (|| -> error::Result<()> {
+        let return_method = match vm.get_property(&receiver, "return") {
+            Ok(method) => method,
+            Err(error) => {
+                reject_async_iterator_dispose(vm, &capability, &error, realm)?;
+                return Ok(());
+            }
+        };
+        if return_method.is_nullish() {
+            vm.call_function(
+                &capability.resolve,
+                &[Value::Undefined],
+                Some(Value::Undefined),
+            )?;
+            return Ok(());
+        }
+        if !is_callable(&return_method, &vm.heap) {
+            let error = Error::type_err("Async iterator return method is not callable");
+            reject_async_iterator_dispose(vm, &capability, &error, realm)?;
+            return Ok(());
+        }
+
+        let return_pin = vm.pin(&return_method);
+        let returned = vm.call_function(&return_method, &[], Some(receiver.clone()));
+        vm.unpin(return_pin);
+        let returned = match returned {
+            Ok(value) => value,
+            Err(error) => {
+                reject_async_iterator_dispose(vm, &capability, &error, realm)?;
+                return Ok(());
+            }
+        };
+        let returned_pin = vm.pin(&returned);
+        let wrapper = vm.promise_resolve_intrinsic_in_env(returned, realm);
+        vm.unpin(returned_pin);
+        let wrapper = match wrapper {
+            Ok(wrapper) => wrapper,
+            Err(error) => {
+                reject_async_iterator_dispose(vm, &capability, &error, realm)?;
+                return Ok(());
+            }
+        };
+        let wrapper_pin = vm.pin(&Value::Object(wrapper));
+        let attach_result = (|| -> error::Result<()> {
+            let unwrap =
+                vm.new_native_function_in_env("", async_iterator_dispose_unwrap, 1, realm)?;
+            let handler = crate::value::PromiseHandler {
+                on_fulfilled: Value::Object(unwrap),
+                on_rejected: Value::Undefined,
+                derived: Some(crate::value::PromiseReactionCapability {
+                    promise: capability.promise.clone(),
+                    resolve: capability.resolve.clone(),
+                    reject: capability.reject.clone(),
+                }),
+                continuation: None,
+            };
+            let state = vm.heap.with_obj(wrapper.0, |object| {
+                if let HeapObj::Promise(data) = object {
+                    *data.state.lock()
+                } else {
+                    crate::value::PromiseStatus::Fulfilled
+                }
+            });
+            if state == crate::value::PromiseStatus::Pending {
+                vm.heap.with_obj(wrapper.0, |object| {
+                    if let HeapObj::Promise(data) = object {
+                        data.handlers.lock().push(handler);
+                    }
+                });
+            } else {
+                vm.microtask_queue.push_back(crate::vm::Microtask::Then {
+                    promise: wrapper,
+                    on_fulfilled: handler.on_fulfilled,
+                    on_rejected: handler.on_rejected,
+                    derived: handler.derived,
+                    continuation: None,
+                });
+            }
+            Ok(())
+        })();
+        vm.unpin(wrapper_pin);
+        attach_result?;
+        Ok(())
+    })();
+    vm.unpin_many(pins);
+    result?;
+    Ok(promise)
 }
 
 fn iterator_constructor_get(

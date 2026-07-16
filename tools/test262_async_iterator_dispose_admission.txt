@@ -1,0 +1,10 @@
+# AsyncIterator.prototype[Symbol.asyncDispose].
+built-ins/AsyncIteratorPrototype/Symbol.asyncDispose/invokes-return.js
+built-ins/AsyncIteratorPrototype/Symbol.asyncDispose/is-function.js
+built-ins/AsyncIteratorPrototype/Symbol.asyncDispose/length.js
+built-ins/AsyncIteratorPrototype/Symbol.asyncDispose/name.js
+built-ins/AsyncIteratorPrototype/Symbol.asyncDispose/prop-desc.js
+built-ins/AsyncIteratorPrototype/Symbol.asyncDispose/return-val.js
+built-ins/AsyncIteratorPrototype/Symbol.asyncDispose/throw-rejected-return.js
+built-ins/AsyncIteratorPrototype/Symbol.asyncDispose/throw-return-getter.js
+built-ins/AsyncIteratorPrototype/Symbol.asyncDispose/throw-return.js

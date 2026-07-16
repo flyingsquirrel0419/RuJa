@@ -114,6 +114,157 @@ fn synchronous_iterators_share_iterator_prototype_and_dispose() {
 }
 
 #[test]
+fn async_iterator_dispose_uses_method_realm_and_awaits_return() {
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var mainGenerator = async function* () {};
+            var foreignGenerator = other.eval("(async function* () {})");
+            var mainPrototype = Object.getPrototypeOf(
+                mainGenerator.constructor.prototype.prototype
+            );
+            var foreignPrototype = Object.getPrototypeOf(
+                foreignGenerator.constructor.prototype.prototype
+            );
+            var mainDispose = mainPrototype[Symbol.asyncDispose];
+            var foreignDispose = foreignPrototype[Symbol.asyncDispose];
+            var ForeignPromise = other.Promise;
+            other.Promise = null;
+            var descriptor = Object.getOwnPropertyDescriptor(
+                foreignPrototype,
+                Symbol.asyncDispose
+            );
+            var calls = [];
+            var receiver = {
+                return: function (value) {
+                    calls.push(this === receiver, arguments.length, value === undefined);
+                    return {
+                        then: function (resolve) {
+                            calls.push(this !== receiver);
+                            resolve({ done: true });
+                        }
+                    };
+                }
+            };
+            var foreignPromise = foreignDispose.call(receiver);
+            var foreignResult = await foreignPromise;
+            var mainPromise = mainDispose.call({});
+            var mainResult = await mainPromise;
+            var nonCallableError = await foreignDispose.call({ return: 1 }).then(
+                function () { return false; },
+                function (error) { return error instanceof other.TypeError; }
+            );
+            var thrown = {};
+            var getterReason = await foreignDispose.call({
+                get return() { throw thrown; }
+            }).then(
+                function () { return false; },
+                function (error) { return error === thrown; }
+            );
+            var rejected = {};
+            var rejectionReason = await foreignDispose.call({
+                return: function () { return Promise.reject(rejected); }
+            }).then(
+                function () { return false; },
+                function (error) { return error === rejected; }
+            );
+            var order = [];
+            var constructorReason = {};
+            var abruptPromise = foreignDispose.call({
+                return: function () {
+                    var promise = ForeignPromise.resolve();
+                    Object.defineProperty(promise, "constructor", {
+                        get: function () {
+                            throw constructorReason;
+                        }
+                    });
+                    return promise;
+                }
+            });
+            abruptPromise.then(
+                undefined,
+                function (error) {
+                    order.push(error === constructorReason ? "dispose" : "wrong");
+                }
+            );
+            ForeignPromise.resolve().then(function () { order.push("marker"); });
+            await ForeignPromise.resolve();
+            await ForeignPromise.resolve();
+            [
+                mainDispose !== foreignDispose,
+                Object.getPrototypeOf(foreignDispose) === other.Function.prototype,
+                foreignPromise instanceof ForeignPromise,
+                !(foreignPromise instanceof Promise),
+                mainPromise instanceof Promise,
+                foreignResult === undefined,
+                mainResult === undefined,
+                calls.join(","),
+                nonCallableError,
+                getterReason,
+                rejectionReason,
+                order.join(","),
+                foreignDispose.name,
+                foreignDispose.length,
+                descriptor.writable,
+                descriptor.enumerable,
+                descriptor.configurable
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "true|true|true|true|true|true|true|true,0,true,true|true|true|true|dispose,marker|[Symbol.asyncDispose]|0|true|false|true"
+        ))
+    );
+}
+
+#[test]
+fn async_iterator_dispose_roots_observable_state_across_gc() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+    assert_eq!(
+        vm.run(
+            r#"
+            var generator = async function* () {};
+            var prototype = Object.getPrototypeOf(
+                generator.constructor.prototype.prototype
+            );
+            var receiver = {
+                get return() {
+                    forceGc();
+                    return function (value) {
+                        forceGc();
+                        return {
+                            get then() {
+                                forceGc();
+                                return function (resolve) {
+                                    forceGc();
+                                    resolve({ done: true });
+                                };
+                            }
+                        };
+                    };
+                }
+            };
+            var promise = prototype[Symbol.asyncDispose].call(receiver);
+            forceGc();
+            var result = await promise;
+            forceGc();
+            result === undefined;
+        "#,
+        )
+        .expect("async iterator disposal should survive observable GC"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn iterator_constructor_uses_new_target_realm_default_prototype() {
     assert_eq!(
         run(r#"

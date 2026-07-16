@@ -147,7 +147,7 @@ impl Vm {
         self.promise_resolve_intrinsic_in_env(value, env)
     }
 
-    fn promise_resolve_intrinsic_in_env(
+    pub(crate) fn promise_resolve_intrinsic_in_env(
         &mut self,
         value: Value,
         env: GcIdx,
