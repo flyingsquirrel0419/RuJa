@@ -8673,6 +8673,39 @@ fn math_basic() {
 }
 
 #[test]
+fn math_tag_and_created_realm_intrinsic_are_spec_shaped() {
+    assert_eq!(
+        run(r#"
+            var descriptor = Object.getOwnPropertyDescriptor(Math, Symbol.toStringTag);
+            var borrowed = String.prototype.split.call(Math);
+            var initialTag = Object.prototype.toString.call(Math);
+            var deleted = delete Math[Symbol.toStringTag];
+            var fallbackTag = Object.prototype.toString.call(Math);
+            Object.defineProperty(Math, Symbol.toStringTag, descriptor);
+
+            var other = $262.createRealm().global;
+            var otherDescriptor = other.Object.getOwnPropertyDescriptor(
+              other.Math,
+              other.Symbol.toStringTag
+            );
+            [
+              descriptor.value, descriptor.writable, descriptor.enumerable,
+              descriptor.configurable, initialTag, borrowed[0], deleted, fallbackTag,
+              other.Math !== Math,
+              other.Object.getPrototypeOf(other.Math) === other.Object.prototype,
+              other.Object.getPrototypeOf(other.Math.abs) === other.Function.prototype,
+              other.Object.prototype.toString.call(other.Math),
+              otherDescriptor.value, otherDescriptor.writable,
+              otherDescriptor.enumerable, otherDescriptor.configurable
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "Math|false|false|true|[object Math]|[object Math]|true|[object Object]|true|true|true|[object Math]|Math|false|false|true"
+        ))
+    );
+}
+
+#[test]
 fn math_round_half() {
     assert_eq!(run("Object.is(Math.round(-0), -0);"), Value::Bool(true));
     assert_eq!(run("Object.is(Math.round(-0.5), -0);"), Value::Bool(true));

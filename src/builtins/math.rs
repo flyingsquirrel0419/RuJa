@@ -266,7 +266,11 @@ fn math_random(_vm: &mut Vm, _args: &[Value], _: Option<Value>) -> error::Result
     Ok(Value::Number(r))
 }
 
-pub(crate) fn build_math(vm: &mut Vm) -> error::Result<Value> {
+pub(crate) fn build_math_in_env(
+    vm: &mut Vm,
+    env: GcIdx,
+    object_proto: Value,
+) -> error::Result<Value> {
     let mut props: IndexMap<PropertyKey, PropertyDescriptor> = IndexMap::new();
     // build methods first, collect into a temp vec
     let mut method_entries: Vec<(&str, NativeFn, usize)> = vec![
@@ -308,7 +312,7 @@ pub(crate) fn build_math(vm: &mut Vm) -> error::Result<Value> {
         ("random", math_random, 0),
     ];
     for (name, f, len) in method_entries.drain(..) {
-        let idx = vm.new_native_function(name, f, len)?;
+        let idx = vm.new_native_function_in_env(name, f, len, env)?;
         props.insert(PropertyKey::from(name), data_prop(Value::Object(idx)));
     }
     props.insert(
@@ -343,9 +347,15 @@ pub(crate) fn build_math(vm: &mut Vm) -> error::Result<Value> {
         PropertyKey::from("SQRT1_2"),
         const_prop(Value::Number(std::f64::consts::FRAC_1_SQRT_2)),
     );
+    let mut tag = data_prop(Value::String(Arc::from("Math")));
+    tag.writable = false;
+    props.insert(
+        PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
+        tag,
+    );
     let obj = HeapObj::Object(ObjectData {
         props: Mutex::new(props),
-        proto: Mutex::new(Some(vm.object_proto.clone())),
+        proto: Mutex::new(Some(object_proto)),
         extensible: AtomicBool::new(true),
         class_name: Some(Arc::from("Math")),
         private_fields: Mutex::new(std::collections::HashMap::new()),

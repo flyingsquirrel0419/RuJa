@@ -32,7 +32,7 @@ pub(crate) use json::{
     date_get_timezone_offset, date_now, date_parse, date_set_component, date_to_iso_string,
     date_to_json, date_to_primitive, date_to_string, date_to_temporal_instant, date_utc,
 };
-pub(crate) use math::{build_console, build_math};
+pub(crate) use math::{build_console, build_math_in_env};
 pub(crate) use proxy::*;
 pub(crate) use typed_array::*;
 
@@ -3256,6 +3256,9 @@ fn make_test262_realm(vm: &mut Vm) -> error::Result<Value> {
         *object.proto().lock() = Some(realm_object_prototype.clone());
     });
     vm.unpin_many(object_pins);
+
+    let realm_math = build_math_in_env(vm, realm_env, realm_object_prototype.clone())?;
+    define_realm_global(vm, realm_env, &global, "Math", realm_math);
 
     let (realm_error_ctor, realm_error_proto) =
         make_error_constructor_in_env(vm, "Error", realm_env)?;
@@ -9492,7 +9495,7 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
     });
     init_global_this(vm)?;
     // Math
-    let math = build_math(vm)?;
+    let math = build_math_in_env(vm, vm.global, vm.object_proto.clone())?;
     define_global(vm, "Math", math);
     // console
     let console = build_console(vm)?;
