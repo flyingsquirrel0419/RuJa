@@ -17,6 +17,9 @@ try:
     from test262_class_private_admission import CLASS_PRIVATE_FEATURES_BY_FILE
     from test262_class_public_field_admission import CLASS_PUBLIC_FIELD_FILES
     from test262_date_to_primitive_admission import DATE_TO_PRIMITIVE_FILES
+    from test262_generator_function_admission import (
+        GENERATOR_FUNCTION_FEATURES, GENERATOR_FUNCTION_FILES,
+    )
     from test262_object_constructor_admission import (
         OBJECT_CONSTRUCTOR_FEATURES, OBJECT_CONSTRUCTOR_FILES,
     )
@@ -49,6 +52,9 @@ except ModuleNotFoundError:
     from tools.test262_class_private_admission import CLASS_PRIVATE_FEATURES_BY_FILE
     from tools.test262_class_public_field_admission import CLASS_PUBLIC_FIELD_FILES
     from tools.test262_date_to_primitive_admission import DATE_TO_PRIMITIVE_FILES
+    from tools.test262_generator_function_admission import (
+        GENERATOR_FUNCTION_FEATURES, GENERATOR_FUNCTION_FILES,
+    )
     from tools.test262_object_constructor_admission import (
         OBJECT_CONSTRUCTOR_FEATURES, OBJECT_CONSTRUCTOR_FILES,
     )
@@ -2135,6 +2141,20 @@ def promise_realm_features(path):
         return frozenset()
     return PROMISE_REALM_FEATURES.get(rel.as_posix(), frozenset())
 
+def generator_function_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except (OSError, ValueError):
+        return False
+    return rel.as_posix() in GENERATOR_FUNCTION_FILES
+
+def generator_function_features(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except (OSError, ValueError):
+        return frozenset()
+    return GENERATOR_FUNCTION_FEATURES.get(rel.as_posix(), frozenset())
+
 def should_skip(meta, path=None):
     feats = set(meta.get('features', []))
     if path is not None and module_core_path(path):
@@ -2182,6 +2202,8 @@ def should_skip(meta, path=None):
         feats.difference_update(object_prototype_features(path))
     if path is not None and promise_realm_path(path):
         feats.difference_update(promise_realm_features(path))
+    if path is not None and generator_function_path(path):
+        feats.difference_update(generator_function_features(path))
     if path is not None and explicit_resource_management_symbols_path(path):
         feats.discard("explicit-resource-management")
     if path is not None and symbol_function_name_path(path):

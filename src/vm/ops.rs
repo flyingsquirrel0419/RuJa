@@ -3305,6 +3305,7 @@ impl Vm {
     fn op_make_closure(&mut self, func_idx: usize) -> error::Result<()> {
         if let Some(fdef) = self.functions.get(func_idx).cloned() {
             let env_idx = self.frames.last().map(|f| f.env).unwrap_or(self.global);
+            let realm = crate::environment::global_env_root(&self.heap, env_idx);
             let is_arrow = fdef.is_arrow;
             let is_method = fdef.is_method;
             let is_generator = fdef.is_generator;
@@ -3323,7 +3324,7 @@ impl Vm {
                         if is_async {
                             self.async_generator_proto.clone()
                         } else {
-                            self.generator_proto.clone()
+                            self.generator_prototype_for_env(realm)
                         }
                     } else {
                         self.object_proto.clone()
@@ -3348,16 +3349,14 @@ impl Vm {
                 if is_async {
                     self.async_generator_function_proto.clone()
                 } else {
-                    self.generator_function_proto.clone()
+                    self.generator_function_prototype_for_env(realm)
                 }
             } else if is_async {
-                let realm = crate::environment::global_env_root(&self.heap, env_idx);
                 self.realm_async_function_prototypes
                     .get(&realm.0)
                     .cloned()
                     .unwrap_or_else(|| self.function_proto.clone())
             } else {
-                let realm = crate::environment::global_env_root(&self.heap, env_idx);
                 self.realm_function_prototypes
                     .get(&realm.0)
                     .cloned()

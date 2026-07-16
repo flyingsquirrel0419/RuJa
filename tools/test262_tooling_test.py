@@ -20,6 +20,10 @@ from test262_class_private_admission import (
 )
 from test262_class_public_field_admission import CLASS_PUBLIC_FIELD_FILES
 from test262_date_to_primitive_admission import DATE_TO_PRIMITIVE_FILES
+from test262_generator_function_admission import (
+    GENERATOR_FUNCTION_FEATURES,
+    GENERATOR_FUNCTION_FILES,
+)
 from test262_object_constructor_admission import (
     OBJECT_CONSTRUCTOR_FEATURES,
     OBJECT_CONSTRUCTOR_FILES,
@@ -1048,6 +1052,50 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                     )
                 finally:
                     tool.TEST262 = original_root
+
+    def test_generator_function_manifest_is_exact_and_shared(self):
+        self.assertEqual(len(GENERATOR_FUNCTION_FILES), 3)
+        self.assertEqual(
+            frozenset(GENERATOR_FUNCTION_FEATURES), GENERATOR_FUNCTION_FILES
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            outside = root / "test" / "built-ins/GeneratorFunction/future.js"
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for relative, features in GENERATOR_FUNCTION_FEATURES.items():
+                        path = root / "test" / relative
+                        self.assertTrue(tool.generator_function_path(path))
+                        self.assertEqual(
+                            tool.generator_function_features(path), features
+                        )
+                        self.assertFalse(
+                            tool.should_skip({"features": sorted(features)}, path)
+                        )
+                        self.assertTrue(
+                            tool.should_skip(
+                                {"features": sorted(features | {"decorators"})},
+                                path,
+                            )
+                        )
+                    self.assertFalse(tool.generator_function_path(outside))
+                    self.assertTrue(
+                        tool.should_skip({"features": ["generators"]}, outside)
+                    )
+                finally:
+                    tool.TEST262 = original_root
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        if test_root.is_dir():
+            for relative, features in GENERATOR_FUNCTION_FEATURES.items():
+                path = test_root / relative
+                self.assertTrue(path.is_file(), relative)
+                metadata = test262_runner.parse_meta(path.read_text())
+                self.assertEqual(
+                    frozenset(metadata.get("features", [])), features, relative
+                )
 
     def test_proxy_get_manifest_is_exact_and_shared(self):
         self.assertEqual(len(PROXY_GET_FILES), 30)

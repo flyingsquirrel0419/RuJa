@@ -1,0 +1,4 @@
+# Synchronous GeneratorFunction Realm fallbacks.
+built-ins/GeneratorFunction/proto-from-ctor-realm-prototype.js
+built-ins/GeneratorFunction/proto-from-ctor-realm.js
+language/expressions/generators/eval-body-proto-realm.js

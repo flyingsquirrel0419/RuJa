@@ -143,6 +143,10 @@ pub struct Vm {
     /// identities rather than mutable global bindings.
     pub(crate) realm_promise_constructors: HashMap<usize, Value>,
     pub(crate) realm_promise_prototypes: HashMap<usize, Value>,
+    /// Realm global environment -> synchronous generator intrinsics.
+    pub(crate) realm_generator_prototypes: HashMap<usize, Value>,
+    pub(crate) realm_generator_function_constructors: HashMap<usize, Value>,
+    pub(crate) realm_generator_function_prototypes: HashMap<usize, Value>,
     /// Realm global environment index + primitive kind -> that Realm's
     /// intrinsic wrapper prototype used by ToObject and primitive references.
     pub(crate) realm_primitive_prototypes: HashMap<(usize, PrimitivePrototypeKind), Value>,
@@ -587,6 +591,9 @@ impl Vm {
             realm_array_prototypes: HashMap::new(),
             realm_promise_constructors: HashMap::new(),
             realm_promise_prototypes: HashMap::new(),
+            realm_generator_prototypes: HashMap::new(),
+            realm_generator_function_constructors: HashMap::new(),
+            realm_generator_function_prototypes: HashMap::new(),
             realm_primitive_prototypes: HashMap::new(),
             realm_eval_functions: HashMap::new(),
             realm_throw_type_errors: HashMap::new(),
@@ -2173,6 +2180,22 @@ impl Vm {
 
     pub(crate) fn current_realm_promise_prototype(&self) -> Value {
         self.promise_prototype_for_env(self.current_realm_global_env())
+    }
+
+    pub(crate) fn generator_prototype_for_env(&self, env: GcIdx) -> Value {
+        let realm = crate::environment::global_env_root(&self.heap, env);
+        self.realm_generator_prototypes
+            .get(&realm.0)
+            .cloned()
+            .unwrap_or_else(|| self.generator_proto.clone())
+    }
+
+    pub(crate) fn generator_function_prototype_for_env(&self, env: GcIdx) -> Value {
+        let realm = crate::environment::global_env_root(&self.heap, env);
+        self.realm_generator_function_prototypes
+            .get(&realm.0)
+            .cloned()
+            .unwrap_or_else(|| self.generator_function_proto.clone())
     }
 
     /// Resolve an identifier to a spec Reference record, using the same

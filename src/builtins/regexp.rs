@@ -1751,9 +1751,10 @@ pub(crate) fn gen_result(
     done: bool,
     is_async_gen: bool,
 ) -> error::Result<Value> {
+    let object_prototype = vm.object_prototype_for_env(vm.current_realm_global_env());
     let obj_idx = vm.heap.allocate(HeapObj::Object(crate::value::ObjectData {
         props: Mutex::new(IndexMap::new()),
-        proto: Mutex::new(Some(vm.object_proto.clone())),
+        proto: Mutex::new(Some(object_prototype)),
         extensible: AtomicBool::new(true),
         class_name: None,
         private_fields: Mutex::new(std::collections::HashMap::new()),

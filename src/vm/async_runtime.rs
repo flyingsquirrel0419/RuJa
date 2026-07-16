@@ -878,6 +878,13 @@ impl Vm {
                 .cloned()
                 .unwrap_or(fallback));
         }
+        if intrinsic == "GeneratorFunction" {
+            return Ok(self
+                .realm_generator_function_prototypes
+                .get(&realm.0)
+                .cloned()
+                .unwrap_or(fallback));
+        }
         let Some(intrinsic_ctor) = env::get(&self.heap, realm, intrinsic) else {
             return Ok(fallback);
         };
@@ -1344,7 +1351,7 @@ impl Vm {
                             } else if is_async {
                                 self.async_generator_proto.clone()
                             } else {
-                                self.generator_proto.clone()
+                                self.generator_prototype_for_env(call_env)
                             }
                         };
                         // Lazy generator: don't run the body yet. Create a suspended

@@ -72,6 +72,146 @@ fn generator_function_constructor_is_distinct_and_subclassable() {
 }
 
 #[test]
+fn generator_intrinsics_are_isolated_per_realm() {
+    assert_eq!(
+        run(r#"
+            var a = $262.createRealm().global;
+            var b = $262.createRealm().global;
+            var aFunction = a.eval("(function* (value) { yield value; })");
+            var bFunction = b.eval("(function* () {})");
+            var AGeneratorFunction = Object.getPrototypeOf(aFunction).constructor;
+            var BGeneratorFunction = Object.getPrototypeOf(bFunction).constructor;
+            var aGeneratorPrototype = AGeneratorFunction.prototype.prototype;
+            var constructorDescriptor = Object.getOwnPropertyDescriptor(
+                AGeneratorFunction.prototype,
+                "constructor"
+            );
+            var prototypeDescriptor = Object.getOwnPropertyDescriptor(
+                AGeneratorFunction.prototype,
+                "prototype"
+            );
+            var instance = aFunction(7);
+            var result = instance.next();
+            [
+                AGeneratorFunction !== BGeneratorFunction,
+                AGeneratorFunction.prototype !== BGeneratorFunction.prototype,
+                aGeneratorPrototype !== BGeneratorFunction.prototype.prototype,
+                Object.getPrototypeOf(AGeneratorFunction) === a.Function,
+                Object.getPrototypeOf(aFunction) === AGeneratorFunction.prototype,
+                Object.getPrototypeOf(aFunction.prototype) === aGeneratorPrototype,
+                Object.getPrototypeOf(instance) === aFunction.prototype,
+                Object.getPrototypeOf(result) === a.Object.prototype,
+                AGeneratorFunction.prototype.constructor === AGeneratorFunction,
+                aGeneratorPrototype.constructor === AGeneratorFunction.prototype,
+                aGeneratorPrototype.next !==
+                    BGeneratorFunction.prototype.prototype.next,
+                aGeneratorPrototype.next.length,
+                constructorDescriptor.writable,
+                constructorDescriptor.enumerable,
+                constructorDescriptor.configurable,
+                prototypeDescriptor.writable,
+                prototypeDescriptor.enumerable,
+                prototypeDescriptor.configurable,
+                result.value,
+                result.done
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "true|true|true|true|true|true|true|true|true|true|true|1|false|false|true|false|false|true|7|false"
+        ))
+    );
+}
+
+#[test]
+fn generator_realm_fallbacks_ignore_mutable_globals_and_survive_gc() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+    vm.run(
+        r#"
+        var mainGeneratorFunction = Object.getPrototypeOf(function* () {}).constructor;
+        var other = $262.createRealm().global;
+        var otherEval = other.eval;
+        var foreignFunction = otherEval("(function* () {})");
+        var foreignGeneratorFunction = Object.getPrototypeOf(foreignFunction).constructor;
+        var foreignGeneratorFunctionPrototype = foreignGeneratorFunction.prototype;
+        var foreignGeneratorPrototype = foreignGeneratorFunctionPrototype.prototype;
+        var constructorRef = new WeakRef(foreignGeneratorFunction);
+        var functionPrototypeRef = new WeakRef(foreignGeneratorFunctionPrototype);
+        var generatorPrototypeRef = new WeakRef(foreignGeneratorPrototype);
+        var target = new other.Function();
+        var newTarget = new Proxy(target, {
+            get: function (target, key, receiver) {
+                if (key === "prototype") {
+                    forceGc();
+                    return null;
+                }
+                return Reflect.get(target, key, receiver);
+            }
+        });
+        delete foreignGeneratorFunctionPrototype.constructor;
+        delete foreignGeneratorFunctionPrototype.prototype;
+        delete foreignGeneratorPrototype.constructor;
+        foreignFunction = null;
+        foreignGeneratorFunction = null;
+        foreignGeneratorFunctionPrototype = null;
+        foreignGeneratorPrototype = null;
+        other.Function = null;
+        other.Object = null;
+    "#,
+    )
+    .expect("failed to prepare foreign generator Realm");
+
+    vm.gc();
+    assert_eq!(
+        vm.run(
+            r#"
+            var dynamic = Reflect.construct(mainGeneratorFunction, [], newTarget);
+            var rootedConstructor = constructorRef.deref();
+            var rootedFunctionPrototype = functionPrototypeRef.deref();
+            var rootedGeneratorPrototype = generatorPrototypeRef.deref();
+            var fresh = otherEval("(function* () {})");
+            fresh.prototype = null;
+            var fallbackInstance = fresh();
+            [
+                rootedConstructor !== undefined,
+                rootedFunctionPrototype !== undefined,
+                rootedGeneratorPrototype !== undefined,
+                Object.getPrototypeOf(dynamic) === rootedFunctionPrototype,
+                Object.getPrototypeOf(dynamic.prototype) ===
+                    mainGeneratorFunction.prototype.prototype,
+                Object.getPrototypeOf(fallbackInstance) === rootedGeneratorPrototype,
+                Object.getPrototypeOf(fresh) === rootedFunctionPrototype,
+                !Object.prototype.hasOwnProperty.call(
+                    rootedFunctionPrototype,
+                    "constructor"
+                ),
+                !Object.prototype.hasOwnProperty.call(
+                    rootedFunctionPrototype,
+                    "prototype"
+                ),
+                !Object.prototype.hasOwnProperty.call(
+                    rootedGeneratorPrototype,
+                    "constructor"
+                )
+            ].join("|");
+        "#
+        )
+        .expect("failed to inspect rooted generator intrinsics"),
+        Value::String(Arc::from(
+            "true|true|true|true|true|true|true|true|true|true"
+        ))
+    );
+}
+
+#[test]
 fn generator_function_instances_have_empty_prototype_descriptor() {
     assert_eq!(
         run(r#"

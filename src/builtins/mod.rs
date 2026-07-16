@@ -2850,6 +2850,106 @@ fn install_promise_intrinsic_in_env(
     Ok((constructor, prototype))
 }
 
+fn install_generator_intrinsics_in_env(
+    vm: &mut Vm,
+    env: GcIdx,
+    iterator_prototype: Value,
+    function_prototype: Value,
+    function_constructor: GcIdx,
+) -> error::Result<(GcIdx, GcIdx)> {
+    let realm = crate::environment::global_env_root(&vm.heap, env);
+    let generator_prototype = vm.alloc(HeapObj::Object(ObjectData {
+        props: Mutex::new(IndexMap::new()),
+        proto: Mutex::new(Some(iterator_prototype)),
+        extensible: AtomicBool::new(true),
+        class_name: Some(Arc::from("Generator")),
+        private_fields: Mutex::new(std::collections::HashMap::new()),
+        primitive: Mutex::new(None),
+    }))?;
+    let generator_prototype_value = Value::Object(generator_prototype);
+    let mut pins = vm.pin(&generator_prototype_value);
+    let next = vm.new_native_function_in_env("next", generator_next, 1, realm)?;
+    let return_method = vm.new_native_function_in_env("return", generator_return, 1, realm)?;
+    let throw = vm.new_native_function_in_env("throw", generator_throw, 1, realm)?;
+    vm.heap.with_obj(generator_prototype.0, |object| {
+        let mut props = object.props().lock();
+        props.insert(PropertyKey::from("next"), data_prop(Value::Object(next)));
+        props.insert(
+            PropertyKey::from("return"),
+            data_prop(Value::Object(return_method)),
+        );
+        props.insert(PropertyKey::from("throw"), data_prop(Value::Object(throw)));
+        let mut tag = data_prop(Value::String(Arc::from("Generator")));
+        tag.writable = false;
+        props.insert(
+            PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
+            tag,
+        );
+    });
+
+    let constructor = vm.new_native_function_in_env(
+        "GeneratorFunction",
+        generator_function_constructor,
+        1,
+        realm,
+    )?;
+    let constructor_value = Value::Object(constructor);
+    pins += vm.pin(&constructor_value);
+    set_function_object_proto(vm, constructor, &Value::Object(function_constructor));
+
+    let function_prototype_idx = vm.alloc(HeapObj::Object(ObjectData {
+        props: Mutex::new(IndexMap::new()),
+        proto: Mutex::new(Some(function_prototype)),
+        extensible: AtomicBool::new(true),
+        class_name: Some(Arc::from("GeneratorFunction")),
+        private_fields: Mutex::new(std::collections::HashMap::new()),
+        primitive: Mutex::new(None),
+    }))?;
+    let function_prototype_value = Value::Object(function_prototype_idx);
+    pins += vm.pin(&function_prototype_value);
+    vm.heap.with_obj(function_prototype_idx.0, |object| {
+        let mut props = object.props().lock();
+        let mut constructor_desc = data_prop(constructor_value.clone());
+        constructor_desc.writable = false;
+        props.insert(PropertyKey::from("constructor"), constructor_desc);
+        let mut prototype_desc = data_prop(generator_prototype_value.clone());
+        prototype_desc.writable = false;
+        props.insert(PropertyKey::from("prototype"), prototype_desc);
+        let mut tag = data_prop(Value::String(Arc::from("GeneratorFunction")));
+        tag.writable = false;
+        props.insert(
+            PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
+            tag,
+        );
+    });
+    vm.heap.with_obj(generator_prototype.0, |object| {
+        let mut constructor_desc = data_prop(function_prototype_value.clone());
+        constructor_desc.writable = false;
+        object
+            .props()
+            .lock()
+            .insert(PropertyKey::from("constructor"), constructor_desc);
+    });
+    vm.heap.with_obj(constructor.0, |object| {
+        if let HeapObj::Function(function) = object {
+            *function.prototype.lock() = Some(function_prototype_value.clone());
+        }
+        object.props().lock().insert(
+            PropertyKey::from("prototype"),
+            const_prop(function_prototype_value.clone()),
+        );
+    });
+
+    vm.realm_generator_prototypes
+        .insert(realm.0, generator_prototype_value);
+    vm.realm_generator_function_constructors
+        .insert(realm.0, constructor_value);
+    vm.realm_generator_function_prototypes
+        .insert(realm.0, function_prototype_value);
+    vm.unpin_many(pins);
+    Ok((generator_prototype, function_prototype_idx))
+}
+
 fn make_test262_realm(vm: &mut Vm) -> error::Result<Value> {
     let realm_env = crate::environment::new_env(&vm.heap, None, true)?;
     let global_idx = vm.heap.allocate(HeapObj::Object(crate::value::ObjectData {
@@ -3059,6 +3159,13 @@ fn make_test262_realm(vm: &mut Vm) -> error::Result<Value> {
         .ok_or_else(|| Error::internal("missing Object prototype intrinsic"))?;
     let realm_iterator_proto =
         install_iterator_intrinsic_in_env(vm, realm_env, Some(&global), object_proto.clone())?;
+    install_generator_intrinsics_in_env(
+        vm,
+        realm_env,
+        realm_iterator_proto.clone(),
+        realm_function_proto.clone(),
+        function_ctor_idx,
+    )?;
     install_array_intrinsic_in_env(vm, realm_env, Some(&global))?;
     setup_array_iterator_proto_in_env(vm, realm_env, realm_iterator_proto.clone())?;
     let (str_ctor, str_proto) = make_builtin_constructor_with_in_env(
@@ -9514,40 +9621,6 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
     vm.realm_regexp_prototypes
         .insert(vm.global.0, vm.regexp_proto.clone());
     define_global(vm, "RegExp", Value::Object(regex_ctor));
-    // Generator prototype with next(). Generator instances inherit this proto.
-    let generator_proto_idx = vm.heap.allocate(HeapObj::Object(ObjectData {
-        props: Mutex::new(IndexMap::new()),
-        proto: Mutex::new(Some(vm.iterator_base_proto.clone())),
-        extensible: AtomicBool::new(true),
-        class_name: Some(Arc::from("Generator")),
-        private_fields: Mutex::new(std::collections::HashMap::new()),
-        primitive: Mutex::new(None),
-    }))?;
-    {
-        let next_fn = vm.new_native_function("next", generator_next, 0)?;
-        let return_fn = vm.new_native_function("return", generator_return, 1)?;
-        let throw_fn = vm.new_native_function("throw", generator_throw, 1)?;
-        vm.heap.with_obj(generator_proto_idx, |o| {
-            o.props()
-                .lock()
-                .insert(PropertyKey::from("next"), data_prop(Value::Object(next_fn)));
-            o.props().lock().insert(
-                PropertyKey::from("return"),
-                data_prop(Value::Object(return_fn)),
-            );
-            o.props().lock().insert(
-                PropertyKey::from("throw"),
-                data_prop(Value::Object(throw_fn)),
-            );
-            let mut tag_desc = data_prop(Value::String(Arc::from("Generator")));
-            tag_desc.writable = false;
-            o.props().lock().insert(
-                PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
-                tag_desc,
-            );
-        });
-    }
-    vm.generator_proto = Value::Object(GcIdx(generator_proto_idx));
     // Function constructor: new Function(p0, ..., body)
     let function_ctor_idx = vm.new_native_function("Function", function_constructor, 1)?;
     vm.heap.with_obj(function_ctor_idx.0, |obj| {
@@ -9562,47 +9635,17 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
     // from its Realm's prototype, whose constructor exposes the intrinsic.
     let function_proto = vm.function_proto.clone();
     install_async_function_intrinsic(vm, vm.global, &function_proto, function_ctor_idx)?;
-    // %GeneratorFunction% is not exposed as a global binding, but generator
-    // functions inherit from %GeneratorFunction.prototype%, whose constructor
-    // property exposes it.
-    let generator_function_ctor_idx =
-        vm.new_native_function("GeneratorFunction", generator_function_constructor, 1)?;
-    let generator_function_proto_idx = vm.heap.allocate(HeapObj::Object(ObjectData {
-        props: Mutex::new(IndexMap::new()),
-        proto: Mutex::new(Some(vm.function_proto.clone())),
-        extensible: AtomicBool::new(true),
-        class_name: Some(Arc::from("GeneratorFunction")),
-        private_fields: Mutex::new(std::collections::HashMap::new()),
-        primitive: Mutex::new(None),
-    }))?;
-    vm.generator_function_proto = Value::Object(GcIdx(generator_function_proto_idx));
-    vm.heap.with_obj(generator_function_proto_idx, |obj| {
-        let mut props = obj.props().lock();
-        props.insert(
-            PropertyKey::from("constructor"),
-            data_prop(Value::Object(generator_function_ctor_idx)),
-        );
-        let mut prototype_desc = data_prop(vm.generator_proto.clone());
-        prototype_desc.writable = false;
-        props.insert(PropertyKey::from("prototype"), prototype_desc);
-        let mut tag_desc = data_prop(Value::String(Arc::from("GeneratorFunction")));
-        tag_desc.writable = false;
-        props.insert(
-            PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
-            tag_desc,
-        );
-    });
-    vm.heap.with_obj(generator_function_ctor_idx.0, |obj| {
-        if let HeapObj::Function(f) = obj {
-            f.prototype
-                .lock()
-                .replace(Value::Object(GcIdx(generator_function_proto_idx)));
-        }
-        obj.props().lock().insert(
-            PropertyKey::from("prototype"),
-            const_prop(Value::Object(GcIdx(generator_function_proto_idx))),
-        );
-    });
+    let iterator_prototype = vm.iterator_base_proto.clone();
+    let function_prototype = vm.function_proto.clone();
+    let (generator_prototype, generator_function_prototype) = install_generator_intrinsics_in_env(
+        vm,
+        vm.global,
+        iterator_prototype,
+        function_prototype,
+        function_ctor_idx,
+    )?;
+    vm.generator_proto = Value::Object(generator_prototype);
+    vm.generator_function_proto = Value::Object(generator_function_prototype);
     // Async generator intrinsics are distinct from their synchronous
     // counterparts. In particular, %AsyncIteratorPrototype% must not alias
     // Object.prototype because user changes to it cannot affect arrays or

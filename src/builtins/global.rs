@@ -460,7 +460,7 @@ fn dynamic_function_constructor(
                 if is_async {
                     vm.async_generator_proto.clone()
                 } else {
-                    vm.generator_proto.clone()
+                    vm.generator_prototype_for_env(function_realm)
                 }
             } else {
                 vm.object_proto.clone()
@@ -478,7 +478,7 @@ fn dynamic_function_constructor(
         let proto = if is_async {
             vm.async_generator_function_proto.clone()
         } else {
-            vm.generator_function_proto.clone()
+            vm.generator_function_prototype_for_env(function_realm)
         };
         if matches!(proto, Value::Object(_)) {
             proto
@@ -502,8 +502,13 @@ fn dynamic_function_constructor(
             .cloned()
             .unwrap_or_else(|| vm.function_proto.clone())
     };
-    let function_object_proto = if let Some(proto) = vm.current_native_new_target_prototype.clone()
-    {
+    let function_object_proto = if is_generator && !is_async {
+        native_constructor_prototype_with_default(
+            vm,
+            "GeneratorFunction",
+            fallback_function_proto.clone(),
+        )?
+    } else if let Some(proto) = vm.current_native_new_target_prototype.clone() {
         if matches!(proto, Value::Object(_)) {
             proto
         } else {
