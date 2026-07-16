@@ -4,6 +4,19 @@
 
 ### Fixed
 
+- `Object.prototype.toString` now boxes primitive receivers, performs
+  Proxy-aware `IsArray` before callable fallback, preserves revoked-Proxy
+  ordering, and reads `@@toStringTag` from the rooted object. Promise and
+  GeneratorFunction prototypes expose their standard tags. Proxy revokers now
+  retain the associated Proxy through a traced object slot until first use
+  instead of storing an untraced numeric heap index. Exact Object-prototype
+  admission grows to 46 files; the complete subtree is **248/248**, broad
+  `built-ins/Object` is **3170/120/121**, the supported subset remains
+  **12751/0/7687**, and tooling is **88/88**. Feature commit `0d64d5b` passed
+  CI `29466781968` and full matrix `29466782034`; six skipped files and the
+  existing `Promise.prototype[Symbol.toStringTag]` failure move to pass,
+  producing **29802 pass / 6346 fail / 12157 skip / 12 timeout / 0 error /
+  48317 total** (**61.7%** of all files, **82.4%** of executed files).
 - Every Realm now owns fresh `%Object.prototype%` methods and `__proto__`
   accessors instead of cloning main-Realm function values. Foreign globals,
   `%Function.prototype%`, Error and primitive-wrapper prototypes, TypedArray

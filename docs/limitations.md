@@ -107,10 +107,10 @@ guarantees, run RuJa in a separately killable process as well.
   separate unsupported surface.
 - Foreign Realm `Object` constructors, static methods, prototype methods, and
   `__proto__` accessors now own Realm-specific function identities, intrinsic
-  prototypes, generated results, and native errors. Six remaining
-  `Object.prototype.toString` files are gated on broader Proxy callable/array
-  classification and GeneratorFunction/Promise fallback tags rather than
-  Realm bootstrap isolation.
+  prototypes, generated results, and native errors. The full 248-file
+  `Object.prototype` subtree now executes without failures or skips. Created
+  Test262 Realms still do not install Realm-local Promise or synchronous
+  GeneratorFunction intrinsic graphs; those are separate bootstrap gaps.
 - `Vm` is `Send` (but not `Sync`): the engine uses `Arc`/`Mutex`/atomics
   for shared ownership and interior mutability, so a `Vm` can be moved
   between threads. Concurrent *shared* access still requires external

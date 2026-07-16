@@ -5858,6 +5858,43 @@ unsupported built-ins skips as the baseline and therefore total 48467 files.
 The six remaining prototype-subtree skips require Proxy array/callable
 classification and GeneratorFunction/Promise fallback tag work.
 
+## Object.prototype.toString completion
+
+Feature commit `0d64d5b` closes those final six skips. `Object.prototype`
+`toString` now applies `ToObject`, then Proxy-aware iterative `IsArray`, then
+callable and internal-slot fallback classification before the observable
+`@@toStringTag` lookup. This preserves nested and revoked Proxy semantics,
+including revocation during the tag getter, and gives strict tag getters the
+boxed primitive receiver required by the specification. Promise and
+GeneratorFunction prototypes expose configurable, non-writable standard tags;
+non-string and deleted tags fall back without incorrectly branding Promise,
+Symbol, or BigInt values.
+
+The same audit found that `Proxy.revocable` stored its associated Proxy as an
+untraced numeric heap index. The revoker now owns a traced object reference,
+removes it on first call, remains idempotent, and permits collection after
+revocation. Cross-job WeakRef/GC regressions prove both retention and release;
+forced-GC tag getters prove the boxed receiver remains rooted.
+
+Exact Object-prototype admission is now **46/46** and the complete
+`built-ins/Object/prototype` subtree is **248 pass / 0 fail / 0 skip / 248
+total**. Broad `built-ins/Object` is **3170 pass / 120 fail / 121 skip / 3411
+total**, the supported subset remains **12751 pass / 0 fail / 7687 skip /
+20438 total**, and tooling is **88/88**. Rust all-target/all-feature tests
+including builtins **434/434**, Clippy with warnings denied, formatting,
+release, and wasm32 checks pass. GPT and Umans reviews found no remaining valid
+high- or medium-severity issue after their GC-test findings were strengthened.
+
+CI `29466781968` and full matrix `29466782034` succeeded. Of the 30 artifacts
+at `/tmp/ruja-artifacts-object-tostring-feature.g9JfLR`, 29 are byte-for-byte
+identical to the preceding documentation baseline. Built-ins moves **+7 pass /
+-1 fail / -6 skip**: the six newly admitted files plus the existing
+`built-ins/Promise/prototype/Symbol.toStringTag.js` failure now pass. The
+normalized aggregate is **29802 pass / 6346 fail / 12157 skip / 12 timeout /
+0 error / 48317 total / 36148 pass-or-fail executed**, or **61.7%** of all
+files and **82.4%** of executed files. Raw artifacts contain the same 150
+unsupported built-ins skips and total 48467 files.
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is
