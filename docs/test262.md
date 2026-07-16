@@ -30,7 +30,7 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 61.7% of all matrix files; 82.5% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 62.0% of all matrix files; 82.6% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (12751 pass / 0 fail on current Test262; 12752 / 0 on the pinned checkout) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
@@ -6376,6 +6376,66 @@ files and **82.5%** of executed files.
   compact internal phase byte and additional resume variants; async iterator
   helpers and absent-argument tracking for broader delegation remain separate
   follow-up surfaces.
+
+## Promise combinator IteratorClose on abrupt completion
+
+`Promise.all`, `Promise.allSettled`, `Promise.any`, and `Promise.race` now
+perform `IteratorClose` after an input iterator has produced a value when the
+receiver's `resolve` call, the resulting value's `then` lookup, or the `then`
+call completes abruptly. Iterator-step and iterator-value abrupt completions
+remain on the no-close path because those operations set the iterator record's
+done state before returning the error.
+
+The shared close-and-reject path retains the original rejection reason and
+Promise capability while the iterator's observable `return` getter and method
+run. A catchable close failure does not replace the original throw completion,
+matching `IteratorClose`'s throw-completion precedence; a non-catchable host
+abort still propagates. The iterator wrapper is rooted for the whole
+combinator loop, and the iterator, capability functions, result Promise, and
+original reason are additionally rooted across close callbacks and forced GC.
+
+`tools/test262_promise_combinator_close_admission.txt` freezes exactly three
+files for each of the four combinators, for **12/12** passing files with no
+skip. A forced adjacent `*close*.js` diagnostic passes **24/24**, including
+the iterator-step/value no-close cases. The supported subset remains **12751
+pass / 0 fail / 7687 skip / 20438 total**, Python tooling is **94/94**, and
+Rust builtins are **448/448**. Rust all-target/all-feature tests, Clippy with
+warnings denied, formatting, release, and wasm32 checks pass. GPT found no
+high- or medium-severity issue. Umans initially questioned close-error
+precedence and the fetched return method's GC lifetime, then withdrew both
+findings after rechecking current Test262, ECMA-262, and `Vm::call_function`'s
+callee pinning.
+
+Feature commit `d0352df` passed CI `29508890153` and full matrix
+`29508890137`. Against the Async-from-Sync feature baseline, 29 of 30 result
+artifacts at `/tmp/ruja-artifacts-promise-close-feature.gvh4gZ` are
+byte-for-byte identical. Only built-ins changes, by exactly **+12 pass / -12
+skip**. The aggregate is **29969 pass / 6334 fail / 12002 skip / 12 timeout /
+0 error / 48317 total / 36303 pass-or-fail executed**, or **62.0%** of all
+files and **82.6%** of executed files.
+
+[Decision Log]
+- 목적과 의도: close the bounded Promise-combinator IteratorClose defect
+  without claiming the much broader remaining Promise iterable corpus.
+- 기존 구현 및 제약 조건: all four combinators rejected directly when
+  receiver `resolve`, `then` lookup, or `then` invocation threw, so the active
+  iterator's `return` hook was skipped. Iterator-step/value failures already
+  followed the required no-close behavior and had to remain unchanged.
+- 검토한 주요 대안: close on every loop error; duplicate close/reject code in
+  each combinator; replace the original rejection with a close error; or share
+  one helper for only the three specification-defined abrupt points.
+- 선택한 방식: root each iterator for the combinator lifetime and route the
+  three post-step abrupt paths through a shared helper that performs close,
+  preserves the original catchable throw completion, and rejects the existing
+  capability.
+- 다른 대안 대신 이 방식을 선택한 이유: broad closing would regress the
+  iterator-record done rules, duplicated implementations would drift across
+  four algorithms, and close-error replacement contradicts current
+  `IteratorClose` precedence when the incoming completion is already a throw.
+- 장점, 단점 및 영향: all four combinators now share one audited close path,
+  observable cleanup runs exactly once, and rejection identity survives GC.
+  The admission remains an exact 12-file boundary; broader Promise combinator
+  conformance and host-abort cleanup remain separately scoped work.
 
 ## Why the full-suite rate is not higher
 

@@ -4,6 +4,17 @@
 
 ### Fixed
 
+- `Promise.all`, `Promise.allSettled`, `Promise.any`, and `Promise.race` now
+  close an active input iterator when the receiver's `resolve` call or the
+  resolved value's `then` lookup/call completes abruptly. Catchable close
+  failures preserve the original throw completion, while observable iterator,
+  capability, and rejection values remain rooted across close callbacks and
+  GC. The exact Test262 cohort is **12/12**, the supported subset remains
+  **12751/0/7687**, tooling is **94/94**, and Rust builtins are **448/448**.
+  Feature commit `d0352df` passed CI `29508890153` and full matrix
+  `29508890137`; only built-ins changes by **+12 pass / -12 skip**, producing
+  **29969 pass / 6334 fail / 12002 skip / 12 timeout / 0 error / 48317 total**
+  (**62.0%** of all files, **82.6%** of executed files).
 - `%AsyncFromSyncIteratorPrototype%` now completes `next`, `return`, and
   `throw` through intrinsic Promise capabilities and reaction jobs instead of
   synchronously draining the microtask queue during async-generator `yield*`.
