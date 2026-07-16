@@ -111,7 +111,9 @@ guarantees, run RuJa in a separately killable process as well.
   `Object.prototype` subtree now executes without failures or skips. Created
   Test262 Realms also install rooted Realm-local Promise, synchronous
   GeneratorFunction/Generator, and asynchronous
-  AsyncGeneratorFunction/AsyncGenerator/AsyncIterator intrinsic graphs.
+  AsyncGeneratorFunction/AsyncGenerator/AsyncIterator intrinsic graphs, plus
+  an independent Math object whose methods inherit that Realm's
+  `%Function.prototype%`.
   `AsyncIterator.prototype[Symbol.asyncDispose]` is implemented with
   Realm-correct Promise and abrupt-completion behavior. `Array.fromAsync`
   consumes async, sync, and array-like sources through intrinsic Promise jobs,

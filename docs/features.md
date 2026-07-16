@@ -139,7 +139,9 @@
   (`isInteger`, `isFinite`, `isNaN`, `isSafeInteger`, constants) and
   `toString(radix)`/`toFixed`/`toPrecision`/`toExponential`
 - **String** statics: `String.raw`, `String.fromCodePoint`, `String.fromCharCode`
-- **Math**: full set of methods and constants (incl. `imul`, `clz32`, `fround`)
+- **Math**: full set of methods and constants (incl. `imul`, `clz32`,
+  `fround`); each Realm owns an independent Math object with the standard
+  `Symbol.toStringTag` and Realm-local method identities
 - **Reflect**: `get`/`set`/`has`/`deleteProperty`/`ownKeys`/`getPrototypeOf`/
   `setPrototypeOf`/`isExtensible`/`preventExtensions`/`apply`/`construct`
 - **WeakMap**/`WeakSet`: object-keyed collections (get/set/has/delete)

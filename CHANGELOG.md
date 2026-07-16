@@ -4,6 +4,18 @@
 
 ### Fixed
 
+- Math now exposes the standard non-writable, non-enumerable, configurable
+  `Symbol.toStringTag` data property, so direct and borrowed string conversion
+  produce `[object Math]` while deletion falls back to `[object Object]`.
+  Created Realms receive independent Math objects whose object and native
+  function prototypes come from that Realm. Four existing Test262 failures in
+  Array `every`/`some`, Math, and String now pass; complete Math and String
+  diagnostics are **285/0/42** and **1136/0/87**, the supported subset remains
+  **12751/0/7687**, tooling is **92/92**, and Rust builtins are **447/447**.
+  Feature commit `01a65a1` passed CI `29497747578` and full matrix
+  `29497747662`; only built-ins changes by **+4 pass / -4 fail**, producing
+  **29919 pass / 6334 fail / 12052 skip / 12 timeout / 0 error / 48317 total**
+  (**61.9%** of all files, **82.5%** of executed files).
 - `Array.fromAsync` now implements async-iterable, sync-iterable, and
   array-like collection through a GC-traced Promise continuation state
   machine. It awaits iterator values and mapper results at the required

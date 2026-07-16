@@ -6246,6 +6246,71 @@ built-ins skips and report 48467 total files.
   iterator helper methods remain a separate unsupported family rather than
   being claimed through this consumer.
 
+## Math branding and Realm installation
+
+Math now owns the standard `Symbol.toStringTag` data property with value
+`"Math"` and attributes non-writable, non-enumerable, and configurable.
+`Object.prototype.toString.call(Math)` and borrowed string operations therefore
+observe `[object Math]`; deleting the configurable property deliberately falls
+back to `[object Object]`. The implementation does not add Math to
+`Object.prototype.toString`'s internal-slot classification because the
+specification derives this brand through the observable well-known-symbol
+property.
+
+The Math builder now accepts an explicit global environment and
+`%Object.prototype%`. Every native method is created in that environment and
+inherits its Realm's `%Function.prototype%`; the Math object inherits the
+matching `%Object.prototype%`. Test262-created Realms install their own Math
+object after those intrinsic prototypes are established, rather than sharing
+or omitting the main-Realm object.
+
+The two direct branding files,
+`built-ins/Math/Symbol.toStringTag.js` and
+`built-ins/String/prototype/split/instance-is-math.js`, both pass. Complete
+diagnostics are **285 pass / 0 fail / 42 skip / 327 total** for Math and
+**1136 pass / 0 fail / 87 skip / 1223 total** for String. The supported subset
+remains **12751 pass / 0 fail / 7687 skip / 20438 total**, Python tooling is
+**92/92**, and Rust builtins are **447/447**. Rust all-target/all-feature tests,
+Clippy with warnings denied, formatting, release, and wasm32 checks pass. GPT
+and Umans independently found no remaining high- or medium-severity issue in
+the descriptor, conversion, bootstrap, Realm, or GC boundary.
+
+Feature commit `01a65a1` passed CI `29497747578` and full matrix
+`29497747662`. Against the Array.fromAsync documentation baseline, 29 of 30
+result artifacts at `/tmp/ruja-artifacts-math-feature.6cmV4u` are
+byte-for-byte identical. Only built-ins changes: the two direct branding files
+and existing
+`built-ins/Array/prototype/every/15.4.4.16-1-10.js` and
+`built-ins/Array/prototype/some/15.4.4.17-1-10.js` move from fail to pass, for
+exactly **+4 pass / -4 fail**. The normalized aggregate is **29919 pass / 6334
+fail / 12052 skip / 12 timeout / 0 error / 48317 total / 36253 pass-or-fail
+executed**, or **61.9%** of all files and **82.5%** of executed files. Raw
+artifacts retain the baseline's 150 extra unsupported built-ins skips and
+report 48467 total files.
+
+[Decision Log]
+- 목적과 의도: close the final executing Math and String failures while
+  making the Math intrinsic follow its observable brand and Realm ownership.
+- 기존 구현 및 제약 조건: the main Math object had only an internal debug
+  class name, no `@@toStringTag`, and Test262-created Realms did not install a
+  Math object. `Object.prototype.toString` correctly ignored the debug class
+  for ordinary-object builtin-tag classification.
+- 검토한 주요 대안: classify `class_name == "Math"` as an internal Math
+  builtin tag; add only the main-Realm symbol property; share the main Math
+  object with child Realms; or parameterize the builder and install fresh
+  Realm-local objects and functions.
+- 선택한 방식: define the standard configurable own symbol property and
+  construct Math with explicit Realm environment and object prototype in both
+  main and created Realms.
+- 다른 대안 대신 이 방식을 선택한 이유: a class-name special case would
+  incorrectly preserve `[object Math]` after deleting the observable tag;
+  main-only or shared installation would leave missing or foreign intrinsic
+  identities in created Realms.
+- 장점, 단점 및 영향: Math and String's current executing corpora have no
+  failures, tag mutation follows specification fallback, and created Realms
+  own their method identities. Realm bootstrap allocates one additional Math
+  object and its native method set per created Realm.
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is
