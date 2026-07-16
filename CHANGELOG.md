@@ -4,6 +4,21 @@
 
 ### Fixed
 
+- Created Realms now own rooted `%Promise%` and `%Promise.prototype%`
+  intrinsic graphs. Promise construction, species defaults, async functions,
+  `await`, dynamic import, resolving/capability functions, combinator result
+  containers, and `AggregateError` allocation select the operation Realm
+  without consulting mutable global bindings. Forced-GC and cross-Realm
+  regressions cover intrinsic identity, internal function prototypes,
+  self-resolution errors, `all`/`allSettled`/`any`/`withResolvers` results,
+  `for await`, and `Reflect.construct` fallback. Exact Promise Realm Test262
+  admission moves one file from skip to pass at **256 pass / 0 fail / 447
+  skip**; the supported subset remains **12751/0/7687**, tooling is **89/89**,
+  and Rust builtins are **437/437**. Feature commit `6916e03` passed CI
+  `29471610323` and full matrix `29471610399`; only built-ins changes by **+1
+  pass / -1 skip**, producing **29803 pass / 6346 fail / 12156 skip / 12
+  timeout / 0 error / 48317 total** (**61.7%** of all files, **82.4%** of
+  executed files).
 - `Object.prototype.toString` now boxes primitive receivers, performs
   Proxy-aware `IsArray` before callable fallback, preserves revoked-Proxy
   ordering, and reads `@@toStringTag` from the rooted object. Promise and

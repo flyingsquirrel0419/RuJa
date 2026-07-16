@@ -5895,6 +5895,62 @@ normalized aggregate is **29802 pass / 6346 fail / 12157 skip / 12 timeout /
 files and **82.4%** of executed files. Raw artifacts contain the same 150
 unsupported built-ins skips and total 48467 files.
 
+## Promise Realm intrinsic isolation
+
+Feature commit `6916e03` installs a distinct `%Promise%` constructor,
+`%Promise.prototype%`, prototype methods, static methods, and species getter
+for every `$262.createRealm()` Realm. VM maps retain the original constructor
+and prototype as GC roots, so internal operations do not depend on replaceable
+global `Promise` properties.
+
+Promise allocation now distinguishes the Realm of the active native method,
+an interpreted async function's closure, an explicit module environment, and
+the Realm of a distinct `NewTarget`. Resolving functions and capability
+executors carry that Realm in their native closure and inherit its
+`%Function.prototype%`. `Promise.all`, `allSettled`, `any`, and
+`withResolvers` allocate their observable arrays, records, result objects,
+and `AggregateError` values from the method Realm. This also keeps foreign
+async functions and `for await` on the foreign Promise graph after globals are
+replaced and after explicit collection.
+
+The exact frozen admission opens only
+`built-ins/Promise/proto-from-ctor-realm.js`. Local verification is **256 pass
+/ 0 fail / 447 skip / 703 total** for `built-ins/Promise`, **12751 pass / 0
+fail / 7687 skip / 20438 total** for the supported subset, and **89/89** for
+the Python tooling suite. Rust all-target/all-feature tests including builtins
+**437/437**, Clippy with warnings denied, formatting, release, and wasm32
+checks pass. Two independent final reviews report no remaining high- or
+medium-severity finding in this Promise unit.
+
+[Decision Log]
+- 목적과 의도: make created Realms own the complete Promise behavior
+  needed by construction, async execution, and Promise combinators.
+- 기존 구현 및 제약 조건: RuJa stored only one main-Realm
+  Promise pair, while native closures, result containers, and error objects
+  could expose their Realm through prototype identity and error provenance.
+- 검토한 주요 대안: clone main-Realm function values; consult
+  each Realm's mutable global `Promise`; or retain original per-Realm
+  intrinsics and select them from execution or constructor Realm state.
+- 선택한 방식: install fresh native graphs, store constructor/prototype
+  maps as GC roots, pass an explicit Realm where async setup precedes frame
+  creation, and use active native closures for method-created functions and
+  containers.
+- 다른 대안 대신 이 방식을 선택한 이유: cloning preserves the wrong native
+  `[[Realm]]`, while global lookup is observably mutable and cannot implement
+  intrinsic fallback semantics.
+- 장점, 단점 및 영향: identity, error provenance, async allocation,
+  and GC behavior now follow Realm boundaries; VM state and allocation helpers
+  gain small Realm maps and explicit selection APIs. Generator and
+  AsyncGenerator intrinsic graphs remain a separate follow-up because their
+  method objects are still main-Realm identities.
+
+CI `29471610323` and full matrix `29471610399` succeeded. Of the 30 result
+artifacts at `/tmp/ruja-artifacts-promise-feature.qrjKLP`, 29 are byte-for-byte
+identical to the Object-toString documentation baseline; built-ins moves
+exactly **+1 pass / -1 skip**. The aggregate is **29803 pass / 6346 fail /
+12156 skip / 12 timeout / 0 error / 48317 total / 36149 pass-or-fail
+executed**, or **61.7%** of all files and **82.4%** of executed files.
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is
