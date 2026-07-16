@@ -12637,6 +12637,156 @@ fn promise_combinators_close_after_resolve_and_then_abrupt_completions() {
 }
 
 #[test]
+fn promise_combinators_reject_setup_errors_as_realm_objects() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+    assert_eq!(
+        vm.run(
+            r#"
+            var methods = ["all", "allSettled", "any", "race"];
+            var typeReasons = [];
+            for (let method of methods) {
+                Promise[method](null).then(
+                    function () { typeReasons.push(null); },
+                    function (reason) { typeReasons.push(reason); }
+                );
+            }
+
+            var originalResolve = Promise.resolve;
+            var lookupReason = {};
+            var lookupReasons = [];
+            var lookupIteratorGets = 0;
+            Object.defineProperty(Promise, "resolve", {
+                configurable: true,
+                get: function () { throw lookupReason; }
+            });
+            var lookupIterable = {};
+            Object.defineProperty(lookupIterable, Symbol.iterator, {
+                get: function () {
+                    lookupIteratorGets += 1;
+                    throw new Error("iterator lookup must not run");
+                }
+            });
+            for (let method of methods) {
+                Promise[method](lookupIterable).then(
+                    function () { lookupReasons.push(null); },
+                    function (reason) { lookupReasons.push(reason); }
+                );
+            }
+            Object.defineProperty(Promise, "resolve", {
+                configurable: true,
+                writable: true,
+                value: originalResolve
+            });
+
+            var nonCallableReasons = [];
+            var nonCallableGc = [];
+            var nonCallableIteratorGets = 0;
+            function C(executor) {
+                executor(function () {}, function (reason) {
+                    var reasonRef = new WeakRef(reason);
+                    forceGc();
+                    nonCallableReasons.push(reason);
+                    nonCallableGc.push(reasonRef.deref() === reason);
+                });
+            }
+            C.resolve = null;
+            var nonCallableIterable = {};
+            Object.defineProperty(nonCallableIterable, Symbol.iterator, {
+                get: function () {
+                    nonCallableIteratorGets += 1;
+                    throw new Error("iterator lookup must not run");
+                }
+            });
+            for (let method of methods) {
+                Promise[method].call(C, nonCallableIterable);
+            }
+
+            var finalResolveReasons = [];
+            for (let method of ["all", "allSettled", "allKeyed", "allSettledKeyed"]) {
+                function FinalC(executor) {
+                    executor(Map.prototype.get, function (reason) {
+                        finalResolveReasons.push(reason);
+                    });
+                }
+                FinalC.resolve = function (value) {
+                    return {
+                        then: function (resolve) { resolve(value); }
+                    };
+                };
+                var input = method.indexOf("Keyed") === -1 ? [1] : { key: 1 };
+                Promise[method].call(FinalC, input);
+            }
+
+            var tryReason;
+            function TryC(executor) {
+                executor(function () {}, function (reason) { tryReason = reason; });
+            }
+            Promise.try.call(TryC, null);
+
+            var other = $262.createRealm().global;
+            var mainMethodError;
+            var foreignMethodError;
+            Promise.all.call(other.Promise, null).catch(function (reason) {
+                mainMethodError = reason;
+            });
+            other.Promise.all.call(Promise, null).catch(function (reason) {
+                foreignMethodError = reason;
+            });
+            "scheduled";
+        "#,
+        )
+        .expect("Promise combinator setup should return rejection promises"),
+        Value::String(Arc::from("scheduled"))
+    );
+    assert_eq!(
+        vm.run(
+            r#"
+            [
+                typeReasons.length,
+                typeReasons.every(function (reason) {
+                    return reason instanceof TypeError &&
+                        Object.getPrototypeOf(reason) === TypeError.prototype;
+                }),
+                lookupReasons.length,
+                lookupReasons.every(function (reason) {
+                    return reason === lookupReason;
+                }),
+                lookupIteratorGets,
+                nonCallableReasons.length,
+                nonCallableReasons.every(function (reason) {
+                    return reason instanceof TypeError;
+                }),
+                nonCallableGc.every(function (alive) { return alive; }),
+                nonCallableIteratorGets,
+                finalResolveReasons.length,
+                finalResolveReasons.every(function (reason) {
+                    return reason instanceof TypeError;
+                }),
+                tryReason instanceof TypeError,
+                mainMethodError instanceof TypeError &&
+                    !(mainMethodError instanceof other.TypeError),
+                foreignMethodError instanceof other.TypeError &&
+                    !(foreignMethodError instanceof TypeError)
+            ].join("|");
+        "#,
+        )
+        .expect("Promise combinator setup rejections should preserve identity and Realm"),
+        Value::String(Arc::from(
+            "4|true|4|true|0|4|true|true|0|4|true|true|true|true"
+        ))
+    );
+}
+
+#[test]
 fn promise_static_resolve_and_reject_use_receiver_constructor_capability() {
     assert_eq!(
         run("class SubPromise extends Promise {}

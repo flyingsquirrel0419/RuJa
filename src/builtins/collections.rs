@@ -2511,10 +2511,22 @@ fn make_rejected_promise(vm: &mut Vm, reason: Value) -> error::Result<Value> {
     Ok(Value::Object(GcIdx(p_idx)))
 }
 
-fn promise_rejection_value(err: &Arc<error::Error>) -> Value {
-    err.thrown_value
-        .clone()
-        .unwrap_or_else(|| Value::String(Arc::from(err.message.as_str())))
+fn promise_rejection_value(vm: &mut Vm, err: &Arc<error::Error>) -> error::Result<Value> {
+    if !err.catchable() {
+        return Err(err.clone());
+    }
+    match err.thrown_value.clone() {
+        Some(reason) => Ok(reason),
+        None => vm.make_error_value(err),
+    }
+}
+
+fn get_promise_resolve(vm: &mut Vm, ctor: &Value) -> error::Result<Value> {
+    let promise_resolve = vm.get_property(ctor, "resolve")?;
+    if !is_callable(&promise_resolve, &vm.heap) {
+        return Err(Error::type_err("Promise resolve is not callable"));
+    }
+    Ok(promise_resolve)
 }
 
 fn make_aggregate_error(vm: &mut Vm, errors: Value) -> error::Result<Value> {
@@ -2569,7 +2581,22 @@ fn promise_capability_reject_and_return(
     capability: &PromiseCapability,
     err: Arc<error::Error>,
 ) -> error::Result<Value> {
-    reject_promise_capability(vm, capability, promise_rejection_value(&err))?;
+    let mut pins = vm.pin_many(&[
+        capability.promise.clone(),
+        capability.resolve.clone(),
+        capability.reject.clone(),
+    ]);
+    let reason = match promise_rejection_value(vm, &err) {
+        Ok(reason) => reason,
+        Err(err) => {
+            vm.unpin_many(pins);
+            return Err(err);
+        }
+    };
+    pins += vm.pin(&reason);
+    let rejected = reject_promise_capability(vm, capability, reason);
+    vm.unpin_many(pins);
+    rejected?;
     Ok(capability.promise.clone())
 }
 
@@ -2579,17 +2606,20 @@ fn promise_combinator_close_and_reject(
     iterator: &Value,
     err: Arc<error::Error>,
 ) -> error::Result<Value> {
-    if !err.catchable() {
-        return Err(err);
-    }
-    let reason = promise_rejection_value(&err);
-    let pins = vm.pin_many(&[
+    let mut pins = vm.pin_many(&[
         iterator.clone(),
         capability.promise.clone(),
         capability.resolve.clone(),
         capability.reject.clone(),
-        reason.clone(),
     ]);
+    let reason = match promise_rejection_value(vm, &err) {
+        Ok(reason) => reason,
+        Err(err) => {
+            vm.unpin_many(pins);
+            return Err(err);
+        }
+    };
+    pins += vm.pin(&reason);
     let close = vm.iterator_close(iterator);
     if let Err(close_err) = close {
         if !close_err.catchable() {
@@ -2700,7 +2730,8 @@ pub(crate) fn promise_all_resolve_element(
     });
     if remaining == 0 {
         if let Err(err) = call_promise_capability_function(vm, &resolve, values) {
-            call_promise_capability_function(vm, &reject, promise_rejection_value(&err))?;
+            let reason = promise_rejection_value(vm, &err)?;
+            call_promise_capability_function(vm, &reject, reason)?;
         }
     }
     Ok(Value::Undefined)
@@ -2809,7 +2840,8 @@ fn promise_all_settled_element(
     });
     if remaining == 0 {
         if let Err(err) = call_promise_capability_function(vm, &resolve, values) {
-            call_promise_capability_function(vm, &reject, promise_rejection_value(&err))?;
+            let reason = promise_rejection_value(vm, &err)?;
+            call_promise_capability_function(vm, &reject, reason)?;
         }
     }
     Ok(Value::Undefined)
@@ -3041,11 +3073,13 @@ fn promise_keyed_element(
         match result {
             Ok(result) => {
                 if let Err(err) = call_promise_capability_function(vm, &resolve, result) {
-                    call_promise_capability_function(vm, &reject, promise_rejection_value(&err))?;
+                    let reason = promise_rejection_value(vm, &err)?;
+                    call_promise_capability_function(vm, &reject, reason)?;
                 }
             }
             Err(err) => {
-                call_promise_capability_function(vm, &reject, promise_rejection_value(&err))?;
+                let reason = promise_rejection_value(vm, &err)?;
+                call_promise_capability_function(vm, &reject, reason)?;
             }
         }
     }
@@ -3206,7 +3240,7 @@ pub(crate) fn promise_static_all(
         capability.resolve.clone(),
         capability.reject.clone(),
     ]);
-    let promise_resolve = match vm.get_property(&ctor, "resolve") {
+    let promise_resolve = match get_promise_resolve(vm, &ctor) {
         Ok(promise_resolve) => promise_resolve,
         Err(err) => {
             let result = promise_capability_reject_and_return(vm, &capability, err);
@@ -3214,16 +3248,6 @@ pub(crate) fn promise_static_all(
             return result;
         }
     };
-    if !is_callable(&promise_resolve, &vm.heap) {
-        let result = reject_promise_capability(
-            vm,
-            &capability,
-            Value::String(Arc::from("Promise.all resolve is not callable")),
-        )
-        .map(|_| capability.promise.clone());
-        vm.unpin_many(pins);
-        return result;
-    }
 
     let iterable = args.first().cloned().unwrap_or(Value::Undefined);
     pins += vm.pin_many(&[promise_resolve.clone(), iterable.clone()]);
@@ -3416,28 +3440,23 @@ pub(crate) fn promise_static_race(
         capability.resolve.clone(),
         capability.reject.clone(),
     ]);
-    let promise_resolve = match vm.get_property(&ctor, "resolve") {
+    let promise_resolve = match get_promise_resolve(vm, &ctor) {
         Ok(promise_resolve) => promise_resolve,
         Err(err) => {
+            let result = promise_capability_reject_and_return(vm, &capability, err);
             vm.unpin_many(pins);
-            return Err(err);
+            return result;
         }
     };
-    if !is_callable(&promise_resolve, &vm.heap) {
-        vm.unpin_many(pins);
-        return Err(Error::type_err("Promise.race resolve is not callable"));
-    }
 
     let iterable = args.first().cloned().unwrap_or(Value::Undefined);
     pins += vm.pin_many(&[promise_resolve.clone(), iterable.clone()]);
     let iter = match vm.make_iterator(&iterable) {
         Ok(iter) => iter,
         Err(err) => {
-            let reason = promise_rejection_value(&err);
-            let reject_result = reject_promise_capability(vm, &capability, reason);
+            let result = promise_capability_reject_and_return(vm, &capability, err);
             vm.unpin_many(pins);
-            reject_result?;
-            return Ok(capability.promise);
+            return result;
         }
     };
     pins += vm.pin(&iter);
@@ -3446,11 +3465,9 @@ pub(crate) fn promise_static_race(
         let (value, done) = match vm.iterator_next(&iter) {
             Ok(step) => step,
             Err(err) => {
-                let reason = promise_rejection_value(&err);
-                let reject_result = reject_promise_capability(vm, &capability, reason);
+                let result = promise_capability_reject_and_return(vm, &capability, err);
                 vm.unpin_many(pins);
-                reject_result?;
-                return Ok(capability.promise);
+                return result;
             }
         };
         if done {
@@ -3509,7 +3526,7 @@ pub(crate) fn promise_static_all_settled(
         capability.resolve.clone(),
         capability.reject.clone(),
     ]);
-    let promise_resolve = match vm.get_property(&ctor, "resolve") {
+    let promise_resolve = match get_promise_resolve(vm, &ctor) {
         Ok(promise_resolve) => promise_resolve,
         Err(err) => {
             let result = promise_capability_reject_and_return(vm, &capability, err);
@@ -3517,16 +3534,6 @@ pub(crate) fn promise_static_all_settled(
             return result;
         }
     };
-    if !is_callable(&promise_resolve, &vm.heap) {
-        let result = reject_promise_capability(
-            vm,
-            &capability,
-            Value::String(Arc::from("Promise.allSettled resolve is not callable")),
-        )
-        .map(|_| capability.promise.clone());
-        vm.unpin_many(pins);
-        return result;
-    }
 
     let iterable = args.first().cloned().unwrap_or(Value::Undefined);
     pins += vm.pin_many(&[promise_resolve.clone(), iterable.clone()]);
@@ -3743,7 +3750,7 @@ fn promise_static_keyed(
         capability.resolve.clone(),
         capability.reject.clone(),
     ]);
-    let promise_resolve = match vm.get_property(&ctor, "resolve") {
+    let promise_resolve = match get_promise_resolve(vm, &ctor) {
         Ok(promise_resolve) => promise_resolve,
         Err(err) => {
             let result = promise_capability_reject_and_return(vm, &capability, err);
@@ -3751,18 +3758,6 @@ fn promise_static_keyed(
             return result;
         }
     };
-    if !is_callable(&promise_resolve, &vm.heap) {
-        let message = if all_settled {
-            "Promise.allSettledKeyed resolve is not callable"
-        } else {
-            "Promise.allKeyed resolve is not callable"
-        };
-        let err = make_type_error_object(vm, message)?;
-        let result =
-            reject_promise_capability(vm, &capability, err).map(|_| capability.promise.clone());
-        vm.unpin_many(pins);
-        return result;
-    }
 
     let promises = args.first().cloned().unwrap_or(Value::Undefined);
     pins += vm.pin_many(&[promise_resolve.clone(), promises.clone()]);
@@ -4018,7 +4013,7 @@ pub(crate) fn promise_static_any(
         capability.resolve.clone(),
         capability.reject.clone(),
     ]);
-    let promise_resolve = match vm.get_property(&ctor, "resolve") {
+    let promise_resolve = match get_promise_resolve(vm, &ctor) {
         Ok(promise_resolve) => promise_resolve,
         Err(err) => {
             let result = promise_capability_reject_and_return(vm, &capability, err);
@@ -4026,16 +4021,6 @@ pub(crate) fn promise_static_any(
             return result;
         }
     };
-    if !is_callable(&promise_resolve, &vm.heap) {
-        let result = reject_promise_capability(
-            vm,
-            &capability,
-            Value::String(Arc::from("Promise.any resolve is not callable")),
-        )
-        .map(|_| capability.promise.clone());
-        vm.unpin_many(pins);
-        return result;
-    }
 
     let iterable = args.first().cloned().unwrap_or(Value::Undefined);
     pins += vm.pin_many(&[promise_resolve.clone(), iterable.clone()]);
@@ -4232,9 +4217,15 @@ pub(crate) fn promise_static_try(
     };
     let settle_result = match callback_result {
         Ok(value) => call_promise_capability_function(vm, &capability.resolve, value),
-        Err(err) => {
-            call_promise_capability_function(vm, &capability.reject, promise_rejection_value(&err))
-        }
+        Err(err) => match promise_rejection_value(vm, &err) {
+            Ok(reason) => {
+                let reason_pin = vm.pin(&reason);
+                let result = call_promise_capability_function(vm, &capability.reject, reason);
+                vm.unpin_many(reason_pin);
+                result
+            }
+            Err(err) => Err(err),
+        },
     };
     vm.unpin_many(pins);
     settle_result?;
