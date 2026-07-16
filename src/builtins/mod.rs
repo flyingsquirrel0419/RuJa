@@ -2775,6 +2775,81 @@ fn install_array_intrinsic_in_env(
     Ok((constructor, prototype))
 }
 
+fn install_promise_intrinsic_in_env(
+    vm: &mut Vm,
+    env: GcIdx,
+    realm_global: Option<&Value>,
+) -> error::Result<(GcIdx, GcIdx)> {
+    let realm = crate::environment::global_env_root(&vm.heap, env);
+    let (constructor, prototype) = make_builtin_constructor_with_in_env(
+        vm,
+        "Promise",
+        1,
+        promise_constructor,
+        &[
+            ("then", promise_then, 2),
+            ("catch", promise_catch, 1),
+            ("finally", promise_finally, 1),
+        ],
+        realm,
+    )?;
+    let constructor_value = Value::Object(constructor);
+    let prototype_value = Value::Object(prototype);
+    let pin_count = vm.pin_many(&[constructor_value.clone(), prototype_value.clone()]);
+
+    vm.heap.with_obj(prototype.0, |object| {
+        let mut tag = data_prop(Value::String(Arc::from("Promise")));
+        tag.writable = false;
+        object.props().lock().insert(
+            PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
+            tag,
+        );
+    });
+    for (name, function, length) in [
+        ("resolve", promise_static_resolve as NativeFn, 1),
+        ("reject", promise_static_reject as NativeFn, 1),
+        ("all", promise_static_all as NativeFn, 1),
+        ("allKeyed", promise_static_all_keyed as NativeFn, 1),
+        ("race", promise_static_race as NativeFn, 1),
+        ("allSettled", promise_static_all_settled as NativeFn, 1),
+        (
+            "allSettledKeyed",
+            promise_static_all_settled_keyed as NativeFn,
+            1,
+        ),
+        ("any", promise_static_any as NativeFn, 1),
+        ("try", promise_static_try as NativeFn, 1),
+        ("withResolvers", promise_with_resolvers as NativeFn, 0),
+    ] {
+        let method = vm.new_native_function_in_env(name, function, length, realm)?;
+        vm.heap.with_obj(constructor.0, |object| {
+            object
+                .props()
+                .lock()
+                .insert(PropertyKey::from(name), data_prop(Value::Object(method)));
+        });
+    }
+    let species =
+        vm.new_native_function_in_env("get [Symbol.species]", promise_species_get, 0, realm)?;
+    vm.heap.with_obj(constructor.0, |object| {
+        object.props().lock().insert(
+            PropertyKey::Symbol(vm.well_known_symbols.species),
+            accessor_get_prop(Value::Object(species)),
+        );
+    });
+
+    vm.realm_promise_constructors
+        .insert(realm.0, constructor_value.clone());
+    vm.realm_promise_prototypes.insert(realm.0, prototype_value);
+    if realm == vm.global {
+        define_global(vm, "Promise", constructor_value);
+    } else if let Some(global) = realm_global {
+        define_realm_global(vm, realm, global, "Promise", constructor_value);
+    }
+    vm.unpin_many(pin_count);
+    Ok((constructor, prototype))
+}
+
 fn make_test262_realm(vm: &mut Vm) -> error::Result<Value> {
     let realm_env = crate::environment::new_env(&vm.heap, None, true)?;
     let global_idx = vm.heap.allocate(HeapObj::Object(crate::value::ObjectData {
@@ -3238,6 +3313,7 @@ fn make_test262_realm(vm: &mut Vm) -> error::Result<Value> {
             &typed_array_proto,
         )?;
     }
+    install_promise_intrinsic_in_env(vm, realm_env, Some(&global))?;
     install_atomics_in_env(vm, realm_env, Some(&global))?;
     install_weak_ref_constructor_in_env(vm, realm_env, Some(&global))?;
     install_finalization_registry_constructor_in_env(vm, realm_env, Some(&global))?;
@@ -4343,8 +4419,24 @@ fn ordinary_own_property_keys(
 }
 
 pub(crate) fn make_value_array(vm: &mut Vm, items: Vec<Value>) -> error::Result<Value> {
-    let arr = HeapObj::Array(ArrayData::new(items, Some(vm.array_proto.clone())));
+    make_value_array_in_env(vm, items, vm.global)
+}
+
+pub(crate) fn make_value_array_in_env(
+    vm: &mut Vm,
+    items: Vec<Value>,
+    env: GcIdx,
+) -> error::Result<Value> {
+    let prototype = vm.array_prototype_for_env(env);
+    let arr = HeapObj::Array(ArrayData::new(items, Some(prototype)));
     Ok(Value::Object(GcIdx(vm.heap.allocate(arr)?)))
+}
+
+pub(crate) fn make_value_array_in_current_realm(
+    vm: &mut Vm,
+    items: Vec<Value>,
+) -> error::Result<Value> {
+    make_value_array_in_env(vm, items, vm.current_realm_global_env())
 }
 pub(crate) fn norm_idx(n: f64, len: f64) -> f64 {
     if n < 0.0 {
@@ -9413,88 +9505,9 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
         }
     }
     // Promise
-    let (promise_ctor, promise_proto) = make_builtin_constructor_with(
-        vm,
-        "Promise",
-        1,
-        promise_constructor,
-        &[
-            ("then", promise_then, 2),
-            ("catch", promise_catch, 1),
-            ("finally", promise_finally, 1),
-        ],
-    )?;
+    let (promise_ctor, promise_proto) = install_promise_intrinsic_in_env(vm, vm.global, None)?;
     vm.promise_ctor = Value::Object(promise_ctor);
     vm.promise_proto = Value::Object(promise_proto);
-    vm.heap.with_obj(promise_proto.0, |obj| {
-        let mut tag = data_prop(Value::String(Arc::from("Promise")));
-        tag.writable = false;
-        obj.props().lock().insert(
-            PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
-            tag,
-        );
-    });
-    // Static methods on the Promise constructor.
-    let resolve_static = vm.new_native_function("resolve", promise_static_resolve, 1)?;
-    let reject_static = vm.new_native_function("reject", promise_static_reject, 1)?;
-    let all_static = vm.new_native_function("all", promise_static_all, 1)?;
-    let all_keyed_static = vm.new_native_function("allKeyed", promise_static_all_keyed, 1)?;
-    let race_static = vm.new_native_function("race", promise_static_race, 1)?;
-    let all_settled_static = vm.new_native_function("allSettled", promise_static_all_settled, 1)?;
-    let all_settled_keyed_static =
-        vm.new_native_function("allSettledKeyed", promise_static_all_settled_keyed, 1)?;
-    let any_static = vm.new_native_function("any", promise_static_any, 1)?;
-    let try_static = vm.new_native_function("try", promise_static_try, 1)?;
-    let with_resolvers_static =
-        vm.new_native_function("withResolvers", promise_with_resolvers, 0)?;
-    let species_getter = vm.new_native_function("get [Symbol.species]", promise_species_get, 0)?;
-    vm.heap.with_obj(promise_ctor.0, |obj| {
-        obj.props().lock().insert(
-            PropertyKey::from("resolve"),
-            data_prop(Value::Object(resolve_static)),
-        );
-        obj.props().lock().insert(
-            PropertyKey::from("reject"),
-            data_prop(Value::Object(reject_static)),
-        );
-        obj.props().lock().insert(
-            PropertyKey::from("all"),
-            data_prop(Value::Object(all_static)),
-        );
-        obj.props().lock().insert(
-            PropertyKey::from("allKeyed"),
-            data_prop(Value::Object(all_keyed_static)),
-        );
-        obj.props().lock().insert(
-            PropertyKey::from("race"),
-            data_prop(Value::Object(race_static)),
-        );
-        obj.props().lock().insert(
-            PropertyKey::from("allSettled"),
-            data_prop(Value::Object(all_settled_static)),
-        );
-        obj.props().lock().insert(
-            PropertyKey::from("allSettledKeyed"),
-            data_prop(Value::Object(all_settled_keyed_static)),
-        );
-        obj.props().lock().insert(
-            PropertyKey::from("any"),
-            data_prop(Value::Object(any_static)),
-        );
-        obj.props().lock().insert(
-            PropertyKey::from("try"),
-            data_prop(Value::Object(try_static)),
-        );
-        obj.props().lock().insert(
-            PropertyKey::from("withResolvers"),
-            data_prop(Value::Object(with_resolvers_static)),
-        );
-        obj.props().lock().insert(
-            PropertyKey::Symbol(vm.well_known_symbols.species),
-            accessor_get_prop(Value::Object(species_getter)),
-        );
-    });
-    define_global(vm, "Promise", Value::Object(promise_ctor));
     // RegExp
     let (regex_ctor, regex_proto) = make_regexp_constructor_in_env(vm, vm.global)?;
     vm.regexp_proto = Value::Object(regex_proto);

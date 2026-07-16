@@ -1260,7 +1260,8 @@ pub(crate) fn atomics_wait_async(
         return atomics_wait_async_result(vm, false, Value::String(Arc::from("timed-out")));
     }
 
-    let capability = new_promise_capability(vm, vm.promise_ctor.clone())?;
+    let constructor = vm.current_realm_promise_constructor();
+    let capability = new_promise_capability(vm, constructor)?;
     let waiter = Arc::new(crate::value::AtomicsWaiter {
         notified: Mutex::new(false),
         wake: parking_lot::Condvar::new(),

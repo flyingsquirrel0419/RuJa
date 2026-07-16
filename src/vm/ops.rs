@@ -2922,7 +2922,8 @@ impl Vm {
             Value::Undefined
         };
         let specifier = self.stack.pop().unwrap_or(Value::Undefined);
-        let capability = crate::builtins::new_promise_capability(self, self.promise_ctor.clone())?;
+        let constructor = self.current_realm_promise_constructor();
+        let capability = crate::builtins::new_promise_capability(self, constructor)?;
         let promise = match capability.promise.clone() {
             Value::Object(promise) => promise,
             _ => {

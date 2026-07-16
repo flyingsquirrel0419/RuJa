@@ -19,6 +19,9 @@ try:
     from test262_object_prototype_admission import (
         OBJECT_PROTOTYPE_FEATURES_BY_FILE, OBJECT_PROTOTYPE_FILES,
     )
+    from test262_promise_realm_admission import (
+        PROMISE_REALM_FEATURES, PROMISE_REALM_FILES,
+    )
     from test262_proxy_get_admission import PROXY_GET_FEATURES, PROXY_GET_FILES
     from test262_proxy_own_keys_admission import (
         PROXY_OWN_KEYS_FEATURES, PROXY_OWN_KEYS_FILES,
@@ -47,6 +50,9 @@ except ModuleNotFoundError:
     )
     from tools.test262_object_prototype_admission import (
         OBJECT_PROTOTYPE_FEATURES_BY_FILE, OBJECT_PROTOTYPE_FILES,
+    )
+    from tools.test262_promise_realm_admission import (
+        PROMISE_REALM_FEATURES, PROMISE_REALM_FILES,
     )
     from tools.test262_proxy_get_admission import PROXY_GET_FEATURES, PROXY_GET_FILES
     from tools.test262_proxy_own_keys_admission import (
@@ -2107,6 +2113,20 @@ def object_prototype_features(path):
         return frozenset()
     return OBJECT_PROTOTYPE_FEATURES_BY_FILE.get(rel.as_posix(), frozenset())
 
+def promise_realm_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except (OSError, ValueError):
+        return False
+    return rel.as_posix() in PROMISE_REALM_FILES
+
+def promise_realm_features(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except (OSError, ValueError):
+        return frozenset()
+    return PROMISE_REALM_FEATURES.get(rel.as_posix(), frozenset())
+
 def should_skip(meta, path=None):
     feats = set(meta.get('features', []))
     if path is not None and module_core_path(path):
@@ -2152,6 +2172,8 @@ def should_skip(meta, path=None):
         feats.difference_update(object_constructor_features(path))
     if path is not None and object_prototype_path(path):
         feats.difference_update(object_prototype_features(path))
+    if path is not None and promise_realm_path(path):
+        feats.difference_update(promise_realm_features(path))
     if path is not None and explicit_resource_management_symbols_path(path):
         feats.discard("explicit-resource-management")
     if path is not None and symbol_function_name_path(path):

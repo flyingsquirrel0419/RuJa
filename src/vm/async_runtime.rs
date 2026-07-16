@@ -17,7 +17,7 @@ impl Vm {
         chunk: Arc<crate::bytecode::Chunk>,
         env: GcIdx,
     ) -> error::Result<(GcIdx, Option<Value>)> {
-        let capability = self.new_intrinsic_promise_capability()?;
+        let capability = self.new_intrinsic_promise_capability_in_env(env)?;
         let Value::Object(promise) = capability.promise.clone() else {
             return Err(Error::internal(
                 "Module evaluation capability has no Promise",
@@ -83,8 +83,21 @@ impl Vm {
     }
 
     fn new_intrinsic_promise_capability(&mut self) -> error::Result<PromiseReactionCapability> {
-        let constructor = self.promise_ctor.clone();
+        let constructor = self.current_realm_promise_constructor();
         let capability = crate::builtins::new_promise_capability(self, constructor)?;
+        Ok(PromiseReactionCapability {
+            promise: capability.promise,
+            resolve: capability.resolve,
+            reject: capability.reject,
+        })
+    }
+
+    fn new_intrinsic_promise_capability_in_env(
+        &mut self,
+        env: GcIdx,
+    ) -> error::Result<PromiseReactionCapability> {
+        let constructor = self.promise_constructor_for_env(env);
+        let capability = crate::builtins::new_promise_capability_in_env(self, constructor, env)?;
         Ok(PromiseReactionCapability {
             promise: capability.promise,
             resolve: capability.resolve,
@@ -135,7 +148,7 @@ impl Vm {
 
             if let Some(promise) = native_promise {
                 let constructor = self.get_property(&value, "constructor")?;
-                if constructor == self.promise_ctor {
+                if constructor == self.current_realm_promise_constructor() {
                     return Ok(promise);
                 }
             }
@@ -297,7 +310,7 @@ impl Vm {
         args: &[Value],
         new_target: Value,
     ) -> error::Result<Value> {
-        let capability = self.new_intrinsic_promise_capability()?;
+        let capability = self.new_intrinsic_promise_capability_in_env(env)?;
         let promise = capability.promise.clone();
         let capability_pins = self.pin_many(&[
             capability.promise.clone(),
@@ -678,15 +691,24 @@ impl Vm {
     }
 
     pub fn new_object(&mut self) -> error::Result<GcIdx> {
+        self.new_object_in_env(self.global)
+    }
+
+    pub(crate) fn new_object_in_env(&mut self, env: GcIdx) -> error::Result<GcIdx> {
+        let prototype = self.object_prototype_for_env(env);
         let obj = HeapObj::Object(crate::value::ObjectData {
             props: Mutex::new(IndexMap::new()),
-            proto: Mutex::new(Some(self.object_proto.clone())),
+            proto: Mutex::new(Some(prototype)),
             extensible: std::sync::atomic::AtomicBool::new(true),
             class_name: None,
             private_fields: Mutex::new(std::collections::HashMap::new()),
             primitive: Mutex::new(None),
         });
         self.alloc(obj)
+    }
+
+    pub(crate) fn new_object_in_current_realm(&mut self) -> error::Result<GcIdx> {
+        self.new_object_in_env(self.current_realm_global_env())
     }
 
     /// Allocate a heap object, returning a catchable `RangeError` if the
@@ -845,6 +867,13 @@ impl Vm {
         if intrinsic == "Object" {
             return Ok(self
                 .realm_object_prototypes
+                .get(&realm.0)
+                .cloned()
+                .unwrap_or(fallback));
+        }
+        if intrinsic == "Promise" {
+            return Ok(self
+                .realm_promise_prototypes
                 .get(&realm.0)
                 .cloned()
                 .unwrap_or(fallback));
@@ -2549,7 +2578,7 @@ impl Vm {
 
             let then = self.get_property(&v, "then")?;
             if crate::builtins::is_callable(&then, &self.heap) {
-                let ctor = self.promise_ctor.clone();
+                let ctor = self.current_realm_promise_constructor();
                 let capability = crate::builtins::new_promise_capability(self, ctor)?;
                 let pins = self.pin_many(&[
                     v.clone(),

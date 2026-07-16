@@ -11725,6 +11725,202 @@ fn promise_static_surface_and_species_descriptor() {
 }
 
 #[test]
+fn promise_intrinsics_are_isolated_by_realm() {
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var foreignAsync = other.eval("(async function () { return 7; })");
+            var foreignPromise = foreignAsync();
+            var foreignError;
+            try { other.Promise.prototype.then.call({}); }
+            catch (error) { foreignError = error; }
+            var species = Object.getOwnPropertyDescriptor(
+                other.Promise,
+                Symbol.species
+            );
+            var tag = Object.getOwnPropertyDescriptor(
+                other.Promise.prototype,
+                Symbol.toStringTag
+            );
+            [
+                other.Promise !== Promise,
+                other.Promise.prototype !== Promise.prototype,
+                other.Promise.resolve !== Promise.resolve,
+                other.Promise.prototype.then !== Promise.prototype.then,
+                Object.getPrototypeOf(other.Promise) === other.Function.prototype,
+                Object.getPrototypeOf(other.Promise.prototype) === other.Object.prototype,
+                Object.getPrototypeOf(foreignPromise) === other.Promise.prototype,
+                foreignPromise.constructor === other.Promise,
+                foreignPromise instanceof other.Promise,
+                !(foreignPromise instanceof Promise),
+                foreignError instanceof other.TypeError,
+                !(foreignError instanceof TypeError),
+                species.get.call(other.Promise) === other.Promise,
+                species.enumerable,
+                species.configurable,
+                tag.value,
+                tag.writable,
+                tag.enumerable,
+                tag.configurable
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "true|true|true|true|true|true|true|true|true|true|true|true|true|false|true|Promise|false|false|true"
+        ))
+    );
+}
+
+#[test]
+fn promise_intrinsic_selection_ignores_mutable_globals_and_survives_gc() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+    vm.run(
+        r#"
+        var mainConstructor = Promise;
+        var mainAsync = async function () { return 1; };
+        var other = $262.createRealm().global;
+        var constructorRef = new WeakRef(other.Promise);
+        var prototypeRef = new WeakRef(other.Promise.prototype);
+        var foreignAsync = other.eval("(async function () { return 2; })");
+        var foreignForAwait = other.eval(
+            "(async function () { for await (var value of [1]) {} return 3; })"
+        );
+        var foreignSelfResolve, foreignSelfReason;
+        var foreignSelfPromise = new other.Promise(function (resolve) {
+            foreignSelfResolve = resolve;
+        });
+        foreignSelfPromise.catch(function (error) { foreignSelfReason = error; });
+        foreignSelfResolve(foreignSelfPromise);
+        var foreignThen = other.Promise.prototype.then;
+        var newTarget = new other.Function();
+        newTarget.prototype = null;
+        other.Promise = null;
+        Promise = null;
+    "#,
+    )
+    .expect("failed to prepare mutated Promise Realms");
+
+    vm.gc();
+    assert_eq!(
+        vm.run(
+            r#"
+            var foreignConstructor = constructorRef.deref();
+            var foreignPrototype = prototypeRef.deref();
+            var mainResult = mainAsync();
+            var foreignResult = foreignAsync();
+            var foreignForAwaitResult = foreignForAwait();
+            var reflected = Reflect.construct(
+                mainConstructor,
+                [function () { forceGc(); }],
+                newTarget
+            );
+            var speciesDefault = mainConstructor.resolve(1);
+            speciesDefault.constructor = undefined;
+            var chained = foreignThen.call(speciesDefault);
+            [
+                foreignConstructor !== undefined,
+                foreignPrototype !== undefined,
+                Object.getPrototypeOf(mainResult) === mainConstructor.prototype,
+                Object.getPrototypeOf(foreignResult) === foreignPrototype,
+                foreignResult.constructor === foreignConstructor,
+                Object.getPrototypeOf(foreignForAwaitResult) === foreignPrototype,
+                foreignSelfReason instanceof other.TypeError,
+                !(foreignSelfReason instanceof TypeError),
+                Object.getPrototypeOf(reflected) === foreignPrototype,
+                Object.getPrototypeOf(chained) === foreignPrototype
+            ].join("|");
+        "#
+        )
+        .expect("failed to use rooted Promise intrinsics after GC"),
+        Value::String(Arc::from(
+            "true|true|true|true|true|true|true|true|true|true"
+        ))
+    );
+}
+
+#[test]
+fn promise_internal_functions_and_results_use_the_method_realm() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    assert_eq!(
+        vm.run(
+            r#"
+            var other = $262.createRealm().global;
+            var resolvingFunctions = [];
+            new other.Promise(function (resolve, reject) {
+                resolvingFunctions = [resolve, reject];
+            });
+
+            var capabilityExecutor;
+            function Capability(executor) {
+                capabilityExecutor = executor;
+                executor(function () {}, function () {});
+                return {};
+            }
+            other.Promise.resolve.call(Capability, 1);
+
+            var elementFunctions = [];
+            function Elements(executor) {
+                executor(function () {}, function () {});
+                return {};
+            }
+            Elements.resolve = function (value) {
+                return {
+                    then: function (resolve, reject) {
+                        elementFunctions = [resolve, reject];
+                        resolve(value);
+                    }
+                };
+            };
+            other.Promise.allSettled.call(Elements, [1]);
+
+            var allValue, settledValue, anyReason;
+            other.Promise.all([]).then(function (value) { allValue = value; });
+            other.Promise.allSettled([1]).then(function (value) {
+                settledValue = value;
+            });
+            other.Promise.any([]).catch(function (error) { anyReason = error; });
+            var resolvers = other.Promise.withResolvers();
+            "scheduled";
+        "#
+        )
+        .expect("failed to exercise foreign Promise internals"),
+        Value::String(Arc::from("scheduled"))
+    );
+
+    assert_eq!(
+        vm.run(
+            r#"
+            [
+                resolvingFunctions.every(function (fn) {
+                    return Object.getPrototypeOf(fn) === other.Function.prototype;
+                }),
+                Object.getPrototypeOf(capabilityExecutor) === other.Function.prototype,
+                elementFunctions.every(function (fn) {
+                    return Object.getPrototypeOf(fn) === other.Function.prototype;
+                }),
+                Object.getPrototypeOf(allValue) === other.Array.prototype,
+                Object.getPrototypeOf(settledValue) === other.Array.prototype,
+                Object.getPrototypeOf(settledValue[0]) === other.Object.prototype,
+                Object.getPrototypeOf(anyReason) === other.AggregateError.prototype,
+                Object.getPrototypeOf(anyReason.errors) === other.Array.prototype,
+                Object.getPrototypeOf(resolvers) === other.Object.prototype
+            ].join("|");
+        "#
+        )
+        .expect("failed to inspect foreign Promise internals"),
+        Value::String(Arc::from("true|true|true|true|true|true|true|true|true"))
+    );
+}
+
+#[test]
 fn promise_static_combinators_return_promises() {
     assert_eq!(
         run("[

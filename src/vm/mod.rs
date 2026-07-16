@@ -138,6 +138,11 @@ pub struct Vm {
     pub(crate) realm_object_prototypes: HashMap<usize, Value>,
     /// Realm global environment index -> original `%Array.prototype%`.
     pub(crate) realm_array_prototypes: HashMap<usize, Value>,
+    /// Realm global environment -> `%Promise%` and `%Promise.prototype%`.
+    /// Async execution and Promise species defaults must use intrinsic
+    /// identities rather than mutable global bindings.
+    pub(crate) realm_promise_constructors: HashMap<usize, Value>,
+    pub(crate) realm_promise_prototypes: HashMap<usize, Value>,
     /// Realm global environment index + primitive kind -> that Realm's
     /// intrinsic wrapper prototype used by ToObject and primitive references.
     pub(crate) realm_primitive_prototypes: HashMap<(usize, PrimitivePrototypeKind), Value>,
@@ -580,6 +585,8 @@ impl Vm {
             realm_globals: HashMap::new(),
             realm_object_prototypes: HashMap::new(),
             realm_array_prototypes: HashMap::new(),
+            realm_promise_constructors: HashMap::new(),
+            realm_promise_prototypes: HashMap::new(),
             realm_primitive_prototypes: HashMap::new(),
             realm_eval_functions: HashMap::new(),
             realm_throw_type_errors: HashMap::new(),
@@ -2089,6 +2096,35 @@ impl Vm {
             .unwrap_or_else(|| self.global_this.clone())
     }
 
+    pub(crate) fn object_prototype_for_env(&self, env: GcIdx) -> Value {
+        let realm = crate::environment::global_env_root(&self.heap, env);
+        self.realm_object_prototypes
+            .get(&realm.0)
+            .cloned()
+            .unwrap_or_else(|| self.object_proto.clone())
+    }
+
+    pub(crate) fn array_prototype_for_env(&self, env: GcIdx) -> Value {
+        let realm = crate::environment::global_env_root(&self.heap, env);
+        self.realm_array_prototypes
+            .get(&realm.0)
+            .cloned()
+            .unwrap_or_else(|| self.array_proto.clone())
+    }
+
+    pub(crate) fn error_prototype_for_env(&self, name: &str, env: GcIdx) -> Value {
+        let realm = crate::environment::global_env_root(&self.heap, env);
+        self.realm_error_prototypes
+            .get(&(realm.0, Arc::from(name)))
+            .cloned()
+            .or_else(|| {
+                self.realm_error_prototypes
+                    .get(&(realm.0, Arc::from("Error")))
+                    .cloned()
+            })
+            .unwrap_or_else(|| self.error_proto.clone())
+    }
+
     pub(crate) fn primitive_prototype_for_env(&self, value: &Value, env: GcIdx) -> Value {
         let kind = match value {
             Value::String(_) => PrimitivePrototypeKind::String,
@@ -2113,6 +2149,30 @@ impl Vm {
 
     pub(crate) fn current_realm_primitive_prototype(&self, value: &Value) -> Value {
         self.primitive_prototype_for_env(value, self.current_realm_global_env())
+    }
+
+    pub(crate) fn promise_constructor_for_env(&self, env: GcIdx) -> Value {
+        let realm = crate::environment::global_env_root(&self.heap, env);
+        self.realm_promise_constructors
+            .get(&realm.0)
+            .cloned()
+            .unwrap_or_else(|| self.promise_ctor.clone())
+    }
+
+    pub(crate) fn promise_prototype_for_env(&self, env: GcIdx) -> Value {
+        let realm = crate::environment::global_env_root(&self.heap, env);
+        self.realm_promise_prototypes
+            .get(&realm.0)
+            .cloned()
+            .unwrap_or_else(|| self.promise_proto.clone())
+    }
+
+    pub(crate) fn current_realm_promise_constructor(&self) -> Value {
+        self.promise_constructor_for_env(self.current_realm_global_env())
+    }
+
+    pub(crate) fn current_realm_promise_prototype(&self) -> Value {
+        self.promise_prototype_for_env(self.current_realm_global_env())
     }
 
     /// Resolve an identifier to a spec Reference record, using the same

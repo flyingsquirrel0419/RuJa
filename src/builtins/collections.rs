@@ -2077,7 +2077,8 @@ pub(crate) fn promise_constructor(
     if !is_callable(&executor, &vm.heap) {
         return Err(Error::type_err("Promise resolver is not a function"));
     }
-    let proto = native_constructor_prototype_with_default(vm, "Promise", vm.promise_proto.clone())?;
+    let fallback = vm.current_realm_promise_prototype();
+    let proto = native_constructor_prototype_with_default(vm, "Promise", fallback)?;
     let p_idx = vm
         .heap
         .allocate(HeapObj::Promise(crate::value::PromiseData {
@@ -2119,9 +2120,28 @@ fn create_bound_native_function(
     length: usize,
     this_val: Value,
 ) -> error::Result<Value> {
-    let target = vm.new_native_function(target_name, func, length)?;
+    let realm = vm.current_realm_global_env();
+    create_bound_native_function_in_env(vm, name, target_name, func, length, this_val, realm)
+}
+
+fn create_bound_native_function_in_env(
+    vm: &mut Vm,
+    name: &str,
+    target_name: &str,
+    func: NativeFn,
+    length: usize,
+    this_val: Value,
+    realm: GcIdx,
+) -> error::Result<Value> {
+    let realm = env::global_env_root(&vm.heap, realm);
+    let target = vm.new_native_function_in_env(target_name, func, length, realm)?;
     let target_val = Value::Object(target);
     let pins = vm.pin_many(&[target_val, this_val.clone()]);
+    let function_proto = vm
+        .realm_function_prototypes
+        .get(&realm.0)
+        .cloned()
+        .unwrap_or_else(|| vm.function_proto.clone());
     let idx = vm.heap.allocate(HeapObj::Function(FunctionData {
         name: Some(Arc::from(name)),
         kind: FunctionKind::Bound {
@@ -2129,13 +2149,13 @@ fn create_bound_native_function(
             this_val,
             bound_args: Vec::new(),
         },
-        closure: vm.global,
+        closure: realm,
         lexical_new_target: Value::Undefined,
         home_object: Mutex::new(None),
         is_class_ctor: AtomicBool::new(false),
         prototype: Mutex::new(None),
-        proto: Mutex::new(match vm.function_proto {
-            Value::Object(_) => Some(vm.function_proto.clone()),
+        proto: Mutex::new(match function_proto {
+            Value::Object(_) => Some(function_proto),
             _ => None,
         }),
         props: Mutex::new(builtin_function_own_props(name, length)),
@@ -2248,6 +2268,15 @@ pub(crate) fn promise_capability_executor(
 }
 
 pub(crate) fn new_promise_capability(vm: &mut Vm, ctor: Value) -> error::Result<PromiseCapability> {
+    let realm = vm.current_realm_global_env();
+    new_promise_capability_in_env(vm, ctor, realm)
+}
+
+pub(crate) fn new_promise_capability_in_env(
+    vm: &mut Vm,
+    ctor: Value,
+    realm: GcIdx,
+) -> error::Result<PromiseCapability> {
     if !vm.is_constructor_value(&ctor) {
         return Err(Error::type_err(
             "Promise capability receiver is not a constructor",
@@ -2256,13 +2285,14 @@ pub(crate) fn new_promise_capability(vm: &mut Vm, ctor: Value) -> error::Result<
 
     let capability_idx = vm.new_object()?;
     let capability = Value::Object(capability_idx);
-    let executor = create_bound_native_function(
+    let executor = create_bound_native_function_in_env(
         vm,
         "",
         "",
         promise_capability_executor,
         2,
         capability.clone(),
+        realm,
     )?;
     let pins = vm.pin_many(&[ctor.clone(), capability.clone(), executor.clone()]);
     let promise_result = vm.construct(&ctor, std::slice::from_ref(&executor));
@@ -2440,6 +2470,7 @@ pub(crate) fn promise_static_reject(
 }
 
 fn make_pending_promise(vm: &mut Vm) -> error::Result<Value> {
+    let prototype = vm.current_realm_promise_prototype();
     let p_idx = vm
         .heap
         .allocate(HeapObj::Promise(crate::value::PromiseData {
@@ -2447,12 +2478,13 @@ fn make_pending_promise(vm: &mut Vm) -> error::Result<Value> {
             result: Mutex::new(Value::Undefined),
             handlers: Mutex::new(Vec::new()),
             props: Mutex::new(IndexMap::new()),
-            proto: Mutex::new(Some(vm.promise_proto.clone())),
+            proto: Mutex::new(Some(prototype)),
         }))?;
     Ok(Value::Object(GcIdx(p_idx)))
 }
 
 fn make_fulfilled_promise(vm: &mut Vm, value: Value) -> error::Result<Value> {
+    let prototype = vm.current_realm_promise_prototype();
     let p_idx = vm
         .heap
         .allocate(HeapObj::Promise(crate::value::PromiseData {
@@ -2460,12 +2492,13 @@ fn make_fulfilled_promise(vm: &mut Vm, value: Value) -> error::Result<Value> {
             result: Mutex::new(value),
             handlers: Mutex::new(Vec::new()),
             props: Mutex::new(IndexMap::new()),
-            proto: Mutex::new(Some(vm.promise_proto.clone())),
+            proto: Mutex::new(Some(prototype)),
         }))?;
     Ok(Value::Object(GcIdx(p_idx)))
 }
 
 fn make_rejected_promise(vm: &mut Vm, reason: Value) -> error::Result<Value> {
+    let prototype = vm.current_realm_promise_prototype();
     let p_idx = vm
         .heap
         .allocate(HeapObj::Promise(crate::value::PromiseData {
@@ -2473,7 +2506,7 @@ fn make_rejected_promise(vm: &mut Vm, reason: Value) -> error::Result<Value> {
             result: Mutex::new(reason),
             handlers: Mutex::new(Vec::new()),
             props: Mutex::new(IndexMap::new()),
-            proto: Mutex::new(Some(vm.promise_proto.clone())),
+            proto: Mutex::new(Some(prototype)),
         }))?;
     Ok(Value::Object(GcIdx(p_idx)))
 }
@@ -2485,17 +2518,7 @@ fn promise_rejection_value(err: &Arc<error::Error>) -> Value {
 }
 
 fn make_aggregate_error(vm: &mut Vm, errors: Value) -> error::Result<Value> {
-    let proto = match env::get(&vm.heap, vm.global, "AggregateError") {
-        Some(Value::Object(ctor)) => vm.heap.with_obj(ctor.0, |obj| {
-            obj.props()
-                .lock()
-                .get(&PropertyKey::from("prototype"))
-                .map(|desc| desc.value.clone())
-        }),
-        _ => None,
-    }
-    .filter(|value| matches!(value, Value::Object(_)))
-    .unwrap_or_else(|| vm.error_proto.clone());
+    let proto = vm.error_prototype_for_env("AggregateError", vm.current_realm_global_env());
 
     let idx = vm.heap.allocate(HeapObj::Object(ObjectData {
         props: Mutex::new(IndexMap::new()),
@@ -2779,17 +2802,7 @@ pub(crate) fn promise_all_settled_reject_element(
 }
 
 fn make_type_error_object(vm: &mut Vm, message: &str) -> error::Result<Value> {
-    let proto = match env::get(&vm.heap, vm.global, "TypeError") {
-        Some(Value::Object(ctor)) => vm.heap.with_obj(ctor.0, |obj| {
-            obj.props()
-                .lock()
-                .get(&PropertyKey::from("prototype"))
-                .map(|desc| desc.value.clone())
-        }),
-        _ => None,
-    }
-    .filter(|value| matches!(value, Value::Object(_)))
-    .unwrap_or_else(|| vm.error_proto.clone());
+    let proto = vm.error_prototype_for_env("TypeError", vm.current_realm_global_env());
 
     let idx = vm.heap.allocate(HeapObj::Object(ObjectData {
         props: Mutex::new(IndexMap::new()),
@@ -3137,7 +3150,7 @@ fn settled_result_object(
     key: &str,
     value: Value,
 ) -> error::Result<Value> {
-    let obj = vm.new_object()?;
+    let obj = vm.new_object_in_current_realm()?;
     vm.heap.with_obj(obj.0, |o| {
         let props = o.props();
         let mut props = props.lock();
@@ -3193,7 +3206,7 @@ pub(crate) fn promise_static_all(
         }
     };
 
-    let values = make_value_array(vm, Vec::new())?;
+    let values = make_value_array_in_current_realm(vm, Vec::new())?;
     pins += vm.pin_many(std::slice::from_ref(&values));
     let state_idx = vm.new_object()?;
     let state = Value::Object(state_idx);
@@ -3500,7 +3513,7 @@ pub(crate) fn promise_static_all_settled(
         }
     };
 
-    let values = make_value_array(vm, Vec::new())?;
+    let values = make_value_array_in_current_realm(vm, Vec::new())?;
     pins += vm.pin_many(std::slice::from_ref(&values));
     let state_idx = vm.new_object()?;
     let state = Value::Object(state_idx);
@@ -4008,7 +4021,7 @@ pub(crate) fn promise_static_any(
         }
     };
 
-    let errors = make_value_array(vm, Vec::new())?;
+    let errors = make_value_array_in_current_realm(vm, Vec::new())?;
     pins += vm.pin_many(std::slice::from_ref(&errors));
     let state_idx = vm.new_object()?;
     let state = Value::Object(state_idx);
@@ -4238,7 +4251,7 @@ pub(crate) fn promise_with_resolvers(
         ));
     }
 
-    let result_idx = vm.new_object()?;
+    let result_idx = vm.new_object_in_current_realm()?;
     let result = Value::Object(result_idx);
     let executor = create_bound_native_function(
         vm,
@@ -4323,7 +4336,8 @@ pub(crate) fn promise_then(
         }
         _ => return Err(Error::type_err("then called on non-promise")),
     };
-    let constructor = promise_species_constructor(vm, &promise, vm.promise_ctor.clone())?;
+    let default_constructor = vm.current_realm_promise_constructor();
+    let constructor = promise_species_constructor(vm, &promise, default_constructor)?;
     let capability = new_promise_capability(vm, constructor)?;
     let derived = crate::value::PromiseReactionCapability {
         promise: capability.promise,

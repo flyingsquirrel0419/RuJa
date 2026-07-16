@@ -1320,7 +1320,7 @@ fn enqueue_async_generator_request(
 ) -> error::Result<Value> {
     let generator_value = Value::Object(generator);
     let generator_pin = vm.pin(&generator_value);
-    let constructor = vm.promise_ctor.clone();
+    let constructor = vm.current_realm_promise_constructor();
     let capability = match crate::builtins::new_promise_capability(vm, constructor) {
         Ok(capability) => capability,
         Err(error) => {
@@ -1781,6 +1781,7 @@ fn wrap_generator_result(
     is_async_gen: bool,
 ) -> error::Result<Value> {
     if is_async_gen {
+        let prototype = vm.current_realm_promise_prototype();
         let p_idx = vm
             .heap
             .allocate(HeapObj::Promise(crate::value::PromiseData {
@@ -1788,7 +1789,7 @@ fn wrap_generator_result(
                 result: Mutex::new(result_obj),
                 handlers: Mutex::new(Vec::new()),
                 props: Mutex::new(IndexMap::new()),
-                proto: Mutex::new(Some(vm.promise_proto.clone())),
+                proto: Mutex::new(Some(prototype)),
             }))?;
         Ok(Value::Object(GcIdx(p_idx)))
     } else {
@@ -1808,6 +1809,7 @@ fn wrap_generator_error(
         Some(value) => value,
         None => vm.make_error_value(&error)?,
     };
+    let prototype = vm.current_realm_promise_prototype();
     let promise = vm
         .heap
         .allocate(HeapObj::Promise(crate::value::PromiseData {
@@ -1815,7 +1817,7 @@ fn wrap_generator_error(
             result: Mutex::new(reason),
             handlers: Mutex::new(Vec::new()),
             props: Mutex::new(IndexMap::new()),
-            proto: Mutex::new(Some(vm.promise_proto.clone())),
+            proto: Mutex::new(Some(prototype)),
         }))?;
     Ok(Value::Object(GcIdx(promise)))
 }

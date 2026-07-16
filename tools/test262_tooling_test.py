@@ -28,6 +28,10 @@ from test262_object_prototype_admission import (
     OBJECT_PROTOTYPE_FEATURES_BY_FILE,
     OBJECT_PROTOTYPE_FILES,
 )
+from test262_promise_realm_admission import (
+    PROMISE_REALM_FEATURES,
+    PROMISE_REALM_FILES,
+)
 from test262_proxy_get_admission import PROXY_GET_FEATURES, PROXY_GET_FILES
 from test262_proxy_own_keys_admission import (
     PROXY_OWN_KEYS_FEATURES,
@@ -969,6 +973,7 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
         self.assertEqual(
             frozenset(OBJECT_PROTOTYPE_FEATURES_BY_FILE), OBJECT_PROTOTYPE_FILES
         )
+
         representative = {
             "built-ins/Object/prototype/__lookupGetter__/lookup-own-get-err.js": {
                 "Proxy", "__getter__",
@@ -1015,6 +1020,31 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                     self.assertFalse(tool.object_prototype_path(outside))
                     self.assertTrue(
                         tool.should_skip({"features": ["Proxy"]}, outside)
+                    )
+                finally:
+                    tool.TEST262 = original_root
+
+    def test_promise_realm_manifest_is_exact_and_shared(self):
+        relative = "built-ins/Promise/proto-from-ctor-realm.js"
+        features = frozenset({"cross-realm", "Reflect"})
+        self.assertEqual(PROMISE_REALM_FILES, frozenset({relative}))
+        self.assertEqual(PROMISE_REALM_FEATURES, {relative: features})
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            admitted = root / "test" / relative
+            outside = root / "test" / "built-ins/Promise/future-realm.js"
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    self.assertTrue(tool.promise_realm_path(admitted))
+                    self.assertEqual(tool.promise_realm_features(admitted), features)
+                    self.assertFalse(
+                        tool.should_skip({"features": sorted(features)}, admitted)
+                    )
+                    self.assertFalse(tool.promise_realm_path(outside))
+                    self.assertTrue(
+                        tool.should_skip({"features": sorted(features)}, outside)
                     )
                 finally:
                     tool.TEST262 = original_root
