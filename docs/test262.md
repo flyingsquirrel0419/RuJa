@@ -30,7 +30,7 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 61.6% of all matrix files; 82.4% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 61.7% of all matrix files; 82.4% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (12751 pass / 0 fail on current Test262; 12752 / 0 on the pinned checkout) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
@@ -5822,6 +5822,41 @@ byte-for-byte identical to the Object-static documentation baseline; built-ins
 moves exactly **+3 pass / -3 skip**. The aggregate is **29754 pass / 6348 fail
 / 12203 skip / 12 timeout / 0 error / 48317 total / 36102 pass-or-fail
 executed**, or **61.6%** of all files and **82.4%** of executed files.
+
+## Object.prototype Realm isolation
+
+Feature commit `44ff53f` gives every Realm fresh native identities for all ten
+`%Object.prototype%` methods and both `__proto__` accessors. The foreign global
+object, `%Function.prototype%`, Error hierarchy, primitive wrapper prototypes,
+TypedArray intrinsic chain, and Atomics namespace now consistently inherit
+from that Realm's rooted `%Object.prototype%`; mutable main-Realm Object state
+cannot leak into a newly created Realm.
+
+The legacy accessor methods preserve Symbol keys, abrupt property-descriptor
+and prototype operations, current-Realm descriptor allocation, and forced-GC
+lifetimes. `isPrototypeOf` and legacy prototype walks use Proxy-aware internal
+operations and consume host fuel, so a Proxy that reports itself as its own
+prototype cannot trap the VM in an unbounded native loop. The exact frozen
+admission adds 40 files at **40/40**. The full `built-ins/Object/prototype`
+subtree is **242 pass / 0 fail / 6 skip / 248 total**, broad
+`built-ins/Object` is **3164 pass / 120 fail / 127 skip / 3411 total**, the
+supported subset remains **12751 pass / 0 fail / 7687 skip / 20438 total**,
+and Python tooling is **88/88**. Rust all-target/all-feature tests, Clippy with
+warnings denied, formatting, release, and wasm32 checks all pass. Independent
+reviews left no valid high- or medium-severity finding; one proposed
+`propertyIsEnumerable` ordering change was rejected because ECMA-262 and
+Test262 require `ToPropertyKey` before `ToObject(this)`.
+
+CI `29463295702` and full matrix `29463295657` succeeded. Of the 30 downloaded
+result artifacts at `/tmp/ruja-artifacts-object-prototype-feature.Oxopq0`, 29
+are byte-for-byte identical to the Object-constructor documentation baseline;
+built-ins moves exactly **+41 pass / -1 fail / -40 skip**. The normalized
+aggregate is **29795 pass / 6347 fail / 12163 skip / 12 timeout / 0 error /
+48317 total / 36142 pass-or-fail executed**, or **61.7%** of all files and
+**82.4%** of executed files. Raw artifacts additionally contain the same 150
+unsupported built-ins skips as the baseline and therefore total 48467 files.
+The six remaining prototype-subtree skips require Proxy array/callable
+classification and GeneratorFunction/Promise fallback tag work.
 
 ## Why the full-suite rate is not higher
 

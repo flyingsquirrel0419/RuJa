@@ -4,6 +4,21 @@
 
 ### Fixed
 
+- Every Realm now owns fresh `%Object.prototype%` methods and `__proto__`
+  accessors instead of cloning main-Realm function values. Foreign globals,
+  `%Function.prototype%`, Error and primitive-wrapper prototypes, TypedArray
+  intrinsics, and the Atomics namespace now inherit from that Realm's rooted
+  `%Object.prototype%`. Legacy accessor lookup and `isPrototypeOf` use
+  Proxy-aware internal prototype operations with fuel accounting, while
+  `propertyIsEnumerable` preserves Symbol-valued `ToPropertyKey` results and
+  descriptor errors. Exact Test262 admission adds 40 files: the complete
+  `Object.prototype` subtree is **242 pass / 0 fail / 6 skip**, broad
+  `built-ins/Object` is **3164/120/127**, the supported subset remains
+  **12751/0/7687**, and tooling is **88/88**. Feature commit `44ff53f` passed
+  CI `29463295702` and full matrix `29463295657`; only built-ins changes by
+  **+41 pass / -1 fail / -40 skip**, producing **29795 pass / 6347 fail /
+  12163 skip / 12 timeout / 0 error / 48317 total** (**61.7%** of all files,
+  **82.4%** of executed files).
 - `Object` call and construction now follow the active function and distinct
   `NewTarget` rules without generic receiver preallocation. Nullish values and
   primitive wrappers use the active constructor Realm, object arguments are

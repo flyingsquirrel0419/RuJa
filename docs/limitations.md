@@ -85,7 +85,7 @@ guarantees, run RuJa in a separately killable process as well.
   scoped subset of ES5.1 + selected ES2015+ features (see
   [test262.md](test262.md#supported-subset) for the exact list). The full
   suite is run in CI (excluding `intl402`/`staging`) with a baseline pass
-  rate of 61.6% of all matrix files and 82.4% of executed files; within the
+  rate of 61.7% of all matrix files and 82.4% of executed files; within the
   supported subset, tests currently run at 100%.
   Full ES conformance is not claimed. See
   [test262.md](test262.md) for current numbers and the failure breakdown.
@@ -105,12 +105,12 @@ guarantees, run RuJa in a separately killable process as well.
   static `Iterator.concat`, `Iterator.zip`, and `Iterator.zipKeyed` provide
   iterator sequencing and joint iteration. Async iterator helpers are a
   separate unsupported surface.
-- Foreign Realm `Object` static methods and their generated results/errors are
-  Realm-specific. Two related bootstrap gaps remain: calling a foreign
-  `Object` constructor as a function still uses the main Realm's default
-  `%Object.prototype%`, and foreign `%Object.prototype%` method/accessor
-  descriptors still clone main-Realm function values. Constructor-call and
-  prototype-method isolation are tracked as separate follow-up units.
+- Foreign Realm `Object` constructors, static methods, prototype methods, and
+  `__proto__` accessors now own Realm-specific function identities, intrinsic
+  prototypes, generated results, and native errors. Six remaining
+  `Object.prototype.toString` files are gated on broader Proxy callable/array
+  classification and GeneratorFunction/Promise fallback tags rather than
+  Realm bootstrap isolation.
 - `Vm` is `Send` (but not `Sync`): the engine uses `Arc`/`Mutex`/atomics
   for shared ownership and interior mutability, so a `Vm` can be moved
   between threads. Concurrent *shared* access still requires external
