@@ -109,10 +109,11 @@ guarantees, run RuJa in a separately killable process as well.
   `__proto__` accessors now own Realm-specific function identities, intrinsic
   prototypes, generated results, and native errors. The full 248-file
   `Object.prototype` subtree now executes without failures or skips. Created
-  Test262 Realms also install rooted Realm-local Promise and synchronous
-  GeneratorFunction/Generator intrinsic graphs. AsyncGeneratorFunction,
-  AsyncGenerator, and AsyncIterator intrinsics remain main-Realm-only bootstrap
-  gaps.
+  Test262 Realms also install rooted Realm-local Promise, synchronous
+  GeneratorFunction/Generator, and asynchronous
+  AsyncGeneratorFunction/AsyncGenerator/AsyncIterator intrinsic graphs.
+  Async iterator helpers and `AsyncIterator.prototype[Symbol.asyncDispose]`
+  remain separate unsupported surfaces.
 - `Vm` is `Send` (but not `Sync`): the engine uses `Arc`/`Mutex`/atomics
   for shared ownership and interior mutability, so a `Vm` can be moved
   between threads. Concurrent *shared* access still requires external

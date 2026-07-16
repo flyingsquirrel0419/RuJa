@@ -5941,8 +5941,8 @@ medium-severity finding in this Promise unit.
 - 장점, 단점 및 영향: identity, error provenance, async allocation,
   and GC behavior now follow Realm boundaries; VM state and allocation helpers
   gain small Realm maps and explicit selection APIs. Generator and
-  AsyncGenerator intrinsic graphs remain a separate follow-up because their
-  method objects are still main-Realm identities.
+  AsyncGenerator intrinsic graphs were kept as separate follow-up units at
+  that stage because their method objects still had main-Realm identities.
 
 CI `29471610323` and full matrix `29471610399` succeeded. Of the 30 result
 artifacts at `/tmp/ruja-artifacts-promise-feature.qrjKLP`, 29 are byte-for-byte
@@ -6017,8 +6017,82 @@ aggregate is **29805 pass / 6346 fail / 12154 skip / 12 timeout / 0 error /
   should be verified independently.
 - 장점, 단점 및 영향: synchronous generator identity, fallback, result
   allocation, and GC behavior now match Realm boundaries. Each created Realm
-  retains three additional intrinsic roots. AsyncGeneratorFunction,
-  AsyncGenerator, and AsyncIterator remain the next explicit bootstrap unit.
+  retains three additional intrinsic roots. The asynchronous graph is handled
+  independently in the following section because its queued Promise Realm
+  semantics require a separate boundary.
+
+## Asynchronous Generator Realm isolation
+
+Every Realm now installs and directly roots `%AsyncIteratorPrototype%`,
+`%AsyncGeneratorPrototype%`, `%AsyncGeneratorFunction%`, and
+`%AsyncGeneratorFunction.prototype%`. The async iterator prototype inherits
+from the Realm's `%Object.prototype%`; the async generator prototype and its
+`next`/`return`/`throw` methods are fresh per Realm; and the hidden constructor
+inherits from the Realm's `%Function%` constructor while its prototype inherits
+from `%Function.prototype%`.
+
+Source and dynamic async generator functions select the defining or active
+constructor Realm for their function and fresh own `prototype` objects.
+Distinct-`NewTarget` fallback uses the `NewTarget` Realm, while calling a
+function whose own `prototype` is not an object falls back through the
+function's Realm. All four intrinsic identities are independent GC roots so
+deleting configurable graph links cannot make a live Realm lose an intrinsic.
+
+Async generator queue processing preserves the specification's two Realm
+roles. Borrowing `next`, `return`, or `throw` creates the request Promise in the
+native method's Realm. Internal PromiseResolve/Await work, delayed native error
+materialization, and `{ value, done }` completion records use the generator's
+closure Realm. Tests cover both borrowing directions, all three methods,
+await-before-yield, delayed TypeError creation, mutable `Function`/`Object`/
+`Promise` globals, distinct `NewTarget` with GC inside a Proxy trap, deleted
+graph links, and WeakRef retention of all four roots.
+
+`tools/test262_async_generator_realm_admission.txt` freezes only the three
+cross-Realm constructor/source fallback files. They pass **3/3**. With gates
+lifted diagnostically, all 23 `built-ins/AsyncGeneratorFunction` files and all
+48 `built-ins/AsyncGeneratorPrototype` files pass. The general
+`AsyncIteratorPrototype[Symbol.asyncIterator]` surface passes separately;
+`Symbol.asyncDispose` remains part of the unsupported explicit-resource-
+management unit and is not admitted here. The supported subset remains
+**12751 pass / 0 fail / 7687 skip / 20438 total**, Python tooling is **91/91**,
+Rust generator tests are **76/76**, and builtins are **437/437**. Rust
+all-target/all-feature tests, Clippy with warnings denied, formatting, release,
+and wasm32 checks pass. Independent GPT and Umans reviews leave no valid high-
+or medium-severity finding after code/spec triage.
+
+Feature commit `7827093` passed CI `29480165633` and full matrix
+`29480165138`. Against the synchronous Generator documentation baseline, 29 of
+30 result artifacts at `/tmp/ruja-artifacts-async-generator-feature.mqSdSG`
+are byte-for-byte identical. Only built-ins changes, by exactly **+2 pass / -2
+skip**. The admitted language-expression file was already executed and passing
+through the broad async-generator path. The aggregate is **29807 pass / 6346
+fail / 12152 skip / 12 timeout / 0 error / 48317 total / 36153 pass-or-fail
+executed**, or **61.7%** of all files and **82.4%** of executed files.
+
+[Decision Log]
+- 목적과 의도: install a complete asynchronous generator intrinsic graph in
+  every Realm while preserving the distinct method Realm and generator Realm
+  roles across queued Promise operations.
+- 기존 구현 및 제약 조건: all async generator intrinsics were main-Realm
+  singletons, dynamic/source/call fallbacks read those singletons, and delayed
+  queue reactions allocated await Promises, native errors, and result objects
+  from whichever execution context happened to be current.
+- 검토한 주요 대안: clone main-Realm objects, switch only constructor
+  fallbacks, store a new Realm field in every generator, or install four rooted
+  intrinsics and derive the generator Realm from its already traced closure.
+- 선택한 방식: install and root four identities per Realm, select source and
+  dynamic prototypes through Realm maps, derive queue-internal Realm state from
+  `LazyGeneratorData.closure`, and keep request capability creation in the
+  borrowed native method Realm.
+- 다른 대안 대신 이 방식을 선택한 이유: cloning preserves the wrong native
+  `[[Realm]]`; constructor-only changes do not repair delayed queue allocation;
+  and the traced closure already carries the authoritative Realm without
+  duplicating mutable state on the generator object.
+- 장점, 단점 및 영향: identity, prototype fallback, GC retention, Promise
+  provenance, native errors, and completion records now follow Realm
+  boundaries. Each Realm retains four additional direct roots. Async iterator
+  helpers and async disposal remain explicit later units rather than being
+  over-admitted with this Realm fix.
 
 ## Why the full-suite rate is not higher
 

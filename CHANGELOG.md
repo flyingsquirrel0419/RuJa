@@ -4,6 +4,24 @@
 
 ### Fixed
 
+- Created Realms now own directly rooted `%AsyncIteratorPrototype%`,
+  `%AsyncGeneratorPrototype%`, `%AsyncGeneratorFunction%`, and
+  `%AsyncGeneratorFunction.prototype%` graphs. Source and dynamic async
+  generators, distinct-`NewTarget` and instance fallbacks, native methods,
+  internal await assimilation, delayed resume errors, and iterator-result
+  objects select the required Realm without consulting mutable globals.
+  Borrowed `next`/`return`/`throw` methods return request Promises from the
+  method Realm while completion records and native body errors remain in the
+  generator Realm. Exact frozen admission adds three cross-Realm files at
+  **3/3**; complete diagnostics are **23/23** for
+  `AsyncGeneratorFunction` and **48/48** for `AsyncGeneratorPrototype`, the
+  supported subset remains **12751/0/7687**, tooling is **91/91**, generators
+  are **76/76**, and Rust builtins remain **437/437**. Feature commit
+  `7827093` passed CI `29480165633` and full matrix `29480165138`; only
+  built-ins changes by **+2 pass / -2 skip**, producing **29807 pass / 6346
+  fail / 12152 skip / 12 timeout / 0 error / 48317 total** (**61.7%** of all
+  files, **82.4%** of executed files). The third admitted language-expression
+  file was already executed by the broader async-generator rule.
 - Created Realms now own rooted synchronous `%GeneratorFunction%`,
   `%GeneratorFunction.prototype%`, and `%Generator.prototype%` intrinsic
   graphs. Source and dynamic generator functions, distinct-`NewTarget`
