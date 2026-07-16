@@ -4,6 +4,20 @@
 
 ### Fixed
 
+- `%AsyncIteratorPrototype%[Symbol.asyncDispose]` is now installed separately
+  in every Realm. It creates its result Promise and generated native errors in
+  the method Realm, performs dynamic `GetMethod("return")`, invokes the method
+  with an empty argument list, assimilates returned thenables through the
+  intrinsic `%Promise%`, and resolves to `undefined`; getter, call,
+  non-callable, and rejected-return abrupt completions reject instead of
+  escaping synchronously. Observable receiver/method/capability/wrapper state
+  is pinned across user callbacks and GC. Exact Test262 admission is **9/9**,
+  the complete AsyncIteratorPrototype diagnostic is **13/13**, the supported
+  subset remains **12751/0/7687**, tooling is **92/92**, and Rust builtins are
+  **438/438**. Feature commit `d8c48fa` passed CI `29485564973` and full matrix
+  `29485565185`; only built-ins changes by **+9 pass / -9 skip**, producing
+  **29816 pass / 6346 fail / 12143 skip / 12 timeout / 0 error / 48317 total**
+  (**61.7%** of all files, **82.5%** of executed files).
 - Created Realms now own directly rooted `%AsyncIteratorPrototype%`,
   `%AsyncGeneratorPrototype%`, `%AsyncGeneratorFunction%`, and
   `%AsyncGeneratorFunction.prototype%` graphs. Source and dynamic async

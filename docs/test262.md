@@ -30,7 +30,7 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 61.7% of all matrix files; 82.4% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 61.7% of all matrix files; 82.5% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (12751 pass / 0 fail on current Test262; 12752 / 0 on the pinned checkout) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
@@ -6091,8 +6091,75 @@ executed**, or **61.7%** of all files and **82.4%** of executed files.
 - 장점, 단점 및 영향: identity, prototype fallback, GC retention, Promise
   provenance, native errors, and completion records now follow Realm
   boundaries. Each Realm retains four additional direct roots. Async iterator
-  helpers and async disposal remain explicit later units rather than being
-  over-admitted with this Realm fix.
+  helpers and async disposal were kept as explicit later units rather than
+  being over-admitted with the Realm fix; disposal is handled immediately
+  below.
+
+## AsyncIterator async disposal
+
+Every Realm's `%AsyncIteratorPrototype%` now owns a fresh
+`[Symbol.asyncDispose]` native method. Calling or borrowing it creates the
+result capability from the method Realm's rooted `%Promise%`, so replacing the
+Realm's mutable global `Promise` does not affect the intrinsic operation. The
+method has the standard `[Symbol.asyncDispose]` name, length zero, and
+writable/non-enumerable/configurable property descriptor.
+
+The implementation follows the observable algorithm order: create the
+capability, dynamically get `return`, resolve immediately when it is nullish,
+reject when it is non-callable or when the getter/call throws, otherwise call
+it with an empty argument list. The returned value is assimilated
+through intrinsic PromiseResolve. A Realm-local anonymous length-one unwrap
+reaction converts fulfillment to `undefined`, while rejection passes through
+unchanged to the result capability. Receiver, method, returned value,
+capability, wrapper Promise, and reaction values are pinned or traced across
+observable callbacks, thenable jobs, and forced GC.
+
+`tools/test262_async_iterator_dispose_admission.txt` freezes the exact nine
+`built-ins/AsyncIteratorPrototype/Symbol.asyncDispose` files. They pass
+**9/9** in the normal runner; with all gates lifted, the complete 13-file
+`built-ins/AsyncIteratorPrototype` diagnostic passes **13/13**. The supported
+subset remains **12751 pass / 0 fail / 7687 skip / 20438 total**, Python
+tooling is **92/92**, and Rust builtins are **438/438**. Rust
+all-target/all-feature tests, Clippy with warnings denied, formatting, release,
+and wasm32 checks pass. Umans reports no high- or medium-severity issue. GPT
+identified an obsolete synthetic `undefined` argument and delayed rejection
+for abrupt PromiseResolve; both are corrected to the current normative
+algorithm. Its final re-review reports no remaining high- or medium-severity
+issue.
+
+Feature commit `d8c48fa` passed CI `29485564973` and full matrix
+`29485565185`. Against the asynchronous Generator documentation baseline, 29
+of 30 result artifacts at `/tmp/ruja-artifacts-async-dispose-feature.ds1DTt`
+are byte-for-byte identical. Only built-ins changes, by exactly **+9 pass / -9
+skip**. The aggregate is **29816 pass / 6346 fail / 12143 skip / 12 timeout / 0
+error / 48317 total / 36162 pass-or-fail executed**, or **61.7%** of all files
+and **82.5%** of executed files.
+
+[Decision Log]
+- 목적과 의도: implement the complete AsyncIterator disposal operation as a
+  narrow, Realm-correct Promise workflow and close its nine known Test262
+  failures without admitting unrelated async iterator helpers.
+- 기존 구현 및 제약 조건: `%AsyncIteratorPrototype%` exposed only
+  `@@asyncIterator`; synchronous iterator disposal could call `return` but did
+  not provide the Promise capability, assimilation, and rejection semantics
+  required by async disposal.
+- 검토한 주요 대안: wrap the synchronous disposer in an async source
+  function, call observable `Promise.resolve`/`then`, broadly enable explicit
+  resource management, or implement the abstract operation with intrinsic
+  capability and internal reaction records.
+- 선택한 방식: install a per-Realm native method, use rooted Promise
+  intrinsics and internal Promise handlers, materialize native errors in the
+  method Realm, reject the original capability immediately when intrinsic
+  PromiseResolve is abrupt, and freeze admission to the nine directly covered
+  files.
+- 다른 대안 대신 이 방식을 선택한 이유: source wrappers introduce parser
+  and execution-context artifacts; observable global Promise methods are
+  mutable; and broad feature admission would claim unrelated `using` syntax
+  and disposal-stack semantics that this method does not implement.
+- 장점, 단점 및 영향: method shape, Realm provenance, dynamic return lookup,
+  thenable assimilation, abrupt rejection, and GC retention now match the
+  specification. Each Realm gains one native method identity; async iterator
+  helpers and broader explicit resource management remain separately bounded.
 
 ## Why the full-suite rate is not higher
 

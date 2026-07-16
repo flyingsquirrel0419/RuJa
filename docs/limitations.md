@@ -85,7 +85,7 @@ guarantees, run RuJa in a separately killable process as well.
   scoped subset of ES5.1 + selected ES2015+ features (see
   [test262.md](test262.md#supported-subset) for the exact list). The full
   suite is run in CI (excluding `intl402`/`staging`) with a baseline pass
-  rate of 61.7% of all matrix files and 82.4% of executed files; within the
+  rate of 61.7% of all matrix files and 82.5% of executed files; within the
   supported subset, tests currently run at 100%.
   Full ES conformance is not claimed. See
   [test262.md](test262.md) for current numbers and the failure breakdown.
@@ -112,8 +112,9 @@ guarantees, run RuJa in a separately killable process as well.
   Test262 Realms also install rooted Realm-local Promise, synchronous
   GeneratorFunction/Generator, and asynchronous
   AsyncGeneratorFunction/AsyncGenerator/AsyncIterator intrinsic graphs.
-  Async iterator helpers and `AsyncIterator.prototype[Symbol.asyncDispose]`
-  remain separate unsupported surfaces.
+  `AsyncIterator.prototype[Symbol.asyncDispose]` is implemented with
+  Realm-correct Promise and abrupt-completion behavior. Async iterator helpers
+  remain a separate unsupported surface.
 - `Vm` is `Send` (but not `Sync`): the engine uses `Arc`/`Mutex`/atomics
   for shared ownership and interior mutability, so a `Vm` can be moved
   between threads. Concurrent *shared* access still requires external
