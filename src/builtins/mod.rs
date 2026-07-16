@@ -1374,40 +1374,53 @@ pub(crate) fn is_array(value: &Value, heap: &Heap) -> bool {
 }
 
 pub(crate) fn is_array_or_throw(vm: &Vm, value: &Value) -> error::Result<bool> {
-    let Value::Object(idx) = value else {
-        return Ok(false);
-    };
-    let proxy = vm.heap.with_obj(idx.0, |obj| match obj {
-        HeapObj::Array(array) => Some(Ok((!array.is_arguments.load(Ordering::Relaxed), None))),
-        HeapObj::Object(object) if object.class_name.as_deref() == Some("Array") => {
-            Some(Ok((true, None)))
-        }
-        HeapObj::Proxy(proxy) => {
-            if *proxy.revoked.lock() {
-                return Some(Err(Error::type_err(
-                    "Cannot determine whether a revoked Proxy is an array",
-                )));
+    enum Step {
+        Done(bool),
+        Proxy(Value),
+        Revoked,
+    }
+
+    let mut current = value.clone();
+    loop {
+        let Value::Object(idx) = &current else {
+            return Ok(false);
+        };
+        match vm.heap.with_obj(idx.0, |obj| match obj {
+            HeapObj::Array(array) => Step::Done(!array.is_arguments.load(Ordering::Relaxed)),
+            HeapObj::Object(object) if object.class_name.as_deref() == Some("Array") => {
+                Step::Done(true)
             }
-            Some(Ok((false, Some(proxy.target.clone()))))
+            HeapObj::Proxy(proxy) if *proxy.revoked.lock() => Step::Revoked,
+            HeapObj::Proxy(proxy) => Step::Proxy(proxy.target.clone()),
+            _ => Step::Done(false),
+        }) {
+            Step::Done(is_array) => return Ok(is_array),
+            Step::Proxy(target) => current = target,
+            Step::Revoked => {
+                return Err(Error::type_err(
+                    "Cannot determine whether a revoked Proxy is an array",
+                ));
+            }
         }
-        _ => Some(Ok((false, None))),
-    });
-    let (is_array, target) = proxy.expect("object classification is exhaustive")?;
-    if let Some(target) = target {
-        is_array_or_throw(vm, &target)
-    } else {
-        Ok(is_array)
     }
 }
 
 pub(crate) fn is_callable(value: &Value, heap: &Heap) -> bool {
-    match value {
-        Value::Object(idx) => heap.with_obj(idx.0, |obj| match obj {
-            HeapObj::Function(_) => true,
-            HeapObj::Proxy(proxy) => is_callable(&proxy.target, heap),
-            _ => false,
-        }),
-        _ => false,
+    let mut current = value.clone();
+    loop {
+        let Value::Object(idx) = &current else {
+            return false;
+        };
+        let target = heap.with_obj(idx.0, |obj| match obj {
+            HeapObj::Function(_) => Ok(None),
+            HeapObj::Proxy(proxy) => Ok(Some(proxy.target.clone())),
+            _ => Err(()),
+        });
+        match target {
+            Ok(None) => return true,
+            Ok(Some(target)) => current = target,
+            Err(()) => return false,
+        }
     }
 }
 
@@ -1423,46 +1436,47 @@ pub(crate) fn object_to_string(
     if this.is_undefined() {
         return Ok(Value::String(Arc::from("[object Undefined]")));
     }
-    let builtin_tag = match &this {
-        Value::String(_) => "String".to_string(),
-        Value::Number(_) => "Number".to_string(),
-        Value::Bool(_) => "Boolean".to_string(),
-        Value::Symbol(_) | Value::BigInt(_) => "Object".to_string(),
-        Value::Object(index) => class_hint.map(str::to_string).unwrap_or_else(|| {
-            vm.heap.with_obj(index.0, |object| match object {
-                HeapObj::Array(array) if array.is_arguments.load(Ordering::Relaxed) => {
-                    "Arguments".to_string()
-                }
-                HeapObj::Array(_) => "Array".to_string(),
-                HeapObj::Function(_) => "Function".to_string(),
-                HeapObj::Object(data) => {
-                    if let Some(primitive) = data.primitive.lock().as_ref() {
-                        return match primitive {
-                            Value::String(_) => "String".to_string(),
-                            Value::Number(_) => "Number".to_string(),
-                            Value::Bool(_) => "Boolean".to_string(),
+    let object = vm.to_object(&this)?;
+    let builtin_tag = if is_array_or_throw(vm, &object)? {
+        "Array".to_string()
+    } else if is_callable(&object, &vm.heap) {
+        "Function".to_string()
+    } else {
+        match &object {
+            Value::Object(index) => class_hint.map(str::to_string).unwrap_or_else(|| {
+                vm.heap.with_obj(index.0, |object| match object {
+                    HeapObj::Array(array) if array.is_arguments.load(Ordering::Relaxed) => {
+                        "Arguments".to_string()
+                    }
+                    HeapObj::Object(data) => {
+                        if let Some(primitive) = data.primitive.lock().as_ref() {
+                            return match primitive {
+                                Value::String(_) => "String".to_string(),
+                                Value::Number(_) => "Number".to_string(),
+                                Value::Bool(_) => "Boolean".to_string(),
+                                _ => "Object".to_string(),
+                            };
+                        }
+                        match data.class_name.as_deref() {
+                            Some("Date") => "Date".to_string(),
+                            Some("RegExp") => "RegExp".to_string(),
+                            Some(
+                                "Error" | "EvalError" | "RangeError" | "ReferenceError"
+                                | "SyntaxError" | "TypeError" | "URIError" | "AggregateError",
+                            ) => "Error".to_string(),
                             _ => "Object".to_string(),
-                        };
+                        }
                     }
-                    match data.class_name.as_deref() {
-                        Some("Date") => "Date".to_string(),
-                        Some("RegExp") => "RegExp".to_string(),
-                        Some(
-                            "Error" | "EvalError" | "RangeError" | "ReferenceError" | "SyntaxError"
-                            | "TypeError" | "URIError" | "AggregateError",
-                        ) => "Error".to_string(),
-                        _ => "Object".to_string(),
-                    }
-                }
-                _ => "Object".to_string(),
-            })
-        }),
-        _ => "Object".to_string(),
+                    _ => "Object".to_string(),
+                })
+            }),
+            _ => "Object".to_string(),
+        }
     };
 
-    let pin_count = vm.pin(&this);
+    let pin_count = vm.pin(&object);
     let tag = vm.get_property_by_key(
-        &this,
+        &object,
         &PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
     );
     vm.unpin_many(pin_count);
@@ -9412,6 +9426,14 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
     )?;
     vm.promise_ctor = Value::Object(promise_ctor);
     vm.promise_proto = Value::Object(promise_proto);
+    vm.heap.with_obj(promise_proto.0, |obj| {
+        let mut tag = data_prop(Value::String(Arc::from("Promise")));
+        tag.writable = false;
+        obj.props().lock().insert(
+            PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
+            tag,
+        );
+    });
     // Static methods on the Promise constructor.
     let resolve_static = vm.new_native_function("resolve", promise_static_resolve, 1)?;
     let reject_static = vm.new_native_function("reject", promise_static_reject, 1)?;
@@ -9550,6 +9572,12 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
         let mut prototype_desc = data_prop(vm.generator_proto.clone());
         prototype_desc.writable = false;
         props.insert(PropertyKey::from("prototype"), prototype_desc);
+        let mut tag_desc = data_prop(Value::String(Arc::from("GeneratorFunction")));
+        tag_desc.writable = false;
+        props.insert(
+            PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
+            tag_desc,
+        );
     });
     vm.heap.with_obj(generator_function_ctor_idx.0, |obj| {
         if let HeapObj::Function(f) = obj {

@@ -104,15 +104,31 @@ OBJECT_PROTOTYPE_FEATURES_BY_FILE = {
     "built-ins/Object/prototype/toString/not-a-constructor.js": frozenset(
         {"Reflect.construct", "arrow-function"}
     ),
+    "built-ins/Object/prototype/toString/proxy-array.js": frozenset({"Proxy"}),
+    "built-ins/Object/prototype/toString/proxy-function.js": frozenset(
+        {"Proxy", "Symbol.toStringTag", "async-functions", "generators"}
+    ),
     "built-ins/Object/prototype/toString/proxy-function-async.js": frozenset(
         {"Proxy", "Symbol.toStringTag", "async-functions"}
+    ),
+    "built-ins/Object/prototype/toString/proxy-revoked-during-get-call.js": frozenset(
+        {"Proxy"}
     ),
     "built-ins/Object/prototype/toString/proxy-revoked.js": frozenset({"Proxy"}),
     "built-ins/Object/prototype/toString/symbol-tag-array-builtin.js": frozenset(
         {"Symbol.iterator", "Symbol.toStringTag", "iterator-helpers"}
     ),
+    "built-ins/Object/prototype/toString/symbol-tag-generators-builtin.js": frozenset(
+        {"Symbol.iterator", "Symbol.toStringTag", "generators"}
+    ),
     "built-ins/Object/prototype/toString/symbol-tag-map-builtin.js": frozenset(
         {"Map", "Symbol.iterator", "Symbol.toStringTag", "iterator-helpers"}
+    ),
+    "built-ins/Object/prototype/toString/symbol-tag-non-str-proxy-function.js": frozenset(
+        {"Proxy", "Symbol.toStringTag", "async-functions", "generators"}
+    ),
+    "built-ins/Object/prototype/toString/symbol-tag-promise-builtin.js": frozenset(
+        {"Promise", "Symbol.toStringTag"}
     ),
     "built-ins/Object/prototype/toString/symbol-tag-set-builtin.js": frozenset(
         {"Set", "Symbol.iterator", "Symbol.toStringTag", "iterator-helpers"}

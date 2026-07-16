@@ -29,10 +29,16 @@ built-ins/Object/prototype/propertyIsEnumerable/symbol_property_toString.js
 built-ins/Object/prototype/propertyIsEnumerable/symbol_property_valueOf.js
 built-ins/Object/prototype/toLocaleString/not-a-constructor.js
 built-ins/Object/prototype/toString/not-a-constructor.js
+built-ins/Object/prototype/toString/proxy-array.js
+built-ins/Object/prototype/toString/proxy-function.js
 built-ins/Object/prototype/toString/proxy-function-async.js
+built-ins/Object/prototype/toString/proxy-revoked-during-get-call.js
 built-ins/Object/prototype/toString/proxy-revoked.js
 built-ins/Object/prototype/toString/symbol-tag-array-builtin.js
+built-ins/Object/prototype/toString/symbol-tag-generators-builtin.js
 built-ins/Object/prototype/toString/symbol-tag-map-builtin.js
+built-ins/Object/prototype/toString/symbol-tag-non-str-proxy-function.js
+built-ins/Object/prototype/toString/symbol-tag-promise-builtin.js
 built-ins/Object/prototype/toString/symbol-tag-set-builtin.js
 built-ins/Object/prototype/toString/symbol-tag-string-builtin.js
 built-ins/Object/prototype/toString/symbol-tag-weakmap-builtin.js

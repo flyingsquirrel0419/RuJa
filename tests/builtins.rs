@@ -9285,6 +9285,165 @@ fn object_prototype_to_string_uses_receiver_brand() {
 }
 
 #[test]
+fn object_prototype_to_string_handles_proxy_and_intrinsic_tags() {
+    assert_eq!(
+        run(r#"
+            var arrayProxy = new Proxy(new Proxy([], {}), {});
+            var functionProxy = new Proxy(new Proxy(function() {}, {}), {});
+            var generatorProxy = new Proxy(function*() {}, {});
+            var asyncProxy = new Proxy(async function() {}, {});
+
+            var revocableArray = Proxy.revocable([], {
+              get: function() { revocableArray.revoke(); }
+            });
+            var revokedDuringGet = Object.prototype.toString.call(
+              revocableArray.proxy
+            );
+
+            var revoked = Proxy.revocable([], {});
+            revoked.revoke();
+            var revokedThrows = false;
+            try {
+              Object.prototype.toString.call(revoked.proxy);
+            } catch (error) {
+              revokedThrows = error instanceof TypeError;
+            }
+
+            var generator = function*() {};
+            var promise = new Promise(function() {});
+            var generatorTag = Object.getOwnPropertyDescriptor(
+              generator.constructor.prototype, Symbol.toStringTag
+            );
+            var promiseTag = Object.getOwnPropertyDescriptor(
+              Promise.prototype, Symbol.toStringTag
+            );
+
+            delete generatorProxy.constructor.prototype[Symbol.toStringTag];
+            Object.defineProperty(asyncProxy.constructor.prototype, Symbol.toStringTag, {
+              value: undefined
+            });
+            delete Promise.prototype[Symbol.toStringTag];
+            delete Symbol.prototype[Symbol.toStringTag];
+            delete BigInt.prototype[Symbol.toStringTag];
+
+            var boxedReceiver;
+            Object.defineProperty(Number.prototype, Symbol.toStringTag, {
+              configurable: true,
+              get: function() {
+                "use strict";
+                boxedReceiver = typeof this === "object" && this instanceof Number;
+                return null;
+              }
+            });
+
+            [
+              Object.prototype.toString.call(arrayProxy),
+              Object.prototype.toString.call(functionProxy),
+              revokedDuringGet,
+              revokedThrows,
+              generatorTag.value,
+              generatorTag.writable,
+              generatorTag.enumerable,
+              generatorTag.configurable,
+              promiseTag.value,
+              promiseTag.writable,
+              promiseTag.enumerable,
+              promiseTag.configurable,
+              Object.prototype.toString.call(generatorProxy),
+              Object.prototype.toString.call(asyncProxy),
+              Object.prototype.toString.call(promise),
+              Object.prototype.toString.call(Symbol()),
+              Object.prototype.toString.call(1n),
+              Object.prototype.toString.call(1),
+              boxedReceiver
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "[object Array]|[object Function]|[object Array]|true|GeneratorFunction|false|false|true|Promise|false|false|true|[object Function]|[object Function]|[object Object]|[object Object]|[object Object]|[object Number]|true"
+        ))
+    );
+}
+
+#[test]
+fn proxy_revoker_traces_its_proxy_until_first_call() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+
+    assert_eq!(
+        vm.run(
+            r#"
+            var pair = Proxy.revocable([], {});
+            var revoke = pair.revoke;
+            var weak = new WeakRef(pair.proxy);
+            pair = null;
+            true;
+            "#,
+        )
+        .expect("failed to create retained Proxy revoker"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        vm.run(
+            r#"
+            forceGc();
+            var retainedUntilRevoke = weak.deref() !== undefined;
+            revoke();
+            revoke();
+            retainedUntilRevoke;
+            "#,
+        )
+        .expect("Proxy revoker should retain its proxy until first call"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        vm.run("forceGc(); weak.deref() === undefined;")
+            .expect("revoked Proxy should be collectable in a later job"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        vm.run(
+            r#"
+            Object.prototype.toString.call(new Proxy([], {
+              get: function(target, key, receiver) {
+                forceGc();
+                return Reflect.get(target, key, receiver);
+              }
+            }));
+            "#,
+        )
+        .expect("Proxy toString should retain values across its get trap"),
+        Value::String(Arc::from("[object Array]"))
+    );
+    assert_eq!(
+        vm.run(
+            r#"
+            var boxedReceiver;
+            Object.defineProperty(Number.prototype, Symbol.toStringTag, {
+              configurable: true,
+              get: function() {
+                "use strict";
+                forceGc();
+                boxedReceiver = typeof this === "object" && this instanceof Number;
+                return null;
+              }
+            });
+            Object.prototype.toString.call(1) + "|" + boxedReceiver;
+            "#,
+        )
+        .expect("boxed toString receiver should survive its tag getter"),
+        Value::String(Arc::from("[object Number]|true"))
+    );
+}
+
+#[test]
 fn object_prototype_value_of_and_to_locale_string_coerce_receiver() {
     assert!(run_err("Object.prototype.valueOf.call(undefined);").contains("TypeError"));
     assert!(run_err("Object.prototype.valueOf.call(null);").contains("TypeError"));

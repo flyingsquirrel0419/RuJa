@@ -59,7 +59,7 @@ pub(crate) fn proxy_revocable(
             let key = crate::value::PrivateSlotKey::Internal(Arc::from("__proxy_idx__"));
             f.private_fields.lock().insert(
                 key,
-                crate::value::PrivateSlot::Value(Value::Number(proxy_idx as f64)),
+                crate::value::PrivateSlot::Value(Value::Object(GcIdx(proxy_idx))),
             );
         }
     });
@@ -88,18 +88,15 @@ fn proxy_revoke(vm: &mut Vm, _args: &[Value], _this: Option<Value>) -> error::Re
         let proxy_idx = vm.heap.with_obj(idx.0, |o| {
             if let HeapObj::Function(f) = o {
                 let key = crate::value::PrivateSlotKey::Internal(Arc::from("__proxy_idx__"));
-                f.private_fields
-                    .lock()
-                    .get(&key)
-                    .and_then(|slot| match slot {
-                        crate::value::PrivateSlot::Value(value) => Some(value),
-                        crate::value::PrivateSlot::Method(_)
-                        | crate::value::PrivateSlot::Accessor { .. } => None,
-                    })
-                    .and_then(|value| match value {
-                        Value::Number(n) => Some(*n as usize),
-                        _ => None,
-                    })
+                let mut fields = f.private_fields.lock();
+                let proxy_idx = match fields.get(&key) {
+                    Some(crate::value::PrivateSlot::Value(Value::Object(proxy_idx))) => {
+                        Some(proxy_idx.0)
+                    }
+                    _ => None,
+                };
+                fields.remove(&key);
+                proxy_idx
             } else {
                 None
             }

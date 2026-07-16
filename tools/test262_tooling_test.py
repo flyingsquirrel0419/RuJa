@@ -965,7 +965,7 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                     tool.TEST262 = original_root
 
     def test_object_prototype_manifest_is_exact_and_shared(self):
-        self.assertEqual(len(OBJECT_PROTOTYPE_FILES), 40)
+        self.assertEqual(len(OBJECT_PROTOTYPE_FILES), 46)
         self.assertEqual(
             frozenset(OBJECT_PROTOTYPE_FEATURES_BY_FILE), OBJECT_PROTOTYPE_FILES
         )
@@ -978,6 +978,9 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
             },
             "built-ins/Object/prototype/toString/proxy-function-async.js": {
                 "Proxy", "Symbol.toStringTag", "async-functions",
+            },
+            "built-ins/Object/prototype/toString/symbol-tag-promise-builtin.js": {
+                "Promise", "Symbol.toStringTag",
             },
         }
         for path, features in representative.items():
