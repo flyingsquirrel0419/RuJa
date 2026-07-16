@@ -4,6 +4,19 @@
 
 ### Fixed
 
+- Promise combinators now materialize catchable native setup failures as real
+  method-Realm Error objects instead of rejection strings, preserve explicit
+  thrown-value identity, and propagate non-catchable host aborts. A shared
+  GetPromiseResolve path makes `all`, `allSettled`, `any`, and `race` reject
+  their existing capability when `resolve` lookup or callability is abrupt;
+  iterator lookup remains unobserved in that case. The exact Test262 cohort is
+  **95/95**, all four directories are **229/0/161**, broad Promise is
+  **363/0/340**, the supported subset remains **12751/0/7687**, tooling is
+  **95/95**, and Rust builtins are **449/449**. Feature commit `fa21315` passed
+  CI `29515343282` and full matrix `29515343238`; only built-ins changes by
+  **+95 pass / -95 skip**, producing **30064 pass / 6334 fail / 11907 skip /
+  12 timeout / 0 error / 48317 total** (**62.2%** of all files, **82.6%** of
+  executed files).
 - `Promise.all`, `Promise.allSettled`, `Promise.any`, and `Promise.race` now
   close an active input iterator when the receiver's `resolve` call or the
   resolved value's `then` lookup/call completes abruptly. Catchable close

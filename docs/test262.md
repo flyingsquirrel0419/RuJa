@@ -30,7 +30,7 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 62.0% of all matrix files; 82.6% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 62.2% of all matrix files; 82.6% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (12751 pass / 0 fail on current Test262; 12752 / 0 on the pinned checkout) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
@@ -6436,6 +6436,73 @@ files and **82.6%** of executed files.
   observable cleanup runs exactly once, and rejection identity survives GC.
   The admission remains an exact 12-file boundary; broader Promise combinator
   conformance and host-abort cleanup remain separately scoped work.
+
+## Promise combinator setup rejection objects
+
+Promise setup failures now follow the same JavaScript-visible completion path
+as ordinary thrown values. A catchable native `TypeError` without an existing
+`thrown_value` is materialized as an Error object in the active Promise
+method's Realm; an explicit object or Symbol throw retains identity, while a
+non-catchable fuel abort propagates to the host instead of becoming a Promise
+rejection. Capability functions, the result Promise, and each materialized
+reason remain pinned across custom reject callbacks and forced GC.
+
+A shared GetPromiseResolve helper now performs both the observable `resolve`
+lookup and callability validation. After NewPromiseCapability succeeds,
+`Promise.all`, `Promise.allSettled`, `Promise.any`, and `Promise.race` reject
+that capability for either abrupt operation and return its Promise without
+touching the iterable. The same helper keeps the keyed variants consistent.
+`Promise.race` no longer lets those post-capability failures escape
+synchronously, and Promise element callbacks plus `Promise.try` use the same
+Error-object conversion instead of a message string.
+
+`tools/test262_promise_combinator_rejection_admission.txt` freezes the exact 95
+files that failed before this change. They pass **95/95** with no skip. The
+normal runner across `all`, `allSettled`, `any`, and `race` is **229 pass / 0
+fail / 161 skip / 390 total**; the complete `built-ins/Promise` diagnostic is
+**363/0/340/703**. With all gates lifted, the four combinator directories move
+from **294/96** to **389/1**; the sole remaining failure is the independently
+scoped `allSettled/resolved-then-catch-finally.js` Promise-finally defect. The
+supported subset remains **12751/0/7687/20438**, Python tooling is **95/95**,
+and Rust builtins are **449/449**. All-target/all-feature Rust tests, Clippy
+with warnings denied, formatting, release, and wasm32 checks pass. Final GPT
+and Umans reviews found no remaining high- or medium-severity issue after
+live metadata, Realm, Fuel, and pin-lifetime findings were checked.
+
+Feature commit `fa21315` passed CI `29515343282` and full matrix
+`29515343238`. Against the preceding Promise-close feature baseline, 29 of 30
+result artifacts at
+`/tmp/ruja-artifacts-promise-rejection-feature.ScWfwN` are byte-for-byte
+identical. Only built-ins changes, by exactly **+95 pass / -95 skip**. The
+aggregate is **30064 pass / 6334 fail / 11907 skip / 12 timeout / 0 error /
+48317 total / 36398 pass-or-fail executed**, or **62.2%** of all files and
+**82.6%** of executed files.
+
+[Decision Log]
+- 목적과 의도: make all audited Promise-combinator setup abrupt completions
+  reject with specification-shaped Error values and close the largest shared
+  failure cluster without admitting unrelated Promise-finally behavior.
+- 기존 구현 및 제약 조건: `promise_rejection_value` converted native errors
+  to message strings; three combinators manually rejected non-callable
+  `resolve` values as strings; and `race` propagated resolve lookup and
+  callability failures synchronously even though its capability already
+  existed.
+- 검토한 주요 대안: special-case each of the 95 tests; create Error objects in
+  every combinator branch; materialize all errors globally across async and
+  generator runtimes; or repair the shared synchronous Promise rejection and
+  GetPromiseResolve boundaries first.
+- 선택한 방식: preserve existing thrown values, materialize only catchable
+  native errors in the current method Realm, propagate host aborts, share
+  GetPromiseResolve across the Promise static methods, and freeze admission to
+  the exact 95 files that exercise this behavior.
+- 다른 대안 대신 이 방식을 선택한 이유: per-test branches would encode the
+  corpus rather than the specification; duplicated Error creation would drift
+  across combinators; and a repository-wide async error conversion changes
+  captured-Realm and suspension contracts that require their own audit.
+- 장점, 단점 및 영향: rejection reasons now have the correct object identity,
+  prototype Realm, ordering, and GC lifetime, and all four combinators share
+  one setup path. Promise-finally and pre-existing async-runtime string/Fuel
+  fallback sites remain explicit follow-up units rather than hidden scope.
 
 ## Why the full-suite rate is not higher
 
