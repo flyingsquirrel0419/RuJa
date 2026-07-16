@@ -12541,6 +12541,102 @@ fn promise_race_uses_receiver_resolve_and_then() {
 }
 
 #[test]
+fn promise_combinators_close_after_resolve_and_then_abrupt_completions() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+    assert_eq!(
+        vm.run(
+            r#"
+            var checks = [];
+            for (var method of ["all", "allSettled", "any", "race"]) {
+                for (var mode of ["resolve", "get-then", "call-then"]) {
+                    var reason = {};
+                    var reasonRef = new WeakRef(reason);
+                    var rejected;
+                    var closeCount = 0;
+                    function C(executor) {
+                        executor(function () {}, function (value) { rejected = value; });
+                    }
+                    C.resolve = function () {
+                        if (mode === "resolve") throw reason;
+                        var nextPromise = {};
+                        if (mode === "get-then") {
+                            Object.defineProperty(nextPromise, "then", {
+                                get: function () { throw reason; }
+                            });
+                        } else {
+                            nextPromise.then = function () { throw reason; };
+                        }
+                        return nextPromise;
+                    };
+                    var iterable = {
+                        [Symbol.iterator]: function () {
+                            return {
+                                next: function () {
+                                    return { value: 1, done: false };
+                                },
+                                return: function () {
+                                    closeCount += 1;
+                                    reason = null;
+                                    forceGc();
+                                    return {};
+                                }
+                            };
+                        }
+                    };
+                    Promise[method].call(C, iterable);
+                    checks.push(closeCount === 1 && rejected === reasonRef.deref());
+                }
+            }
+
+            var original = {};
+            var originalRef = new WeakRef(original);
+            var closeReason = {};
+            var closeGets = 0;
+            var finalRejected;
+            function ClosingC(executor) {
+                executor(function () {}, function (value) { finalRejected = value; });
+            }
+            ClosingC.resolve = function () { throw original; };
+            var closingIterable = {
+                [Symbol.iterator]: function () {
+                    var iterator = {
+                        next: function () { return { value: 1, done: false }; }
+                    };
+                    Object.defineProperty(iterator, "return", {
+                        get: function () {
+                            closeGets += 1;
+                            original = null;
+                            forceGc();
+                            throw closeReason;
+                        }
+                    });
+                    return iterator;
+                }
+            };
+            Promise.all.call(ClosingC, closingIterable);
+            [
+                checks.length,
+                checks.every(function (value) { return value; }),
+                finalRejected === originalRef.deref(),
+                closeGets
+            ].join("|");
+        "#,
+        )
+        .expect("Promise combinator close matrix should complete"),
+        Value::String(Arc::from("12|true|true|1"))
+    );
+}
+
+#[test]
 fn promise_static_resolve_and_reject_use_receiver_constructor_capability() {
     assert_eq!(
         run("class SubPromise extends Promise {}

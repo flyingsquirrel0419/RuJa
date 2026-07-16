@@ -48,6 +48,10 @@ from test262_promise_realm_admission import (
     PROMISE_REALM_FEATURES,
     PROMISE_REALM_FILES,
 )
+from test262_promise_combinator_close_admission import (
+    PROMISE_COMBINATOR_CLOSE_FEATURES,
+    PROMISE_COMBINATOR_CLOSE_FILES,
+)
 from test262_proxy_get_admission import PROXY_GET_FEATURES, PROXY_GET_FILES
 from test262_proxy_own_keys_admission import (
     PROXY_OWN_KEYS_FEATURES,
@@ -1064,6 +1068,65 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                     )
                 finally:
                     tool.TEST262 = original_root
+
+    def test_promise_combinator_close_manifest_is_exact_and_shared(self):
+        self.assertEqual(len(PROMISE_COMBINATOR_CLOSE_FILES), 12)
+        self.assertEqual(
+            frozenset(PROMISE_COMBINATOR_CLOSE_FEATURES),
+            PROMISE_COMBINATOR_CLOSE_FILES,
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            outside = root / "test/built-ins/Promise/all/future-close.js"
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for relative, features in PROMISE_COMBINATOR_CLOSE_FEATURES.items():
+                        path = root / "test" / relative
+                        self.assertTrue(tool.promise_combinator_close_path(path))
+                        self.assertEqual(
+                            tool.promise_combinator_close_features(path), features
+                        )
+                        flags = ["async"] if "/any/" in relative else []
+                        self.assertFalse(
+                            tool.should_skip(
+                                {"features": sorted(features), "flags": flags},
+                                path,
+                            )
+                        )
+                        self.assertTrue(
+                            tool.should_skip(
+                                {
+                                    "features": sorted(features | {"decorators"}),
+                                    "flags": flags,
+                                },
+                                path,
+                            )
+                        )
+                    self.assertFalse(tool.promise_combinator_close_path(outside))
+                    self.assertTrue(
+                        tool.should_skip(
+                            {"features": ["Symbol.iterator"]},
+                            outside,
+                        )
+                    )
+                finally:
+                    tool.TEST262 = original_root
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        try:
+            test_root_available = test_root.is_dir()
+        except OSError:
+            test_root_available = False
+        if test_root_available:
+            for relative, features in PROMISE_COMBINATOR_CLOSE_FEATURES.items():
+                path = test_root / relative
+                self.assertTrue(path.is_file(), relative)
+                metadata = test262_runner.parse_meta(path.read_text())
+                self.assertEqual(
+                    frozenset(metadata.get("features", [])), features, relative
+                )
 
     def test_generator_function_manifest_is_exact_and_shared(self):
         self.assertEqual(len(GENERATOR_FUNCTION_FILES), 3)

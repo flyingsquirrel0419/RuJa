@@ -2573,6 +2573,36 @@ fn promise_capability_reject_and_return(
     Ok(capability.promise.clone())
 }
 
+fn promise_combinator_close_and_reject(
+    vm: &mut Vm,
+    capability: &PromiseCapability,
+    iterator: &Value,
+    err: Arc<error::Error>,
+) -> error::Result<Value> {
+    if !err.catchable() {
+        return Err(err);
+    }
+    let reason = promise_rejection_value(&err);
+    let pins = vm.pin_many(&[
+        iterator.clone(),
+        capability.promise.clone(),
+        capability.resolve.clone(),
+        capability.reject.clone(),
+        reason.clone(),
+    ]);
+    let close = vm.iterator_close(iterator);
+    if let Err(close_err) = close {
+        if !close_err.catchable() {
+            vm.unpin_many(pins);
+            return Err(close_err);
+        }
+    }
+    let rejected = reject_promise_capability(vm, capability, reason);
+    vm.unpin_many(pins);
+    rejected?;
+    Ok(capability.promise.clone())
+}
+
 pub(crate) fn promise_all_resolve_element(
     vm: &mut Vm,
     args: &[Value],
@@ -3205,6 +3235,7 @@ pub(crate) fn promise_static_all(
             return result;
         }
     };
+    pins += vm.pin(&iter);
 
     let values = make_value_array_in_current_realm(vm, Vec::new())?;
     pins += vm.pin_many(std::slice::from_ref(&values));
@@ -3343,7 +3374,7 @@ pub(crate) fn promise_static_all(
         let next_promise = match next_promise_result {
             Ok(next_promise) => next_promise,
             Err(err) => {
-                let result = promise_capability_reject_and_return(vm, &capability, err);
+                let result = promise_combinator_close_and_reject(vm, &capability, &iter, err);
                 vm.unpin_many(pins);
                 return result;
             }
@@ -3351,7 +3382,7 @@ pub(crate) fn promise_static_all(
         let then = match vm.get_property(&next_promise, "then") {
             Ok(then) => then,
             Err(err) => {
-                let result = promise_capability_reject_and_return(vm, &capability, err);
+                let result = promise_combinator_close_and_reject(vm, &capability, &iter, err);
                 vm.unpin_many(pins);
                 return result;
             }
@@ -3364,7 +3395,7 @@ pub(crate) fn promise_static_all(
         );
         vm.unpin_many(then_pins);
         if let Err(err) = then_result {
-            let result = promise_capability_reject_and_return(vm, &capability, err);
+            let result = promise_combinator_close_and_reject(vm, &capability, &iter, err);
             vm.unpin_many(pins);
             return result;
         }
@@ -3409,6 +3440,7 @@ pub(crate) fn promise_static_race(
             return Ok(capability.promise);
         }
     };
+    pins += vm.pin(&iter);
 
     loop {
         let (value, done) = match vm.iterator_next(&iter) {
@@ -3436,21 +3468,17 @@ pub(crate) fn promise_static_race(
         let next_promise = match next_promise_result {
             Ok(next_promise) => next_promise,
             Err(err) => {
-                let reason = promise_rejection_value(&err);
-                let reject_result = reject_promise_capability(vm, &capability, reason);
+                let result = promise_combinator_close_and_reject(vm, &capability, &iter, err);
                 vm.unpin_many(pins);
-                reject_result?;
-                return Ok(capability.promise);
+                return result;
             }
         };
         let then = match vm.get_property(&next_promise, "then") {
             Ok(then) => then,
             Err(err) => {
-                let reason = promise_rejection_value(&err);
-                let reject_result = reject_promise_capability(vm, &capability, reason);
+                let result = promise_combinator_close_and_reject(vm, &capability, &iter, err);
                 vm.unpin_many(pins);
-                reject_result?;
-                return Ok(capability.promise);
+                return result;
             }
         };
         let then_pins = vm.pin_many(&[next_promise.clone(), then.clone()]);
@@ -3461,11 +3489,9 @@ pub(crate) fn promise_static_race(
         );
         vm.unpin_many(then_pins);
         if let Err(err) = then_result {
-            let reason = promise_rejection_value(&err);
-            let reject_result = reject_promise_capability(vm, &capability, reason);
+            let result = promise_combinator_close_and_reject(vm, &capability, &iter, err);
             vm.unpin_many(pins);
-            reject_result?;
-            return Ok(capability.promise);
+            return result;
         }
     }
 }
@@ -3512,6 +3538,7 @@ pub(crate) fn promise_static_all_settled(
             return result;
         }
     };
+    pins += vm.pin(&iter);
 
     let values = make_value_array_in_current_realm(vm, Vec::new())?;
     pins += vm.pin_many(std::slice::from_ref(&values));
@@ -3673,7 +3700,7 @@ pub(crate) fn promise_static_all_settled(
         let next_promise = match next_promise_result {
             Ok(next_promise) => next_promise,
             Err(err) => {
-                let result = promise_capability_reject_and_return(vm, &capability, err);
+                let result = promise_combinator_close_and_reject(vm, &capability, &iter, err);
                 vm.unpin_many(pins);
                 return result;
             }
@@ -3681,7 +3708,7 @@ pub(crate) fn promise_static_all_settled(
         let then = match vm.get_property(&next_promise, "then") {
             Ok(then) => then,
             Err(err) => {
-                let result = promise_capability_reject_and_return(vm, &capability, err);
+                let result = promise_combinator_close_and_reject(vm, &capability, &iter, err);
                 vm.unpin_many(pins);
                 return result;
             }
@@ -3694,7 +3721,7 @@ pub(crate) fn promise_static_all_settled(
         );
         vm.unpin_many(then_pins);
         if let Err(err) = then_result {
-            let result = promise_capability_reject_and_return(vm, &capability, err);
+            let result = promise_combinator_close_and_reject(vm, &capability, &iter, err);
             vm.unpin_many(pins);
             return result;
         }
@@ -4020,6 +4047,7 @@ pub(crate) fn promise_static_any(
             return result;
         }
     };
+    pins += vm.pin(&iter);
 
     let errors = make_value_array_in_current_realm(vm, Vec::new())?;
     pins += vm.pin_many(std::slice::from_ref(&errors));
@@ -4150,7 +4178,7 @@ pub(crate) fn promise_static_any(
         let next_promise = match next_promise_result {
             Ok(next_promise) => next_promise,
             Err(err) => {
-                let result = promise_capability_reject_and_return(vm, &capability, err);
+                let result = promise_combinator_close_and_reject(vm, &capability, &iter, err);
                 vm.unpin_many(pins);
                 return result;
             }
@@ -4158,7 +4186,7 @@ pub(crate) fn promise_static_any(
         let then = match vm.get_property(&next_promise, "then") {
             Ok(then) => then,
             Err(err) => {
-                let result = promise_capability_reject_and_return(vm, &capability, err);
+                let result = promise_combinator_close_and_reject(vm, &capability, &iter, err);
                 vm.unpin_many(pins);
                 return result;
             }
@@ -4171,7 +4199,7 @@ pub(crate) fn promise_static_any(
         );
         vm.unpin_many(then_pins);
         if let Err(err) = then_result {
-            let result = promise_capability_reject_and_return(vm, &capability, err);
+            let result = promise_combinator_close_and_reject(vm, &capability, &iter, err);
             vm.unpin_many(pins);
             return result;
         }
