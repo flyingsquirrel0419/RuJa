@@ -1,0 +1,3 @@
+# Feature-gated files completing the current Function.prototype.apply subtree.
+built-ins/Function/prototype/apply/not-a-constructor.js
+built-ins/Function/prototype/apply/resizable-buffer.js

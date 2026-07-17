@@ -1,3 +1,4 @@
+use super::call_arguments::{create_list_from_array_like, MAX_MATERIALIZED_CALL_ARGUMENTS};
 use super::*;
 
 // Function.prototype: call / apply / bind
@@ -73,38 +74,14 @@ pub(crate) fn function_apply(
         )));
     }
     let this_arg = args.first().cloned().unwrap_or(Value::Undefined);
-    let arr_args: Vec<Value> = match args.get(1) {
-        Some(Value::Undefined) | Some(Value::Null) => Vec::new(),
-        Some(Value::Object(idx)) => vm.heap.with_obj(idx.0, |obj| match obj {
-            HeapObj::Array(a) => a.items.lock().clone(),
-            _ => {
-                // Array-like fallback: read .length and integer-indexed props.
-                let len = obj
-                    .props()
-                    .lock()
-                    .get(&PropertyKey::from("length"))
-                    .and_then(|d| {
-                        if let Value::Number(n) = d.value {
-                            Some(n as usize)
-                        } else {
-                            None
-                        }
-                    })
-                    .unwrap_or(0);
-                (0..len)
-                    .map(|i| {
-                        obj.props()
-                            .lock()
-                            .get(&PropertyKey::from(i.to_string().as_str()))
-                            .map(|d| d.value.clone())
-                            .unwrap_or(Value::Undefined)
-                    })
-                    .collect()
-            }
-        }),
-        _ => Vec::new(),
+    let arguments_list = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let (call_args, call_args_pin_count) = match arguments_list {
+        Value::Undefined | Value::Null => (Vec::new(), 0),
+        _ => create_list_from_array_like(vm, &arguments_list, MAX_MATERIALIZED_CALL_ARGUMENTS)?,
     };
-    vm.call_function(&target, &arr_args, Some(this_arg))
+    let result = vm.call_function(&target, &call_args, Some(this_arg));
+    vm.unpin_many(call_args_pin_count);
+    result
 }
 
 /// `Function.prototype.bind(thisArg, ...args)`: create a new function with a
@@ -190,4 +167,98 @@ pub(crate) fn function_throw_type_error(
     Err(error::Error::type_err(
         "'caller' and 'arguments' are restricted function properties",
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn apply_argument_list_pins_balance_on_success_and_errors() {
+        let mut vm = Vm::new().expect("failed to initialize VM");
+        vm.run(
+            r#"
+            var itemError = {};
+            var abruptItems = {
+              length: 2,
+              get 0() { return {}; },
+              get 1() { throw itemError; }
+            };
+            var completeItems = {
+              length: 2,
+              get 0() { return { label: "first" }; },
+              get 1() { return { label: "second" }; }
+            };
+            var targetError = {};
+            function returningTarget(first) { return first; }
+            function throwingTarget() { throw targetError; }
+            "#,
+        )
+        .expect("failed to create Function.apply fixtures");
+
+        let returning_target = vm
+            .run("returningTarget")
+            .expect("failed to read returning target");
+        let throwing_target = vm
+            .run("throwingTarget")
+            .expect("failed to read throwing target");
+        let abrupt_items = vm
+            .run("abruptItems")
+            .expect("failed to read abrupt argument list");
+        let complete_items = vm
+            .run("completeItems")
+            .expect("failed to read complete argument list");
+        let baseline = vm.gc_pins.len();
+
+        assert!(function_apply(
+            &mut vm,
+            &[Value::Undefined, Value::Number(1.0)],
+            Some(returning_target.clone()),
+        )
+        .is_err());
+        assert_eq!(vm.gc_pins.len(), baseline);
+
+        assert!(function_apply(
+            &mut vm,
+            &[Value::Undefined, abrupt_items],
+            Some(returning_target.clone()),
+        )
+        .is_err());
+        assert_eq!(vm.gc_pins.len(), baseline);
+
+        let returned = function_apply(
+            &mut vm,
+            &[Value::Undefined, complete_items.clone()],
+            Some(returning_target.clone()),
+        )
+        .expect("successful apply should return the target result");
+        assert_eq!(vm.gc_pins.len(), baseline);
+        assert_eq!(
+            vm.get_property(&returned, "label")
+                .expect("returned argument should remain valid"),
+            Value::String(Arc::from("first"))
+        );
+
+        assert!(function_apply(
+            &mut vm,
+            &[Value::Undefined, complete_items],
+            Some(throwing_target),
+        )
+        .is_err());
+        assert_eq!(vm.gc_pins.len(), baseline);
+
+        function_apply(&mut vm, &[Value::Undefined], Some(returning_target.clone()))
+            .expect("an omitted argument list should call with no arguments");
+        assert_eq!(vm.gc_pins.len(), baseline);
+
+        for nullish in [Value::Undefined, Value::Null] {
+            function_apply(
+                &mut vm,
+                &[Value::Undefined, nullish],
+                Some(returning_target.clone()),
+            )
+            .expect("nullish argument lists should call with no arguments");
+            assert_eq!(vm.gc_pins.len(), baseline);
+        }
+    }
 }

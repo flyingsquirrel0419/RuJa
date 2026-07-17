@@ -11563,6 +11563,165 @@ fn reflect_apply_uses_create_list_from_array_like() {
 }
 
 #[test]
+fn function_apply_observes_array_like_access_and_roots_arguments() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+
+    vm.run(
+        r#"
+        var accessLog = [];
+        var inherited = {};
+        Object.defineProperty(inherited, "1", {
+          get: function() {
+            accessLog.push("1");
+            forceGc();
+            return { label: "inherited" };
+          }
+        });
+        var arrayLike = Object.create(inherited);
+        Object.defineProperty(arrayLike, "length", {
+          get: function() {
+            accessLog.push("length");
+            return {
+              valueOf: function() {
+                accessLog.push("valueOf");
+                forceGc();
+                return 2;
+              }
+            };
+          }
+        });
+        Object.defineProperty(arrayLike, "0", {
+          get: function() {
+            accessLog.push("0");
+            return { label: "own" };
+          }
+        });
+        var observableResult = function(first, second) {
+          forceGc();
+          return [first.label, second.label, first === second].join(",");
+        }.apply(null, arrayLike);
+
+        var proxyLog = [];
+        var proxyResult = function(first, second) {
+          return first + second;
+        }.apply(null, new Proxy({ length: 2, 0: 3, 1: 4 }, {
+          get: function(target, key) {
+            proxyLog.push(String(key));
+            return target[key];
+          }
+        }));
+
+        var array = [{ label: "backing" }];
+        var arrayPrototype = Object.create(Array.prototype);
+        Object.defineProperty(arrayPrototype, "1", {
+          value: { label: "array-inherited" }
+        });
+        Object.setPrototypeOf(array, arrayPrototype);
+        Object.defineProperty(array, "0", {
+          get: function() { return { label: "array-accessor" }; }
+        });
+        array.length = 2;
+        var arrayResult = function(first, second) {
+          return first.label + "," + second.label;
+        }.apply(null, array);
+
+        var typedResult = function(first, second) {
+          return first + "," + second;
+        }.apply(null, new Uint8Array([5, 6]));
+
+        function emptyCount() { return arguments.length; }
+        var nullishResult = [
+          emptyCount.apply(),
+          emptyCount.apply(null),
+          emptyCount.apply(null, undefined),
+          emptyCount.apply(null, null)
+        ].join(",");
+
+        var lengthError = {};
+        var lengthErrorResult = false;
+        try {
+          (function() {}).apply(null, {
+            get length() {
+              return {
+                valueOf: function() {
+                  forceGc();
+                  throw lengthError;
+                }
+              };
+            }
+          });
+        } catch (error) {
+          forceGc();
+          lengthErrorResult = error === lengthError;
+        }
+
+        var returned = function(first) {
+          forceGc();
+          return first;
+        }.apply(null, {
+          length: 1,
+          get 0() { return { label: "returned" }; }
+        });
+        forceGc();
+
+        var thrownResult = "missing";
+        try {
+          (function(first) {
+            forceGc();
+            throw first;
+          }).apply(null, {
+            length: 1,
+            get 0() { return { label: "thrown" }; }
+          });
+        } catch (error) {
+          forceGc();
+          thrownResult = error.label;
+        }
+
+        var capReads = 0;
+        var capResult = false;
+        try {
+          (function() {}).apply(null, {
+            length: 1048577,
+            get 0() { capReads++; }
+          });
+        } catch (error) {
+          capResult = error instanceof RangeError && capReads === 0;
+        }
+
+        var primitiveResult = false;
+        try {
+          (function() {}).apply(null, 1);
+        } catch (error) {
+          primitiveResult = error instanceof TypeError;
+        }
+        "#,
+    )
+    .expect("failed to exercise Function.apply argument materialization");
+
+    assert_eq!(
+        vm.run(
+            "[observableResult, accessLog.join(','), proxyResult, proxyLog.join(','), arrayResult, typedResult, nullishResult, lengthErrorResult, returned.label, thrownResult, capResult, primitiveResult].join('|')"
+        )
+        .expect("failed to read Function.apply results"),
+        Value::String(Arc::from(concat!(
+            "own,inherited,false|length,valueOf,0,1|7|length,0,1|",
+            "array-accessor,array-inherited|5,6|0,0,0,0|true|",
+            "returned|thrown|true|true"
+        )))
+    );
+}
+
+#[test]
 fn reflect_argument_lists_root_values_across_observable_getters() {
     let mut vm = Vm::new().expect("failed to initialize VM");
     vm.register_fn(

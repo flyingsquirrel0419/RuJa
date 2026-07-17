@@ -7,6 +7,8 @@ pub(crate) mod global;
 pub(crate) mod json;
 pub(crate) mod math;
 
+pub(crate) mod call_arguments;
+
 pub(crate) mod array;
 pub(crate) use array::*;
 

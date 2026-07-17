@@ -56,6 +56,9 @@ try:
     from test262_reflect_call_admission import (
         REFLECT_CALL_FEATURES, REFLECT_CALL_FILES,
     )
+    from test262_function_apply_admission import (
+        FUNCTION_APPLY_FEATURES, FUNCTION_APPLY_FILES,
+    )
     from test262_reference_primitive_admission import REFERENCE_PRIMITIVE_FILES
     from test262_support import append_async_harness, execute_source
     from test262_dynamic_import_admission import DYNAMIC_IMPORT_FILES
@@ -117,6 +120,9 @@ except ModuleNotFoundError:
     )
     from tools.test262_reflect_call_admission import (
         REFLECT_CALL_FEATURES, REFLECT_CALL_FILES,
+    )
+    from tools.test262_function_apply_admission import (
+        FUNCTION_APPLY_FEATURES, FUNCTION_APPLY_FILES,
     )
     from tools.test262_reference_primitive_admission import REFERENCE_PRIMITIVE_FILES
     from tools.test262_support import append_async_harness, execute_source
@@ -2150,6 +2156,24 @@ def reflect_call_features(path):
         return frozenset()
     return REFLECT_CALL_FEATURES.get(rel.as_posix(), frozenset())
 
+def function_apply_path(path):
+    if path is None:
+        return False
+    try:
+        rel = Path(path).resolve().relative_to(Path(TEST262).resolve() / "test")
+    except ValueError:
+        return False
+    return rel.as_posix() in FUNCTION_APPLY_FILES
+
+def function_apply_features(path):
+    if path is None:
+        return frozenset()
+    try:
+        rel = Path(path).resolve().relative_to(Path(TEST262).resolve() / "test")
+    except ValueError:
+        return frozenset()
+    return FUNCTION_APPLY_FEATURES.get(rel.as_posix(), frozenset())
+
 def reference_primitive_path(path):
     if path is None:
         return False
@@ -2372,6 +2396,8 @@ def should_skip(meta, path=None):
         feats.difference_update(proxy_own_keys_features(path))
     if path is not None and reflect_call_path(path):
         feats.difference_update(reflect_call_features(path))
+    if path is not None and function_apply_path(path):
+        feats.difference_update(function_apply_features(path))
     if path is not None and reference_primitive_path(path):
         feats.difference_update({"cross-realm", "Symbol", "Proxy"})
     if path is not None and object_constructor_path(path):
