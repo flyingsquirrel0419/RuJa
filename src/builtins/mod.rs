@@ -44,8 +44,8 @@ use crate::gc::Heap;
 use crate::value::{
     ArrayData, BindingKind, CollectionIteratorData, CollectionIteratorKind, FunctionData,
     FunctionKind, GcIdx, HeapObj, IteratorConcatIterable, IteratorHelperData, IteratorHelperInner,
-    IteratorHelperKind, IteratorZipMode, MapData, MapKey, ObjectData, PropertyDescriptor,
-    PropertyKey, RegExpStringIteratorData, SetData, Value,
+    IteratorHelperKind, IteratorZipMode, MapData, MapKey, NativeConstructMode, ObjectData,
+    PropertyDescriptor, PropertyKey, RegExpStringIteratorData, SetData, Value,
 };
 use crate::vm::{NativeFn, Vm};
 use indexmap::{IndexMap, IndexSet};
@@ -1522,6 +1522,7 @@ pub(crate) fn make_builtin_constructor(
         kind: FunctionKind::Native {
             func: object_constructor,
             length: 1,
+            construct_mode: NativeConstructMode::InternalDeferredPrototype,
         },
         closure: vm.global,
         lexical_new_target: Value::Undefined,
@@ -1582,7 +1583,13 @@ fn install_typed_array_constructor_in_env(
     typed_array_proto: &Value,
 ) -> error::Result<()> {
     let (name, constructor, kind) = entry;
-    let ctor_idx = vm.new_native_function_in_env(name, constructor, 3, env)?;
+    let ctor_idx = vm.new_native_constructor_in_env(
+        name,
+        constructor,
+        3,
+        env,
+        NativeConstructMode::InternalDeferredPrototype,
+    )?;
     let proto_idx = GcIdx(vm.heap.allocate(HeapObj::Object(ObjectData {
         props: Mutex::new(IndexMap::new()),
         proto: Mutex::new(Some(typed_array_proto.clone())),
@@ -1701,11 +1708,12 @@ fn make_typed_array_intrinsic_in_env(vm: &mut Vm, env: GcIdx) -> error::Result<(
         .get(&realm.0)
         .cloned()
         .unwrap_or_else(|| vm.object_proto.clone());
-    let typed_array_ctor = Value::Object(vm.new_native_function_in_env(
+    let typed_array_ctor = Value::Object(vm.new_native_constructor_in_env(
         "TypedArray",
         typed_array_intrinsic_constructor,
         0,
         env,
+        NativeConstructMode::PreallocateReceiver,
     )?);
     let typed_array_proto =
         Value::Object(GcIdx(vm.heap.allocate(HeapObj::Object(ObjectData {
@@ -1990,6 +1998,7 @@ fn install_array_buffer_constructor_in_env(
         "ArrayBuffer",
         1,
         array_buffer_constructor,
+        NativeConstructMode::InternalDeferredPrototype,
         &[
             ("slice", array_buffer_slice, 2),
             ("resize", array_buffer_resize, 1),
@@ -2101,6 +2110,7 @@ fn install_shared_array_buffer_constructor_in_env(
         "SharedArrayBuffer",
         1,
         shared_array_buffer_constructor,
+        NativeConstructMode::InternalDeferredPrototype,
         &[
             ("slice", shared_array_buffer_slice, 2),
             ("grow", shared_array_buffer_grow, 1),
@@ -2196,6 +2206,7 @@ fn install_data_view_constructor_in_env(
         "DataView",
         1,
         data_view_constructor,
+        NativeConstructMode::InternalDeferredPrototype,
         &[
             ("getFloat16", data_view_get_float16, 1),
             ("getFloat32", data_view_get_float32, 1),
@@ -2277,6 +2288,7 @@ fn install_weak_ref_constructor_in_env(
         "WeakRef",
         1,
         weak_ref_constructor,
+        NativeConstructMode::InternalDeferredPrototype,
         &[("deref", weak_ref_deref, 0)],
         env,
     )?;
@@ -2325,6 +2337,7 @@ fn install_finalization_registry_constructor_in_env(
         "FinalizationRegistry",
         1,
         finalization_registry_constructor,
+        NativeConstructMode::InternalDeferredPrototype,
         &[
             ("register", finalization_registry_register, 2),
             ("unregister", finalization_registry_unregister, 1),
@@ -2426,6 +2439,7 @@ fn make_error_constructor_in_env(
         kind: FunctionKind::Native {
             func: ctor_native,
             length: ctor_length,
+            construct_mode: NativeConstructMode::InternalEagerPrototype,
         },
         closure: env,
         lexical_new_target: Value::Undefined,
@@ -2546,6 +2560,7 @@ fn make_regexp_constructor_in_env(vm: &mut Vm, env: GcIdx) -> error::Result<(GcI
         "RegExp",
         2,
         regexp_constructor,
+        NativeConstructMode::InternalEagerPrototype,
         &[
             ("test", regexp_test, 1),
             ("exec", regexp_exec, 1),
@@ -2713,6 +2728,7 @@ fn install_array_intrinsic_in_env(
         "Array",
         1,
         array_constructor,
+        NativeConstructMode::InternalEagerPrototype,
         ARRAY_PROTOTYPE_METHODS,
         env,
     )?;
@@ -2789,6 +2805,7 @@ fn install_promise_intrinsic_in_env(
         "Promise",
         1,
         promise_constructor,
+        NativeConstructMode::InternalDeferredPrototype,
         &[
             ("then", promise_then, 2),
             ("catch", promise_catch, 1),
@@ -2890,11 +2907,12 @@ fn install_generator_intrinsics_in_env(
         );
     });
 
-    let constructor = vm.new_native_function_in_env(
+    let constructor = vm.new_native_constructor_in_env(
         "GeneratorFunction",
         generator_function_constructor,
         1,
         realm,
+        NativeConstructMode::InternalEagerPrototype,
     )?;
     let constructor_value = Value::Object(constructor);
     pins += vm.pin(&constructor_value);
@@ -3021,11 +3039,12 @@ fn install_async_generator_intrinsics_in_env(
         );
     });
 
-    let constructor = vm.new_native_function_in_env(
+    let constructor = vm.new_native_constructor_in_env(
         "AsyncGeneratorFunction",
         async_generator_function_constructor,
         1,
         realm,
+        NativeConstructMode::InternalEagerPrototype,
     )?;
     let constructor_value = Value::Object(constructor);
     pins += vm.pin(&constructor_value);
@@ -3143,8 +3162,13 @@ fn populate_test262_realm(vm: &mut Vm, realm_env: GcIdx) -> error::Result<Value>
         set_function_object_proto(vm, function, &realm_function_proto);
     }
 
-    let function_ctor_idx =
-        vm.new_native_function_in_env("Function", function_constructor, 1, realm_env)?;
+    let function_ctor_idx = vm.new_native_constructor_in_env(
+        "Function",
+        function_constructor,
+        1,
+        realm_env,
+        NativeConstructMode::InternalEagerPrototype,
+    )?;
     set_function_object_proto(vm, function_ctor_idx, &realm_function_proto);
     let call_fn = vm.new_native_function_in_env("call", function_call, 1, realm_env)?;
     let apply_fn = vm.new_native_function_in_env("apply", function_apply, 2, realm_env)?;
@@ -3224,8 +3248,13 @@ fn populate_test262_realm(vm: &mut Vm, realm_env: GcIdx) -> error::Result<Value>
     }))?;
     let realm_object_prototype = Value::Object(realm_object_prototype_idx);
     let mut object_pins = vm.pin(&realm_object_prototype);
-    let realm_object_idx =
-        vm.new_native_function_in_env("Object", object_constructor, 1, realm_env)?;
+    let realm_object_idx = vm.new_native_constructor_in_env(
+        "Object",
+        object_constructor,
+        1,
+        realm_env,
+        NativeConstructMode::InternalDeferredPrototype,
+    )?;
     let realm_object = Value::Object(realm_object_idx);
     object_pins += vm.pin(&realm_object);
     vm.heap.with_obj(realm_object_idx.0, |obj| {
@@ -3322,6 +3351,7 @@ fn populate_test262_realm(vm: &mut Vm, realm_env: GcIdx) -> error::Result<Value>
         "String",
         1,
         string_constructor,
+        NativeConstructMode::PreallocateReceiver,
         &[
             ("valueOf", string_value_of, 0),
             ("toString", string_proto_to_string, 0),
@@ -3343,6 +3373,7 @@ fn populate_test262_realm(vm: &mut Vm, realm_env: GcIdx) -> error::Result<Value>
         "Number",
         1,
         number_constructor,
+        NativeConstructMode::PreallocateReceiver,
         &[
             ("toString", num_proto_to_string, 1),
             ("toLocaleString", num_proto_to_locale_string, 0),
@@ -3358,6 +3389,7 @@ fn populate_test262_realm(vm: &mut Vm, realm_env: GcIdx) -> error::Result<Value>
         "Boolean",
         1,
         boolean_constructor,
+        NativeConstructMode::PreallocateReceiver,
         &[
             ("valueOf", boolean_value_of, 0),
             ("toString", boolean_to_string, 0),
@@ -7116,8 +7148,13 @@ fn install_async_function_intrinsic(
     function_proto: &Value,
     function_ctor: GcIdx,
 ) -> error::Result<()> {
-    let constructor =
-        vm.new_native_function_in_env("AsyncFunction", async_function_constructor, 1, env)?;
+    let constructor = vm.new_native_constructor_in_env(
+        "AsyncFunction",
+        async_function_constructor,
+        1,
+        env,
+        NativeConstructMode::InternalEagerPrototype,
+    )?;
     set_function_object_proto(vm, constructor, &Value::Object(function_ctor));
     let prototype = Value::Object(GcIdx(vm.heap.allocate(HeapObj::Object(ObjectData {
         props: Mutex::new(IndexMap::new()),
@@ -9430,7 +9467,13 @@ fn install_iterator_intrinsic_in_env(
     pin_count += vm.pin(&Value::Object(zip));
     let zip_keyed = vm.new_native_function_in_env("zipKeyed", iterator_zip_keyed, 1, realm)?;
     pin_count += vm.pin(&Value::Object(zip_keyed));
-    let constructor = vm.new_native_function_in_env("Iterator", iterator_constructor, 0, realm)?;
+    let constructor = vm.new_native_constructor_in_env(
+        "Iterator",
+        iterator_constructor,
+        0,
+        realm,
+        NativeConstructMode::InternalDeferredPrototype,
+    )?;
     let constructor_value = Value::Object(constructor);
     pin_count += vm.pin(&constructor_value);
 
@@ -9556,7 +9599,12 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
     define_global(vm, "Reflect", reflect);
 
     // Proxy constructor + revocable.
-    let proxy_ctor_idx = vm.new_native_function("Proxy", proxy_constructor, 2)?;
+    let proxy_ctor_idx = vm.new_native_constructor(
+        "Proxy",
+        proxy_constructor,
+        2,
+        NativeConstructMode::InternalEagerPrototype,
+    )?;
     vm.heap.with_obj(proxy_ctor_idx.0, |o| {
         if let HeapObj::Function(f) = o {
             f.prototype.lock().replace(Value::Undefined);
@@ -9594,6 +9642,7 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
         "Date",
         7,
         date_constructor,
+        NativeConstructMode::PreallocateReceiver,
         &[
             ("valueOf", date_get_time, 0),
             ("getTime", date_get_time, 0),
@@ -9692,6 +9741,7 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
         "String",
         1,
         string_constructor,
+        NativeConstructMode::PreallocateReceiver,
         &[
             ("charAt", str_char_at, 1),
             ("charCodeAt", str_char_code_at, 1),
@@ -9769,6 +9819,7 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
         "Number",
         1,
         number_constructor,
+        NativeConstructMode::PreallocateReceiver,
         &[
             ("toFixed", num_to_fixed, 1),
             ("toPrecision", num_to_precision, 1),
@@ -9837,6 +9888,7 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
         "Boolean",
         1,
         boolean_constructor,
+        NativeConstructMode::PreallocateReceiver,
         &[
             ("valueOf", boolean_value_of, 0),
             ("toString", boolean_to_string, 0),
@@ -9958,7 +10010,12 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
         .insert(vm.global.0, vm.regexp_proto.clone());
     define_global(vm, "RegExp", Value::Object(regex_ctor));
     // Function constructor: new Function(p0, ..., body)
-    let function_ctor_idx = vm.new_native_function("Function", function_constructor, 1)?;
+    let function_ctor_idx = vm.new_native_constructor(
+        "Function",
+        function_constructor,
+        1,
+        NativeConstructMode::InternalEagerPrototype,
+    )?;
     vm.heap.with_obj(function_ctor_idx.0, |obj| {
         if let HeapObj::Function(f) = obj {
             f.prototype

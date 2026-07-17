@@ -3829,6 +3829,88 @@ fn array_subclass_instances_use_new_target_prototype() {
 }
 
 #[test]
+fn internal_native_constructors_preserve_eager_lookup_and_forwarding() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            var prototype = {};
+            var NewTarget = function () {}.bind();
+            Object.defineProperty(Function.prototype, "prototype", {
+              get: function () { log.push("prototype"); return prototype; },
+              configurable: true
+            });
+            var pattern = {
+              toString: function () { log.push("pattern"); return "x"; }
+            };
+            var regexp = Reflect.construct(RegExp, [pattern], NewTarget);
+            delete Function.prototype.prototype;
+
+            var BoundArray = Array.bind(null, 1);
+            var bound = new BoundArray(2, 3);
+            var ArrayProxy = new Proxy(Array, {});
+            var proxied = new ArrayProxy(4, 5);
+            [
+              log.join(","),
+              Object.getPrototypeOf(regexp) === prototype,
+              bound.join(","),
+              Object.getPrototypeOf(bound) === Array.prototype,
+              proxied.join(","),
+              Object.getPrototypeOf(proxied) === ArrayProxy.prototype
+            ].join("|");
+        "#),
+        Value::String(Arc::from("prototype,pattern|true|1,2,3|true|4,5|true"))
+    );
+}
+
+#[test]
+fn eager_native_constructor_resolves_fallback_before_body_validation() {
+    assert_eq!(
+        run(r#"
+            var pair = Proxy.revocable(function () {}, {});
+            var NewTarget = pair.proxy.bind(null);
+            pair.revoke();
+            try {
+              Reflect.construct(Array, [-1], NewTarget);
+            } catch (error) {
+              error.name;
+            }
+        "#),
+        Value::String(Arc::from("TypeError"))
+    );
+}
+
+#[test]
+fn weak_collection_constructors_require_new_and_use_new_target_prototype() {
+    assert_eq!(
+        run(r#"
+            var weakMapCallThrows = false;
+            var weakSetCallThrows = false;
+            try { WeakMap(); } catch (error) {
+              weakMapCallThrows = error instanceof TypeError;
+            }
+            try { WeakSet(); } catch (error) {
+              weakSetCallThrows = error instanceof TypeError;
+            }
+            class WeakMapSubclass extends WeakMap {}
+            class WeakSetSubclass extends WeakSet {}
+            var weakMap = new WeakMapSubclass();
+            var weakSet = new WeakSetSubclass();
+            [
+              weakMapCallThrows,
+              weakSetCallThrows,
+              weakMap instanceof WeakMapSubclass,
+              weakMap instanceof WeakMap,
+              Object.getPrototypeOf(weakMap) === WeakMapSubclass.prototype,
+              weakSet instanceof WeakSetSubclass,
+              weakSet instanceof WeakSet,
+              Object.getPrototypeOf(weakSet) === WeakSetSubclass.prototype
+            ].join("|");
+        "#),
+        Value::String(Arc::from("true|true|true|true|true|true|true|true"))
+    );
+}
+
+#[test]
 fn uint8array_subclass_instances_use_new_target_prototype_and_store_elements() {
     assert_eq!(
         run(r#"

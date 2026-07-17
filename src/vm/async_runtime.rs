@@ -6,7 +6,7 @@ use crate::error::{self, Error};
 use crate::value::{
     AsyncFunctionContinuation, GcIdx, PromiseReactionCapability, PromiseStatus, Value,
 };
-use crate::value::{FunctionKind, HeapObj, PropertyKey};
+use crate::value::{FunctionKind, HeapObj, NativeConstructMode, PropertyKey};
 use indexmap::IndexMap;
 use parking_lot::Mutex;
 use std::sync::Arc;
@@ -824,6 +824,50 @@ impl Vm {
         length: usize,
         closure: GcIdx,
     ) -> error::Result<GcIdx> {
+        self.new_native_function_with_construct_mode_in_env(
+            name,
+            func,
+            length,
+            closure,
+            NativeConstructMode::PreallocateReceiver,
+        )
+    }
+
+    pub(crate) fn new_native_constructor(
+        &mut self,
+        name: &str,
+        func: NativeFn,
+        length: usize,
+        construct_mode: NativeConstructMode,
+    ) -> error::Result<GcIdx> {
+        self.new_native_constructor_in_env(name, func, length, self.global, construct_mode)
+    }
+
+    pub(crate) fn new_native_constructor_in_env(
+        &mut self,
+        name: &str,
+        func: NativeFn,
+        length: usize,
+        closure: GcIdx,
+        construct_mode: NativeConstructMode,
+    ) -> error::Result<GcIdx> {
+        self.new_native_function_with_construct_mode_in_env(
+            name,
+            func,
+            length,
+            closure,
+            construct_mode,
+        )
+    }
+
+    fn new_native_function_with_construct_mode_in_env(
+        &mut self,
+        name: &str,
+        func: NativeFn,
+        length: usize,
+        closure: GcIdx,
+        construct_mode: NativeConstructMode,
+    ) -> error::Result<GcIdx> {
         let realm = crate::environment::global_env_root(&self.heap, closure);
         let function_proto = self
             .realm_function_prototypes
@@ -844,7 +888,11 @@ impl Vm {
 
         let fdef = crate::value::FunctionData {
             name: Some(Arc::from(name)),
-            kind: crate::value::FunctionKind::Native { func, length },
+            kind: crate::value::FunctionKind::Native {
+                func,
+                length,
+                construct_mode,
+            },
             closure,
             lexical_new_target: Value::Undefined,
             home_object: Mutex::new(None),
@@ -1553,40 +1601,54 @@ impl Vm {
         self.construct_with_new_target(constructor, args, constructor)
     }
 
-    fn is_internally_allocating_native_constructor(&self, idx: GcIdx) -> bool {
+    fn native_construct_mode(&self, idx: GcIdx) -> Option<NativeConstructMode> {
         self.heap.with_obj(idx.0, |obj| {
             let HeapObj::Function(f) = obj else {
-                return false;
+                return None;
             };
-            if !matches!(f.kind, FunctionKind::Native { .. }) {
-                return false;
-            }
-            matches!(
-                f.name.as_deref(),
-                Some("Object")
-                    | Some("Iterator")
-                    | Some("Promise")
-                    | Some("ArrayBuffer")
-                    | Some("DataView")
-                    | Some("WeakRef")
-                    | Some("FinalizationRegistry")
-                    | Some("SharedArrayBuffer")
-                    | Some("Int8Array")
-                    | Some("Uint8Array")
-                    | Some("Uint8ClampedArray")
-                    | Some("Int16Array")
-                    | Some("Uint16Array")
-                    | Some("Int32Array")
-                    | Some("Uint32Array")
-                    | Some("Float32Array")
-                    | Some("Float64Array")
-                    | Some("BigInt64Array")
-                    | Some("BigUint64Array")
-            )
+            let FunctionKind::Native { construct_mode, .. } = &f.kind else {
+                return None;
+            };
+            Some(*construct_mode)
         })
     }
 
+    pub(crate) fn call_function_with_new_target(
+        &mut self,
+        constructor: &Value,
+        args: &[Value],
+        this_value: Value,
+        new_target: &Value,
+        observed_prototype: Option<Value>,
+    ) -> error::Result<Value> {
+        // Dispatch can fail before it consumes pending construction metadata,
+        // so the caller owns a scoped save/restore on every result path.
+        let previous_new_target = self.pending_new_target.replace(new_target.clone());
+        let previous_prototype =
+            std::mem::replace(&mut self.pending_new_target_prototype, observed_prototype);
+        let result = self.call_function(constructor, args, Some(this_value));
+        self.pending_new_target = previous_new_target;
+        self.pending_new_target_prototype = previous_prototype;
+        result
+    }
+
     pub fn construct_with_new_target(
+        &mut self,
+        constructor: &Value,
+        args: &[Value],
+        new_target: &Value,
+    ) -> error::Result<Value> {
+        // `new` removes its operands from the VM stack before an observable
+        // prototype lookup, so keep every construction input rooted here.
+        let mut pin_count = self.pin(constructor);
+        pin_count += self.pin_many(args);
+        pin_count += self.pin(new_target);
+        let result = self.construct_with_new_target_inner(constructor, args, new_target);
+        self.unpin_many(pin_count);
+        result
+    }
+
+    fn construct_with_new_target_inner(
         &mut self,
         constructor: &Value,
         args: &[Value],
@@ -1631,10 +1693,31 @@ impl Vm {
         if !self.is_constructor_value(new_target) {
             return Err(Error::type_err("newTarget is not a constructor"));
         }
-        if self.is_internally_allocating_native_constructor(idx) {
-            self.pending_new_target = Some(new_target.clone());
-            self.pending_new_target_prototype = None;
-            return self.call_function(constructor, args, Some(Value::Undefined));
+        match self.native_construct_mode(idx) {
+            Some(NativeConstructMode::InternalEagerPrototype) => {
+                let observed_prototype = self.get_property(new_target, "prototype")?;
+                if !matches!(observed_prototype, Value::Object(_)) {
+                    let fallback = self.object_proto.clone();
+                    self.constructor_realm_default_prototype(new_target, "Object", fallback)?;
+                }
+                return self.call_function_with_new_target(
+                    constructor,
+                    args,
+                    Value::Undefined,
+                    new_target,
+                    Some(observed_prototype),
+                );
+            }
+            Some(NativeConstructMode::InternalDeferredPrototype) => {
+                return self.call_function_with_new_target(
+                    constructor,
+                    args,
+                    Value::Undefined,
+                    new_target,
+                    None,
+                );
+            }
+            Some(NativeConstructMode::PreallocateReceiver) | None => {}
         }
         // GetPrototypeFromConstructor reads the observable `.prototype`;
         // non-object values, including explicit null, use %Object.prototype%.
@@ -1676,9 +1759,13 @@ impl Vm {
             primitive: Mutex::new(None),
         });
         let this_obj = Value::Object(GcIdx(self.heap.allocate(new_obj)?));
-        self.pending_new_target = Some(new_target.clone());
-        self.pending_new_target_prototype = Some(observed_proto);
-        let result = self.call_function(constructor, args, Some(this_obj.clone()))?;
+        let result = self.call_function_with_new_target(
+            constructor,
+            args,
+            this_obj.clone(),
+            new_target,
+            Some(observed_proto),
+        )?;
         if matches!(result, Value::Object(_)) {
             Ok(result)
         } else {

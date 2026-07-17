@@ -1,5 +1,5 @@
 use super::Vm;
-use crate::value::{HeapObj, PromiseStatus};
+use crate::value::{HeapObj, NativeConstructMode, PromiseStatus};
 use crate::Value;
 use std::fs;
 
@@ -20,6 +20,102 @@ fn promise_state_and_result(vm: &Vm, value: Value) -> (PromiseStatus, Value) {
         (*data.state.lock(), data.result.lock().clone())
     })
 }
+
+fn native_construct_mode(vm: &Vm, value: &Value) -> NativeConstructMode {
+    let Value::Object(function) = value else {
+        panic!("expected a native function object");
+    };
+    vm.heap.with_obj(function.0, |object| {
+        let HeapObj::Function(data) = object else {
+            panic!("expected a native function");
+        };
+        let crate::value::FunctionKind::Native { construct_mode, .. } = &data.kind else {
+            panic!("expected a native function kind");
+        };
+        *construct_mode
+    })
+}
+
+const EAGER_NATIVE_CONSTRUCTOR_SOURCES: &[&str] = &[
+    "Array",
+    "RegExp",
+    "Function",
+    "Proxy",
+    "Map",
+    "Set",
+    "WeakMap",
+    "WeakSet",
+    "Error",
+    "EvalError",
+    "RangeError",
+    "ReferenceError",
+    "SyntaxError",
+    "TypeError",
+    "URIError",
+    "AggregateError",
+    "(async function () {}).constructor",
+    "(function* () {}).constructor",
+    "(async function* () {}).constructor",
+];
+
+const DEFERRED_NATIVE_CONSTRUCTOR_SOURCES: &[&str] = &[
+    "Object",
+    "Iterator",
+    "Promise",
+    "ArrayBuffer",
+    "DataView",
+    "WeakRef",
+    "FinalizationRegistry",
+    "SharedArrayBuffer",
+    "Int8Array",
+    "Uint8Array",
+    "Uint8ClampedArray",
+    "Int16Array",
+    "Uint16Array",
+    "Int32Array",
+    "Uint32Array",
+    "Float32Array",
+    "Float64Array",
+    "BigInt64Array",
+    "BigUint64Array",
+];
+
+const PREALLOCATED_NATIVE_FUNCTION_SOURCES: &[&str] = &[
+    "String",
+    "Number",
+    "Boolean",
+    "Date",
+    "BigInt",
+    "Symbol",
+    "Object.getPrototypeOf(Int8Array)",
+];
+
+const FOREIGN_EAGER_NATIVE_CONSTRUCTOR_SOURCES: &[&str] = &[
+    "Array",
+    "RegExp",
+    "Function",
+    "Proxy",
+    "Error",
+    "EvalError",
+    "RangeError",
+    "ReferenceError",
+    "SyntaxError",
+    "TypeError",
+    "URIError",
+    "AggregateError",
+    "(async function () {}).constructor",
+    "(function* () {}).constructor",
+    "(async function* () {}).constructor",
+];
+
+const FOREIGN_PREALLOCATED_NATIVE_FUNCTION_SOURCES: &[&str] = &[
+    "String",
+    "Number",
+    "Boolean",
+    "BigInt",
+    "Symbol",
+    "Object.getPrototypeOf(Int8Array)",
+];
 
 fn realm_registry_counts(vm: &Vm) -> [usize; 28] {
     [
@@ -172,6 +268,169 @@ fn function_creation_failures_restore_gc_pin_depth() {
         assert_eq!(error.kind, crate::error::ErrorKind::Range);
         assert_eq!(vm.gc_pins.len(), pin_depth);
     }
+}
+
+#[test]
+fn internally_allocating_array_constructor_uses_one_heap_slot() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.gc();
+    let limit = vm.heap.live_count() + 1;
+    vm.set_max_heap_objects(Some(limit));
+
+    let result = vm.run("new Array();");
+    let live_count = vm.heap.live_count();
+    vm.set_max_heap_objects(None);
+
+    let value = result.expect("Array construction should need only the resulting Array slot");
+    let Value::Object(array) = value else {
+        panic!("Array construction should return an object");
+    };
+    assert!(vm
+        .heap
+        .with_obj(array.0, |object| matches!(object, HeapObj::Array(_))));
+    assert!(live_count <= limit);
+}
+
+#[test]
+fn native_constructor_allocation_modes_are_explicit() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    for &source in EAGER_NATIVE_CONSTRUCTOR_SOURCES {
+        let constructor = vm.run(source).expect("eager constructor should resolve");
+        assert!(vm.is_constructor_value(&constructor));
+        assert_eq!(
+            native_construct_mode(&vm, &constructor),
+            NativeConstructMode::InternalEagerPrototype,
+            "unexpected construct mode for {source}"
+        );
+    }
+    for &source in DEFERRED_NATIVE_CONSTRUCTOR_SOURCES {
+        let constructor = vm.run(source).expect("deferred constructor should resolve");
+        assert!(vm.is_constructor_value(&constructor));
+        assert_eq!(
+            native_construct_mode(&vm, &constructor),
+            NativeConstructMode::InternalDeferredPrototype,
+            "unexpected construct mode for {source}"
+        );
+    }
+    for &source in PREALLOCATED_NATIVE_FUNCTION_SOURCES {
+        let constructor = vm
+            .run(source)
+            .expect("preallocating constructor should resolve");
+        assert_eq!(
+            native_construct_mode(&vm, &constructor),
+            NativeConstructMode::PreallocateReceiver,
+            "unexpected construct mode for {source}"
+        );
+    }
+}
+
+#[test]
+fn created_realm_native_constructor_modes_match_main_registrations() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    let global = vm
+        .run("$262.createRealm().global;")
+        .expect("Realm global should be created");
+    let eval = vm
+        .get_property(&global, "eval")
+        .expect("Realm global should expose eval");
+    let pin_count = vm.pin_many(&[global.clone(), eval.clone()]);
+
+    for &source in FOREIGN_EAGER_NATIVE_CONSTRUCTOR_SOURCES {
+        let constructor = vm
+            .call_function(&eval, &[Value::String(source.into())], Some(global.clone()))
+            .expect("foreign eager constructor should resolve");
+        assert!(vm.is_constructor_value(&constructor));
+        assert_eq!(
+            native_construct_mode(&vm, &constructor),
+            NativeConstructMode::InternalEagerPrototype,
+            "unexpected foreign construct mode for {source}"
+        );
+    }
+    for &source in DEFERRED_NATIVE_CONSTRUCTOR_SOURCES {
+        let constructor = vm
+            .call_function(&eval, &[Value::String(source.into())], Some(global.clone()))
+            .expect("foreign deferred constructor should resolve");
+        assert!(vm.is_constructor_value(&constructor));
+        assert_eq!(
+            native_construct_mode(&vm, &constructor),
+            NativeConstructMode::InternalDeferredPrototype,
+            "unexpected foreign construct mode for {source}"
+        );
+    }
+    for &source in FOREIGN_PREALLOCATED_NATIVE_FUNCTION_SOURCES {
+        let constructor = vm
+            .call_function(&eval, &[Value::String(source.into())], Some(global.clone()))
+            .expect("foreign preallocating constructor should resolve");
+        assert_eq!(
+            native_construct_mode(&vm, &constructor),
+            NativeConstructMode::PreallocateReceiver,
+            "unexpected foreign construct mode for {source}"
+        );
+    }
+
+    vm.unpin_many(pin_count);
+}
+
+#[test]
+fn construction_state_restores_after_pre_dispatch_depth_error() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    let chunk = std::sync::Arc::new(crate::bytecode::Chunk::default());
+    for _ in 0..512 {
+        vm.frames.push(super::CallFrame::new(
+            chunk.clone(),
+            0,
+            0,
+            Vec::new(),
+            vm.global,
+            Value::Undefined,
+        ));
+    }
+    let array = vm.get_global("Array");
+    let error = vm
+        .construct(&array, &[])
+        .expect_err("native dispatch should hit the call-depth guard");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    vm.frames.clear();
+    assert!(vm.pending_new_target.is_none());
+    assert!(vm.pending_new_target_prototype.is_none());
+    let error = vm
+        .run("class C {} C();")
+        .expect_err("plain class call must remain rejected after depth failure");
+    assert_eq!(error.kind, crate::error::ErrorKind::Type);
+}
+
+#[test]
+fn eager_constructor_prototype_getter_keeps_arguments_rooted() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("GC hook should register");
+
+    assert_eq!(
+        vm.run(
+            r#"
+            var Constructor = new Proxy(Array, {
+              get: function (target, key) {
+                if (key === "prototype") {
+                  forceGc();
+                  return Array.prototype;
+                }
+                return target[key];
+              }
+            });
+            var result = new Constructor({ marker: 42 });
+            result[0].marker;
+            "#,
+        )
+        .expect("constructor argument should survive the prototype getter"),
+        Value::Number(42.0)
+    );
 }
 
 #[test]

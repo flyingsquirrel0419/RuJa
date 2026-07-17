@@ -687,6 +687,7 @@ pub enum FunctionKind {
     Native {
         func: crate::vm::NativeFn,
         length: usize,
+        construct_mode: NativeConstructMode,
     },
     Interpreted {
         func: std::sync::Arc<crate::function::FunctionDef>,
@@ -696,6 +697,16 @@ pub enum FunctionKind {
         this_val: Value,
         bound_args: Vec<Value>,
     },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NativeConstructMode {
+    /// The VM creates the ordinary receiver before invoking the native body.
+    PreallocateReceiver,
+    /// The native body allocates the result, but `.prototype` is observed first.
+    InternalEagerPrototype,
+    /// The native body controls when `.prototype` is observed after validation.
+    InternalDeferredPrototype,
 }
 
 pub struct EnvironmentData {

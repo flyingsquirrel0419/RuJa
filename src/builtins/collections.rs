@@ -898,22 +898,22 @@ pub(crate) fn weakmap_constructor(
     _args: &[Value],
     _this: Option<Value>,
 ) -> error::Result<Value> {
-    // The WeakMap prototype (with get/set/has/delete) is the constructor's
-    // own `.prototype` property. `construct` passes a fresh Object whose
-    // [[Prototype]] is that prototype as `this`; copy it so the returned
-    // WeakMap object inherits the methods.
-    let proto = match _this {
-        Some(Value::Object(idx)) => vm.heap.with_obj(idx.0, |o| o.proto().lock().clone()),
-        _ => Some(vm.object_proto.clone()),
-    };
-    let obj_idx = vm
+    if vm.current_native_new_target().is_none() {
+        return Err(Error::type_err(
+            "WeakMap constructor must be called with new",
+        ));
+    }
+    let proto = native_constructor_prototype_with_default(vm, "WeakMap", vm.object_proto.clone())?;
+    let pin_count = vm.pin(&proto);
+    let allocation = vm
         .heap
         .allocate(HeapObj::WeakMap(crate::value::WeakMapData {
             entries: Mutex::new(Vec::new()),
             props: Mutex::new(IndexMap::new()),
-            proto: Mutex::new(proto),
-        }))?;
-    Ok(Value::Object(GcIdx(obj_idx)))
+            proto: Mutex::new(Some(proto)),
+        }));
+    vm.unpin_many(pin_count);
+    Ok(Value::Object(GcIdx(allocation?)))
 }
 
 pub(crate) fn weakmap_set(
@@ -1025,18 +1025,22 @@ pub(crate) fn weakset_constructor(
     _args: &[Value],
     _this: Option<Value>,
 ) -> error::Result<Value> {
-    let proto = match _this {
-        Some(Value::Object(idx)) => vm.heap.with_obj(idx.0, |o| o.proto().lock().clone()),
-        _ => Some(vm.object_proto.clone()),
-    };
-    let obj_idx = vm
+    if vm.current_native_new_target().is_none() {
+        return Err(Error::type_err(
+            "WeakSet constructor must be called with new",
+        ));
+    }
+    let proto = native_constructor_prototype_with_default(vm, "WeakSet", vm.object_proto.clone())?;
+    let pin_count = vm.pin(&proto);
+    let allocation = vm
         .heap
         .allocate(HeapObj::WeakSet(crate::value::WeakSetData {
             items: Mutex::new(Vec::new()),
             props: Mutex::new(IndexMap::new()),
-            proto: Mutex::new(proto),
-        }))?;
-    Ok(Value::Object(GcIdx(obj_idx)))
+            proto: Mutex::new(Some(proto)),
+        }));
+    vm.unpin_many(pin_count);
+    Ok(Value::Object(GcIdx(allocation?)))
 }
 
 pub(crate) fn weakset_add(

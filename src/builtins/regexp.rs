@@ -2096,6 +2096,7 @@ pub fn setup_collections(vm: &mut Vm) -> error::Result<()> {
         "Map",
         0,
         map_constructor,
+        NativeConstructMode::InternalEagerPrototype,
         &[
             ("set", map_set, 2),
             ("get", map_get, 1),
@@ -2154,6 +2155,7 @@ pub fn setup_collections(vm: &mut Vm) -> error::Result<()> {
         "Set",
         0,
         set_constructor,
+        NativeConstructMode::InternalEagerPrototype,
         &[
             ("add", set_add, 1),
             ("has", set_has, 1),
@@ -2214,6 +2216,7 @@ pub fn setup_collections(vm: &mut Vm) -> error::Result<()> {
         "WeakMap",
         0,
         weakmap_constructor,
+        NativeConstructMode::InternalEagerPrototype,
         &[
             ("get", weakmap_get, 1),
             ("set", weakmap_set, 2),
@@ -2228,6 +2231,7 @@ pub fn setup_collections(vm: &mut Vm) -> error::Result<()> {
         "WeakSet",
         0,
         weakset_constructor,
+        NativeConstructMode::InternalEagerPrototype,
         &[
             ("add", weakset_add, 1),
             ("has", weakset_has, 1),
@@ -2333,13 +2337,14 @@ pub(crate) fn make_builtin_constructor_with(
     name: &str,
     length: usize,
     ctor: NativeFn,
+    construct_mode: NativeConstructMode,
     methods: &[(&str, NativeFn, usize)],
 ) -> error::Result<(GcIdx, GcIdx)> {
     make_builtin_constructor_with_proto_class_in_env(
         vm,
         name,
         length,
-        ctor,
+        (ctor, construct_mode),
         methods,
         vm.global,
         Some(name),
@@ -2351,6 +2356,7 @@ pub(crate) fn make_builtin_constructor_with_in_env(
     name: &str,
     length: usize,
     ctor: NativeFn,
+    construct_mode: NativeConstructMode,
     methods: &[(&str, NativeFn, usize)],
     env: GcIdx,
 ) -> error::Result<(GcIdx, GcIdx)> {
@@ -2358,7 +2364,7 @@ pub(crate) fn make_builtin_constructor_with_in_env(
         vm,
         name,
         length,
-        ctor,
+        (ctor, construct_mode),
         methods,
         env,
         Some(name),
@@ -2370,6 +2376,7 @@ pub(crate) fn make_builtin_constructor_with_proto_class(
     name: &str,
     length: usize,
     ctor: NativeFn,
+    construct_mode: NativeConstructMode,
     methods: &[(&str, NativeFn, usize)],
     proto_class_name: Option<&str>,
 ) -> error::Result<(GcIdx, GcIdx)> {
@@ -2377,7 +2384,7 @@ pub(crate) fn make_builtin_constructor_with_proto_class(
         vm,
         name,
         length,
-        ctor,
+        (ctor, construct_mode),
         methods,
         vm.global,
         proto_class_name,
@@ -2388,11 +2395,12 @@ fn make_builtin_constructor_with_proto_class_in_env(
     vm: &mut Vm,
     name: &str,
     length: usize,
-    ctor: NativeFn,
+    constructor: (NativeFn, NativeConstructMode),
     methods: &[(&str, NativeFn, usize)],
     env: GcIdx,
     proto_class_name: Option<&str>,
 ) -> error::Result<(GcIdx, GcIdx)> {
+    let (ctor, construct_mode) = constructor;
     let realm = crate::environment::global_env_root(&vm.heap, env);
     let object_proto = vm
         .realm_object_prototypes
@@ -2420,7 +2428,11 @@ fn make_builtin_constructor_with_proto_class_in_env(
     let proto_idx = GcIdx(vm.heap.allocate(proto_obj)?);
     let ctor_func = FunctionData {
         name: Some(Arc::from(name)),
-        kind: FunctionKind::Native { func: ctor, length },
+        kind: FunctionKind::Native {
+            func: ctor,
+            length,
+            construct_mode,
+        },
         closure: env,
         lexical_new_target: Value::Undefined,
         home_object: Mutex::new(None),

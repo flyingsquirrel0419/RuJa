@@ -2419,13 +2419,18 @@ impl Vm {
                     // that class constructors accept this as a [[Construct]]
                     // call. `super()` forwards the active constructor's
                     // new.target, not the superclass constructor.
-                    self.pending_new_target = Some(if matches!(new_target, Value::Undefined) {
+                    let forwarded_new_target = if matches!(new_target, Value::Undefined) {
                         super_ctor.clone()
                     } else {
                         new_target
-                    });
-                    self.pending_new_target_prototype = None;
-                    let result = self.call_function(&super_ctor, &args, Some(this_val.clone()))?;
+                    };
+                    let result = self.call_function_with_new_target(
+                        &super_ctor,
+                        &args,
+                        this_val.clone(),
+                        &forwarded_new_target,
+                        None,
+                    )?;
                     // If the parent constructor returned an object, use it as the new `this`.
                     let new_this = if matches!(result, Value::Object(_)) {
                         result
@@ -2469,13 +2474,18 @@ impl Vm {
                         return Err(Error::type_err("not a constructor"));
                     }
                     let (this_env, this_val, new_target) = self.prepare_super_constructor_call()?;
-                    self.pending_new_target = Some(if matches!(new_target, Value::Undefined) {
+                    let forwarded_new_target = if matches!(new_target, Value::Undefined) {
                         super_ctor.clone()
                     } else {
                         new_target
-                    });
-                    self.pending_new_target_prototype = None;
-                    let result = self.call_function(&super_ctor, &args, Some(this_val.clone()))?;
+                    };
+                    let result = self.call_function_with_new_target(
+                        &super_ctor,
+                        &args,
+                        this_val.clone(),
+                        &forwarded_new_target,
+                        None,
+                    )?;
                     let new_this = if matches!(result, Value::Object(_)) {
                         result
                     } else {

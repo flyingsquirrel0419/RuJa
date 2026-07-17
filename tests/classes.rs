@@ -440,6 +440,45 @@ fn symbol_can_be_extended_but_symbol_construction_throws() {
 }
 
 #[test]
+fn super_pre_dispatch_failures_restore_constructor_state() {
+    assert_eq!(
+        run(r#"
+            var ran = false;
+            class C { constructor() { ran = true; } }
+
+            var directPair = Proxy.revocable(function () {}, {});
+            class Direct extends directPair.proxy {
+              constructor() {
+                try { super(); }
+                catch (_) {
+                  try { C(); return { status: "accepted", ran: ran }; }
+                  catch (error) { return { status: error.name, ran: ran }; }
+                }
+              }
+            }
+            directPair.revoke();
+            var direct = new Direct();
+
+            var spreadPair = Proxy.revocable(function () {}, {});
+            class Spread extends spreadPair.proxy {
+              constructor() {
+                try { super(...[]); }
+                catch (_) {
+                  try { C(); return { status: "accepted", ran: ran }; }
+                  catch (error) { return { status: error.name, ran: ran }; }
+                }
+              }
+            }
+            spreadPair.revoke();
+            var spread = new Spread();
+
+            [direct.status, direct.ran, spread.status, spread.ran].join("|");
+        "#),
+        Value::String(Arc::from("TypeError|false|TypeError|false"))
+    );
+}
+
+#[test]
 fn async_and_generator_superclasses_fail_before_prototype_lookup() {
     assert_eq!(
         run(r#"
