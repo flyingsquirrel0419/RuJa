@@ -4,6 +4,25 @@
 
 ### Fixed
 
+- `Promise.prototype.finally` now performs receiver validation and
+  `SpeciesConstructor`, creates Realm-correct anonymous `ThenFinally` and
+  `CatchFinally` built-ins, calls `onFinally` with no arguments, applies the
+  abstract `PromiseResolve(C, result)` operation without consulting
+  `C.resolve`, and restores the original fulfillment or rejection through an
+  anonymous value thunk or thrower. Promise reactions now normalize
+  non-callable handlers and always pass successful handler results through the
+  capability resolve function, preserving observable overridden-`then` calls,
+  thenable job ordering, self-resolution checks, and subclass constructor
+  counts. `Promise.resolve` also validates its receiver constructor before the
+  same-Promise fast path. Exact Test262 admission is **37/37**; complete
+  `finally`, forced `then`, forced `resolve`, and four-combinator diagnostics
+  are **29/29**, **75/75**, **30/30**, and **390/390**. Broad Promise is
+  **387/0/316** normally and **698/5** with every gate lifted, the supported
+  subset remains **12751/0/7687**, tooling is **96/96**, and Rust builtins are
+  **452/452**. Feature commit `0581788` passed CI `29549608490` and full
+  matrix `29549608468`; only built-ins changes by **+24 pass / -24 skip**,
+  producing **30088 pass / 6334 fail / 11883 skip / 12 timeout / 0 error /
+  48317 total** (**62.3%** of all files, **82.6%** of executed files).
 - Promise combinators now materialize catchable native setup failures as real
   method-Realm Error objects instead of rejection strings, preserve explicit
   thrown-value identity, and propagate non-catchable host aborts. A shared

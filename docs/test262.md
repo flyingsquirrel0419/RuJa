@@ -30,7 +30,7 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 62.2% of all matrix files; 82.6% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 62.3% of all matrix files; 82.6% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (12751 pass / 0 fail on current Test262; 12752 / 0 on the pinned checkout) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
@@ -6503,6 +6503,82 @@ aggregate is **30064 pass / 6334 fail / 11907 skip / 12 timeout / 0 error /
   prototype Realm, ordering, and GC lifetime, and all four combinators share
   one setup path. Promise-finally and pre-existing async-runtime string/Fuel
   fallback sites remain explicit follow-up units rather than hidden scope.
+
+## Promise finally and reaction completion
+
+`Promise.prototype.finally` now follows the complete wrapper algorithm. It
+validates that the receiver is an object, obtains `C` through
+`SpeciesConstructor`, and creates distinct anonymous, non-constructible
+`ThenFinally` and `CatchFinally` built-ins with length 1 in the method Realm.
+Each wrapper invokes `onFinally` with no arguments, performs the abstract
+`PromiseResolve(C, result)` operation without reading `C.resolve`, and invokes
+the resulting promise's observable `then` with one anonymous length-0 value
+thunk or thrower. Ordinary cleanup results therefore preserve the original
+settlement, while a thrown value or rejected cleanup promise replaces it.
+
+The shared Promise reaction path now normalizes non-callable fulfillment and
+rejection handlers to pass-through behavior. A successful reaction always
+calls the derived capability's resolve function instead of directly adopting
+a native Promise's internal state. This preserves the required thenable job
+boundary, observes overridden `then` methods, and delegates self-resolution to
+the resolving function. `Promise.resolve` validates that its receiver is a
+constructor before checking whether an input Promise has the same constructor,
+so a primitive receiver cannot escape through the fast path. Bound native
+closure receivers are rooted before their target allocation, and the finally
+state, constructor, callback, original completion, intermediate promise, and
+all four anonymous functions remain rooted across observable getters, calls,
+and forced GC.
+
+`tools/test262_promise_finally_admission.txt` freezes 37 exact files: all 29
+current `Promise.prototype.finally` files, six adjacent
+`Promise.prototype.then` reaction files, the allSettled/finally integration
+file, and the Promise.resolve receiver-ordering file. Runner and analyzer pass
+**37/37**. Complete forced diagnostics are **29/29** for `finally`, **75/75**
+for `then`, **30/30** for `resolve`, and **390/390** across `all`,
+`allSettled`, `any`, and `race`. Broad `built-ins/Promise` is **387 pass / 0
+fail / 316 skip / 703 total** under the normal boundary and **698/5** with all
+gates lifted. The supported subset remains **12751/0/7687/20438**, Python
+tooling is **96/96**, and Rust builtins are **452/452**. All-target/all-feature
+tests, Clippy with warnings denied, formatting, release, and wasm32 checks
+pass. GPT found no high- or medium-severity issue in the final diff; the
+independent Umans reconnaissance identified the pre-fix wrapper, rooting, and
+Realm requirements that the implementation and forced-GC regressions cover.
+
+Feature commit `0581788` passed CI `29549608490` and full matrix
+`29549608468`. Against the Promise setup-rejection feature baseline, 29 of 30
+result artifacts at `/tmp/ruja-artifacts-promise-finally-feature.klMTHm` are
+byte-for-byte identical. Only built-ins changes, by exactly **+24 pass / -24
+skip**. The aggregate is **30088 pass / 6334 fail / 11883 skip / 12 timeout /
+0 error / 48317 total / 36422 pass-or-fail executed**, or **62.3%** of all
+files and **82.6%** of executed files.
+
+[Decision Log]
+- 목적과 의도: complete Promise finally without hiding its observable
+  species, PromiseResolve, handler metadata, and job-ordering requirements
+  behind an internal shortcut.
+- 기존 구현 및 제약 조건: `finally` passed the same callback directly to both
+  `then` branches; reactions treated non-callable values as functions and
+  directly adopted native Promise state, skipping the capability resolver,
+  overridden `then`, one job boundary, and one subclass construction.
+- 검토한 주요 대안: patch only the 12 failing finally files; preserve direct
+  adoption and special-case finally wrappers; synthesize interpreted
+  JavaScript closures; add a new microtask type; or use Realm-explicit bound
+  native closures plus the existing resolving functions and queue.
+- 선택한 방식: factor abstract PromiseResolve by constructor, implement all
+  four anonymous closures with bound native state, normalize handlers at
+  PerformPromiseThen, and route every normal reaction result through the
+  capability resolve function.
+- 다른 대안 대신 이 방식을 선택한 이유: test-specific branches would encode
+  corpus accidents, direct adoption cannot reproduce observable `then` and
+  constructor counts, interpreted wrappers add parser/runtime dependencies,
+  and the existing resolving functions already implement self-resolution and
+  thenable jobs.
+- 장점, 단점 및 영향: the full Promise corpus is now **698/703** with every
+  gate lifted, all finally behavior is Realm- and GC-stable, and no new job
+  representation is needed. Native Promise returns now take the required
+  resolving-function path and allocate/queue accordingly; the five remaining
+  Promise failures and the older async-runtime string/Fuel fallback are
+  separate bounded follow-ups.
 
 ## Why the full-suite rate is not higher
 
