@@ -4,6 +4,27 @@
 
 ### Fixed
 
+- Catchable errors can now settle already-created Promises at an exact heap
+  object cap. Error materialization pins the operation Realm prototype, tries
+  one rooted GC allocation, and falls back only on typed `HeapLimitExceeded`
+  to an immutable, preallocated Realm-local
+  `RangeError("heap limit exceeded")` that already counts toward the cap.
+  Intrinsic Error prototypes and emergency values are permanent roots;
+  explicit thrown objects preserve identity and Fuel remains a host abort.
+  Promise resolving getters, self-resolution, callable-then job setup, initial
+  dynamic-import jobs, and post-evaluation dynamic-import continuations now
+  reject their consumed capabilities instead of propagating the allocation
+  error while leaving them pending. Regressions also cover fresh allocation
+  after reclaiming garbage, repeated bounded sentinel reuse, immutability,
+  cross-Realm prototypes, and intrinsic survival after mutable globals are
+  replaced. Final local gates include Promise **433/0/270**, dynamic import
+  **620/0/384**, supported subset **12751/0/7687**, tooling **100/100**, Rust
+  lib/unit **87/87**, builtins **458/458**, modules **31/31**, and Fuel
+  **24/24**. Feature commit `82dd814` passed CI `29582672359` and full matrix
+  `29582673229`; all 30 result files match the preceding async-job baseline
+  byte-for-byte, preserving **30159 pass / 6330 fail / 11816 skip / 12 timeout
+  / 0 error / 48317 total** (**62.4%** of all files, **82.7%** of executed
+  files).
 - Deferred Promise, thenable, dynamic-import, await, async-iterator, and
   async-generator jobs now retain the Realm that owns their operation instead
   of consulting whichever execution context happens to be active later.

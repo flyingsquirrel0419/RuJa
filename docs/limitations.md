@@ -12,12 +12,21 @@ The following resource limits are enforced:
   of live GC-managed heap objects. When exceeded, allocation throws a
   catchable `RangeError("heap limit exceeded")`. A GC cycle is attempted
   before the error is raised. `None` = unlimited (default).
-  At an exact hard limit, an async job may have no spare cell in which to
-  materialize that `RangeError` as a rejection value. RuJa propagates the host
-  error and avoids replaying state-advanced async work, but the active Promise
-  can remain pending; queued async-generator siblings are still drained.
-  Reserved emergency error capacity or a post-unwind materializer is not yet
-  implemented.
+  At an exact hard limit, Error materialization performs one rooted GC retry
+  and then uses an immutable, preallocated `RangeError` from the operation
+  Realm. That reserve already counts toward the cap, so an existing Promise or
+  dynamic-import capability can reject without allocating over the limit.
+  Repeated saturated failures in one Realm share that frozen object's identity
+  (`e1 === e2` can be true), while reclaimable capacity still produces fresh
+  Error objects. A failure that occurs before a Promise or capability itself
+  exists remains a synchronous host resource error because there is no
+  JavaScript object available to settle.
+- **Realm construction rollback**: test262 Realm setup publishes several
+  per-Realm intrinsic registries before every later allocation has succeeded.
+  A heap-limit failure during that interval can leave an inaccessible partial
+  Realm rooted until the VM is dropped. Realm creation is not yet
+  transactional; hosts should provision the object cap before creating many
+  Realms rather than repeatedly constructing them at the boundary.
 - **Call-stack depth**: JavaScript recursion is capped at 1000 frames.
   Exceeding this throws a catchable `RangeError("Maximum call stack size
   exceeded")`, not a native stack overflow (SIGSEGV/abort).

@@ -57,6 +57,33 @@ the function object can allocate, then released only after the function owns
 it. Allocation failures restore both the temporary environment pin and the
 prototype pin, so a forced collection cannot reuse the prototype's heap slot.
 
+Native Error materialization is also a collecting boundary. It first pins the
+selected Realm intrinsic prototype and performs the ordinary rooted GC retry.
+If every capped cell is still live, the VM returns an immutable, preallocated
+`RangeError("heap limit exceeded")` owned by that Realm. The reserve is created
+during Realm intrinsic setup, counts as an ordinary live heap object, and is a
+permanent GC root together with the Realm's intrinsic Error prototypes. It
+therefore settles an already-created Promise without allocating past the
+sandbox limit or borrowing another Realm's Error identity.
+
+The reserve is non-extensible and its `name`, `message`, and `stack` properties
+are non-writable and non-configurable. Repeated fully saturated failures in the
+same Realm intentionally share object identity; a fresh Error is still used
+whenever GC reclaims a normal cell. Explicit JavaScript thrown values bypass
+materialization, and non-catchable Fuel exhaustion never uses the reserve.
+Because Error materialization can now collect, every caller must pin any heap
+value held only in a Rust local that remains needed after the call.
+
+```text
+[Decision Log]
+- 목적과 의도: Keep existing Promise and dynamic-import capabilities settleable at an exact object cap without weakening the cap.
+- 기존 구현 및 제약 조건: A catchable heap failure needed one more GC cell for its JavaScript Error object; allocation failure propagated to the host after the Promise resolver or job had already been consumed.
+- 검토한 주요 대안: Allow a bounded number of over-cap cells; defer settlement until a later GC; use one VM-wide fallback; preallocate one fallback per Realm.
+- 선택한 방식: Try one rooted GC allocation, then return an immutable preallocated RangeError from the operation Realm.
+- 다른 대안 대신 이 방식을 선택한 이유: Over-cap cells violate the host contract, deferred retries cannot guarantee a free cell and change job ordering, and a VM-wide object violates Realm identity.
+- 장점, 단점 및 영향: The live-object ceiling remains exact and repeated failures always settle existing Promises; one cell is reserved per Realm and saturated failures expose shared identity as a documented host-limit deviation.
+```
+
 Observable materializers follow the same ownership rule. When an abstract
 operation reads heap values into a Rust collection and a later getter, proxy
 trap, coercion, call, or construction can re-enter JavaScript, every value is
