@@ -1441,10 +1441,19 @@ pub(crate) fn str_from_char_code(
     let s = crate::value::utf16_from_codes(&codes);
     Ok(Value::String(Arc::from(s.as_str())))
 }
+
+fn new_primitive_wrapper(vm: &mut Vm, intrinsic: &str, primitive: Value) -> error::Result<Value> {
+    let fallback = vm.current_realm_primitive_prototype(&primitive);
+    let prototype = native_constructor_prototype_with_default(vm, intrinsic, fallback)?;
+    let wrapper = super::new_object_with_prototype(vm, prototype)?;
+    vm.set_primitive(&wrapper, primitive);
+    Ok(wrapper)
+}
+
 pub(crate) fn string_constructor(
     vm: &mut Vm,
     args: &[Value],
-    this: Option<Value>,
+    _this: Option<Value>,
 ) -> error::Result<Value> {
     fn symbol_string(vm: &Vm, id: u32) -> Value {
         let desc = vm.symbol_descriptions.get(&id).and_then(|d| d.as_ref());
@@ -1454,42 +1463,37 @@ pub(crate) fn string_constructor(
         }))
     }
 
-    if let Some(Value::Object(_)) = &this {
-        let prim = match args.first() {
-            None => Value::String(Arc::from("")),
-            Some(Value::Symbol(id)) => symbol_string(vm, *id),
-            Some(v) => Value::String(vm.to_string(v)?),
-        };
-        let length = match &prim {
-            Value::String(s) => crate::value::utf16_len(s) as f64,
-            _ => 0.0,
-        };
-        let this_obj = this.unwrap();
-        vm.set_primitive(&this_obj, prim);
-        if let Value::Object(idx) = &this_obj {
-            vm.heap.with_obj(idx.0, |o| {
-                if let HeapObj::Object(obj) = o {
-                    obj.props.lock().insert(
-                        PropertyKey::from("length"),
-                        const_prop(Value::Number(length)),
-                    );
-                }
-            });
-        }
-        return Ok(this_obj);
+    let constructing = vm.current_native_new_target().is_some();
+    let primitive = match args.first() {
+        // `String()` with no argument yields "", distinct from
+        // `String(undefined)` which yields "undefined".
+        None => Value::String(Arc::from("")),
+        Some(Value::Symbol(id)) if !constructing => symbol_string(vm, *id),
+        Some(value) => Value::String(vm.to_string(value)?),
+    };
+    if !constructing {
+        return Ok(primitive);
     }
-    // `String()` with no argument yields "" (per spec), distinct from
-    // `String(undefined)` which yields "undefined".
-    match args.first() {
-        None => Ok(Value::String(Arc::from(""))),
-        Some(Value::Symbol(id)) => Ok(symbol_string(vm, *id)),
-        Some(v) => Ok(Value::String(vm.to_string(v)?)),
+
+    let Value::String(string) = &primitive else {
+        unreachable!("String constructor must produce a String primitive");
+    };
+    let length = crate::value::utf16_len(string) as f64;
+    let wrapper = new_primitive_wrapper(vm, "String", primitive)?;
+    if let Value::Object(idx) = &wrapper {
+        vm.heap.with_obj(idx.0, |object| {
+            object.props().lock().insert(
+                PropertyKey::from("length"),
+                const_prop(Value::Number(length)),
+            );
+        });
     }
+    Ok(wrapper)
 }
 pub(crate) fn number_constructor(
     vm: &mut Vm,
     args: &[Value],
-    this: Option<Value>,
+    _this: Option<Value>,
 ) -> error::Result<Value> {
     fn number_from_constructor_arg(vm: &mut Vm, v: &Value) -> error::Result<Value> {
         let prim = match v {
@@ -1510,18 +1514,15 @@ pub(crate) fn number_constructor(
         }
     }
 
-    if let Some(Value::Object(_)) = &this {
-        let prim = match args.first() {
-            None => Value::Number(0.0),
-            Some(v) => number_from_constructor_arg(vm, v)?,
-        };
-        vm.set_primitive(this.as_ref().unwrap(), prim);
-        return Ok(this.unwrap());
+    let primitive = match args.first() {
+        None => Value::Number(0.0),
+        Some(value) => number_from_constructor_arg(vm, value)?,
+    };
+    if vm.current_native_new_target().is_none() {
+        return Ok(primitive);
     }
-    match args.first() {
-        None => Ok(Value::Number(0.0)),
-        Some(v) => number_from_constructor_arg(vm, v),
-    }
+
+    new_primitive_wrapper(vm, "Number", primitive)
 }
 
 pub(crate) fn number_is_integer(
@@ -2069,14 +2070,12 @@ pub(crate) fn format_f64_radix(n: f64, radix: u32) -> String {
 pub(crate) fn boolean_constructor(
     vm: &mut Vm,
     args: &[Value],
-    this: Option<Value>,
+    _this: Option<Value>,
 ) -> error::Result<Value> {
-    if let Some(Value::Object(_)) = &this {
-        let prim = Value::Bool(args.first().unwrap_or(&Value::Undefined).is_truthy());
-        vm.set_primitive(this.as_ref().unwrap(), prim);
-        return Ok(this.unwrap());
+    let primitive = Value::Bool(args.first().unwrap_or(&Value::Undefined).is_truthy());
+    if vm.current_native_new_target().is_none() {
+        return Ok(primitive);
     }
-    Ok(Value::Bool(
-        args.first().unwrap_or(&Value::Undefined).is_truthy(),
-    ))
+
+    new_primitive_wrapper(vm, "Boolean", primitive)
 }

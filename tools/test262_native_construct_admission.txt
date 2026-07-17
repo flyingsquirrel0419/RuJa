@@ -4,3 +4,13 @@ built-ins/Symbol/is-constructor.js
 built-ins/Proxy/constructor.js
 built-ins/Proxy/proxy-newtarget.js
 built-ins/Proxy/proxy-undefined-newtarget.js
+built-ins/String/is-a-constructor.js
+built-ins/String/proto-from-ctor-realm.js
+built-ins/String/symbol-string-coercion.js
+built-ins/String/symbol-wrapping.js
+built-ins/Number/is-a-constructor.js
+built-ins/Number/proto-from-ctor-realm.js
+built-ins/Number/return-abrupt-tonumber-value-symbol.js
+built-ins/Boolean/is-a-constructor.js
+built-ins/Boolean/proto-from-ctor-realm.js
+built-ins/Boolean/symbol-coercion.js

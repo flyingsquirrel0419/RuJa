@@ -17,4 +17,22 @@ NATIVE_CONSTRUCT_FEATURES = {
     "built-ins/Proxy/constructor.js": frozenset({"Proxy"}),
     "built-ins/Proxy/proxy-newtarget.js": frozenset({"Proxy"}),
     "built-ins/Proxy/proxy-undefined-newtarget.js": frozenset({"Proxy"}),
+    "built-ins/String/is-a-constructor.js": frozenset({"Reflect.construct"}),
+    "built-ins/String/proto-from-ctor-realm.js": frozenset(
+        {"cross-realm", "Reflect"}
+    ),
+    "built-ins/String/symbol-string-coercion.js": frozenset({"Symbol"}),
+    "built-ins/String/symbol-wrapping.js": frozenset({"Symbol"}),
+    "built-ins/Number/is-a-constructor.js": frozenset({"Reflect.construct"}),
+    "built-ins/Number/proto-from-ctor-realm.js": frozenset(
+        {"cross-realm", "Reflect"}
+    ),
+    "built-ins/Number/return-abrupt-tonumber-value-symbol.js": frozenset(
+        {"Symbol"}
+    ),
+    "built-ins/Boolean/is-a-constructor.js": frozenset({"Reflect.construct"}),
+    "built-ins/Boolean/proto-from-ctor-realm.js": frozenset(
+        {"cross-realm", "Reflect"}
+    ),
+    "built-ins/Boolean/symbol-coercion.js": frozenset({"Symbol"}),
 }

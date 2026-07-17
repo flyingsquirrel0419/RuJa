@@ -966,6 +966,19 @@ impl Vm {
                 .cloned()
                 .unwrap_or(fallback));
         }
+        let primitive_kind = match intrinsic {
+            "String" => Some(PrimitivePrototypeKind::String),
+            "Number" => Some(PrimitivePrototypeKind::Number),
+            "Boolean" => Some(PrimitivePrototypeKind::Boolean),
+            _ => None,
+        };
+        if let Some(kind) = primitive_kind {
+            return Ok(self
+                .realm_primitive_prototypes
+                .get(&(realm.0, kind))
+                .cloned()
+                .unwrap_or(fallback));
+        }
         if intrinsic == "Promise" {
             return Ok(self
                 .realm_promise_prototypes

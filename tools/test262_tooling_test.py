@@ -1022,6 +1022,24 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
             "built-ins/Proxy/constructor.js": {"Proxy"},
             "built-ins/Proxy/proxy-newtarget.js": {"Proxy"},
             "built-ins/Proxy/proxy-undefined-newtarget.js": {"Proxy"},
+            "built-ins/String/is-a-constructor.js": {"Reflect.construct"},
+            "built-ins/String/proto-from-ctor-realm.js": {
+                "cross-realm", "Reflect",
+            },
+            "built-ins/String/symbol-string-coercion.js": {"Symbol"},
+            "built-ins/String/symbol-wrapping.js": {"Symbol"},
+            "built-ins/Number/is-a-constructor.js": {"Reflect.construct"},
+            "built-ins/Number/proto-from-ctor-realm.js": {
+                "cross-realm", "Reflect",
+            },
+            "built-ins/Number/return-abrupt-tonumber-value-symbol.js": {
+                "Symbol",
+            },
+            "built-ins/Boolean/is-a-constructor.js": {"Reflect.construct"},
+            "built-ins/Boolean/proto-from-ctor-realm.js": {
+                "cross-realm", "Reflect",
+            },
+            "built-ins/Boolean/symbol-coercion.js": {"Symbol"},
         }
         self.assertEqual(NATIVE_CONSTRUCT_FILES, frozenset(expected))
         self.assertEqual(

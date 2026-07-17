@@ -59,6 +59,9 @@ const EAGER_NATIVE_CONSTRUCTOR_SOURCES: &[&str] = &[
 
 const DEFERRED_NATIVE_CONSTRUCTOR_SOURCES: &[&str] = &[
     "Object",
+    "String",
+    "Number",
+    "Boolean",
     "Proxy",
     "BigInt",
     "Symbol",
@@ -83,7 +86,7 @@ const DEFERRED_NATIVE_CONSTRUCTOR_SOURCES: &[&str] = &[
     "BigUint64Array",
 ];
 
-const PREALLOCATED_NATIVE_CONSTRUCTOR_SOURCES: &[&str] = &["String", "Number", "Boolean", "Date"];
+const PREALLOCATED_NATIVE_CONSTRUCTOR_SOURCES: &[&str] = &["Date"];
 
 const NON_CONSTRUCTIBLE_NATIVE_FUNCTION_SOURCES: &[&str] = &[
     "Function.prototype",
@@ -109,8 +112,6 @@ const FOREIGN_EAGER_NATIVE_CONSTRUCTOR_SOURCES: &[&str] = &[
     "(function* () {}).constructor",
     "(async function* () {}).constructor",
 ];
-
-const FOREIGN_PREALLOCATED_NATIVE_CONSTRUCTOR_SOURCES: &[&str] = &["String", "Number", "Boolean"];
 
 fn realm_registry_counts(vm: &Vm) -> [usize; 28] {
     [
@@ -491,6 +492,251 @@ fn body_controlled_native_constructors_skip_automatic_prototype_lookup() {
 }
 
 #[test]
+fn primitive_wrapper_constructors_defer_prototype_lookup_until_after_conversion() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    assert_eq!(
+        vm.run(
+            r#"
+            var events = [];
+            function newTarget(label, prototype) {
+              return new Proxy(function () {}, {
+                get: function (target, key) {
+                  if (key === "prototype") {
+                    events.push(label + "-prototype");
+                    return prototype;
+                  }
+                  return target[key];
+                }
+              });
+            }
+
+            var stringPrototype = {};
+            var stringValue = {
+              toString: function () {
+                events.push("string-coercion");
+                return "\uD83D\uDE00";
+              }
+            };
+            var boxedString = Reflect.construct(
+              String, [stringValue], newTarget("string", stringPrototype)
+            );
+
+            var numberPrototype = {};
+            var numberValue = {
+              valueOf: function () {
+                events.push("number-coercion");
+                return 7;
+              }
+            };
+            var boxedNumber = Reflect.construct(
+              Number, [numberValue], newTarget("number", numberPrototype)
+            );
+
+            var booleanPrototype = {};
+            var boxedBoolean = Reflect.construct(
+              Boolean, [0], newTarget("boolean", booleanPrototype)
+            );
+
+            var marker = {};
+            var abruptPrototypeReads = 0;
+            var AbruptNewTarget = new Proxy(function () {}, {
+              get: function (target, key) {
+                if (key === "prototype") abruptPrototypeReads += 1;
+                return target[key];
+              }
+            });
+            var abruptBeforePrototype = false;
+            try {
+              Reflect.construct(Number, [{
+                valueOf: function () {
+                  events.push("number-abrupt");
+                  throw marker;
+                }
+              }], AbruptNewTarget);
+            } catch (error) {
+              abruptBeforePrototype = error === marker;
+            }
+
+            var symbolPrototypeReads = 0;
+            var SymbolNewTarget = new Proxy(function () {}, {
+              get: function (target, key) {
+                if (key === "prototype") symbolPrototypeReads += 1;
+                return target[key];
+              }
+            });
+            var symbolConstructThrows = false;
+            try { Reflect.construct(String, [Symbol("x")], SymbolNewTarget); }
+            catch (error) { symbolConstructThrows = error instanceof TypeError; }
+
+            var stringReceiver = {};
+            var numberReceiver = {};
+            var booleanReceiver = {};
+            var stringCall = String.call(stringReceiver, "plain");
+            var numberCall = Number.call(numberReceiver, 11);
+            var booleanCall = Boolean.call(booleanReceiver, 1);
+            var callReceiversUnmodified = 0;
+            try { String.prototype.valueOf.call(stringReceiver); }
+            catch (error) { if (error instanceof TypeError) callReceiversUnmodified += 1; }
+            try { Number.prototype.valueOf.call(numberReceiver); }
+            catch (error) { if (error instanceof TypeError) callReceiversUnmodified += 1; }
+            try { Boolean.prototype.valueOf.call(booleanReceiver); }
+            catch (error) { if (error instanceof TypeError) callReceiversUnmodified += 1; }
+
+            var stringLength = Object.getOwnPropertyDescriptor(boxedString, "length");
+            [
+              events.join(","),
+              Object.getPrototypeOf(boxedString) === stringPrototype,
+              Object.getPrototypeOf(boxedNumber) === numberPrototype,
+              Object.getPrototypeOf(boxedBoolean) === booleanPrototype,
+              String.prototype.valueOf.call(boxedString) === "\uD83D\uDE00",
+              Number.prototype.valueOf.call(boxedNumber) === 7,
+              Boolean.prototype.valueOf.call(boxedBoolean) === false,
+              stringLength.value === 2,
+              !stringLength.writable && !stringLength.enumerable &&
+                !stringLength.configurable,
+              abruptBeforePrototype,
+              abruptPrototypeReads,
+              symbolConstructThrows,
+              symbolPrototypeReads,
+              String(Symbol("x")),
+              stringCall === "plain",
+              numberCall === 11,
+              booleanCall === true,
+              callReceiversUnmodified === 3
+            ].join("|");
+            "#,
+        )
+        .expect("primitive wrapper construction should follow specification order"),
+        Value::String(
+            "string-coercion,string-prototype,number-coercion,number-prototype,boolean-prototype,number-abrupt|true|true|true|true|true|true|true|true|true|0|true|0|Symbol(x)|true|true|true|true"
+                .into()
+        )
+    );
+}
+
+#[test]
+fn primitive_wrapper_fallbacks_use_the_new_target_realm_intrinsics() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("GC hook should register");
+
+    assert_eq!(
+        vm.run(
+            r#"
+            var other = $262.createRealm().global;
+            var PlainNewTarget = new other.Function();
+            PlainNewTarget.prototype = null;
+            var BoundNewTarget = PlainNewTarget.bind(null);
+            var ProxyNewTarget = new Proxy(PlainNewTarget, {});
+
+            other.eval(
+              "String = function ReplacementString() {};" +
+              "String.prototype = { wrong: true };" +
+              "Number = function ReplacementNumber() {};" +
+              "Number.prototype = { wrong: true };" +
+              "Boolean = function ReplacementBoolean() {};" +
+              "Boolean.prototype = { wrong: true };"
+            );
+            forceGc();
+
+            var boxedString = Reflect.construct(String, ["ok"], PlainNewTarget);
+            var boxedNumber = Reflect.construct(Number, [9], BoundNewTarget);
+            var boxedBoolean = Reflect.construct(Boolean, [1], ProxyNewTarget);
+            var stringPrototype = Object.getPrototypeOf(boxedString);
+            var numberPrototype = Object.getPrototypeOf(boxedNumber);
+            var booleanPrototype = Object.getPrototypeOf(boxedBoolean);
+
+            [
+              stringPrototype.wrong === undefined,
+              numberPrototype.wrong === undefined,
+              booleanPrototype.wrong === undefined,
+              Object.getPrototypeOf(stringPrototype.valueOf) === other.Function.prototype,
+              Object.getPrototypeOf(numberPrototype.valueOf) === other.Function.prototype,
+              Object.getPrototypeOf(booleanPrototype.valueOf) === other.Function.prototype,
+              stringPrototype.valueOf.call(boxedString) === "ok",
+              numberPrototype.valueOf.call(boxedNumber) === 9,
+              booleanPrototype.valueOf.call(boxedBoolean) === true
+            ].join("|");
+            "#,
+        )
+        .expect("primitive wrappers should use immutable foreign Realm intrinsics"),
+        Value::String("true|true|true|true|true|true|true|true|true".into())
+    );
+}
+
+#[test]
+fn primitive_wrapper_prototype_result_survives_observable_gc() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("GC hook should register");
+
+    assert_eq!(
+        vm.run(
+            r#"
+            var NewTarget = new Proxy(function () {}, {
+              get: function (target, key) {
+                if (key === "prototype") {
+                  var prototype = { marker: 42 };
+                  forceGc();
+                  return prototype;
+                }
+                return target[key];
+              }
+            });
+            var wrapper = Reflect.construct(Number, [1], NewTarget);
+            Object.getPrototypeOf(wrapper).marker;
+            "#,
+        )
+        .expect("prototype getter result should survive wrapper allocation"),
+        Value::Number(42.0)
+    );
+}
+
+#[test]
+fn primitive_wrapper_allocation_obeys_the_exact_heap_cap() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.gc();
+    let baseline_live = vm.heap.live_count();
+    let baseline_pins = vm.gc_pins.len();
+
+    vm.set_max_heap_objects(Some(baseline_live + 1));
+    assert_eq!(
+        vm.run("new String('x').valueOf();")
+            .expect("one free cell should be enough for a String wrapper"),
+        Value::String("x".into())
+    );
+    assert!(vm.heap.live_count() <= baseline_live + 1);
+
+    vm.set_max_heap_objects(None);
+    vm.gc();
+    vm.set_max_heap_objects(Some(vm.heap.live_count()));
+    let error = vm
+        .run("new Number(1);")
+        .expect_err("a saturated heap must reject wrapper allocation");
+    vm.set_max_heap_objects(None);
+
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_main_realm_range_error(&vm, error.as_ref());
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert!(vm.pending_new_target.is_none());
+    assert!(vm.pending_new_target_prototype.is_none());
+}
+
+#[test]
 fn created_realm_native_constructor_modes_match_main_registrations() {
     let mut vm = Vm::new().expect("VM should initialize");
     let global = vm
@@ -520,17 +766,6 @@ fn created_realm_native_constructor_modes_match_main_registrations() {
         assert_eq!(
             native_construct_mode(&vm, &constructor),
             Some(NativeConstructMode::InternalDeferredPrototype),
-            "unexpected foreign construct mode for {source}"
-        );
-    }
-    for &source in FOREIGN_PREALLOCATED_NATIVE_CONSTRUCTOR_SOURCES {
-        let constructor = vm
-            .call_function(&eval, &[Value::String(source.into())], Some(global.clone()))
-            .expect("foreign preallocating constructor should resolve");
-        assert!(vm.is_constructor_value(&constructor));
-        assert_eq!(
-            native_construct_mode(&vm, &constructor),
-            Some(NativeConstructMode::PreallocateReceiver),
             "unexpected foreign construct mode for {source}"
         );
     }

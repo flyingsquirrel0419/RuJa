@@ -3385,7 +3385,7 @@ fn populate_test262_realm(vm: &mut Vm, realm_env: GcIdx) -> error::Result<Value>
         "String",
         1,
         string_constructor,
-        NativeConstructMode::PreallocateReceiver,
+        NativeConstructMode::InternalDeferredPrototype,
         &[
             ("valueOf", string_value_of, 0),
             ("toString", string_proto_to_string, 0),
@@ -3407,7 +3407,7 @@ fn populate_test262_realm(vm: &mut Vm, realm_env: GcIdx) -> error::Result<Value>
         "Number",
         1,
         number_constructor,
-        NativeConstructMode::PreallocateReceiver,
+        NativeConstructMode::InternalDeferredPrototype,
         &[
             ("toString", num_proto_to_string, 1),
             ("toLocaleString", num_proto_to_locale_string, 0),
@@ -3423,7 +3423,7 @@ fn populate_test262_realm(vm: &mut Vm, realm_env: GcIdx) -> error::Result<Value>
         "Boolean",
         1,
         boolean_constructor,
-        NativeConstructMode::PreallocateReceiver,
+        NativeConstructMode::InternalDeferredPrototype,
         &[
             ("valueOf", boolean_value_of, 0),
             ("toString", boolean_to_string, 0),
@@ -9808,7 +9808,7 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
         "String",
         1,
         string_constructor,
-        NativeConstructMode::PreallocateReceiver,
+        NativeConstructMode::InternalDeferredPrototype,
         &[
             ("charAt", str_char_at, 1),
             ("charCodeAt", str_char_code_at, 1),
@@ -9886,7 +9886,7 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
         "Number",
         1,
         number_constructor,
-        NativeConstructMode::PreallocateReceiver,
+        NativeConstructMode::InternalDeferredPrototype,
         &[
             ("toFixed", num_to_fixed, 1),
             ("toPrecision", num_to_precision, 1),
@@ -9955,7 +9955,7 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
         "Boolean",
         1,
         boolean_constructor,
-        NativeConstructMode::PreallocateReceiver,
+        NativeConstructMode::InternalDeferredPrototype,
         &[
             ("valueOf", boolean_value_of, 0),
             ("toString", boolean_to_string, 0),
