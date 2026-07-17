@@ -2095,25 +2095,30 @@ pub(crate) fn promise_constructor(
     let resolving_functions = create_promise_resolving_functions(vm, p_val.clone());
     vm.unpin(promise_pin);
     let (resolve_fn, reject_fn) = resolving_functions?;
-    match vm.call_function(
+    let executor_pins = vm.pin_many(&[p_val.clone(), resolve_fn.clone(), reject_fn.clone()]);
+    let realm = vm.current_realm_global_env();
+    let result = match vm.call_function(
         &executor,
         &[resolve_fn, reject_fn.clone()],
         Some(Value::Undefined),
     ) {
-        Ok(_) => {}
+        Ok(_) => Ok(()),
         Err(e) => {
             // executor threw: reject the promise with the thrown value
-            let reason = match &e.thrown_value {
-                Some(reason) => reason.clone(),
-                None => vm.make_error_value(&e)?,
-            };
-            vm.call_function(
-                &reject_fn,
-                std::slice::from_ref(&reason),
-                Some(Value::Undefined),
-            )?;
+            match vm.promise_rejection_reason_in_realm(&e, realm) {
+                Ok(reason) => vm
+                    .call_function(
+                        &reject_fn,
+                        std::slice::from_ref(&reason),
+                        Some(Value::Undefined),
+                    )
+                    .map(|_| ()),
+                Err(error) => Err(error),
+            }
         }
-    }
+    };
+    vm.unpin_many(executor_pins);
+    result?;
     Ok(p_val)
 }
 
@@ -2364,14 +2369,11 @@ pub(crate) fn promise_resolve(
     }
     if matches!(value, Value::Object(_)) {
         let pins = vm.pin_many(&[Value::Object(GcIdx(p_idx)), value.clone()]);
+        let realm = vm.current_realm_global_env();
         let then = match vm.get_property(&value, "then") {
             Ok(then) => then,
             Err(error) => {
-                let reason = match &error.thrown_value {
-                    Some(reason) => Ok(reason.clone()),
-                    None => vm.make_error_value(&error),
-                };
-                let reason = match reason {
+                let reason = match vm.promise_rejection_reason_in_realm(&error, realm) {
                     Ok(reason) => reason,
                     Err(error) => {
                         vm.unpin_many(pins);
@@ -2384,6 +2386,7 @@ pub(crate) fn promise_resolve(
             }
         };
         if is_callable(&then, &vm.heap) {
+            let realm = vm.constructor_realm(&then).unwrap_or(realm);
             let then_pin = vm.pin(&then);
             let resolving = create_promise_resolving_functions(vm, Value::Object(GcIdx(p_idx)));
             let (resolve, reject) = match resolving {
@@ -2400,6 +2403,7 @@ pub(crate) fn promise_resolve(
                     then,
                     resolve,
                     reject,
+                    realm,
                 });
             vm.unpin(then_pin);
             vm.unpin_many(pins);
@@ -4704,12 +4708,22 @@ pub(crate) fn promise_then(
         }
         _ => {
             // already settled: schedule immediately, passing derived for chaining
+            let realm = match state {
+                crate::value::PromiseStatus::Fulfilled => {
+                    vm.promise_reaction_job_realm(&on_fulfilled)
+                }
+                crate::value::PromiseStatus::Rejected => {
+                    vm.promise_reaction_job_realm(&on_rejected)
+                }
+                crate::value::PromiseStatus::Pending => None,
+            };
             vm.microtask_queue.push_back(crate::vm::Microtask::Then {
                 promise: GcIdx(p_idx),
                 on_fulfilled,
                 on_rejected,
                 derived: Some(derived.clone()),
                 continuation: None,
+                realm,
             });
         }
     }

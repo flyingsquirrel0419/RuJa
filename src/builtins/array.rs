@@ -9,10 +9,7 @@ fn array_from_async_error_reason(
     error: &Arc<Error>,
     realm: GcIdx,
 ) -> error::Result<Value> {
-    match error.thrown_value.clone() {
-        Some(reason) => Ok(reason),
-        None => vm.make_error_value_in_realm(error, realm),
-    }
+    vm.promise_rejection_reason_in_realm(error, realm)
 }
 
 fn settle_array_from_async(
@@ -95,6 +92,7 @@ fn await_array_from_async(
                 on_rejected: Value::Undefined,
                 derived: None,
                 continuation: handler.continuation,
+                realm: None,
             });
         }
         Ok(())

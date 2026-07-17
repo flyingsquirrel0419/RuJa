@@ -929,6 +929,7 @@ pub enum PromiseContinuation {
     DynamicImport {
         target: std::path::PathBuf,
         capability: PromiseReactionCapability,
+        realm: GcIdx,
     },
     AsyncGenerator {
         generator: GcIdx,

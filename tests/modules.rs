@@ -663,6 +663,56 @@ fn pending_sibling_evaluation_survives_another_dependency_rejection() {
 }
 
 #[test]
+fn post_await_fuel_does_not_error_an_unrelated_pending_sibling() {
+    let dir = module_fixture_dir("fuel-pending-sibling");
+    fs::write(
+        dir.join("fuel.js"),
+        "await Promise.resolve(); while (true) {}",
+    )
+    .expect("fuel dependency should be written");
+    fs::write(
+        dir.join("pending.js"),
+        r#"
+        globalThis.fuelSiblingStarted = true;
+        await new Promise(resolve => { globalThis.resolveFuelSibling = resolve; });
+        globalThis.fuelSiblingFinished = true;
+        "#,
+    )
+    .expect("pending dependency should be written");
+    fs::write(
+        dir.join("first.js"),
+        "import './fuel.js'; import './pending.js';",
+    )
+    .expect("first entry should be written");
+    fs::write(dir.join("second.js"), "import './pending.js';")
+        .expect("second entry should be written");
+
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.set_fuel(Some(10_000));
+    let first = vm
+        .run_module_file(dir.join("first.js"))
+        .expect_err("fuel dependency should abort the first entry");
+    assert_eq!(first.kind, ruja::ErrorKind::Fuel);
+    vm.set_fuel(None);
+    assert_eq!(
+        vm.run("globalThis.fuelSiblingStarted === true")
+            .expect("pending sibling marker should be readable"),
+        Value::Bool(true)
+    );
+
+    vm.run("globalThis.resolveFuelSibling();")
+        .expect("pending sibling should remain resumable");
+    vm.run_module_file(dir.join("second.js"))
+        .expect("later importer should reuse the settled sibling");
+    assert_eq!(
+        vm.run("globalThis.fuelSiblingFinished === true")
+            .expect("pending sibling completion should be readable"),
+        Value::Bool(true)
+    );
+    fs::remove_dir_all(dir).expect("module fixtures should be removed");
+}
+
+#[test]
 fn dynamic_import_from_script_resolves_canonical_module_namespace() {
     let dir = module_fixture_dir("dynamic-import-script");
     fs::write(
@@ -713,6 +763,208 @@ fn dynamic_import_from_script_resolves_canonical_module_namespace() {
         )
         .expect("dynamic import results should be readable"),
         Value::String(Arc::from("true|42|42|42|true|true|42"))
+    );
+    fs::remove_dir_all(dir).expect("module fixtures should be removed");
+}
+
+#[test]
+fn dynamic_import_host_errors_use_the_initiating_realm_after_reentry() {
+    let dir = module_fixture_dir("dynamic-import-error-realm");
+    fs::write(dir.join("invalid.js"), "export const = 1;")
+        .expect("invalid module should be written");
+    fs::write(dir.join("dependency.js"), "export const present = 1;")
+        .expect("link dependency should be written");
+    fs::write(
+        dir.join("link-error.js"),
+        "import { missing } from './dependency.js'; export { missing };",
+    )
+    .expect("link-error module should be written");
+    fs::write(
+        dir.join("entry.js"),
+        r#"
+        var other = $262.createRealm().global;
+        other.mainSyntaxError = SyntaxError;
+        other.results = [];
+        var callback = other.eval(`(function() {
+          var imports = [
+            import('./missing.js'),
+            import('./invalid.js'),
+            import('./link-error.js')
+          ];
+          for (var promise of imports) {
+            results.push(promise instanceof Promise);
+            promise.catch(error => {
+              results.push(
+                error instanceof SyntaxError,
+                !(error instanceof mainSyntaxError),
+                Object.getPrototypeOf(error) === SyntaxError.prototype
+              );
+            });
+          }
+        })`);
+        Array.prototype.map.call([0], callback);
+        forceGc();
+        "#,
+    )
+    .expect("dynamic import entry should be written");
+
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("GC hook should register");
+    vm.run_file(dir.join("entry.js"))
+        .expect("dynamic import host errors should reject");
+    assert_eq!(
+        vm.run("other.results.join('|')")
+            .expect("dynamic import Realm markers should be readable"),
+        Value::String(Arc::from(
+            "true|true|true|true|true|true|true|true|true|true|true|true"
+        ))
+    );
+    fs::remove_dir_all(dir).expect("module fixtures should be removed");
+}
+
+#[test]
+fn dynamic_import_does_not_turn_fuel_exhaustion_into_a_rejection() {
+    let dir = module_fixture_dir("dynamic-import-fuel");
+    fs::write(dir.join("infinite.js"), "while (true) {}")
+        .expect("infinite module should be written");
+    fs::write(dir.join("entry.js"), "import('./infinite.js');")
+        .expect("dynamic import entry should be written");
+    fs::write(
+        dir.join("specifier.js"),
+        "import({ toString() { while (true) {} } });",
+    )
+    .expect("infinite specifier entry should be written");
+
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.set_fuel(Some(10_000));
+    let error = vm
+        .run_file(dir.join("entry.js"))
+        .expect_err("dynamic import must not swallow the host fuel abort");
+    assert_eq!(error.kind, ruja::error::ErrorKind::Fuel);
+
+    let mut vm = Vm::new().expect("second VM should initialize");
+    vm.set_fuel(Some(10_000));
+    let error = vm
+        .run_file(dir.join("specifier.js"))
+        .expect_err("specifier coercion must not swallow the host fuel abort");
+    assert_eq!(error.kind, ruja::error::ErrorKind::Fuel);
+    fs::remove_dir_all(dir).expect("module fixtures should be removed");
+}
+
+#[test]
+fn dynamic_import_namespace_thenable_uses_function_realm_and_propagates_fuel() {
+    let dir = module_fixture_dir("dynamic-import-thenable-job");
+    fs::write(
+        dir.join("foreign.js"),
+        r#"
+        globalThis.foreignThenRealm = $262.createRealm().global;
+        export const then = foreignThenRealm.eval(`
+          new Proxy(function() {}, { apply: 1 })
+        `);
+        "#,
+    )
+    .expect("foreign thenable module should be written");
+    fs::write(
+        dir.join("foreign-entry.js"),
+        r#"
+        import('./foreign.js').catch(error => {
+          globalThis.thenableErrorUsesFunctionRealm =
+            error instanceof foreignThenRealm.TypeError &&
+            !(error instanceof TypeError);
+        });
+        "#,
+    )
+    .expect("foreign thenable entry should be written");
+    fs::write(
+        dir.join("infinite.js"),
+        "export function then() { while (true) {} }",
+    )
+    .expect("infinite thenable module should be written");
+    fs::write(dir.join("fuel-entry.js"), "import('./infinite.js');")
+        .expect("fuel thenable entry should be written");
+
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.run_file(dir.join("foreign-entry.js"))
+        .expect("foreign thenable failure should reject");
+    assert_eq!(
+        vm.run("thenableErrorUsesFunctionRealm")
+            .expect("thenable Realm marker should be readable"),
+        Value::Bool(true)
+    );
+
+    let mut vm = Vm::new().expect("fuel VM should initialize");
+    vm.set_fuel(Some(10_000));
+    let error = vm
+        .run_file(dir.join("fuel-entry.js"))
+        .expect_err("thenable job must not swallow the host fuel abort");
+    assert_eq!(error.kind, ruja::ErrorKind::Fuel);
+    fs::remove_dir_all(dir).expect("module fixtures should be removed");
+}
+
+#[test]
+fn dynamic_import_post_await_fuel_marks_the_module_errored() {
+    let dir = module_fixture_dir("dynamic-import-post-await-fuel");
+    fs::write(
+        dir.join("target.js"),
+        "globalThis.postAwaitFuelEvaluations = \
+         (globalThis.postAwaitFuelEvaluations || 0) + 1; \
+         await Promise.resolve(); while (true) {}",
+    )
+    .expect("async module should be written");
+    fs::write(dir.join("entry.js"), "import('./target.js');")
+        .expect("dynamic import entry should be written");
+    fs::write(
+        dir.join("await-target.js"),
+        "globalThis.awaitSetupFuelEvaluations = \
+         (globalThis.awaitSetupFuelEvaluations || 0) + 1; \
+         await 0; await { get then() { while (true) {} } };",
+    )
+    .expect("await-setup module should be written");
+    fs::write(dir.join("await-entry.js"), "import('./await-target.js');")
+        .expect("await-setup dynamic import entry should be written");
+
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.set_fuel(Some(10_000));
+    let first = vm
+        .run_file(dir.join("entry.js"))
+        .expect_err("post-await fuel exhaustion should abort the first import");
+    assert_eq!(first.kind, ruja::error::ErrorKind::Fuel);
+
+    vm.set_fuel(Some(10_000));
+    let second = vm
+        .run_file(dir.join("entry.js"))
+        .expect_err("the errored module must not reuse a pending evaluation Promise");
+    assert_eq!(second.kind, ruja::error::ErrorKind::Fuel);
+    vm.set_fuel(None);
+    assert_eq!(
+        vm.run("postAwaitFuelEvaluations")
+            .expect("evaluation count should be readable"),
+        Value::Number(1.0)
+    );
+
+    vm.set_fuel(Some(10_000));
+    let first = vm
+        .run_file(dir.join("await-entry.js"))
+        .expect_err("await setup fuel exhaustion should abort the first import");
+    assert_eq!(first.kind, ruja::error::ErrorKind::Fuel);
+    vm.set_fuel(Some(10_000));
+    let second = vm
+        .run_file(dir.join("await-entry.js"))
+        .expect_err("await setup abort must be cached as a module error");
+    assert_eq!(second.kind, ruja::error::ErrorKind::Fuel);
+    vm.set_fuel(None);
+    assert_eq!(
+        vm.run("awaitSetupFuelEvaluations")
+            .expect("await setup evaluation count should be readable"),
+        Value::Number(1.0)
     );
     fs::remove_dir_all(dir).expect("module fixtures should be removed");
 }
@@ -881,6 +1133,60 @@ fn dynamic_import_of_tla_self_propagates_cached_rejection() {
         )
         .expect("TLA self-rejection markers should be readable"),
         Value::String(Arc::from("1|true|true"))
+    );
+    fs::remove_dir_all(dir).expect("module fixtures should be removed");
+}
+
+#[test]
+fn dynamic_import_pending_continuation_preserves_target_realm_reason() {
+    let dir = module_fixture_dir("dynamic-import-cross-realm-pending");
+    fs::write(
+        dir.join("target.js"),
+        r#"
+        globalThis.moduleReason = new TypeError('module failure');
+        globalThis.other = $262.createRealm().global;
+        other.mainGlobal = globalThis;
+        other.results = [];
+        var callback = other.eval(`(function() {
+          var pending = import('./target.js');
+          results.push(pending instanceof Promise);
+          pending.catch(reason => {
+            results.push(
+              reason === mainGlobal.moduleReason,
+              reason instanceof mainGlobal.TypeError,
+              !(reason instanceof TypeError)
+            );
+          });
+        })`);
+        Array.prototype.map.call([0], callback);
+        await Promise.resolve();
+        forceGc();
+        throw moduleReason;
+        "#,
+    )
+    .expect("self-importing target should be written");
+    fs::write(
+        dir.join("entry.js"),
+        "import('./target.js').catch(function() {});",
+    )
+    .expect("dynamic import entry should be written");
+
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("GC hook should register");
+    vm.run_file(dir.join("entry.js"))
+        .expect("dynamic imports should settle through rejection handlers");
+    assert_eq!(
+        vm.run("other.results.join('|')")
+            .expect("pending import markers should be readable"),
+        Value::String(Arc::from("true|true|true|true"))
     );
     fs::remove_dir_all(dir).expect("module fixtures should be removed");
 }

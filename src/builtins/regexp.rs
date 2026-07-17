@@ -1367,7 +1367,98 @@ fn enqueue_async_generator_request(
     Ok(promise)
 }
 
+fn abort_async_generator_host_error(vm: &mut Vm, generator: GcIdx) {
+    let schedule_drain = vm.heap.with_obj(generator.0, |obj| {
+        let HeapObj::LazyGenerator(data) = obj else {
+            return false;
+        };
+        data.started.store(true, Ordering::Release);
+        data.done.store(true, Ordering::Release);
+        data.delegating.store(false, Ordering::Release);
+        data.async_suspended_yield.store(false, Ordering::Release);
+        data.async_delegate_await_kind.store(0, Ordering::Release);
+        if data.async_processing.swap(false, Ordering::AcqRel) {
+            let mut queue = data.async_queue.lock();
+            queue.pop_front();
+            !queue.is_empty()
+        } else {
+            false
+        }
+    });
+    if schedule_drain {
+        vm.microtask_queue
+            .push_back(crate::vm::Microtask::AsyncGeneratorDrain { generator });
+    }
+}
+
+fn reschedule_async_generator_after_error(vm: &mut Vm, generator: GcIdx) {
+    let schedule_drain = vm.heap.with_obj(generator.0, |obj| {
+        let HeapObj::LazyGenerator(data) = obj else {
+            return false;
+        };
+        data.async_processing.swap(false, Ordering::AcqRel) && !data.async_queue.lock().is_empty()
+    });
+    if schedule_drain {
+        vm.microtask_queue
+            .push_back(crate::vm::Microtask::AsyncGeneratorDrain { generator });
+    }
+}
+
+fn can_retry_terminal_async_generator_next(vm: &Vm, generator: GcIdx) -> bool {
+    vm.heap.with_obj(generator.0, |obj| {
+        let HeapObj::LazyGenerator(data) = obj else {
+            return false;
+        };
+        if !data.done.load(Ordering::Acquire) {
+            return false;
+        }
+        let queue = data.async_queue.lock();
+        matches!(
+            queue.front(),
+            Some(crate::value::AsyncGeneratorRequest {
+                kind: crate::value::AsyncGeneratorRequestKind::Next(_),
+                ..
+            })
+        )
+    })
+}
+
+pub(crate) fn drain_async_generator_queue(vm: &mut Vm, generator: GcIdx) -> error::Result<()> {
+    let generator_pin = vm.pin(&Value::Object(generator));
+    let should_process = vm.heap.with_obj(generator.0, |obj| {
+        let HeapObj::LazyGenerator(data) = obj else {
+            return false;
+        };
+        !data.async_queue.lock().is_empty() && !data.async_processing.swap(true, Ordering::AcqRel)
+    });
+    let result = if should_process {
+        process_async_generator_queue(vm, generator)
+    } else {
+        Ok(())
+    };
+    vm.unpin(generator_pin);
+    result
+}
+
 fn process_async_generator_queue(vm: &mut Vm, generator: GcIdx) -> error::Result<()> {
+    let retry_terminal_next = can_retry_terminal_async_generator_next(vm, generator);
+    let result = process_async_generator_queue_inner(vm, generator);
+    if let Err(error) = &result {
+        // Only a terminal `next()` completion is replayable. Other paths may
+        // already have advanced generator bytecode before returning the error.
+        if error.catchable()
+            && retry_terminal_next
+            && can_retry_terminal_async_generator_next(vm, generator)
+        {
+            reschedule_async_generator_after_error(vm, generator);
+        } else {
+            abort_async_generator_host_error(vm, generator);
+        }
+    }
+    result
+}
+
+fn process_async_generator_queue_inner(vm: &mut Vm, generator: GcIdx) -> error::Result<()> {
     loop {
         let request = vm.heap.with_obj(generator.0, |obj| {
             if let HeapObj::LazyGenerator(data) = obj {
@@ -1579,6 +1670,7 @@ fn begin_async_generator_await_pinned(
                 generator,
                 kind,
             }),
+            realm: None,
         });
     }
     Ok(())
@@ -1647,10 +1739,7 @@ fn generator_error_reason(
     generator: GcIdx,
     error: &Arc<Error>,
 ) -> error::Result<Value> {
-    match error.thrown_value.clone() {
-        Some(value) => Ok(value),
-        None => vm.make_error_value_in_realm(error, async_generator_realm(vm, generator)),
-    }
+    vm.promise_rejection_reason_in_realm(error, async_generator_realm(vm, generator))
 }
 
 pub(crate) fn run_async_generator_reaction(
@@ -1661,6 +1750,9 @@ pub(crate) fn run_async_generator_reaction(
 ) -> error::Result<()> {
     let generator_pin = vm.pin(&Value::Object(generator));
     let result = run_async_generator_reaction_pinned(vm, generator, kind, promise);
+    if result.is_err() {
+        abort_async_generator_host_error(vm, generator);
+    }
     vm.unpin(generator_pin);
     result
 }
@@ -1779,11 +1871,12 @@ fn complete_generator_resume(
 
         match vm.await_value(value) {
             Ok(value) => return gen_result(vm, value, done, true),
+            Err(error) if !error.catchable() => return Err(error),
             Err(error) if !done => {
-                let reason = error
-                    .thrown_value
-                    .clone()
-                    .unwrap_or_else(|| Value::String(Arc::from(error.message.as_str())));
+                let reason = vm.promise_rejection_reason_in_realm(
+                    &error,
+                    async_generator_realm(vm, generator),
+                )?;
                 resumed = vm.resume_generator(generator, crate::vm::ResumeKind::Throw(reason));
             }
             Err(error) => return wrap_generator_error(vm, error, true),
@@ -1810,7 +1903,7 @@ pub(crate) fn gen_result_in_env(
     env: GcIdx,
 ) -> error::Result<Value> {
     let object_prototype = vm.object_prototype_for_env(env);
-    let obj_idx = vm.heap.allocate(HeapObj::Object(crate::value::ObjectData {
+    let obj_idx = vm.alloc(HeapObj::Object(crate::value::ObjectData {
         props: Mutex::new(IndexMap::new()),
         proto: Mutex::new(Some(object_prototype)),
         extensible: AtomicBool::new(true),
@@ -1818,7 +1911,7 @@ pub(crate) fn gen_result_in_env(
         private_fields: Mutex::new(std::collections::HashMap::new()),
         primitive: Mutex::new(None),
     }))?;
-    vm.heap.with_obj(obj_idx, |o| {
+    vm.heap.with_obj(obj_idx.0, |o| {
         if let HeapObj::Object(obj) = o {
             obj.props
                 .lock()
@@ -1829,7 +1922,7 @@ pub(crate) fn gen_result_in_env(
             );
         }
     });
-    let result_obj = Value::Object(GcIdx(obj_idx));
+    let result_obj = Value::Object(obj_idx);
     vm.keep_during_job(&result_obj);
     if is_async_gen {
         wrap_generator_result_in_env(vm, result_obj, env)
@@ -1877,11 +1970,10 @@ fn wrap_generator_error(
     if !is_async_gen {
         return Err(error);
     }
-    let reason = match error.thrown_value.clone() {
-        Some(value) => value,
-        None => vm.make_error_value(&error)?,
-    };
+    let realm = vm.current_realm_global_env();
+    let reason = vm.promise_rejection_reason_in_realm(&error, realm)?;
     let prototype = vm.current_realm_promise_prototype();
+    let reason_pin = vm.pin(&reason);
     let promise = vm
         .heap
         .allocate(HeapObj::Promise(crate::value::PromiseData {
@@ -1890,7 +1982,9 @@ fn wrap_generator_error(
             handlers: Mutex::new(Vec::new()),
             props: Mutex::new(IndexMap::new()),
             proto: Mutex::new(Some(prototype)),
-        }))?;
+        }));
+    vm.unpin(reason_pin);
+    let promise = promise?;
     Ok(Value::Object(GcIdx(promise)))
 }
 

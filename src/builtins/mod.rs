@@ -9056,10 +9056,7 @@ fn reject_async_iterator_dispose(
     error: &Arc<Error>,
     realm: GcIdx,
 ) -> error::Result<()> {
-    let reason = match error.thrown_value.clone() {
-        Some(reason) => reason,
-        None => vm.make_error_value_in_realm(error, realm)?,
-    };
+    let reason = vm.promise_rejection_reason_in_realm(error, realm)?;
     let pins = vm.pin_many(&[
         capability.promise.clone(),
         capability.resolve.clone(),
@@ -9163,12 +9160,22 @@ fn async_iterator_dispose(
                     }
                 });
             } else {
+                let realm = match state {
+                    crate::value::PromiseStatus::Fulfilled => {
+                        vm.promise_reaction_job_realm(&handler.on_fulfilled)
+                    }
+                    crate::value::PromiseStatus::Rejected => {
+                        vm.promise_reaction_job_realm(&handler.on_rejected)
+                    }
+                    crate::value::PromiseStatus::Pending => None,
+                };
                 vm.microtask_queue.push_back(crate::vm::Microtask::Then {
                     promise: wrapper,
                     on_fulfilled: handler.on_fulfilled,
                     on_rejected: handler.on_rejected,
                     derived: handler.derived,
                     continuation: None,
+                    realm,
                 });
             }
             Ok(())

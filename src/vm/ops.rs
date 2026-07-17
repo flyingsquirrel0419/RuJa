@@ -2869,10 +2869,8 @@ impl Vm {
         reject: &Value,
         error: &Arc<Error>,
     ) -> error::Result<Value> {
-        let reason = match &error.thrown_value {
-            Some(value) => value.clone(),
-            None => self.make_error_value(error)?,
-        };
+        let realm = self.current_realm_global_env();
+        let reason = self.promise_rejection_reason_in_realm(error, realm)?;
         let reason_pin = self.pin(&reason);
         let result = self.call_function(
             reject,
@@ -2947,7 +2945,8 @@ impl Vm {
             Value::Undefined
         };
         let specifier = self.stack.pop().unwrap_or(Value::Undefined);
-        let constructor = self.current_realm_promise_constructor();
+        let realm = self.current_realm_global_env();
+        let constructor = self.promise_constructor_for_env(realm);
         let capability = crate::builtins::new_promise_capability(self, constructor)?;
         let promise = match capability.promise.clone() {
             Value::Object(promise) => promise,
@@ -2976,6 +2975,7 @@ impl Vm {
                             promise,
                             resolve: capability.resolve.clone(),
                             reject: capability.reject.clone(),
+                            realm,
                             referrer,
                             specifier: specifier.into(),
                             import_type,
@@ -3363,8 +3363,18 @@ impl Vm {
             } else {
                 Value::Undefined
             };
+            // The fresh prototype is not reachable from JavaScript until the
+            // function allocation succeeds, so it must survive any collection
+            // triggered while creating the name environment or function.
+            let proto_pin_count = self.pin(&proto_val);
             let closure_env = if has_name_binding {
-                let name_env = crate::environment::new_env(&self.heap, Some(env_idx), false)?;
+                let name_env = match crate::environment::new_env(&self.heap, Some(env_idx), false) {
+                    Ok(name_env) => name_env,
+                    Err(error) => {
+                        self.unpin_many(proto_pin_count);
+                        return Err(error.into());
+                    }
+                };
                 self.gc_pins.push(name_env.0);
                 name_env
             } else {
@@ -3419,6 +3429,7 @@ impl Vm {
             if has_name_binding {
                 self.gc_pins.pop();
             }
+            self.unpin_many(proto_pin_count);
             let idx = idx_result?;
             if has_name_binding {
                 if let Some(name) = fn_name.as_ref() {

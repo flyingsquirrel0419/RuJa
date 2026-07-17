@@ -2805,11 +2805,15 @@ impl Vm {
                     on_rejected,
                     derived,
                     continuation,
+                    realm,
                     ..
                 } => {
                     roots.push(promise.0);
                     Self::push_value_roots(&mut roots, on_fulfilled);
                     Self::push_value_roots(&mut roots, on_rejected);
+                    if let Some(realm) = realm {
+                        roots.push(realm.0);
+                    }
                     if let Some(capability) = derived {
                         Self::push_value_roots(&mut roots, &capability.promise);
                         Self::push_value_roots(&mut roots, &capability.resolve);
@@ -2818,11 +2822,14 @@ impl Vm {
                     if let Some(continuation) = continuation {
                         match continuation {
                             crate::value::PromiseContinuation::DynamicImport {
-                                capability, ..
+                                capability,
+                                realm,
+                                ..
                             } => {
                                 Self::push_value_roots(&mut roots, &capability.promise);
                                 Self::push_value_roots(&mut roots, &capability.resolve);
                                 Self::push_value_roots(&mut roots, &capability.reject);
+                                roots.push(realm.0);
                             }
                             crate::value::PromiseContinuation::AsyncGenerator {
                                 generator, ..
@@ -2885,11 +2892,13 @@ impl Vm {
                     then,
                     resolve,
                     reject,
+                    realm,
                 } => {
                     Self::push_value_roots(&mut roots, thenable);
                     Self::push_value_roots(&mut roots, then);
                     Self::push_value_roots(&mut roots, resolve);
                     Self::push_value_roots(&mut roots, reject);
+                    roots.push(realm.0);
                 }
                 Microtask::Resolve { promise, value } => {
                     roots.push(promise.0);
@@ -2899,15 +2908,18 @@ impl Vm {
                     roots.push(promise.0);
                     Self::push_value_roots(&mut roots, reason);
                 }
+                Microtask::AsyncGeneratorDrain { generator } => roots.push(generator.0),
                 Microtask::DynamicImport {
                     promise,
                     resolve,
                     reject,
+                    realm,
                     ..
                 } => {
                     roots.push(promise.0);
                     Self::push_value_roots(&mut roots, resolve);
                     Self::push_value_roots(&mut roots, reject);
+                    roots.push(realm.0);
                 }
                 Microtask::FinalizationCleanup { registry } => roots.push(registry.0),
             }
@@ -3105,12 +3117,14 @@ impl Vm {
             }
         });
         for h in handlers {
+            let realm = self.promise_reaction_job_realm(&h.on_fulfilled);
             self.microtask_queue.push_back(Microtask::Then {
                 promise: GcIdx(promise_idx),
                 on_fulfilled: h.on_fulfilled,
                 on_rejected: h.on_rejected,
                 derived: h.derived,
                 continuation: h.continuation,
+                realm,
             });
         }
     }
@@ -3130,12 +3144,14 @@ impl Vm {
             }
         });
         for h in handlers {
+            let realm = self.promise_reaction_job_realm(&h.on_rejected);
             self.microtask_queue.push_back(Microtask::Then {
                 promise: GcIdx(promise_idx),
                 on_fulfilled: h.on_fulfilled,
                 on_rejected: h.on_rejected,
                 derived: h.derived,
                 continuation: h.continuation,
+                realm,
             });
         }
     }
@@ -3206,6 +3222,7 @@ impl Vm {
         evaluation_promise: GcIdx,
         target: &std::path::Path,
         capability: crate::value::PromiseReactionCapability,
+        realm: GcIdx,
     ) -> error::Result<()> {
         let (state, result) = self.heap.with_obj(evaluation_promise.0, |object| {
             if let HeapObj::Promise(data) = object {
@@ -3233,20 +3250,13 @@ impl Vm {
                     std::slice::from_ref(&namespace),
                     Some(Value::Undefined),
                 ),
-                Err(error) => match error.thrown_value.clone() {
-                    Some(reason) => self.call_function(
+                Err(error) => match self.promise_rejection_reason_in_realm(&error, realm) {
+                    Ok(reason) => self.call_function(
                         &capability.reject,
                         std::slice::from_ref(&reason),
                         Some(Value::Undefined),
                     ),
-                    None => {
-                        let reason = self.make_error_value(&error)?;
-                        self.call_function(
-                            &capability.reject,
-                            std::slice::from_ref(&reason),
-                            Some(Value::Undefined),
-                        )
-                    }
+                    Err(error) => Err(error),
                 },
             }
         };
@@ -3262,6 +3272,7 @@ impl Vm {
                 on_rejected,
                 derived,
                 continuation,
+                realm,
             } => match continuation {
                 Some(crate::value::PromiseContinuation::AsyncGenerator { generator, kind }) => {
                     crate::builtins::regexp::run_async_generator_reaction(
@@ -3288,17 +3299,20 @@ impl Vm {
                 Some(crate::value::PromiseContinuation::AsyncFunction(frame)) => {
                     self.run_async_function_reaction(*frame, promise)
                 }
-                Some(crate::value::PromiseContinuation::DynamicImport { target, capability }) => {
-                    self.run_dynamic_import_reaction(promise, &target, capability)
-                }
-                None => self.run_then(promise, on_fulfilled, on_rejected, derived),
+                Some(crate::value::PromiseContinuation::DynamicImport {
+                    target,
+                    capability,
+                    realm,
+                }) => self.run_dynamic_import_reaction(promise, &target, capability, realm),
+                None => self.run_then(promise, on_fulfilled, on_rejected, derived, realm),
             },
             Microtask::Thenable {
                 thenable,
                 then,
                 resolve,
                 reject,
-            } => self.run_thenable_job(thenable, then, resolve, reject),
+                realm,
+            } => self.run_thenable_job(thenable, then, resolve, reject, realm),
             Microtask::Resolve { promise, value } => {
                 self.promise_resolve(promise.0, value);
                 Ok(())
@@ -3307,10 +3321,14 @@ impl Vm {
                 self.promise_reject(promise.0, reason);
                 Ok(())
             }
+            Microtask::AsyncGeneratorDrain { generator } => {
+                crate::builtins::regexp::drain_async_generator_queue(self, generator)
+            }
             Microtask::DynamicImport {
                 promise,
                 resolve,
                 reject,
+                realm,
                 referrer,
                 specifier,
                 import_type,
@@ -3342,6 +3360,7 @@ impl Vm {
                         let continuation = Some(crate::value::PromiseContinuation::DynamicImport {
                             target,
                             capability,
+                            realm,
                         });
                         let state = self.heap.with_obj(evaluation_promise.0, |object| {
                             if let HeapObj::Promise(data) = object {
@@ -3368,13 +3387,13 @@ impl Vm {
                                 on_rejected: Value::Undefined,
                                 derived: None,
                                 continuation,
+                                realm: None,
                             });
                         }
                         Ok(Value::Undefined)
                     }
-                    Err(error) => match &error.thrown_value {
-                        Some(value) => {
-                            let reason = value.clone();
+                    Err(error) => match self.promise_rejection_reason_in_realm(&error, realm) {
+                        Ok(reason) => {
                             let reason_pin = self.pin(&reason);
                             let result = self.call_function(
                                 &reject,
@@ -3384,19 +3403,7 @@ impl Vm {
                             self.unpin(reason_pin);
                             result
                         }
-                        None => match self.make_error_value(&error) {
-                            Ok(reason) => {
-                                let reason_pin = self.pin(&reason);
-                                let result = self.call_function(
-                                    &reject,
-                                    std::slice::from_ref(&reason),
-                                    Some(Value::Undefined),
-                                );
-                                self.unpin(reason_pin);
-                                result
-                            }
-                            Err(error) => Err(error),
-                        },
+                        Err(error) => Err(error),
                     },
                 };
                 self.unpin_many(capability_pins);

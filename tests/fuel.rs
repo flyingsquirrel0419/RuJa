@@ -56,6 +56,192 @@ fn fuel_exhaustion_is_uncatchable() {
 }
 
 #[test]
+fn promise_resolution_then_getter_does_not_suppress_fuel_exhaustion() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.set_fuel(Some(10_000));
+    let error = vm
+        .run(
+            r#"
+            globalThis.inner = { get then() { while (true) {} } };
+            globalThis.outer = [inner];
+            outer.then = Array.prototype.map;
+            globalThis.promise = Promise.resolve(outer);
+            "#,
+        )
+        .expect_err("then getter fuel exhaustion must abort the host run");
+    assert_eq!(error.kind, ruja::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+}
+
+#[test]
+fn promise_reaction_does_not_suppress_resolution_fuel_exhaustion() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.set_fuel(Some(10_000));
+    let error = vm
+        .run(
+            r#"
+            globalThis.inner = { get then() { while (true) {} } };
+            globalThis.promise = Promise.resolve().then(function () {
+              return Promise.resolve(inner);
+            });
+            "#,
+        )
+        .expect_err("Promise reaction must propagate resolution fuel exhaustion");
+    assert_eq!(error.kind, ruja::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+}
+
+#[test]
+fn promise_and_async_boundaries_do_not_suppress_fuel_exhaustion() {
+    let cases = [
+        (
+            "Promise executor",
+            "new Promise(function () { while (true) {} });",
+        ),
+        (
+            "thenable job",
+            "Promise.resolve({ then: function () { while (true) {} } });",
+        ),
+        (
+            "async function await",
+            r#"
+            globalThis.promise = (async function () {
+              await { get then() { while (true) {} } };
+            })();
+            "#,
+        ),
+        (
+            "Array.fromAsync value",
+            r#"
+            Array.fromAsync({
+              0: { get then() { while (true) {} } },
+              length: 1
+            });
+            "#,
+        ),
+        (
+            "async generator yield",
+            r#"
+            globalThis.iterator = (async function* () {
+              yield { get then() { while (true) {} } };
+            })();
+            globalThis.promise = iterator.next();
+            "#,
+        ),
+        (
+            "async iterator disposal",
+            r#"
+            globalThis.asyncIteratorPrototype = Object.getPrototypeOf(
+              (async function* () {}).constructor.prototype.prototype
+            );
+            asyncIteratorPrototype[Symbol.asyncDispose].call({
+              return: function () { while (true) {} }
+            });
+            "#,
+        ),
+    ];
+
+    for (boundary, source) in cases {
+        let mut vm = Vm::new().expect("failed to initialize VM");
+        vm.set_fuel(Some(20_000));
+        let error = match vm.run(source) {
+            Err(error) => error,
+            Ok(value) => panic!("{boundary} unexpectedly completed with {value:?}"),
+        };
+        assert_eq!(error.kind, ruja::ErrorKind::Fuel, "{boundary}");
+        assert_eq!(vm.fuel_remaining(), Some(0), "{boundary}");
+    }
+}
+
+#[test]
+fn async_generator_recovers_after_a_host_fuel_abort() {
+    for body in [
+        "while (true) {}",
+        "yield { get then() { while (true) {} } };",
+    ] {
+        let mut vm = Vm::new().expect("failed to initialize VM");
+        vm.run(&format!(
+            "globalThis.generator = (async function* () {{ {body} }})();"
+        ))
+        .expect("async generator should be created");
+
+        vm.set_fuel(Some(20_000));
+        let error = vm
+            .run("generator.next();")
+            .expect_err("async generator must propagate fuel exhaustion");
+        assert_eq!(error.kind, ruja::ErrorKind::Fuel, "{body}");
+
+        vm.set_fuel(None);
+        vm.run(
+            r#"
+            globalThis.recovered = false;
+            generator.next().then(
+              function (result) { recovered = result.done; },
+              function () { recovered = true; }
+            );
+            "#,
+        )
+        .expect("a later async generator request should settle");
+        assert_eq!(
+            vm.run("recovered")
+                .expect("recovery marker should be readable"),
+            ruja::Value::Bool(true),
+            "{body}"
+        );
+    }
+
+    let mut vm = Vm::new().expect("queued-request VM should initialize");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(ruja::Value::Undefined)
+        },
+        0,
+    )
+    .expect("GC hook should register");
+    vm.run(
+        r#"
+        globalThis.generator = (async function* () {
+          await 0;
+          while (true) {}
+        })();
+        "#,
+    )
+    .expect("queued-request generator should be created");
+    vm.set_fuel(Some(20_000));
+    let error = vm
+        .run(
+            r#"
+            globalThis.firstRequest = generator.next();
+            globalThis.secondRequest = generator.next();
+            "#,
+        )
+        .expect_err("resumed generator must propagate fuel exhaustion");
+    assert_eq!(error.kind, ruja::ErrorKind::Fuel);
+
+    vm.set_fuel(None);
+    vm.run(
+        r#"
+        globalThis.secondSettled = false;
+        secondRequest.then(
+          function (result) { secondSettled = result.done; },
+          function () { secondSettled = true; }
+        );
+        globalThis.generator = undefined;
+        globalThis.firstRequest = undefined;
+        forceGc();
+        "#,
+    )
+    .expect("queued request should settle after recovery");
+    assert_eq!(
+        vm.run("secondSettled")
+            .expect("queued recovery markers should be readable"),
+        ruja::Value::Bool(true)
+    );
+}
+
+#[test]
 fn iterator_helper_close_does_not_suppress_fuel_exhaustion() {
     let mut vm = Vm::new().expect("failed to initialize VM");
     vm.set_fuel(Some(20_000));

@@ -12070,6 +12070,63 @@ fn promise_capability_resolve_assimilates_thenables_and_rejects_self_resolution(
 }
 
 #[test]
+fn promise_reaction_captures_handler_realm_before_proxy_revocation() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        globalThis.other = $262.createRealm().global;
+        globalThis.immediatePair = other.eval("Proxy.revocable(function () {}, {})");
+        globalThis.immediateResult = "pending";
+        Promise.resolve().then(immediatePair.proxy).catch(function (error) {
+          immediateResult = [
+            error instanceof other.TypeError,
+            error instanceof TypeError
+          ].join("|");
+        });
+        immediatePair.revoke();
+
+        globalThis.pendingFulfilledPair = other.eval(
+          "Proxy.revocable(function () {}, {})"
+        );
+        globalThis.resolvePending = undefined;
+        globalThis.pendingFulfilledResult = "pending";
+        new Promise(function (resolve) { resolvePending = resolve; })
+          .then(pendingFulfilledPair.proxy)
+          .catch(function (error) {
+            pendingFulfilledResult = [
+              error instanceof other.TypeError,
+              error instanceof TypeError
+            ].join("|");
+          });
+        resolvePending();
+        pendingFulfilledPair.revoke();
+
+        globalThis.pendingRejectedPair = other.eval(
+          "Proxy.revocable(function () {}, {})"
+        );
+        globalThis.rejectPending = undefined;
+        globalThis.pendingRejectedResult = "pending";
+        new Promise(function (_, reject) { rejectPending = reject; })
+          .then(undefined, pendingRejectedPair.proxy)
+          .catch(function (error) {
+            pendingRejectedResult = [
+              error instanceof other.TypeError,
+              error instanceof TypeError
+            ].join("|");
+          });
+        rejectPending("reason");
+        pendingRejectedPair.revoke();
+        "#,
+    )
+    .expect("revoked Proxy reaction should reject");
+    assert_eq!(
+        vm.run("[immediateResult, pendingFulfilledResult, pendingRejectedResult].join(',')")
+            .expect("reaction Realm marker should be readable"),
+        Value::String(Arc::from("true|false,true|false,true|false"))
+    );
+}
+
+#[test]
 fn promise_catch_reject() {
     // reject -> catch returns a derived promise (object), not the error value.
     let r = run("new Promise(function(_, rej){ rej('boom'); }) \

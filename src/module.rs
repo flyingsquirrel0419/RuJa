@@ -925,6 +925,18 @@ impl Vm {
         }
     }
 
+    /// A host abort belongs only to the continuation that observed it; other
+    /// pending module jobs may be unrelated and must remain resumable.
+    pub(crate) fn mark_module_evaluation_aborted(&mut self, path: &Path, error: Arc<Error>) {
+        if let Some(record) = self.module_records.get(path) {
+            let mut runtime = record.runtime.lock();
+            runtime.status = ModuleStatus::Errored;
+            runtime.error = Some(error);
+            runtime.evaluation_promise = None;
+            runtime.completion_value = None;
+        }
+    }
+
     pub(crate) fn finish_dynamic_import(&mut self, target: &Path) -> error::Result<Value> {
         let mut graph = HashMap::new();
         load_graph(self, target.to_path_buf(), &mut graph)?;

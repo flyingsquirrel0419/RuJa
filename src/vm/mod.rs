@@ -1,5 +1,7 @@
 //! Stack-based bytecode VM.
 
+#[cfg(test)]
+mod allocation_tests;
 mod async_runtime;
 mod conversions;
 #[cfg(test)]
@@ -441,12 +443,14 @@ pub enum Microtask {
         on_rejected: Value,
         derived: Option<crate::value::PromiseReactionCapability>,
         continuation: Option<crate::value::PromiseContinuation>,
+        realm: Option<GcIdx>,
     },
     Thenable {
         thenable: Value,
         then: Value,
         resolve: Value,
         reject: Value,
+        realm: GcIdx,
     },
     Resolve {
         promise: GcIdx,
@@ -456,10 +460,14 @@ pub enum Microtask {
         promise: GcIdx,
         reason: Value,
     },
+    AsyncGeneratorDrain {
+        generator: GcIdx,
+    },
     DynamicImport {
         promise: GcIdx,
         resolve: Value,
         reject: Value,
+        realm: GcIdx,
         referrer: Arc<std::path::PathBuf>,
         specifier: Arc<str>,
         import_type: Option<Arc<str>>,
@@ -1974,6 +1982,22 @@ impl Vm {
             primitive: Mutex::new(None),
         });
         Ok(Value::Object(GcIdx(self.heap.allocate(obj)?)))
+    }
+
+    /// Preserve JavaScript throws, materialize native errors in the operation
+    /// Realm, and keep host aborts outside the Promise rejection channel.
+    pub(crate) fn promise_rejection_reason_in_realm(
+        &mut self,
+        error: &Arc<Error>,
+        realm: GcIdx,
+    ) -> error::Result<Value> {
+        if !error.catchable() {
+            return Err(error.clone());
+        }
+        match error.thrown_value.clone() {
+            Some(reason) => Ok(reason),
+            None => self.make_error_value_in_realm(error, realm),
+        }
     }
 
     pub(crate) fn materialize_error_in_realm(

@@ -133,18 +133,24 @@ impl Vm {
         error: &Arc<Error>,
         env: GcIdx,
     ) -> error::Result<()> {
-        let reason = match error.thrown_value.clone() {
-            Some(reason) => reason,
-            None => self.make_error_value_in_realm(error, env)?,
-        };
-        let pins = self.pin_many(&[
+        let capability_pins = self.pin_many(&[
             capability.promise.clone(),
+            capability.resolve.clone(),
             capability.reject.clone(),
-            reason.clone(),
         ]);
-        let result = self.call_function(&capability.reject, &[reason], Some(Value::Undefined));
-        self.unpin_many(pins);
-        result.map(|_| ())
+        let result = match self.promise_rejection_reason_in_realm(error, env) {
+            Ok(reason) => {
+                let reason_pin = self.pin(&reason);
+                let result = self
+                    .call_function(&capability.reject, &[reason], Some(Value::Undefined))
+                    .map(|_| ());
+                self.unpin(reason_pin);
+                result
+            }
+            Err(error) => Err(error),
+        };
+        self.unpin_many(capability_pins);
+        result
     }
 
     fn promise_resolve_intrinsic(&mut self, value: Value) -> error::Result<GcIdx> {
@@ -200,14 +206,33 @@ impl Vm {
     ) -> error::Result<GcIdx> {
         match self.promise_resolve_intrinsic_in_env(value, env) {
             Ok(promise) => Ok(promise),
+            Err(error) => self.rejected_promise_for_await_error_in_env(&error, env),
+        }
+    }
+
+    pub(crate) fn rejected_promise_for_await_error_in_env(
+        &mut self,
+        error: &Arc<Error>,
+        env: GcIdx,
+    ) -> error::Result<GcIdx> {
+        // Classify host aborts before capability allocation so a resource
+        // failure cannot replace them. A thrown JS object is otherwise held
+        // only by Arc<Error>, which the GC cannot trace.
+        let reason = self.promise_rejection_reason_in_realm(error, env)?;
+        let reason_pin = self.pin(&reason);
+        let capability = match self.new_intrinsic_promise_capability_in_env(env) {
+            Ok(capability) => capability,
             Err(error) => {
-                let capability = self.new_intrinsic_promise_capability_in_env(env)?;
-                self.reject_promise_capability_error_in_env(&capability, &error, env)?;
-                match capability.promise {
-                    Value::Object(idx) => Ok(idx),
-                    _ => Err(Error::internal("Promise capability returned non-object")),
-                }
+                self.unpin(reason_pin);
+                return Err(error);
             }
+        };
+        let rejected = self.settle_promise_capability(&capability, reason, true);
+        self.unpin(reason_pin);
+        rejected?;
+        match capability.promise {
+            Value::Object(idx) => Ok(idx),
+            _ => Err(Error::internal("Promise capability returned non-object")),
         }
     }
 
@@ -329,6 +354,7 @@ impl Vm {
                 on_rejected: Value::Undefined,
                 derived: None,
                 continuation: handler.continuation,
+                realm: None,
             });
         }
         Ok(())
@@ -350,6 +376,7 @@ impl Vm {
             capability.resolve.clone(),
             capability.reject.clone(),
         ]);
+        let stack_base = self.stack.len();
         let target_depth =
             self.push_async_function_frame(callee, fdef, env, this_val, args, new_target);
         let result = self.interpret_to_depth(target_depth);
@@ -378,6 +405,10 @@ impl Vm {
                 }
             }
         };
+        if suspended && settled.is_err() {
+            self.frames.truncate(target_depth);
+            self.stack.truncate(stack_base);
+        }
         self.unpin_many(capability_pins);
         settled?;
         Ok(promise)
@@ -467,6 +498,11 @@ impl Vm {
                 }
                 Ok(value) => self.resolve_promise_capability_value(&capability, value),
                 Err(error) if !error.catchable() => {
+                    if module_evaluation {
+                        if let Some(path) = module_path.as_deref() {
+                            self.mark_module_evaluation_aborted(path, error.clone());
+                        }
+                    }
                     if self.frames.len() > target_depth {
                         self.frames.truncate(target_depth);
                     }
@@ -484,6 +520,16 @@ impl Vm {
                 }
             }
         };
+        if suspended {
+            if let Err(error) = &settled {
+                if module_evaluation && !error.catchable() {
+                    if let Some(path) = module_path.as_deref() {
+                        self.mark_module_evaluation_aborted(path, error.clone());
+                    }
+                }
+                self.frames.truncate(target_depth);
+            }
+        }
         self.stack = caller_stack;
         self.unpin_many(capability_pins);
         self.unpin(source_pin);
@@ -544,6 +590,7 @@ impl Vm {
         then: Value,
         resolve: Value,
         reject: Value,
+        realm: GcIdx,
     ) -> error::Result<()> {
         let pins = self.pin_many(&[
             thenable.clone(),
@@ -553,11 +600,7 @@ impl Vm {
         ]);
         let call_result = self.call_function(&then, &[resolve, reject.clone()], Some(thenable));
         let result = if let Err(error) = call_result {
-            let reason = match &error.thrown_value {
-                Some(reason) => Ok(reason.clone()),
-                None => self.make_error_value(&error),
-            };
-            match reason {
+            match self.promise_rejection_reason_in_realm(&error, realm) {
                 Ok(reason) => {
                     let reason_pin = self.pin(&reason);
                     let result = self
@@ -594,6 +637,7 @@ impl Vm {
         on_fulfilled: Value,
         on_rejected: Value,
         derived: Option<PromiseReactionCapability>,
+        realm: Option<GcIdx>,
     ) -> error::Result<()> {
         let (state, result) = self.heap.with_obj(promise.0, |o| {
             if let HeapObj::Promise(p) = o {
@@ -628,30 +672,36 @@ impl Vm {
             roots.push(capability.reject.clone());
         }
         let pinned = self.pin_many(&roots);
+        let handler_realm = realm.unwrap_or_else(|| self.current_realm_global_env());
         // call the handler with the result
         let call_ret = self.call_function(&handler, std::slice::from_ref(&result), None);
-        // Unpin everything (handler + result + derived) regardless of outcome.
-        self.unpin_many(pinned);
-        match call_ret {
+        let outcome = match call_ret {
             Ok(ret) => {
-                if let Some(capability) = derived {
+                if let Some(capability) = &derived {
                     // PromiseReactionJob always calls the capability's resolve
                     // function. That path performs self-resolution checks and
                     // observes an overridden `then` even for native Promises.
-                    self.settle_promise_capability(&capability, ret, false)?;
+                    self.settle_promise_capability(capability, ret, false)
+                } else {
+                    Ok(())
                 }
             }
-            Err(e) => {
+            Err(error) if !error.catchable() => Err(error),
+            Err(error) => {
                 if let Some(capability) = &derived {
-                    let reason: Value = e
-                        .thrown_value
-                        .clone()
-                        .unwrap_or_else(|| Value::String(Arc::from(e.message.as_str())));
-                    self.settle_promise_capability(capability, reason, true)?;
+                    match self.promise_rejection_reason_in_realm(&error, handler_realm) {
+                        Ok(reason) => self.settle_promise_capability(capability, reason, true),
+                        Err(error) => Err(error),
+                    }
+                } else {
+                    Ok(())
                 }
             }
-        }
-        Ok(())
+        };
+        // Error materialization and capability settlement can allocate, so the
+        // reaction roots stay pinned through the whole outcome conversion.
+        self.unpin_many(pinned);
+        outcome
     }
 
     fn settle_promise_capability(
@@ -840,6 +890,14 @@ impl Vm {
                 Err(next) => current = next,
             }
         }
+    }
+
+    pub(crate) fn promise_reaction_job_realm(&self, handler: &Value) -> Option<GcIdx> {
+        if !crate::builtins::is_callable(handler, &self.heap) {
+            return None;
+        }
+        let current_realm = self.current_realm_global_env();
+        Some(self.constructor_realm(handler).unwrap_or(current_realm))
     }
 
     pub(crate) fn constructor_realm_default_prototype(
@@ -2694,10 +2752,7 @@ impl Vm {
         let value_wrapper = match self.promise_resolve_intrinsic_in_env(value, realm) {
             Ok(promise) => promise,
             Err(error) => {
-                let reason = match error.thrown_value.clone() {
-                    Some(reason) => reason,
-                    None => self.make_error_value_in_realm(&error, realm)?,
-                };
+                let reason = self.promise_rejection_reason_in_realm(&error, realm)?;
                 let reason_pin = self.pin(&reason);
                 if !done && close_on_rejection {
                     if let Some(iterator) = &iterator {
@@ -2746,6 +2801,7 @@ impl Vm {
                 on_rejected: Value::Undefined,
                 derived: None,
                 continuation: handler.continuation,
+                realm: None,
             });
         }
         Ok(())
@@ -2942,6 +2998,8 @@ impl Vm {
 
             let then = self.get_property(&v, "then")?;
             if crate::builtins::is_callable(&then, &self.heap) {
+                let current_realm = self.current_realm_global_env();
+                let realm = self.constructor_realm(&then).unwrap_or(current_realm);
                 let ctor = self.current_realm_promise_constructor();
                 let capability = crate::builtins::new_promise_capability(self, ctor)?;
                 let pins = self.pin_many(&[
@@ -2957,10 +3015,13 @@ impl Vm {
                     Some(v),
                 );
                 if let Err(error) = call_result {
-                    let reason = error
-                        .thrown_value
-                        .clone()
-                        .unwrap_or_else(|| Value::String(Arc::from(error.message.as_str())));
+                    let reason = match self.promise_rejection_reason_in_realm(&error, realm) {
+                        Ok(reason) => reason,
+                        Err(error) => {
+                            self.unpin_many(pins);
+                            return Err(error);
+                        }
+                    };
                     if let Err(reject_error) =
                         self.call_function(&capability.reject, &[reason], Some(Value::Undefined))
                     {
