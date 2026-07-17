@@ -6648,6 +6648,84 @@ files and **82.6%** of executed files.
   argument rooting and native-to-interpreted Realm tracking are recorded as
   separate units rather than hidden in this patch.
 
+## Reflect call argument materialization and GC ownership
+
+`Reflect.apply` and `Reflect.construct` now preserve the full
+`CreateListFromArrayLike` lifetime contract. The observable `length` value is
+pinned while `ToLength` can invoke conversion hooks. Each indexed `Get` result
+is pinned immediately before the next getter can re-enter JavaScript, and the
+caller retains all of those roots through the final target call or
+construction. Indexed-get, length-conversion, target-call, and constructor
+errors all release exactly the roots owned by this materialization.
+
+Previously, earlier getter results lived only in a Rust `Vec<Value>`, which is
+not scanned by the collector. A later getter that forced GC could reclaim and
+reuse those handles before the call began. The deterministic regression
+changed the first object into the second object and could turn an ephemeral
+Promise executor into a non-callable value. Tests now force GC during length
+coercion, later index getters, nested and Proxy calls, explicit
+`NewTarget.prototype` lookup after materialization, returned and thrown value
+transfer, target errors, and Promise construction. A unit-level pin-stack test
+also covers successful materialization and every abrupt cleanup boundary.
+
+`tools/test262_reflect_call_admission.txt` freezes all 19 current direct files:
+nine under `built-ins/Reflect/apply` and ten under
+`built-ins/Reflect/construct`. Runner and analyzer subtract only each file's
+audited metadata features; unknown future Reflect files and files with added
+feature gates remain skipped. The exact boundary and the same boundary with
+all gates forcibly lifted are both **19/19**. Broad Promise remains **388 pass
+/ 0 fail / 315 skip / 703 total** normally and **699/4/0/703** fully opened.
+The supported subset remains **12751/0/7687/20438**, Python tooling is
+**98/98**, and Rust builtins are **453/453**. All-target/all-feature tests and
+builds, Clippy with warnings denied, formatting, release, and wasm32 checks
+pass. Independent GPT and Umans reviews found no implementation defect or
+admission leak; the requested `ToLength`, post-materialization NewTarget,
+success-cleanup, return, and throw coverage was added before the final run.
+
+Feature commit `be24904` passed CI `29555440736` and full matrix
+`29555440756`. Against
+`/tmp/ruja-artifacts-promise-constructor-order-feature.KVXx1G`, 29 of 30
+result artifacts at `/tmp/ruja-artifacts-reflect-call-feature.dh7hH0` are
+byte-for-byte identical. Only built-ins changes, by exactly **+19 pass / -19
+skip**. The aggregate is **30108 pass / 6334 fail / 12013 skip / 12 timeout /
+0 error / 48467 total / 36442 pass-or-fail executed**, or **62.1%** of all
+files and **82.6%** of executed files.
+
+The existing 1,048,576-argument materialization cap remains an explicit
+sandbox policy and therefore differs from the specification's full `ToLength`
+range for enormous values. `Function.prototype.apply` still uses a
+separate legacy materializer that reads arrays and own data properties without
+the observable Reflect algorithm; unifying and auditing that path is the next
+bounded follow-up.
+
+[Decision Log]
+- 목적과 의도: prevent re-entrant GC from invalidating values already produced
+  by `CreateListFromArrayLike`, while admitting only the audited direct
+  Reflect call surface.
+- 기존 구현 및 제약 조건: a Rust `Vec<Value>` was not part of the GC root set;
+  `call_function` and construction pinned arguments only after all observable
+  getters had already run; and every abrupt path had to restore the stack-like
+  `gc_pins` discipline.
+- 검토한 주요 대안: pin the complete vector only after materialization; rely
+  on call dispatch to pin arguments; copy values into a temporary JS Array;
+  add a general Rust-container root scanner or RAII guard; or transfer each
+  successful getter result into `gc_pins` immediately and return its ownership
+  count to the caller.
+- 선택한 방식: pin `length` across conversion, pin each indexed result at its
+  first stable boundary, return `(Vec<Value>, pin_count)`, clean partial lists
+  inside the helper, and have each caller capture its final result before
+  releasing all list roots.
+- 다른 대안 대신 이 방식을 선택한 이유: post-materialization and dispatch
+  pinning are too late, a temporary JS Array adds observable allocation and
+  prototype concerns, and a general root-container or RAII redesign is broader
+  than the two shared Reflect call sites.
+- 장점, 단점 및 영향: getter order and error precedence remain unchanged,
+  every materialized value survives arbitrary re-entry through the target
+  operation, and pin ownership is directly testable. The manual pin-count
+  protocol remains a local discipline, the resource cap remains intentionally
+  non-spec for huge lists, and `Function.prototype.apply` requires its own
+  materializer audit.
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is

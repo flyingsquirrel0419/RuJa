@@ -51,6 +51,13 @@ preallocating an ordinary object in generic dispatch. Values returned by that
 lookup, and fresh specialized objects not yet linked from another heap object,
 must remain on `gc_pins` across every collecting `Vm::alloc` call.
 
+Observable materializers follow the same ownership rule. When an abstract
+operation reads heap values into a Rust collection and a later getter, proxy
+trap, coercion, call, or construction can re-enter JavaScript, every value is
+pinned immediately after it is read. The caller owns those pins through the
+last re-entrant operation and releases them on both normal and abrupt
+completion. A Rust `Vec<Value>` is storage, not a GC root.
+
 ---
 
 **Next:** [Features](features.md) · [Known limitations](limitations.md) · [Back to README](../README.md)

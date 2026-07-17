@@ -4,6 +4,21 @@
 
 ### Fixed
 
+- `Reflect.apply` and `Reflect.construct` now keep an observable
+  `argumentsList.length` result rooted through `ToLength`, pin each indexed
+  value immediately, and retain the complete materialized list through the
+  target call or construction. Every normal and abrupt path restores the GC
+  pin stack. Forced-GC regressions cover length coercion, later index getters,
+  nested and Proxy calls, post-materialization `NewTarget.prototype` lookup,
+  returned and thrown arguments, target errors, and Promise executors. The
+  complete direct Test262 surface is admitted at **19/19**; broad Promise
+  remains **388/0/315** normally and **699/4** with all gates lifted, the
+  supported subset remains **12751/0/7687**, tooling is **98/98**, and Rust
+  builtins are **453/453**. Feature commit `be24904` passed CI `29555440736`
+  and full matrix `29555440756`; 29 of 30 result files match the prior
+  baseline byte-for-byte and built-ins changes by exactly **+19 pass / -19
+  skip**, producing **30108 pass / 6334 fail / 12013 skip / 12 timeout / 0
+  error / 48467 total** (**62.1%** of all files, **82.6%** of executed files).
 - Promise construction now validates executor callability before observing
   `NewTarget.prototype`. Promise uses its internally allocating native path,
   while observable prototype values and the fresh Promise remain GC-rooted
