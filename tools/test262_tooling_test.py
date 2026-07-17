@@ -56,6 +56,10 @@ from test262_promise_combinator_rejection_admission import (
     PROMISE_COMBINATOR_REJECTION_FEATURES,
     PROMISE_COMBINATOR_REJECTION_FILES,
 )
+from test262_promise_finally_admission import (
+    PROMISE_FINALLY_FEATURES,
+    PROMISE_FINALLY_FILES,
+)
 from test262_proxy_get_admission import PROXY_GET_FEATURES, PROXY_GET_FILES
 from test262_proxy_own_keys_admission import (
     PROXY_OWN_KEYS_FEATURES,
@@ -1205,6 +1209,84 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                     frozenset(metadata.get("features", [])), features, relative
                 )
                 self.assertEqual(metadata.get("flags", []), ["async"], relative)
+
+    def test_promise_finally_manifest_is_exact_and_shared(self):
+        self.assertEqual(len(PROMISE_FINALLY_FILES), 37)
+        self.assertEqual(
+            frozenset(PROMISE_FINALLY_FEATURES), PROMISE_FINALLY_FILES
+        )
+        self.assertEqual(
+            len(
+                {
+                    relative
+                    for relative in PROMISE_FINALLY_FILES
+                    if "/prototype/finally/" in relative
+                }
+            ),
+            29,
+        )
+        self.assertTrue(
+            PROMISE_FINALLY_FILES.isdisjoint(PROMISE_COMBINATOR_CLOSE_FILES)
+        )
+        self.assertTrue(
+            PROMISE_FINALLY_FILES.isdisjoint(PROMISE_COMBINATOR_REJECTION_FILES)
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            outside = root / "test/built-ins/Promise/prototype/finally/future.js"
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for relative, features in PROMISE_FINALLY_FEATURES.items():
+                        path = root / "test" / relative
+                        self.assertTrue(tool.promise_finally_path(path), relative)
+                        self.assertEqual(
+                            tool.promise_finally_features(path), features, relative
+                        )
+                        self.assertFalse(
+                            tool.should_skip(
+                                {"features": sorted(features), "flags": ["async"]},
+                                path,
+                            ),
+                            relative,
+                        )
+                        self.assertTrue(
+                            tool.should_skip(
+                                {
+                                    "features": sorted(features | {"decorators"}),
+                                    "flags": ["async"],
+                                },
+                                path,
+                            ),
+                            relative,
+                        )
+                    self.assertFalse(tool.promise_finally_path(outside))
+                    self.assertTrue(
+                        tool.should_skip(
+                            {
+                                "features": ["Promise.prototype.finally"],
+                                "flags": ["async"],
+                            },
+                            outside,
+                        )
+                    )
+                finally:
+                    tool.TEST262 = original_root
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        try:
+            test_root_available = test_root.is_dir()
+        except OSError:
+            test_root_available = False
+        if test_root_available:
+            for relative, features in PROMISE_FINALLY_FEATURES.items():
+                path = test_root / relative
+                self.assertTrue(path.is_file(), relative)
+                metadata = test262_runner.parse_meta(path.read_text())
+                self.assertEqual(
+                    frozenset(metadata.get("features", [])), features, relative
+                )
 
     def test_generator_function_manifest_is_exact_and_shared(self):
         self.assertEqual(len(GENERATOR_FUNCTION_FILES), 3)

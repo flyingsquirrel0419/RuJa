@@ -2134,9 +2134,19 @@ fn create_bound_native_function_in_env(
     realm: GcIdx,
 ) -> error::Result<Value> {
     let realm = env::global_env_root(&vm.heap, realm);
-    let target = vm.new_native_function_in_env(target_name, func, length, realm)?;
+    // The bound receiver is the closure record for these internal functions.
+    // Root it before allocating the native target, since that allocation may
+    // trigger a collection before the bound function starts tracing it.
+    let this_pin = vm.pin(&this_val);
+    let target = match vm.new_native_function_in_env(target_name, func, length, realm) {
+        Ok(target) => target,
+        Err(error) => {
+            vm.unpin(this_pin);
+            return Err(error);
+        }
+    };
     let target_val = Value::Object(target);
-    let pins = vm.pin_many(&[target_val, this_val.clone()]);
+    let target_pin = vm.pin(&target_val);
     let function_proto = vm
         .realm_function_prototypes
         .get(&realm.0)
@@ -2162,7 +2172,8 @@ fn create_bound_native_function_in_env(
         extensible: AtomicBool::new(true),
         private_fields: Mutex::new(std::collections::HashMap::new()),
     }));
-    vm.unpin_many(pins);
+    vm.unpin(target_pin);
+    vm.unpin(this_pin);
     let idx = idx?;
     Ok(Value::Object(GcIdx(idx)))
 }
@@ -2408,6 +2419,49 @@ pub(crate) fn promise_reject(
     Ok(Value::Undefined)
 }
 
+fn promise_resolve_with_constructor(
+    vm: &mut Vm,
+    ctor: Value,
+    value: Value,
+) -> error::Result<Value> {
+    if !vm.is_constructor_value(&ctor) {
+        return Err(Error::type_err(
+            "Promise.resolve receiver is not a constructor",
+        ));
+    }
+    let pins = vm.pin_many(&[ctor.clone(), value.clone()]);
+    let result = (|| -> error::Result<Value> {
+        if let Value::Object(idx) = &value {
+            let is_promise = vm
+                .heap
+                .with_obj(idx.0, |o| matches!(o, HeapObj::Promise(_)));
+            if is_promise {
+                let value_constructor =
+                    vm.get_property_by_key(&value, &PropertyKey::from("constructor"))?;
+                if value_constructor == ctor {
+                    return Ok(value.clone());
+                }
+            }
+        }
+        let capability = new_promise_capability(vm, ctor.clone())?;
+        let capability_pins = vm.pin_many(&[
+            capability.promise.clone(),
+            capability.resolve.clone(),
+            value.clone(),
+        ]);
+        let result = vm.call_function(
+            &capability.resolve,
+            std::slice::from_ref(&value),
+            Some(Value::Undefined),
+        );
+        vm.unpin_many(capability_pins);
+        result?;
+        Ok(capability.promise)
+    })();
+    vm.unpin_many(pins);
+    result
+}
+
 /// `Promise.resolve(v)`: create a promise capability from the receiver
 /// constructor and resolve it with `v`.
 pub(crate) fn promise_static_resolve(
@@ -2417,32 +2471,7 @@ pub(crate) fn promise_static_resolve(
 ) -> error::Result<Value> {
     let ctor = this.unwrap_or(Value::Undefined);
     let value = args.first().cloned().unwrap_or(Value::Undefined);
-    if let Value::Object(idx) = &value {
-        let is_promise = vm
-            .heap
-            .with_obj(idx.0, |o| matches!(o, HeapObj::Promise(_)));
-        if is_promise {
-            let value_constructor =
-                vm.get_property_by_key(&value, &PropertyKey::from("constructor"))?;
-            if value_constructor == ctor {
-                return Ok(value);
-            }
-        }
-    }
-    let capability = new_promise_capability(vm, ctor)?;
-    let pins = vm.pin_many(&[
-        capability.promise.clone(),
-        capability.resolve.clone(),
-        value.clone(),
-    ]);
-    let result = vm.call_function(
-        &capability.resolve,
-        std::slice::from_ref(&value),
-        Some(Value::Undefined),
-    );
-    vm.unpin_many(pins);
-    result?;
-    Ok(capability.promise)
+    promise_resolve_with_constructor(vm, ctor, value)
 }
 
 /// `Promise.reject(r)`: returns a promise rejected with `r`.
@@ -4294,15 +4323,186 @@ pub(crate) fn promise_with_resolvers(
     Ok(result)
 }
 
+fn promise_finally_state(vm: &Vm, this: Option<Value>) -> error::Result<(Value, Value)> {
+    let Some(Value::Object(state)) = this else {
+        return Err(Error::internal("missing Promise finally closure state"));
+    };
+    vm.heap.with_obj(state.0, |object| {
+        let props = object.props().lock();
+        let constructor = props
+            .get(&PropertyKey::from("constructor"))
+            .map(|descriptor| descriptor.value.clone())
+            .ok_or_else(|| Error::internal("missing Promise finally constructor"))?;
+        let on_finally = props
+            .get(&PropertyKey::from("onFinally"))
+            .map(|descriptor| descriptor.value.clone())
+            .ok_or_else(|| Error::internal("missing Promise finally callback"))?;
+        Ok((constructor, on_finally))
+    })
+}
+
+fn promise_finally_value_thunk(
+    _vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    Ok(this.unwrap_or(Value::Undefined))
+}
+
+fn promise_finally_thrower(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    Err(Error::thrown(this.unwrap_or(Value::Undefined), &vm.heap))
+}
+
+fn promise_finally_handler(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+    rejected: bool,
+) -> error::Result<Value> {
+    let original = args.first().cloned().unwrap_or(Value::Undefined);
+    let (constructor, on_finally) = promise_finally_state(vm, this)?;
+    let realm = vm.current_realm_global_env();
+    let result = vm.call_function(&on_finally, &[], Some(Value::Undefined))?;
+    let promise = promise_resolve_with_constructor(vm, constructor, result)?;
+
+    let promise_pin = vm.pin(&promise);
+    let continuation = create_bound_native_function_in_env(
+        vm,
+        "",
+        "",
+        if rejected {
+            promise_finally_thrower
+        } else {
+            promise_finally_value_thunk
+        },
+        0,
+        original,
+        realm,
+    );
+    let continuation = match continuation {
+        Ok(continuation) => continuation,
+        Err(error) => {
+            vm.unpin(promise_pin);
+            return Err(error);
+        }
+    };
+    let continuation_pin = vm.pin(&continuation);
+    let then = vm.get_property(&promise, "then");
+    let result = match then {
+        Ok(then) => vm.call_function(&then, &[continuation], Some(promise)),
+        Err(error) => Err(error),
+    };
+    vm.unpin(continuation_pin);
+    vm.unpin(promise_pin);
+    result
+}
+
+fn promise_then_finally(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    promise_finally_handler(vm, args, this, false)
+}
+
+fn promise_catch_finally(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    promise_finally_handler(vm, args, this, true)
+}
+
+fn create_promise_finally_functions(
+    vm: &mut Vm,
+    constructor: Value,
+    on_finally: Value,
+    realm: GcIdx,
+) -> error::Result<(Value, Value)> {
+    let captures = vm.pin_many(&[constructor.clone(), on_finally.clone()]);
+    let state = match vm.new_object_in_env(realm) {
+        Ok(state) => state,
+        Err(error) => {
+            vm.unpin_many(captures);
+            return Err(error);
+        }
+    };
+    vm.heap.with_obj(state.0, |object| {
+        let mut props = object.props().lock();
+        props.insert(
+            PropertyKey::from("constructor"),
+            PropertyDescriptor::data(constructor),
+        );
+        props.insert(
+            PropertyKey::from("onFinally"),
+            PropertyDescriptor::data(on_finally),
+        );
+    });
+    let state = Value::Object(state);
+    let state_pin = vm.pin(&state);
+
+    let then_finally = create_bound_native_function_in_env(
+        vm,
+        "",
+        "",
+        promise_then_finally,
+        1,
+        state.clone(),
+        realm,
+    );
+    let then_finally = match then_finally {
+        Ok(then_finally) => then_finally,
+        Err(error) => {
+            vm.unpin(state_pin);
+            vm.unpin_many(captures);
+            return Err(error);
+        }
+    };
+    let then_pin = vm.pin(&then_finally);
+    let catch_finally =
+        create_bound_native_function_in_env(vm, "", "", promise_catch_finally, 1, state, realm);
+    vm.unpin(then_pin);
+    vm.unpin(state_pin);
+    vm.unpin_many(captures);
+    Ok((then_finally, catch_finally?))
+}
+
 pub(crate) fn promise_finally(
     vm: &mut Vm,
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
     let promise = this.unwrap_or(Value::Undefined);
+    if !matches!(promise, Value::Object(_)) {
+        return Err(Error::type_err(
+            "Promise.prototype.finally receiver is not an object",
+        ));
+    }
+
     let on_finally = args.first().cloned().unwrap_or(Value::Undefined);
-    let then = vm.get_property(&promise, "then")?;
-    vm.call_function(&then, &[on_finally.clone(), on_finally], Some(promise))
+    let realm = vm.current_realm_global_env();
+    let default_constructor = vm.promise_constructor_for_env(realm);
+    let roots = vm.pin_many(&[
+        promise.clone(),
+        on_finally.clone(),
+        default_constructor.clone(),
+    ]);
+    let result = (|| -> error::Result<Value> {
+        let constructor = promise_species_constructor(vm, &promise, default_constructor.clone())?;
+        let (then_finally, catch_finally) = if is_callable(&on_finally, &vm.heap) {
+            create_promise_finally_functions(vm, constructor, on_finally.clone(), realm)?
+        } else {
+            (on_finally.clone(), on_finally.clone())
+        };
+        let handler_roots = vm.pin_many(&[then_finally.clone(), catch_finally.clone()]);
+        let then = vm.get_property(&promise, "then");
+        let call_result = match then {
+            Ok(then) => {
+                vm.call_function(&then, &[then_finally, catch_finally], Some(promise.clone()))
+            }
+            Err(error) => Err(error),
+        };
+        vm.unpin_many(handler_roots);
+        call_result
+    })();
+    vm.unpin_many(roots);
+    result
 }
 
 pub(crate) fn promise_species_get(
@@ -4343,7 +4543,17 @@ pub(crate) fn promise_then(
     this: Option<Value>,
 ) -> error::Result<Value> {
     let on_fulfilled = args.first().cloned().unwrap_or(Value::Undefined);
+    let on_fulfilled = if is_callable(&on_fulfilled, &vm.heap) {
+        on_fulfilled
+    } else {
+        Value::Undefined
+    };
     let on_rejected = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let on_rejected = if is_callable(&on_rejected, &vm.heap) {
+        on_rejected
+    } else {
+        Value::Undefined
+    };
     let promise = this.unwrap_or(Value::Undefined);
     let p_idx = match &promise {
         Value::Object(idx)

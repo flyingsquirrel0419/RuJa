@@ -11839,6 +11839,244 @@ fn promise_finally_honors_symbol_species_accessor() {
 }
 
 #[test]
+fn promise_then_normalizes_handlers_and_observes_returned_promise_then() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        var fulfilledOriginal = {};
+        var fulfilledResult;
+        Promise.resolve(fulfilledOriginal)
+          .then(1, 2)
+          .then(function (value) { fulfilledResult = value; });
+
+        var rejectedOriginal = {};
+        var rejectedResult;
+        Promise.reject(rejectedOriginal)
+          .then(1, 2)
+          .then(undefined, function (reason) { rejectedResult = reason; });
+
+        var observableThenCalls = 0;
+        var returnedPromise = Promise.resolve();
+        returnedPromise.then = function (resolve) {
+          observableThenCalls += 1;
+          resolve(9);
+        };
+        var assimilatedResult;
+        Promise.resolve()
+          .then(function () { return returnedPromise; })
+          .then(function (value) { assimilatedResult = value; });
+        "#,
+    )
+    .expect("Promise reaction matrix should settle");
+    assert_eq!(
+        vm.run(
+            "fulfilledResult === fulfilledOriginal &&\
+             rejectedResult === rejectedOriginal &&\
+             observableThenCalls === 1 && assimilatedResult === 9;"
+        )
+        .expect("Promise reaction results should be readable"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn promise_finally_uses_wrappers_promise_resolve_and_original_completion() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        var order = [];
+        var thenFinally, catchFinally, observedThis, observedArgs;
+        var SpeciesHolder = function () {};
+        Object.defineProperty(SpeciesHolder, Symbol.species, {
+          get: function () { order.push("species"); return Promise; }
+        });
+        var target = {};
+        Object.defineProperty(target, "constructor", {
+          get: function () { order.push("constructor"); return SpeciesHolder; }
+        });
+        Object.defineProperty(target, "then", {
+          get: function () {
+            order.push("then-get");
+            return function (onFulfilled, onRejected) {
+              order.push("then-call");
+              observedThis = this;
+              observedArgs = arguments.length;
+              thenFinally = onFulfilled;
+              catchFinally = onRejected;
+              return target;
+            };
+          }
+        });
+        var callback = function () {};
+        var observableResult = Promise.prototype.finally.call(target, callback);
+
+        var fulfilledOriginal = {};
+        var fulfilledResult;
+        var fulfilledArgs = -1;
+        Promise.resolve(fulfilledOriginal)
+          .finally(function () {
+            fulfilledArgs = arguments.length;
+            return {};
+          })
+          .then(function (value) { fulfilledResult = value; });
+
+        var rejectedOriginal = {};
+        var rejectedResult;
+        Promise.reject(rejectedOriginal)
+          .finally(function () { return {}; })
+          .then(undefined, function (reason) { rejectedResult = reason; });
+
+        var thrownReason = {};
+        var thrownResult;
+        Promise.resolve()
+          .finally(function () { throw thrownReason; })
+          .then(undefined, function (reason) { thrownResult = reason; });
+
+        var replacementReason = {};
+        var replacementResult;
+        Promise.resolve()
+          .finally(function () { return Promise.reject(replacementReason); })
+          .then(undefined, function (reason) { replacementResult = reason; });
+
+        var subclassCount = 0;
+        var observedSubclassCount = 0;
+        class FinallyPromise extends Promise {
+          constructor(executor) {
+            subclassCount += 1;
+            super(executor);
+          }
+        }
+        new FinallyPromise(function (resolve) { resolve(); })
+          .finally(function () {})
+          .then(function () { observedSubclassCount = subclassCount; })
+          .then(function () {});
+
+        var abstractOriginal = {};
+        var abstractResult;
+        var resolveReads = 0;
+        var abstractSource = new Promise(function (resolve) { resolve(abstractOriginal); });
+        Object.defineProperty(Promise, "resolve", {
+          configurable: true,
+          get: function () { resolveReads += 1; throw new Error("must not read Promise.resolve"); }
+        });
+        abstractSource
+          .finally(function () { return {}; })
+          .then(function (value) { abstractResult = value; });
+        "#,
+    )
+    .expect("Promise finally matrix should settle");
+    assert_eq!(
+        vm.run(
+            r#"
+            order.join("|") === "constructor|species|then-get|then-call" &&
+            observableResult === target && observedThis === target && observedArgs === 2 &&
+            typeof thenFinally === "function" && typeof catchFinally === "function" &&
+            thenFinally !== callback && catchFinally !== callback &&
+            thenFinally.name === "" && catchFinally.name === "" &&
+            thenFinally.length === 1 && catchFinally.length === 1 &&
+            (function () { try { new thenFinally(); return false; } catch (e) { return e instanceof TypeError; } })() &&
+            (function () { try { new catchFinally(); return false; } catch (e) { return e instanceof TypeError; } })() &&
+            fulfilledArgs === 0 && fulfilledResult === fulfilledOriginal &&
+            rejectedResult === rejectedOriginal && thrownResult === thrownReason &&
+            replacementResult === replacementReason && observedSubclassCount === 7 &&
+            resolveReads === 0 && abstractResult === abstractOriginal;
+            "#,
+        )
+        .expect("Promise finally observations should be readable"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn promise_finally_closures_use_method_realm_and_survive_observable_gc() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+    assert_eq!(
+        vm.run(
+            r#"
+            var other = $262.createRealm().global;
+            var foreignFinally = other.Promise.prototype.finally;
+            var callbackCalls = 0;
+            var callback = function () {
+              callbackCalls += 1;
+              forceGc();
+              return returned;
+            };
+            var callbackRef = new WeakRef(callback);
+            var innerHandlers = [];
+            var returned = new other.Promise(function (resolve) { resolve(1); });
+            Object.defineProperty(returned, "then", {
+              get: function () {
+                forceGc();
+                return function (handler) {
+                  innerHandlers.push(handler);
+                  forceGc();
+                  return handler();
+                };
+              }
+            });
+
+            var thenFinally, catchFinally;
+            var target = {};
+            Object.defineProperty(target, "constructor", {
+              get: function () { forceGc(); return undefined; }
+            });
+            Object.defineProperty(target, "then", {
+              get: function () {
+                forceGc();
+                return function (onFulfilled, onRejected) {
+                  thenFinally = onFulfilled;
+                  catchFinally = onRejected;
+                  forceGc();
+                  return {};
+                };
+              }
+            });
+            foreignFinally.call(target, callback);
+            callback = null;
+            forceGc();
+
+            var original = {};
+            var fulfilled = thenFinally(original);
+            var reason = {};
+            var rejected;
+            try { catchFinally(reason); } catch (error) { rejected = error; }
+
+            var receiverError;
+            try { foreignFinally.call(1); } catch (error) { receiverError = error; }
+            [
+              callbackRef.deref() !== undefined,
+              callbackCalls === 2,
+              fulfilled === original,
+              rejected === reason,
+              Object.getPrototypeOf(thenFinally) === other.Function.prototype,
+              Object.getPrototypeOf(catchFinally) === other.Function.prototype,
+              innerHandlers.length === 2,
+              innerHandlers[0].name === "" && innerHandlers[0].length === 0,
+              innerHandlers[1].name === "" && innerHandlers[1].length === 0,
+              Object.getPrototypeOf(innerHandlers[0]) === other.Function.prototype,
+              Object.getPrototypeOf(innerHandlers[1]) === other.Function.prototype,
+              receiverError instanceof other.TypeError,
+              !(receiverError instanceof TypeError)
+            ].join("|");
+            "#,
+        )
+        .expect("foreign Promise finally closures should survive GC"),
+        Value::String(Arc::from(
+            "true|true|true|true|true|true|true|true|true|true|true|true|true"
+        ))
+    );
+}
+
+#[test]
 fn promise_callback_runs() {
     // Verify the then callback actually executes by having it throw into a
     // catch that we observe via the derived promise being an object.
@@ -12841,6 +13079,18 @@ fn promise_static_resolve_and_reject_validate_capability_constructor() {
              try { Promise.resolve.call(function(executor) {}, 1); }
              catch (e) { rejected = e instanceof TypeError; }
              rejected;"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run("var promise = new Promise(function () {});
+             var receivers = [undefined, null, true, 1, '', Symbol()];
+             var rejected = 0;
+             for (var receiver of receivers) {
+               promise.constructor = receiver;
+               try { Promise.resolve.call(receiver, promise); }
+               catch (error) { if (error instanceof TypeError) rejected += 1; }
+             }
+             rejected === receivers.length;"),
         Value::Bool(true)
     );
 }

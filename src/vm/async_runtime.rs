@@ -613,7 +613,7 @@ impl Vm {
         } else {
             on_fulfilled
         };
-        if matches!(handler, Value::Undefined) {
+        if !crate::builtins::is_callable(&handler, &self.heap) {
             // pass-through: settle the derived promise with the same outcome
             if let Some(capability) = &derived {
                 if state == PromiseStatus::Rejected {
@@ -641,62 +641,10 @@ impl Vm {
         match call_ret {
             Ok(ret) => {
                 if let Some(capability) = derived {
-                    // if the return is itself a promise, adopt its state
-                    if let Value::Object(ret_idx) = ret {
-                        let is_promise = self
-                            .heap
-                            .with_obj(ret_idx.0, |o| matches!(o, HeapObj::Promise(_)));
-                        if is_promise {
-                            if matches!(&capability.promise, Value::Object(idx) if *idx == ret_idx)
-                            {
-                                let err = Error::type_err("Cannot resolve promise with itself");
-                                let reason = self.make_error_value(&err)?;
-                                self.settle_promise_capability(&capability, reason, true)?;
-                                return Ok(());
-                            }
-                            // If `ret` is already settled, adding a handler to
-                            // its stored handler list is both unnecessary and
-                            // leaves no resolver to drain that list. Schedule
-                            // the pass-through reaction directly; only pending
-                            // promises retain handlers for a future settle.
-                            let state = self.heap.with_obj(ret_idx.0, |o| {
-                                if let HeapObj::Promise(p) = o {
-                                    *p.state.lock()
-                                } else {
-                                    PromiseStatus::Pending
-                                }
-                            });
-                            if state == PromiseStatus::Pending {
-                                self.heap.with_obj(ret_idx.0, |o| {
-                                    if let HeapObj::Promise(p) = o {
-                                        p.handlers.lock().push(crate::value::PromiseHandler {
-                                            on_fulfilled: Value::Undefined,
-                                            on_rejected: Value::Undefined,
-                                            derived: Some(capability.clone()),
-                                            continuation: None,
-                                        });
-                                    }
-                                });
-                            } else {
-                                self.microtask_queue.push_back(Microtask::Then {
-                                    promise: ret_idx,
-                                    on_fulfilled: Value::Undefined,
-                                    on_rejected: Value::Undefined,
-                                    derived: Some(capability),
-                                    continuation: None,
-                                });
-                            }
-                            // Do NOT also resolve `derived` now: the adoption
-                            // handler registered above settles `derived` when
-                            // `ret` settles. Resolving here immediately would
-                            // wrap the Promise as `[object Promise]` instead of
-                            // adopting its eventual value.
-                        } else {
-                            self.settle_promise_capability(&capability, ret, false)?;
-                        }
-                    } else {
-                        self.settle_promise_capability(&capability, ret, false)?;
-                    }
+                    // PromiseReactionJob always calls the capability's resolve
+                    // function. That path performs self-resolution checks and
+                    // observes an overridden `then` even for native Promises.
+                    self.settle_promise_capability(&capability, ret, false)?;
                 }
             }
             Err(e) => {
