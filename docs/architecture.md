@@ -46,13 +46,15 @@ heap values held in Rust locals across allocations that could trigger a GC.
 
 Native functions carry `Option<NativeConstructMode>` metadata instead of
 deriving constructibility from an observable `.prototype` slot. `None` means
-the function has no `[[Construct]]` internal method. `Some(PreallocateReceiver)`
-uses ordinary receiver allocation, `Some(InternalEagerPrototype)` lets an
-internal allocator run after dispatch has observed `NewTarget.prototype`, and
+the function has no `[[Construct]]` internal method.
+`Some(InternalEagerPrototype)` lets an internal allocator run after dispatch
+has observed `NewTarget.prototype`, while
 `Some(InternalDeferredPrototype)` gives the native body ownership of whether
-and when that lookup occurs. Registration tests inventory constructors and
-ordinary native functions in both the main and created Realms so callability,
-constructibility, and allocation policy cannot silently collapse together.
+and when that lookup occurs. The obsolete generic native-receiver
+preallocation mode has no remaining user and was removed. Registration tests
+inventory constructors and ordinary native functions in both the main and
+created Realms so callability, constructibility, and allocation policy cannot
+silently collapse together.
 
 BigInt and Symbol intentionally have `[[Construct]]`: they can participate in
 class heritage and serve as a `newTarget`, but their bodies throw before
@@ -91,7 +93,7 @@ liveness at depths exercised up to 100,000 wrappers.
 - 검토한 주요 대안: Keep prototype-presence inference, add constructor-name exceptions, reject BigInt and Symbol at IsConstructor time, cap wrapper depth, or model constructibility explicitly and flatten the abstract-operation traversals.
 - 선택한 방식: Store `Option<NativeConstructMode>`, let body-controlled constructors reject or validate in spec order, route all construction including `super()` through one iterative dispatcher, and reverse-validate rooted Proxy trap results.
 - 다른 대안 대신 이 방식을 선택한 이유: Observable properties cannot represent internal methods, a depth cap changes valid JavaScript behavior, and per-builtin forwarding would duplicate new-target and GC rules. Explicit metadata plus iterative traversal preserves the abstract operation without using host recursion.
-- 장점, 단점 및 영향: BigInt, Symbol, Proxy, BoundFunction, Realm, and exact-cap behavior now share one testable contract; 100,000-layer Proxy operations no longer abort the process. Iterative descriptor validation retains `O(depth)` pending state, and wrapper-specific fallback/coercion order remains a separate conformance unit.
+- 장점, 단점 및 영향: BigInt, Symbol, Proxy, BoundFunction, Realm, and exact-cap behavior now share one testable contract; 100,000-layer Proxy operations no longer abort the process. Iterative descriptor validation retains `O(depth)` pending state, while family-specific fallback and coercion order is handled by the constructor units below.
 ```
 
 String, Number, and Boolean use `InternalDeferredPrototype` because their
@@ -105,8 +107,7 @@ wrapper-specific default from the existing GC-rooted
 new targets to their function Realm. It then pins the selected prototype while
 the common sandbox allocator creates one ordinary object and initializes its
 wrapped primitive slot. String adds its immutable UTF-16 `length` property
-after allocation. Date remains the only `PreallocateReceiver` constructor and
-is intentionally a separate algorithmic unit.
+after allocation.
 
 ```text
 [Decision Log]
@@ -115,7 +116,33 @@ is intentionally a separate algorithmic unit.
 - 검토한 주요 대안: Add wrapper-name exceptions to generic dispatch, add three more eager allocation modes, or let this family own conversion, prototype lookup, and allocation in its existing native bodies.
 - 선택한 방식: Use `InternalDeferredPrototype`, select immutable Realm primitive prototypes from the VM registry, and share one rooted wrapper-allocation helper across the three bodies.
 - 다른 대안 대신 이 방식을 선택한 이유: The three algorithms all convert before `GetPrototypeFromConstructor`, while String also has call-only Symbol behavior. Dispatcher exceptions would duplicate builtin semantics and still conflate calls with construction.
-- 장점, 단점 및 영향: Observable order, foreign-Realm fallback, Bound/Proxy forwarding, direct calls, and cap failures share one tested path. The helper is deliberately limited to primitive wrappers; Date and other constructor families require separate audits.
+- 장점, 단점 및 영향: Observable order, foreign-Realm fallback, Bound/Proxy forwarding, direct calls, and cap failures share one tested path. The helper is deliberately limited to primitive wrappers; Date uses the separate body-controlled path below.
+```
+
+Date also uses `InternalDeferredPrototype`, but it has a distinct call branch.
+Calls return a current date String without coercing supplied arguments or
+branding an object `this`. Construction copies a Date input or converts the
+single/component arguments, applies `TimeClip`, and only then observes
+`NewTarget.prototype`; abrupt conversion therefore prevents the lookup. A
+non-object prototype selects the immutable Date prototype from the new
+target's function Realm through the GC-rooted `realm_date_prototypes` map.
+
+Each Realm installs its own Date constructor, prototype, prototype methods,
+and static functions. `%Date.prototype%` is an ordinary unbranded object, and
+constructed instances store `[[DateValue]]` in an internal private slot rather
+than an observable property. The selected prototype is pinned while the
+common sandbox allocator creates exactly one object, so a cap-triggered
+collection cannot reclaim it and a saturated heap still uses the existing
+Realm-local emergency `RangeError` path.
+
+```text
+[Decision Log]
+- 목적과 의도: Preserve Date's call-versus-construct split, conversion/prototype order, hidden DateValue, Realm fallback, and exact sandbox allocation contract.
+- 기존 구현 및 제약 조건: Generic receiver preallocation read `NewTarget.prototype` before Date conversion, treated an object `this` as construction, exposed Date state through `__time__`, and reused main-Realm Date intrinsics in created Realms.
+- 검토한 주요 대안: Keep generic preallocation with Date-specific repair steps, reuse the primitive-wrapper allocator, or let the Date body own conversion, prototype selection, slot initialization, and allocation.
+- 선택한 방식: Use `InternalDeferredPrototype`, install a complete Date intrinsic graph per Realm, resolve immutable Date fallbacks through a traced registry, and allocate one internally branded object after all observable conversion.
+- 다른 대안 대신 이 방식을 선택한 이유: Date calls do not wrap a primitive and construction has Date-copy, parsing, component, and TimeClip branches. Reusing preallocation or the primitive helper would preserve the wrong order or misrepresent the internal slot.
+- 장점, 단점 및 영향: Direct/call/apply/bound use, subclasses, foreign new targets, abrupt order, forced GC, and exact-cap failure now share one tested path. The Realm registry inventory grows from 28 to 29 families and remains manually synchronized across storage, tracing, rollback, and tests.
 ```
 
 `MakeClosure` follows the same rule for an ordinary function's fresh
@@ -165,7 +192,7 @@ allocation through final wrapper attachment. It records the incoming
 the intrinsic graph, allocates the host wrapper, and attaches the Realm global.
 A successful commit releases only the transaction's pins. Any error first
 truncates the complete transaction-owned pin suffix and then removes that
-environment's entries from all 28 per-Realm registry families. Native error
+environment's entries from all 29 per-Realm registry families. Native error
 materialization runs afterward in the calling Realm, so its collecting retry
 can reclaim the abandoned graph.
 
@@ -180,7 +207,7 @@ logical rollback surface.
 ```text
 [Decision Log]
 - 목적과 의도: Make failed test262 Realm construction leave no inaccessible GC roots while preserving exact heap-cap and error-Realm behavior.
-- 기존 구현 및 제약 조건: Intrinsic installers publish 28 families of Realm roots incrementally and use fallible LIFO temporary pins; wrapper allocation remains fallible after every registry has been populated.
+- 기존 구현 및 제약 조건: Intrinsic installers publish 29 families of Realm roots incrementally and use fallible LIFO temporary pins; wrapper allocation remains fallible after every registry has been populated.
 - 검토한 주요 대안: Publish nothing until setup completes; clean only the last inserted map; make every installer independently error-safe; or own all provisional roots and pins in one outer transaction.
 - 선택한 방식: Keep provisional registry publication, pin the fresh environment, capture the incoming pin depth, include wrapper attachment in the transaction, truncate the owned pin suffix on every result, and remove every Realm registry entry on error.
 - 다른 대안 대신 이 방식을 선택한 이유: Later installers require earlier intrinsic identities, map-specific cleanup misses other roots, and duplicating rollback in every installer creates drift. One lexical owner matches the actual observability boundary.

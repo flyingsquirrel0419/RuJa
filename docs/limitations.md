@@ -136,6 +136,10 @@ guarantees, run RuJa in a separately killable process as well.
   AsyncGeneratorFunction/AsyncGenerator/AsyncIterator intrinsic graphs, plus
   an independent Math object whose methods inherit that Realm's
   `%Function.prototype%`.
+  Date constructors, prototypes, methods, and static functions are also
+  Realm-local. A non-object Date new-target prototype falls back to the
+  immutable Date prototype from that new target's Realm, while constructed
+  instances keep their Date value in a non-observable internal slot.
   `AsyncIterator.prototype[Symbol.asyncDispose]` is implemented with
   Realm-correct Promise and abrupt-completion behavior. `Array.fromAsync`
   consumes async, sync, and array-like sources through intrinsic Promise jobs,

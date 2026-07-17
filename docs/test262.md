@@ -7015,7 +7015,7 @@ therefore remains **30159 pass / 6330 fail / 11816 skip / 12 timeout / 0 error
 `$262.createRealm()` now treats intrinsic population and final host-wrapper
 attachment as one transaction. The fresh environment is pinned before any
 publication, nested installer pins are owned as one suffix, and an error
-removes all 28 per-Realm registry families before native error materialization
+removes all 29 per-Realm registry families before native error materialization
 runs in the caller Realm. The heap allocator, cache, fuel, and unrelated
 finalization jobs are intentionally not rewound.
 
@@ -7045,18 +7045,20 @@ aggregate remains **30159 pass / 6330 fail / 11816 skip / 12 timeout / 0 error
 
 ## Explicit native constructor allocation modes
 
-Native construction now selects receiver allocation through immutable
-`NativeConstructMode` metadata rather than a function-name allowlist. Ordinary
-native constructors preallocate a receiver, eager internal allocators observe
-and cache `NewTarget.prototype` before their body, and deferred internal
-allocators own their validation and prototype timing. The eager path retains
-the previous non-object fallback and error precedence. Bound and transparent
-Proxy construction forwards the original new target, while the constructor,
-new target, argument list, cached prototype, and fresh specialized object are
-rooted across every re-entrant or collecting boundary.
+Native construction selected receiver allocation through immutable
+`NativeConstructMode` metadata rather than a function-name allowlist. The
+initial migration represented ordinary receiver preallocation, eager internal
+allocation, and deferred internal allocation separately. Subsequent
+primitive-wrapper and Date units moved the last preallocated users into their
+native bodies and removed that enum variant; the current engine retains eager
+and deferred modes. Bound and transparent Proxy construction forwards the
+original new target, while the constructor, new target, argument list, cached
+prototype, and fresh specialized object are rooted across every re-entrant or
+collecting boundary.
 
-Internal registration tests require **19 eager / 19 deferred** constructors in
-both the main and a created Realm. Regressions cover exact-cap Array
+At this migration checkpoint, internal registration tests required **19 eager
+/ 19 deferred** constructors in both the main and a created Realm. Regressions
+cover exact-cap Array
 construction, getter and fallback-error order, bound/Proxy forwarding, forced
 collection of direct-new arguments, pre-dispatch pending-state cleanup,
 WeakMap/WeakSet call rejection and subclass prototypes, and revoked-Proxy
@@ -7089,9 +7091,9 @@ skip / 12 timeout / 0 error / 48317 total / 36489 pass-or-fail executed**, or
 - 목적과 의도: Replace implicit native-constructor allocation classification without broad, unmeasured changes to observable prototype timing.
 - 기존 구현 및 제약 조건: A fixed function-name allowlist suppressed generic receivers, several specialized constructors depended on different validation and prototype orders, and Rust construction inputs were not automatically GC roots.
 - 검토한 주요 대안: Expand the allowlist, move every constructor to one eager path, defer every lookup to builtin bodies, or encode the existing protocols explicitly and migrate ordering defects separately.
-- 선택한 방식: Use three immutable allocation modes, preserve each constructor's baseline eager or deferred timing, inventory every registration, and add scoped NewTarget cleanup plus complete input rooting.
+- 선택한 방식: Introduce three immutable migration modes, preserve each constructor's baseline eager or deferred timing, inventory every registration, and add scoped NewTarget cleanup plus complete input rooting; later family audits may remove modes with no remaining users.
 - 다른 대안 대신 이 방식을 선택한 이유: One universal timing rule would introduce unrelated conformance regressions, while names cannot safely encode semantics. Explicit modes make the current contract testable and permit later constructor-specific migrations with focused Test262 evidence.
-- 장점, 단점 및 영향: The allowlist and wasted exact-cap receiver are gone and two real Weak collection failures pass. Native constructibility, super forwarding, wrapper coercion order, and constructors requiring no automatic prototype lookup remain visible follow-up units.
+- 장점, 단점 및 영향: The allowlist and wasted exact-cap receiver are gone and two real Weak collection failures pass. At this checkpoint, native constructibility, super forwarding, wrapper coercion order, and constructors requiring no automatic prototype lookup remained visible follow-up units; the later sections record their independent audits.
 ```
 
 ## Explicit native constructibility and stack-safe Proxy forwarding
@@ -7217,7 +7219,64 @@ aggregate is **30176 pass / 6328 fail / 11801 skip / 12 timeout / 0 error /
 - 검토한 주요 대안: Remove Reflect/cross-realm/Symbol gates globally, admit complete constructor directories, or extend the existing exact native-construction manifest.
 - 선택한 방식: Freeze ten paths with per-file feature exceptions shared by the runner and analyzer, and require local order/Realm/GC/cap regressions beyond the pinned files.
 - 다른 대안 대신 이 방식을 선택한 이유: Exact admission ties every metric change to audited behavior while local regressions cover observable ordering that the current pinned files do not exercise.
-- 장점, 단점 및 영향: Ten skips become passes with no new fail, timeout, or error; the manifest remains narrow and must be extended deliberately. Date is not implied by these results and remains a separate constructor unit.
+- 장점, 단점 및 영향: Ten skips become passes with no new fail, timeout, or error; the manifest remains narrow and must be extended deliberately. These results did not imply Date support, which is handled by the separate unit below.
+```
+
+## Date constructor call/construct order and Realm fallbacks
+
+Date now uses body-controlled native construction. Calls return a date String
+regardless of the supplied `this` and do not coerce argument values.
+Construction computes and clips its Date value before observing
+`NewTarget.prototype`; abrupt conversion stops before that getter. Non-object
+prototypes select the immutable `%Date.prototype%` from the new target's Realm,
+including BoundFunction and transparent-Proxy targets. Each created Realm owns
+its Date constructor, prototype, methods, and static functions. Constructed
+instances keep `[[DateValue]]` in an internal slot, while `%Date.prototype%`
+remains unbranded. Getter-produced prototypes remain rooted through the
+single-cell sandbox allocation.
+
+The frozen native-construction manifest adds exactly five audited files:
+
+- `built-ins/Date/is-a-constructor.js`
+- `built-ins/Date/subclassing.js`
+- `built-ins/Date/proto-from-ctor-realm-zero.js`
+- `built-ins/Date/proto-from-ctor-realm-one.js`
+- `built-ins/Date/proto-from-ctor-realm-two.js`
+
+All five pass against Test262 `020cb74075849d1e404bbcdb62feb7a02e6966db`.
+The complete Date subtree is **516 pass / 0 fail / 78 skip / 594 total**.
+Applying the same new runner to the preceding release binary produces **512 /
+4 / 78 / 594**; the four implementation fixes are Date subclassing and the
+three foreign-Realm fallback files. `is-a-constructor.js` was already
+runtime-green and moves from skip to pass through exact admission. All four
+Date subclass files pass, and the supported subset remains **12751 pass / 0
+fail / 7687 skip / 20438 total**.
+
+Final local gates pass all targets and features, warnings-denied Clippy,
+formatting, release, and wasm32, with Python tooling **101/101**, Rust lib/unit
+**108/108**, builtins **461/461**, classes **105/105**, modules **31/31**, and
+Fuel **24/24**. GPT 5.6 reviewers Bacon and Mendel both returned `CLEAN` and
+were closed. Feature commit `5bdc7bd` passed CI `29618073392` and full matrix
+`29618073439`.
+
+Of the 30 downloaded result files at
+`/tmp/ruja-artifacts-date-feature.ezDrIL`, 29 are byte-identical to
+`/tmp/ruja-artifacts-primitive-wrappers-feature.ArVzjB`. Only the built-ins
+result changed, from **14578 pass / 5511 fail / 3567 skip / 12 timeout** to
+**14583 / 5511 / 3562 / 12**. The workflow delta is **+5 pass / -5 skip**
+because all five paths were skipped by the preceding workflow's manifest. The
+aggregate is **30181 pass / 6328 fail / 11796 skip / 12 timeout / 0 error /
+48317 total / 36509 pass-or-fail executed**, or **62.5%** of all files and
+**82.7%** of executed files.
+
+```text
+[Decision Log]
+- 목적과 의도: Admit only Date construction behavior whose call split, conversion order, Realm fallback, hidden state, and sandbox allocation are directly verified.
+- 기존 구현 및 제약 조건: The runner skipped five relevant files; four failed when forced because generic preallocation observed the new-target prototype too early or selected the wrong Realm fallback. Broad Date admission would expose unrelated unsupported paths.
+- 검토한 주요 대안: Remove cross-Realm and Reflect gates globally, admit the complete Date directory, reuse primitive-wrapper admission, or extend the exact native-construction manifest.
+- 선택한 방식: Freeze five Date paths with per-file feature exceptions shared by runner and analyzer, and pair them with local call/apply/bound, abrupt-order, Realm, GC, and exact-cap regressions.
+- 다른 대안 대신 이 방식을 선택한 이유: Exact admission ties every matrix gain to audited behavior while local regressions cover observable order and hidden-slot properties not asserted by the pinned files.
+- 장점, 단점 및 영향: Five skips become passes with no new fail, timeout, or error, and four real runtime defects are removed. Dynamic Function-family and RegExp construction remain separate conformance units.
 ```
 
 ## Why the full-suite rate is not higher

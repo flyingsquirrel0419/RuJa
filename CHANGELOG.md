@@ -4,6 +4,33 @@
 
 ### Fixed
 
+- Date calls and construction now follow separate native paths. Calling Date
+  ignores the supplied `this`, does not coerce supplied argument values, and
+  returns a date String;
+  construction computes and clips its Date value before observing
+  `NewTarget.prototype`, so abrupt conversion prevents that lookup. A
+  non-object prototype falls back to the immutable `%Date.prototype%` from
+  the new target's Realm through BoundFunction and transparent-Proxy targets.
+  Each created Realm now owns its Date constructor, prototype, methods, and
+  static functions, and the new `realm_date_prototypes` registry is traced,
+  rolled back after failed Realm construction, and included in the **29**
+  registry-family inventory. Constructed Dates store `[[DateValue]]` in an
+  internal private slot rather than an observable `__time__` property, while
+  `%Date.prototype%` remains unbranded. Date uses the common sandbox allocator,
+  roots getter-produced prototypes across collection, consumes exactly one
+  cell, and preserves the exact hard heap cap. Removing the final generic
+  receiver-preallocation user leaves **18 eager / 27 deferred** native
+  constructors. Exact Date admission is **5/5**; the broad Date subtree
+  improves from **512 pass / 4 fail / 78 skip** with the preceding binary to
+  **516 / 0 / 78** with the same runner. Final local gates include tooling
+  **101/101**, Rust lib/unit **108/108**, builtins **461/461**, classes
+  **105/105**, modules **31/31**, Fuel **24/24**, release, and wasm32. Both GPT
+  5.6 reviews returned `CLEAN`. Feature commit `5bdc7bd` passed CI
+  `29618073392` and full matrix `29618073439`. Of the 30 result files at
+  `/tmp/ruja-artifacts-date-feature.ezDrIL`, 29 are byte-identical to the
+  primitive-wrapper artifacts; built-ins changed by **+5 pass / -5 skip**.
+  The aggregate is **30181 pass / 6328 fail / 11796 skip / 12 timeout / 0
+  error / 48317 total** (**62.5%** of all files, **82.7%** of executed files).
 - String, Number, and Boolean construction is now owned by the constructor
   body instead of generic receiver preallocation. Calls ignore the supplied
   `this` and return primitives; construction completes String/Number
@@ -16,9 +43,9 @@
   `new String(Symbol())` throws before prototype observation. Wrapper
   allocation pins a getter-produced prototype, uses the sandbox allocator,
   succeeds with exactly one free cell, and returns the Realm-local reserve at
-  a saturated cap. Registration coverage now inventories **18 eager / 26
-  deferred / 1 preallocated** native constructors, with Date intentionally
-  left as the separate preallocated family. The exact ten-file admission is
+  a saturated cap. At that checkpoint, registration coverage inventoried
+  **18 eager / 26 deferred / 1 preallocated** native constructors and left
+  Date for the separate follow-up above. The exact ten-file admission is
   **10/10**, all 13 wrapper subclass files pass, and the broad String/Number/
   Boolean result is **1504 pass / 0 fail / 110 skip**; with the same runner the
   preceding binary was **1500 / 4 / 110**. Final local gates include tooling
@@ -59,12 +86,12 @@
   **+5 pass / -5 skip**. The aggregate is **30166 pass / 6328 fail / 11811
   skip / 12 timeout / 0 error / 48317 total** (**62.4%** of all files,
   **82.7%** of executed files).
-- Native construction no longer depends on an immutable function-name
-  allowlist to decide whether generic dispatch may allocate the receiver.
-  Every native function now carries an explicit `NativeConstructMode`:
-  ordinary receiver preallocation, internal allocation with eager prototype
-  observation, or internal allocation with constructor-controlled deferred
-  observation. The eager path preserves the existing observable
+- The initial native-construction metadata migration removed the immutable
+  function-name allowlist that decided whether generic dispatch allocated a
+  receiver. It introduced explicit eager, deferred, and migration-time
+  preallocation modes; the later primitive-wrapper and Date units above
+  removed the final preallocation user and the enum variant. The eager path
+  preserves the existing observable
   `NewTarget.prototype` and fallback-error order, while bound functions and
   transparent Proxies keep forwarding the original new target. Construction
   pins the resolved constructor, new target, and every argument through the
@@ -72,8 +99,9 @@
   even when pre-dispatch setup or normal/spread `super()` fails. Exact-cap
   `new Array()` no longer wastes a discarded ordinary receiver, and WeakMap
   and WeakSet now require `new`, allocate their specialized objects, and honor
-  subclass prototypes. Registration tests inventory all **19 eager / 19
-  deferred** constructors in both the main and created Realms. Local gates
+  subclass prototypes. At that checkpoint, registration tests inventoried
+  **19 eager / 19 deferred** constructors in both the main and created Realms.
+  Local gates
   include tooling **100/100**, all-target Rust lib/unit **95/95**, builtins
   **461/461**, classes **104/104**, modules **31/31**, Fuel **24/24**, release,
   and wasm32. The eager constructor cohort improves from **3952 pass / 1223
@@ -90,8 +118,8 @@
   object cap. The fresh global environment is pinned before any collecting
   allocation, one lexical transaction owns every nested installer pin through
   intrinsic population and final wrapper attachment, and every failure
-  truncates that pin suffix before removing all 28 per-Realm registry
-  families. The resulting partial object graph is collectible before the
+  truncates that pin suffix before removing every per-Realm registry family.
+  The resulting partial object graph is collectible before the
   caller Realm materializes its `RangeError`. Regressions sweep every failing
   capacity through the production host path, repeat the final-wrapper
   boundary, prove exact-cap success and later VM reuse, and force collection
