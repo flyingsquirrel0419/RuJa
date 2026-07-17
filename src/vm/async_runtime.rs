@@ -1492,6 +1492,7 @@ impl Vm {
                 f.name.as_deref(),
                 Some("Object")
                     | Some("Iterator")
+                    | Some("Promise")
                     | Some("ArrayBuffer")
                     | Some("DataView")
                     | Some("WeakRef")

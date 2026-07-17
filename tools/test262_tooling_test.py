@@ -56,6 +56,10 @@ from test262_promise_combinator_rejection_admission import (
     PROMISE_COMBINATOR_REJECTION_FEATURES,
     PROMISE_COMBINATOR_REJECTION_FILES,
 )
+from test262_promise_constructor_order_admission import (
+    PROMISE_CONSTRUCTOR_ORDER_FEATURES,
+    PROMISE_CONSTRUCTOR_ORDER_FILES,
+)
 from test262_promise_finally_admission import (
     PROMISE_FINALLY_FEATURES,
     PROMISE_FINALLY_FILES,
@@ -1287,6 +1291,53 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                 self.assertEqual(
                     frozenset(metadata.get("features", [])), features, relative
                 )
+
+    def test_promise_constructor_order_manifest_is_exact_and_shared(self):
+        relative = (
+            "built-ins/Promise/"
+            "get-prototype-abrupt-executor-not-callable.js"
+        )
+        features = frozenset({"Reflect", "Reflect.construct"})
+        self.assertEqual(PROMISE_CONSTRUCTOR_ORDER_FILES, frozenset({relative}))
+        self.assertEqual(
+            PROMISE_CONSTRUCTOR_ORDER_FEATURES,
+            {relative: features},
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            admitted = root / "test" / relative
+            outside = root / "test/built-ins/Promise/get-prototype-abrupt.js"
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    self.assertTrue(tool.promise_constructor_order_path(admitted))
+                    self.assertEqual(
+                        tool.promise_constructor_order_features(admitted), features
+                    )
+                    self.assertFalse(
+                        tool.should_skip({"features": sorted(features)}, admitted)
+                    )
+                    self.assertTrue(
+                        tool.should_skip(
+                            {"features": sorted(features | {"decorators"})},
+                            admitted,
+                        )
+                    )
+                    self.assertFalse(tool.promise_constructor_order_path(outside))
+                    self.assertTrue(
+                        tool.should_skip({"features": sorted(features)}, outside)
+                    )
+                finally:
+                    tool.TEST262 = original_root
+
+        path = Path(test262_runner.TEST262) / "test" / relative
+        if path.is_file():
+            metadata = test262_runner.parse_meta(path.read_text())
+            self.assertEqual(
+                frozenset(metadata.get("features", [])), features
+            )
 
     def test_generator_function_manifest_is_exact_and_shared(self):
         self.assertEqual(len(GENERATOR_FUNCTION_FILES), 3)

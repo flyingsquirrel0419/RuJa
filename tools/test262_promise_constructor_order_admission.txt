@@ -1,0 +1,2 @@
+# Promise validates executor callability before observing NewTarget.prototype.
+built-ins/Promise/get-prototype-abrupt-executor-not-callable.js

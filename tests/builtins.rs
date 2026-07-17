@@ -13177,6 +13177,58 @@ fn promise_constructor_requires_new_and_calls_executor_with_undefined_this() {
              seen === undefined;"),
         Value::Bool(true)
     );
+    assert_eq!(
+        run(r#"var prototypeGets = 0, executorCalls = 0;
+             var marker = {};
+             var newTarget = (function () {}).bind();
+             Object.defineProperty(newTarget, 'prototype', {
+               get: function () { prototypeGets += 1; throw marker; }
+             });
+             var missingError, callableError;
+             try { Reflect.construct(Promise, [], newTarget); }
+             catch (error) { missingError = error; }
+             var getsAfterMissingExecutor = prototypeGets;
+             try {
+               Reflect.construct(Promise, [function () { executorCalls += 1; }], newTarget);
+             } catch (error) { callableError = error; }
+             missingError instanceof TypeError &&
+               getsAfterMissingExecutor === 0 &&
+               callableError === marker && prototypeGets === 1 &&
+               executorCalls === 0;"#),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run(r#"var order = [];
+             var expectedPrototype = {};
+             var newTarget = (function () {}).bind();
+             Object.defineProperty(newTarget, 'prototype', {
+               get: function () {
+                 order.push('prototype-get');
+                 return expectedPrototype;
+               }
+             });
+             var promise = Reflect.construct(Promise, [function () {
+               order.push('executor');
+             }], newTarget);
+             Object.getPrototypeOf(promise) === expectedPrototype &&
+               order.join(',') === 'prototype-get,executor';"#),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run(r#"var other = $262.createRealm().global;
+             var foreignError;
+             try { Reflect.construct(other.Promise, [], function () {}); }
+             catch (error) { foreignError = error; }
+             var foreignNewTarget = new other.Function();
+             foreignNewTarget.prototype = null;
+             var foreignPromise = Reflect.construct(
+               Promise, [function () {}], foreignNewTarget
+             );
+             foreignError instanceof other.TypeError &&
+               !(foreignError instanceof TypeError) &&
+               Object.getPrototypeOf(foreignPromise) === other.Promise.prototype;"#),
+        Value::Bool(true)
+    );
 }
 
 // --- RegExp ---

@@ -47,6 +47,9 @@ try:
     from test262_promise_combinator_rejection_admission import (
         PROMISE_COMBINATOR_REJECTION_FEATURES, PROMISE_COMBINATOR_REJECTION_FILES,
     )
+    from test262_promise_constructor_order_admission import (
+        PROMISE_CONSTRUCTOR_ORDER_FEATURES, PROMISE_CONSTRUCTOR_ORDER_FILES,
+    )
     from test262_promise_finally_admission import (
         PROMISE_FINALLY_FEATURES, PROMISE_FINALLY_FILES,
     )
@@ -102,6 +105,9 @@ except ModuleNotFoundError:
     )
     from tools.test262_promise_combinator_rejection_admission import (
         PROMISE_COMBINATOR_REJECTION_FEATURES, PROMISE_COMBINATOR_REJECTION_FILES,
+    )
+    from tools.test262_promise_constructor_order_admission import (
+        PROMISE_CONSTRUCTOR_ORDER_FEATURES, PROMISE_CONSTRUCTOR_ORDER_FILES,
     )
     from tools.test262_promise_finally_admission import (
         PROMISE_FINALLY_FEATURES, PROMISE_FINALLY_FILES,
@@ -2211,6 +2217,20 @@ def promise_combinator_rejection_features(path):
         return frozenset()
     return PROMISE_COMBINATOR_REJECTION_FEATURES.get(rel.as_posix(), frozenset())
 
+def promise_constructor_order_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except (OSError, ValueError):
+        return False
+    return rel.as_posix() in PROMISE_CONSTRUCTOR_ORDER_FILES
+
+def promise_constructor_order_features(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except (OSError, ValueError):
+        return frozenset()
+    return PROMISE_CONSTRUCTOR_ORDER_FEATURES.get(rel.as_posix(), frozenset())
+
 def promise_finally_path(path):
     try:
         rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
@@ -2346,6 +2366,8 @@ def should_skip(meta, path=None):
         feats.difference_update(promise_combinator_close_features(path))
     if path is not None and promise_combinator_rejection_path(path):
         feats.difference_update(promise_combinator_rejection_features(path))
+    if path is not None and promise_constructor_order_path(path):
+        feats.difference_update(promise_constructor_order_features(path))
     if path is not None and promise_finally_path(path):
         feats.difference_update(promise_finally_features(path))
     if path is not None and generator_function_path(path):

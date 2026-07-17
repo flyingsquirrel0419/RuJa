@@ -2079,17 +2079,22 @@ pub(crate) fn promise_constructor(
     }
     let fallback = vm.current_realm_promise_prototype();
     let proto = native_constructor_prototype_with_default(vm, "Promise", fallback)?;
-    let p_idx = vm
-        .heap
-        .allocate(HeapObj::Promise(crate::value::PromiseData {
-            state: Mutex::new(crate::value::PromiseStatus::Pending),
-            result: Mutex::new(Value::Undefined),
-            handlers: Mutex::new(Vec::new()),
-            props: Mutex::new(IndexMap::new()),
-            proto: Mutex::new(Some(proto)),
-        }))?;
-    let p_val = Value::Object(GcIdx(p_idx));
-    let (resolve_fn, reject_fn) = create_promise_resolving_functions(vm, p_val.clone())?;
+    // The observable prototype and fresh Promise live only in Rust locals at
+    // these allocation boundaries, so keep both in the collector root set.
+    let proto_pin = vm.pin(&proto);
+    let p_idx = vm.alloc(HeapObj::Promise(crate::value::PromiseData {
+        state: Mutex::new(crate::value::PromiseStatus::Pending),
+        result: Mutex::new(Value::Undefined),
+        handlers: Mutex::new(Vec::new()),
+        props: Mutex::new(IndexMap::new()),
+        proto: Mutex::new(Some(proto)),
+    }));
+    vm.unpin(proto_pin);
+    let p_val = Value::Object(p_idx?);
+    let promise_pin = vm.pin(&p_val);
+    let resolving_functions = create_promise_resolving_functions(vm, p_val.clone());
+    vm.unpin(promise_pin);
+    let (resolve_fn, reject_fn) = resolving_functions?;
     match vm.call_function(
         &executor,
         &[resolve_fn, reject_fn.clone()],
@@ -4620,3 +4625,34 @@ pub(crate) fn promise_catch(
 }
 
 // =========================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn promise_constructor_roots_result_before_resolving_state_allocation() {
+        let mut vm = Vm::new().expect("failed to initialize VM");
+        let constructor = vm.promise_ctor.clone();
+        let executor = vm
+            .run("(function () {})")
+            .expect("failed to create Promise executor");
+        let executor_pin = vm.pin(&executor);
+
+        // Fill the heap with collectable objects so the resolving-state
+        // allocation is guaranteed to collect immediately after the Promise.
+        for _ in 0..16 {
+            vm.new_object().expect("failed to create GC pressure");
+        }
+        vm.set_max_heap_objects(Some(vm.heap.live_count() + 1));
+
+        let promise = vm.construct(&constructor, &[executor]);
+        vm.unpin(executor_pin);
+        let promise = promise.expect("Promise construction should survive collection");
+        assert!(matches!(
+            promise,
+            Value::Object(idx)
+                if vm.heap.with_obj(idx.0, |object| matches!(object, HeapObj::Promise(_)))
+        ));
+    }
+}
