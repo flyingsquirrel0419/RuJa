@@ -2013,8 +2013,10 @@ fn reflect_apply(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result
     if !is_callable(&target, &vm.heap) {
         return Err(Error::type_err("target is not callable"));
     }
-    let call_args = reflect_create_list_from_array_like(vm, &args_arr)?;
-    vm.call_function(&target, &call_args, Some(this_arg))
+    let (call_args, call_args_pin_count) = reflect_create_list_from_array_like(vm, &args_arr)?;
+    let result = vm.call_function(&target, &call_args, Some(this_arg));
+    vm.unpin_many(call_args_pin_count);
+    result
 }
 
 fn reflect_to_length(vm: &mut Vm, value: &Value) -> error::Result<usize> {
@@ -2031,19 +2033,36 @@ fn reflect_to_length(vm: &mut Vm, value: &Value) -> error::Result<usize> {
     Ok(n.trunc().min(MAX_SAFE_LENGTH) as usize)
 }
 
-fn reflect_create_list_from_array_like(vm: &mut Vm, value: &Value) -> error::Result<Vec<Value>> {
+fn reflect_create_list_from_array_like(
+    vm: &mut Vm,
+    value: &Value,
+) -> error::Result<(Vec<Value>, usize)> {
     if !matches!(value, Value::Object(_)) {
         return Err(Error::type_err(
             "Reflect.construct argumentsList must be an object",
         ));
     }
     let length = vm.get_property(value, "length")?;
-    let len = reflect_to_length(vm, &length)?;
+    let length_pin = vm.pin(&length);
+    let len = reflect_to_length(vm, &length);
+    vm.unpin(length_pin);
+    let len = len?;
     let mut list = Vec::with_capacity(len);
+    let mut pin_count = 0;
     for index in 0..len {
-        list.push(vm.get_property(value, &index.to_string())?);
+        let item = match vm.get_property(value, &index.to_string()) {
+            Ok(item) => item,
+            Err(error) => {
+                vm.unpin_many(pin_count);
+                return Err(error);
+            }
+        };
+        // Earlier results are no longer reachable through the argumentsList;
+        // keep them alive while later getters and the eventual call re-enter JS.
+        pin_count += vm.pin(&item);
+        list.push(item);
     }
-    Ok(list)
+    Ok((list, pin_count))
 }
 
 fn reflect_construct(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
@@ -2060,8 +2079,10 @@ fn reflect_construct(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Re
     } else {
         target.clone()
     };
-    let call_args = reflect_create_list_from_array_like(vm, &args_arr)?;
-    vm.construct_with_new_target(&target, &call_args, &new_target)
+    let (call_args, call_args_pin_count) = reflect_create_list_from_array_like(vm, &args_arr)?;
+    let result = vm.construct_with_new_target(&target, &call_args, &new_target);
+    vm.unpin_many(call_args_pin_count);
+    result
 }
 
 pub(crate) fn build_reflect(vm: &mut Vm) -> error::Result<Value> {
@@ -2134,4 +2155,118 @@ pub(crate) fn build_json(vm: &mut Vm) -> error::Result<Value> {
         primitive: Mutex::new(None),
     });
     Ok(Value::Object(GcIdx(vm.heap.allocate(obj)?)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reflect_argument_list_pins_balance_on_success_and_errors() {
+        let mut vm = Vm::new().expect("failed to initialize VM");
+        vm.run(
+            r#"
+            var itemError = {};
+            var abruptItems = {
+              length: 2,
+              get 0() { return {}; },
+              get 1() { throw itemError; }
+            };
+            var lengthError = {};
+            var abruptLength = {
+              get length() {
+                return { valueOf: function() { throw lengthError; } };
+              }
+            };
+            var completeItems = {
+              length: 2,
+              get 0() { return { label: "first" }; },
+              get 1() { return { label: "second" }; }
+            };
+            var targetError = {};
+            function returningCallTarget(first) { return first; }
+            function ReturningConstructTarget(first) { this.first = first; }
+            function throwingCallTarget() { throw targetError; }
+            function ThrowingConstructTarget() { throw targetError; }
+            "#,
+        )
+        .expect("failed to create Reflect argument-list fixtures");
+
+        let baseline = vm.gc_pins.len();
+        for name in ["abruptItems", "abruptLength"] {
+            let value = vm.run(name).expect("failed to read abrupt fixture");
+            assert!(reflect_create_list_from_array_like(&mut vm, &value).is_err());
+            assert_eq!(vm.gc_pins.len(), baseline, "pin leak after {name}");
+        }
+
+        let value = vm
+            .run("completeItems")
+            .expect("failed to read complete fixture");
+        let (items, pin_count) = reflect_create_list_from_array_like(&mut vm, &value)
+            .expect("complete list materialization should succeed");
+        assert_eq!(items.len(), 2);
+        assert_eq!(vm.gc_pins.len(), baseline + pin_count);
+        vm.gc();
+        assert_ne!(items[0], items[1]);
+        assert_eq!(
+            vm.get_property(&items[0], "label")
+                .expect("first item should survive collection"),
+            Value::String(Arc::from("first"))
+        );
+        assert_eq!(
+            vm.get_property(&items[1], "label")
+                .expect("second item should survive collection"),
+            Value::String(Arc::from("second"))
+        );
+        vm.unpin_many(pin_count);
+        assert_eq!(vm.gc_pins.len(), baseline);
+
+        let call_target = vm
+            .run("returningCallTarget")
+            .expect("failed to read returning call target");
+        let call_result = reflect_apply(
+            &mut vm,
+            &[call_target, Value::Undefined, value.clone()],
+            None,
+        )
+        .expect("successful Reflect.apply should return its target result");
+        assert_eq!(vm.gc_pins.len(), baseline);
+        assert_eq!(
+            vm.get_property(&call_result, "label")
+                .expect("returned argument should remain valid"),
+            Value::String(Arc::from("first"))
+        );
+
+        let construct_target = vm
+            .run("ReturningConstructTarget")
+            .expect("failed to read returning construct target");
+        let construct_result = reflect_construct(&mut vm, &[construct_target, value.clone()], None)
+            .expect("successful Reflect.construct should return an instance");
+        assert_eq!(vm.gc_pins.len(), baseline);
+        let constructed_first = vm
+            .get_property(&construct_result, "first")
+            .expect("constructed argument property should be readable");
+        assert_eq!(
+            vm.get_property(&constructed_first, "label")
+                .expect("constructed argument should remain valid"),
+            Value::String(Arc::from("first"))
+        );
+
+        let call_target = vm
+            .run("throwingCallTarget")
+            .expect("failed to read throwing call target");
+        assert!(reflect_apply(
+            &mut vm,
+            &[call_target, Value::Undefined, value.clone()],
+            None,
+        )
+        .is_err());
+        assert_eq!(vm.gc_pins.len(), baseline);
+
+        let construct_target = vm
+            .run("ThrowingConstructTarget")
+            .expect("failed to read throwing construct target");
+        assert!(reflect_construct(&mut vm, &[construct_target, value], None).is_err());
+        assert_eq!(vm.gc_pins.len(), baseline);
+    }
 }

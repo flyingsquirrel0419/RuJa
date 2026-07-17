@@ -11563,6 +11563,160 @@ fn reflect_apply_uses_create_list_from_array_like() {
 }
 
 #[test]
+fn reflect_argument_lists_root_values_across_observable_getters() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+
+    vm.run(
+        r#"
+        var applyResult = Reflect.apply(function(first, second) {
+          return [first.label, second.label, first === second].join(",");
+        }, null, {
+          length: 2,
+          get 0() { return { label: "apply-first" }; },
+          get 1() { forceGc(); return { label: "apply-second" }; }
+        });
+
+        var lengthResult = Reflect.apply(function(first, second) {
+          return first.label + "," + second.label;
+        }, null, {
+          get length() {
+            return {
+              get valueOf() {
+                forceGc();
+                return function() { forceGc(); return 2; };
+              }
+            };
+          },
+          get 0() { return { label: "length-first" }; },
+          get 1() { return { label: "length-second" }; }
+        });
+
+        var lengthError = {};
+        var lengthErrorResult = false;
+        try {
+          Reflect.apply(function() {}, null, {
+            get length() {
+              return {
+                valueOf: function() { forceGc(); throw lengthError; }
+              };
+            }
+          });
+        } catch (error) {
+          lengthErrorResult = error === lengthError;
+        }
+
+        function Target(first, second) {
+          this.result = [first.label, second.label, first === second].join(",");
+        }
+        var constructResult = Reflect.construct(Target, {
+          length: 2,
+          get 0() { return { label: "construct-first" }; },
+          get 1() { forceGc(); return { label: "construct-second" }; }
+        }).result;
+
+        var newTargetPrototype = { marker: "new-target-prototype" };
+        var NewTarget = new Proxy(function() {}, {
+          get: function(target, key, receiver) {
+            if (key === "prototype") {
+              forceGc();
+              return newTargetPrototype;
+            }
+            return Reflect.get(target, key, receiver);
+          }
+        });
+        var newTargetInstance = Reflect.construct(Target, {
+          length: 2,
+          get 0() { return { label: "new-target-first" }; },
+          get 1() { return { label: "new-target-second" }; }
+        }, NewTarget);
+        var newTargetResult =
+          newTargetInstance.result + "," +
+          Object.getPrototypeOf(newTargetInstance).marker;
+
+        var nestedResult = Reflect.apply(function(first, second) {
+          return Reflect.apply(function(a, b) {
+            return a() + "," + b();
+          }, null, [first, second]);
+        }, null, {
+          length: 2,
+          get 0() { return function() { return "nested-first"; }; },
+          get 1() { forceGc(); return function() { return "nested-second"; }; }
+        });
+
+        var forwarding = new Proxy(function(first, second) {
+          return [first.label, second.label, first === second].join(",");
+        }, {
+          apply: function(target, receiver, args) {
+            return Reflect.apply(target, receiver, args);
+          }
+        });
+        var proxyResult = Reflect.apply(forwarding, null, {
+          length: 2,
+          get 0() { return { label: "proxy-first" }; },
+          get 1() { forceGc(); return { label: "proxy-second" }; }
+        });
+
+        var returned = Reflect.apply(function(first) { return first; }, null, {
+          length: 1,
+          get 0() { return { label: "returned-first" }; }
+        });
+        forceGc();
+        var returnedResult = returned.label;
+
+        var thrownResult = "missing";
+        try {
+          Reflect.apply(function(first) { throw first; }, null, {
+            length: 1,
+            get 0() { return { label: "thrown-first" }; }
+          });
+        } catch (error) {
+          forceGc();
+          thrownResult = error.label;
+        }
+
+        var promiseResult = "pending";
+        try {
+          Reflect.construct(Promise, {
+            length: 2,
+            get 0() { return function(resolve) { resolve(9); }; },
+            get 1() { forceGc(); return {}; }
+          }).then(function(value) {
+            promiseResult = value;
+          });
+        } catch (error) {
+          promiseResult = error.name;
+        }
+        "#,
+    )
+    .expect("failed to exercise Reflect argument-list rooting");
+
+    assert_eq!(
+        vm.run(
+            "[applyResult, lengthResult, lengthErrorResult, constructResult, newTargetResult, nestedResult, proxyResult, returnedResult, thrownResult, promiseResult].join('|');"
+        )
+        .expect("failed to read Reflect argument-list results"),
+        Value::String(Arc::from(concat!(
+            "apply-first,apply-second,false|",
+            "length-first,length-second|true|",
+            "construct-first,construct-second,false|",
+            "new-target-first,new-target-second,false,new-target-prototype|",
+            "nested-first,nested-second|",
+            "proxy-first,proxy-second,false|",
+            "returned-first|thrown-first|9"
+        )))
+    );
+}
+
+#[test]
 fn math_expanded() {
     assert_eq!(run("Math.hypot(3,4);"), Value::Number(5.0));
     assert_eq!(

@@ -69,6 +69,7 @@ from test262_proxy_own_keys_admission import (
     PROXY_OWN_KEYS_FEATURES,
     PROXY_OWN_KEYS_FILES,
 )
+from test262_reflect_call_admission import REFLECT_CALL_FEATURES, REFLECT_CALL_FILES
 from test262_reference_primitive_admission import REFERENCE_PRIMITIVE_FILES
 from test262_dynamic_import_admission import DYNAMIC_IMPORT_FILES
 from test262_import_meta_admission import IMPORT_META_FILES
@@ -1614,6 +1615,82 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                     self.assertTrue(tool.proxy_get_path(reflected_path))
                 finally:
                     tool.TEST262 = original_root
+
+    def test_reflect_call_manifest_is_exact_live_and_shared(self):
+        self.assertEqual(len(REFLECT_CALL_FILES), 19)
+        self.assertEqual(frozenset(REFLECT_CALL_FEATURES), REFLECT_CALL_FILES)
+        self.assertEqual(
+            sum("/apply/" in relative for relative in REFLECT_CALL_FILES),
+            9,
+        )
+        self.assertEqual(
+            sum("/construct/" in relative for relative in REFLECT_CALL_FILES),
+            10,
+        )
+
+        symbolic = (
+            "built-ins/Reflect/apply/"
+            "arguments-list-is-not-array-like-but-still-valid.js"
+        )
+        construct = "built-ins/Reflect/construct/use-arguments-list.js"
+        construct_base = "built-ins/Reflect/construct/construct.js"
+        self.assertEqual(
+            REFLECT_CALL_FEATURES[symbolic],
+            {"Reflect", "Symbol", "arrow-function"},
+        )
+        self.assertEqual(
+            REFLECT_CALL_FEATURES[construct],
+            {"Reflect", "Reflect.construct"},
+        )
+        self.assertEqual(REFLECT_CALL_FEATURES[construct_base], {"Reflect"})
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            future = root / "test/built-ins/Reflect/apply/future.js"
+            outside = root / "test/built-ins/Reflect/get/future.js"
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for relative, features in REFLECT_CALL_FEATURES.items():
+                        path = root / "test" / relative
+                        self.assertTrue(tool.reflect_call_path(path), relative)
+                        self.assertEqual(tool.reflect_call_features(path), features)
+                        self.assertFalse(
+                            tool.should_skip({"features": sorted(features)}, path),
+                            relative,
+                        )
+                        self.assertTrue(
+                            tool.should_skip(
+                                {"features": sorted(features | {"decorators"})},
+                                path,
+                            ),
+                            relative,
+                        )
+                    self.assertFalse(tool.reflect_call_path(future))
+                    self.assertFalse(tool.reflect_call_path(outside))
+                    self.assertTrue(
+                        tool.should_skip({"features": ["Reflect"]}, future)
+                    )
+                    self.assertTrue(
+                        tool.should_skip({"features": ["Reflect"]}, outside)
+                    )
+                finally:
+                    tool.TEST262 = original_root
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        try:
+            test_root_available = test_root.is_dir()
+        except OSError:
+            test_root_available = False
+        if test_root_available:
+            for relative, features in REFLECT_CALL_FEATURES.items():
+                path = test_root / relative
+                self.assertTrue(path.is_file(), relative)
+                metadata = test262_runner.parse_meta(path.read_text())
+                self.assertEqual(
+                    frozenset(metadata.get("features", [])), features, relative
+                )
 
     def test_proxy_own_keys_manifest_is_exact_live_and_shared(self):
         self.assertEqual(len(PROXY_OWN_KEYS_FILES), 40)
