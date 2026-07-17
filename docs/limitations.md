@@ -20,13 +20,10 @@ The following resource limits are enforced:
   (`e1 === e2` can be true), while reclaimable capacity still produces fresh
   Error objects. A failure that occurs before a Promise or capability itself
   exists remains a synchronous host resource error because there is no
-  JavaScript object available to settle.
-- **Realm construction rollback**: test262 Realm setup publishes several
-  per-Realm intrinsic registries before every later allocation has succeeded.
-  A heap-limit failure during that interval can leave an inaccessible partial
-  Realm rooted until the VM is dropped. Realm creation is not yet
-  transactional; hosts should provision the object cap before creating many
-  Realms rather than repeatedly constructing them at the boundary.
+  JavaScript object available to settle. Test262 Realm construction is
+  transactional: a failed intrinsic or wrapper allocation restores temporary
+  pin depth and removes every provisional per-Realm registry root before the
+  caller Realm's error is materialized.
 - **Call-stack depth**: JavaScript recursion is capped at 1000 frames.
   Exceeding this throws a catchable `RangeError("Maximum call stack size
   exceeded")`, not a native stack overflow (SIGSEGV/abort).

@@ -7010,6 +7010,39 @@ therefore remains **30159 pass / 6330 fail / 11816 skip / 12 timeout / 0 error
   allocate its rejection object, and file-backed module records are not yet
   independently owned per created Realm; both remain explicit follow-ups.
 
+## Transactional test262 Realm construction
+
+`$262.createRealm()` now treats intrinsic population and final host-wrapper
+attachment as one transaction. The fresh environment is pinned before any
+publication, nested installer pins are owned as one suffix, and an error
+removes all 28 per-Realm registry families before native error materialization
+runs in the caller Realm. The heap allocator, cache, fuel, and unrelated
+finalization jobs are intentionally not rewound.
+
+The allocation regression dynamically measures the complete Realm graph,
+sweeps every insufficient capacity from zero through the final-wrapper
+boundary, repeats that latest failure, and then creates and evaluates code in
+a Realm at the exact successful capacity. Every failure restores all registry
+counts and pin depth, materializes the main-Realm `RangeError`, and returns to
+the original live-object count after GC. Separate tests collect immediately
+after the fresh environment pin and while the fully populated provisional
+graph is live; the former verifies that the registered heap cell remains an
+`Environment` with the correct `globalThis` binding.
+
+Against pinned Test262 `020cb74075849d1e404bbcdb62feb7a02e6966db`, the 186
+files containing `$262.createRealm` produce **109 pass / 8 fail / 69 skip**
+with both feature commit `87741b1` and the preceding release artifact. The
+eight existing failures and every status are identical. Broad release runs
+remain Promise **433/0/270/703**, dynamic import **620/0/384/1004**, and the
+supported subset **12751/0/7687/20438**. Python tooling is **100/100** and the
+all-target/all-feature Rust, formatting, Clippy, release, and wasm32 gates
+pass. CI `29587781649` and full matrix `29587781683` succeeded. All 30 result
+files at `/tmp/ruja-artifacts-realm-rollback-feature.S47HSt` are byte-for-byte
+identical to `/tmp/ruja-artifacts-hard-heap-feature.Im5lWX`; the workflow
+aggregate remains **30159 pass / 6330 fail / 11816 skip / 12 timeout / 0 error
+/ 48317 total / 36489 pass-or-fail executed**, or **62.4%** of all files and
+**82.7%** of executed files.
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is

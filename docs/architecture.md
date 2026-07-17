@@ -84,6 +84,42 @@ value held only in a Rust local that remains needed after the call.
 - 장점, 단점 및 영향: The live-object ceiling remains exact and repeated failures always settle existing Promises; one cell is reserved per Realm and saturated failures expose shared identity as a documented host-limit deviation.
 ```
 
+## Transactional test262 Realm construction
+
+The test262 host builds a Realm by publishing intrinsic objects into per-Realm
+VM registries as setup progresses. Those provisional entries are intentional:
+later installers consult earlier intrinsic identities, and the same maps keep
+the growing object graph alive across collecting allocations. They do not,
+however, make a partially initialized Realm observable to JavaScript.
+
+Realm creation therefore uses one transaction from fresh environment
+allocation through final wrapper attachment. It records the incoming
+`gc_pins` depth, pins the environment before any object can reach it, populates
+the intrinsic graph, allocates the host wrapper, and attaches the Realm global.
+A successful commit releases only the transaction's pins. Any error first
+truncates the complete transaction-owned pin suffix and then removes that
+environment's entries from all 28 per-Realm registry families. Native error
+materialization runs afterward in the calling Realm, so its collecting retry
+can reclaim the abandoned graph.
+
+Rollback does not rewind the heap allocator, inline cache, GC counters, fuel,
+or finalization queue. A cap-triggered collection may legitimately clear the
+cache or enqueue cleanup for pre-existing registries; restoring either would
+reintroduce stale heap indices or lose required jobs. Realm setup itself does
+not publish module records, template objects, generated symbols, or Promise
+jobs, so registry roots and the transaction pin suffix are the complete
+logical rollback surface.
+
+```text
+[Decision Log]
+- 목적과 의도: Make failed test262 Realm construction leave no inaccessible GC roots while preserving exact heap-cap and error-Realm behavior.
+- 기존 구현 및 제약 조건: Intrinsic installers publish 28 families of Realm roots incrementally and use fallible LIFO temporary pins; wrapper allocation remains fallible after every registry has been populated.
+- 검토한 주요 대안: Publish nothing until setup completes; clean only the last inserted map; make every installer independently error-safe; or own all provisional roots and pins in one outer transaction.
+- 선택한 방식: Keep provisional registry publication, pin the fresh environment, capture the incoming pin depth, include wrapper attachment in the transaction, truncate the owned pin suffix on every result, and remove every Realm registry entry on error.
+- 다른 대안 대신 이 방식을 선택한 이유: Later installers require earlier intrinsic identities, map-specific cleanup misses other roots, and duplicating rollback in every installer creates drift. One lexical owner matches the actual observability boundary.
+- 장점, 단점 및 영향: Every hard-cap failure point is reusable and collectible before caller-Realm error materialization. The registry inventory remains manually synchronized across the VM fields, root tracer, rollback helper, and regression counter, so new Realm registries must update all four sites.
+```
+
 Observable materializers follow the same ownership rule. When an abstract
 operation reads heap values into a Rust collection and a later getter, proxy
 trap, coercion, call, or construction can re-enter JavaScript, every value is

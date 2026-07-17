@@ -4,6 +4,27 @@
 
 ### Fixed
 
+- `$262.createRealm()` construction is now transactional under the hard heap
+  object cap. The fresh global environment is pinned before any collecting
+  allocation, one lexical transaction owns every nested installer pin through
+  intrinsic population and final wrapper attachment, and every failure
+  truncates that pin suffix before removing all 28 per-Realm registry
+  families. The resulting partial object graph is collectible before the
+  caller Realm materializes its `RangeError`. Regressions sweep every failing
+  capacity through the production host path, repeat the final-wrapper
+  boundary, prove exact-cap success and later VM reuse, and force collection
+  both before intrinsic publication and while the complete provisional graph
+  is live. The current and preceding release binaries produce the same
+  **109 pass / 8 fail / 69 skip** result across all 186 pinned Test262 files
+  containing `$262.createRealm`; Promise remains **433/0/270**, dynamic import
+  **620/0/384**, and the supported subset **12751/0/7687**. Local gates include
+  tooling **100/100**, Rust lib/unit **90/90**, builtins **458/458**, modules
+  **31/31**, and Fuel **24/24**. Feature commit `87741b1` passed CI
+  `29587781649` and full matrix `29587781683`; all 30 result files at
+  `/tmp/ruja-artifacts-realm-rollback-feature.S47HSt` are byte-for-byte
+  identical to the preceding hard-heap baseline, preserving **30159 pass /
+  6330 fail / 11816 skip / 12 timeout / 0 error / 48317 total** (**62.4%** of
+  all files, **82.7%** of executed files).
 - Catchable errors can now settle already-created Promises at an exact heap
   object cap. Error materialization pins the operation Realm prototype, tries
   one rooted GC allocation, and falls back only on typed `HeapLimitExceeded`
