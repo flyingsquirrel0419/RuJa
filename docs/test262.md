@@ -30,7 +30,7 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 62.3% of all matrix files; 82.6% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 62.1% of all matrix files; 82.6% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (12751 pass / 0 fail on current Test262; 12752 / 0 on the pinned checkout) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
@@ -6548,8 +6548,8 @@ Feature commit `0581788` passed CI `29549608490` and full matrix
 `29549608468`. Against the Promise setup-rejection feature baseline, 29 of 30
 result artifacts at `/tmp/ruja-artifacts-promise-finally-feature.klMTHm` are
 byte-for-byte identical. Only built-ins changes, by exactly **+24 pass / -24
-skip**. The aggregate is **30088 pass / 6334 fail / 11883 skip / 12 timeout /
-0 error / 48317 total / 36422 pass-or-fail executed**, or **62.3%** of all
+skip**. The aggregate is **30088 pass / 6334 fail / 12033 skip / 12 timeout /
+0 error / 48467 total / 36422 pass-or-fail executed**, or **62.1%** of all
 files and **82.6%** of executed files.
 
 [Decision Log]
@@ -6579,6 +6579,74 @@ files and **82.6%** of executed files.
   resolving-function path and allocate/queue accordingly; the five remaining
   Promise failures and the older async-runtime string/Fuel fallback are
   separate bounded follow-ups.
+
+## Promise constructor ordering and allocation roots
+
+Promise construction now follows the required observable order: require
+construction, validate that the executor is callable, read
+`NewTarget.prototype`, allocate the Promise, create resolving functions, and
+finally invoke the executor. `Promise` is classified as an internally
+allocating native constructor, so generic native dispatch no longer performs
+an ordinary-object allocation and prototype read before `promise_constructor`
+can reject an omitted or non-callable executor. A callable executor still
+observes exactly one prototype read, preserves an abrupt getter value by
+identity, and is not invoked when that read fails. TypeErrors come from the
+target Promise Realm, while a non-object prototype still falls back to the
+NewTarget Realm's `%Promise.prototype%`.
+
+The observable prototype is pinned before the collecting Promise allocation,
+and the fresh Promise is pinned before resolving-state allocation. A heap-cap
+regression first reproduced the old slot reuse, where collection replaced the
+new Promise with the resolving-state object, and now verifies that the returned
+value remains a Promise. `tools/test262_promise_constructor_order_admission.txt`
+freezes only
+`built-ins/Promise/get-prototype-abrupt-executor-not-callable.js` with its
+exact `Reflect` and `Reflect.construct` feature gates; runner and analyzer pass
+**1/1** without admitting the adjacent callable-executor case.
+
+Broad `built-ins/Promise` is **388 pass / 0 fail / 315 skip / 703 total** under
+the normal boundary and **699/4/0/703** with every gate lifted. The remaining
+four failures are the paired `allKeyed` and `allSettledKeyed` Proxy
+`[[GetOwnProperty]]` cases. The supported subset remains
+**12751/0/7687/20438**, Python tooling is **97/97**, and Rust builtins are
+**452/452**. All-target/all-feature tests and builds, Clippy with warnings
+denied, formatting, release, and wasm32 checks pass. GPT and Umans found no
+high- or medium-severity issue introduced by the final diff.
+
+Feature commit `568171c` and CI-environment follow-up `c224613` passed CI
+`29552437436` and full matrix `29552437437`. Against the Promise-finally
+baseline, 29 of 30 result artifacts at
+`/tmp/ruja-artifacts-promise-constructor-order-feature.KVXx1G` are
+byte-for-byte identical. Only built-ins changes, by exactly **+1 pass / -1
+skip**. The aggregate is **30089 pass / 6334 fail / 12032 skip / 12 timeout /
+0 error / 48467 total / 36423 pass-or-fail executed**, or **62.1%** of all
+files and **82.6%** of executed files.
+
+[Decision Log]
+- 목적과 의도: enforce Promise constructor ordering without moving unrelated
+  Promise or generic construction behavior into the same change, and prevent
+  allocation-time collection from invalidating the new Promise.
+- 기존 구현 및 제약 조건: generic native construction observed
+  `NewTarget.prototype` before entering `promise_constructor`; the constructor
+  then allocated a Promise outside `Vm::alloc` and held it only in a Rust local
+  while allocating resolving state.
+- 검토한 주요 대안: special-case the single Test262 file; reorder validation
+  in generic construction; precompute and cache the prototype; classify Promise
+  with the existing internal-allocation path; or redesign native constructor
+  metadata before fixing the observable bug.
+- 선택한 방식: route Promise through the established internally allocating
+  native path, preserve its existing local algorithm order, use collecting
+  `Vm::alloc`, and pin the prototype and Promise at their exact allocation
+  boundaries.
+- 다른 대안 대신 이 방식을 선택한 이유: generic reordering would break
+  ordinary constructors, caching would hide observable access, a test-specific
+  branch would encode the corpus, and constructor metadata redesign is broader
+  than this one-file semantic repair.
+- 장점, 단점 및 영향: the exact ordering case and allocation-time GC failure
+  are fixed with no Promise-corpus regression. Name-based internal-constructor
+  classification remains an architectural follow-up; pre-existing Reflect
+  argument rooting and native-to-interpreted Realm tracking are recorded as
+  separate units rather than hidden in this patch.
 
 ## Why the full-suite rate is not higher
 

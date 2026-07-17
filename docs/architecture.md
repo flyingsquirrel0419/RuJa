@@ -44,6 +44,13 @@ marked per GC step, avoiding long pauses. There is no generational collector.
 accumulate memory before a collection. A `gc_pins` stack lets call paths pin
 heap values held in Rust locals across allocations that could trigger a GC.
 
+Native constructors that allocate specialized heap objects use an internal
+allocation dispatch path. This lets each constructor perform specification
+validation before the observable `NewTarget.prototype` lookup instead of
+preallocating an ordinary object in generic dispatch. Values returned by that
+lookup, and fresh specialized objects not yet linked from another heap object,
+must remain on `gc_pins` across every collecting `Vm::alloc` call.
+
 ---
 
 **Next:** [Features](features.md) · [Known limitations](limitations.md) · [Back to README](../README.md)

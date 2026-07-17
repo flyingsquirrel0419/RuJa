@@ -4,6 +4,20 @@
 
 ### Fixed
 
+- Promise construction now validates executor callability before observing
+  `NewTarget.prototype`. Promise uses its internally allocating native path,
+  while observable prototype values and the fresh Promise remain GC-rooted
+  across instance and resolving-state allocation. Regressions cover abrupt
+  getter identity, getter-before-executor order, zero executor calls on
+  prototype failure, target- and NewTarget-Realm behavior, and forced
+  allocation-time collection. Exact Test262 admission is **1/1**; broad
+  Promise is **388/0/315** normally and **699/4** with every gate lifted, the
+  supported subset remains **12751/0/7687**, tooling is **97/97**, and Rust
+  builtins are **452/452**. Feature commit `568171c` plus CI portability
+  follow-up `c224613` passed CI `29552437436` and full matrix `29552437437`;
+  only built-ins changes by **+1 pass / -1 skip**, producing **30089 pass /
+  6334 fail / 12032 skip / 12 timeout / 0 error / 48467 total** (**62.1%** of
+  all files, **82.6%** of executed files).
 - `Promise.prototype.finally` now performs receiver validation and
   `SpeciesConstructor`, creates Realm-correct anonymous `ThenFinally` and
   `CatchFinally` built-ins, calls `onFinally` with no arguments, applies the
@@ -21,8 +35,8 @@
   subset remains **12751/0/7687**, tooling is **96/96**, and Rust builtins are
   **452/452**. Feature commit `0581788` passed CI `29549608490` and full
   matrix `29549608468`; only built-ins changes by **+24 pass / -24 skip**,
-  producing **30088 pass / 6334 fail / 11883 skip / 12 timeout / 0 error /
-  48317 total** (**62.3%** of all files, **82.6%** of executed files).
+  producing **30088 pass / 6334 fail / 12033 skip / 12 timeout / 0 error /
+  48467 total** (**62.1%** of all files, **82.6%** of executed files).
 - Promise combinators now materialize catchable native setup failures as real
   method-Realm Error objects instead of rejection strings, preserve explicit
   thrown-value identity, and propagate non-catchable host aborts. A shared

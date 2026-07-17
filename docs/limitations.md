@@ -85,7 +85,7 @@ guarantees, run RuJa in a separately killable process as well.
   scoped subset of ES5.1 + selected ES2015+ features (see
   [test262.md](test262.md#supported-subset) for the exact list). The full
   suite is run in CI (excluding `intl402`/`staging`) with a baseline pass
-  rate of 62.3% of all matrix files and 82.6% of executed files; within the
+  rate of 62.1% of all matrix files and 82.6% of executed files; within the
   supported subset, tests currently run at 100%.
   Full ES conformance is not claimed. See
   [test262.md](test262.md) for current numbers and the failure breakdown.
@@ -129,7 +129,9 @@ guarantees, run RuJa in a separately killable process as well.
   PromiseResolve, observable reaction, original-completion, Realm, and GC
   semantics required by its complete 29-file corpus. The four standard
   combinator directories consequently pass all 390 files with their gates
-  lifted. Five broader Promise edge cases remain separately gated.
+  lifted. Promise construction validates executor callability before
+  observing `NewTarget.prototype` and roots its instance across resolving-state
+  allocation. Four broader Promise edge cases remain separately gated.
   Async iterator helpers remain a separate unsupported surface.
 - `Vm` is `Send` (but not `Sync`): the engine uses `Arc`/`Mutex`/atomics
   for shared ownership and interior mutability, so a `Vm` can be moved
