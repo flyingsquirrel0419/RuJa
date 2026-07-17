@@ -1333,17 +1333,17 @@ pub(crate) fn native_constructor_prototype_with_default(
     intrinsic: &str,
     fallback: Value,
 ) -> error::Result<Value> {
-    if let Some(proto) = vm.current_native_new_target_prototype.clone() {
+    if let Some(proto) = vm.current_native_new_target_prototype().cloned() {
         if matches!(proto, Value::Object(_)) {
             return Ok(proto);
         }
-    } else if let Some(new_target) = vm.current_native_new_target.clone() {
+    } else if let Some(new_target) = vm.current_native_new_target().cloned() {
         let proto = vm.get_property_by_key(&new_target, &PropertyKey::from("prototype"))?;
         if matches!(proto, Value::Object(_)) {
             return Ok(proto);
         }
     }
-    if let Some(new_target) = vm.current_native_new_target.clone() {
+    if let Some(new_target) = vm.current_native_new_target().cloned() {
         return vm.constructor_realm_default_prototype(&new_target, intrinsic, fallback);
     }
     Ok(fallback)
@@ -3855,10 +3855,10 @@ fn new_object_in_current_realm(vm: &mut Vm) -> error::Result<Value> {
 
 fn object_constructor(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
     let has_distinct_new_target = match (
-        vm.current_native_new_target.as_ref(),
-        vm.current_native_callee.as_ref(),
+        vm.current_native_new_target().cloned(),
+        vm.current_native_callee().cloned(),
     ) {
-        (Some(new_target), Some(active_function)) => !vm.strict_eq(new_target, active_function),
+        (Some(new_target), Some(active_function)) => !vm.strict_eq(&new_target, &active_function),
         _ => false,
     };
     if has_distinct_new_target {
@@ -6747,7 +6747,7 @@ pub(crate) fn object_define_property_result(
 // Minimal stubs to keep the crate compiling while parser/lexer work is in progress.
 
 fn active_error_constructor_prototype(vm: &mut Vm) -> error::Result<Value> {
-    if let Some(callee) = vm.current_native_callee.clone() {
+    if let Some(callee) = vm.current_native_callee().cloned() {
         let proto = vm.get_property_by_key(&callee, &PropertyKey::from("prototype"))?;
         if matches!(proto, Value::Object(_)) {
             return Ok(proto);
@@ -6757,7 +6757,7 @@ fn active_error_constructor_prototype(vm: &mut Vm) -> error::Result<Value> {
 }
 
 fn active_error_constructor_name(vm: &mut Vm) -> Arc<str> {
-    let Some(Value::Object(idx)) = vm.current_native_callee.as_ref() else {
+    let Some(Value::Object(idx)) = vm.current_native_callee() else {
         return Arc::from("Error");
     };
     vm.heap.with_obj(idx.0, |obj| {
@@ -6819,7 +6819,7 @@ fn error_object_for_constructor(vm: &mut Vm, this: Option<Value>) -> error::Resu
             if is_global {
                 let proto = active_error_constructor_prototype(vm)?;
                 Ok(new_error_object(vm, proto)?)
-            } else if vm.current_native_new_target.is_some() {
+            } else if vm.current_native_new_target().is_some() {
                 let proto = new_target_error_constructor_prototype(vm)?;
                 Ok(new_error_object(vm, proto)?)
             } else {
@@ -6829,7 +6829,7 @@ fn error_object_for_constructor(vm: &mut Vm, this: Option<Value>) -> error::Resu
         _ => {
             // Called as Error(msg) or TypeError(msg) without new: create a
             // fresh object from the active constructor's prototype.
-            let proto = if vm.current_native_new_target.is_some() {
+            let proto = if vm.current_native_new_target().is_some() {
                 new_target_error_constructor_prototype(vm)?
             } else {
                 active_error_constructor_prototype(vm)?
@@ -7125,12 +7125,11 @@ fn iterator_constructor(
     _args: &[Value],
     _this: Option<Value>,
 ) -> error::Result<Value> {
-    let Some(new_target) = vm.current_native_new_target.clone() else {
+    let Some(new_target) = vm.current_native_new_target().cloned() else {
         return Err(Error::type_err("Iterator must be subclassed"));
     };
     if vm
-        .current_native_callee
-        .as_ref()
+        .current_native_callee()
         .is_some_and(|callee| *callee == new_target)
     {
         return Err(Error::type_err("Iterator must be subclassed"));

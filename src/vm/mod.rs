@@ -2,6 +2,8 @@
 
 mod async_runtime;
 mod conversions;
+#[cfg(test)]
+mod execution_context_tests;
 pub(crate) mod ops;
 mod property;
 
@@ -63,6 +65,25 @@ pub(crate) struct ExternalJobState {
     pub next_wait_id: u64,
 }
 
+#[derive(Clone)]
+pub(crate) enum ExecutionContextKind {
+    Interpreted {
+        callee: Value,
+    },
+    Native {
+        callee: Value,
+        new_target: Option<Value>,
+        new_target_prototype: Option<Value>,
+    },
+}
+
+#[derive(Clone)]
+pub(crate) struct ExecutionContext {
+    /// The lexical environment whose global root owns this call's intrinsics.
+    pub(crate) realm_env: GcIdx,
+    pub(crate) kind: ExecutionContextKind,
+}
+
 #[allow(dead_code)]
 pub struct Vm {
     pub(crate) heap: Heap,
@@ -72,14 +93,10 @@ pub struct Vm {
     pub(crate) pending_new_target: Option<Value>,
     /// Observable `newTarget.prototype` value already read by `construct`.
     pub(crate) pending_new_target_prototype: Option<Value>,
-    /// Native functions sometimes need the active callee object, for example
-    /// Error subclass constructors called without `new`.
-    pub(crate) current_native_callee: Option<Value>,
-    /// Native constructors need the active `new.target` for
-    /// OrdinaryCreateFromConstructor-style allocation.
-    pub(crate) current_native_new_target: Option<Value>,
-    /// Cached observable prototype value for the active native constructor.
-    pub(crate) current_native_new_target_prototype: Option<Value>,
+    /// Calls and resumptions are ordered independently from bytecode frames:
+    /// a native builtin can re-enter interpreted code before another frame is
+    /// available, and generators later resume beneath a different native call.
+    pub(crate) execution_contexts: Vec<ExecutionContext>,
     pub(crate) stack: Vec<Value>,
     pub(crate) frames: Vec<CallFrame>,
     pub(crate) object_proto: Value,
@@ -549,9 +566,7 @@ impl Vm {
             global_this: Value::Undefined,
             pending_new_target: None,
             pending_new_target_prototype: None,
-            current_native_callee: None,
-            current_native_new_target: None,
-            current_native_new_target_prototype: None,
+            execution_contexts: Vec::new(),
             stack: Vec::new(),
             frames: Vec::new(),
             object_proto: Value::Undefined,
@@ -1420,9 +1435,7 @@ impl Vm {
         }
         // Run only this function's frame. interpret returns when its frame pops.
         let target_depth = self.frames.len() - 1;
-        let result = self
-            .interpret_to_depth(target_depth)
-            .map_err(|error| self.materialize_current_interpreted_error(error));
+        let result = self.interpret_to_depth(target_depth);
         // On error, the function frame is still on the stack; pop it so the
         // caller's catch handler can be found by the enclosing interpret_catch.
         if result.is_err() {
@@ -1769,9 +1782,7 @@ impl Vm {
             }
         }
 
-        let result = self
-            .interpret_to_depth(target_depth)
-            .map_err(|error| self.materialize_current_interpreted_error(error));
+        let result = self.interpret_to_depth(target_depth);
 
         // Clear the resume value on the frame so a subsequent resume (or a
         // GC pass between resumes) does not observe a stale value.
@@ -1878,11 +1889,14 @@ impl Vm {
     }
 
     fn interpret(&mut self) -> error::Result<Value> {
-        self.interpret_catch(None, None)
+        self.with_current_frame_execution_context(|vm| vm.interpret_catch(None, None))
     }
 
     fn interpret_to_depth(&mut self, target_depth: usize) -> error::Result<Value> {
-        self.interpret_catch(Some(target_depth), None)
+        self.with_current_frame_execution_context(|vm| {
+            vm.interpret_catch(Some(target_depth), None)
+                .map_err(|error| vm.materialize_current_interpreted_error(error))
+        })
     }
 
     fn interpret_to_depth_until_ip(
@@ -1890,7 +1904,9 @@ impl Vm {
         target_depth: usize,
         stop_ip: usize,
     ) -> error::Result<Value> {
-        self.interpret_catch(Some(target_depth), Some((target_depth, stop_ip)))
+        self.with_current_frame_execution_context(|vm| {
+            vm.interpret_catch(Some(target_depth), Some((target_depth, stop_ip)))
+        })
     }
 
     /// Build a catchable `Error` object for a native (non-thrown) error, so
@@ -2089,7 +2105,10 @@ impl Vm {
 }
 
 enum FuncCallInfo {
-    Native(NativeFn),
+    Native {
+        func: NativeFn,
+        closure: GcIdx,
+    },
     Interpreted {
         func: std::sync::Arc<crate::function::FunctionDef>,
         closure: GcIdx,
@@ -2111,21 +2130,86 @@ impl Vm {
         Ok(self.to_string(v)?.to_string())
     }
 
+    pub(crate) fn with_execution_context<T>(
+        &mut self,
+        context: ExecutionContext,
+        operation: impl FnOnce(&mut Self) -> T,
+    ) -> T {
+        let depth = self.execution_contexts.len();
+        self.execution_contexts.push(context);
+        let result = operation(self);
+        debug_assert_eq!(self.execution_contexts.len(), depth + 1);
+        self.execution_contexts.truncate(depth);
+        result
+    }
+
+    fn with_current_frame_execution_context<T>(
+        &mut self,
+        operation: impl FnOnce(&mut Self) -> T,
+    ) -> T {
+        // Call setup already owns an interpreted context, but a frame context
+        // must sit above it while bytecode runs and when a suspended frame is
+        // later resumed beneath an unrelated native caller.
+        let Some((realm_env, callee)) = self
+            .frames
+            .last()
+            .map(|frame| (frame.env, frame.callee.clone()))
+        else {
+            return operation(self);
+        };
+        self.with_execution_context(
+            ExecutionContext {
+                realm_env,
+                kind: ExecutionContextKind::Interpreted { callee },
+            },
+            operation,
+        )
+    }
+
+    pub(crate) fn current_native_callee(&self) -> Option<&Value> {
+        match &self.execution_contexts.last()?.kind {
+            ExecutionContextKind::Native { callee, .. } => Some(callee),
+            ExecutionContextKind::Interpreted { .. } => None,
+        }
+    }
+
+    pub(crate) fn current_native_new_target(&self) -> Option<&Value> {
+        match &self.execution_contexts.last()?.kind {
+            ExecutionContextKind::Native { new_target, .. } => new_target.as_ref(),
+            ExecutionContextKind::Interpreted { .. } => None,
+        }
+    }
+
+    pub(crate) fn current_native_new_target_prototype(&self) -> Option<&Value> {
+        match &self.execution_contexts.last()?.kind {
+            ExecutionContextKind::Native {
+                new_target_prototype,
+                ..
+            } => new_target_prototype.as_ref(),
+            ExecutionContextKind::Interpreted { .. } => None,
+        }
+    }
+
     pub(crate) fn current_realm_global_env(&self) -> GcIdx {
-        let env = self.native_callee_closure().unwrap_or_else(|| {
-            self.frames
-                .last()
-                .map(|frame| frame.env)
-                .unwrap_or(self.global)
-        });
+        let env = self
+            .execution_contexts
+            .last()
+            .map(|context| context.realm_env)
+            .or_else(|| self.frames.last().map(|frame| frame.env))
+            .unwrap_or(self.global);
         crate::environment::global_env_root(&self.heap, env)
     }
 
     pub(crate) fn current_interpreted_realm_global_env(&self) -> GcIdx {
-        let env = self
-            .frames
+        let context_env = self
+            .execution_contexts
             .last()
-            .map(|frame| frame.env)
+            .and_then(|context| match &context.kind {
+                ExecutionContextKind::Interpreted { .. } => Some(context.realm_env),
+                ExecutionContextKind::Native { .. } => None,
+            });
+        let env = context_env
+            .or_else(|| self.frames.last().map(|frame| frame.env))
             .unwrap_or(self.global);
         crate::environment::global_env_root(&self.heap, env)
     }

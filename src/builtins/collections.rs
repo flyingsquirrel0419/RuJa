@@ -1131,7 +1131,7 @@ pub(crate) fn weak_ref_constructor(
     args: &[Value],
     _this: Option<Value>,
 ) -> error::Result<Value> {
-    if vm.current_native_new_target.is_none() {
+    if vm.current_native_new_target().is_none() {
         return Err(Error::type_err("WeakRef constructor requires new"));
     }
     let target = args.first().cloned().unwrap_or(Value::Undefined);
@@ -1204,7 +1204,7 @@ pub(crate) fn finalization_registry_constructor(
     args: &[Value],
     _this: Option<Value>,
 ) -> error::Result<Value> {
-    if vm.current_native_new_target.is_none() {
+    if vm.current_native_new_target().is_none() {
         return Err(Error::type_err(
             "FinalizationRegistry constructor requires new",
         ));
@@ -1459,7 +1459,7 @@ pub(crate) fn map_constructor(
     _args: &[Value],
     _this: Option<Value>,
 ) -> error::Result<Value> {
-    if vm.current_native_new_target.is_none() {
+    if vm.current_native_new_target().is_none() {
         return Err(Error::type_err("Map constructor must be called with new"));
     }
     let proto = native_constructor_prototype_with_default(vm, "Map", vm.map_proto.clone())?;
@@ -1912,7 +1912,7 @@ pub(crate) fn set_constructor(
     _args: &[Value],
     _this: Option<Value>,
 ) -> error::Result<Value> {
-    if vm.current_native_new_target.is_none() {
+    if vm.current_native_new_target().is_none() {
         return Err(Error::type_err("Set constructor must be called with new"));
     }
     let proto = native_constructor_prototype_with_default(vm, "Set", vm.set_proto.clone())?;
@@ -1953,7 +1953,7 @@ pub(crate) fn symbol_constructor(
     args: &[Value],
     _: Option<Value>,
 ) -> error::Result<Value> {
-    if vm.current_native_new_target.is_some() {
+    if vm.current_native_new_target().is_some() {
         return Err(Error::type_err("Symbol is not a constructor"));
     }
     let desc = match args.first().unwrap_or(&Value::Undefined) {
@@ -2068,7 +2068,7 @@ pub(crate) fn promise_constructor(
     args: &[Value],
     _this: Option<Value>,
 ) -> error::Result<Value> {
-    if vm.current_native_new_target.is_none() {
+    if vm.current_native_new_target().is_none() {
         return Err(Error::type_err(
             "Promise constructor must be called with new",
         ));

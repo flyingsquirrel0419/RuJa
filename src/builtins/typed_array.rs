@@ -57,7 +57,7 @@ pub(crate) fn array_buffer_constructor(
     args: &[Value],
     _this: Option<Value>,
 ) -> error::Result<Value> {
-    if vm.current_native_new_target.is_none() {
+    if vm.current_native_new_target().is_none() {
         return Err(Error::type_err("ArrayBuffer constructor requires new"));
     }
 
@@ -110,7 +110,7 @@ pub(crate) fn shared_array_buffer_constructor(
     args: &[Value],
     _this: Option<Value>,
 ) -> error::Result<Value> {
-    if vm.current_native_new_target.is_none() {
+    if vm.current_native_new_target().is_none() {
         return Err(Error::type_err(
             "SharedArrayBuffer constructor requires new",
         ));
@@ -1457,7 +1457,7 @@ pub(crate) fn data_view_constructor(
     args: &[Value],
     _this: Option<Value>,
 ) -> error::Result<Value> {
-    if vm.current_native_new_target.is_none() {
+    if vm.current_native_new_target().is_none() {
         return Err(Error::type_err("DataView constructor requires new"));
     }
 
@@ -5446,7 +5446,7 @@ fn typed_array_constructor_with_kind(
     args: &[Value],
     kind: crate::value::TypedArrayKind,
 ) -> error::Result<Value> {
-    if vm.current_native_new_target.is_none() {
+    if vm.current_native_new_target().is_none() {
         return Err(Error::type_err(
             "TypedArray constructor requires new".to_string(),
         ));
@@ -5606,8 +5606,8 @@ fn typed_array_constructor_prototype(
     kind: crate::value::TypedArrayKind,
 ) -> error::Result<Value> {
     let fallback_proto = vm
-        .current_native_callee
-        .clone()
+        .current_native_callee()
+        .cloned()
         .and_then(|callee| {
             vm.get_property_by_key(&callee, &PropertyKey::from("prototype"))
                 .ok()

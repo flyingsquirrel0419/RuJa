@@ -509,13 +509,13 @@ fn dynamic_function_constructor(
             "GeneratorFunction"
         };
         native_constructor_prototype_with_default(vm, intrinsic, fallback_function_proto.clone())?
-    } else if let Some(proto) = vm.current_native_new_target_prototype.clone() {
+    } else if let Some(proto) = vm.current_native_new_target_prototype().cloned() {
         if matches!(proto, Value::Object(_)) {
             proto
         } else {
             fallback_function_proto.clone()
         }
-    } else if let Some(new_target) = vm.current_native_new_target.clone() {
+    } else if let Some(new_target) = vm.current_native_new_target().cloned() {
         let proto = vm.get_property_by_key(&new_target, &PropertyKey::from("prototype"))?;
         if matches!(proto, Value::Object(_)) {
             proto

@@ -2704,14 +2704,26 @@ impl Vm {
         if let Some(v) = &self.pending_new_target_prototype {
             Self::push_value_roots(&mut roots, v);
         }
-        if let Some(v) = &self.current_native_callee {
-            Self::push_value_roots(&mut roots, v);
-        }
-        if let Some(v) = &self.current_native_new_target {
-            Self::push_value_roots(&mut roots, v);
-        }
-        if let Some(v) = &self.current_native_new_target_prototype {
-            Self::push_value_roots(&mut roots, v);
+        for context in &self.execution_contexts {
+            roots.push(context.realm_env.0);
+            match &context.kind {
+                ExecutionContextKind::Interpreted { callee } => {
+                    Self::push_value_roots(&mut roots, callee);
+                }
+                ExecutionContextKind::Native {
+                    callee,
+                    new_target,
+                    new_target_prototype,
+                } => {
+                    Self::push_value_roots(&mut roots, callee);
+                    if let Some(value) = new_target {
+                        Self::push_value_roots(&mut roots, value);
+                    }
+                    if let Some(value) = new_target_prototype {
+                        Self::push_value_roots(&mut roots, value);
+                    }
+                }
+            }
         }
         for v in &self.stack {
             Self::push_value_roots(&mut roots, v);

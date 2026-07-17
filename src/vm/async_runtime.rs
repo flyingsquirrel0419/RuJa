@@ -48,9 +48,7 @@ impl Vm {
         frame.module_evaluation = true;
         self.frames.push(frame);
         let target_depth = self.frames.len() - 1;
-        let result = self
-            .interpret_to_depth(target_depth)
-            .map_err(|error| self.materialize_current_interpreted_error(error));
+        let result = self.interpret_to_depth(target_depth);
         let suspended = self
             .frames
             .get(target_depth)
@@ -354,9 +352,7 @@ impl Vm {
         ]);
         let target_depth =
             self.push_async_function_frame(callee, fdef, env, this_val, args, new_target);
-        let result = self
-            .interpret_to_depth(target_depth)
-            .map_err(|error| self.materialize_current_interpreted_error(error));
+        let result = self.interpret_to_depth(target_depth);
         let suspended = self
             .frames
             .get(target_depth)
@@ -454,9 +450,7 @@ impl Vm {
         }
         self.frames.push(frame);
         let target_depth = self.frames.len() - 1;
-        let run_result = self
-            .interpret_to_depth(target_depth)
-            .map_err(|error| self.materialize_current_interpreted_error(error));
+        let run_result = self.interpret_to_depth(target_depth);
         let suspended = self
             .frames
             .get(target_depth)
@@ -812,16 +806,10 @@ impl Vm {
     }
 
     pub(crate) fn native_callee_closure(&self) -> Option<GcIdx> {
-        let Value::Object(idx) = self.current_native_callee.as_ref()? else {
-            return None;
-        };
-        self.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Function(f) = obj {
-                Some(f.closure)
-            } else {
-                None
-            }
-        })
+        match &self.execution_contexts.last()?.kind {
+            ExecutionContextKind::Native { .. } => Some(self.execution_contexts.last()?.realm_env),
+            ExecutionContextKind::Interpreted { .. } => None,
+        }
     }
 
     pub(crate) fn constructor_realm(&self, constructor: &Value) -> error::Result<GcIdx> {
@@ -1089,9 +1077,10 @@ impl Vm {
         let kind_info = self.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Function(f) = obj {
                 match &f.kind {
-                    crate::value::FunctionKind::Native { func, .. } => {
-                        Some(FuncCallInfo::Native(*func))
-                    }
+                    crate::value::FunctionKind::Native { func, .. } => Some(FuncCallInfo::Native {
+                        func: *func,
+                        closure: f.closure,
+                    }),
                     crate::value::FunctionKind::Interpreted { func } => {
                         Some(FuncCallInfo::Interpreted {
                             func: func.clone(),
@@ -1120,26 +1109,24 @@ impl Vm {
             }
         });
         match kind_info {
-            Some(FuncCallInfo::Native(f)) => {
-                let saved_native_callee = self.current_native_callee.replace(Value::Object(idx));
-                let saved_native_new_target = self.current_native_new_target.take();
-                let saved_native_new_target_prototype =
-                    self.current_native_new_target_prototype.take();
-                self.current_native_new_target = self.pending_new_target.take();
-                self.current_native_new_target_prototype = self.pending_new_target_prototype.take();
-                let result = match f(self, args, this) {
+            Some(FuncCallInfo::Native { func: f, closure }) => {
+                let context = ExecutionContext {
+                    realm_env: closure,
+                    kind: ExecutionContextKind::Native {
+                        callee: Value::Object(idx),
+                        new_target: self.pending_new_target.take(),
+                        new_target_prototype: self.pending_new_target_prototype.take(),
+                    },
+                };
+                self.with_execution_context(context, |vm| match f(vm, args, this) {
                     Err(err) if err.catchable() && err.thrown_value.is_none() => {
-                        match self.make_error_value(&err) {
-                            Ok(thrown) => Err(Error::thrown(thrown, &self.heap)),
+                        match vm.make_error_value(&err) {
+                            Ok(thrown) => Err(Error::thrown(thrown, &vm.heap)),
                             Err(err) => Err(err),
                         }
                     }
                     result => result,
-                };
-                self.current_native_callee = saved_native_callee;
-                self.current_native_new_target = saved_native_new_target;
-                self.current_native_new_target_prototype = saved_native_new_target_prototype;
-                result
+                })
             }
             Some(FuncCallInfo::Interpreted {
                 func,
@@ -1150,16 +1137,31 @@ impl Vm {
                 lexical_new_target,
                 home_object,
             }) => {
-                // Class constructors cannot be called without `new`.
-                // `construct()` sets `pending_new_target` before calling us;
-                // it is consumed later by `execute_chunk_func`. Super()
-                // calls also go through `call_function` but are valid.
+                let context_depth = self.execution_contexts.len();
+                self.execution_contexts.push(ExecutionContext {
+                    realm_env: closure,
+                    kind: ExecutionContextKind::Interpreted {
+                        callee: Value::Object(idx),
+                    },
+                });
+                // The interpreted context must exist before call setup because
+                // sloppy this conversion and arguments/rest allocation use the
+                // callee Realm before its bytecode frame is pushed.
                 if is_class_ctor && self.pending_new_target.is_none() {
-                    return Err(Error::type_err(
+                    let error = self.materialize_current_interpreted_error(Error::type_err(
                         "Class constructor cannot be invoked without 'new'",
                     ));
+                    self.execution_contexts.truncate(context_depth);
+                    return Err(error);
                 }
-                let call_env = env::new_env(&self.heap, Some(closure), true)?;
+                let call_env = match env::new_env(&self.heap, Some(closure), true) {
+                    Ok(call_env) => call_env,
+                    Err(error) => {
+                        let error = self.materialize_current_interpreted_error(error.into());
+                        self.execution_contexts.truncate(context_depth);
+                        return Err(error);
+                    }
+                };
                 let call_env_pin_count = self.pin(&Value::Object(call_env));
                 let call_result = (|| {
                     // Declare every parameter binding as *uninitialized* (TDZ). The raw
@@ -1186,7 +1188,7 @@ impl Vm {
                         };
                         let arr = HeapObj::Array(crate::value::ArrayData::new(
                             rest,
-                            Some(self.array_proto.clone()),
+                            Some(self.array_prototype_for_env(call_env)),
                         ));
                         env::declare(
                             &self.heap,
@@ -1199,7 +1201,7 @@ impl Vm {
                     if !is_arrow {
                         let mut arg_array = crate::value::ArrayData::new(
                             args.to_vec(),
-                            Some(self.object_proto.clone()),
+                            Some(self.object_prototype_for_env(call_env)),
                         );
                         arg_array
                             .is_arguments
@@ -1284,7 +1286,7 @@ impl Vm {
                         let raw = this.unwrap_or(Value::Undefined);
                         if !func.chunk.is_strict {
                             if raw.is_nullish() {
-                                self.global_this.clone()
+                                self.realm_global_for_env(call_env)
                             } else {
                                 self.to_object(&raw)?
                             }
@@ -1461,6 +1463,10 @@ impl Vm {
                     }
                 })();
                 self.unpin_many(call_env_pin_count);
+                let call_result =
+                    call_result.map_err(|error| self.materialize_current_interpreted_error(error));
+                debug_assert_eq!(self.execution_contexts.len(), context_depth + 1);
+                self.execution_contexts.truncate(context_depth);
                 call_result
             }
             Some(FuncCallInfo::Bound {

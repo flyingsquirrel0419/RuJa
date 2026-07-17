@@ -1395,7 +1395,7 @@ fn date_parse_string(source: &str) -> f64 {
 }
 
 fn active_native_name(vm: &mut Vm) -> Option<Arc<str>> {
-    let callee = vm.current_native_callee.clone()?;
+    let callee = vm.current_native_callee().cloned()?;
     let Value::Object(idx) = callee else {
         return None;
     };

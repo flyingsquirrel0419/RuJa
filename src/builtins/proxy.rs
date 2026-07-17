@@ -84,7 +84,7 @@ pub(crate) fn proxy_revocable(
 }
 
 fn proxy_revoke(vm: &mut Vm, _args: &[Value], _this: Option<Value>) -> error::Result<Value> {
-    if let Some(Value::Object(idx)) = vm.current_native_callee.clone() {
+    if let Some(Value::Object(idx)) = vm.current_native_callee().cloned() {
         let proxy_idx = vm.heap.with_obj(idx.0, |o| {
             if let HeapObj::Function(f) = o {
                 let key = crate::value::PrivateSlotKey::Internal(Arc::from("__proxy_idx__"));
