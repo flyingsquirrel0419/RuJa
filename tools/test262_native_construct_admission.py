@@ -35,4 +35,15 @@ NATIVE_CONSTRUCT_FEATURES = {
         {"cross-realm", "Reflect"}
     ),
     "built-ins/Boolean/symbol-coercion.js": frozenset({"Symbol"}),
+    "built-ins/Date/is-a-constructor.js": frozenset({"Reflect.construct"}),
+    "built-ins/Date/subclassing.js": frozenset({"Reflect"}),
+    "built-ins/Date/proto-from-ctor-realm-zero.js": frozenset(
+        {"cross-realm", "Reflect"}
+    ),
+    "built-ins/Date/proto-from-ctor-realm-one.js": frozenset(
+        {"cross-realm", "Reflect"}
+    ),
+    "built-ins/Date/proto-from-ctor-realm-two.js": frozenset(
+        {"cross-realm", "Reflect"}
+    ),
 }

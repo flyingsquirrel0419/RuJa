@@ -14,3 +14,8 @@ built-ins/Number/return-abrupt-tonumber-value-symbol.js
 built-ins/Boolean/is-a-constructor.js
 built-ins/Boolean/proto-from-ctor-realm.js
 built-ins/Boolean/symbol-coercion.js
+built-ins/Date/is-a-constructor.js
+built-ins/Date/subclassing.js
+built-ins/Date/proto-from-ctor-realm-zero.js
+built-ins/Date/proto-from-ctor-realm-one.js
+built-ins/Date/proto-from-ctor-realm-two.js

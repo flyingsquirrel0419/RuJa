@@ -62,6 +62,7 @@ const DEFERRED_NATIVE_CONSTRUCTOR_SOURCES: &[&str] = &[
     "String",
     "Number",
     "Boolean",
+    "Date",
     "Proxy",
     "BigInt",
     "Symbol",
@@ -85,8 +86,6 @@ const DEFERRED_NATIVE_CONSTRUCTOR_SOURCES: &[&str] = &[
     "BigInt64Array",
     "BigUint64Array",
 ];
-
-const PREALLOCATED_NATIVE_CONSTRUCTOR_SOURCES: &[&str] = &["Date"];
 
 const NON_CONSTRUCTIBLE_NATIVE_FUNCTION_SOURCES: &[&str] = &[
     "Function.prototype",
@@ -113,7 +112,7 @@ const FOREIGN_EAGER_NATIVE_CONSTRUCTOR_SOURCES: &[&str] = &[
     "(async function* () {}).constructor",
 ];
 
-fn realm_registry_counts(vm: &Vm) -> [usize; 28] {
+fn realm_registry_counts(vm: &Vm) -> [usize; 29] {
     [
         vm.realm_globals.len(),
         vm.realm_object_prototypes.len(),
@@ -128,6 +127,7 @@ fn realm_registry_counts(vm: &Vm) -> [usize; 28] {
         vm.realm_async_generator_function_constructors.len(),
         vm.realm_async_generator_function_prototypes.len(),
         vm.realm_primitive_prototypes.len(),
+        vm.realm_date_prototypes.len(),
         vm.realm_eval_functions.len(),
         vm.realm_throw_type_errors.len(),
         vm.realm_function_prototypes.len(),
@@ -183,7 +183,7 @@ fn assert_main_realm_range_error(vm: &Vm, error: &crate::error::Error) {
 fn assert_failed_realm_attempt(
     vm: &mut Vm,
     baseline_live: usize,
-    baseline_registries: [usize; 28],
+    baseline_registries: [usize; 29],
     baseline_pins: usize,
     extra_capacity: usize,
 ) {
@@ -305,17 +305,6 @@ fn native_constructor_allocation_modes_are_explicit() {
         assert_eq!(
             native_construct_mode(&vm, &constructor),
             Some(NativeConstructMode::InternalDeferredPrototype),
-            "unexpected construct mode for {source}"
-        );
-    }
-    for &source in PREALLOCATED_NATIVE_CONSTRUCTOR_SOURCES {
-        let constructor = vm
-            .run(source)
-            .expect("preallocating constructor should resolve");
-        assert!(vm.is_constructor_value(&constructor));
-        assert_eq!(
-            native_construct_mode(&vm, &constructor),
-            Some(NativeConstructMode::PreallocateReceiver),
             "unexpected construct mode for {source}"
         );
     }
@@ -734,6 +723,228 @@ fn primitive_wrapper_allocation_obeys_the_exact_heap_cap() {
     assert_eq!(vm.gc_pins.len(), baseline_pins);
     assert!(vm.pending_new_target.is_none());
     assert!(vm.pending_new_target_prototype.is_none());
+}
+
+#[test]
+fn date_constructor_defers_prototype_and_hides_date_value() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    assert_eq!(
+        vm.run(
+            r#"
+            var receiver = {};
+            var callCoercions = 0;
+            var poison = {
+              valueOf: function () {
+                callCoercions += 1;
+                throw new Error("coerced");
+              }
+            };
+            var direct = Date.call(receiver, poison);
+            var applied = Date.apply(receiver, [poison]);
+            var bound = Date.bind(receiver, poison)();
+            var receiverRejected = false;
+            try { Date.prototype.getTime.call(receiver); }
+            catch (error) { receiverRejected = error instanceof TypeError; }
+
+            function newTarget(log) {
+              var target = (function () {}).bind(null);
+              Object.defineProperty(target, "prototype", {
+                get: function () {
+                  log.push("prototype");
+                  return Date.prototype;
+                },
+                configurable: true
+              });
+              return target;
+            }
+
+            var log = [];
+            var one = Reflect.construct(Date, [{
+              valueOf: function () { log.push("value"); return 0; }
+            }], newTarget(log));
+            var oneLog = log.join(",");
+
+            log = [];
+            try {
+              Reflect.construct(Date, [{
+                valueOf: function () {
+                  log.push("abrupt");
+                  throw new Error("boom");
+                }
+              }], newTarget(log));
+            } catch (error) {}
+            var abruptLog = log.join(",");
+
+            log = [];
+            function value(name, number) {
+              return { valueOf: function () { log.push(name); return number; } };
+            }
+            var many = Reflect.construct(Date, [
+              value("year", 1970), value("month", 0), value("day", 1)
+            ], newTarget(log));
+
+            one.__time__ = 99;
+            delete one.__time__;
+            one.setTime(8);
+            [
+              typeof direct,
+              typeof applied,
+              typeof bound,
+              callCoercions,
+              receiverRejected,
+              Object.getOwnPropertyNames(receiver).length,
+              oneLog,
+              abruptLog,
+              log.join(","),
+              typeof Date.prototype.getTime.call(many) === "number",
+              one.getTime(),
+              Object.getOwnPropertyNames(one).length
+            ].join("|");
+            "#,
+        )
+        .expect("Date call/construct order should be observable"),
+        Value::String(
+            "string|string|string|0|true|0|value,prototype|abrupt|year,month,day,prototype|true|8|0"
+                .into()
+        )
+    );
+    assert!(vm.pending_new_target.is_none());
+    assert!(vm.pending_new_target_prototype.is_none());
+}
+
+#[test]
+fn date_constructor_uses_immutable_foreign_realm_intrinsics() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("GC hook should register");
+    assert_eq!(
+        vm.run(
+            r#"
+            var other = $262.createRealm().global;
+            var OtherDate = other.Date;
+            var OtherDatePrototype = OtherDate.prototype;
+            var C = new other.Function();
+            C.prototype = null;
+            var BoundNewTarget = C.bind(null);
+            var ProxyNewTarget = new Proxy(C, {});
+            var getTime = OtherDatePrototype.getTime;
+            var constructorShape =
+              Object.getPrototypeOf(OtherDate) === other.Function.prototype;
+            var methodShape =
+              Object.getPrototypeOf(getTime) === other.Function.prototype;
+            var callCoercions = 0;
+            var callResult = OtherDate.call({}, {
+              valueOf: function () { callCoercions += 1; throw new Error("coerced"); }
+            });
+            other.eval("Date = null;");
+            var bindingCleared = other.eval("Date === null;");
+            other.Date = { prototype: { wrong: true } };
+            OtherDate = null;
+            OtherDatePrototype = null;
+            forceGc();
+
+            var plain = Reflect.construct(Date, [0], C);
+            var bound = Reflect.construct(Date, [1], BoundNewTarget);
+            var proxied = Reflect.construct(Date, [2], ProxyNewTarget);
+            var plainPrototype = Object.getPrototypeOf(plain);
+            var realmError = false;
+            try { getTime.call({}); }
+            catch (error) { realmError = error instanceof other.TypeError; }
+
+            [
+              constructorShape,
+              methodShape,
+              bindingCleared,
+              plainPrototype !== plain,
+              plainPrototype.wrong === undefined,
+              Object.getPrototypeOf(plainPrototype) === other.Object.prototype,
+              plainPrototype.getTime === getTime,
+              Object.getPrototypeOf(bound) === plainPrototype,
+              Object.getPrototypeOf(proxied) === plainPrototype,
+              getTime.call(proxied),
+              typeof callResult,
+              callCoercions,
+              realmError
+            ].join("|");
+            "#,
+        )
+        .expect("Date fallback should use immutable foreign Realm intrinsics"),
+        Value::String("true|true|true|true|true|true|true|true|true|2|string|0|true".into())
+    );
+}
+
+#[test]
+fn date_prototype_result_survives_cap_triggered_gc() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn("capHeap", |vm, _, _| cap_heap_at_current_live_count(vm), 0)
+        .expect("heap-cap hook should register");
+
+    let result = vm.run(
+        r#"
+            var NewTarget = (function () {}).bind(null);
+            Object.defineProperty(NewTarget, "prototype", {
+              get: function () {
+                var prototype = { marker: 42 };
+                capHeap();
+                return prototype;
+              },
+              configurable: true
+            });
+            var date = Reflect.construct(Date, [{
+              valueOf: function () { return 1; }
+            }], NewTarget);
+            Object.getPrototypeOf(date).marker + Date.prototype.getTime.call(date);
+            "#,
+    );
+    vm.set_max_heap_objects(None);
+    assert_eq!(
+        result.expect("Date inputs and prototype should survive observable GC"),
+        Value::Number(43.0)
+    );
+}
+
+#[test]
+fn date_allocation_obeys_gc_retry_and_the_exact_heap_cap() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.gc();
+    let baseline_live = vm.heap.live_count();
+    let baseline_pins = vm.gc_pins.len();
+    for _ in 0..64 {
+        let _garbage = vm.new_object().expect("garbage object should allocate");
+    }
+    let limit = baseline_live + 1;
+    vm.set_max_heap_objects(Some(limit));
+    assert_eq!(
+        vm.run("new Date(123).getTime();")
+            .expect("Date allocation should collect garbage and use one cell"),
+        Value::Number(123.0)
+    );
+    assert!(vm.heap.live_count() <= limit);
+
+    vm.set_max_heap_objects(None);
+    vm.gc();
+    vm.set_max_heap_objects(Some(vm.heap.live_count()));
+    let error = vm
+        .run("new Date(1);")
+        .expect_err("a saturated heap must reject Date allocation");
+    vm.set_max_heap_objects(None);
+
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_main_realm_range_error(&vm, error.as_ref());
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert!(vm.pending_new_target.is_none());
+    assert!(vm.pending_new_target_prototype.is_none());
+    assert!(matches!(
+        vm.run("Date.call({}, { valueOf: function () { throw 1; } });"),
+        Ok(Value::String(_))
+    ));
 }
 
 #[test]

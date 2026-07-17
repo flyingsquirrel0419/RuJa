@@ -704,8 +704,6 @@ pub enum FunctionKind {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NativeConstructMode {
-    /// The VM creates the ordinary receiver before invoking the native body.
-    PreallocateReceiver,
     /// The native body allocates the result, but `.prototype` is observed first.
     InternalEagerPrototype,
     /// The native body controls whether and when `.prototype` is observed.

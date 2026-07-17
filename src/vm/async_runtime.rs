@@ -979,6 +979,13 @@ impl Vm {
                 .cloned()
                 .unwrap_or(fallback));
         }
+        if intrinsic == "Date" {
+            return Ok(self
+                .realm_date_prototypes
+                .get(&realm.0)
+                .cloned()
+                .unwrap_or(fallback));
+        }
         if intrinsic == "Promise" {
             return Ok(self
                 .realm_promise_prototypes
@@ -1743,7 +1750,7 @@ impl Vm {
                     None,
                 );
             }
-            Some(NativeConstructMode::PreallocateReceiver) | None => {}
+            None => {}
         }
         // GetPrototypeFromConstructor reads the observable `.prototype`;
         // non-object values, including explicit null, use %Object.prototype%.

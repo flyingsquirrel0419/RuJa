@@ -2396,7 +2396,7 @@ pub(crate) fn make_builtin_constructor_with_proto_class(
     )
 }
 
-fn make_builtin_constructor_with_proto_class_in_env(
+pub(crate) fn make_builtin_constructor_with_proto_class_in_env(
     vm: &mut Vm,
     name: &str,
     length: usize,

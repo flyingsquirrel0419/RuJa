@@ -179,6 +179,10 @@ pub struct Vm {
     /// Realm global environment index + primitive kind -> that Realm's
     /// intrinsic wrapper prototype used by ToObject and primitive references.
     pub(crate) realm_primitive_prototypes: HashMap<(usize, PrimitivePrototypeKind), Value>,
+    /// Realm global environment index -> that Realm's original
+    /// `%Date.prototype%`. Date construction must not consult a replaced
+    /// global `Date` binding when selecting its intrinsic fallback.
+    pub(crate) realm_date_prototypes: HashMap<usize, Value>,
     /// Realm global environment index -> that Realm's original intrinsic
     /// `%eval%` function object. Direct eval detection must not consult the
     /// mutable global `eval` property because scripts may replace it.
@@ -652,6 +656,7 @@ impl Vm {
             realm_async_generator_function_constructors: HashMap::new(),
             realm_async_generator_function_prototypes: HashMap::new(),
             realm_primitive_prototypes: HashMap::new(),
+            realm_date_prototypes: HashMap::new(),
             realm_eval_functions: HashMap::new(),
             realm_throw_type_errors: HashMap::new(),
             realm_function_prototypes: HashMap::new(),
@@ -2063,6 +2068,7 @@ impl Vm {
             .remove(&realm);
         self.realm_primitive_prototypes
             .retain(|(owner, _), _| *owner != realm);
+        self.realm_date_prototypes.remove(&realm);
         self.realm_eval_functions.remove(&realm);
         self.realm_throw_type_errors.remove(&realm);
         self.realm_function_prototypes.remove(&realm);
@@ -2408,6 +2414,18 @@ impl Vm {
 
     pub(crate) fn current_realm_primitive_prototype(&self, value: &Value) -> Value {
         self.primitive_prototype_for_env(value, self.current_realm_global_env())
+    }
+
+    pub(crate) fn date_prototype_for_env(&self, env: GcIdx) -> Value {
+        let realm = crate::environment::global_env_root(&self.heap, env);
+        self.realm_date_prototypes
+            .get(&realm.0)
+            .cloned()
+            .unwrap_or_else(|| self.date_proto.clone())
+    }
+
+    pub(crate) fn current_realm_date_prototype(&self) -> Value {
+        self.date_prototype_for_env(self.current_realm_global_env())
     }
 
     pub(crate) fn promise_constructor_for_env(&self, env: GcIdx) -> Value {

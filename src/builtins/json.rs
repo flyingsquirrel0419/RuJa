@@ -1408,12 +1408,37 @@ fn active_native_name(vm: &mut Vm) -> Option<Arc<str>> {
     })
 }
 
+const DATE_VALUE_SLOT: &str = "[[DateValue]]";
+
+fn date_value_slot_key() -> crate::value::PrivateSlotKey {
+    crate::value::PrivateSlotKey::Internal(Arc::from(DATE_VALUE_SLOT))
+}
+
+fn new_date_object(vm: &mut Vm, prototype: Value, time_value: f64) -> error::Result<Value> {
+    let pin_count = vm.pin(&prototype);
+    let result = vm
+        .alloc(HeapObj::Object(ObjectData {
+            props: Mutex::new(IndexMap::new()),
+            proto: Mutex::new(Some(prototype)),
+            extensible: AtomicBool::new(true),
+            class_name: Some(Arc::from("Date")),
+            private_fields: Mutex::new(std::collections::HashMap::from([(
+                date_value_slot_key(),
+                crate::value::PrivateSlot::Value(Value::Number(time_value)),
+            )])),
+            primitive: Mutex::new(None),
+        }))
+        .map(Value::Object);
+    vm.unpin_many(pin_count);
+    result
+}
+
 pub(crate) fn date_constructor(
     vm: &mut Vm,
     args: &[Value],
-    this: Option<Value>,
+    _this: Option<Value>,
 ) -> error::Result<Value> {
-    if !matches!(this, Some(Value::Object(_))) {
+    if vm.current_native_new_target().is_none() {
         return Ok(Value::String(Arc::from(
             date_date_time_string(now_ms()).as_str(),
         )));
@@ -1462,40 +1487,30 @@ pub(crate) fn date_constructor(
     };
     // ES TimeValue: values outside +/-8.64e15 ms become Invalid Date (NaN).
     let ts = date_time_clip(ts);
-    if let Some(Value::Object(idx)) = this {
-        vm.heap.with_obj_mut(idx.0, |o| {
-            if let HeapObj::Object(o) = o {
-                o.class_name = Some(Arc::from("Date"));
-                o.props
-                    .lock()
-                    .insert(PropertyKey::from("__time__"), data_prop(Value::Number(ts)));
-            }
-        });
-        Ok(Value::Object(idx))
-    } else {
-        unreachable!("Date constructor function calls return before constructing a time value")
-    }
+    let fallback = vm.current_realm_date_prototype();
+    let prototype = native_constructor_prototype_with_default(vm, "Date", fallback)?;
+    new_date_object(vm, prototype, ts)
 }
 
 fn date_this_time_value(vm: &Vm, this: Option<Value>) -> error::Result<(GcIdx, f64)> {
     let Some(Value::Object(idx)) = this else {
         return Err(Error::type_err("Date method called on non-Date receiver"));
     };
-    let (is_date, ts) = vm.heap.with_obj(idx.0, |obj| {
-        let ts = obj
-            .props()
-            .lock()
-            .get(&PropertyKey::from("__time__"))
-            .and_then(|d| match &d.value {
-                Value::Number(n) => Some(*n),
-                _ => None,
-            })
-            .unwrap_or(f64::NAN);
-        (obj.class_name() == "Date", ts)
-    });
-    if !is_date {
-        return Err(Error::type_err("Date method called on non-Date receiver"));
-    }
+    let ts = vm
+        .heap
+        .with_obj(idx.0, |obj| {
+            let HeapObj::Object(data) = obj else {
+                return None;
+            };
+            data.private_fields
+                .lock()
+                .get(&date_value_slot_key())
+                .and_then(|slot| match slot {
+                    crate::value::PrivateSlot::Value(Value::Number(value)) => Some(*value),
+                    _ => None,
+                })
+        })
+        .ok_or_else(|| Error::type_err("Date method called on non-Date receiver"))?;
     Ok((idx, ts))
 }
 
@@ -1567,9 +1582,9 @@ pub(crate) fn date_set_component(
     }
     vm.heap.with_obj(idx.0, |o| {
         if let HeapObj::Object(o) = o {
-            o.props.lock().insert(
-                PropertyKey::from("__time__"),
-                data_prop(Value::Number(value)),
+            o.private_fields.lock().insert(
+                date_value_slot_key(),
+                crate::value::PrivateSlot::Value(Value::Number(value)),
             );
         }
     });

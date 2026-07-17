@@ -3626,6 +3626,8 @@ fn populate_test262_realm(vm: &mut Vm, realm_env: GcIdx) -> error::Result<Value>
             .insert((realm_env.0, kind), prototype);
     }
 
+    install_date_intrinsic_in_env(vm, realm_env, Some(&global))?;
+
     install_array_buffer_constructor_in_env(vm, realm_env, Some(&global), false)?;
     install_shared_array_buffer_constructor_in_env(vm, realm_env, Some(&global))?;
     install_data_view_constructor_in_env(vm, realm_env, Some(&global))?;
@@ -3654,6 +3656,117 @@ fn populate_test262_realm(vm: &mut Vm, realm_env: GcIdx) -> error::Result<Value>
     vm.install_heap_limit_error_in_realm(realm_env)?;
 
     Ok(global)
+}
+
+fn install_date_intrinsic_in_env(
+    vm: &mut Vm,
+    realm_env: GcIdx,
+    realm_global: Option<&Value>,
+) -> error::Result<()> {
+    let (constructor, prototype) = make_builtin_constructor_with_proto_class_in_env(
+        vm,
+        "Date",
+        7,
+        (
+            date_constructor,
+            NativeConstructMode::InternalDeferredPrototype,
+        ),
+        &[
+            ("valueOf", date_get_time, 0),
+            ("getTime", date_get_time, 0),
+            ("getFullYear", date_get_component, 0),
+            ("getUTCFullYear", date_get_component, 0),
+            ("getMonth", date_get_component, 0),
+            ("getUTCMonth", date_get_component, 0),
+            ("getDate", date_get_component, 0),
+            ("getUTCDate", date_get_component, 0),
+            ("getDay", date_get_component, 0),
+            ("getUTCDay", date_get_component, 0),
+            ("getHours", date_get_component, 0),
+            ("getUTCHours", date_get_component, 0),
+            ("getMinutes", date_get_component, 0),
+            ("getUTCMinutes", date_get_component, 0),
+            ("getSeconds", date_get_component, 0),
+            ("getUTCSeconds", date_get_component, 0),
+            ("getMilliseconds", date_get_component, 0),
+            ("getUTCMilliseconds", date_get_component, 0),
+            ("setTime", date_set_component, 1),
+            ("setMilliseconds", date_set_component, 1),
+            ("setUTCMilliseconds", date_set_component, 1),
+            ("setSeconds", date_set_component, 2),
+            ("setUTCSeconds", date_set_component, 2),
+            ("setMinutes", date_set_component, 3),
+            ("setUTCMinutes", date_set_component, 3),
+            ("setHours", date_set_component, 4),
+            ("setUTCHours", date_set_component, 4),
+            ("setDate", date_set_component, 1),
+            ("setUTCDate", date_set_component, 1),
+            ("setMonth", date_set_component, 2),
+            ("setUTCMonth", date_set_component, 2),
+            ("setFullYear", date_set_component, 3),
+            ("setUTCFullYear", date_set_component, 3),
+            ("toString", date_to_string, 0),
+            ("toLocaleString", date_to_string, 0),
+            ("toUTCString", date_to_string, 0),
+            ("toTimeString", date_to_string, 0),
+            ("toDateString", date_to_string, 0),
+            ("toLocaleDateString", date_to_string, 0),
+            ("toLocaleTimeString", date_to_string, 0),
+            ("toISOString", date_to_iso_string, 0),
+            ("toJSON", date_to_json, 1),
+            ("toTemporalInstant", date_to_temporal_instant, 0),
+            ("getTimezoneOffset", date_get_timezone_offset, 0),
+        ],
+        realm_env,
+        None,
+    )?;
+    let constructor_value = Value::Object(constructor);
+    let prototype_value = Value::Object(prototype);
+    let mut pin_count = vm.pin_many(&[constructor_value.clone(), prototype_value.clone()]);
+    let result = (|| -> error::Result<()> {
+        let to_primitive =
+            vm.new_native_function_in_env("[Symbol.toPrimitive]", date_to_primitive, 1, realm_env)?;
+        pin_count += vm.pin(&Value::Object(to_primitive));
+        let now = vm.new_native_function_in_env("now", date_now, 0, realm_env)?;
+        pin_count += vm.pin(&Value::Object(now));
+        let parse = vm.new_native_function_in_env("parse", date_parse, 1, realm_env)?;
+        pin_count += vm.pin(&Value::Object(parse));
+        let utc = vm.new_native_function_in_env("UTC", date_utc, 7, realm_env)?;
+        pin_count += vm.pin(&Value::Object(utc));
+
+        vm.heap.with_obj(prototype.0, |object| {
+            object.props().lock().insert(
+                PropertyKey::Symbol(vm.well_known_symbols.to_primitive),
+                PropertyDescriptor {
+                    value: Value::Object(to_primitive),
+                    writable: false,
+                    enumerable: false,
+                    configurable: true,
+                    get: None,
+                    set: None,
+                    is_accessor: false,
+                },
+            );
+        });
+        vm.heap.with_obj(constructor.0, |object| {
+            let mut props = object.props().lock();
+            props.insert(PropertyKey::from("now"), data_prop(Value::Object(now)));
+            props.insert(PropertyKey::from("parse"), data_prop(Value::Object(parse)));
+            props.insert(PropertyKey::from("UTC"), data_prop(Value::Object(utc)));
+        });
+
+        vm.realm_date_prototypes
+            .insert(realm_env.0, prototype_value.clone());
+        if realm_env == vm.global {
+            vm.date_proto = prototype_value;
+            define_global(vm, "Date", constructor_value);
+        } else if let Some(global) = realm_global {
+            define_realm_global(vm, realm_env, global, "Date", constructor_value);
+        }
+        Ok(())
+    })();
+    vm.unpin_many(pin_count);
+    result
 }
 
 fn make_test262_realm(vm: &mut Vm) -> error::Result<Value> {
@@ -9703,96 +9816,7 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
         )?;
     }
     install_atomics_in_env(vm, vm.global, None)?;
-    // Date (minimal: now() and constructor returning a timestamp wrapper)
-    let (date_ctor, date_proto) = make_builtin_constructor_with_proto_class(
-        vm,
-        "Date",
-        7,
-        date_constructor,
-        NativeConstructMode::PreallocateReceiver,
-        &[
-            ("valueOf", date_get_time, 0),
-            ("getTime", date_get_time, 0),
-            ("getFullYear", date_get_component, 0),
-            ("getUTCFullYear", date_get_component, 0),
-            ("getMonth", date_get_component, 0),
-            ("getUTCMonth", date_get_component, 0),
-            ("getDate", date_get_component, 0),
-            ("getUTCDate", date_get_component, 0),
-            ("getDay", date_get_component, 0),
-            ("getUTCDay", date_get_component, 0),
-            ("getHours", date_get_component, 0),
-            ("getUTCHours", date_get_component, 0),
-            ("getMinutes", date_get_component, 0),
-            ("getUTCMinutes", date_get_component, 0),
-            ("getSeconds", date_get_component, 0),
-            ("getUTCSeconds", date_get_component, 0),
-            ("getMilliseconds", date_get_component, 0),
-            ("getUTCMilliseconds", date_get_component, 0),
-            ("setTime", date_set_component, 1),
-            ("setMilliseconds", date_set_component, 1),
-            ("setUTCMilliseconds", date_set_component, 1),
-            ("setSeconds", date_set_component, 2),
-            ("setUTCSeconds", date_set_component, 2),
-            ("setMinutes", date_set_component, 3),
-            ("setUTCMinutes", date_set_component, 3),
-            ("setHours", date_set_component, 4),
-            ("setUTCHours", date_set_component, 4),
-            ("setDate", date_set_component, 1),
-            ("setUTCDate", date_set_component, 1),
-            ("setMonth", date_set_component, 2),
-            ("setUTCMonth", date_set_component, 2),
-            ("setFullYear", date_set_component, 3),
-            ("setUTCFullYear", date_set_component, 3),
-            ("toString", date_to_string, 0),
-            ("toLocaleString", date_to_string, 0),
-            ("toUTCString", date_to_string, 0),
-            ("toTimeString", date_to_string, 0),
-            ("toDateString", date_to_string, 0),
-            ("toLocaleDateString", date_to_string, 0),
-            ("toLocaleTimeString", date_to_string, 0),
-            ("toISOString", date_to_iso_string, 0),
-            ("toJSON", date_to_json, 1),
-            ("toTemporalInstant", date_to_temporal_instant, 0),
-            ("getTimezoneOffset", date_get_timezone_offset, 0),
-        ],
-        None,
-    )?;
-    let date_to_primitive_fn =
-        vm.new_native_function("[Symbol.toPrimitive]", date_to_primitive, 1)?;
-    vm.heap.with_obj(date_proto.0, |object| {
-        object.props().lock().insert(
-            PropertyKey::Symbol(vm.well_known_symbols.to_primitive),
-            PropertyDescriptor {
-                value: Value::Object(date_to_primitive_fn),
-                writable: false,
-                enumerable: false,
-                configurable: true,
-                get: None,
-                set: None,
-                is_accessor: false,
-            },
-        );
-    });
-    vm.date_proto = Value::Object(date_proto);
-    define_global(vm, "Date", Value::Object(date_ctor));
-    let now_fn = vm.new_native_function("now", date_now, 0)?;
-    let parse_fn = vm.new_native_function("parse", date_parse, 1)?;
-    let utc_fn = vm.new_native_function("UTC", date_utc, 7)?;
-    if let Value::Object(dc) = Value::Object(date_ctor) {
-        vm.heap.with_obj(dc.0, |obj| {
-            obj.props()
-                .lock()
-                .insert(PropertyKey::from("now"), data_prop(Value::Object(now_fn)));
-            obj.props().lock().insert(
-                PropertyKey::from("parse"),
-                data_prop(Value::Object(parse_fn)),
-            );
-            obj.props()
-                .lock()
-                .insert(PropertyKey::from("UTC"), data_prop(Value::Object(utc_fn)));
-        });
-    }
+    install_date_intrinsic_in_env(vm, vm.global, None)?;
     let object_proto = vm.object_proto.clone();
     install_iterator_intrinsic_in_env(vm, vm.global, None, object_proto)?;
     setup_array_iterator_proto(vm)?;

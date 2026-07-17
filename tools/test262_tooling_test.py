@@ -1040,6 +1040,17 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                 "cross-realm", "Reflect",
             },
             "built-ins/Boolean/symbol-coercion.js": {"Symbol"},
+            "built-ins/Date/is-a-constructor.js": {"Reflect.construct"},
+            "built-ins/Date/subclassing.js": {"Reflect"},
+            "built-ins/Date/proto-from-ctor-realm-zero.js": {
+                "cross-realm", "Reflect",
+            },
+            "built-ins/Date/proto-from-ctor-realm-one.js": {
+                "cross-realm", "Reflect",
+            },
+            "built-ins/Date/proto-from-ctor-realm-two.js": {
+                "cross-realm", "Reflect",
+            },
         }
         self.assertEqual(NATIVE_CONSTRUCT_FILES, frozenset(expected))
         self.assertEqual(
