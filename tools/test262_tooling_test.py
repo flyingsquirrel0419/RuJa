@@ -1333,7 +1333,11 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                     tool.TEST262 = original_root
 
         path = Path(test262_runner.TEST262) / "test" / relative
-        if path.is_file():
+        try:
+            path_available = path.is_file()
+        except OSError:
+            path_available = False
+        if path_available:
             metadata = test262_runner.parse_meta(path.read_text())
             self.assertEqual(
                 frozenset(metadata.get("features", [])), features
