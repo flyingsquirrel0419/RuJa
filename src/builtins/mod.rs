@@ -1522,7 +1522,7 @@ pub(crate) fn make_builtin_constructor(
         kind: FunctionKind::Native {
             func: object_constructor,
             length: 1,
-            construct_mode: NativeConstructMode::InternalDeferredPrototype,
+            construct_mode: Some(NativeConstructMode::InternalDeferredPrototype),
         },
         closure: vm.global,
         lexical_new_target: Value::Undefined,
@@ -1713,7 +1713,7 @@ fn make_typed_array_intrinsic_in_env(vm: &mut Vm, env: GcIdx) -> error::Result<(
         typed_array_intrinsic_constructor,
         0,
         env,
-        NativeConstructMode::PreallocateReceiver,
+        NativeConstructMode::InternalDeferredPrototype,
     )?);
     let typed_array_proto =
         Value::Object(GcIdx(vm.heap.allocate(HeapObj::Object(ObjectData {
@@ -2439,7 +2439,7 @@ fn make_error_constructor_in_env(
         kind: FunctionKind::Native {
             func: ctor_native,
             length: ctor_length,
-            construct_mode: NativeConstructMode::InternalEagerPrototype,
+            construct_mode: Some(NativeConstructMode::InternalEagerPrototype),
         },
         closure: env,
         lexical_new_target: Value::Undefined,
@@ -3109,6 +3109,42 @@ fn install_async_generator_intrinsics_in_env(
     ))
 }
 
+fn install_proxy_intrinsic_in_env(
+    vm: &mut Vm,
+    env: GcIdx,
+    global: Option<&Value>,
+) -> error::Result<Value> {
+    let constructor = Value::Object(vm.new_native_constructor_in_env(
+        "Proxy",
+        proxy_constructor,
+        2,
+        env,
+        NativeConstructMode::InternalDeferredPrototype,
+    )?);
+    let pin_count = vm.pin(&constructor);
+    let result = (|| {
+        let revocable = vm.new_native_function_in_env("revocable", proxy_revocable, 2, env)?;
+        let Value::Object(constructor_idx) = constructor else {
+            unreachable!();
+        };
+        vm.heap.with_obj(constructor_idx.0, |object| {
+            object.props().lock().insert(
+                PropertyKey::from("revocable"),
+                data_prop(Value::Object(revocable)),
+            );
+        });
+        let constructor = Value::Object(constructor_idx);
+        if let Some(global) = global {
+            define_realm_global(vm, env, global, "Proxy", constructor.clone());
+        } else {
+            define_global(vm, "Proxy", constructor.clone());
+        }
+        Ok(constructor)
+    })();
+    vm.unpin_many(pin_count);
+    result
+}
+
 fn populate_test262_realm(vm: &mut Vm, realm_env: GcIdx) -> error::Result<Value> {
     let global_idx = vm.heap.allocate(HeapObj::Object(crate::value::ObjectData {
         props: Mutex::new(IndexMap::new()),
@@ -3145,9 +3181,6 @@ fn populate_test262_realm(vm: &mut Vm, realm_env: GcIdx) -> error::Result<Value>
         "parseInt",
         Value::Object(parse_int_idx),
     );
-    if let Some(proxy) = crate::environment::get(&vm.heap, vm.global, "Proxy") {
-        define_realm_global(vm, realm_env, &global, "Proxy", proxy);
-    }
     let realm_function_proto_idx =
         vm.new_native_function_in_env("Function.prototype", function_proto_noop, 0, realm_env)?;
     let realm_function_proto = Value::Object(realm_function_proto_idx);
@@ -3161,6 +3194,7 @@ fn populate_test262_realm(vm: &mut Vm, realm_env: GcIdx) -> error::Result<Value>
     for function in [eval_idx, parse_int_idx] {
         set_function_object_proto(vm, function, &realm_function_proto);
     }
+    install_proxy_intrinsic_in_env(vm, realm_env, Some(&global))?;
 
     let function_ctor_idx = vm.new_native_constructor_in_env(
         "Function",
@@ -3399,7 +3433,13 @@ fn populate_test262_realm(vm: &mut Vm, realm_env: GcIdx) -> error::Result<Value>
     vm.set_primitive(&Value::Object(bool_proto), Value::Bool(false));
     define_realm_global(vm, realm_env, &global, "Boolean", Value::Object(bool_ctor));
 
-    let bigint_idx = vm.new_native_function_in_env("BigInt", global_bigint, 1, realm_env)?;
+    let bigint_idx = vm.new_native_constructor_in_env(
+        "BigInt",
+        global_bigint,
+        1,
+        realm_env,
+        NativeConstructMode::InternalDeferredPrototype,
+    )?;
     let bigint_as_int_n = vm.new_native_function_in_env("asIntN", bigint_as_int_n, 2, realm_env)?;
     let bigint_as_uint_n =
         vm.new_native_function_in_env("asUintN", bigint_as_uint_n, 2, realm_env)?;
@@ -3471,7 +3511,13 @@ fn populate_test262_realm(vm: &mut Vm, realm_env: GcIdx) -> error::Result<Value>
     vm.realm_regexp_prototypes
         .insert(realm_env.0, Value::Object(regexp_proto));
     define_realm_global(vm, realm_env, &global, "RegExp", Value::Object(regexp_ctor));
-    let symbol_idx = vm.new_native_function_in_env("Symbol", symbol_constructor, 0, realm_env)?;
+    let symbol_idx = vm.new_native_constructor_in_env(
+        "Symbol",
+        symbol_constructor,
+        0,
+        realm_env,
+        NativeConstructMode::InternalDeferredPrototype,
+    )?;
     let symbol_for_idx = vm.new_native_function_in_env("for", symbol_for, 1, realm_env)?;
     let symbol_key_for_idx =
         vm.new_native_function_in_env("keyFor", symbol_key_for, 1, realm_env)?;
@@ -6157,123 +6203,165 @@ pub(crate) fn own_property_descriptor_for_key_or_throw(
     obj: &Value,
     key: &PropertyKey,
 ) -> error::Result<Option<PropertyDescriptor>> {
-    if let Value::Object(idx) = obj {
-        let namespace_binding = vm.heap.with_obj(idx.0, |o| {
-            if let HeapObj::ModuleNamespace(namespace) = o {
-                return key
-                    .as_str()
-                    .and_then(|name| namespace.exports.lock().get(name).cloned());
-            }
-            None
-        });
-        if let Some((env, name)) = namespace_binding {
-            let value = match crate::environment::get_checked(&vm.heap, env, &name) {
-                Ok(Some(value)) => value,
-                Ok(None) | Err(false) => Value::Undefined,
-                Err(true) => {
-                    return Err(Error::reference(format!(
-                        "Cannot access '{}' before initialization",
-                        name
-                    )))
-                }
+    let root_pin = vm.pin(obj);
+    let mut current = obj.clone();
+    let mut pending = Vec::new();
+    let mut pending_pin_count = 0;
+    let result = (|| {
+        let mut target_desc = loop {
+            let Value::Object(idx) = &current else {
+                break own_property_descriptor_for_key(vm, &current, key);
             };
-            let mut desc = PropertyDescriptor::data(value);
-            desc.writable = true;
-            desc.enumerable = true;
-            desc.configurable = false;
-            return Ok(Some(desc));
-        }
-        if let Some(proxy_result) = vm.heap.with_obj(idx.0, |o| {
-            if let HeapObj::Proxy(proxy) = o {
-                if *proxy.revoked.lock() {
-                    return Some(Err(Error::type_err(
-                        "Cannot perform 'getOwnPropertyDescriptor' on a proxy that has been revoked",
-                    )));
+            let namespace_binding = vm.heap.with_obj(idx.0, |o| {
+                if let HeapObj::ModuleNamespace(namespace) = o {
+                    return key
+                        .as_str()
+                        .and_then(|name| namespace.exports.lock().get(name).cloned());
                 }
-                Some(Ok((proxy.target.clone(), proxy.handler.clone())))
-            } else {
                 None
+            });
+            if let Some((env, name)) = namespace_binding {
+                let value = match crate::environment::get_checked(&vm.heap, env, &name) {
+                    Ok(Some(value)) => value,
+                    Ok(None) | Err(false) => Value::Undefined,
+                    Err(true) => {
+                        return Err(Error::reference(format!(
+                            "Cannot access '{}' before initialization",
+                            name
+                        )))
+                    }
+                };
+                let mut desc = PropertyDescriptor::data(value);
+                desc.writable = true;
+                desc.enumerable = true;
+                desc.configurable = false;
+                break Some(desc);
             }
-        }) {
+            let proxy_result = vm.heap.with_obj(idx.0, |o| {
+                if let HeapObj::Proxy(proxy) = o {
+                    if *proxy.revoked.lock() {
+                        return Some(Err(Error::type_err(
+                            "Cannot perform 'getOwnPropertyDescriptor' on a proxy that has been revoked",
+                        )));
+                    }
+                    Some(Ok((proxy.target.clone(), proxy.handler.clone())))
+                } else {
+                    None
+                }
+            });
+            let Some(proxy_result) = proxy_result else {
+                break own_property_descriptor_for_key(vm, &current, key);
+            };
             let (target, handler) = proxy_result?;
             let proxy_pins = vm.pin_many(&[target.clone(), handler.clone()]);
-            let descriptor_result = (|| {
-                let key_value = property_key_to_value(key);
-                let trap = vm.get_property(&handler, "getOwnPropertyDescriptor")?;
-                if trap.is_nullish() {
-                    return own_property_descriptor_for_key_or_throw(vm, &target, key);
+            let trap = match vm.get_property(&handler, "getOwnPropertyDescriptor") {
+                Ok(trap) => trap,
+                Err(error) => {
+                    vm.unpin_many(proxy_pins);
+                    return Err(error);
                 }
-                let trap_pin = vm.pin(&trap);
-                let result = vm.call_function(
-                    &trap,
-                    &[target.clone(), key_value],
-                    Some(handler),
-                );
-                vm.unpin(trap_pin);
-                let result = result?;
-                let result_pin = vm.pin(&result);
-                let validation = (|| {
-                    let target_desc =
-                        own_property_descriptor_for_key_or_throw(vm, &target, key)?;
-                    let mut descriptor_roots = Vec::new();
-                    if let Some(target_desc) = target_desc.as_ref() {
-                        descriptor_roots.push(target_desc.value.clone());
-                        descriptor_roots.extend(target_desc.get.iter().cloned());
-                        descriptor_roots.extend(target_desc.set.iter().cloned());
-                    }
-                    let descriptor_pins = vm.pin_many(&descriptor_roots);
-                    let invariant_result = (|| {
-                        let extensible_target = vm.is_extensible(&target)?;
-                        if result.is_undefined() {
-                            if let Some(target_desc) = target_desc.as_ref() {
-                                if !target_desc.configurable || !extensible_target {
-                                    return Err(Error::type_err(
-                                        "Proxy getOwnPropertyDescriptor trap cannot hide the target property",
-                                    ));
-                                }
-                            }
-                            return Ok(None);
-                        }
-                        let result_desc = property_descriptor_from_object(vm, &result)?;
-                        if !vm.is_compatible_property_descriptor(
-                            target_desc.as_ref(),
-                            &result_desc,
-                            extensible_target,
-                        ) {
-                            return Err(Error::type_err(
-                                "Proxy getOwnPropertyDescriptor trap returned an incompatible descriptor",
-                            ));
-                        }
-                        if !result_desc.configurable {
-                            let Some(target_desc) = target_desc.as_ref() else {
-                                return Err(Error::type_err(
-                                    "Proxy getOwnPropertyDescriptor trap cannot report a new non-configurable property",
-                                ));
-                            };
-                            if target_desc.configurable
-                                || (!result_desc.is_accessor
-                                    && !result_desc.writable
-                                    && !target_desc.is_accessor
-                                    && target_desc.writable)
-                            {
-                                return Err(Error::type_err(
-                                    "Proxy getOwnPropertyDescriptor trap cannot tighten the target descriptor",
-                                ));
-                            }
-                        }
-                        Ok(Some(result_desc))
-                    })();
-                    vm.unpin_many(descriptor_pins);
-                    invariant_result
-                })();
-                vm.unpin(result_pin);
-                validation
-            })();
+            };
+            if trap.is_nullish() {
+                vm.unpin_many(proxy_pins);
+                current = target;
+                continue;
+            }
+            let key_value = property_key_to_value(key);
+            let trap_pin = vm.pin(&trap);
+            let trap_result = vm.call_function(&trap, &[target.clone(), key_value], Some(handler));
+            vm.unpin(trap_pin);
+            let trap_result = match trap_result {
+                Ok(result) => result,
+                Err(error) => {
+                    vm.unpin_many(proxy_pins);
+                    return Err(error);
+                }
+            };
+            if !trap_result.is_undefined() && !matches!(trap_result, Value::Object(_)) {
+                vm.unpin_many(proxy_pins);
+                return Err(Error::type_err(
+                    "Proxy getOwnPropertyDescriptor trap must return an object or undefined",
+                ));
+            }
             vm.unpin_many(proxy_pins);
-            return descriptor_result;
+            pending_pin_count += vm.pin(&target);
+            pending_pin_count += vm.pin(&trap_result);
+            pending.push((target.clone(), trap_result));
+            current = target;
+        };
+
+        while let Some((target, trap_result)) = pending.pop() {
+            target_desc = validate_proxy_get_own_property_descriptor_result(
+                vm,
+                &target,
+                &trap_result,
+                target_desc,
+            )?;
         }
+        Ok(target_desc)
+    })();
+    vm.unpin_many(pending_pin_count);
+    vm.unpin(root_pin);
+    result
+}
+
+fn validate_proxy_get_own_property_descriptor_result(
+    vm: &mut Vm,
+    target: &Value,
+    result: &Value,
+    target_desc: Option<PropertyDescriptor>,
+) -> error::Result<Option<PropertyDescriptor>> {
+    let mut descriptor_roots = Vec::new();
+    if let Some(target_desc) = target_desc.as_ref() {
+        descriptor_roots.push(target_desc.value.clone());
+        descriptor_roots.extend(target_desc.get.iter().cloned());
+        descriptor_roots.extend(target_desc.set.iter().cloned());
     }
-    Ok(own_property_descriptor_for_key(vm, obj, key))
+    let descriptor_pins = vm.pin_many(&descriptor_roots);
+    let validation = (|| {
+        if result.is_undefined() {
+            let Some(target_desc) = target_desc.as_ref() else {
+                return Ok(None);
+            };
+            if !target_desc.configurable || !vm.is_extensible(target)? {
+                return Err(Error::type_err(
+                    "Proxy getOwnPropertyDescriptor trap cannot hide the target property",
+                ));
+            }
+            return Ok(None);
+        }
+        let extensible_target = vm.is_extensible(target)?;
+        let result_desc = property_descriptor_from_object(vm, result)?;
+        if !vm.is_compatible_property_descriptor(
+            target_desc.as_ref(),
+            &result_desc,
+            extensible_target,
+        ) {
+            return Err(Error::type_err(
+                "Proxy getOwnPropertyDescriptor trap returned an incompatible descriptor",
+            ));
+        }
+        if !result_desc.configurable {
+            let Some(target_desc) = target_desc.as_ref() else {
+                return Err(Error::type_err(
+                    "Proxy getOwnPropertyDescriptor trap cannot report a new non-configurable property",
+                ));
+            };
+            if target_desc.configurable
+                || (!result_desc.is_accessor
+                    && !result_desc.writable
+                    && !target_desc.is_accessor
+                    && target_desc.writable)
+            {
+                return Err(Error::type_err(
+                    "Proxy getOwnPropertyDescriptor trap cannot tighten the target descriptor",
+                ));
+            }
+        }
+        Ok(Some(result_desc))
+    })();
+    vm.unpin_many(descriptor_pins);
+    validation
 }
 
 fn from_property_descriptor(vm: &mut Vm, desc: PropertyDescriptor) -> error::Result<Value> {
@@ -9598,28 +9686,7 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
     let reflect = build_reflect(vm)?;
     define_global(vm, "Reflect", reflect);
 
-    // Proxy constructor + revocable.
-    let proxy_ctor_idx = vm.new_native_constructor(
-        "Proxy",
-        proxy_constructor,
-        2,
-        NativeConstructMode::InternalEagerPrototype,
-    )?;
-    vm.heap.with_obj(proxy_ctor_idx.0, |o| {
-        if let HeapObj::Function(f) = o {
-            f.prototype.lock().replace(Value::Undefined);
-        }
-    });
-    let proxy_rev_idx = vm.new_native_function("revocable", proxy_revocable, 2)?;
-    vm.heap.with_obj(proxy_ctor_idx.0, |o| {
-        if let HeapObj::Function(f) = o {
-            f.props.lock().insert(
-                PropertyKey::from("revocable"),
-                data_prop(Value::Object(proxy_rev_idx)),
-            );
-        }
-    });
-    define_global(vm, "Proxy", Value::Object(proxy_ctor_idx));
+    install_proxy_intrinsic_in_env(vm, vm.global, None)?;
 
     install_array_buffer_constructor_in_env(vm, vm.global, None, true)?;
     install_shared_array_buffer_constructor_in_env(vm, vm.global, None)?;
@@ -9927,8 +9994,14 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
     define_global_const(vm, "NaN", Value::Number(f64::NAN));
     define_global_const(vm, "Infinity", Value::Number(f64::INFINITY));
     define_global_const(vm, "undefined", Value::Undefined);
-    // BigInt constructor (function form only; no prototype methods yet).
-    let bigint_idx = vm.new_native_function("BigInt", global_bigint, 1)?;
+    // BigInt has [[Construct]] for extends/newTarget checks, but its body
+    // rejects construction before argument coercion.
+    let bigint_idx = vm.new_native_constructor(
+        "BigInt",
+        global_bigint,
+        1,
+        NativeConstructMode::InternalDeferredPrototype,
+    )?;
     let as_int_n = vm.new_native_function("asIntN", bigint_as_int_n, 2)?;
     let as_uint_n = vm.new_native_function("asUintN", bigint_as_uint_n, 2)?;
     vm.heap.with_obj(bigint_idx.0, |obj| {

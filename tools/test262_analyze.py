@@ -31,6 +31,9 @@ try:
     from test262_object_constructor_admission import (
         OBJECT_CONSTRUCTOR_FEATURES, OBJECT_CONSTRUCTOR_FILES,
     )
+    from test262_native_construct_admission import (
+        NATIVE_CONSTRUCT_FEATURES, NATIVE_CONSTRUCT_FILES,
+    )
     from test262_object_prototype_admission import (
         OBJECT_PROTOTYPE_FEATURES_BY_FILE, OBJECT_PROTOTYPE_FILES,
     )
@@ -98,6 +101,9 @@ except ModuleNotFoundError:
     )
     from tools.test262_object_constructor_admission import (
         OBJECT_CONSTRUCTOR_FEATURES, OBJECT_CONSTRUCTOR_FILES,
+    )
+    from tools.test262_native_construct_admission import (
+        NATIVE_CONSTRUCT_FEATURES, NATIVE_CONSTRUCT_FILES,
     )
     from tools.test262_object_prototype_admission import (
         OBJECT_PROTOTYPE_FEATURES_BY_FILE, OBJECT_PROTOTYPE_FILES,
@@ -2207,6 +2213,24 @@ def object_constructor_features(path):
         return frozenset()
     return OBJECT_CONSTRUCTOR_FEATURES.get(rel.as_posix(), frozenset())
 
+def native_construct_path(path):
+    if path is None:
+        return False
+    try:
+        rel = Path(path).resolve().relative_to(Path(TEST262).resolve() / "test")
+    except ValueError:
+        return False
+    return rel.as_posix() in NATIVE_CONSTRUCT_FILES
+
+def native_construct_features(path):
+    if path is None:
+        return frozenset()
+    try:
+        rel = Path(path).resolve().relative_to(Path(TEST262).resolve() / "test")
+    except ValueError:
+        return frozenset()
+    return NATIVE_CONSTRUCT_FEATURES.get(rel.as_posix(), frozenset())
+
 def object_prototype_path(path):
     try:
         rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
@@ -2422,6 +2446,8 @@ def should_skip(meta, path=None):
         feats.difference_update({"cross-realm", "Symbol", "Proxy"})
     if path is not None and object_constructor_path(path):
         feats.difference_update(object_constructor_features(path))
+    if path is not None and native_construct_path(path):
+        feats.difference_update(native_construct_features(path))
     if path is not None and object_prototype_path(path):
         feats.difference_update(object_prototype_features(path))
     if path is not None and promise_realm_path(path):

@@ -2414,29 +2414,18 @@ impl Vm {
                     if is_function_prototype || !self.is_constructor_value(&super_ctor) {
                         return Err(Error::type_err("not a constructor"));
                     }
-                    let (this_env, this_val, new_target) = self.prepare_super_constructor_call()?;
-                    // Call the parent constructor. Set pending_new_target so
-                    // that class constructors accept this as a [[Construct]]
-                    // call. `super()` forwards the active constructor's
-                    // new.target, not the superclass constructor.
+                    let (this_env, _placeholder, new_target) =
+                        self.prepare_super_constructor_call()?;
+                    // `super()` performs [[Construct]], so BoundFunction and
+                    // Proxy superclasses must use their construct semantics.
+                    // It forwards the active constructor's new.target.
                     let forwarded_new_target = if matches!(new_target, Value::Undefined) {
                         super_ctor.clone()
                     } else {
                         new_target
                     };
-                    let result = self.call_function_with_new_target(
-                        &super_ctor,
-                        &args,
-                        this_val.clone(),
-                        &forwarded_new_target,
-                        None,
-                    )?;
-                    // If the parent constructor returned an object, use it as the new `this`.
-                    let new_this = if matches!(result, Value::Object(_)) {
-                        result
-                    } else {
-                        this_val
-                    };
+                    let new_this =
+                        self.construct_with_new_target(&super_ctor, &args, &forwarded_new_target)?;
                     // BindThisValue happens after Construct. If `this` was
                     // already initialized, the superclass constructor has
                     // still run and this step throws ReferenceError.
@@ -2473,24 +2462,15 @@ impl Vm {
                     if is_function_prototype || !self.is_constructor_value(&super_ctor) {
                         return Err(Error::type_err("not a constructor"));
                     }
-                    let (this_env, this_val, new_target) = self.prepare_super_constructor_call()?;
+                    let (this_env, _placeholder, new_target) =
+                        self.prepare_super_constructor_call()?;
                     let forwarded_new_target = if matches!(new_target, Value::Undefined) {
                         super_ctor.clone()
                     } else {
                         new_target
                     };
-                    let result = self.call_function_with_new_target(
-                        &super_ctor,
-                        &args,
-                        this_val.clone(),
-                        &forwarded_new_target,
-                        None,
-                    )?;
-                    let new_this = if matches!(result, Value::Object(_)) {
-                        result
-                    } else {
-                        this_val
-                    };
+                    let new_this =
+                        self.construct_with_new_target(&super_ctor, &args, &forwarded_new_target)?;
                     self.bind_super_constructor_result(this_env, new_this.clone())?;
                     self.stack.push(new_this);
                 }

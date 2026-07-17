@@ -21,7 +21,7 @@ fn promise_state_and_result(vm: &Vm, value: Value) -> (PromiseStatus, Value) {
     })
 }
 
-fn native_construct_mode(vm: &Vm, value: &Value) -> NativeConstructMode {
+fn native_construct_mode(vm: &Vm, value: &Value) -> Option<NativeConstructMode> {
     let Value::Object(function) = value else {
         panic!("expected a native function object");
     };
@@ -40,7 +40,6 @@ const EAGER_NATIVE_CONSTRUCTOR_SOURCES: &[&str] = &[
     "Array",
     "RegExp",
     "Function",
-    "Proxy",
     "Map",
     "Set",
     "WeakMap",
@@ -60,6 +59,10 @@ const EAGER_NATIVE_CONSTRUCTOR_SOURCES: &[&str] = &[
 
 const DEFERRED_NATIVE_CONSTRUCTOR_SOURCES: &[&str] = &[
     "Object",
+    "Proxy",
+    "BigInt",
+    "Symbol",
+    "Object.getPrototypeOf(Int8Array)",
     "Iterator",
     "Promise",
     "ArrayBuffer",
@@ -80,21 +83,20 @@ const DEFERRED_NATIVE_CONSTRUCTOR_SOURCES: &[&str] = &[
     "BigUint64Array",
 ];
 
-const PREALLOCATED_NATIVE_FUNCTION_SOURCES: &[&str] = &[
-    "String",
-    "Number",
-    "Boolean",
-    "Date",
-    "BigInt",
-    "Symbol",
-    "Object.getPrototypeOf(Int8Array)",
+const PREALLOCATED_NATIVE_CONSTRUCTOR_SOURCES: &[&str] = &["String", "Number", "Boolean", "Date"];
+
+const NON_CONSTRUCTIBLE_NATIVE_FUNCTION_SOURCES: &[&str] = &[
+    "Function.prototype",
+    "Math.abs",
+    "Array.prototype.push",
+    "BigInt.asIntN",
+    "Symbol.for",
 ];
 
 const FOREIGN_EAGER_NATIVE_CONSTRUCTOR_SOURCES: &[&str] = &[
     "Array",
     "RegExp",
     "Function",
-    "Proxy",
     "Error",
     "EvalError",
     "RangeError",
@@ -108,14 +110,7 @@ const FOREIGN_EAGER_NATIVE_CONSTRUCTOR_SOURCES: &[&str] = &[
     "(async function* () {}).constructor",
 ];
 
-const FOREIGN_PREALLOCATED_NATIVE_FUNCTION_SOURCES: &[&str] = &[
-    "String",
-    "Number",
-    "Boolean",
-    "BigInt",
-    "Symbol",
-    "Object.getPrototypeOf(Int8Array)",
-];
+const FOREIGN_PREALLOCATED_NATIVE_CONSTRUCTOR_SOURCES: &[&str] = &["String", "Number", "Boolean"];
 
 fn realm_registry_counts(vm: &Vm) -> [usize; 28] {
     [
@@ -299,7 +294,7 @@ fn native_constructor_allocation_modes_are_explicit() {
         assert!(vm.is_constructor_value(&constructor));
         assert_eq!(
             native_construct_mode(&vm, &constructor),
-            NativeConstructMode::InternalEagerPrototype,
+            Some(NativeConstructMode::InternalEagerPrototype),
             "unexpected construct mode for {source}"
         );
     }
@@ -308,20 +303,191 @@ fn native_constructor_allocation_modes_are_explicit() {
         assert!(vm.is_constructor_value(&constructor));
         assert_eq!(
             native_construct_mode(&vm, &constructor),
-            NativeConstructMode::InternalDeferredPrototype,
+            Some(NativeConstructMode::InternalDeferredPrototype),
             "unexpected construct mode for {source}"
         );
     }
-    for &source in PREALLOCATED_NATIVE_FUNCTION_SOURCES {
+    for &source in PREALLOCATED_NATIVE_CONSTRUCTOR_SOURCES {
         let constructor = vm
             .run(source)
             .expect("preallocating constructor should resolve");
+        assert!(vm.is_constructor_value(&constructor));
         assert_eq!(
             native_construct_mode(&vm, &constructor),
-            NativeConstructMode::PreallocateReceiver,
+            Some(NativeConstructMode::PreallocateReceiver),
             "unexpected construct mode for {source}"
         );
     }
+    for &source in NON_CONSTRUCTIBLE_NATIVE_FUNCTION_SOURCES {
+        let function = vm.run(source).expect("native function should resolve");
+        assert!(
+            !vm.is_constructor_value(&function),
+            "{source} must not construct"
+        );
+        assert_eq!(
+            native_construct_mode(&vm, &function),
+            None,
+            "unexpected construct metadata for {source}"
+        );
+    }
+}
+
+#[test]
+fn constructor_checks_follow_deep_proxy_and_bound_chains_iteratively() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.run(
+        r#"
+        var sharedHandler = {};
+        var deepProxyBase = function () {};
+        var deepProxyConstructor = deepProxyBase;
+        for (var i = 0; i < 20000; i += 1) {
+          deepProxyConstructor = new Proxy(deepProxyConstructor, sharedHandler);
+        }
+        var deepBoundConstructor = function () {};
+        for (var j = 0; j < 20000; j += 1) {
+          deepBoundConstructor = deepBoundConstructor.bind(null);
+        }
+        var deepNonConstructor = Math.abs;
+        for (var k = 0; k < 1000; k += 1) {
+          deepNonConstructor = new Proxy(deepNonConstructor, sharedHandler);
+        }
+        var ShallowNewTarget = function () {};
+        var deepProxyResult = Reflect.construct(
+          deepProxyConstructor, [], ShallowNewTarget
+        );
+        var deepProxyDefaultResult = Reflect.construct(deepProxyConstructor, []);
+        var deepBoundResult = Reflect.construct(
+          deepBoundConstructor, [], ShallowNewTarget
+        );
+        var invariantBase = {};
+        Object.defineProperty(invariantBase, "fixed", {
+          value: 1,
+          writable: false,
+          configurable: false
+        });
+        var deepInvariantTarget = invariantBase;
+        for (var m = 0; m < 100000; m += 1) {
+          deepInvariantTarget = new Proxy(deepInvariantTarget, sharedHandler);
+        }
+        var invariantProxy = new Proxy(deepInvariantTarget, {
+          get: function () { return 1; }
+        });
+        var deepInvariantRead = invariantProxy.fixed === 1;
+        var descriptorProxy = new Proxy(deepInvariantTarget, {
+          getOwnPropertyDescriptor: function () { return undefined; }
+        });
+        var deepDescriptorRead =
+          Object.getOwnPropertyDescriptor(descriptorProxy, "missing") === undefined;
+        var trapHandler = {
+          isExtensible: function () { return true; },
+          getOwnPropertyDescriptor: function () { return undefined; }
+        };
+        var deepTrapTarget = {};
+        for (var n = 0; n < 100000; n += 1) {
+          deepTrapTarget = new Proxy(deepTrapTarget, trapHandler);
+        }
+        var deepTrapExtensible = Object.isExtensible(deepTrapTarget);
+        var deepTrapDescriptor =
+          Object.getOwnPropertyDescriptor(deepTrapTarget, "missing") === undefined;
+        var freshDescriptorHandler = {
+          getOwnPropertyDescriptor: function () {
+            return {
+              value: 1,
+              writable: true,
+              enumerable: true,
+              configurable: true
+            };
+          }
+        };
+        var freshDescriptorTarget = {};
+        for (var q = 0; q < 1000; q += 1) {
+          freshDescriptorTarget = new Proxy(
+            freshDescriptorTarget, freshDescriptorHandler
+          );
+        }
+        var freshDescriptor =
+          Object.getOwnPropertyDescriptor(freshDescriptorTarget, "fresh");
+        var deepFreshDescriptor =
+          freshDescriptor.value === 1 &&
+          freshDescriptor.writable &&
+          freshDescriptor.enumerable &&
+          freshDescriptor.configurable;
+        var deepProxyConstructed =
+          Object.getPrototypeOf(deepProxyResult) === ShallowNewTarget.prototype;
+        var deepProxyDefaultConstructed =
+          Object.getPrototypeOf(deepProxyDefaultResult) === deepProxyBase.prototype;
+        var deepBoundConstructed =
+          Object.getPrototypeOf(deepBoundResult) === ShallowNewTarget.prototype;
+        "#,
+    )
+    .expect("deep constructor wrappers should allocate");
+
+    assert!(vm.is_constructor_value(&vm.get_global("deepProxyConstructor")));
+    assert!(vm.is_constructor_value(&vm.get_global("deepBoundConstructor")));
+    assert!(!vm.is_constructor_value(&vm.get_global("deepNonConstructor")));
+    assert_eq!(vm.get_global("deepProxyConstructed"), Value::Bool(true));
+    assert_eq!(
+        vm.get_global("deepProxyDefaultConstructed"),
+        Value::Bool(true)
+    );
+    assert_eq!(vm.get_global("deepBoundConstructed"), Value::Bool(true));
+    assert_eq!(vm.get_global("deepInvariantRead"), Value::Bool(true));
+    assert_eq!(vm.get_global("deepDescriptorRead"), Value::Bool(true));
+    assert_eq!(vm.get_global("deepTrapExtensible"), Value::Bool(true));
+    assert_eq!(vm.get_global("deepTrapDescriptor"), Value::Bool(true));
+    assert_eq!(vm.get_global("deepFreshDescriptor"), Value::Bool(true));
+}
+
+#[test]
+fn body_controlled_native_constructors_skip_automatic_prototype_lookup() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    assert_eq!(
+        vm.run(
+            r#"
+            var prototypeReads = [];
+            var active = "";
+            var coercions = 0;
+            var NewTarget = new Proxy(function () {}, {
+              get: function (target, key) {
+                if (key === "prototype") prototypeReads.push(active);
+                return target[key];
+              }
+            });
+            function throwsTypeError(label, target, args) {
+              active = label;
+              try { Reflect.construct(target, args, NewTarget); }
+              catch (error) { return error instanceof TypeError; }
+              return false;
+            }
+
+            var bigintError = throwsTypeError("BigInt", BigInt, [{
+              valueOf: function () { coercions += 1; return 1; }
+            }]);
+            var symbolError = throwsTypeError("Symbol", Symbol, [{
+              toString: function () { coercions += 1; return "description"; }
+            }]);
+            var proxyCallError = false;
+            try { Proxy(function () {}, {}); }
+            catch (error) { proxyCallError = error instanceof TypeError; }
+            active = "Proxy";
+            var proxyResult = Reflect.construct(Proxy, [function () {}, {}], NewTarget);
+            var TypedArray = Object.getPrototypeOf(Int8Array);
+            var typedArrayError = throwsTypeError("TypedArray", TypedArray, []);
+
+            [
+              bigintError,
+              symbolError,
+              proxyCallError,
+              typeof proxyResult,
+              typedArrayError,
+              prototypeReads.join(","),
+              coercions
+            ].join("|");
+            "#,
+        )
+        .expect("body-controlled constructors should complete with expected errors"),
+        Value::String("true|true|true|function|true||0".into())
+    );
 }
 
 #[test]
@@ -342,7 +508,7 @@ fn created_realm_native_constructor_modes_match_main_registrations() {
         assert!(vm.is_constructor_value(&constructor));
         assert_eq!(
             native_construct_mode(&vm, &constructor),
-            NativeConstructMode::InternalEagerPrototype,
+            Some(NativeConstructMode::InternalEagerPrototype),
             "unexpected foreign construct mode for {source}"
         );
     }
@@ -353,22 +519,160 @@ fn created_realm_native_constructor_modes_match_main_registrations() {
         assert!(vm.is_constructor_value(&constructor));
         assert_eq!(
             native_construct_mode(&vm, &constructor),
-            NativeConstructMode::InternalDeferredPrototype,
+            Some(NativeConstructMode::InternalDeferredPrototype),
             "unexpected foreign construct mode for {source}"
         );
     }
-    for &source in FOREIGN_PREALLOCATED_NATIVE_FUNCTION_SOURCES {
+    for &source in FOREIGN_PREALLOCATED_NATIVE_CONSTRUCTOR_SOURCES {
         let constructor = vm
             .call_function(&eval, &[Value::String(source.into())], Some(global.clone()))
             .expect("foreign preallocating constructor should resolve");
+        assert!(vm.is_constructor_value(&constructor));
         assert_eq!(
             native_construct_mode(&vm, &constructor),
-            NativeConstructMode::PreallocateReceiver,
+            Some(NativeConstructMode::PreallocateReceiver),
             "unexpected foreign construct mode for {source}"
+        );
+    }
+    for &source in NON_CONSTRUCTIBLE_NATIVE_FUNCTION_SOURCES {
+        let function = vm
+            .call_function(&eval, &[Value::String(source.into())], Some(global.clone()))
+            .expect("foreign native function should resolve");
+        assert!(
+            !vm.is_constructor_value(&function),
+            "{source} must not construct"
+        );
+        assert_eq!(
+            native_construct_mode(&vm, &function),
+            None,
+            "unexpected foreign construct metadata for {source}"
         );
     }
 
     vm.unpin_many(pin_count);
+}
+
+#[test]
+fn created_realm_body_controlled_constructors_preserve_realm_and_order() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    assert_eq!(
+        vm.run(
+            r#"
+            var other = $262.createRealm().global;
+            var prototypeReads = [];
+            var coercions = 0;
+            var active = "";
+            var NewTarget = new Proxy(function () {}, {
+              get: function (target, key) {
+                if (key === "prototype") prototypeReads.push(active);
+                return target[key];
+              }
+            });
+            function foreignTypeError(label, target, args) {
+              active = label;
+              try { Reflect.construct(target, args, NewTarget); }
+              catch (error) { return error instanceof other.TypeError; }
+              return false;
+            }
+
+            var bigintError = foreignTypeError("BigInt", other.BigInt, [{
+              valueOf: function () { coercions += 1; return 1; }
+            }]);
+            var symbolError = foreignTypeError("Symbol", other.Symbol, [{
+              toString: function () { coercions += 1; return "description"; }
+            }]);
+            var OtherTypedArray = Object.getPrototypeOf(other.Int8Array);
+            var typedArrayError = foreignTypeError("TypedArray", OtherTypedArray, []);
+
+            [
+              bigintError,
+              symbolError,
+              typedArrayError,
+              prototypeReads.join(","),
+              coercions
+            ].join("|");
+            "#,
+        )
+        .expect("foreign constructors should throw in their own Realm"),
+        Value::String("true|true|true||0".into())
+    );
+}
+
+#[test]
+fn created_realm_proxy_intrinsic_and_revocable_results_are_realm_local() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    assert_eq!(
+        vm.run(
+            r#"
+            var other = $262.createRealm().global;
+            var callError = other.eval(
+              "try { Proxy({}, {}); false; } catch (error) { error instanceof TypeError; }"
+            );
+            var newTargetResult = Reflect.construct(function () {}, [], other.Proxy);
+            var pair = other.Proxy.revocable(function () {}, {});
+            var trapArrayIsRealmLocal = other.eval(
+              "var seen; var P = new Proxy(function () {}, {" +
+              "construct: function (target, args) {" +
+              "seen = Object.getPrototypeOf(args) === Array.prototype; return {};" +
+              "}}); new P(); seen;"
+            );
+            [
+              other.Proxy !== Proxy,
+              callError,
+              Object.getPrototypeOf(other.Proxy) === other.Function.prototype,
+              Object.getPrototypeOf(other.Proxy.revocable) === other.Function.prototype,
+              Object.getPrototypeOf(newTargetResult) === other.Object.prototype,
+              Object.getPrototypeOf(pair) === other.Object.prototype,
+              Object.getPrototypeOf(pair.revoke) === other.Function.prototype,
+              trapArrayIsRealmLocal
+            ].join("|");
+            "#,
+        )
+        .expect("created Realm Proxy surface should be observable"),
+        Value::String("true|true|true|true|true|true|true|true".into())
+    );
+}
+
+#[test]
+fn proxy_revocable_roots_intermediates_across_exact_cap_collection() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.run(
+        "globalThis.proxyTarget = function () {}; proxyTarget.x = 1; globalThis.proxyHandler = {};",
+    )
+    .expect("Proxy fixture should initialize");
+    vm.gc();
+    let baseline = vm.heap.live_count();
+    let _unrooted_garbage = vm.new_object().expect("garbage object should allocate");
+    let limit = baseline + 3;
+    vm.set_max_heap_objects(Some(limit));
+
+    let pair = vm
+        .run("Proxy.revocable(proxyTarget, proxyHandler);")
+        .expect("garbage collection should leave room for the rooted result");
+    vm.set_max_heap_objects(None);
+    let pair_pin = vm.pin(&pair);
+    let proxy = vm
+        .get_property(&pair, "proxy")
+        .expect("result should retain its proxy");
+    let revoke = vm
+        .get_property(&pair, "revoke")
+        .expect("result should retain its revoker");
+    assert_eq!(
+        vm.get_property(&proxy, "x")
+            .expect("live proxy should forward target properties"),
+        Value::Number(1.0)
+    );
+    assert_eq!(
+        vm.call_function(&revoke, &[], None)
+            .expect("live revoker should remain callable"),
+        Value::Undefined
+    );
+    let error = vm
+        .get_property(&proxy, "x")
+        .expect_err("revoked proxy should reject later access");
+    assert_eq!(error.kind, crate::error::ErrorKind::Type);
+    assert!(vm.heap.live_count() <= limit);
+    vm.unpin_many(pair_pin);
 }
 
 #[test]

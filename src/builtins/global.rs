@@ -157,6 +157,9 @@ pub(crate) fn global_is_finite(
 /// Throws RangeError for non-integral numbers, SyntaxError for unparseable
 /// strings, and TypeError for unsupported primitive types.
 pub(crate) fn global_bigint(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    if vm.current_native_new_target().is_some() {
+        return Err(Error::type_err("BigInt is not a constructor"));
+    }
     let arg = args.first().unwrap_or(&Value::Undefined);
     let prim = match arg {
         Value::Object(_) => vm.to_primitive_number(arg)?,

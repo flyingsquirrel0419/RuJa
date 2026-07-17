@@ -381,21 +381,51 @@ impl Vm {
     ) -> error::Result<Value> {
         let pin_count = self.pin_many(&[target.clone(), handler.clone(), receiver.clone()]);
         let result = (|| {
-            let trap = self.get_property(&handler, "get")?;
-            if trap.is_nullish() {
-                return self.get_property_key_rx(&target, key, receiver, depth + 1);
+            let mut target = target;
+            let mut handler = handler;
+            loop {
+                let trap = self.get_property(&handler, "get")?;
+                if !trap.is_nullish() {
+                    let key_value = Self::property_key_to_value(key);
+                    let trap_pin = self.pin(&trap);
+                    let trap_result = self.call_function(
+                        &trap,
+                        &[target.clone(), key_value, receiver.clone()],
+                        Some(handler),
+                    );
+                    self.unpin(trap_pin);
+                    let trap_result = trap_result?;
+                    let result_pin = self.pin(&trap_result);
+                    let validation = self.validate_proxy_get_result(&target, key, &trap_result);
+                    self.unpin(result_pin);
+                    validation?;
+                    return Ok(trap_result);
+                }
+
+                // Transparent Proxy chains are valid at arbitrary depth. Keep
+                // the original target pinned and unwrap them without consuming
+                // the ordinary prototype-cycle recursion budget.
+                let nested_proxy = match &target {
+                    Value::Object(idx) => self.heap.with_obj(idx.0, |object| {
+                        let HeapObj::Proxy(proxy) = object else {
+                            return None;
+                        };
+                        if *proxy.revoked.lock() {
+                            return Some(Err(Error::type_err(
+                                "Cannot perform 'get' on a proxy that has been revoked",
+                            )));
+                        }
+                        Some(Ok((proxy.target.clone(), proxy.handler.clone())))
+                    }),
+                    _ => None,
+                };
+                match nested_proxy {
+                    Some(result) => {
+                        (target, handler) = result?;
+                    }
+                    None => return self.get_property_key_rx(&target, key, receiver, depth),
+                }
             }
-            let key_value = Self::property_key_to_value(key);
-            let trap_pin = self.pin(&trap);
-            let trap_result =
-                self.call_function(&trap, &[target.clone(), key_value, receiver], Some(handler));
-            self.unpin(trap_pin);
-            let trap_result = trap_result?;
-            let result_pin = self.pin(&trap_result);
-            let validation = self.validate_proxy_get_result(&target, key, &trap_result);
-            self.unpin(result_pin);
-            validation?;
-            Ok(trap_result)
         })();
         self.unpin_many(pin_count);
         result
@@ -888,39 +918,68 @@ impl Vm {
     }
 
     pub(crate) fn is_extensible(&mut self, obj: &Value) -> error::Result<bool> {
-        let Value::Object(idx) = obj else {
-            return Ok(false);
-        };
-        let proxy_info = self.heap.with_obj(idx.0, |o| {
-            if let HeapObj::Proxy(proxy) = o {
-                if *proxy.revoked.lock() {
-                    return Some(Err(Error::type_err(
-                        "Cannot perform 'isExtensible' on a proxy that has been revoked",
-                    )));
+        let root_pin = self.pin(obj);
+        let mut current = obj.clone();
+        let mut trap_results = Vec::new();
+        let result = (|| loop {
+            let Value::Object(idx) = &current else {
+                return Ok(false);
+            };
+            let proxy_info = self.heap.with_obj(idx.0, |o| {
+                if let HeapObj::Proxy(proxy) = o {
+                    if *proxy.revoked.lock() {
+                        return Some(Err(Error::type_err(
+                            "Cannot perform 'isExtensible' on a proxy that has been revoked",
+                        )));
+                    }
+                    Some(Ok((proxy.target.clone(), proxy.handler.clone())))
+                } else {
+                    None
                 }
-                Some(Ok((proxy.target.clone(), proxy.handler.clone())))
-            } else {
-                None
+            });
+            let Some(proxy_info) = proxy_info else {
+                let target_result = self.heap.with_obj(idx.0, |o| o.is_extensible());
+                for trap_result in trap_results.iter().rev() {
+                    if *trap_result != target_result {
+                        return Err(Error::type_err(
+                            "Proxy isExtensible trap result must match target extensibility",
+                        ));
+                    }
+                }
+                return Ok(target_result);
+            };
+            let (target, handler) = proxy_info?;
+            let proxy_pins = self.pin_many(&[target.clone(), handler.clone()]);
+            let trap = match self.get_property(&handler, "isExtensible") {
+                Ok(trap) => trap,
+                Err(error) => {
+                    self.unpin_many(proxy_pins);
+                    return Err(error);
+                }
+            };
+            if trap.is_nullish() {
+                self.unpin_many(proxy_pins);
+                current = target;
+                continue;
             }
-        });
-        if let Some(result) = proxy_info {
-            let (target, handler) = result?;
-            let trap = self.get_property(&handler, "isExtensible")?;
-            if trap.is_undefined() || trap.is_null() {
-                return self.is_extensible(&target);
-            }
+            let trap_pin = self.pin(&trap);
             let trap_result =
-                self.call_function(&trap, std::slice::from_ref(&target), Some(handler))?;
+                self.call_function(&trap, std::slice::from_ref(&target), Some(handler));
+            self.unpin(trap_pin);
+            let trap_result = match trap_result {
+                Ok(result) => result,
+                Err(error) => {
+                    self.unpin_many(proxy_pins);
+                    return Err(error);
+                }
+            };
             let boolean_trap_result = self.to_boolean(&trap_result);
-            let target_result = self.is_extensible(&target)?;
-            if boolean_trap_result != target_result {
-                return Err(Error::type_err(
-                    "Proxy isExtensible trap result must match target extensibility",
-                ));
-            }
-            return Ok(boolean_trap_result);
-        }
-        Ok(self.heap.with_obj(idx.0, |o| o.is_extensible()))
+            trap_results.push(boolean_trap_result);
+            self.unpin_many(proxy_pins);
+            current = target;
+        })();
+        self.unpin(root_pin);
+        result
     }
 
     fn set_property_impl(

@@ -479,6 +479,51 @@ fn super_pre_dispatch_failures_restore_constructor_state() {
 }
 
 #[test]
+fn super_uses_construct_semantics_for_proxy_and_bound_superclasses() {
+    assert_eq!(
+        run(r#"
+            var calls = [];
+            function ProxyBase(value) { this.proxyValue = value; }
+            var ProxiedBase = new Proxy(ProxyBase, {
+              apply: function (target, thisValue, args) {
+                calls.push("apply");
+                return Reflect.apply(target, thisValue, args);
+              },
+              construct: function (target, args, newTarget) {
+                calls.push("construct");
+                return Reflect.construct(target, args, newTarget);
+              }
+            });
+            class ProxyDerived extends ProxiedBase {
+              constructor() { super(7); }
+            }
+
+            function BoundBase(left, right) { this.boundValue = left + right; }
+            var boundThis = {};
+            var BoundBaseWithArg = BoundBase.bind(boundThis, 1);
+            Object.defineProperty(BoundBaseWithArg, "prototype", {
+              value: BoundBase.prototype
+            });
+            class BoundDerived extends BoundBaseWithArg {
+              constructor() { super(2); }
+            }
+
+            var proxyResult = new ProxyDerived();
+            var boundResult = new BoundDerived();
+            [
+              calls.join(","),
+              proxyResult.proxyValue,
+              proxyResult instanceof ProxyDerived,
+              boundResult.boundValue,
+              boundResult instanceof BoundDerived,
+              boundThis.boundValue
+            ].join("|");
+        "#),
+        Value::String(Arc::from("construct|7|true|3|true|"))
+    );
+}
+
+#[test]
 fn async_and_generator_superclasses_fail_before_prototype_lookup() {
     assert_eq!(
         run(r#"

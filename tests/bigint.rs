@@ -117,6 +117,57 @@ fn bigint_constructor_rejects_missing_and_nullish_with_typeerror() {
 }
 
 #[test]
+fn bigint_construct_entry_rejects_before_coercion_but_remains_constructible() {
+    assert_eq!(
+        run(r#"
+            var coercions = 0;
+            var argument = {
+              valueOf: function () {
+                coercions += 1;
+                return 1;
+              }
+            };
+            function throwsTypeError(operation) {
+              try { operation(); }
+              catch (error) { return error instanceof TypeError; }
+              return false;
+            }
+
+            class BigIntSubclass extends BigInt {}
+            var BoundBigInt = BigInt.bind(null);
+            var ForwardingProxy = new Proxy(BigInt, {});
+            var trapCalls = 0;
+            var TrappingProxy = new Proxy(BigInt, {
+              construct: function () {
+                trapCalls += 1;
+                return { trapped: true };
+              }
+            });
+
+            var direct = throwsTypeError(function () { new BigInt(argument); });
+            var derived = throwsTypeError(function () { new BigIntSubclass(argument); });
+            var bound = throwsTypeError(function () { new BoundBigInt(argument); });
+            var forwarded = throwsTypeError(function () { new ForwardingProxy(argument); });
+            var trapped = new TrappingProxy(argument);
+            var newTargetResult = Reflect.construct(function () {}, [], BigInt);
+
+            [
+              direct,
+              derived,
+              bound,
+              forwarded,
+              trapped.trapped,
+              trapCalls,
+              Object.getPrototypeOf(newTargetResult) === BigInt.prototype,
+              coercions,
+              typeof BigInt(1)
+            ].join("|");
+        "#),
+        Value::String(Arc::from("true|true|true|true|true|1|true|0|bigint"))
+    );
+}
+
+#[test]
 fn bigint_as_int_n_and_as_uint_n_wrap_and_validate_order() {
     assert_eq!(
         run(r#"

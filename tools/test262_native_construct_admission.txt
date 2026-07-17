@@ -1,0 +1,6 @@
+# Audited native [[Construct]] presence and constructor-entry behavior.
+built-ins/BigInt/is-a-constructor.js
+built-ins/Symbol/is-constructor.js
+built-ins/Proxy/constructor.js
+built-ins/Proxy/proxy-newtarget.js
+built-ins/Proxy/proxy-undefined-newtarget.js

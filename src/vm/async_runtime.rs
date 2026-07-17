@@ -824,13 +824,7 @@ impl Vm {
         length: usize,
         closure: GcIdx,
     ) -> error::Result<GcIdx> {
-        self.new_native_function_with_construct_mode_in_env(
-            name,
-            func,
-            length,
-            closure,
-            NativeConstructMode::PreallocateReceiver,
-        )
+        self.new_native_function_with_construct_mode_in_env(name, func, length, closure, None)
     }
 
     pub(crate) fn new_native_constructor(
@@ -856,7 +850,7 @@ impl Vm {
             func,
             length,
             closure,
-            construct_mode,
+            Some(construct_mode),
         )
     }
 
@@ -866,7 +860,7 @@ impl Vm {
         func: NativeFn,
         length: usize,
         closure: GcIdx,
-        construct_mode: NativeConstructMode,
+        construct_mode: Option<NativeConstructMode>,
     ) -> error::Result<GcIdx> {
         let realm = crate::environment::global_env_root(&self.heap, closure);
         let function_proto = self
@@ -897,8 +891,9 @@ impl Vm {
             lexical_new_target: Value::Undefined,
             home_object: Mutex::new(None),
             is_class_ctor: std::sync::atomic::AtomicBool::new(false),
-            // Native functions have no `prototype` property (they are not
-            // constructors). Their [[Prototype]] (`__proto__`) is
+            // Constructor installers attach an instance prototype separately;
+            // [[Construct]] itself is represented by `construct_mode`.
+            // Every native function's own [[Prototype]] (`__proto__`) is
             // `Function.prototype` once it has been allocated.
             prototype: Mutex::new(None),
             proto: Mutex::new(match function_proto {
@@ -1004,22 +999,32 @@ impl Vm {
     }
 
     pub(crate) fn is_constructor_value(&self, value: &Value) -> bool {
-        let Value::Object(idx) = value else {
+        let Value::Object(mut current) = value else {
             return false;
         };
-        self.heap.with_obj(idx.0, |obj| match obj {
-            HeapObj::Function(f) => match &f.kind {
-                crate::value::FunctionKind::Interpreted { func } => {
-                    !func.is_arrow && !func.is_method && !func.is_async && !func.is_generator
-                }
-                crate::value::FunctionKind::Native { .. } => f.prototype.lock().is_some(),
-                crate::value::FunctionKind::Bound { target, .. } => {
-                    self.is_constructor_value(&Value::Object(*target))
-                }
-            },
-            HeapObj::Proxy(proxy) => self.is_constructor_value(&proxy.target),
-            _ => false,
-        })
+        loop {
+            let next = self.heap.with_obj(current.0, |obj| match obj {
+                HeapObj::Function(f) => match &f.kind {
+                    crate::value::FunctionKind::Interpreted { func } => Err(!func.is_arrow
+                        && !func.is_method
+                        && !func.is_async
+                        && !func.is_generator),
+                    crate::value::FunctionKind::Native { construct_mode, .. } => {
+                        Err(construct_mode.is_some())
+                    }
+                    crate::value::FunctionKind::Bound { target, .. } => Ok(*target),
+                },
+                HeapObj::Proxy(proxy) => match &proxy.target {
+                    Value::Object(target) => Ok(*target),
+                    _ => Err(false),
+                },
+                _ => Err(false),
+            });
+            match next {
+                Ok(target) => current = target,
+                Err(result) => return result,
+            }
+        }
     }
 
     fn proxy_construct_info(&self, constructor: GcIdx) -> Option<error::Result<(Value, Value)>> {
@@ -1034,38 +1039,6 @@ impl Vm {
             }
             Some(Ok((proxy.target.clone(), proxy.handler.clone())))
         })
-    }
-
-    fn construct_proxy(
-        &mut self,
-        target: Value,
-        handler: Value,
-        args: &[Value],
-        new_target: &Value,
-    ) -> error::Result<Value> {
-        if !self.is_constructor_value(&target) {
-            return Err(Error::type_err("not a constructor".to_string()));
-        }
-        let trap = self.get_property(&handler, "construct")?;
-        if trap.is_undefined() || trap.is_null() {
-            return self.construct_with_new_target(&target, args, new_target);
-        }
-        if !crate::builtins::is_callable(&trap, &self.heap) {
-            return Err(Error::type_err("Proxy construct trap is not callable"));
-        }
-        let arg_array = crate::builtins::make_value_array(self, args.to_vec())?;
-        let new_obj = self.call_function(
-            &trap,
-            &[target, arg_array, new_target.clone()],
-            Some(handler),
-        )?;
-        if matches!(new_obj, Value::Object(_)) {
-            Ok(new_obj)
-        } else {
-            Err(Error::type_err(
-                "Proxy construct trap must return an object".to_string(),
-            ))
-        }
     }
 
     /// Define a global binding (visible to JS as a top-level variable).
@@ -1609,7 +1582,7 @@ impl Vm {
             let FunctionKind::Native { construct_mode, .. } = &f.kind else {
                 return None;
             };
-            Some(*construct_mode)
+            *construct_mode
         })
     }
 
@@ -1654,45 +1627,85 @@ impl Vm {
         args: &[Value],
         new_target: &Value,
     ) -> error::Result<Value> {
-        let idx = match constructor {
-            Value::Object(idx) => *idx,
-            _ => return Err(Error::type_err("not a constructor".to_string())),
-        };
-        let bound_construct = self.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Function(f) = obj {
-                if let crate::value::FunctionKind::Bound {
-                    target, bound_args, ..
-                } = &f.kind
-                {
-                    return Some((*target, bound_args.clone()));
-                }
-            }
-            None
-        });
-        if let Some((target, bound_args)) = bound_construct {
-            let mut all = bound_args;
-            all.extend_from_slice(args);
-            let forwarded_new_target = if constructor == new_target {
-                Value::Object(target)
-            } else {
-                new_target.clone()
-            };
-            return self.construct_with_new_target(
-                &Value::Object(target),
-                &all,
-                &forwarded_new_target,
-            );
-        }
-        if let Some(proxy_construct) = self.proxy_construct_info(idx) {
-            let (target, handler) = proxy_construct?;
-            return self.construct_proxy(target, handler, args, new_target);
-        }
         if !self.is_constructor_value(constructor) {
             return Err(Error::type_err("not a constructor".to_string()));
         }
         if !self.is_constructor_value(new_target) {
             return Err(Error::type_err("newTarget is not a constructor"));
         }
+
+        let mut active_constructor = constructor.clone();
+        let mut active_args = args.to_vec();
+        let mut active_new_target = new_target.clone();
+        let idx = loop {
+            let Value::Object(idx) = &active_constructor else {
+                unreachable!("constructor metadata must resolve to an object");
+            };
+            let idx = *idx;
+            let bound_construct = self.heap.with_obj(idx.0, |obj| {
+                if let HeapObj::Function(f) = obj {
+                    if let crate::value::FunctionKind::Bound {
+                        target, bound_args, ..
+                    } = &f.kind
+                    {
+                        return Some((*target, bound_args.clone()));
+                    }
+                }
+                None
+            });
+            if let Some((target, bound_args)) = bound_construct {
+                let mut all = bound_args;
+                all.extend_from_slice(&active_args);
+                if active_constructor == active_new_target {
+                    active_new_target = Value::Object(target);
+                }
+                active_constructor = Value::Object(target);
+                active_args = all;
+                continue;
+            }
+
+            if let Some(proxy_construct) = self.proxy_construct_info(idx) {
+                let (target, handler) = proxy_construct?;
+                let trap = self.get_property(&handler, "construct")?;
+                if trap.is_undefined() || trap.is_null() {
+                    active_constructor = target;
+                    continue;
+                }
+                if !crate::builtins::is_callable(&trap, &self.heap) {
+                    return Err(Error::type_err("Proxy construct trap is not callable"));
+                }
+                let mut pin_count = self.pin(&trap);
+                let arg_array = match crate::builtins::make_value_array_in_current_realm(
+                    self,
+                    active_args.clone(),
+                ) {
+                    Ok(array) => array,
+                    Err(error) => {
+                        self.unpin_many(pin_count);
+                        return Err(error);
+                    }
+                };
+                pin_count += self.pin(&arg_array);
+                let new_obj = self.call_function(
+                    &trap,
+                    &[target, arg_array, active_new_target.clone()],
+                    Some(handler),
+                );
+                self.unpin_many(pin_count);
+                let new_obj = new_obj?;
+                if matches!(new_obj, Value::Object(_)) {
+                    return Ok(new_obj);
+                }
+                return Err(Error::type_err(
+                    "Proxy construct trap must return an object".to_string(),
+                ));
+            }
+
+            break idx;
+        };
+        let constructor = &active_constructor;
+        let args = active_args.as_slice();
+        let new_target = &active_new_target;
         match self.native_construct_mode(idx) {
             Some(NativeConstructMode::InternalEagerPrototype) => {
                 let observed_prototype = self.get_property(new_target, "prototype")?;

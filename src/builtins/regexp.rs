@@ -2242,7 +2242,12 @@ pub fn setup_collections(vm: &mut Vm) -> error::Result<()> {
     let _ = weakset_proto;
 
     // Symbol
-    let sym_idx = vm.new_native_function("Symbol", symbol_constructor, 0)?;
+    let sym_idx = vm.new_native_constructor(
+        "Symbol",
+        symbol_constructor,
+        0,
+        NativeConstructMode::InternalDeferredPrototype,
+    )?;
     define_global(vm, "Symbol", Value::Object(sym_idx));
     let sym_for_idx = vm.new_native_function("for", symbol_for, 1)?;
     let sym_key_for_idx = vm.new_native_function("keyFor", symbol_key_for, 1)?;
@@ -2260,9 +2265,9 @@ pub fn setup_collections(vm: &mut Vm) -> error::Result<()> {
             install_symbol_static_properties(vm, &mut props);
         });
     }
-    // Symbol.prototype: a plain Object with a toString method. Symbol is a
-    // value type (not a constructor), so build the proto manually rather than
-    // going through make_builtin_constructor.
+    // Symbol has [[Construct]] for extends/newTarget checks, but construction
+    // always throws. Build its primitive wrapper prototype without a generic
+    // receiver-producing constructor helper.
     let sym_tostring_idx = vm.new_native_function("toString", symbol_to_string, 0)?;
     let sym_valueof_idx = vm.new_native_function("valueOf", symbol_value_of, 0)?;
     let sym_to_primitive_idx =
@@ -2431,7 +2436,7 @@ fn make_builtin_constructor_with_proto_class_in_env(
         kind: FunctionKind::Native {
             func: ctor,
             length,
-            construct_mode,
+            construct_mode: Some(construct_mode),
         },
         closure: env,
         lexical_new_target: Value::Undefined,

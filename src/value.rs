@@ -687,7 +687,10 @@ pub enum FunctionKind {
     Native {
         func: crate::vm::NativeFn,
         length: usize,
-        construct_mode: NativeConstructMode,
+        /// `None` means the builtin has no [[Construct]] internal method.
+        /// A mode is present only for native constructors and also selects
+        /// who owns receiver allocation and prototype observation.
+        construct_mode: Option<NativeConstructMode>,
     },
     Interpreted {
         func: std::sync::Arc<crate::function::FunctionDef>,
@@ -705,7 +708,7 @@ pub enum NativeConstructMode {
     PreallocateReceiver,
     /// The native body allocates the result, but `.prototype` is observed first.
     InternalEagerPrototype,
-    /// The native body controls when `.prototype` is observed after validation.
+    /// The native body controls whether and when `.prototype` is observed.
     InternalDeferredPrototype,
 }
 

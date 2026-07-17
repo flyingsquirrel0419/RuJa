@@ -40,6 +40,10 @@ from test262_object_constructor_admission import (
     OBJECT_CONSTRUCTOR_FEATURES,
     OBJECT_CONSTRUCTOR_FILES,
 )
+from test262_native_construct_admission import (
+    NATIVE_CONSTRUCT_FEATURES,
+    NATIVE_CONSTRUCT_FILES,
+)
 from test262_object_prototype_admission import (
     OBJECT_PROTOTYPE_FEATURES_BY_FILE,
     OBJECT_PROTOTYPE_FILES,
@@ -1005,6 +1009,53 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                         tool.should_skip(
                             {"features": ["Reflect.construct"]}, outside
                         )
+                    )
+                finally:
+                    tool.TEST262 = original_root
+
+    def test_native_construct_manifest_is_exact_and_shared(self):
+        expected = {
+            "built-ins/BigInt/is-a-constructor.js": {"Reflect.construct"},
+            "built-ins/Symbol/is-constructor.js": {
+                "Symbol", "Reflect.construct",
+            },
+            "built-ins/Proxy/constructor.js": {"Proxy"},
+            "built-ins/Proxy/proxy-newtarget.js": {"Proxy"},
+            "built-ins/Proxy/proxy-undefined-newtarget.js": {"Proxy"},
+        }
+        self.assertEqual(NATIVE_CONSTRUCT_FILES, frozenset(expected))
+        self.assertEqual(
+            NATIVE_CONSTRUCT_FEATURES,
+            {path: frozenset(features) for path, features in expected.items()},
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            outside = root / "test" / "built-ins/Proxy/future.js"
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for relative, features in expected.items():
+                        path = root / "test" / relative
+                        self.assertTrue(tool.native_construct_path(path))
+                        self.assertEqual(
+                            tool.native_construct_features(path), features
+                        )
+                        self.assertFalse(
+                            tool.should_skip(
+                                {"features": sorted(features)},
+                                path,
+                            )
+                        )
+                        self.assertTrue(
+                            tool.should_skip(
+                                {"features": sorted(features | {"decorators"})},
+                                path,
+                            )
+                        )
+                    self.assertFalse(tool.native_construct_path(outside))
+                    self.assertTrue(
+                        tool.should_skip({"features": ["Proxy"]}, outside)
                     )
                 finally:
                     tool.TEST262 = original_root
