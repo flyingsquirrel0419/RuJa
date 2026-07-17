@@ -44,12 +44,35 @@ marked per GC step, avoiding long pauses. There is no generational collector.
 accumulate memory before a collection. A `gc_pins` stack lets call paths pin
 heap values held in Rust locals across allocations that could trigger a GC.
 
-Native constructors that allocate specialized heap objects use an internal
-allocation dispatch path. This lets each constructor perform specification
-validation before the observable `NewTarget.prototype` lookup instead of
-preallocating an ordinary object in generic dispatch. Values returned by that
-lookup, and fresh specialized objects not yet linked from another heap object,
-must remain on `gc_pins` across every collecting `Vm::alloc` call.
+Native functions carry immutable `NativeConstructMode` metadata instead of
+being classified by their observable `name`. `PreallocateReceiver` uses the
+ordinary construction path. `InternalEagerPrototype` suppresses the discarded
+ordinary receiver but observes the raw `NewTarget.prototype` before entering
+the native body; a non-object value resolves the same Realm-local
+`%Object.prototype%` fallback before the body, preserving existing error
+precedence. `InternalDeferredPrototype` leaves both validation and prototype
+observation to the constructor body. Main-Realm and created-Realm registration
+tests inventory every eager and deferred constructor so a new builtin cannot
+silently inherit the wrong allocation protocol.
+
+`construct_with_new_target` pins the resolved constructor, new target, and all
+arguments across prototype getters, Proxy and bound-function forwarding,
+native calls, and collecting allocation. `call_function_with_new_target`
+scopes the pending new target as save, set, call, and restore, including errors
+that occur before native dispatch and both normal and spread `super()` paths.
+Values returned by prototype lookup, and fresh specialized objects not yet
+linked from another heap object, remain on `gc_pins` across every collecting
+`Vm::alloc` call.
+
+```text
+[Decision Log]
+- 목적과 의도: Make native receiver allocation an explicit, reviewable contract while preserving observable construction order and exact-cap GC safety.
+- 기존 구현 및 제약 조건: Generic dispatch skipped receiver allocation through a function-name allowlist, construction inputs lived in untraced Rust locals, and pending NewTarget state could survive pre-dispatch errors.
+- 검토한 주요 대안: Keep and expand the name allowlist; make every specialized constructor perform all dispatch itself; infer behavior from return object type; or store an immutable mode on each native function.
+- 선택한 방식: Store one of three allocation modes on FunctionKind::Native, inventory registrations per Realm, pin the complete construction input set, and scope pending NewTarget mutation around every call.
+- 다른 대안 대신 이 방식을 선택한 이유: Names are observable and mutable metadata, return types are known too late, and duplicating forwarding logic in each builtin would drift. Explicit modes keep dispatch policy adjacent to registration without changing baseline ordering wholesale.
+- 장점, 단점 및 영향: Exact-cap construction avoids discarded receivers, WeakMap and WeakSet gain correct specialized allocation, and abrupt paths restore state. Constructibility and several constructor-specific ordering defects remain separate metadata and conformance units.
+```
 
 `MakeClosure` follows the same rule for an ordinary function's fresh
 `.prototype`: the prototype is pinned before a named-function environment or

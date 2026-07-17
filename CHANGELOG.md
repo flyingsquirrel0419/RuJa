@@ -4,6 +4,33 @@
 
 ### Fixed
 
+- Native construction no longer depends on an immutable function-name
+  allowlist to decide whether generic dispatch may allocate the receiver.
+  Every native function now carries an explicit `NativeConstructMode`:
+  ordinary receiver preallocation, internal allocation with eager prototype
+  observation, or internal allocation with constructor-controlled deferred
+  observation. The eager path preserves the existing observable
+  `NewTarget.prototype` and fallback-error order, while bound functions and
+  transparent Proxies keep forwarding the original new target. Construction
+  pins the resolved constructor, new target, and every argument through the
+  complete observable path, and scoped pending-new-target state is restored
+  even when pre-dispatch setup or normal/spread `super()` fails. Exact-cap
+  `new Array()` no longer wastes a discarded ordinary receiver, and WeakMap
+  and WeakSet now require `new`, allocate their specialized objects, and honor
+  subclass prototypes. Registration tests inventory all **19 eager / 19
+  deferred** constructors in both the main and created Realms. Local gates
+  include tooling **100/100**, all-target Rust lib/unit **95/95**, builtins
+  **461/461**, classes **104/104**, modules **31/31**, Fuel **24/24**, release,
+  and wasm32. The eager constructor cohort improves from **3952 pass / 1223
+  fail** to **3954 / 1221** solely through the WeakMap/WeakSet fixes; the
+  deferred cohort, Promise **433/0/270**, dynamic import **620/0/384**, and the
+  supported subset **12751/0/7687** are unchanged. Feature commit `6cc6dff`
+  passed CI `29596899916` and full matrix `29596899918`; 29 of 30 result files
+  at `/tmp/ruja-artifacts-native-construct-feature.KyS5dn` are byte-identical
+  to the Realm-rollback baseline, with only built-ins changing by **+2 pass /
+  -2 fail**. The aggregate is now **30161 pass / 6328 fail / 11816 skip / 12
+  timeout / 0 error / 48317 total** (**62.4%** of all files, **82.7%** of
+  executed files).
 - `$262.createRealm()` construction is now transactional under the hard heap
   object cap. The fresh global environment is pinned before any collecting
   allocation, one lexical transaction owns every nested installer pin through

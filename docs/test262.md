@@ -7043,6 +7043,57 @@ aggregate remains **30159 pass / 6330 fail / 11816 skip / 12 timeout / 0 error
 / 48317 total / 36489 pass-or-fail executed**, or **62.4%** of all files and
 **82.7%** of executed files.
 
+## Explicit native constructor allocation modes
+
+Native construction now selects receiver allocation through immutable
+`NativeConstructMode` metadata rather than a function-name allowlist. Ordinary
+native constructors preallocate a receiver, eager internal allocators observe
+and cache `NewTarget.prototype` before their body, and deferred internal
+allocators own their validation and prototype timing. The eager path retains
+the previous non-object fallback and error precedence. Bound and transparent
+Proxy construction forwards the original new target, while the constructor,
+new target, argument list, cached prototype, and fresh specialized object are
+rooted across every re-entrant or collecting boundary.
+
+Internal registration tests require **19 eager / 19 deferred** constructors in
+both the main and a created Realm. Regressions cover exact-cap Array
+construction, getter and fallback-error order, bound/Proxy forwarding, forced
+collection of direct-new arguments, pre-dispatch pending-state cleanup,
+WeakMap/WeakSet call rejection and subclass prototypes, and revoked-Proxy
+`super()` failures for normal and spread arguments. Two independent GPT 5.6
+reviews returned `CLEAN` after eager fallback precedence, argument rooting,
+foreign-Realm inventory, call-depth cleanup, and both `super()` paths were
+covered.
+
+Against the pinned Test262 revision, the eager affected cohort changes from
+**3952 pass / 1223 fail / 1621 skip / 9 timeout / 6805 total** to **3954 /
+1221 / 1621 / 9 / 6805**. The two status changes are the WeakMap and WeakSet
+`undefined-newtarget` cases. The deferred cohort remains byte-identical at
+**5693 pass / 120 fail / 514 skip / 1 timeout / 6328 total**. Promise remains
+**433/0/270/703**, dynamic import **620/0/384/1004**, and the supported subset
+**12751/0/7687/20438**.
+
+Final local gates pass all targets and features, warnings-denied Clippy,
+formatting, release, and wasm32, with Python tooling **100/100**, all-target
+Rust lib/unit **95/95**, builtins **461/461**, classes **104/104**, modules
+**31/31**, and Fuel **24/24**. Feature commit `6cc6dff` passed CI
+`29596899916` and full matrix `29596899918`. Of the 30 downloaded result files
+at `/tmp/ruja-artifacts-native-construct-feature.KyS5dn`, 29 are byte-identical
+to `/tmp/ruja-artifacts-realm-rollback-feature.S47HSt`; built-ins changes only
+by **+2 pass / -2 fail**. The aggregate is **30161 pass / 6328 fail / 11816
+skip / 12 timeout / 0 error / 48317 total / 36489 pass-or-fail executed**, or
+**62.4%** of all files and **82.7%** of executed files.
+
+```text
+[Decision Log]
+- 목적과 의도: Replace implicit native-constructor allocation classification without broad, unmeasured changes to observable prototype timing.
+- 기존 구현 및 제약 조건: A fixed function-name allowlist suppressed generic receivers, several specialized constructors depended on different validation and prototype orders, and Rust construction inputs were not automatically GC roots.
+- 검토한 주요 대안: Expand the allowlist, move every constructor to one eager path, defer every lookup to builtin bodies, or encode the existing protocols explicitly and migrate ordering defects separately.
+- 선택한 방식: Use three immutable allocation modes, preserve each constructor's baseline eager or deferred timing, inventory every registration, and add scoped NewTarget cleanup plus complete input rooting.
+- 다른 대안 대신 이 방식을 선택한 이유: One universal timing rule would introduce unrelated conformance regressions, while names cannot safely encode semantics. Explicit modes make the current contract testable and permit later constructor-specific migrations with focused Test262 evidence.
+- 장점, 단점 및 영향: The allowlist and wasted exact-cap receiver are gone and two real Weak collection failures pass. Native constructibility, super forwarding, wrapper coercion order, and constructors requiring no automatic prototype lookup remain visible follow-up units.
+```
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is
