@@ -58,6 +58,16 @@ pinned immediately after it is read. The caller owns those pins through the
 last re-entrant operation and releases them on both normal and abrupt
 completion. A Rust `Vec<Value>` is storage, not a GC root.
 
+`src/builtins/call_arguments.rs` centralizes that contract for
+`CreateListFromArrayLike`. `Reflect.apply`, `Reflect.construct`, and
+`Function.prototype.apply` therefore share the same observable `length`,
+`ToLength`, indexed `Get`, resource-cap, and pin-cleanup behavior instead of
+maintaining array-specific shortcuts. `Function.prototype.apply` handles its
+specified omitted, `null`, and `undefined` no-argument cases before entering
+the shared object-only operation. The materialized list and its pin count move
+together into the final call so a later getter or target re-entry cannot make
+an earlier argument collectible.
+
 ---
 
 **Next:** [Features](features.md) · [Known limitations](limitations.md) · [Back to README](../README.md)

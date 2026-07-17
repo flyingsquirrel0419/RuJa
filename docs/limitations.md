@@ -22,13 +22,13 @@ The following resource limits are enforced:
   `Array.from(iterable)` is capped at 65k elements. Dense arrays are capped
   at 1M elements (`MAX_DENSE_ARRAY_LEN`); beyond that, indices are stored
   sparsely as named properties.
-- **Call argument caps**: `Reflect.apply` and `Reflect.construct` materialize
-  at most 1,048,576 array-like arguments and throw `RangeError` above that
-  limit. This sandbox resource policy is stricter than ECMAScript `ToLength`
-  and can change observable ordering for enormous `length` values.
-  `Function.prototype.apply` still uses a separate legacy array/own-data-
-  property materializer rather than the observable `CreateListFromArrayLike`
-  path; unifying and auditing that path is a separate follow-up.
+- **Call argument caps**: `Reflect.apply`, `Reflect.construct`, and
+  `Function.prototype.apply` share an observable `CreateListFromArrayLike`
+  implementation that materializes at most 1,048,576 arguments and throws
+  `RangeError` above that limit. The cap is checked after `ToLength` truncates
+  and clamps the observed `length`, but before any indexed `Get`. This sandbox
+  resource policy is stricter than ECMAScript's full `ToLength` range and
+  intentionally prevents enormous argument-list allocation.
 
 These limits make it safe to pass untrusted JS to `Vm::run` without risking
 process crashes, infinite loops, or OOM kills. For truly hard real-time

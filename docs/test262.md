@@ -6693,10 +6693,10 @@ files and **82.6%** of executed files.
 
 The existing 1,048,576-argument materialization cap remains an explicit
 sandbox policy and therefore differs from the specification's full `ToLength`
-range for enormous values. `Function.prototype.apply` still uses a
-separate legacy materializer that reads arrays and own data properties without
-the observable Reflect algorithm; unifying and auditing that path is the next
-bounded follow-up.
+range for enormous values. The shared operation now checks that cap after
+`ToLength` truncation, so a fractional value that truncates to the limit is
+accepted while a resulting integer length above the limit fails before any
+indexed `Get`.
 
 [Decision Log]
 - 목적과 의도: prevent re-entrant GC from invalidating values already produced
@@ -6722,9 +6722,76 @@ bounded follow-up.
 - 장점, 단점 및 영향: getter order and error precedence remain unchanged,
   every materialized value survives arbitrary re-entry through the target
   operation, and pin ownership is directly testable. The manual pin-count
-  protocol remains a local discipline, the resource cap remains intentionally
-  non-spec for huge lists, and `Function.prototype.apply` requires its own
-  materializer audit.
+  protocol remains a local discipline and the resource cap remains
+  intentionally non-spec for huge lists.
+
+## Function.prototype.apply observable argument materialization
+
+`Function.prototype.apply` now uses the same shared
+`CreateListFromArrayLike` operation as both Reflect call builtins. Callable
+validation still happens first. An omitted, `null`, or `undefined` argument
+list takes the specified empty-list path; every other value must be an object.
+The shared operation performs observable `Get("length")`, `ToLength`, and
+ascending indexed `Get` calls, so accessors, inherited values, Proxy traps,
+array holes, and TypedArray elements are no longer bypassed by an Array clone
+or own-data-property shortcut. There is deliberately no real-Array fast path:
+Array index access can itself be observable, and splitting the algorithms was
+the source of the semantic drift.
+
+The observed length is rooted across coercion, every indexed value is rooted
+before the next JavaScript re-entry, and the caller owns all resulting pins
+through the target invocation. Helper, indexed-get, and target-call errors
+restore the original pin depth while returned and thrown argument values retain
+their identity. The 1,048,576-element sandbox cap is evaluated after
+`ToLength`; this also fixes the shared Reflect boundary where `1048576.5`
+previously threw instead of truncating to the accepted limit.
+
+`tools/test262_function_apply_admission.txt` admits only the two previously
+feature-gated direct files,
+`built-ins/Function/prototype/apply/not-a-constructor.js` and
+`built-ins/Function/prototype/apply/resizable-buffer.js`. The complete direct
+directory is now **48/48**, up from **42 pass / 4 fail / 2 skip**. Direct
+Reflect remains **19/19**, the supported subset remains
+**12751/0/7687/20438**, Python tooling is **99/99**, and Rust builtins are
+**454/454**. All-target/all-feature tests and builds, Clippy with warnings
+denied, formatting, release, and wasm32 checks pass. Independent GPT and Umans
+reviews found no implementation defect; explicit omitted/nullish and abrupt
+`ToLength` regressions requested during review were added before the final run.
+
+Feature commit `ffea75a` passed CI `29558468870` and full matrix
+`29558468852`. Against `/tmp/ruja-artifacts-reflect-call-feature.dh7hH0`, 29
+of 30 result artifacts at
+`/tmp/ruja-artifacts-function-apply-feature.wpT8MO` are byte-for-byte
+identical. Only built-ins changes, by exactly **+6 pass / -4 fail / -2 skip**.
+The aggregate is **30114 pass / 6330 fail / 12011 skip / 12 timeout / 0 error /
+48467 total / 36444 pass-or-fail executed**, or **62.1%** of all files and
+**82.6%** of executed files.
+
+[Decision Log]
+- 목적과 의도: make `Function.prototype.apply` follow its observable
+  array-like argument algorithm while preserving every argument across
+  re-entrant garbage collection.
+- 기존 구현 및 제약 조건: the legacy path cloned real Arrays or inspected own
+  data properties directly, skipped inherited/accessor/Proxy behavior, and
+  held intermediate heap values only in a Rust vector. Reflect had a corrected
+  pin protocol, but keeping two materializers allowed ordering and cap behavior
+  to diverge again.
+- 검토한 주요 대안: repair only the four failing Test262 files; retain an
+  Array fast path and patch accessors; convert inputs into a temporary JS
+  Array; keep separate Apply and Reflect helpers; or move the complete abstract
+  operation and pin contract into one builtin module.
+- 선택한 방식: preserve Apply's callable and nullish front-end rules, then use
+  one object-only shared materializer whose return value carries both the Rust
+  argument vector and its owned pin count into the target call.
+- 다른 대안 대신 이 방식을 선택한 이유: file-specific fixes would encode
+  corpus accidents, even ordinary Arrays can expose indexed access, a
+  temporary JS Array adds allocation and prototype semantics, and duplicated
+  helpers had already drifted in both observability and cap ordering.
+- 장점, 단점 및 영향: Apply and Reflect now share getter order, error
+  precedence, cap semantics, and GC ownership; all 48 direct Apply files pass
+  without widening unrelated gates. The manual LIFO pin-count contract and the
+  non-spec sandbox cap remain explicit local constraints. Execution-context
+  Realm tracking and the four keyed Promise failures stay separate follow-ups.
 
 ## Why the full-suite rate is not higher
 

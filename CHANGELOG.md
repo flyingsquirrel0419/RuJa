@@ -4,6 +4,23 @@
 
 ### Fixed
 
+- `Function.prototype.apply` now shares the observable
+  `CreateListFromArrayLike` implementation used by `Reflect.apply` and
+  `Reflect.construct`. It reads and coerces `length` before ordered indexed
+  `Get` operations, observes inherited properties, accessors, Proxies, array
+  holes, and TypedArrays, rejects non-object argument lists, and preserves the
+  specified omitted/`null`/`undefined` no-argument behavior. The shared helper
+  checks the 1,048,576-element sandbox cap after `ToLength`, pins every result
+  immediately across later re-entry, and keeps the complete list rooted
+  through the target call on both normal and abrupt paths. Direct
+  `Function.prototype.apply` Test262 is now **48/48**, direct Reflect remains
+  **19/19**, the supported subset remains **12751/0/7687**, tooling is
+  **99/99**, and Rust builtins are **454/454**. Feature commit `ffea75a` passed
+  CI `29558468870` and full matrix `29558468852`; 29 of 30 result files match
+  the Reflect baseline byte-for-byte and built-ins changes by exactly **+6
+  pass / -4 fail / -2 skip**, producing **30114 pass / 6330 fail / 12011 skip
+  / 12 timeout / 0 error / 48467 total** (**62.1%** of all files, **82.6%** of
+  executed files).
 - `Reflect.apply` and `Reflect.construct` now keep an observable
   `argumentsList.length` result rooted through `ToLength`, pin each indexed
   value immediately, and retain the complete materialized list through the
