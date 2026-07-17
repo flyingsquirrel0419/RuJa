@@ -6943,6 +6943,73 @@ skip / 12 timeout / 0 error / 48317 total / 36489 pass-or-fail executed**, or
   caught Rust panic; module-instantiation error timing and name-based native
   constructor classification remain separate audit units.
 
+## Promise job Realm and host-abort preservation
+
+Deferred Promise work now carries the Realm selected by the operation that
+created it. Dynamic import retains its initiating Realm, thenable jobs use the
+callable `then` function Realm, and Promise reactions capture the selected
+handler Realm when enqueued rather than when executed. The GC traces those
+Realm environments together with every queued capability and continuation, so
+forced collection cannot silently fall back to the main Realm.
+
+A shared completion classifier preserves explicit thrown-value identity,
+materializes catchable native errors in the operation Realm, and propagates
+Fuel exhaustion as a non-catchable host abort. The same policy now covers
+Promise executors and resolution, reaction handlers and capability settlement,
+await setup, `Array.fromAsync`, Async-from-Sync iteration, async iterator
+disposal, async generators, and dynamic import. Async host aborts restore pin,
+frame, and stack ownership; module continuations cache only their own errored
+record; async-generator drains are rooted, release queue ownership, preserve
+siblings, and retry only terminal `next()` settlement so an already-advanced
+generator body is never replayed. Function creation separately pins its fresh
+`.prototype` through environment and closure allocation.
+
+The final local release run is unchanged at **433 pass / 0 fail / 270 skip /
+703 total** for `built-ins/Promise`, **620 pass / 0 fail / 384 skip / 1004
+total** for dynamic import, and **12751 pass / 0 fail / 7687 skip / 20438
+total** for the supported subset. Python tooling is **100/100**; Rust lib/unit,
+builtins, modules, and Fuel tests are **77/77**, **458/458**, **31/31**, and
+**24/24**. All-target/all-feature tests and builds, warnings-denied Clippy,
+formatting, release, and wasm32 checks pass. Independent GPT and Umans reviews
+both found the unsafe state-advanced async-generator replay and both returned
+`CLEAN` after the terminal-only retry correction and hard-heap regressions.
+
+Feature commit `d3698b3` passed CI `29577669220` and full matrix
+`29577669208`. All 30 result artifacts at
+`/tmp/ruja-artifacts-promise-jobs-feature.P2W5fL` are byte-for-byte identical
+to `/tmp/ruja-artifacts-execution-context-feature.9m50B4`. The aggregate
+therefore remains **30159 pass / 6330 fail / 11816 skip / 12 timeout / 0 error
+/ 48317 total / 36489 pass-or-fail executed**, or **62.4%** of all files and
+**82.7%** of executed files. No Test262 admission or runner gate changed.
+
+[Decision Log]
+- 목적과 의도: preserve the specification-owned Realm and completion class
+  across deferred Promise and async boundaries without converting host resource
+  aborts into observable JavaScript rejections.
+- 기존 구현 및 제약 조건: jobs often selected a Realm only when they ran,
+  several async paths stringified native errors or rejected Fuel, and abrupt
+  await/module/generator paths could leave suspended frames, evaluating module
+  records, or owned generator queues behind. Rust locals and `Arc<Error>` are
+  not GC roots.
+- 검토한 주요 대안: reject every error through the current Realm; use the VM
+  global Realm for all generated errors; patch only dynamic import; retry every
+  failed async-generator request; or carry Realm metadata and classify
+  completions at each Promise boundary while explicitly unwinding state.
+- 선택한 방식: store and trace operation Realms in jobs and continuations,
+  use one catchable/thrown/host-abort classifier, pin values before collecting
+  conversion, mark only the owning module or async frame aborted, and permit
+  async-generator retry only for a terminal front `next()` request.
+- 다른 대안 대신 이 방식을 선택한 이유: execution-time or VM-global Realm
+  lookup is observably wrong after re-entry, blanket rejection makes Fuel
+  catchable, path-specific fixes would drift again, and replaying a request
+  after bytecode advancement can duplicate effects or change its result.
+- 장점, 단점 및 영향: cross-Realm errors and thrown objects now retain their
+  identity, host aborts leave reusable VM state, and queued generator/module
+  siblings survive without changing Test262 counts. A hard heap limit can
+  still leave the active async Promise pending when no capacity exists to
+  allocate its rejection object, and file-backed module records are not yet
+  independently owned per created Realm; both remain explicit follow-ups.
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is

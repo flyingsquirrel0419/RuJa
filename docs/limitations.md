@@ -12,6 +12,12 @@ The following resource limits are enforced:
   of live GC-managed heap objects. When exceeded, allocation throws a
   catchable `RangeError("heap limit exceeded")`. A GC cycle is attempted
   before the error is raised. `None` = unlimited (default).
+  At an exact hard limit, an async job may have no spare cell in which to
+  materialize that `RangeError` as a rejection value. RuJa propagates the host
+  error and avoids replaying state-advanced async work, but the active Promise
+  can remain pending; queued async-generator siblings are still drained.
+  Reserved emergency error capacity or a post-unwind materializer is not yet
+  implemented.
 - **Call-stack depth**: JavaScript recursion is capped at 1000 frames.
   Exceeding this throws a catchable `RangeError("Maximum call stack size
   exceeded")`, not a native stack overflow (SIGSEGV/abort).
@@ -87,7 +93,10 @@ guarantees, run RuJa in a separately killable process as well.
   Dynamic import attributes enumerate observable `with` properties and support
   `type: "json"` and `type: "text"` for relative files; other keys and types
   reject. Bare-specifier resolution, `import.source`, and `import.defer` are
-  not implemented yet.
+  not implemented yet. Dynamic-import jobs and generated errors retain the
+  initiating Realm, but file-backed module environments and the canonical
+  module cache are still VM-wide and rooted under the main global environment;
+  independently Realm-owned module graphs are not implemented yet.
 - test262 conformance is scoped, not full: RuJa targets a deliberately
   scoped subset of ES5.1 + selected ES2015+ features (see
   [test262.md](test262.md#supported-subset) for the exact list). The full

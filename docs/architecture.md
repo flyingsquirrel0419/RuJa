@@ -51,6 +51,12 @@ preallocating an ordinary object in generic dispatch. Values returned by that
 lookup, and fresh specialized objects not yet linked from another heap object,
 must remain on `gc_pins` across every collecting `Vm::alloc` call.
 
+`MakeClosure` follows the same rule for an ordinary function's fresh
+`.prototype`: the prototype is pinned before a named-function environment or
+the function object can allocate, then released only after the function owns
+it. Allocation failures restore both the temporary environment pin and the
+prototype pin, so a forced collection cannot reuse the prototype's heap slot.
+
 Observable materializers follow the same ownership rule. When an abstract
 operation reads heap values into a Rust collection and a later getter, proxy
 trap, coercion, call, or construction can re-enter JavaScript, every value is
@@ -84,6 +90,33 @@ keeps the resulting promise, shared state, element callbacks, and observable
 LIFO order on both success and rejection, while skipped keys allocate no entry
 state. This keeps the specification's operation order and the collector's
 manual `gc_pins` ownership discipline aligned at each re-entry boundary.
+
+## Promise and async jobs
+
+Deferred jobs own the Realm selected when the job is created. Dynamic import
+records the initiating Realm, thenable jobs record the callable `then` Realm,
+and Promise reaction jobs record the selected handler Realm before later Proxy
+revocation or unrelated re-entry can change how an error is constructed. Job
+payloads and Promise continuations trace these Realm environments together
+with their capabilities, handlers, promises, and generator references.
+
+`promise_rejection_reason_in_realm` is the common completion boundary. It
+preserves an explicit thrown JavaScript value, materializes a catchable native
+error in the operation Realm, and returns non-catchable Fuel exhaustion to the
+host unchanged. Promise construction, resolution, reactions, await,
+`Array.fromAsync`, Async-from-Sync iteration, async iterator disposal, and
+async generators use that classification before converting a completion into
+a rejection. Values that exist only in Rust locals are pinned before error or
+replacement-capability allocation.
+
+Host aborts also unwind the owning state machine. Initial and resumed async
+functions remove suspended frames and restore the operand stack; a module
+continuation marks only its own cached record errored; unrelated pending module
+jobs remain resumable. An async generator marks the active request aborted,
+releases queue ownership, and schedules a rooted drain for queued siblings.
+Only a terminal `next()` result is retryable after a catchable allocation
+failure. Other errors may occur after bytecode state advanced, so replaying the
+original request is forbidden.
 
 ## Execution contexts and Realms
 

@@ -4,6 +4,27 @@
 
 ### Fixed
 
+- Deferred Promise, thenable, dynamic-import, await, async-iterator, and
+  async-generator jobs now retain the Realm that owns their operation instead
+  of consulting whichever execution context happens to be active later.
+  Catchable native failures become real Error objects in that Realm, explicit
+  JavaScript throws preserve identity, and non-catchable Fuel exhaustion stays
+  a host abort rather than becoming a Promise rejection. Promise executors,
+  reaction settlement, await replacement capabilities, and generated iterator
+  results keep their live values pinned through every collecting allocation.
+  Aborted async frames restore stack and frame depth, post-await module aborts
+  cache an errored module record without poisoning unrelated siblings, and
+  async generators release queue ownership, drain queued siblings, root drain
+  jobs, retry only terminal `next()` settlement, and never replay a body whose
+  state already advanced. `MakeClosure` also roots its fresh `.prototype`
+  across name-environment and function allocation. Final local gates include
+  Promise **433/0/270**, dynamic import **620/0/384**, supported subset
+  **12751/0/7687**, tooling **100/100**, Rust lib/unit **77/77**, builtins
+  **458/458**, modules **31/31**, and Fuel **24/24**. Feature commit `d3698b3`
+  passed CI `29577669220` and full matrix `29577669208`; all 30 result files
+  match the execution-context baseline byte-for-byte, preserving **30159 pass
+  / 6330 fail / 11816 skip / 12 timeout / 0 error / 48317 total** (**62.4%**
+  of all files, **82.7%** of executed files).
 - Native and interpreted calls now use a stack-ordered execution-context model
   instead of VM-wide scalar native-callee and construction slots. Each
   active call or resumption owns its callee Realm, while native contexts also
