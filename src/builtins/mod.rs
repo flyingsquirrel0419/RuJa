@@ -3574,6 +3574,7 @@ fn make_test262_realm(vm: &mut Vm) -> error::Result<Value> {
     install_atomics_in_env(vm, realm_env, Some(&global))?;
     install_weak_ref_constructor_in_env(vm, realm_env, Some(&global))?;
     install_finalization_registry_constructor_in_env(vm, realm_env, Some(&global))?;
+    vm.install_heap_limit_error_in_realm(realm_env)?;
 
     Ok(global)
 }
@@ -7064,6 +7065,7 @@ pub fn setup(vm: &mut Vm) -> error::Result<()> {
         });
         define_global(vm, name, Value::Object(ctor));
     }
+    vm.install_heap_limit_error_in_realm(vm.global)?;
     Ok(())
 }
 

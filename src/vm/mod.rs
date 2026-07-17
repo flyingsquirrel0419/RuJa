@@ -201,6 +201,9 @@ pub struct Vm {
     /// Realm's original intrinsic Error prototype. Native errors must not
     /// consult mutable global bindings such as `TypeError`.
     pub(crate) realm_error_prototypes: HashMap<(usize, Arc<str>), Value>,
+    /// Realm global environment index -> immutable, preallocated RangeError
+    /// used only when the strict heap cap leaves no cell for a fresh error.
+    pub(crate) realm_heap_limit_errors: HashMap<usize, Value>,
     /// Realm global environment index -> original `%RegExp.prototype%`.
     /// RegExp literals must not consult a mutable `RegExp` binding.
     pub(crate) realm_regexp_prototypes: HashMap<usize, Value>,
@@ -657,6 +660,7 @@ impl Vm {
             realm_string_iterator_prototypes: HashMap::new(),
             realm_iterator_helper_prototypes: HashMap::new(),
             realm_error_prototypes: HashMap::new(),
+            realm_heap_limit_errors: HashMap::new(),
             realm_regexp_prototypes: HashMap::new(),
             realm_array_buffer_prototypes: HashMap::new(),
             realm_typed_array_constructors: HashMap::new(),
@@ -1930,6 +1934,7 @@ impl Vm {
         error_env: GcIdx,
     ) -> error::Result<Value> {
         use crate::value::{ObjectData, PropertyDescriptor};
+        let error_env = crate::environment::global_env_root(&self.heap, error_env);
         let ctor_name = match e.kind {
             crate::error::ErrorKind::Type => "TypeError",
             crate::error::ErrorKind::Range => "RangeError",
@@ -1973,6 +1978,7 @@ impl Vm {
             crate::value::PropertyKey::from("stack"),
             PropertyDescriptor::data(Value::String(Arc::from(e.stack.join("\n").as_str()))),
         );
+        let proto_pin = self.pin(&proto);
         let obj = HeapObj::Object(ObjectData {
             props: Mutex::new(props),
             proto: Mutex::new(Some(proto)),
@@ -1981,7 +1987,55 @@ impl Vm {
             private_fields: Mutex::new(std::collections::HashMap::new()),
             primitive: Mutex::new(None),
         });
-        Ok(Value::Object(GcIdx(self.heap.allocate(obj)?)))
+        let allocation = self.try_alloc(obj);
+        self.unpin_many(proto_pin);
+        match allocation {
+            Ok(index) => Ok(Value::Object(index)),
+            Err(limit) => self
+                .realm_heap_limit_errors
+                .get(&error_env.0)
+                .cloned()
+                .ok_or_else(|| limit.into()),
+        }
+    }
+
+    /// Reserve one already-counted, immutable RangeError per Realm so a
+    /// catchable heap-limit completion never needs to allocate past the cap.
+    pub(crate) fn install_heap_limit_error_in_realm(
+        &mut self,
+        error_env: GcIdx,
+    ) -> error::Result<()> {
+        use crate::value::{ObjectData, PropertyDescriptor};
+        let error_env = crate::environment::global_env_root(&self.heap, error_env);
+        if self.realm_heap_limit_errors.contains_key(&error_env.0) {
+            return Ok(());
+        }
+        let proto = self.error_prototype_for_env("RangeError", error_env);
+        let mut props = IndexMap::new();
+        for (name, value) in [
+            ("name", Value::String(Arc::from("RangeError"))),
+            (
+                "message",
+                Value::String(Arc::from(crate::gc::HEAP_LIMIT_MESSAGE)),
+            ),
+            ("stack", Value::String(Arc::from(""))),
+        ] {
+            let mut descriptor = PropertyDescriptor::data(value);
+            descriptor.writable = false;
+            descriptor.configurable = false;
+            props.insert(crate::value::PropertyKey::from(name), descriptor);
+        }
+        let object = HeapObj::Object(ObjectData {
+            props: Mutex::new(props),
+            proto: Mutex::new(Some(proto)),
+            extensible: AtomicBool::new(false),
+            class_name: Some(Arc::from("Error")),
+            private_fields: Mutex::new(std::collections::HashMap::new()),
+            primitive: Mutex::new(None),
+        });
+        let error = Value::Object(GcIdx(self.heap.allocate(object)?));
+        self.realm_heap_limit_errors.insert(error_env.0, error);
+        Ok(())
     }
 
     /// Preserve JavaScript throws, materialize native errors in the operation

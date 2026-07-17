@@ -2369,11 +2369,11 @@ pub(crate) fn promise_resolve(
     }
     if matches!(value, Value::Object(_)) {
         let pins = vm.pin_many(&[Value::Object(GcIdx(p_idx)), value.clone()]);
-        let realm = vm.current_realm_global_env();
+        let promise_realm = vm.current_realm_global_env();
         let then = match vm.get_property(&value, "then") {
             Ok(then) => then,
             Err(error) => {
-                let reason = match vm.promise_rejection_reason_in_realm(&error, realm) {
+                let reason = match vm.promise_rejection_reason_in_realm(&error, promise_realm) {
                     Ok(reason) => reason,
                     Err(error) => {
                         vm.unpin_many(pins);
@@ -2386,15 +2386,24 @@ pub(crate) fn promise_resolve(
             }
         };
         if is_callable(&then, &vm.heap) {
-            let realm = vm.constructor_realm(&then).unwrap_or(realm);
+            let then_realm = vm.constructor_realm(&then).unwrap_or(promise_realm);
             let then_pin = vm.pin(&then);
             let resolving = create_promise_resolving_functions(vm, Value::Object(GcIdx(p_idx)));
             let (resolve, reject) = match resolving {
                 Ok(resolving) => resolving,
                 Err(error) => {
+                    let reason = match vm.promise_rejection_reason_in_realm(&error, promise_realm) {
+                        Ok(reason) => reason,
+                        Err(error) => {
+                            vm.unpin(then_pin);
+                            vm.unpin_many(pins);
+                            return Err(error);
+                        }
+                    };
+                    vm.promise_reject(p_idx, reason);
                     vm.unpin(then_pin);
                     vm.unpin_many(pins);
-                    return Err(error);
+                    return Ok(Value::Undefined);
                 }
             };
             vm.microtask_queue
@@ -2403,7 +2412,7 @@ pub(crate) fn promise_resolve(
                     then,
                     resolve,
                     reject,
-                    realm,
+                    realm: then_realm,
                 });
             vm.unpin(then_pin);
             vm.unpin_many(pins);

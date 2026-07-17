@@ -13,6 +13,8 @@
 
 use crate::value::HeapObj;
 
+pub(crate) const HEAP_LIMIT_MESSAGE: &str = "heap limit exceeded";
+
 #[derive(Debug, Clone, Copy)]
 pub struct HeapLimitExceeded;
 
@@ -20,7 +22,7 @@ impl std::convert::From<HeapLimitExceeded> for std::sync::Arc<crate::error::Erro
     fn from(_: HeapLimitExceeded) -> Self {
         std::sync::Arc::new(crate::error::Error {
             kind: crate::error::ErrorKind::Range,
-            message: "heap limit exceeded".into(),
+            message: HEAP_LIMIT_MESSAGE.into(),
             stack: Vec::new(),
             thrown_value: None,
             line: None,

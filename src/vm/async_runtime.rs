@@ -756,6 +756,15 @@ impl Vm {
     /// heap limit is exceeded. All heap allocations must go through this
     /// method so the limit is enforced uniformly.
     pub(crate) fn alloc(&mut self, obj: HeapObj) -> error::Result<GcIdx> {
+        Ok(self.try_alloc(obj)?)
+    }
+
+    /// Preserve the typed heap-limit failure for callers that have a bounded
+    /// preallocated fallback, while sharing the ordinary rooted GC retry.
+    pub(crate) fn try_alloc(
+        &mut self,
+        obj: HeapObj,
+    ) -> Result<GcIdx, crate::gc::HeapLimitExceeded> {
         // If a heap limit is set, try collecting first to free up space.
         let max = self.max_heap_objects;
         if max > 0 && self.heap.live_count() >= max {

@@ -2997,6 +2997,12 @@ impl Vm {
         for v in self.realm_iterator_helper_prototypes.values() {
             Self::push_value_roots(&mut roots, v);
         }
+        for v in self.realm_error_prototypes.values() {
+            Self::push_value_roots(&mut roots, v);
+        }
+        for v in self.realm_heap_limit_errors.values() {
+            Self::push_value_roots(&mut roots, v);
+        }
         for v in self.realm_regexp_prototypes.values() {
             Self::push_value_roots(&mut roots, v);
         }

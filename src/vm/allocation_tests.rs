@@ -3,6 +3,24 @@ use crate::value::{HeapObj, PromiseStatus};
 use crate::Value;
 use std::fs;
 
+fn cap_heap_at_current_live_count(vm: &mut Vm) -> crate::error::Result<Value> {
+    vm.gc();
+    vm.set_max_heap_objects(Some(vm.heap.live_count()));
+    Ok(Value::Undefined)
+}
+
+fn promise_state_and_result(vm: &Vm, value: Value) -> (PromiseStatus, Value) {
+    let Value::Object(promise) = value else {
+        panic!("expected a Promise object");
+    };
+    vm.heap.with_obj(promise.0, |object| {
+        let HeapObj::Promise(data) = object else {
+            panic!("expected a Promise heap object");
+        };
+        (*data.state.lock(), data.result.lock().clone())
+    })
+}
+
 #[test]
 fn function_prototype_survives_collection_before_function_allocation() {
     let dir = std::env::temp_dir().join(format!(
@@ -55,6 +73,450 @@ fn function_creation_failures_restore_gc_pin_depth() {
         assert_eq!(error.kind, crate::error::ErrorKind::Range);
         assert_eq!(vm.gc_pins.len(), pin_depth);
     }
+}
+
+#[test]
+fn promise_resolution_heap_error_rejects_instead_of_remaining_pending() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn("capHeap", |vm, _, _| cap_heap_at_current_live_count(vm), 0)
+        .expect("heap-cap hook should register");
+    vm.run(
+        r#"
+        globalThis.pendingPromise = new Promise(function (resolve) {
+          globalThis.resolvePending = resolve;
+        });
+        globalThis.thenable = {
+          get then() {
+            capHeap();
+            return {};
+          }
+        };
+        "#,
+    )
+    .expect("Promise fixture should initialize");
+
+    let execution = vm.run("resolvePending(thenable);");
+    vm.set_max_heap_objects(None);
+    let global_this = vm.global_this.clone();
+    let promise = vm
+        .get_property(&global_this, "pendingPromise")
+        .expect("Promise should remain reachable");
+    let (state, reason) = promise_state_and_result(&vm, promise);
+
+    assert!(
+        execution.is_ok(),
+        "Promise resolution must consume the catchable heap error; got {execution:?}"
+    );
+    assert!(
+        state == PromiseStatus::Rejected,
+        "Promise must be rejected instead of remaining pending"
+    );
+    assert_eq!(
+        vm.get_property(&reason, "name")
+            .expect("rejection name should be readable"),
+        Value::String("RangeError".into())
+    );
+    assert_eq!(
+        vm.get_property(&reason, "message")
+            .expect("rejection message should be readable"),
+        Value::String("heap limit exceeded".into())
+    );
+}
+
+#[test]
+fn promise_thenable_job_setup_heap_error_rejects_instead_of_remaining_pending() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn("capHeap", |vm, _, _| cap_heap_at_current_live_count(vm), 0)
+        .expect("heap-cap hook should register");
+    vm.run(
+        r#"
+        globalThis.callableThen = function () {};
+        globalThis.pendingPromise = new Promise(function (resolve) {
+          globalThis.resolvePending = resolve;
+        });
+        globalThis.thenable = {
+          get then() {
+            capHeap();
+            return callableThen;
+          }
+        };
+        "#,
+    )
+    .expect("callable thenable fixture should initialize");
+
+    let execution = vm.run("resolvePending(thenable);");
+    vm.set_max_heap_objects(None);
+    let global_this = vm.global_this.clone();
+    let promise = vm
+        .get_property(&global_this, "pendingPromise")
+        .expect("Promise should remain reachable");
+    let (state, reason) = promise_state_and_result(&vm, promise);
+
+    assert!(
+        execution.is_ok(),
+        "thenable-job setup must consume the catchable heap error; got {execution:?}"
+    );
+    assert!(
+        state == PromiseStatus::Rejected,
+        "Promise must be rejected after thenable-job setup fails"
+    );
+    assert_eq!(
+        vm.get_property(&reason, "name")
+            .expect("rejection name should be readable"),
+        Value::String("RangeError".into())
+    );
+    assert_eq!(
+        vm.get_property(&reason, "message")
+            .expect("rejection message should be readable"),
+        Value::String("heap limit exceeded".into())
+    );
+}
+
+#[test]
+fn promise_self_resolution_heap_error_uses_the_emergency_reserve() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn("capHeap", |vm, _, _| cap_heap_at_current_live_count(vm), 0)
+        .expect("heap-cap hook should register");
+    vm.run(
+        r#"
+        globalThis.pendingPromise = new Promise(function (resolve) {
+          globalThis.resolvePending = resolve;
+        });
+        "#,
+    )
+    .expect("self-resolution fixture should initialize");
+
+    vm.run("capHeap(); resolvePending(pendingPromise);")
+        .expect("self-resolution TypeError should reject at the exact cap");
+    let limit = vm.max_heap_objects;
+    assert!(vm.heap.live_count() <= limit);
+    let global_this = vm.global_this.clone();
+    let promise = vm
+        .get_property(&global_this, "pendingPromise")
+        .expect("Promise should remain reachable");
+    let (state, reason) = promise_state_and_result(&vm, promise);
+    assert!(state == PromiseStatus::Rejected);
+    assert_eq!(
+        reason,
+        vm.realm_heap_limit_errors
+            .get(&vm.global.0)
+            .cloned()
+            .expect("main Realm reserve should exist")
+    );
+    vm.set_max_heap_objects(None);
+}
+
+#[test]
+fn dynamic_import_heap_error_rejects_instead_of_remaining_pending() {
+    let dir = std::env::temp_dir().join(format!(
+        "ruja-dynamic-import-heap-limit-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock should follow epoch")
+            .as_nanos()
+    ));
+    fs::create_dir_all(&dir).expect("module fixture directory should be created");
+    fs::write(dir.join("target.js"), "export const value = {};")
+        .expect("dynamic import target should be written");
+    fs::write(
+        dir.join("entry.js"),
+        "globalThis.importPromise = import('./target.js'); capHeap();",
+    )
+    .expect("dynamic import entry should be written");
+
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn("capHeap", |vm, _, _| cap_heap_at_current_live_count(vm), 0)
+        .expect("heap-cap hook should register");
+    let execution = vm.run_file(dir.join("entry.js"));
+    vm.set_max_heap_objects(None);
+    let global_this = vm.global_this.clone();
+    let promise = vm
+        .get_property(&global_this, "importPromise")
+        .expect("dynamic import Promise should remain reachable");
+    let (state, reason) = promise_state_and_result(&vm, promise);
+
+    assert!(
+        execution.is_ok(),
+        "dynamic import must consume the catchable heap error; got {execution:?}"
+    );
+    assert!(
+        state == PromiseStatus::Rejected,
+        "dynamic import Promise must be rejected instead of remaining pending"
+    );
+    assert_eq!(
+        vm.get_property(&reason, "name")
+            .expect("rejection name should be readable"),
+        Value::String("RangeError".into())
+    );
+    assert_eq!(
+        vm.get_property(&reason, "message")
+            .expect("rejection message should be readable"),
+        Value::String("heap limit exceeded".into())
+    );
+
+    fs::remove_dir_all(dir).expect("module fixture directory should be removed");
+}
+
+#[test]
+fn dynamic_import_continuation_heap_error_rejects_instead_of_remaining_pending() {
+    let dir = std::env::temp_dir().join(format!(
+        "ruja-dynamic-import-continuation-heap-limit-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock should follow epoch")
+            .as_nanos()
+    ));
+    fs::create_dir_all(&dir).expect("module fixture directory should be created");
+    fs::write(
+        dir.join("target.js"),
+        r#"
+        globalThis.innerImportPromise = import('./target.js');
+        await 0;
+        globalThis.targetReachedEnd = true;
+        Promise.resolve().then(capHeap);
+        export const value = 1;
+        "#,
+    )
+    .expect("self-importing async module should be written");
+    fs::write(dir.join("entry.js"), "import './target.js';")
+        .expect("static module entry should be written");
+
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn("capHeap", |vm, _, _| cap_heap_at_current_live_count(vm), 0)
+        .expect("heap-cap hook should register");
+    let execution = vm.run_module_file(dir.join("entry.js"));
+    let global_this = vm.global_this.clone();
+    let promise = vm
+        .get_property(&global_this, "innerImportPromise")
+        .expect("inner dynamic import Promise should remain reachable");
+    let (state, reason) = promise_state_and_result(&vm, promise);
+    assert!(
+        execution.is_ok(),
+        "dynamic import continuation must consume the heap error; got {execution:?}"
+    );
+    assert_eq!(
+        vm.get_property(&global_this, "targetReachedEnd")
+            .expect("module completion marker should be readable"),
+        Value::Bool(true)
+    );
+    assert!(
+        state == PromiseStatus::Rejected,
+        "continuation failure must reject the inner import Promise"
+    );
+    assert_eq!(
+        vm.get_property(&reason, "message")
+            .expect("continuation rejection message should be readable"),
+        Value::String(crate::gc::HEAP_LIMIT_MESSAGE.into())
+    );
+    assert!(vm.max_heap_objects > 0);
+    assert!(vm.heap.live_count() <= vm.max_heap_objects);
+    vm.set_max_heap_objects(None);
+
+    fs::remove_dir_all(dir).expect("module fixture directory should be removed");
+}
+
+#[test]
+fn error_materialization_collects_before_using_the_emergency_reserve() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    let emergency = vm
+        .realm_heap_limit_errors
+        .get(&vm.global.0)
+        .cloned()
+        .expect("main Realm should have a heap-limit reserve");
+    for _ in 0..128 {
+        let _ = vm.new_object().expect("unrooted garbage should allocate");
+    }
+    let limit = vm.heap.live_count();
+    vm.set_max_heap_objects(Some(limit));
+
+    let error = crate::error::Error::range("ordinary range failure");
+    let materialized = vm
+        .make_error_value(&error)
+        .expect("rooted GC should free a cell for a fresh error");
+
+    assert!(
+        materialized != emergency,
+        "reclaimable garbage must avoid observable emergency identity reuse"
+    );
+    assert!(vm.heap.live_count() <= limit);
+    vm.set_max_heap_objects(None);
+    assert_eq!(
+        vm.get_property(&materialized, "message")
+            .expect("fresh error message should be readable"),
+        Value::String("ordinary range failure".into())
+    );
+}
+
+#[test]
+fn saturated_heap_reuses_an_immutable_realm_reserve_without_exceeding_the_cap() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.gc();
+    let limit = vm.heap.live_count();
+    vm.set_max_heap_objects(Some(limit));
+    let error = crate::error::Error::range(crate::gc::HEAP_LIMIT_MESSAGE);
+    let first_reason = vm
+        .make_error_value(&error)
+        .expect("saturated heap should return the emergency reserve");
+    let second_reason = vm
+        .make_error_value(&error)
+        .expect("repeated saturation should reuse the emergency reserve");
+
+    let expected_reserve = vm
+        .realm_heap_limit_errors
+        .get(&vm.global.0)
+        .cloned()
+        .expect("main Realm reserve should remain rooted");
+    assert_eq!(first_reason, expected_reserve);
+    assert_eq!(second_reason, expected_reserve);
+    assert!(vm.heap.live_count() <= limit);
+    let expected_proto = vm
+        .realm_error_prototypes
+        .get(&(vm.global.0, "RangeError".into()))
+        .cloned()
+        .expect("RangeError prototype should remain rooted");
+    vm.heap.with_obj(
+        match first_reason {
+            Value::Object(index) => index.0,
+            _ => panic!("heap-limit reserve should be an object"),
+        },
+        |object| {
+            let HeapObj::Object(data) = object else {
+                panic!("heap-limit reserve should be ordinary Error data");
+            };
+            assert!(!object.is_extensible());
+            assert_eq!(*data.proto.lock(), Some(expected_proto));
+            let properties = data.props.lock();
+            for name in ["name", "message", "stack"] {
+                let descriptor = properties
+                    .get(&crate::value::PropertyKey::from(name))
+                    .expect("reserve property should exist");
+                assert!(!descriptor.writable);
+                assert!(descriptor.enumerable);
+                assert!(!descriptor.configurable);
+            }
+        },
+    );
+    vm.set_max_heap_objects(None);
+}
+
+#[test]
+fn heap_limit_reserve_uses_the_failing_promise_realm() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn("capHeap", |vm, _, _| cap_heap_at_current_live_count(vm), 0)
+        .expect("heap-cap hook should register");
+    vm.run(
+        r#"
+        globalThis.other = $262.createRealm().global;
+        other.capHeap = capHeap;
+        other.eval(`
+          globalThis.pendingPromise = new Promise(function (resolve) {
+            globalThis.resolvePending = resolve;
+          });
+          globalThis.thenable = {
+            get then() { capHeap(); return {}; }
+          };
+        `);
+        "#,
+    )
+    .expect("foreign Realm fixture should initialize");
+
+    vm.run("other.resolvePending(other.thenable);")
+        .expect("foreign Promise should consume the heap error");
+    let limit = vm.max_heap_objects;
+    assert!(limit > 0);
+    assert!(vm.heap.live_count() <= limit);
+    let global_this = vm.global_this.clone();
+    let other = vm
+        .get_property(&global_this, "other")
+        .expect("foreign global should be readable");
+    let promise = vm
+        .get_property(&other, "pendingPromise")
+        .expect("foreign Promise should be readable");
+    let (state, reason) = promise_state_and_result(&vm, promise);
+    assert!(state == PromiseStatus::Rejected);
+    assert!(
+        reason
+            != vm
+                .realm_heap_limit_errors
+                .get(&vm.global.0)
+                .cloned()
+                .expect("main Realm reserve should exist")
+    );
+
+    vm.set_max_heap_objects(None);
+    vm.set_property(&other, "heapReason", reason)
+        .expect("foreign rejection reason should be exposed for inspection");
+    assert_eq!(
+        vm.run(
+            "other.heapReason instanceof other.RangeError && \
+             !(other.heapReason instanceof RangeError) && \
+             Object.getPrototypeOf(other.heapReason) === other.RangeError.prototype"
+        )
+        .expect("foreign reserve Realm should be observable"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn explicit_throw_identity_survives_an_exact_heap_cap() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn("capHeap", |vm, _, _| cap_heap_at_current_live_count(vm), 0)
+        .expect("heap-cap hook should register");
+    vm.run(
+        r#"
+        globalThis.reason = { marker: 123 };
+        globalThis.pendingPromise = new Promise(function (resolve) {
+          globalThis.resolvePending = resolve;
+        });
+        globalThis.thenable = {
+          get then() { capHeap(); throw reason; }
+        };
+        "#,
+    )
+    .expect("explicit throw fixture should initialize");
+
+    vm.run("resolvePending(thenable);")
+        .expect("explicit thrown value should reject without materialization");
+    let limit = vm.max_heap_objects;
+    assert!(vm.heap.live_count() <= limit);
+    let global_this = vm.global_this.clone();
+    let promise = vm
+        .get_property(&global_this, "pendingPromise")
+        .expect("Promise should be readable");
+    let expected = vm
+        .get_property(&global_this, "reason")
+        .expect("explicit reason should be readable");
+    let (state, actual) = promise_state_and_result(&vm, promise);
+    assert!(state == PromiseStatus::Rejected);
+    assert_eq!(actual, expected);
+    vm.set_max_heap_objects(None);
+}
+
+#[test]
+fn intrinsic_error_prototypes_remain_roots_after_global_replacement() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    let expected_proto = vm
+        .realm_error_prototypes
+        .get(&(vm.global.0, "TypeError".into()))
+        .cloned()
+        .expect("intrinsic TypeError prototype should exist");
+    vm.run("TypeError = undefined; globalThis.TypeError = undefined;")
+        .expect("TypeError globals should be replaceable");
+    vm.gc();
+
+    let error = crate::error::Error::type_err("root check");
+    let materialized = vm
+        .make_error_value(&error)
+        .expect("native TypeError should still materialize");
+    let Value::Object(materialized) = materialized else {
+        panic!("materialized TypeError should be an object");
+    };
+    let actual_proto = vm
+        .heap
+        .with_obj(materialized.0, |object| object.proto().lock().clone());
+    assert_eq!(actual_proto, Some(expected_proto));
 }
 
 #[test]
