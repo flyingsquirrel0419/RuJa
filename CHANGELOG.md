@@ -4,6 +4,34 @@
 
 ### Fixed
 
+- Native function constructibility is now independent from observable
+  `.prototype` state. `FunctionKind::Native` stores
+  `Option<NativeConstructMode>`: `None` means no `[[Construct]]`, while a
+  present mode selects the receiver/prototype protocol. BigInt and Symbol keep
+  `[[Construct]]` for `extends` and `newTarget` checks but reject construction
+  before coercion; Proxy and `%TypedArray%` own their validation without an
+  automatic `NewTarget.prototype` read. Proxy now requires `new`, each created
+  Realm owns its Proxy constructor and `revocable` function, construct-trap
+  argument arrays use the operation Realm, and revocable intermediates remain
+  rooted at an exact heap cap. IsConstructor, BoundFunction/transparent-Proxy
+  construction, and normal/spread `super()` forwarding use the full iterative
+  `[[Construct]]` path. Proxy `get`, `getOwnPropertyDescriptor`, and
+  `isExtensible` forwarding also avoid host recursion; trap-bearing chains
+  retain pending results as LIFO-safe GC roots and validate invariants in
+  reverse order. Regressions exercise 20,000 constructor wrappers, 100,000
+  transparent and trap-bearing Proxy layers, fresh descriptor objects under
+  GC, Realm identity, and body-before-coercion order. Final local gates include
+  tooling **101/101**, all-target Rust lib/unit **100/100**, builtins
+  **461/461**, classes **105/105**, modules **31/31**, Fuel **24/24**, release,
+  and wasm32. The pinned affected cohort improves from **250 pass / 8 fail /
+  338 skip** to **251 / 7 / 338** with the same runner; five exact native-
+  construct files are newly admitted and pass. Feature commit `894e4bc`
+  passed CI `29609644806` and full matrix `29609644698`. Of the 30 result
+  files at `/tmp/ruja-artifacts-native-constructibility-feature.UeJr8Q`, 29
+  are byte-identical to the allocation-metadata baseline; built-ins changes by
+  **+5 pass / -5 skip**. The aggregate is **30166 pass / 6328 fail / 11811
+  skip / 12 timeout / 0 error / 48317 total** (**62.4%** of all files,
+  **82.7%** of executed files).
 - Native construction no longer depends on an immutable function-name
   allowlist to decide whether generic dispatch may allocate the receiver.
   Every native function now carries an explicit `NativeConstructMode`:

@@ -44,34 +44,54 @@ marked per GC step, avoiding long pauses. There is no generational collector.
 accumulate memory before a collection. A `gc_pins` stack lets call paths pin
 heap values held in Rust locals across allocations that could trigger a GC.
 
-Native functions carry immutable `NativeConstructMode` metadata instead of
-being classified by their observable `name`. `PreallocateReceiver` uses the
-ordinary construction path. `InternalEagerPrototype` suppresses the discarded
-ordinary receiver but observes the raw `NewTarget.prototype` before entering
-the native body; a non-object value resolves the same Realm-local
-`%Object.prototype%` fallback before the body, preserving existing error
-precedence. `InternalDeferredPrototype` leaves both validation and prototype
-observation to the constructor body. Main-Realm and created-Realm registration
-tests inventory every eager and deferred constructor so a new builtin cannot
-silently inherit the wrong allocation protocol.
+Native functions carry `Option<NativeConstructMode>` metadata instead of
+deriving constructibility from an observable `.prototype` slot. `None` means
+the function has no `[[Construct]]` internal method. `Some(PreallocateReceiver)`
+uses ordinary receiver allocation, `Some(InternalEagerPrototype)` lets an
+internal allocator run after dispatch has observed `NewTarget.prototype`, and
+`Some(InternalDeferredPrototype)` gives the native body ownership of whether
+and when that lookup occurs. Registration tests inventory constructors and
+ordinary native functions in both the main and created Realms so callability,
+constructibility, and allocation policy cannot silently collapse together.
 
-`construct_with_new_target` pins the resolved constructor, new target, and all
-arguments across prototype getters, Proxy and bound-function forwarding,
-native calls, and collecting allocation. `call_function_with_new_target`
-scopes the pending new target as save, set, call, and restore, including errors
-that occur before native dispatch and both normal and spread `super()` paths.
-Values returned by prototype lookup, and fresh specialized objects not yet
-linked from another heap object, remain on `gc_pins` across every collecting
-`Vm::alloc` call.
+BigInt and Symbol intentionally have `[[Construct]]`: they can participate in
+class heritage and serve as a `newTarget`, but their bodies throw before
+coercing arguments. Proxy and the abstract `%TypedArray%` constructor also use
+the body-controlled mode because dispatch must not observe
+`NewTarget.prototype` before their own validation. Each created Realm installs
+its own Proxy constructor and `revocable`; the result pair, revoker, and
+construct-trap argument array are allocated with that operation Realm's
+intrinsics. Exact-cap construction pins every provisional Proxy value before a
+collecting allocation.
+
+`is_constructor_value` and `construct_with_new_target` iteratively follow
+arbitrarily deep BoundFunction and transparent-Proxy chains. Bound arguments
+are prepended in wrapper order, BoundFunction `newTarget` substitution occurs
+only when required, and a Proxy construct trap receives the still-active
+target, argument array, and original forwarded new target. Normal and spread
+`super()` execute this same `[[Construct]]` dispatcher rather than the call
+path, so bound `this` and Proxy `apply` traps cannot leak into superclass
+construction. Construction inputs and temporary trap values remain on
+`gc_pins` across every observable or collecting boundary.
+
+Deep Proxy property forwarding uses the same stack-safety rule. Transparent
+`get` chains are iterative and do not consume ordinary prototype depth.
+`getOwnPropertyDescriptor` stores rooted target/trap-result pairs while
+descending and validates them from the ordinary target outward;
+`isExtensible` similarly collects trap booleans and checks invariants in
+reverse. Short-lived roots are removed before pending roots are installed so
+the LIFO pin stack cannot discard a fresh descriptor result. This trades
+`O(depth)` temporary host memory for bounded Rust call-stack use and exact GC
+liveness at depths exercised up to 100,000 wrappers.
 
 ```text
 [Decision Log]
-- 목적과 의도: Make native receiver allocation an explicit, reviewable contract while preserving observable construction order and exact-cap GC safety.
-- 기존 구현 및 제약 조건: Generic dispatch skipped receiver allocation through a function-name allowlist, construction inputs lived in untraced Rust locals, and pending NewTarget state could survive pre-dispatch errors.
-- 검토한 주요 대안: Keep and expand the name allowlist; make every specialized constructor perform all dispatch itself; infer behavior from return object type; or store an immutable mode on each native function.
-- 선택한 방식: Store one of three allocation modes on FunctionKind::Native, inventory registrations per Realm, pin the complete construction input set, and scope pending NewTarget mutation around every call.
-- 다른 대안 대신 이 방식을 선택한 이유: Names are observable and mutable metadata, return types are known too late, and duplicating forwarding logic in each builtin would drift. Explicit modes keep dispatch policy adjacent to registration without changing baseline ordering wholesale.
-- 장점, 단점 및 영향: Exact-cap construction avoids discarded receivers, WeakMap and WeakSet gain correct specialized allocation, and abrupt paths restore state. Constructibility and several constructor-specific ordering defects remain separate metadata and conformance units.
+- 목적과 의도: Separate native `[[Construct]]` presence from receiver allocation while making wrapper forwarding stack-safe and GC-safe at adversarial depth.
+- 기존 구현 및 제약 조건: Native constructibility depended on a mutable prototype slot, Proxy was shared across created Realms, `super()` used `[[Call]]`, and recursive Bound/Proxy/property forwarding could overflow the Rust stack or lose temporary values during collection.
+- 검토한 주요 대안: Keep prototype-presence inference, add constructor-name exceptions, reject BigInt and Symbol at IsConstructor time, cap wrapper depth, or model constructibility explicitly and flatten the abstract-operation traversals.
+- 선택한 방식: Store `Option<NativeConstructMode>`, let body-controlled constructors reject or validate in spec order, route all construction including `super()` through one iterative dispatcher, and reverse-validate rooted Proxy trap results.
+- 다른 대안 대신 이 방식을 선택한 이유: Observable properties cannot represent internal methods, a depth cap changes valid JavaScript behavior, and per-builtin forwarding would duplicate new-target and GC rules. Explicit metadata plus iterative traversal preserves the abstract operation without using host recursion.
+- 장점, 단점 및 영향: BigInt, Symbol, Proxy, BoundFunction, Realm, and exact-cap behavior now share one testable contract; 100,000-layer Proxy operations no longer abort the process. Iterative descriptor validation retains `O(depth)` pending state, and wrapper-specific fallback/coercion order remains a separate conformance unit.
 ```
 
 `MakeClosure` follows the same rule for an ordinary function's fresh

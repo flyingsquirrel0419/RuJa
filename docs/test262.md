@@ -7094,6 +7094,73 @@ skip / 12 timeout / 0 error / 48317 total / 36489 pass-or-fail executed**, or
 - 장점, 단점 및 영향: The allowlist and wasted exact-cap receiver are gone and two real Weak collection failures pass. Native constructibility, super forwarding, wrapper coercion order, and constructors requiring no automatic prototype lookup remain visible follow-up units.
 ```
 
+## Explicit native constructibility and stack-safe Proxy forwarding
+
+Native `[[Construct]]` presence is now represented by
+`Option<NativeConstructMode>` rather than a function's observable prototype
+slot. BigInt and Symbol remain constructors for heritage and `newTarget`
+checks, but reject construction before argument coercion. Proxy and the
+abstract `%TypedArray%` constructor use body-controlled dispatch without an
+automatic prototype lookup. Created Realms own their Proxy constructor,
+`revocable`, result objects, revokers, and construct-trap argument arrays.
+
+BoundFunction and transparent-Proxy IsConstructor and construction traversal
+are iterative, including argument prepending and `newTarget` substitution.
+Normal and spread `super()` now invoke the same `[[Construct]]` path, so Proxy
+superclasses use `construct` rather than `apply` and bound superclasses ignore
+their bound `this`. Proxy `get`, `getOwnPropertyDescriptor`, and
+`isExtensible` operations also flatten transparent and trap-bearing chains.
+Descriptor targets and fresh trap results stay rooted until reverse invariant
+validation completes. Regressions cover 20,000 constructor wrappers, 100,000
+Proxy layers, fresh descriptor allocation under GC, exact-cap revocation, and
+main/created-Realm identity.
+
+Against pinned Test262 `020cb74075849d1e404bbcdb62feb7a02e6966db`, the
+frozen native-construct admission contains exactly five files:
+
+- `built-ins/BigInt/is-a-constructor.js`
+- `built-ins/Symbol/is-constructor.js`
+- `built-ins/Proxy/constructor.js`
+- `built-ins/Proxy/proxy-newtarget.js`
+- `built-ins/Proxy/proxy-undefined-newtarget.js`
+
+All five pass. With the new runner applied to both binaries, the combined
+BigInt, Symbol, Proxy, `Reflect.construct`, and `Function.prototype.bind`
+cohort improves from **250 pass / 8 fail / 338 skip / 596 total** to **251 /
+7 / 338 / 596**; the implementation gain is Proxy call-without-`new`.
+BigInt plus Symbol is **104/0/71/175**, Proxy is **53/0/258/311**, Promise
+remains **433/0/270/703**, dynamic import remains **620/0/384/1004**, and the
+supported subset remains **12751/0/7687/20438**. The 186 `$262.createRealm`
+files remain **109/8/69** with the same eight failures.
+
+Final local gates pass all targets and features, warnings-denied Clippy,
+formatting, release, and wasm32, with Python tooling **101/101**, all-target
+Rust lib/unit **100/100**, builtins **461/461**, classes **105/105**, modules
+**31/31**, and Fuel **24/24**. Both GPT 5.6 final reviews returned `CLEAN` and
+their sessions were closed. Feature commit `894e4bc` passed CI `29609644806`
+and full matrix `29609644698`.
+
+Of the 30 downloaded result files at
+`/tmp/ruja-artifacts-native-constructibility-feature.UeJr8Q`, 29 are
+byte-identical to
+`/tmp/ruja-artifacts-native-construct-feature.KyS5dn`. Only built-ins changes,
+from **14563 pass / 5511 fail / 3582 skip / 12 timeout** to **14568 / 5511 /
+3577 / 12**. This artifact delta is **+5 pass / -5 skip** because the previous
+workflow skipped the entire frozen admission. The aggregate is **30166 pass /
+6328 fail / 11811 skip / 12 timeout / 0 error / 48317 total / 36494
+pass-or-fail executed**, or **62.4%** of all files and **82.7%** of executed
+files.
+
+```text
+[Decision Log]
+- 목적과 의도: Admit only the native construction behavior proven by exact regressions while removing host-stack and GC-lifetime failure modes from wrapper forwarding.
+- 기존 구현 및 제약 조건: Feature-level skips hid five passing-or-fixable files, and recursive Proxy/Bound/property traversal was invalid at legal depth even when ordinary shallow tests passed.
+- 검토한 주요 대안: Remove broad feature gates, admit whole directories, keep a host depth cap, or freeze exact files and make the relevant abstract operations iterative.
+- 선택한 방식: Share one five-file manifest between runner and analyzer, require exact parity tests, and retain pending Proxy results as explicit roots for reverse validation.
+- 다른 대안 대신 이 방식을 선택한 이유: Directory or feature-wide admission would expose unrelated unsupported semantics, while a depth cap rejects valid programs. Exact admission ties every reported gain to covered behavior.
+- 장점, 단점 및 영향: Five files move from skip to pass with no new full-matrix failure and deep wrappers cannot abort the host. The manifest remains intentionally narrow and must be extended only with a focused conformance unit.
+```
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is
