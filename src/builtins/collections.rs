@@ -2967,6 +2967,51 @@ fn keyed_data_prop(value: Value) -> PropertyDescriptor {
     }
 }
 
+fn append_keyed_entry_placeholder(
+    vm: &Vm,
+    keys: &Value,
+    values: &Value,
+    key: &PropertyKey,
+) -> error::Result<usize> {
+    let keys_idx = match keys {
+        Value::Object(idx) => *idx,
+        _ => return Err(Error::type_err("Promise keyed keys array")),
+    };
+    let values_idx = match values {
+        Value::Object(idx) => *idx,
+        _ => return Err(Error::type_err("Promise keyed values array")),
+    };
+    let arrays_are_valid = vm
+        .heap
+        .with_obj(keys_idx.0, |obj| matches!(obj, HeapObj::Array(_)))
+        && vm
+            .heap
+            .with_obj(values_idx.0, |obj| matches!(obj, HeapObj::Array(_)));
+    if !arrays_are_valid {
+        return Err(Error::type_err("Promise keyed entry storage"));
+    }
+
+    let index = vm.heap.with_obj(keys_idx.0, |obj| {
+        let HeapObj::Array(array) = obj else {
+            unreachable!("validated Promise keyed keys array")
+        };
+        let mut items = array.items.lock();
+        let mut present = array.present.lock();
+        let index = items.len();
+        items.push(property_key_to_value(key));
+        present.push(true);
+        index
+    });
+    vm.heap.with_obj(values_idx.0, |obj| {
+        let HeapObj::Array(array) = obj else {
+            unreachable!("validated Promise keyed values array")
+        };
+        array.items.lock().push(Value::Undefined);
+        array.present.lock().push(false);
+    });
+    Ok(index)
+}
+
 fn make_keyed_result_object(vm: &mut Vm, keys: Value, values: Value) -> error::Result<Value> {
     let pins = vm.pin_many(&[keys.clone(), values.clone()]);
     let key_items = array_items_snapshot(&keys, vm, "Promise keyed keys")?;
@@ -3803,7 +3848,7 @@ fn promise_static_keyed(
         return result;
     }
 
-    let property_keys = match own_property_keys_or_throw(vm, &promises, true, true, true) {
+    let property_keys = match own_property_keys_or_throw(vm, &promises, false, true, true) {
         Ok(keys) => keys,
         Err(err) => {
             let result = promise_capability_reject_and_return(vm, &capability, err);
@@ -3811,14 +3856,34 @@ fn promise_static_keyed(
             return result;
         }
     };
-    let key_values: Vec<Value> = property_keys.iter().map(property_key_to_value).collect();
-    let values_init = vec![Value::Undefined; key_values.len()];
-    let keys_array = make_value_array(vm, key_values)?;
+    let keys_array = match make_value_array_in_current_realm(vm, Vec::new()) {
+        Ok(keys_array) => keys_array,
+        Err(err) => {
+            let result = promise_capability_reject_and_return(vm, &capability, err);
+            vm.unpin_many(pins);
+            return result;
+        }
+    };
     let keys_array_pins = vm.pin_many(std::slice::from_ref(&keys_array));
-    let values = make_value_array(vm, values_init)?;
+    let values = match make_value_array_in_current_realm(vm, Vec::new()) {
+        Ok(values) => values,
+        Err(err) => {
+            let result = promise_capability_reject_and_return(vm, &capability, err);
+            vm.unpin_many(keys_array_pins);
+            vm.unpin_many(pins);
+            return result;
+        }
+    };
     vm.unpin_many(keys_array_pins);
     pins += vm.pin_many(&[keys_array.clone(), values.clone()]);
-    let state_idx = vm.new_object()?;
+    let state_idx = match vm.new_object() {
+        Ok(state_idx) => state_idx,
+        Err(err) => {
+            let result = promise_capability_reject_and_return(vm, &capability, err);
+            vm.unpin_many(pins);
+            return result;
+        }
+    };
     let state = Value::Object(state_idx);
     vm.heap.with_obj(state_idx.0, |obj| {
         let props = obj.props();
@@ -3846,23 +3911,21 @@ fn promise_static_keyed(
     });
     pins += vm.pin_many(std::slice::from_ref(&state));
 
-    for (index, key) in property_keys.iter().enumerate() {
-        vm.heap.with_obj(state_idx.0, |obj| {
-            let props = obj.props();
-            let mut props = props.lock();
-            let remaining = match props
-                .get(&PropertyKey::from("remaining"))
-                .map(|desc| desc.value.clone())
-            {
-                Some(Value::Number(n)) if n > 0.0 => n,
-                _ => 0.0,
-            };
-            props.insert(
-                PropertyKey::from("remaining"),
-                PropertyDescriptor::data(Value::Number(remaining + 1.0)),
-            );
-        });
-
+    for key in &property_keys {
+        // PerformPromiseAllKeyed interleaves [[GetOwnProperty]] with this
+        // key's Get/resolve/then chain. Pre-filtering every descriptor here
+        // would observably reorder Proxy traps across keys.
+        let descriptor = match own_property_descriptor_for_key_or_throw(vm, &promises, key) {
+            Ok(descriptor) => descriptor,
+            Err(err) => {
+                let result = promise_capability_reject_and_return(vm, &capability, err);
+                vm.unpin_many(pins);
+                return result;
+            }
+        };
+        if !descriptor.is_some_and(|descriptor| descriptor.enumerable) {
+            continue;
+        }
         let value = match vm.get_property_by_key(&promises, key) {
             Ok(value) => value,
             Err(err) => {
@@ -3871,7 +3934,40 @@ fn promise_static_keyed(
                 return result;
             }
         };
-        let record_idx = vm.new_object()?;
+        let value_pin = vm.pin(&value);
+        let index = match append_keyed_entry_placeholder(vm, &keys_array, &values, key) {
+            Ok(index) => index,
+            Err(err) => {
+                let result = promise_capability_reject_and_return(vm, &capability, err);
+                vm.unpin(value_pin);
+                vm.unpin_many(pins);
+                return result;
+            }
+        };
+        let next_promise_result = vm.call_function(
+            &promise_resolve,
+            std::slice::from_ref(&value),
+            Some(ctor.clone()),
+        );
+        vm.unpin(value_pin);
+        let next_promise = match next_promise_result {
+            Ok(next_promise) => next_promise,
+            Err(err) => {
+                let result = promise_capability_reject_and_return(vm, &capability, err);
+                vm.unpin_many(pins);
+                return result;
+            }
+        };
+        let next_promise_pin = vm.pin(&next_promise);
+        let record_idx = match vm.new_object() {
+            Ok(record_idx) => record_idx,
+            Err(err) => {
+                let result = promise_capability_reject_and_return(vm, &capability, err);
+                vm.unpin(next_promise_pin);
+                vm.unpin_many(pins);
+                return result;
+            }
+        };
         let record = Value::Object(record_idx);
         let record_pins = vm.pin_many(std::slice::from_ref(&record));
         vm.heap.with_obj(record_idx.0, |obj| {
@@ -3905,9 +4001,11 @@ fn promise_static_keyed(
         let resolve_element = match resolve_element_result {
             Ok(resolve_element) => resolve_element,
             Err(err) => {
+                let result = promise_capability_reject_and_return(vm, &capability, err);
                 vm.unpin_many(record_pins);
+                vm.unpin(next_promise_pin);
                 vm.unpin_many(pins);
-                return Err(err);
+                return result;
             }
         };
         let reject_element = if all_settled {
@@ -3924,56 +4022,61 @@ fn promise_static_keyed(
             match reject_element_result {
                 Ok(reject_element) => reject_element,
                 Err(err) => {
+                    let result = promise_capability_reject_and_return(vm, &capability, err);
                     vm.unpin_many(record_pins);
+                    vm.unpin(next_promise_pin);
                     vm.unpin_many(pins);
-                    return Err(err);
+                    return result;
                 }
             }
         } else {
             capability.reject.clone()
         };
-        vm.unpin_many(record_pins);
-
-        let element_pins = vm.pin_many(&[
-            value.clone(),
-            record,
-            resolve_element.clone(),
-            reject_element.clone(),
-        ]);
-        let next_promise_result = vm.call_function(
-            &promise_resolve,
-            std::slice::from_ref(&value),
-            Some(ctor.clone()),
-        );
-        vm.unpin_many(element_pins);
-        let next_promise = match next_promise_result {
-            Ok(next_promise) => next_promise,
-            Err(err) => {
-                let result = promise_capability_reject_and_return(vm, &capability, err);
-                vm.unpin_many(pins);
-                return result;
-            }
-        };
+        let callback_pins = vm.pin_many(&[resolve_element.clone(), reject_element.clone()]);
+        vm.heap.with_obj(state_idx.0, |obj| {
+            let props = obj.props();
+            let mut props = props.lock();
+            let remaining = match props
+                .get(&PropertyKey::from("remaining"))
+                .map(|desc| desc.value.clone())
+            {
+                Some(Value::Number(n)) if n > 0.0 => n,
+                _ => 0.0,
+            };
+            props.insert(
+                PropertyKey::from("remaining"),
+                PropertyDescriptor::data(Value::Number(remaining + 1.0)),
+            );
+        });
         let then = match vm.get_property(&next_promise, "then") {
             Ok(then) => then,
             Err(err) => {
                 let result = promise_capability_reject_and_return(vm, &capability, err);
+                vm.unpin_many(callback_pins);
+                vm.unpin_many(record_pins);
+                vm.unpin(next_promise_pin);
                 vm.unpin_many(pins);
                 return result;
             }
         };
-        let then_pins = vm.pin_many(&[next_promise.clone(), then.clone()]);
+        let then_pin = vm.pin(&then);
         let then_result = vm.call_function(
             &then,
             &[resolve_element, reject_element],
             Some(next_promise),
         );
-        vm.unpin_many(then_pins);
+        vm.unpin(then_pin);
         if let Err(err) = then_result {
             let result = promise_capability_reject_and_return(vm, &capability, err);
+            vm.unpin_many(callback_pins);
+            vm.unpin_many(record_pins);
+            vm.unpin(next_promise_pin);
             vm.unpin_many(pins);
             return result;
         }
+        vm.unpin_many(callback_pins);
+        vm.unpin_many(record_pins);
+        vm.unpin(next_promise_pin);
     }
 
     let remaining = vm.heap.with_obj(state_idx.0, |obj| {
@@ -4654,5 +4757,28 @@ mod tests {
             Value::Object(idx)
                 if vm.heap.with_obj(idx.0, |object| matches!(object, HeapObj::Promise(_)))
         ));
+    }
+
+    #[test]
+    fn promise_keyed_descriptor_paths_restore_pin_depth() {
+        let mut vm = Vm::new().expect("failed to initialize VM");
+        let baseline = vm.gc_pins.len();
+        vm.run(
+            r#"
+            var marker = {};
+            var skipped = new Proxy({ key: 1 }, {
+              getOwnPropertyDescriptor: function() { return undefined; }
+            });
+            var abrupt = new Proxy({ key: 1 }, {
+              getOwnPropertyDescriptor: function() { throw marker; }
+            });
+            Promise.allKeyed(skipped);
+            Promise.allSettledKeyed(skipped);
+            Promise.allKeyed(abrupt).then(undefined, function() {});
+            Promise.allSettledKeyed(abrupt).then(undefined, function() {});
+            "#,
+        )
+        .expect("keyed descriptor paths should return Promises");
+        assert_eq!(vm.gc_pins.len(), baseline);
     }
 }

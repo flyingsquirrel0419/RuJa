@@ -12966,6 +12966,207 @@ fn promise_all_settled_keyed_uses_receiver_resolve_and_then() {
 }
 
 #[test]
+fn promise_keyed_interleaves_proxy_descriptors_with_each_entry() {
+    assert_eq!(
+        run(
+            r##"
+            function exercise(method) {
+              var log = [];
+              var result;
+              var rejected;
+              function C(executor) {
+                executor(
+                  function(value) { result = value; },
+                  function(reason) { rejected = reason; }
+                );
+              }
+              C.resolve = function(value) {
+                log.push("resolve:" + value.tag);
+                var next = {};
+                Object.defineProperty(next, "then", {
+                  get: function() {
+                    log.push("then-get:" + value.tag);
+                    return function(onFulfilled) {
+                      log.push("then-call:" + value.tag);
+                      onFulfilled(value);
+                    };
+                  }
+                });
+                return next;
+              };
+              var target = {
+                a: { tag: "a" },
+                skip: { tag: "skip" },
+                b: { tag: "b" }
+              };
+              var input = new Proxy(target, {
+                ownKeys: function() {
+                  log.push("keys");
+                  return ["a", "skip", "b"];
+                },
+                getOwnPropertyDescriptor: function(target, key) {
+                  log.push("desc:" + key);
+                  if (key === "skip") return undefined;
+                  return Reflect.getOwnPropertyDescriptor(target, key);
+                },
+                get: function(target, key, receiver) {
+                  log.push("get:" + key);
+                  return Reflect.get(target, key, receiver);
+                }
+              });
+
+              Promise[method].call(C, input);
+              var valuesMatch = method === "allKeyed"
+                ? result.a.tag === "a" && result.b.tag === "b"
+                : result.a.status === "fulfilled" && result.a.value.tag === "a" &&
+                  result.b.status === "fulfilled" && result.b.value.tag === "b";
+              return [
+                log.join(","),
+                Object.keys(result).join(","),
+                valuesMatch,
+                rejected === undefined
+              ].join("|");
+            }
+
+            [exercise("allKeyed"), exercise("allSettledKeyed")].join("#");
+            "##,
+        ),
+        Value::String(Arc::from(
+            "keys,desc:a,get:a,resolve:a,then-get:a,then-call:a,desc:skip,desc:b,get:b,resolve:b,then-get:b,then-call:b|a,b|true|true#keys,desc:a,get:a,resolve:a,then-get:a,then-call:a,desc:skip,desc:b,get:b,resolve:b,then-get:b,then-call:b|a,b|true|true"
+        ))
+    );
+}
+
+#[test]
+fn promise_keyed_observes_delegating_proxy_descriptors_and_rejects_abruptly() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        var keyedDescriptorResults = {};
+        for (var method of ["allKeyed", "allSettledKeyed"]) {
+          (function(method) {
+            var descriptorCalls = 0;
+            var getCalls = 0;
+            var skippedInput = new Proxy({ key: 1 }, {
+              getOwnPropertyDescriptor: function() {
+                descriptorCalls += 1;
+                return undefined;
+              },
+              get: function() {
+                getCalls += 1;
+                return 1;
+              }
+            });
+            Promise[method](skippedInput).then(function(result) {
+              keyedDescriptorResults[method + "Skip"] =
+                Reflect.ownKeys(result).length === 0 &&
+                descriptorCalls === 1 && getCalls === 0;
+            });
+
+            var marker = { method: method };
+            var throwingInput = new Proxy({ key: 1 }, {
+              getOwnPropertyDescriptor: function() { throw marker; }
+            });
+            Promise[method](throwingInput).then(
+              function() { keyedDescriptorResults[method + "Throw"] = false; },
+              function(reason) {
+                keyedDescriptorResults[method + "Throw"] = reason === marker;
+              }
+            );
+          })(method);
+        }
+        "#,
+    )
+    .expect("keyed descriptor reactions should settle");
+    assert_eq!(
+        vm.run(
+            r#"
+            keyedDescriptorResults.allKeyedSkip &&
+              keyedDescriptorResults.allKeyedThrow &&
+              keyedDescriptorResults.allSettledKeyedSkip &&
+              keyedDescriptorResults.allSettledKeyedThrow;
+            "#
+        )
+        .expect("failed to inspect keyed descriptor results"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn promise_keyed_entry_state_survives_observable_gc() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+
+    assert_eq!(
+        vm.run(
+            r#"
+            function exercise(method) {
+              var result;
+              var rejected;
+              function C(executor) {
+                executor(
+                  function(value) { result = value; },
+                  function(reason) { rejected = reason; }
+                );
+              }
+              C.resolve = function(value) {
+                var next = {};
+                Object.defineProperty(next, "then", {
+                  get: function() {
+                    forceGc();
+                    return function(onFulfilled) {
+                      forceGc();
+                      onFulfilled(value);
+                    };
+                  }
+                });
+                return next;
+              };
+              var input = new Proxy({ first: 0, second: 0 }, {
+                ownKeys: function() {
+                  forceGc();
+                  return ["first", "second"];
+                },
+                getOwnPropertyDescriptor: function(target, key) {
+                  forceGc();
+                  return Reflect.getOwnPropertyDescriptor(target, key);
+                },
+                get: function(target, key) {
+                  var value = { key: key };
+                  forceGc();
+                  return value;
+                }
+              });
+
+              Promise[method].call(C, input);
+              var valuesMatch = method === "allKeyed"
+                ? result.first.key === "first" && result.second.key === "second"
+                : result.first.status === "fulfilled" &&
+                  result.first.value.key === "first" &&
+                  result.second.status === "fulfilled" &&
+                  result.second.value.key === "second";
+              return Object.getPrototypeOf(result) === null &&
+                Object.keys(result).join(",") === "first,second" &&
+                valuesMatch && rejected === undefined;
+            }
+
+            [exercise("allKeyed"), exercise("allSettledKeyed")].join("|");
+            "#,
+        )
+        .expect("keyed entry state should survive observable GC"),
+        Value::String(Arc::from("true|true"))
+    );
+}
+
+#[test]
 fn promise_any_uses_receiver_resolve_and_then() {
     assert_eq!(
         run("var callCount = 0, executorLength = 0;

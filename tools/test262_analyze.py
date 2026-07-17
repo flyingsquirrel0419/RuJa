@@ -43,6 +43,9 @@ try:
     from test262_promise_combinator_rejection_admission import (
         PROMISE_COMBINATOR_REJECTION_FEATURES, PROMISE_COMBINATOR_REJECTION_FILES,
     )
+    from test262_promise_keyed_admission import (
+        PROMISE_KEYED_FEATURES, PROMISE_KEYED_FILES,
+    )
     from test262_promise_constructor_order_admission import (
         PROMISE_CONSTRUCTOR_ORDER_FEATURES, PROMISE_CONSTRUCTOR_ORDER_FILES,
     )
@@ -107,6 +110,9 @@ except ModuleNotFoundError:
     )
     from tools.test262_promise_combinator_rejection_admission import (
         PROMISE_COMBINATOR_REJECTION_FEATURES, PROMISE_COMBINATOR_REJECTION_FILES,
+    )
+    from tools.test262_promise_keyed_admission import (
+        PROMISE_KEYED_FEATURES, PROMISE_KEYED_FILES,
     )
     from tools.test262_promise_constructor_order_admission import (
         PROMISE_CONSTRUCTOR_ORDER_FEATURES, PROMISE_CONSTRUCTOR_ORDER_FILES,
@@ -2257,6 +2263,20 @@ def promise_combinator_rejection_features(path):
         return frozenset()
     return PROMISE_COMBINATOR_REJECTION_FEATURES.get(rel.as_posix(), frozenset())
 
+def promise_keyed_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except (OSError, ValueError):
+        return False
+    return rel.as_posix() in PROMISE_KEYED_FILES
+
+def promise_keyed_features(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except (OSError, ValueError):
+        return frozenset()
+    return PROMISE_KEYED_FEATURES.get(rel.as_posix(), frozenset())
+
 def promise_constructor_order_path(path):
     try:
         rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
@@ -2410,6 +2430,8 @@ def should_skip(meta, path=None):
         feats.difference_update(promise_combinator_close_features(path))
     if path is not None and promise_combinator_rejection_path(path):
         feats.difference_update(promise_combinator_rejection_features(path))
+    if path is not None and promise_keyed_path(path):
+        feats.difference_update(promise_keyed_features(path))
     if path is not None and promise_constructor_order_path(path):
         feats.difference_update(promise_constructor_order_features(path))
     if path is not None and promise_finally_path(path):
@@ -2601,6 +2623,7 @@ def should_skip(meta, path=None):
         or async_from_sync_iterator_path(path)
         or promise_combinator_close_path(path)
         or promise_combinator_rejection_path(path)
+        or promise_keyed_path(path)
         or promise_finally_path(path)
         or array_from_async_path(path)
         or atomics_sync_path(path)

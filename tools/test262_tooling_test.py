@@ -56,6 +56,10 @@ from test262_promise_combinator_rejection_admission import (
     PROMISE_COMBINATOR_REJECTION_FEATURES,
     PROMISE_COMBINATOR_REJECTION_FILES,
 )
+from test262_promise_keyed_admission import (
+    PROMISE_KEYED_FEATURES,
+    PROMISE_KEYED_FILES,
+)
 from test262_promise_constructor_order_admission import (
     PROMISE_CONSTRUCTOR_ORDER_FEATURES,
     PROMISE_CONSTRUCTOR_ORDER_FILES,
@@ -1218,6 +1222,81 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                     frozenset(metadata.get("features", [])), features, relative
                 )
                 self.assertEqual(metadata.get("flags", []), ["async"], relative)
+
+    def test_promise_keyed_manifest_is_exact_live_and_shared(self):
+        self.assertEqual(len(PROMISE_KEYED_FILES), 63)
+        self.assertEqual(frozenset(PROMISE_KEYED_FEATURES), PROMISE_KEYED_FILES)
+        self.assertTrue(
+            PROMISE_KEYED_FILES.isdisjoint(PROMISE_COMBINATOR_CLOSE_FILES)
+        )
+        self.assertTrue(
+            PROMISE_KEYED_FILES.isdisjoint(PROMISE_COMBINATOR_REJECTION_FILES)
+        )
+        self.assertTrue(PROMISE_KEYED_FILES.isdisjoint(PROMISE_FINALLY_FILES))
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            future = root / "test/built-ins/Promise/allKeyed/future.js"
+            outside = root / "test/built-ins/Promise/all/future-keyed.js"
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for relative, features in PROMISE_KEYED_FEATURES.items():
+                        path = root / "test" / relative
+                        self.assertTrue(tool.promise_keyed_path(path), relative)
+                        self.assertEqual(tool.promise_keyed_features(path), features)
+                        self.assertFalse(
+                            tool.should_skip(
+                                {"features": sorted(features), "flags": ["async"]},
+                                path,
+                            ),
+                            relative,
+                        )
+                        self.assertTrue(
+                            tool.should_skip(
+                                {
+                                    "features": sorted(features | {"decorators"}),
+                                    "flags": ["async"],
+                                },
+                                path,
+                            ),
+                            relative,
+                        )
+                    for path in (future, outside):
+                        self.assertFalse(tool.promise_keyed_path(path))
+                        self.assertEqual(tool.promise_keyed_features(path), frozenset())
+                        self.assertTrue(
+                            tool.should_skip(
+                                {"features": [], "flags": ["async"]},
+                                path,
+                            )
+                        )
+                        self.assertTrue(
+                            tool.should_skip(
+                                {
+                                    "features": ["await-dictionary"],
+                                    "flags": ["async"],
+                                },
+                                path,
+                            )
+                        )
+                finally:
+                    tool.TEST262 = original_root
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        try:
+            test_root_available = test_root.is_dir()
+        except OSError:
+            test_root_available = False
+        if test_root_available:
+            for relative, features in PROMISE_KEYED_FEATURES.items():
+                path = test_root / relative
+                self.assertTrue(path.is_file(), relative)
+                metadata = test262_runner.parse_meta(path.read_text())
+                self.assertEqual(
+                    frozenset(metadata.get("features", [])), features, relative
+                )
 
     def test_promise_finally_manifest_is_exact_and_shared(self):
         self.assertEqual(len(PROMISE_FINALLY_FILES), 37)
