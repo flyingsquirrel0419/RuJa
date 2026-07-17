@@ -30,7 +30,7 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 62.4% of all matrix files; 82.7% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 62.5% of all matrix files; 82.7% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (12751 pass / 0 fail on current Test262; 12752 / 0 on the pinned checkout) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
@@ -7159,6 +7159,65 @@ files.
 - 선택한 방식: Share one five-file manifest between runner and analyzer, require exact parity tests, and retain pending Proxy results as explicit roots for reverse validation.
 - 다른 대안 대신 이 방식을 선택한 이유: Directory or feature-wide admission would expose unrelated unsupported semantics, while a depth cap rejects valid programs. Exact admission ties every reported gain to covered behavior.
 - 장점, 단점 및 영향: Five files move from skip to pass with no new full-matrix failure and deep wrappers cannot abort the host. The manifest remains intentionally narrow and must be extended only with a focused conformance unit.
+```
+
+## Primitive wrapper constructor order and Realm fallbacks
+
+String, Number, and Boolean now use body-controlled native construction. The
+value conversion happens before `NewTarget.prototype` is observed, direct
+calls return primitives regardless of their `this` argument, and non-object
+prototype values select the corresponding immutable primitive prototype from
+the new target's Realm. This lookup follows BoundFunction and transparent
+Proxy targets without consulting mutable Realm globals. String's Symbol
+special case is limited to calls, so construction throws before reading the
+new target prototype. Getter-produced prototypes remain rooted through the
+one-cell wrapper allocation, and a saturated heap returns the preallocated
+Realm `RangeError` without exceeding the cap.
+
+The frozen native-construction manifest adds exactly ten audited files:
+
+- String: `is-a-constructor.js`, `proto-from-ctor-realm.js`,
+  `symbol-string-coercion.js`, and `symbol-wrapping.js`.
+- Number: `is-a-constructor.js`, `proto-from-ctor-realm.js`, and
+  `return-abrupt-tonumber-value-symbol.js`.
+- Boolean: `is-a-constructor.js`, `proto-from-ctor-realm.js`, and
+  `symbol-coercion.js`.
+
+All ten pass against Test262 `020cb74075849d1e404bbcdb62feb7a02e6966db`.
+The complete String/Number/Boolean subtree is **1504 pass / 0 fail / 110 skip
+/ 1614 total**. Applying the same new runner to the preceding release binary
+produces **1500 / 4 / 110 / 1614**; the four implementation fixes are the
+three foreign-Realm prototype files and String Symbol wrapping. The other six
+files were already runtime-green and move from skip to pass through exact
+admission. All 13 wrapper subclass files remain green, and the supported
+subset remains **12751 pass / 0 fail / 7687 skip / 20438 total**.
+
+Final local gates pass all targets and features, warnings-denied Clippy,
+formatting, release, and wasm32, with Python tooling **101/101**, Rust lib/unit
+**104/104**, builtins **461/461**, classes **105/105**, modules **31/31**, and
+Fuel **24/24**. GPT 5.6 reviewers Herschel and Russell both returned `CLEAN`
+and were closed. Feature commit `ddf3d55` passed CI `29613370285` and full
+matrix `29613370302`.
+
+Of the 30 downloaded result files at
+`/tmp/ruja-artifacts-primitive-wrappers-feature.ArVzjB`, 29 are byte-identical
+to `/tmp/ruja-artifacts-native-constructibility-feature.UeJr8Q`. Only the
+built-ins result changed, from **14568 pass / 5511 fail / 3577 skip / 12
+timeout** to **14578 / 5511 / 3567 / 12**. The workflow delta is **+10 pass /
+-10 skip**
+because all ten paths were skipped by the preceding workflow's manifest. The
+aggregate is **30176 pass / 6328 fail / 11801 skip / 12 timeout / 0 error /
+48317 total / 36504 pass-or-fail executed**, or **62.5%** of all files and
+**82.7%** of executed files.
+
+```text
+[Decision Log]
+- 목적과 의도: Report only primitive-wrapper behavior whose conversion order, Realm fallback, allocation, and call-versus-construct semantics are directly verified.
+- 기존 구현 및 제약 조건: Feature-level gates skipped ten relevant files; four failed when forced to run because generic preallocation observed the wrong thing at the wrong time. Broad feature admission would also expose unrelated unsupported semantics.
+- 검토한 주요 대안: Remove Reflect/cross-realm/Symbol gates globally, admit complete constructor directories, or extend the existing exact native-construction manifest.
+- 선택한 방식: Freeze ten paths with per-file feature exceptions shared by the runner and analyzer, and require local order/Realm/GC/cap regressions beyond the pinned files.
+- 다른 대안 대신 이 방식을 선택한 이유: Exact admission ties every metric change to audited behavior while local regressions cover observable ordering that the current pinned files do not exercise.
+- 장점, 단점 및 영향: Ten skips become passes with no new fail, timeout, or error; the manifest remains narrow and must be extended deliberately. Date is not implied by these results and remains a separate constructor unit.
 ```
 
 ## Why the full-suite rate is not higher

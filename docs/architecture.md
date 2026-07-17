@@ -94,6 +94,30 @@ liveness at depths exercised up to 100,000 wrappers.
 - 장점, 단점 및 영향: BigInt, Symbol, Proxy, BoundFunction, Realm, and exact-cap behavior now share one testable contract; 100,000-layer Proxy operations no longer abort the process. Iterative descriptor validation retains `O(depth)` pending state, and wrapper-specific fallback/coercion order remains a separate conformance unit.
 ```
 
+String, Number, and Boolean use `InternalDeferredPrototype` because their
+constructor algorithms must finish primitive conversion before any observable
+`NewTarget.prototype` read. Their native bodies distinguish calls from
+construction through the active execution context's `NewTarget`, never through
+the supplied `this`. A call therefore returns a primitive even when invoked
+with `Function.prototype.call` and an object receiver. Construction selects the
+wrapper-specific default from the existing GC-rooted
+`realm_primitive_prototypes` registry after following BoundFunction and Proxy
+new targets to their function Realm. It then pins the selected prototype while
+the common sandbox allocator creates one ordinary object and initializes its
+wrapped primitive slot. String adds its immutable UTF-16 `length` property
+after allocation. Date remains the only `PreallocateReceiver` constructor and
+is intentionally a separate algorithmic unit.
+
+```text
+[Decision Log]
+- 목적과 의도: Preserve the specification's primitive-conversion, prototype-selection, and allocation order for String, Number, and Boolean in every Realm.
+- 기존 구현 및 제약 조건: Generic preallocation read `NewTarget.prototype` too early, hardcoded `%Object.prototype%` as the fallback, and treated an object `this` as proof of construction. Wrapper allocation must still honor GC rooting and the exact heap cap.
+- 검토한 주요 대안: Add wrapper-name exceptions to generic dispatch, add three more eager allocation modes, or let this family own conversion, prototype lookup, and allocation in its existing native bodies.
+- 선택한 방식: Use `InternalDeferredPrototype`, select immutable Realm primitive prototypes from the VM registry, and share one rooted wrapper-allocation helper across the three bodies.
+- 다른 대안 대신 이 방식을 선택한 이유: The three algorithms all convert before `GetPrototypeFromConstructor`, while String also has call-only Symbol behavior. Dispatcher exceptions would duplicate builtin semantics and still conflate calls with construction.
+- 장점, 단점 및 영향: Observable order, foreign-Realm fallback, Bound/Proxy forwarding, direct calls, and cap failures share one tested path. The helper is deliberately limited to primitive wrappers; Date and other constructor families require separate audits.
+```
+
 `MakeClosure` follows the same rule for an ordinary function's fresh
 `.prototype`: the prototype is pinned before a named-function environment or
 the function object can allocate, then released only after the function owns

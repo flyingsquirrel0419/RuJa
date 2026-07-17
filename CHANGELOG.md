@@ -4,6 +4,33 @@
 
 ### Fixed
 
+- String, Number, and Boolean construction is now owned by the constructor
+  body instead of generic receiver preallocation. Calls ignore the supplied
+  `this` and return primitives; construction completes String/Number
+  conversion before reading `NewTarget.prototype`, while Boolean performs its
+  non-observable conversion before that lookup. Non-object prototypes fall
+  back to the immutable `%String.prototype%`, `%Number.prototype%`, or
+  `%Boolean.prototype%` from the new target's Realm, including BoundFunction
+  and transparent-Proxy targets, without consulting replaced global bindings.
+  `String(Symbol())` remains the descriptive call conversion while
+  `new String(Symbol())` throws before prototype observation. Wrapper
+  allocation pins a getter-produced prototype, uses the sandbox allocator,
+  succeeds with exactly one free cell, and returns the Realm-local reserve at
+  a saturated cap. Registration coverage now inventories **18 eager / 26
+  deferred / 1 preallocated** native constructors, with Date intentionally
+  left as the separate preallocated family. The exact ten-file admission is
+  **10/10**, all 13 wrapper subclass files pass, and the broad String/Number/
+  Boolean result is **1504 pass / 0 fail / 110 skip**; with the same runner the
+  preceding binary was **1500 / 4 / 110**. Final local gates include tooling
+  **101/101**, Rust lib/unit **104/104**, builtins **461/461**, classes
+  **105/105**, modules **31/31**, Fuel **24/24**, release, and wasm32. Feature
+  commit `ddf3d55` passed CI `29613370285` and full matrix `29613370302`.
+  Of the 30 result files at
+  `/tmp/ruja-artifacts-primitive-wrappers-feature.ArVzjB`, 29 are byte-identical
+  to the preceding feature artifacts; built-ins changed by **+10 pass / -10
+  skip**. The aggregate is **30176 pass / 6328 fail / 11801 skip / 12 timeout
+  / 0 error / 48317 total** (**62.5%** of all files, **82.7%** of executed
+  files).
 - Native function constructibility is now independent from observable
   `.prototype` state. `FunctionKind::Native` stores
   `Option<NativeConstructMode>`: `None` means no `[[Construct]]`, while a
