@@ -3090,8 +3090,7 @@ fn install_async_generator_intrinsics_in_env(
     ))
 }
 
-fn make_test262_realm(vm: &mut Vm) -> error::Result<Value> {
-    let realm_env = crate::environment::new_env(&vm.heap, None, true)?;
+fn populate_test262_realm(vm: &mut Vm, realm_env: GcIdx) -> error::Result<Value> {
     let global_idx = vm.heap.allocate(HeapObj::Object(crate::value::ObjectData {
         props: Mutex::new(IndexMap::new()),
         proto: Mutex::new(None),
@@ -3579,15 +3578,54 @@ fn make_test262_realm(vm: &mut Vm) -> error::Result<Value> {
     Ok(global)
 }
 
+fn make_test262_realm(vm: &mut Vm) -> error::Result<Value> {
+    make_test262_realm_transaction(vm, |_| {})
+}
+
+fn make_test262_realm_transaction(
+    vm: &mut Vm,
+    before_population: impl FnOnce(&mut Vm),
+) -> error::Result<Value> {
+    let pin_base = vm.gc_pins.len();
+    let realm_env = crate::environment::new_env(&vm.heap, None, true)?;
+    // Realm installers use fallible, stack-disciplined temporary pins. The
+    // transaction owns their entire suffix so an early return cannot retain a
+    // partially initialized Realm. Pin the environment itself until published
+    // functions make it reachable through the provisional registry graph.
+    vm.gc_pins.push(realm_env.0);
+    before_population(vm);
+    let result = (|| {
+        let global = populate_test262_realm(vm, realm_env)?;
+        let realm = vm.new_object()?;
+        vm.heap.with_obj(realm.0, |obj| {
+            obj.props()
+                .lock()
+                .insert(PropertyKey::from("global"), data_prop(global));
+        });
+        Ok(Value::Object(realm))
+    })();
+    if result.is_ok() {
+        debug_assert_eq!(
+            vm.gc_pins.len(),
+            pin_base + 1,
+            "successful Realm installation must release all nested pins"
+        );
+    }
+    vm.gc_pins.truncate(pin_base);
+    if result.is_err() {
+        vm.remove_realm_registry_entries(realm_env);
+    }
+    result
+}
+
+#[cfg(test)]
+pub(crate) fn make_test262_realm_after_environment_gc(vm: &mut Vm) -> error::Result<Value> {
+    // At this point the explicit pin is the environment's only GC root.
+    make_test262_realm_transaction(vm, |vm| vm.gc())
+}
+
 fn test262_create_realm(vm: &mut Vm, _args: &[Value], _: Option<Value>) -> error::Result<Value> {
-    let global = make_test262_realm(vm)?;
-    let realm = vm.new_object()?;
-    vm.heap.with_obj(realm.0, |obj| {
-        obj.props()
-            .lock()
-            .insert(PropertyKey::from("global"), data_prop(global));
-    });
-    Ok(Value::Object(realm))
+    make_test262_realm(vm)
 }
 
 fn test262_eval_script(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {

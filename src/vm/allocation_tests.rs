@@ -21,6 +21,105 @@ fn promise_state_and_result(vm: &Vm, value: Value) -> (PromiseStatus, Value) {
     })
 }
 
+fn realm_registry_counts(vm: &Vm) -> [usize; 28] {
+    [
+        vm.realm_globals.len(),
+        vm.realm_object_prototypes.len(),
+        vm.realm_array_prototypes.len(),
+        vm.realm_promise_constructors.len(),
+        vm.realm_promise_prototypes.len(),
+        vm.realm_generator_prototypes.len(),
+        vm.realm_generator_function_constructors.len(),
+        vm.realm_generator_function_prototypes.len(),
+        vm.realm_async_iterator_prototypes.len(),
+        vm.realm_async_generator_prototypes.len(),
+        vm.realm_async_generator_function_constructors.len(),
+        vm.realm_async_generator_function_prototypes.len(),
+        vm.realm_primitive_prototypes.len(),
+        vm.realm_eval_functions.len(),
+        vm.realm_throw_type_errors.len(),
+        vm.realm_function_prototypes.len(),
+        vm.realm_async_function_prototypes.len(),
+        vm.realm_iterator_constructors.len(),
+        vm.realm_iterator_prototypes.len(),
+        vm.realm_array_iterator_prototypes.len(),
+        vm.realm_wrap_for_valid_iterator_prototypes.len(),
+        vm.realm_string_iterator_prototypes.len(),
+        vm.realm_iterator_helper_prototypes.len(),
+        vm.realm_error_prototypes.len(),
+        vm.realm_heap_limit_errors.len(),
+        vm.realm_regexp_prototypes.len(),
+        vm.realm_array_buffer_prototypes.len(),
+        vm.realm_typed_array_constructors.len(),
+    ]
+}
+
+fn realm_creation_live_delta() -> usize {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.gc();
+    let baseline_live = vm.heap.live_count();
+    let realm = vm
+        .run("$262.createRealm();")
+        .expect("Realm creation should succeed without a cap");
+    let realm_pin = vm.pin(&realm);
+    vm.gc();
+    let delta = vm.heap.live_count() - baseline_live;
+    vm.unpin_many(realm_pin);
+    assert!(delta > 1, "Realm creation must allocate a nontrivial graph");
+    delta
+}
+
+fn assert_main_realm_range_error(vm: &Vm, error: &crate::error::Error) {
+    let Value::Object(error_object) = error
+        .thrown_value
+        .clone()
+        .expect("native heap failure should be materialized")
+    else {
+        panic!("heap failure should throw an Error object");
+    };
+    let expected_proto = vm.error_prototype_for_env("RangeError", vm.global);
+    let actual_proto = vm
+        .heap
+        .with_obj(error_object.0, |object| object.proto().lock().clone());
+    assert_eq!(
+        actual_proto,
+        Some(expected_proto),
+        "Realm construction failure must materialize in the calling Realm"
+    );
+}
+
+fn assert_failed_realm_attempt(
+    vm: &mut Vm,
+    baseline_live: usize,
+    baseline_registries: [usize; 28],
+    baseline_pins: usize,
+    extra_capacity: usize,
+) {
+    vm.set_max_heap_objects(Some(baseline_live + extra_capacity));
+    let error = vm
+        .run("$262.createRealm();")
+        .expect_err("Realm construction should hit the selected heap boundary");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_main_realm_range_error(vm, error.as_ref());
+    vm.set_max_heap_objects(None);
+    assert_eq!(
+        realm_registry_counts(vm),
+        baseline_registries,
+        "failed Realm must restore every registry at extra capacity {extra_capacity}"
+    );
+    assert_eq!(
+        vm.gc_pins.len(),
+        baseline_pins,
+        "failed Realm must restore the pin stack at extra capacity {extra_capacity}"
+    );
+    vm.gc();
+    assert_eq!(
+        vm.heap.live_count(),
+        baseline_live,
+        "failed Realm graph must be collectible at extra capacity {extra_capacity}"
+    );
+}
+
 #[test]
 fn function_prototype_survives_collection_before_function_allocation() {
     let dir = std::env::temp_dir().join(format!(
@@ -73,6 +172,150 @@ fn function_creation_failures_restore_gc_pin_depth() {
         assert_eq!(error.kind, crate::error::ErrorKind::Range);
         assert_eq!(vm.gc_pins.len(), pin_depth);
     }
+}
+
+#[test]
+fn failed_realm_construction_rolls_back_every_heap_boundary() {
+    let required_capacity = realm_creation_live_delta();
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.gc();
+    let baseline_live = vm.heap.live_count();
+    let baseline_registries = realm_registry_counts(&vm);
+    let baseline_pins = vm.gc_pins.len();
+
+    for extra_capacity in 0..required_capacity {
+        assert_failed_realm_attempt(
+            &mut vm,
+            baseline_live,
+            baseline_registries,
+            baseline_pins,
+            extra_capacity,
+        );
+    }
+
+    let wrapper_boundary = required_capacity - 1;
+    for _ in 0..2 {
+        assert_failed_realm_attempt(
+            &mut vm,
+            baseline_live,
+            baseline_registries,
+            baseline_pins,
+            wrapper_boundary,
+        );
+    }
+
+    vm.set_max_heap_objects(Some(baseline_live + required_capacity));
+    let realm = vm
+        .run("$262.createRealm();")
+        .expect("exact required capacity should create a Realm after every rollback");
+    vm.set_max_heap_objects(None);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert!(
+        realm_registry_counts(&vm)
+            .iter()
+            .zip(baseline_registries)
+            .all(|(populated, baseline)| populated > &baseline),
+        "successful Realm creation must publish every registry family"
+    );
+    let global = vm
+        .get_property(&realm, "global")
+        .expect("Realm wrapper should expose its global");
+    let eval = vm
+        .get_property(&global, "eval")
+        .expect("Realm global should expose its intrinsic eval");
+    assert_eq!(
+        vm.call_function(&eval, &[Value::String("1 + 1".into())], Some(global))
+            .expect("Realm should remain functional after rollback sweep"),
+        Value::Number(2.0)
+    );
+}
+
+#[test]
+fn realm_environment_survives_collection_before_intrinsic_publication() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.gc();
+    let baseline_registries = realm_registry_counts(&vm);
+    let baseline_realm_envs: Vec<_> = vm.realm_globals.keys().copied().collect();
+    let baseline_pins = vm.gc_pins.len();
+
+    let realm = crate::builtins::make_test262_realm_after_environment_gc(&mut vm)
+        .expect("the pinned Realm environment should survive pre-publication collection");
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert!(
+        realm_registry_counts(&vm)
+            .iter()
+            .zip(baseline_registries)
+            .all(|(populated, baseline)| populated > &baseline),
+        "the collected construction must publish every Realm registry family"
+    );
+    let global = vm
+        .get_property(&realm, "global")
+        .expect("collected Realm wrapper should expose its global");
+    let realm_env = vm
+        .realm_globals
+        .keys()
+        .copied()
+        .find(|realm| !baseline_realm_envs.contains(realm))
+        .expect("successful construction should register one new Realm environment");
+    vm.heap.with_obj(realm_env, |object| {
+        assert!(
+            matches!(object, HeapObj::Environment(_)),
+            "the pinned environment cell must not be collected and reused"
+        );
+    });
+    assert_eq!(
+        crate::environment::get(&vm.heap, crate::value::GcIdx(realm_env), "globalThis"),
+        Some(global.clone()),
+        "the surviving Realm environment must retain its global binding"
+    );
+    let eval = vm
+        .get_property(&global, "eval")
+        .expect("collected Realm global should expose eval");
+    assert_eq!(
+        vm.call_function(&eval, &[Value::String("20 + 22".into())], Some(global))
+            .expect("the pre-publication-collected Realm should remain functional"),
+        Value::Number(42.0)
+    );
+}
+
+#[test]
+fn realm_construction_survives_collection_of_preexisting_garbage() {
+    let required_capacity = realm_creation_live_delta();
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.gc();
+    let baseline_live = vm.heap.live_count();
+    let baseline_pins = vm.gc_pins.len();
+    // One extra dead cell makes the final wrapper allocation collect while
+    // every provisional Realm root must survive, without exhausting a direct
+    // Heap allocation earlier in intrinsic setup.
+    let garbage_count = 1;
+    for _ in 0..garbage_count {
+        vm.new_object()
+            .expect("unreachable garbage fixture should allocate");
+    }
+    let live_with_garbage = vm.heap.live_count();
+
+    vm.set_max_heap_objects(Some(baseline_live + required_capacity));
+    let realm = vm
+        .run("$262.createRealm();")
+        .expect("Realm construction should collect garbage and stay within the exact cap");
+    vm.set_max_heap_objects(None);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert!(
+        vm.heap.live_count() < live_with_garbage + required_capacity,
+        "construction must trigger a collection instead of retaining the garbage fixture"
+    );
+    let global = vm
+        .get_property(&realm, "global")
+        .expect("collected construction should return a valid Realm wrapper");
+    let eval = vm
+        .get_property(&global, "eval")
+        .expect("collected Realm should retain its intrinsic eval");
+    assert_eq!(
+        vm.call_function(&eval, &[Value::String("6 * 7".into())], Some(global))
+            .expect("collected Realm should evaluate scripts"),
+        Value::Number(42.0)
+    );
 }
 
 #[test]

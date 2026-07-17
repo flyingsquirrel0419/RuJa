@@ -151,6 +151,9 @@ pub struct Vm {
     pub(crate) well_known_symbols: WellKnownSymbols,
     pub(crate) global_names: HashMap<Arc<str>, usize>,
     pub(crate) global_constants: Vec<Value>,
+    /// Every `realm_*` registry in this block is a direct GC root. A new
+    /// registry must also be handled by `remove_realm_registry_entries` so
+    /// failed provisional Realm construction remains transactional.
     /// Realm global environment index -> that Realm's global object.
     pub(crate) realm_globals: HashMap<usize, Value>,
     /// Realm global environment index -> original `%Object.prototype%`.
@@ -2036,6 +2039,47 @@ impl Vm {
         let error = Value::Object(GcIdx(self.heap.allocate(object)?));
         self.realm_heap_limit_errors.insert(error_env.0, error);
         Ok(())
+    }
+
+    /// Remove every VM-owned intrinsic root for a Realm whose construction
+    /// failed before its wrapper became observable. Heap objects become
+    /// collectible after these registry entries are removed.
+    pub(crate) fn remove_realm_registry_entries(&mut self, realm: GcIdx) {
+        let realm = realm.0;
+        debug_assert_ne!(realm, self.global.0, "main Realm must never be rolled back");
+        self.realm_globals.remove(&realm);
+        self.realm_object_prototypes.remove(&realm);
+        self.realm_array_prototypes.remove(&realm);
+        self.realm_promise_constructors.remove(&realm);
+        self.realm_promise_prototypes.remove(&realm);
+        self.realm_generator_prototypes.remove(&realm);
+        self.realm_generator_function_constructors.remove(&realm);
+        self.realm_generator_function_prototypes.remove(&realm);
+        self.realm_async_iterator_prototypes.remove(&realm);
+        self.realm_async_generator_prototypes.remove(&realm);
+        self.realm_async_generator_function_constructors
+            .remove(&realm);
+        self.realm_async_generator_function_prototypes
+            .remove(&realm);
+        self.realm_primitive_prototypes
+            .retain(|(owner, _), _| *owner != realm);
+        self.realm_eval_functions.remove(&realm);
+        self.realm_throw_type_errors.remove(&realm);
+        self.realm_function_prototypes.remove(&realm);
+        self.realm_async_function_prototypes.remove(&realm);
+        self.realm_iterator_constructors.remove(&realm);
+        self.realm_iterator_prototypes.remove(&realm);
+        self.realm_array_iterator_prototypes.remove(&realm);
+        self.realm_wrap_for_valid_iterator_prototypes.remove(&realm);
+        self.realm_string_iterator_prototypes.remove(&realm);
+        self.realm_iterator_helper_prototypes.remove(&realm);
+        self.realm_error_prototypes
+            .retain(|(owner, _), _| *owner != realm);
+        self.realm_heap_limit_errors.remove(&realm);
+        self.realm_regexp_prototypes.remove(&realm);
+        self.realm_array_buffer_prototypes.remove(&realm);
+        self.realm_typed_array_constructors
+            .retain(|(owner, _), _| *owner != realm);
     }
 
     /// Preserve JavaScript throws, materialize native errors in the operation
