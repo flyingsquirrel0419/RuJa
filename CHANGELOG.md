@@ -4,6 +4,23 @@
 
 ### Fixed
 
+- Native and interpreted calls now use a stack-ordered execution-context model
+  instead of VM-wide scalar native-callee and construction slots. Each
+  active call or resumption owns its callee Realm, while native contexts also
+  own `NewTarget` and the already-observed prototype. Interpreted setup and
+  bytecode execution therefore keep primitive lookup, sloppy `this`, global
+  writes, arguments/rest allocation, and catchable error objects in the callee
+  Realm across native callbacks, bound/Proxy forwarding, generator method
+  borrowing, async suspension, nested calls, abrupt completion, and forced GC.
+  Native-only accessors read only the top native context, every context is
+  traced as a GC root, and all normal and `Result`-based abrupt paths restore
+  the previous stack depth. The supported subset remains **12751/0/7687**,
+  tooling is **100/100**, Rust lib/unit tests are **69/69**, and builtins are
+  **457/457**. Feature commit `46fecef` passed CI `29567895773` and full
+  matrix `29567895748`; all 30 result files match the Promise-keyed baseline
+  byte-for-byte, preserving **30159 pass / 6330 fail / 11816 skip / 12 timeout
+  / 0 error / 48317 total** (**62.4%** of all files, **82.7%** of executed
+  files).
 - `Promise.allKeyed` and `Promise.allSettledKeyed` now snapshot raw own keys,
   then observe each key's Proxy-aware descriptor before any value read,
   `C.resolve` call, or `then` operation. Missing and non-enumerable descriptors

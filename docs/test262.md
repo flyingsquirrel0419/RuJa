@@ -6871,6 +6871,78 @@ artifacts also corrects their recently documented totals from an erroneous
   next separate architecture unit rather than being mixed into this semantic
   repair.
 
+## Stack-ordered execution Realm tracking
+
+Native-to-interpreted re-entry previously used three scalar VM fields for the
+current native callee, `NewTarget`, and cached prototype. A native builtin
+could overwrite or clear that state while invoking a callback from another
+Realm, leaving pre-frame call setup and later generator or async resumption to
+consult the outer caller, active frame, or VM global inconsistently. The
+observable failures included wrong primitive prototypes, sloppy global writes
+and boxed/nullish `this`, arguments/rest prototypes, and native TypeError
+objects created after nested or abrupt callbacks.
+
+The VM now records native and interpreted execution contexts in one LIFO
+stack. Interpreted dispatch installs a context before class validation and
+argument setup, and the interpreter installs a second frame-owned context
+while bytecode executes or a suspended frame resumes. Native contexts carry
+the callee, Realm environment, `NewTarget`, and any observable prototype value.
+General Realm lookup and native-only metadata use only the top context, while
+interpreted error lookup falls back from a top native method to the active
+resumed frame. Error materialization happens before that frame context is
+removed, and the collector traces every context-owned heap value.
+
+Regressions exercise callbacks in both Realm directions, bound functions and
+Proxies, primitive and global lookup, sloppy `this`, arguments/rest objects,
+nested native errors, abrupt restoration, generator default-parameter setup,
+borrowed generator `next`/`throw`/`return`, async functions and async
+generators before and after `await`, and forced collection. An internal VM test
+also requires an empty context stack after synchronous success, synchronous
+failure, a later call, and async rejection queue draining.
+
+This architecture-only unit changes no Test262 admission manifest or runner
+gate. The supported subset remains **12751 pass / 0 fail / 7687 skip / 20438
+total**, Python tooling is **100/100**, Rust lib/unit tests are **69/69**, and
+Rust builtins are **457/457**. All-target/all-feature tests and builds, Clippy
+with warnings denied, formatting, release, and wasm32 checks pass. Independent
+GPT and Umans reviews found no high- or medium-severity defect after generator
+prologue, borrowed abrupt resume, and async rejection cleanup coverage was
+added. Feature commit `46fecef` passed CI `29567895773`.
+
+Full matrix `29567895748` also passed. All 30 result artifacts at
+`/tmp/ruja-artifacts-execution-context-feature.9m50B4` are byte-for-byte
+identical to `/tmp/ruja-artifacts-promise-keyed-feature.pqnizJ`. The
+artifact-derived aggregate is unchanged at **30159 pass / 6330 fail / 11816
+skip / 12 timeout / 0 error / 48317 total / 36489 pass-or-fail executed**, or
+**62.4%** of all files and **82.7%** of executed files.
+
+[Decision Log]
+- 목적과 의도: make the active ECMAScript execution context, rather than the
+  outermost native caller or mutable VM global, determine callee Realm and
+  construction metadata across every re-entry and resumption boundary.
+- 기존 구현 및 제약 조건: three scalar native fields could represent only one
+  active native call; bytecode frames did not exist during interpreted call
+  setup and could be suspended and resumed under an unrelated native method;
+  context-owned heap values also had to participate in manual GC rooting.
+- 검토한 주요 대안: patch individual builtins with explicit Realm arguments;
+  infer Realm only from the frame stack; maintain separate Realm, callee, and
+  construction stacks; or represent native and interpreted calls in one typed
+  execution-context stack.
+- 선택한 방식: use one LIFO stack with typed native/interpreted entries, keep
+  short setup and frame contexts for interpreted calls, restrict native
+  metadata to a top native entry, materialize errors before scope cleanup, and
+  trace every stored value from the VM root set.
+- 다른 대안 대신 이 방식을 선택한 이유: call-site patches would leave new
+  re-entry paths vulnerable, frames cannot cover pre-frame setup or all resume
+  boundaries, and independent stacks can drift out of sync. One typed stack
+  expresses observable nesting and gives cleanup and GC a single invariant.
+- 장점, 단점 및 영향: cross-Realm callbacks and resumptions now preserve
+  callee-owned intrinsics without widening Test262 support, and construction
+  metadata cannot leak through interpreted calls. The scope helper restores
+  all `Result` paths but is not designed to recover and reuse a VM after a
+  caught Rust panic; module-instantiation error timing and name-based native
+  constructor classification remain separate audit units.
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is

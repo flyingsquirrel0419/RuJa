@@ -85,6 +85,39 @@ LIFO order on both success and rejection, while skipped keys allocate no entry
 state. This keeps the specification's operation order and the collector's
 manual `gc_pins` ownership discipline aligned at each re-entry boundary.
 
+## Execution contexts and Realms
+
+`Vm::execution_contexts` is the authoritative LIFO record of active JavaScript
+calls and resumptions. It is intentionally separate from the bytecode frame
+stack: a native builtin can call interpreted code before a frame exists, and a
+suspended generator or async function can later resume beneath an unrelated
+native caller. Every context owns its callee Realm environment and callee;
+native contexts additionally own `NewTarget` and any already-observed
+`NewTarget.prototype` value.
+
+Interpreted dispatch pushes a setup context before class validation, sloppy
+`this` conversion, and arguments/rest allocation so those pre-frame operations
+use the callee Realm. The interpreter then pushes a frame context while
+bytecode runs. Keeping both entries is deliberate: the setup context covers
+the interval before frame creation, while the frame context makes later
+generator and async resumptions independent of whichever native method resumed
+them.
+
+General Realm lookup uses only the top execution context, then falls back to
+the active frame and VM global. Native callee and construction accessors also
+read only a top native context; searching downward would leak an outer native
+call into an active interpreted call. Interpreted error lookup accepts a top
+interpreted context and otherwise falls back to the active frame, preserving a
+suspended function's Realm when a borrowed native `next`, `throw`, or `return`
+method resumes it. Catchable errors are materialized before the owning context
+is popped.
+
+The GC traces every execution context's Realm environment, callee,
+`NewTarget`, and cached prototype. Rust scope cleanup restores the previous
+context depth on all normal and `Result`-based abrupt paths; unwinding and then
+reusing a VM after a caught Rust panic remains outside the engine's supported
+recovery contract.
+
 ---
 
 **Next:** [Features](features.md) · [Known limitations](limitations.md) · [Back to README](../README.md)
