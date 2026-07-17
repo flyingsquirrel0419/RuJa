@@ -92,7 +92,7 @@ guarantees, run RuJa in a separately killable process as well.
   scoped subset of ES5.1 + selected ES2015+ features (see
   [test262.md](test262.md#supported-subset) for the exact list). The full
   suite is run in CI (excluding `intl402`/`staging`) with a baseline pass
-  rate of 62.1% of all matrix files and 82.6% of executed files; within the
+  rate of 62.4% of all matrix files and 82.7% of executed files; within the
   supported subset, tests currently run at 100%.
   Full ES conformance is not claimed. See
   [test262.md](test262.md) for current numbers and the failure breakdown.
@@ -138,7 +138,10 @@ guarantees, run RuJa in a separately killable process as well.
   combinator directories consequently pass all 390 files with their gates
   lifted. Promise construction validates executor callability before
   observing `NewTarget.prototype` and roots its instance across resolving-state
-  allocation. Four broader Promise edge cases remain separately gated.
+  allocation. `Promise.allKeyed` and `Promise.allSettledKeyed` preserve raw
+  own-key order while observing each Proxy descriptor before reading or
+  resolving that entry; the complete 703-file Promise corpus passes when all
+  diagnostic gates are lifted.
   Async iterator helpers remain a separate unsupported surface.
 - `Vm` is `Send` (but not `Sync`): the engine uses `Arc`/`Mutex`/atomics
   for shared ownership and interior mutability, so a `Vm` can be moved

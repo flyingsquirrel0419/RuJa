@@ -30,7 +30,7 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 62.1% of all matrix files; 82.6% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 62.4% of all matrix files; 82.7% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (12751 pass / 0 fail on current Test262; 12752 / 0 on the pinned checkout) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
@@ -6548,8 +6548,8 @@ Feature commit `0581788` passed CI `29549608490` and full matrix
 `29549608468`. Against the Promise setup-rejection feature baseline, 29 of 30
 result artifacts at `/tmp/ruja-artifacts-promise-finally-feature.klMTHm` are
 byte-for-byte identical. Only built-ins changes, by exactly **+24 pass / -24
-skip**. The aggregate is **30088 pass / 6334 fail / 12033 skip / 12 timeout /
-0 error / 48467 total / 36422 pass-or-fail executed**, or **62.1%** of all
+skip**. The aggregate is **30088 pass / 6334 fail / 11883 skip / 12 timeout /
+0 error / 48317 total / 36422 pass-or-fail executed**, or **62.3%** of all
 files and **82.6%** of executed files.
 
 [Decision Log]
@@ -6618,8 +6618,8 @@ Feature commit `568171c` and CI-environment follow-up `c224613` passed CI
 baseline, 29 of 30 result artifacts at
 `/tmp/ruja-artifacts-promise-constructor-order-feature.KVXx1G` are
 byte-for-byte identical. Only built-ins changes, by exactly **+1 pass / -1
-skip**. The aggregate is **30089 pass / 6334 fail / 12032 skip / 12 timeout /
-0 error / 48467 total / 36423 pass-or-fail executed**, or **62.1%** of all
+skip**. The aggregate is **30089 pass / 6334 fail / 11882 skip / 12 timeout /
+0 error / 48317 total / 36423 pass-or-fail executed**, or **62.3%** of all
 files and **82.6%** of executed files.
 
 [Decision Log]
@@ -6687,8 +6687,8 @@ Feature commit `be24904` passed CI `29555440736` and full matrix
 `/tmp/ruja-artifacts-promise-constructor-order-feature.KVXx1G`, 29 of 30
 result artifacts at `/tmp/ruja-artifacts-reflect-call-feature.dh7hH0` are
 byte-for-byte identical. Only built-ins changes, by exactly **+19 pass / -19
-skip**. The aggregate is **30108 pass / 6334 fail / 12013 skip / 12 timeout /
-0 error / 48467 total / 36442 pass-or-fail executed**, or **62.1%** of all
+skip**. The aggregate is **30108 pass / 6334 fail / 11863 skip / 12 timeout /
+0 error / 48317 total / 36442 pass-or-fail executed**, or **62.3%** of all
 files and **82.6%** of executed files.
 
 The existing 1,048,576-argument materialization cap remains an explicit
@@ -6763,8 +6763,8 @@ Feature commit `ffea75a` passed CI `29558468870` and full matrix
 of 30 result artifacts at
 `/tmp/ruja-artifacts-function-apply-feature.wpT8MO` are byte-for-byte
 identical. Only built-ins changes, by exactly **+6 pass / -4 fail / -2 skip**.
-The aggregate is **30114 pass / 6330 fail / 12011 skip / 12 timeout / 0 error /
-48467 total / 36444 pass-or-fail executed**, or **62.1%** of all files and
+The aggregate is **30114 pass / 6330 fail / 11861 skip / 12 timeout / 0 error /
+48317 total / 36444 pass-or-fail executed**, or **62.3%** of all files and
 **82.6%** of executed files.
 
 [Decision Log]
@@ -6792,6 +6792,84 @@ The aggregate is **30114 pass / 6330 fail / 12011 skip / 12 timeout / 0 error /
   without widening unrelated gates. The manual LIFO pin-count contract and the
   non-spec sandbox cap remain explicit local constraints. Execution-context
   Realm tracking and the four keyed Promise failures stay separate follow-ups.
+
+## Promise keyed descriptor ordering and admission
+
+`Promise.allKeyed` and `Promise.allSettledKeyed` now follow the observable
+ordering in the
+[Await Dictionary draft](https://tc39.es/proposal-await-dictionary/). The
+implementation snapshots raw `[[OwnPropertyKeys]]` once, then performs
+Proxy-aware `[[GetOwnProperty]]` separately for each key. Only an enumerable
+descriptor advances the accepted-entry index and proceeds through `Get`,
+`C.resolve`, callback creation, `then` lookup, and `then` invocation. Missing
+or non-enumerable descriptors are skipped without reading the value or
+allocating result state, so accepted entries remain compact. This separation
+also preserves the required trap order when a Proxy omits `ownKeys` and
+delegates key enumeration to its target.
+
+The property value is rooted through `C.resolve`; the returned promise,
+per-entry record, callbacks, and observable `then` value remain rooted through
+the final call. Key/state allocation and callback-creation failures after
+object validation reject the existing capability, and the keyed entry paths
+restore their original pin depth on normal and abrupt completion. Forced-GC
+regressions cover `ownKeys`, descriptor lookup, property `Get`, `then` lookup,
+and `then` invocation for both keyed methods. Ordering tests also cover
+descriptor `undefined`, exact thrown-value identity, explicit and delegated
+key enumeration, and compact middle-key skipping.
+
+`tools/test262_promise_keyed_admission.txt` freezes all current 63 files under
+`built-ins/Promise/allKeyed` and `built-ins/Promise/allSettledKeyed` at test262
+`020cb74075849d1e404bbcdb62feb7a02e6966db`. Runner and analyzer remove only
+the exact metadata features recorded for each manifest member; unknown future
+files remain skipped even when they carry only the async flag. Both the normal
+and all-gates-lifted exact runs are **63/63**. Broad Promise is **433 pass / 0
+fail / 270 skip / 703 total** normally and **703/703** with every gate lifted.
+The supported subset remains **12751/0/7687/20438**, Python tooling is
+**100/100**, Rust lib/unit tests are **68/68**, and Rust builtins are
+**457/457**. All-target/all-feature tests and builds, Clippy with warnings
+denied, formatting, release, and wasm32 checks pass. Independent GPT and Umans
+reviews found no semantic defect; an admission test was strengthened so future
+paths stay skipped independently of the proposal feature gate.
+
+Feature commit `3489f00` passed CI `29562059144` and full matrix
+`29562059145`. Against
+`/tmp/ruja-artifacts-function-apply-feature.wpT8MO`, 29 of 30 result artifacts
+at `/tmp/ruja-artifacts-promise-keyed-feature.pqnizJ` are byte-for-byte
+identical. Only built-ins changes, by exactly **+45 pass / -45 skip**. The
+artifact and workflow aggregates agree at **30159 pass / 6330 fail / 11816
+skip / 12 timeout / 0 error / 48317 total / 36489 pass-or-fail executed**, or
+**62.4%** of all files and **82.7%** of executed files. Re-summing the retained
+Promise-finally, Promise-constructor, Reflect-call, and Function.apply
+artifacts also corrects their recently documented totals from an erroneous
+**48467** to the actual **48317**; each mistaken skip count was high by 150.
+
+[Decision Log]
+- 목적과 의도: make keyed Promise combinators observe every Proxy descriptor
+  at the specified per-key point while preserving accepted values across
+  arbitrary re-entry and GC.
+- 기존 구현 및 제약 조건: enumerable filtering was folded into the shared
+  own-key helper. A Proxy without `ownKeys` delegated that filtering to its
+  target, bypassing the original Proxy's descriptor trap, while explicit
+  `ownKeys` still caused all descriptors to be read before any entry's
+  resolve/then chain. Intermediate Rust locals were not GC roots.
+- 검토한 주요 대안: special-case the four failing files; teach delegated
+  `ownKeys` filtering to call back through the original Proxy; precompute
+  descriptor/key pairs; reuse a temporary JavaScript object as state; or keep
+  raw key enumeration separate from per-entry descriptor processing.
+- 선택한 방식: snapshot unfiltered own keys, query the original input's
+  descriptor inside the loop, append a key/value placeholder only after the
+  descriptor is accepted, and use explicit LIFO pins through the observable
+  resolve and `then` operations.
+- 다른 대안 대신 이 방식을 선택한 이유: file-specific and delegation-only
+  fixes would retain the wrong interleaving, precomputation is observably
+  incorrect, and temporary user-visible storage adds unrelated allocation and
+  prototype semantics. The two-stage algorithm directly matches the proposal
+  and existing internal property operations.
+- 장점, 단점 및 영향: the complete keyed surface and fully opened Promise
+  corpus now pass without widening future admissions. The manual pin protocol
+  remains local and review-sensitive; execution-context Realm tracking is the
+  next separate architecture unit rather than being mixed into this semantic
+  repair.
 
 ## Why the full-suite rate is not higher
 

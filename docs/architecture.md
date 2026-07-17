@@ -68,6 +68,23 @@ the shared object-only operation. The materialized list and its pin count move
 together into the final call so a later getter or target re-entry cannot make
 an earlier argument collectible.
 
+Promise keyed combinators use a separate two-stage observable protocol. They
+first snapshot raw `[[OwnPropertyKeys]]`, including non-enumerable keys, and
+then perform Proxy-aware `[[GetOwnProperty]]` inside the per-key loop. An
+undefined or non-enumerable descriptor skips that key before `Get`,
+`C.resolve`, state allocation, or index advancement. Accepted keys therefore
+form a compact result while descriptor traps remain interleaved with that
+key's `Get`, resolve call, `then` lookup, and `then` invocation. Pre-filtering
+all descriptors during key enumeration is forbidden because it changes
+observable Proxy order and bypasses a delegating Proxy's descriptor trap.
+
+Every accepted keyed entry pins its property value through `C.resolve`, then
+keeps the resulting promise, shared state, element callbacks, and observable
+`then` value rooted until invocation completes. Those roots are released in
+LIFO order on both success and rejection, while skipped keys allocate no entry
+state. This keeps the specification's operation order and the collector's
+manual `gc_pins` ownership discipline aligned at each re-entry boundary.
+
 ---
 
 **Next:** [Features](features.md) · [Known limitations](limitations.md) · [Back to README](../README.md)

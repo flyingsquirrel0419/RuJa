@@ -4,6 +4,19 @@
 
 ### Fixed
 
+- `Promise.allKeyed` and `Promise.allSettledKeyed` now snapshot raw own keys,
+  then observe each key's Proxy-aware descriptor before any value read,
+  `C.resolve` call, or `then` operation. Missing and non-enumerable descriptors
+  are skipped without advancing the compact result index, while accepted
+  values, promises, records, callbacks, and `then` values stay rooted across
+  every observable re-entry. Exact keyed admission is **63/63**, broad Promise
+  is **433/0/270** normally and **703/703** with all gates lifted, the supported
+  subset remains **12751/0/7687**, tooling is **100/100**, and Rust builtins are
+  **457/457**. Feature commit `3489f00` passed CI `29562059144` and full matrix
+  `29562059145`; 29 of 30 result files match the Function.apply baseline
+  byte-for-byte and built-ins changes by exactly **+45 pass / -45 skip**,
+  producing **30159 pass / 6330 fail / 11816 skip / 12 timeout / 0 error /
+  48317 total** (**62.4%** of all files, **82.7%** of executed files).
 - `Function.prototype.apply` now shares the observable
   `CreateListFromArrayLike` implementation used by `Reflect.apply` and
   `Reflect.construct`. It reads and coerces `length` before ordered indexed
@@ -18,8 +31,8 @@
   **99/99**, and Rust builtins are **454/454**. Feature commit `ffea75a` passed
   CI `29558468870` and full matrix `29558468852`; 29 of 30 result files match
   the Reflect baseline byte-for-byte and built-ins changes by exactly **+6
-  pass / -4 fail / -2 skip**, producing **30114 pass / 6330 fail / 12011 skip
-  / 12 timeout / 0 error / 48467 total** (**62.1%** of all files, **82.6%** of
+  pass / -4 fail / -2 skip**, producing **30114 pass / 6330 fail / 11861 skip
+  / 12 timeout / 0 error / 48317 total** (**62.3%** of all files, **82.6%** of
   executed files).
 - `Reflect.apply` and `Reflect.construct` now keep an observable
   `argumentsList.length` result rooted through `ToLength`, pin each indexed
@@ -34,8 +47,8 @@
   builtins are **453/453**. Feature commit `be24904` passed CI `29555440736`
   and full matrix `29555440756`; 29 of 30 result files match the prior
   baseline byte-for-byte and built-ins changes by exactly **+19 pass / -19
-  skip**, producing **30108 pass / 6334 fail / 12013 skip / 12 timeout / 0
-  error / 48467 total** (**62.1%** of all files, **82.6%** of executed files).
+  skip**, producing **30108 pass / 6334 fail / 11863 skip / 12 timeout / 0
+  error / 48317 total** (**62.3%** of all files, **82.6%** of executed files).
 - Promise construction now validates executor callability before observing
   `NewTarget.prototype`. Promise uses its internally allocating native path,
   while observable prototype values and the fresh Promise remain GC-rooted
@@ -48,7 +61,7 @@
   builtins are **452/452**. Feature commit `568171c` plus CI portability
   follow-up `c224613` passed CI `29552437436` and full matrix `29552437437`;
   only built-ins changes by **+1 pass / -1 skip**, producing **30089 pass /
-  6334 fail / 12032 skip / 12 timeout / 0 error / 48467 total** (**62.1%** of
+  6334 fail / 11882 skip / 12 timeout / 0 error / 48317 total** (**62.3%** of
   all files, **82.6%** of executed files).
 - `Promise.prototype.finally` now performs receiver validation and
   `SpeciesConstructor`, creates Realm-correct anonymous `ThenFinally` and
@@ -67,8 +80,8 @@
   subset remains **12751/0/7687**, tooling is **96/96**, and Rust builtins are
   **452/452**. Feature commit `0581788` passed CI `29549608490` and full
   matrix `29549608468`; only built-ins changes by **+24 pass / -24 skip**,
-  producing **30088 pass / 6334 fail / 12033 skip / 12 timeout / 0 error /
-  48467 total** (**62.1%** of all files, **82.6%** of executed files).
+  producing **30088 pass / 6334 fail / 11883 skip / 12 timeout / 0 error /
+  48317 total** (**62.3%** of all files, **82.6%** of executed files).
 - Promise combinators now materialize catchable native setup failures as real
   method-Realm Error objects instead of rejection strings, preserve explicit
   thrown-value identity, and propagate non-catchable host aborts. A shared
