@@ -64,19 +64,24 @@ guarantees are required.
   that need a hard wall around attacker-controlled compilation must isolate
   the VM in a separately killable process.
 - RegExp construction, `IsRegExp`, Realm fallback, the String-symbol methods,
-  character-class escapes, and active-ignoreCase `\w`/`\W` lowering are
-  implemented and audited, but full RegExp conformance is not complete. The
-  current `built-ins/RegExp` diagnostic has **63 failures**: **41** direct/root
-  syntax and matcher files, **16** lookbehind files, and **6** match-indices
-  files. Unicode `iu`/`iv` `\b`/`\B` still inherits Rust's broader Unicode
-  word boundary instead of the ECMAScript WordCharacters set; ignore-case
-  backreferences do not yet canonicalize the captured and consumed text;
-  valid scalars in `U+F0000..U+F07FF` collide with the non-Unicode UTF-16
+  character-class escapes, active-ignoreCase `\w`/`\W` lowering, and `d`-flag
+  match indices are implemented and audited, but full RegExp conformance is
+  not complete. The current `built-ins/RegExp` diagnostic has **52 failures**:
+  **37** direct/root syntax and matcher files and **15** lookbehind files; the
+  match-indices subtree is **14/14**. Named groups support Unicode identifier
+  names, escaped names, early errors, and ordinary backreferences, but RuJa
+  still rejects duplicate names in structurally disjoint alternatives that
+  current ECMAScript permits. Unicode `iu`/`iv` `\b`/`\B` on the linear backend
+  still inherits Rust's broader Unicode word boundary instead of the
+  ECMAScript WordCharacters set; the exact lookaround lowering is used only
+  when a pattern already requires the bounded backreference backend.
+  Ignore-case backreferences do not yet canonicalize the captured and consumed
+  text; valid scalars in `U+F0000..U+F07FF` collide with the internal UTF-16
   sentinel representation; and nested `v` set subtraction/intersection is
-  still delegated to an incomplete backend interpretation. A boundary rewrite
-  through `fancy-regex` was rejected because nested quantified patterns hit
-  its backtracking limit; the eventual fix needs a separate linear matching
-  design rather than weakening the execution bound.
+  still delegated to an incomplete backend interpretation. Moving every
+  boundary onto `fancy-regex` was rejected because nested quantified patterns
+  can hit its backtracking limit; the eventual general fix needs a separate
+  linear matching design rather than weakening the execution bound.
 - Execution fuel is **cooperative, not preemptive**: `Vm::set_fuel(Some(n))`
   bounds execution to ~n opcodes (exhaustion throws a `RangeError` that is
   *not* catchable by user `try/catch`, so untrusted code cannot swallow it).
@@ -137,8 +142,8 @@ guarantees are required.
   scoped subset of ES5.1 + selected ES2015+ features (see
   [test262.md](test262.md#supported-subset) for the exact list). The full
   suite is run in CI (excluding `intl402`/`staging`) with a baseline pass
-  rate of 62.5% of all matrix files and 82.7% of executed files (**30,194
-  pass / 6,322 fail / 11,789 skip / 12 timeout**); within the supported subset,
+  rate of 62.7% of all matrix files and 83.2% of executed files (**30,404
+  pass / 6,133 fail / 11,924 skip / 6 timeout**); within the supported subset,
   tests currently run at 100%.
   Full ES conformance is not claimed. See
   [test262.md](test262.md) for current numbers and the failure breakdown.

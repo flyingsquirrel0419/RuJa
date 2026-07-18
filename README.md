@@ -57,7 +57,8 @@ indexing, `at`/`copyWithin`/`entries`/`fill`/`filter`/`find`/`findIndex`/
 `findLast`/`findLastIndex`/`forEach`/`includes`/`indexOf`/`join`/`keys`/
 `lastIndexOf`/`map`/`reverse`/`set`/`slice`/
 `sort`/`subarray`/`toLocaleString`/`toReversed`/`toSorted`/`reduce`/
-`reduceRight`/`some`/`every`/`values`/`with`, BigInt, Date, regex, and more.
+`reduceRight`/`some`/`every`/`values`/`with`, BigInt, Date, RegExp `d` match
+indices and named groups, and more.
 RuJa does
 not claim
 full ES conformance — conformance is scoped to this subset. See
@@ -67,8 +68,8 @@ for intentionally-unsupported features.
 
 **Supported-subset pass rate: 100.0%** (12,751 tests in `language/statements`
 + `language/expressions` on current Test262, unsupported-feature tests
-skipped). The latest full matrix is 62.7% of all files and 83.0% of executed
-files (30,302 pass / 6,222 fail / 11,781 skip) — see
+skipped). The latest full matrix is 62.7% of all files and 83.2% of executed
+files (30,404 pass / 6,133 fail / 11,924 skip) — see
 [test262 conformance](docs/test262.md)
 for why these numbers differ.
 

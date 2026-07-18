@@ -212,6 +212,25 @@ Realm, while species values, flags, lastIndex values, matcher state, and
 iterator state are pinned across every re-entrant conversion, trap, call, and
 allocation.
 
+Native `RegExpBuiltinExec` now treats backend byte positions as an internal
+transport detail. `RegExpBackendInput` either borrows the original internal
+string or owns a normalized matcher view plus a sorted backend-byte to
+original-UTF-16 boundary table. The owned path is required when a JavaScript
+string contains adjacent sentinel-backed high and low surrogates under `u` or
+`v`: the backend must see one scalar, while `lastIndex`, match `index`, capture
+strings, and `d`-flag ranges must remain measured in the original two code
+units. A Unicode `lastIndex` inside that pair maps to the code point's starting
+boundary, matching `GetStringIndex` behavior.
+
+After matching, all capture endpoints are converted in one ordered pass and
+reused for result strings, named `groups`, `lastIndex`, and match indices.
+With the internal `[[RegExpHasIndices]]` flag set, exec allocates one
+method-Realm Array per participating capture, explicit `undefined` entries for
+nonparticipating captures, and a null-prototype `indices.groups` object whose
+named properties alias the same pair objects. Pair arrays and groups are
+pinned through nested allocation, materialization consumes fuel per capture,
+and exact heap-cap failure restores the original pin depth.
+
 The same work made the write pipeline receiver-aware end to end. OrdinarySet
 stops at the nearest data descriptor, delegates through Proxy prototypes, and
 preserves the original receiver. Proxy `set`, `getOwnPropertyDescriptor`,

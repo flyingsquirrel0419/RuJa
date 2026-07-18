@@ -7799,6 +7799,100 @@ and **6** match-indices files.
 - 장점, 단점 및 영향: Word escapes and simple classes now follow ECMAScript across i/iu/iv and local modifiers with bounded compile cost and no Test262 regression. Unicode boundaries, ignore-case backreferences, sentinel-range scalars, and full nested-v algebra remain explicit architectural work.
 ```
 
+## RegExp match indices and named groups
+
+Native RegExp exec now implements the ECMA-262
+[`RegExpBuiltinExec`](https://tc39.es/ecma262/multipage/text-processing.html#sec-regexpbuiltinexec)
+`d`-flag result contract. The match Array receives an own enumerable
+`indices` property after `groups`; every participating capture receives a
+method-Realm `[start, end]` Array; nonparticipating captures are explicit
+`undefined`; and `indices.groups` is either `undefined` or a null-prototype
+object. Named entries alias the exact pair objects already stored by numeric
+capture index, including a data property named `__proto__`.
+
+The implementation reads the immutable internal `[[RegExpHasIndices]]` bit,
+not shadowable public `hasIndices` or `flags` properties. Backend byte
+positions are converted to original JavaScript UTF-16 positions in one
+left-to-right pass. Unicode matching over dynamically concatenated surrogate
+pairs uses a normalized backend scalar view with an explicit byte-to-code-unit
+boundary map, so match strings, `index`, `lastIndex`, named groups, and index
+pairs all retain the original code-unit coordinates. A `u`/`v` `lastIndex`
+inside a surrogate pair maps to the code point start, as it does for an
+ordinary supplementary scalar.
+
+Named capture declarations are decoded independently of backend syntax. Raw
+and escaped Unicode names use the ECMAScript `ID_Start`/`ID_Continue` sets,
+including `$`, `_`, ZWNJ, and ZWJ. Definitions lower to numbered captures and
+named references lower through unambiguous noncapturing boundaries, preserving
+the original public `source`. Unmatched, forward, and self references follow
+ECMAScript's empty-match behavior; a following decimal digit cannot merge into
+another capture number. Literal declarations and references are validated as
+early errors. Legacy non-`u` `\k<name>` remains an identity escape only when
+the pattern has no named capture, while malformed `\u` and `\u{n}` retain
+their Annex B identity/quantifier meaning.
+
+All pair Arrays and the null-prototype groups object are pinned across nested
+allocation. Pair materialization consumes fuel per capture, and exact-cap
+tests prove that the six retained objects for one matched and one unmatched
+named capture succeed at the exact limit, fail one cell below it, and restore
+pin depth. The shared capture-range conversion prevents an attacker-controlled
+`capture_count * input_length` rescan.
+
+The exact frozen admission in
+`tools/test262_regexp_match_indices_admission.txt` lifts only the
+`regexp-named-groups` dependency for seven audited match-indices files; future
+and outside files retain their broad feature gate. On Test262
+`020cb74075849d1e404bbcdb62feb7a02e6966db`, the complete
+`built-ins/RegExp/match-indices` directory is **14 pass / 0 fail / 0 skip / 0
+timeout**, `regexp-modifiers` remains **70/70**, the full RegExp diagnostic
+improves from **960/63/856/0** to **978/52/849/0**, and the supported subset
+remains **12751 pass / 0 fail / 7687 skip / 20438 total**. The RegExp delta is
+exactly **+18 pass / -11 fail / -7 skip**; an isolated binary from the previous
+HEAD passed none of the final 52 failing files, so no old RegExp pass regressed.
+
+Final local gates pass all Rust targets/features, warnings-denied Clippy,
+rustfmt/diff, release, wasm32, Python tooling **107/107**, Rust lib/unit
+**126/126**, bugfixes **67/67**, builtins **473/473**, and Fuel **27/27**.
+GPT 5.6 reviews found and closed digit-boundary merging, Fancy word-boundary
+compatibility, legacy `\k` regression, incorrect XID-only names, dynamic
+surrogate-pair indices, delayed literal errors, malformed non-`u` `\u`, and a
+lookbehind compilation regression. All reviewer sessions were closed; no
+coder model or Umans provider route was used. Feature commit `7ceb8e9` and
+tooling portability fix `08f2fa4` are pushed. Ordinary CI `29657974089`
+passes every build, Rust, formatting, Clippy, tooling, and supported-Test262
+step.
+
+Full matrix `29657718789` passes all 30 shards. Its downloaded artifacts at
+`/tmp/ruja-regexp-indices-feature.29657718789` aggregate to **30404 pass /
+6133 fail / 11924 skip / 6 timeout / 0 error / 48467 total / 36537
+pass-or-fail executed**, or **62.7%** of all files and **83.2%** of executed
+files. Twenty-eight result files are byte-identical to the prior RegExp
+feature baseline. `built-ins` moves from **14784/5331/3547/6** to
+**14802/5320/3540/6**, exactly the locally reproduced RegExp improvement.
+`annexB` also moves **+3 pass / -3 fail**, but old and new binaries produce no
+Annex B status changes against the same local Test262 checkout. That second
+artifact difference is upstream checkout drift because each matrix job still
+clones an unpinned Test262 HEAD independently; it is not attributed to this
+engine change. The aggregate delta therefore combines the verified
+`built-ins` improvement with unrelated Annex B corpus drift.
+
+The remaining RegExp work is deliberately separate. Duplicate named groups in
+structurally disjoint alternatives need one name to own multiple capture
+indices and a participating-capture selection rule. Unicode word boundaries
+on linear-backend patterns, ignore-case backreference canonicalization, the
+reserved sentinel scalar range, nested `v` set algebra, and the remaining
+lookbehind backend limitations retain their existing boundaries.
+
+```text
+[Decision Log]
+- 목적과 의도: Implement complete d-flag match indices and the named-capture behavior required to expose them without weakening Realm, GC, UTF-16, fuel, or backend safety invariants.
+- 기존 구현 및 제약 조건: Native exec already produced captures but discarded their ranges; backend offsets are UTF-8 bytes, JavaScript offsets are UTF-16 code units, split surrogate sentinels require a different Unicode matcher view, nested result allocation can collect unrooted pairs, and the linear backend cannot execute backreferences.
+- 검토한 주요 대안: Re-run the pattern once per capture, derive indices from returned strings, expose backend byte offsets, move every pattern to fancy-regex, hand-roll a second matcher, or retain one match and convert all finalized capture boundaries together.
+- 선택한 방식: Preserve finalized backend capture ranges, normalize only Unicode inputs containing split surrogate pairs with an explicit boundary map, convert all endpoints once, lower named groups to numbered backend captures, and materialize Realm-local rooted index Arrays under the internal d flag.
+- 다른 대안 대신 이 방식을 선택한 이유: Re-matching changes observable capture state, string search is ambiguous and quadratic, byte offsets violate ECMAScript, broad fancy-regex routing weakens bounded linear execution, and a new matcher is too broad for this verified unit. One range pipeline reuses the existing successful match and keeps every coordinate conversion explicit.
+- 장점, 단점 및 영향: Match indices, named aliases, descriptors, order, Realm identity, surrogate coordinates, exact heap caps, and fuel are directly tested; seven exact files are safely admitted and five pre-existing RegExp failures also close. Duplicate names across disjoint alternatives and the larger boundary/backreference/lookbehind architecture remain explicit follow-up work.
+```
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is

@@ -4,6 +4,49 @@
 
 ### Fixed
 
+- RegExp `d` now exposes the complete match-indices result shape. Native exec
+  adds the own `indices` property after `groups`, creates method-Realm pair
+  Arrays for every participating capture, stores explicit `undefined` for
+  unmatched captures, and builds a null-prototype `indices.groups` whose named
+  properties alias the numeric pair objects. Internal flag slots, property
+  descriptors/order, foreign Realms, repeated and empty captures, and
+  `__proto__` names are covered.
+
+  Backend byte ranges are converted to original UTF-16 coordinates in one
+  ordered pass. Unicode execution over dynamically concatenated surrogate
+  sentinels uses a scalar matcher view plus an explicit boundary map, so
+  match strings, `index`, `lastIndex`, groups, and indices agree with ordinary
+  supplementary strings, including a `lastIndex` inside a pair. Nested pair
+  allocation is rooted, consumes fuel per capture, succeeds at the exact heap
+  cap, and restores pin depth when one cell below the requirement.
+
+  Named groups now decode raw and escaped ECMAScript identifier names, lower
+  definitions/references without changing public `source`, and preserve
+  unmatched, forward, self, and digit-suffixed backreference semantics.
+  Invalid declarations/references are literal early errors; legacy non-`u`
+  `\k` identity escapes and incomplete `\u` Annex B behavior are preserved.
+  Exact Test262 admission remains frozen to seven audited named-group index
+  files.
+
+  Final local gates include tooling **107/107**, Rust lib/unit **126/126**,
+  builtins **473/473**, bugfixes **67/67**, Fuel **27/27**, release, wasm32,
+  warnings-denied Clippy, formatting, match-indices **14/14**,
+  `regexp-modifiers` **70/70**, full RegExp **978/52/849/0**, and the supported
+  subset **12751/0/7687/20438**. Against the previous RegExp diagnostic this is
+  **+18 pass / -11 fail / -7 skip** with no old passing file regressed. GPT 5.6
+  reviewers found and closed byte/UTF-16 mapping, GC, named-reference,
+  malformed-escape, early-error, and lookbehind-regression defects; every
+  session is closed and no coder or Umans route was used. Feature commit
+  `7ceb8e9` plus CI-portability fix `08f2fa4` passed ordinary CI
+  `29657974089`. Full matrix `29657718789` also passed all 30 shards. Its
+  downloaded artifacts report **30404 pass / 6133 fail / 11924 skip / 6
+  timeout / 0 error / 48467 total**, or **62.7%** of all files and **83.2%**
+  of executed files. Twenty-eight shard results are byte-identical to the
+  preceding feature baseline; `built-ins` contains the exact RegExp delta
+  (**+18 pass / -11 fail / -7 skip**). The separate Annex B artifact delta
+  (**+3 pass / -3 fail**) came from independently cloned, unpinned Test262
+  HEADs: old and new binaries produced no Annex B status changes against the
+  same local checkout.
 - Active-ignoreCase RegExp `\w`/`\W` escapes now use ECMAScript
   WordCharacters outside classes and in ordinary character classes. Plain
   `i` mode remains exactly ASCII alphanumeric plus underscore; `iu` and `iv`
