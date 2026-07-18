@@ -2770,7 +2770,10 @@ def main():
         print(f"RATE={rate:.1f} PASS={counts['pass']} FAIL={counts['fail']} "
               f"SKIP={counts['skip']} TOTAL={total} RAN={ran}")
     else:
-        print("RATE=0.0 PASS=0 FAIL=0 SKIP=0 TOTAL=0 RAN=0")
+        print(
+            f"RATE=0.0 PASS={counts['pass']} FAIL={counts['fail']} "
+            f"SKIP={counts['skip']} TOTAL={total} RAN=0"
+        )
 
 if __name__ == '__main__':
     main()

@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Regression tests for RuJa's shared test262 process support."""
 
+import io
 import subprocess
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -2520,6 +2522,31 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
                     self.assertEqual(tool.test_timeout_seconds(outside), 8)
                 finally:
                     tool.TEST262 = original_root
+
+    def test_zero_execution_rate_preserves_skip_and_total(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            test_dir = root / "test" / "unsupported"
+            test_dir.mkdir(parents=True)
+            (test_dir / "skipped.js").write_text("1;", encoding="utf-8")
+            output = io.StringIO()
+            with (
+                patch.object(test262_runner, "TEST262", str(root)),
+                patch.object(test262_runner, "run_test", return_value="skip"),
+                patch.object(
+                    test262_runner.sys,
+                    "argv",
+                    ["test262_runner.py", "unsupported"],
+                ),
+                redirect_stdout(output),
+            ):
+                test262_runner.main()
+
+            self.assertIn("Results over 1 tests (ran 0):", output.getvalue())
+            self.assertIn(
+                "RATE=0.0 PASS=0 FAIL=0 SKIP=1 TOTAL=1 RAN=0",
+                output.getvalue(),
+            )
 
     def test_character_class_escape_timeout_is_limited_to_generated_complements(self):
         with tempfile.TemporaryDirectory() as temp_dir:
