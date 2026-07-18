@@ -14604,6 +14604,109 @@ fn regexp_character_class_escapes_use_ecmascript_sets() {
 }
 
 #[test]
+fn regexp_ignore_case_word_characters_follow_ecmascript_canonicalization() {
+    assert_eq!(
+        run(r#"
+            var unrelated = ["é", "\u0660", "中"];
+            var legacyWord = /^\w$/i;
+            var legacyNonWord = /^\W$/i;
+            var legacyWordClass = /^[\w]$/i;
+            var legacyNonWordClass = /^[\W]$/i;
+            var ok = !legacyWord.test("\u017F") && !legacyWord.test("\u212A") &&
+              legacyNonWord.test("\u017F") && legacyNonWord.test("\u212A") &&
+              !legacyWordClass.test("\u017F") && !legacyWordClass.test("\u212A") &&
+              legacyNonWordClass.test("\u017F") && legacyNonWordClass.test("\u212A");
+
+            for (var i = 0; i < unrelated.length; i++) {
+              ok = ok && !legacyWord.test(unrelated[i]) && legacyNonWord.test(unrelated[i]) &&
+                !legacyWordClass.test(unrelated[i]) && legacyNonWordClass.test(unrelated[i]);
+            }
+
+            var unicodeFlags = ["ui", "vi"];
+            for (var j = 0; j < unicodeFlags.length; j++) {
+              var flags = unicodeFlags[j];
+              var word = new RegExp("^\\w$", flags);
+              var nonWord = new RegExp("^\\W$", flags);
+              var wordClass = new RegExp("^[\\w]$", flags);
+              var nonWordClass = new RegExp("^[\\W]$", flags);
+              var negatedWordClass = new RegExp("^[^\\w]$", flags);
+              var negatedNonWordClass = new RegExp("^[^\\W]$", flags);
+              ok = ok && word.test("\u017F") && word.test("\u212A") &&
+                !nonWord.test("\u017F") && !nonWord.test("\u212A") &&
+                wordClass.test("\u017F") && wordClass.test("\u212A") &&
+                !nonWordClass.test("\u017F") && !nonWordClass.test("\u212A") &&
+                !negatedWordClass.test("\u017F") && negatedNonWordClass.test("\u017F");
+              for (var k = 0; k < unrelated.length; k++) {
+                ok = ok && !word.test(unrelated[k]) && nonWord.test(unrelated[k]) &&
+                  !wordClass.test(unrelated[k]) && nonWordClass.test(unrelated[k]) &&
+                  negatedWordClass.test(unrelated[k]) && !negatedNonWordClass.test(unrelated[k]);
+              }
+            }
+            ok;
+            "#),
+        Value::Bool(true)
+    );
+
+    assert_eq!(
+        run(r#"
+            !/^[s\w]$/i.test("\u017F") &&
+              !/^[k\w]$/i.test("\u212A") &&
+              /^[s\w]$/i.test("S") &&
+              /^[\w-a]$/i.test("-") && /^[\w-a]$/i.test("a") &&
+              /^[a-\w]$/i.test("-") && /^[a-\w]$/i.test("Z") &&
+              /(?i:\w)/.test("A") && !/(?i:\w)/.test("\u017F") &&
+              /(?i:\w)/u.test("\u017F") && !/(?i:\w)/u.test("é") &&
+              /(?i:[\w])/u.test("\u212A") && !/(?i:[\w])/u.test("é") &&
+              /(?i:[s\w])/.test("S") && !/(?i:[s\w])/.test("\u017F");
+            "#),
+        Value::Bool(true)
+    );
+
+    assert_eq!(
+        run(r#"
+            !/\b\u017F/i.test("\u017F") && /\B\u017F/i.test("\u017F") &&
+              /\b\u017F/iu.test("\u017F") && !/\B\u017F/iu.test("\u017F") &&
+              /Z\B\u017F/iu.test("Z\u017F") && !/Z\b\u017F/iu.test("Z\u017F") &&
+              /(?i:\b)\u017F/u.test("\u017F") && !/(?i:\B)\u017F/u.test("\u017F") &&
+              /(?-i:\B)\u017F/ui.test("\u017F") &&
+              !/^(a+)+\b$/iu.test("aaaaaaaaaaaaaaaaaaaa!");
+            "#),
+        Value::Bool(true)
+    );
+
+    assert_eq!(
+        run(r#"
+            var lone = String.fromCharCode(0xD800);
+            /^\W$/i.test(lone) && !/^\w$/i.test(lone) &&
+              /^[\W]$/i.test(lone) && !/^[\w]$/i.test(lone) &&
+              /^\W\B\W$/i.test("😀") && !/^\W\b\W$/i.test("😀") &&
+              /^\W$/iu.test("😀") &&
+              /^(\w)\1$/iu.test("\u017F\u017F") &&
+              !/^(\w)\1$/iu.test("éé") &&
+              /^(\w)\1$/iv.test("\u212A\u212A");
+            "#),
+        Value::Bool(true)
+    );
+
+    assert_eq!(
+        run(r#"
+            /\u212A/iv.test("k") && /K/iv.test("k") &&
+              /\u017F/iv.test("s") && !/é/iv.test("e") &&
+              new RegExp("[[\\w]--[a]]", "iv").test("S") &&
+              !new RegExp("[[a]--[\\w]]", "iv").test("a") &&
+              new RegExp("[[a]&&[\\w]]", "iv").test("A") &&
+              !new RegExp("^[\\w][\\p{ASCII}]$", "iv").test("éA") &&
+              new RegExp("^[\\w][\\p{ASCII}]$", "iv").test("\u017FA") &&
+              new RegExp("^[^\\w][\\p{ASCII}]$", "iv").test("éA") &&
+              !new RegExp("^[\\p{ASCII}][\\w]$", "iv").test("Aé") &&
+              new RegExp("^[\\p{ASCII}][\\w]$", "iv").test("A\u017F") &&
+              /\\w/i.test("\\w") && !/\\w/i.test("A");
+            "#),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn regex_literals_use_realm_intrinsics_not_mutable_bindings() {
     assert_eq!(
         run(r#"

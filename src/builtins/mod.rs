@@ -54,6 +54,8 @@ use num_integer::Integer;
 use num_rational::Ratio;
 use num_traits::{FromPrimitive, Signed, ToPrimitive, Zero};
 use regex::{Regex as RustRegex, RegexBuilder as RustRegexBuilder};
+use regex_syntax::hir::{Class, ClassUnicode, ClassUnicodeRange, Hir, HirKind};
+use regex_syntax::ParserBuilder as RegexSyntaxParserBuilder;
 use std::borrow::Cow;
 
 #[derive(Clone, Copy)]
@@ -183,7 +185,8 @@ fn compile_regex_with_input_mode(
     code_unit_input: bool,
 ) -> Result<CompiledRegex, String> {
     let capture_count = regex_capture_count(source);
-    let backend_source = normalize_regex_for_backend(source, flags, capture_count, code_unit_input);
+    let backend_source =
+        normalize_regex_for_backend(source, flags, capture_count, code_unit_input)?;
     if regex_uses_backreference(source, capture_count) {
         let mut b = fancy_regex::RegexBuilder::new(&backend_source);
         b.case_insensitive(flags.contains('i'));
@@ -432,6 +435,231 @@ fn regex_runtime_error(error: fancy_regex::Error) -> Arc<Error> {
 // Rust regex uses Unicode Nd/White_Space; ECMAScript uses ASCII digits and
 // its lexical WhiteSpace plus LineTerminator set (including FEFF, excluding 0085).
 const ECMASCRIPT_WHITESPACE_CLASS_BODY: &str = r"\x09-\x0d\x20\u{a0}\u{1680}\u{2000}-\u{200a}\u{2028}-\u{2029}\u{202f}\u{205f}\u{3000}\u{feff}";
+const ECMASCRIPT_WORD_CLASS_BODY: &str = "A-Za-z0-9_";
+const ECMASCRIPT_UNICODE_IGNORE_CASE_WORD_CLASS_BODY: &str = r"A-Za-z0-9_\u{17f}\u{212a}";
+
+fn ecmascript_word_class_body(unicode_mode: bool) -> &'static str {
+    if unicode_mode {
+        ECMASCRIPT_UNICODE_IGNORE_CASE_WORD_CLASS_BODY
+    } else {
+        ECMASCRIPT_WORD_CLASS_BODY
+    }
+}
+
+fn push_ecmascript_word_escape_for_backend(
+    out: &mut String,
+    escape: char,
+    in_class: bool,
+    unicode_mode: bool,
+) {
+    out.pop();
+    if in_class && !unicode_mode {
+        escape_annex_b_hyphen_before_class_set(out);
+    }
+    if !in_class {
+        out.push_str("(?-i:");
+    }
+    out.push('[');
+    if escape == 'W' {
+        out.push('^');
+    }
+    out.push_str(ecmascript_word_class_body(unicode_mode));
+    out.push(']');
+    if !in_class {
+        out.push(')');
+    }
+}
+
+fn legacy_regex_canonicalize_code_unit(unit: u16) -> u16 {
+    if (0xd800..=0xdfff).contains(&unit) {
+        return unit;
+    }
+    let Some(ch) = char::from_u32(unit as u32) else {
+        return unit;
+    };
+    let mut uppercase = ch.to_uppercase();
+    let Some(mapped) = uppercase.next() else {
+        return unit;
+    };
+    if uppercase.next().is_some() || mapped.len_utf16() != 1 {
+        return unit;
+    }
+    let mapped = mapped as u32 as u16;
+    if unit >= 0x80 && mapped < 0x80 {
+        unit
+    } else {
+        mapped
+    }
+}
+
+fn legacy_regex_canonical_code_units() -> &'static [u16] {
+    static CODE_UNITS: OnceLock<Box<[u16]>> = OnceLock::new();
+    CODE_UNITS.get_or_init(|| {
+        (0..=u16::MAX)
+            .map(legacy_regex_canonicalize_code_unit)
+            .collect::<Vec<_>>()
+            .into_boxed_slice()
+    })
+}
+
+fn internal_char_for_code_unit(unit: u16) -> char {
+    if (0xd800..=0xdfff).contains(&unit) {
+        char::from_u32(0xf0000 + (unit as u32 - 0xd800)).unwrap()
+    } else {
+        char::from_u32(unit as u32).unwrap()
+    }
+}
+
+fn legacy_case_fold_groups() -> &'static [Box<[u16]>] {
+    static GROUPS: OnceLock<Box<[Box<[u16]>]>> = OnceLock::new();
+    GROUPS.get_or_init(|| {
+        let mut pairs = (0..=u16::MAX)
+            .map(|unit| (legacy_regex_canonical_code_units()[unit as usize], unit))
+            .collect::<Vec<_>>();
+        pairs.sort_unstable();
+        let mut groups = Vec::new();
+        let mut start = 0;
+        while start < pairs.len() {
+            let mut end = start + 1;
+            while end < pairs.len() && pairs[end].0 == pairs[start].0 {
+                end += 1;
+            }
+            if end - start > 1 {
+                groups.push(
+                    pairs[start..end]
+                        .iter()
+                        .map(|(_, unit)| *unit)
+                        .collect::<Vec<_>>()
+                        .into_boxed_slice(),
+                );
+            }
+            start = end;
+        }
+        groups.into_boxed_slice()
+    })
+}
+
+fn class_contains_char(class: &ClassUnicode, ch: char) -> bool {
+    class
+        .ranges()
+        .binary_search_by(|range| {
+            if ch < range.start() {
+                std::cmp::Ordering::Greater
+            } else if ch > range.end() {
+                std::cmp::Ordering::Less
+            } else {
+                std::cmp::Ordering::Equal
+            }
+        })
+        .is_ok()
+}
+
+fn legacy_case_fold_class(class: &ClassUnicode) -> ClassUnicode {
+    let mut additions = Vec::new();
+    for group in legacy_case_fold_groups() {
+        if group
+            .iter()
+            .any(|unit| class_contains_char(class, internal_char_for_code_unit(*unit)))
+        {
+            additions.extend(group.iter().map(|unit| {
+                let ch = internal_char_for_code_unit(*unit);
+                ClassUnicodeRange::new(ch, ch)
+            }));
+        }
+    }
+    let mut folded = class.clone();
+    folded.union(&ClassUnicode::new(additions));
+    folded
+}
+
+fn unicode_sets_class_needs_native_fallback<I>(chars: &std::iter::Peekable<I>) -> bool
+where
+    I: Iterator<Item = char> + Clone,
+{
+    let mut chars = chars.clone();
+    let mut escaped = false;
+    while let Some(ch) = chars.next() {
+        if escaped {
+            if matches!(ch, 'p' | 'P' | 'q') {
+                return true;
+            }
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if ch == '[' {
+            return true;
+        }
+        if ch == ']' {
+            return false;
+        }
+        if (ch == '&' && chars.peek() == Some(&'&')) || (ch == '-' && chars.peek() == Some(&'-')) {
+            return true;
+        }
+    }
+    false
+}
+
+fn materialize_active_word_class(
+    backend_class: &str,
+    unicode_mode: bool,
+) -> Result<String, String> {
+    const MAX_CACHE_ENTRIES: usize = 128;
+    const MAX_CACHED_SOURCE_BYTES: usize = 512;
+    const MAX_CACHED_RESULT_BYTES: usize = 4096;
+    static CACHE: OnceLock<Mutex<std::collections::HashMap<(String, bool), String>>> =
+        OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
+    let cache_key = (backend_class.len() <= MAX_CACHED_SOURCE_BYTES)
+        .then(|| (backend_class.to_string(), unicode_mode));
+    if let Some(cached) = cache_key
+        .as_ref()
+        .and_then(|key| cache.lock().get(key).cloned())
+    {
+        return Ok(cached);
+    }
+
+    let outer_negated = backend_class.starts_with("[^");
+    let positive_class = if outer_negated {
+        format!("[{}", &backend_class[2..])
+    } else {
+        backend_class.to_string()
+    };
+    let hir = RegexSyntaxParserBuilder::new()
+        .unicode(true)
+        .utf8(true)
+        .build()
+        .parse(&positive_class)
+        .map_err(|error| error.to_string())?;
+    let mut class = match hir.into_kind() {
+        HirKind::Class(Class::Unicode(class)) => class,
+        _ => return Err("word escape did not normalize to a Unicode class".to_string()),
+    };
+
+    // CharacterSetMatcher compares Canonicalize results. Materializing that
+    // equivalence closure lets the backend run this class with `i` disabled.
+    class = if unicode_mode {
+        class.case_fold_simple();
+        class
+    } else {
+        legacy_case_fold_class(&class)
+    };
+    if outer_negated {
+        class.negate();
+    }
+    let materialized = Hir::class(Class::Unicode(class)).to_string();
+    if let Some(cache_key) = cache_key.filter(|_| materialized.len() <= MAX_CACHED_RESULT_BYTES) {
+        let mut cache = cache.lock();
+        if cache.len() >= MAX_CACHE_ENTRIES {
+            cache.clear();
+        }
+        cache.insert(cache_key, materialized.clone());
+    }
+    Ok(materialized)
+}
 
 fn escape_annex_b_hyphen_before_class_set(out: &mut String) {
     if !out.ends_with('-') {
@@ -494,23 +722,28 @@ fn normalize_regex_for_backend(
     flags: &str,
     capture_count: usize,
     code_unit_input: bool,
-) -> String {
+) -> Result<String, String> {
+    let unicode_mode = flags.contains('u') || flags.contains('v');
     if source == "[]" {
-        return r"[^\s\S]".to_string();
+        return Ok(r"[^\s\S]".to_string());
     }
     if source == "[^]" {
-        return if flags.contains('u') {
+        let source = if unicode_mode {
             "(?s:.)".to_string()
         } else {
             r"[\x00-\u{ffff}\u{f0000}-\u{f07ff}]".to_string()
         };
+        return Ok(source);
     }
     let mut out = String::with_capacity(source.len());
     let mut chars = source.chars().peekable();
     let mut in_class = false;
+    let mut unicode_sets_class_depth = 0usize;
     let mut escaped = false;
-    let unicode_mode = flags.contains('u') || flags.contains('v');
-    let protect_non_unicode_case = flags.contains('i') && !flags.contains('u');
+    let protect_non_unicode_case = flags.contains('i') && !unicode_mode;
+    let mut class_output_start = None;
+    let mut class_has_active_word_escape = false;
+    let mut materialize_current_word_class = true;
     let mut modifier_stack = vec![RegexModifierState {
         dot_all: flags.contains('s'),
         ignore_case: flags.contains('i'),
@@ -548,6 +781,29 @@ fn normalize_regex_for_backend(
             {
                 out.pop();
                 out.push_str(r"\s\S");
+            } else if in_class
+                && matches!(ch, 'w' | 'W')
+                && modifier_stack.last().is_some_and(|state| state.ignore_case)
+                && materialize_current_word_class
+            {
+                class_has_active_word_escape = true;
+                push_ecmascript_word_escape_for_backend(&mut out, ch, true, unicode_mode);
+            } else if !in_class
+                && matches!(ch, 'w' | 'W')
+                && modifier_stack.last().is_some_and(|state| state.ignore_case)
+            {
+                push_ecmascript_word_escape_for_backend(&mut out, ch, false, unicode_mode);
+            } else if !in_class
+                && matches!(ch, 'b' | 'B')
+                && modifier_stack.last().is_some_and(|state| state.ignore_case)
+                && !unicode_mode
+            {
+                out.pop();
+                match ch {
+                    'b' => out.push_str(r"(?-iu:\b)"),
+                    'B' => out.push_str(r"(?-iu:\B)"),
+                    _ => unreachable!(),
+                }
             } else if in_class
                 && matches!(ch, 'w' | 'W')
                 && !modifier_stack.last().is_some_and(|state| state.ignore_case)
@@ -701,13 +957,45 @@ fn normalize_regex_for_backend(
             continue;
         }
         if ch == '[' {
+            if in_class && flags.contains('v') {
+                unicode_sets_class_depth += 1;
+                out.push(ch);
+                continue;
+            }
+            if !in_class {
+                class_output_start = Some(out.len());
+                class_has_active_word_escape = false;
+                materialize_current_word_class =
+                    !flags.contains('v') || !unicode_sets_class_needs_native_fallback(&chars);
+                unicode_sets_class_depth = 1;
+            }
             in_class = true;
             out.push(ch);
             continue;
         }
         if ch == ']' && in_class {
+            if flags.contains('v') && unicode_sets_class_depth > 1 {
+                unicode_sets_class_depth -= 1;
+                out.push(ch);
+                continue;
+            }
             in_class = false;
+            unicode_sets_class_depth = 0;
             out.push(ch);
+            if class_has_active_word_escape {
+                let start = class_output_start
+                    .take()
+                    .expect("active word class must have an output start");
+                let backend_class = out[start..].to_string();
+                let materialized = materialize_active_word_class(&backend_class, unicode_mode)?;
+                out.truncate(start);
+                out.push_str("(?-i:");
+                out.push_str(&materialized);
+                out.push(')');
+            } else {
+                class_output_start = None;
+            }
+            materialize_current_word_class = true;
             continue;
         }
 
@@ -816,7 +1104,7 @@ fn normalize_regex_for_backend(
         }
     }
 
-    out
+    Ok(out)
 }
 
 fn regex_capture_count(source: &str) -> usize {
@@ -1292,7 +1580,7 @@ where
 use parking_lot::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 // ---------------------------------------------------------------------------
 // Helpers

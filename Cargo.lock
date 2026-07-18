@@ -522,6 +522,7 @@ dependencies = [
  "num-traits",
  "parking_lot",
  "regex",
+ "regex-syntax",
  "serde_json",
  "unicode-ident",
  "unicode-normalization",
