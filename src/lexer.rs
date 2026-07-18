@@ -1,4 +1,5 @@
 use crate::token::{Token, TokenKind};
+use indexmap::IndexSet;
 
 /// Decode one UTF-8 code point starting at the beginning of `bytes`,
 /// returning `(char, byte_length)`. `(0, 0)` on invalid input.
@@ -179,6 +180,160 @@ pub(crate) fn decode_regex_group_name(raw: &str) -> Result<String, String> {
         return Err("invalid regular expression group name".to_string());
     }
     Ok(decoded.into_iter().collect())
+}
+
+#[derive(Default)]
+struct RegexDisjunctionNames {
+    completed_alternatives: IndexSet<String>,
+    current_alternative: IndexSet<String>,
+}
+
+impl RegexDisjunctionNames {
+    fn finish_alternative(&mut self) {
+        if self.completed_alternatives.len() < self.current_alternative.len() {
+            std::mem::swap(
+                &mut self.completed_alternatives,
+                &mut self.current_alternative,
+            );
+        }
+        self.completed_alternatives
+            .extend(self.current_alternative.drain(..));
+    }
+
+    fn finish(mut self) -> IndexSet<String> {
+        self.finish_alternative();
+        self.completed_alternatives
+    }
+}
+
+fn add_participating_regex_group_name(
+    alternative: &mut IndexSet<String>,
+    name: String,
+) -> Result<(), String> {
+    if alternative.insert(name.clone()) {
+        Ok(())
+    } else {
+        Err(format!("duplicate regular expression group name '{name}'"))
+    }
+}
+
+fn merge_participating_regex_group_names(
+    alternative: &mut IndexSet<String>,
+    mut names: IndexSet<String>,
+) -> Result<(), String> {
+    if alternative.len() < names.len() {
+        std::mem::swap(alternative, &mut names);
+    }
+    for name in names {
+        add_participating_regex_group_name(alternative, name)?;
+    }
+    Ok(())
+}
+
+/// Collect named captures in source order while enforcing the specification's
+/// `MightBothParticipate` early error. Names in distinct alternatives of the
+/// same disjunction are unioned, while concatenated terms are intersected for
+/// duplicates because both terms can contribute captures to one match.
+pub(crate) fn scan_regex_named_captures(
+    pattern: &str,
+    flags: &str,
+) -> Result<Vec<(String, usize)>, String> {
+    let chars: Vec<char> = pattern.chars().collect();
+    let mut captures = Vec::new();
+    let mut capture_index = 0usize;
+    let mut frames = vec![RegexDisjunctionNames::default()];
+    let mut class_depth = 0usize;
+    let unicode_sets = flags.contains('v');
+    let mut index = 0usize;
+
+    while index < chars.len() {
+        let ch = chars[index];
+        if class_depth > 0 {
+            match ch {
+                '\\' => index = (index + 2).min(chars.len()),
+                '[' if unicode_sets => {
+                    class_depth += 1;
+                    index += 1;
+                }
+                ']' => {
+                    class_depth -= 1;
+                    index += 1;
+                }
+                _ => index += 1,
+            }
+            continue;
+        }
+
+        match ch {
+            '\\' => index = (index + 2).min(chars.len()),
+            '[' => {
+                class_depth = 1;
+                index += 1;
+            }
+            '|' => {
+                frames
+                    .last_mut()
+                    .expect("root RegExp disjunction frame must exist")
+                    .finish_alternative();
+                index += 1;
+            }
+            ')' => {
+                if frames.len() > 1 {
+                    let names = frames.pop().unwrap().finish();
+                    let parent = frames
+                        .last_mut()
+                        .expect("parent RegExp disjunction frame must exist");
+                    merge_participating_regex_group_names(&mut parent.current_alternative, names)?;
+                }
+                index += 1;
+            }
+            '(' => {
+                let mut body_start = index + 1;
+                if chars.get(index + 1) == Some(&'?') && chars.get(index + 2) == Some(&'@') {
+                    return Err("invalid regular expression group".to_string());
+                }
+                if chars.get(index + 1) != Some(&'?') {
+                    capture_index += 1;
+                } else if chars.get(index + 2) == Some(&'<')
+                    && !matches!(chars.get(index + 3), Some('=' | '!'))
+                {
+                    capture_index += 1;
+                    let mut end = index + 3;
+                    while chars.get(end).is_some_and(|candidate| *candidate != '>') {
+                        end += 1;
+                    }
+                    if chars.get(end) != Some(&'>') {
+                        return Err("unterminated regular expression group name".to_string());
+                    }
+                    let raw_name: String = chars[index + 3..end].iter().collect();
+                    let name = decode_regex_group_name(&raw_name)?;
+                    let current = &mut frames
+                        .last_mut()
+                        .expect("root RegExp disjunction frame must exist")
+                        .current_alternative;
+                    add_participating_regex_group_name(current, name.clone())?;
+                    captures.push((name, capture_index));
+                    body_start = end + 1;
+                }
+                frames.push(RegexDisjunctionNames::default());
+                index = body_start;
+            }
+            _ => index += 1,
+        }
+    }
+
+    // Other syntax validation reports unmatched parentheses. Completing the
+    // frames here still keeps constructor and literal duplicate-name errors
+    // deterministic when malformed syntax surrounds otherwise valid names.
+    while frames.len() > 1 {
+        let names = frames.pop().unwrap().finish();
+        let parent = frames
+            .last_mut()
+            .expect("root RegExp disjunction frame must exist");
+        merge_participating_regex_group_names(&mut parent.current_alternative, names)?;
+    }
+
+    Ok(captures)
 }
 
 fn is_unicode_space_separator(c: char) -> bool {
@@ -1913,47 +2068,11 @@ pub(crate) fn validate_regex_literal(pattern: &str, flags: &str) -> Result<(), S
 
 fn validate_regex_named_groups(pattern: &str, flags: &str) -> Result<(), String> {
     let chars: Vec<char> = pattern.chars().collect();
-    let mut names = Vec::new();
-    let mut index = 0usize;
+    let captures = scan_regex_named_captures(pattern, flags)?;
+    let names: IndexSet<&str> = captures.iter().map(|(name, _)| name.as_str()).collect();
+
+    let mut index = 0;
     let mut in_class = false;
-
-    while index < chars.len() {
-        match chars[index] {
-            '\\' => index = (index + 2).min(chars.len()),
-            '[' if !in_class => {
-                in_class = true;
-                index += 1;
-            }
-            ']' if in_class => {
-                in_class = false;
-                index += 1;
-            }
-            '(' if !in_class
-                && chars.get(index + 1) == Some(&'?')
-                && chars.get(index + 2) == Some(&'<')
-                && !matches!(chars.get(index + 3), Some('=' | '!')) =>
-            {
-                let mut end = index + 3;
-                while chars.get(end).is_some_and(|ch| *ch != '>') {
-                    end += 1;
-                }
-                if chars.get(end) != Some(&'>') {
-                    return Err("unterminated regular expression group name".to_string());
-                }
-                let raw_name: String = chars[index + 3..end].iter().collect();
-                let name = decode_regex_group_name(&raw_name)?;
-                if names.contains(&name) {
-                    return Err(format!("duplicate regular expression group name '{name}'"));
-                }
-                names.push(name);
-                index = end + 1;
-            }
-            _ => index += 1,
-        }
-    }
-
-    index = 0;
-    in_class = false;
     let unicode_mode = flags.contains('u') || flags.contains('v');
     while index < chars.len() {
         let ch = chars[index];
@@ -1980,7 +2099,7 @@ fn validate_regex_named_groups(pattern: &str, flags: &str) -> Result<(), String>
                 }
                 let raw_name: String = chars[index + 3..end].iter().collect();
                 let name = decode_regex_group_name(&raw_name)?;
-                if !names.contains(&name) {
+                if !names.contains(name.as_str()) {
                     return Err(format!("unknown regular expression group name '{name}'"));
                 }
                 index = end + 1;
@@ -3117,6 +3236,37 @@ mod tests {
                 Eof,
             ]
         );
+    }
+
+    #[test]
+    fn regex_duplicate_named_groups_require_disjoint_alternatives() {
+        for pattern in [
+            "(?<x>a)|(?<x>b)",
+            "(?:(?<x>a)|(?<x>b))",
+            "(?<x>a)|(?:(?<x>b)|(?<x>c))",
+            "(?:(?<x>a)|(?<y>b))|(?<x>c)(?<y>d)",
+            r"(?<x>a)|(?<\u0078>b)",
+        ] {
+            assert!(
+                validate_regex_literal(pattern, "u").is_ok(),
+                "pattern should be valid: {pattern}"
+            );
+        }
+
+        for pattern in [
+            "(?<x>a)(?<x>b)",
+            "(?<x>a)(?:b|c)(?<x>d)",
+            "(?<x>(?:a|(?<x>b)))",
+            "(?:(?<x>a)|b)(?<x>c)",
+            r"(?<x>a)(?<\u0078>b)",
+        ] {
+            assert!(
+                validate_regex_literal(pattern, "u")
+                    .is_err_and(|error| error.contains("duplicate regular expression group name")),
+                "pattern should reject a participating duplicate: {pattern}"
+            );
+        }
+        assert!(validate_regex_literal("(?@1)", "u").is_err());
     }
 
     #[test]

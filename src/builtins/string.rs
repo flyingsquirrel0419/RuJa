@@ -591,11 +591,11 @@ pub(crate) fn str_replace(
             let global = flags_str.contains('g');
             let re = compile_regex(&source, &flags_str)
                 .map_err(|e| Error::syntax(format!("Invalid regex: {}", e)))?;
-            let capture_names = regex_capture_names(&source).map_err(Error::syntax)?;
+            let capture_names = regex_capture_names(&source, &flags_str).map_err(Error::syntax)?;
             if is_fn {
                 let mut result = String::new();
                 let mut last_end = 0;
-                for caps in re.captures_iter_ecma(&s, &source, &flags_str, false)? {
+                for caps in re.captures_iter(&s)? {
                     let m = caps.get(0).unwrap();
                     result.push_str(&s[last_end..m.start()]);
                     let mut cap_args = vec![Value::String(Arc::from(m.as_str()))];
@@ -628,7 +628,7 @@ pub(crate) fn str_replace(
             let mut result = String::new();
             let mut last_end = 0;
             let mut replaced = false;
-            for caps in re.captures_iter_ecma(&s, &source, &flags_str, false)? {
+            for caps in re.captures_iter(&s)? {
                 let Some(m) = caps.get(0) else {
                     continue;
                 };
@@ -758,9 +758,10 @@ pub(super) fn replace_substitution(
                 if let Some(close_offset) = replacement[name_start..].find('>') {
                     let name_end = name_start + close_offset;
                     let name = &replacement[name_start..name_end];
-                    if let Some(capture_index) = named_capture_index(capture_names, name) {
+                    for capture_index in named_capture_indices(capture_names, name) {
                         if let Some(Some(capture)) = captures.get(capture_index - 1) {
                             result.push_str(capture);
+                            break;
                         }
                     }
                     chars.next();
@@ -1012,7 +1013,7 @@ fn regexp_match_internal(vm: &mut Vm, regexp: Value, s: &str) -> error::Result<V
     let flags_str = read_regexp_flags(vm, &regexp).unwrap_or_default();
     let re = compile_regex(&source, &flags_str)
         .map_err(|e| Error::syntax(format!("Invalid regex: {}", e)))?;
-    let capture_names = regex_capture_names(&source).map_err(Error::syntax)?;
+    let capture_names = regex_capture_names(&source, &flags_str).map_err(Error::syntax)?;
     let global = flags_str.contains('g');
     if global {
         let items: Vec<Value> = re
@@ -1026,7 +1027,7 @@ fn regexp_match_internal(vm: &mut Vm, regexp: Value, s: &str) -> error::Result<V
             make_value_array(vm, items)
         }
     } else {
-        match re.captures_ecma(s, &source, &flags_str, false)? {
+        match re.captures(s)? {
             Some(caps) => {
                 let items: Vec<Value> = caps
                     .iter()

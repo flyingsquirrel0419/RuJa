@@ -1291,7 +1291,7 @@ pub(crate) fn regexp_exec(
         compile_regex_for_code_units(&source, &flags)
     }
     .map_err(|e| Error::syntax(format!("Invalid regex: {}", e)))?;
-    let capture_names = regex_capture_names(&source).map_err(Error::syntax)?;
+    let capture_names = regex_capture_names(&source, &flags).map_err(Error::syntax)?;
     let global = flags.contains('g');
     let sticky = flags.contains('y');
     let this_value = match &this {
@@ -1332,13 +1332,7 @@ pub(crate) fn regexp_exec(
     // and multiline line starts; sticky only requires the match to begin at
     // lastIndex.
     let m = re
-        .captures_at_ecma(
-            backend_input.as_str(),
-            start_byte,
-            &source,
-            &flags,
-            !(flags.contains('u') || flags.contains('v')),
-        )?
+        .captures_at(backend_input.as_str(), start_byte)?
         .filter(|c| {
             !sticky
                 || c.get(0)
@@ -1510,6 +1504,7 @@ fn make_regexp_groups_object_from_ranges(
     vm.heap.with_obj(groups.0, |object| {
         let props = object.props();
         let mut props = props.lock();
+        let mut matched_names = IndexSet::new();
         for capture in names {
             let value = ranges
                 .get(capture.index)
@@ -1521,6 +1516,13 @@ fn make_regexp_groups_object_from_ranges(
                     ))
                 })
                 .unwrap_or(Value::Undefined);
+            if matched_names.contains(&capture.name) {
+                debug_assert!(value.is_undefined());
+                continue;
+            }
+            if !value.is_undefined() {
+                matched_names.insert(capture.name.clone());
+            }
             props.insert(
                 PropertyKey::from(capture.name.clone()),
                 PropertyDescriptor::data(value),
@@ -1575,8 +1577,16 @@ fn make_regexp_indices_array(
             vm.heap.with_obj(groups_idx.0, |object| {
                 let props = object.props();
                 let mut props = props.lock();
+                let mut matched_names = IndexSet::new();
                 for capture in capture_names {
                     if let Some(value) = pair_values.get(capture.index) {
+                        if matched_names.contains(&capture.name) {
+                            debug_assert!(value.is_undefined());
+                            continue;
+                        }
+                        if !value.is_undefined() {
+                            matched_names.insert(capture.name.clone());
+                        }
                         props.insert(
                             PropertyKey::from(capture.name.clone()),
                             enumerable_data_prop(value.clone()),

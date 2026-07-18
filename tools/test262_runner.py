@@ -62,6 +62,10 @@ try:
     from test262_regexp_match_indices_admission import (
         REGEXP_MATCH_INDICES_FEATURES, REGEXP_MATCH_INDICES_FILES,
     )
+    from test262_regexp_duplicate_named_groups_admission import (
+        REGEXP_DUPLICATE_NAMED_GROUPS_FEATURES,
+        REGEXP_DUPLICATE_NAMED_GROUPS_FILES,
+    )
     from test262_proxy_get_admission import PROXY_GET_FEATURES, PROXY_GET_FILES
     from test262_proxy_own_keys_admission import (
         PROXY_OWN_KEYS_FEATURES, PROXY_OWN_KEYS_FILES,
@@ -135,6 +139,10 @@ except ModuleNotFoundError:
     )
     from tools.test262_regexp_match_indices_admission import (
         REGEXP_MATCH_INDICES_FEATURES, REGEXP_MATCH_INDICES_FILES,
+    )
+    from tools.test262_regexp_duplicate_named_groups_admission import (
+        REGEXP_DUPLICATE_NAMED_GROUPS_FEATURES,
+        REGEXP_DUPLICATE_NAMED_GROUPS_FILES,
     )
     from tools.test262_proxy_get_admission import PROXY_GET_FEATURES, PROXY_GET_FILES
     from tools.test262_proxy_own_keys_admission import (
@@ -2381,6 +2389,13 @@ def regexp_match_indices_features(path):
         return frozenset()
     return REGEXP_MATCH_INDICES_FEATURES.get(rel.as_posix(), frozenset())
 
+def regexp_duplicate_named_groups_features(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except (OSError, ValueError):
+        return frozenset()
+    return REGEXP_DUPLICATE_NAMED_GROUPS_FEATURES.get(rel.as_posix(), frozenset())
+
 def generator_function_path(path):
     try:
         rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
@@ -2516,6 +2531,7 @@ def should_skip(meta, path=None):
         feats.difference_update(promise_finally_features(path))
     if path is not None:
         feats.difference_update(regexp_match_indices_features(path))
+        feats.difference_update(regexp_duplicate_named_groups_features(path))
     if path is not None and generator_function_path(path):
         feats.difference_update(generator_function_features(path))
     if path is not None and async_generator_realm_path(path):

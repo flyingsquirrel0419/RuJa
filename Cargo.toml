@@ -10,10 +10,11 @@ homepage = "https://github.com/flyingsquirrel0419/RuJa"
 readme = "README.md"
 keywords = ["javascript", "sandbox", "embedded", "runtime", "scripting"]
 categories = ["compilers", "embedded"]
+publish = false
 
 
 [dependencies]
-fancy-regex = "0.18.0"
+fancy-regex = { version = "0.18.0", path = "vendor/fancy-regex" }
 indexmap = "=2.2.6"
 regex = "1"
 regex-syntax = "0.8"

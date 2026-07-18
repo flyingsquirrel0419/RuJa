@@ -15204,6 +15204,60 @@ fn regexp_named_group_backend_lowering_preserves_names_and_backreferences() {
 }
 
 #[test]
+fn regexp_duplicate_named_groups_select_the_participating_capture() {
+    assert_eq!(
+        run(r#"
+            var simple = /(?<x>a)|(?<x>b)/d.exec("b");
+            var ordered = /(?:(?<x>a)|(?<y>a)(?<x>b))(?:(?<z>c)|(?<z>d))/d.exec("abc");
+            var repeated = /(?:(?:(?<r>a)|(?<r>b)|c)\k<r>){2}/d.exec("aac");
+            var repeatedWithoutRef = /(?:(?<n>a)|(?<n>b)|c){2}/d.exec("ac");
+            var trailingBackref = /^(?:(?<t>a)|(?<t>b))*\k<t>$/d.exec("aa");
+            var split = "xab".split(/(?<s>a)|(?<s>b)/);
+            [
+              simple[1] === undefined,
+              simple[2],
+              simple.groups.x,
+              simple.indices.groups.x === simple.indices[2],
+              simple.indices.groups.x.join(","),
+              Object.keys(simple.groups).join(","),
+              ordered.groups.x,
+              ordered.groups.y,
+              ordered.groups.z,
+              Object.keys(ordered.groups).join(","),
+              ordered.indices.groups.x === ordered.indices[3],
+              ordered.indices.groups.z === ordered.indices[4],
+              /(?:(?<q>a)|(?<q>b))\k<q>/.test("bb"),
+              /(?:(?<q>a)|(?<q>b))\k<q>/.test("abab"),
+              /^(?:(?<q>x)|(?<q>y)|z)\k<q>$/.test("z"),
+              /^(?:(?<q>x)|(?<q>y)|z)\k<q>$/.test("zz"),
+              repeated.groups.r === undefined,
+              repeated.indices.groups.r === undefined,
+              repeatedWithoutRef.groups.n === undefined,
+              repeatedWithoutRef.indices.groups.n === undefined,
+              trailingBackref[1],
+              trailingBackref[2] === undefined,
+              trailingBackref.groups.t,
+              trailingBackref.indices.groups.t === trailingBackref.indices[1],
+              /^(?:(?<u>ſ)|(?<u>t))\k<u>$/iu.test("ſs"),
+              /^(?:(?<u>Ωa)|(?<u>z))\k<u>$/iu.test("Ωaωaa"),
+              /^(?:(?<u>ſ)|(?<u>t))\k<u>$/i.test("ſs"),
+              "ba".replace(/(?<v>a)|(?<v>b)/g, "[$<v>][$1][$2]"),
+              split.map(String).join("|")
+            ].join(";");
+        "#),
+        Value::String(Arc::from(
+            "true;b;b;true;0,1;x;b;a;c;x,y,z;true;true;true;false;true;false;true;true;true;true;a;true;a;true;true;false;false;[b][][b][a][a][];x|a|undefined||undefined|b|"
+        ))
+    );
+
+    assert_eq!(
+        run(r#"new RegExp("(?<x>a)|(?<x>b)").source;"#),
+        Value::String(Arc::from("(?<x>a)|(?<x>b)"))
+    );
+    assert!(run_err(r#"new RegExp("(?<x>a)(?:b|c)(?<x>d)");"#).contains("SyntaxError"));
+}
+
+#[test]
 fn regexp_repeated_capture_clears_nonparticipating_groups() {
     assert_eq!(
         run("var m = /(z)((a+)?(b+)?(c))*/.exec('zaacbbbcac'); [m[0], m[1], m[2], m[3], String(m[4]), m[5]].join('|');"),

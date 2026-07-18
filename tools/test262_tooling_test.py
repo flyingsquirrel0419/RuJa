@@ -79,6 +79,10 @@ from test262_regexp_match_indices_admission import (
     REGEXP_MATCH_INDICES_FEATURES,
     REGEXP_MATCH_INDICES_FILES,
 )
+from test262_regexp_duplicate_named_groups_admission import (
+    REGEXP_DUPLICATE_NAMED_GROUPS_FEATURES,
+    REGEXP_DUPLICATE_NAMED_GROUPS_FILES,
+)
 from test262_proxy_get_admission import PROXY_GET_FEATURES, PROXY_GET_FILES
 from test262_proxy_own_keys_admission import (
     PROXY_OWN_KEYS_FEATURES,
@@ -2087,6 +2091,65 @@ class RegExpMatchIndicesAdmissionTests(unittest.TestCase):
                             tool.regexp_match_indices_features(path), frozenset()
                         )
                         self.assertTrue(tool.should_skip(metadata, path))
+                finally:
+                    tool.TEST262 = original_root
+
+
+class RegExpDuplicateNamedGroupsAdmissionTests(unittest.TestCase):
+    def test_manifest_is_exact_live_and_shared(self):
+        self.assertEqual(len(REGEXP_DUPLICATE_NAMED_GROUPS_FILES), 19)
+        self.assertEqual(
+            frozenset(REGEXP_DUPLICATE_NAMED_GROUPS_FEATURES),
+            REGEXP_DUPLICATE_NAMED_GROUPS_FILES,
+        )
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        try:
+            test_root_available = test_root.is_dir()
+        except OSError:
+            test_root_available = False
+        if test_root_available:
+            for relative in REGEXP_DUPLICATE_NAMED_GROUPS_FILES:
+                path = test_root / relative
+                self.assertTrue(path.is_file(), relative)
+                features = set(
+                    test262_runner.parse_meta(path.read_text()).get("features", [])
+                )
+                self.assertTrue(
+                    REGEXP_DUPLICATE_NAMED_GROUPS_FEATURES[relative] <= features,
+                    relative,
+                )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            future = root / "test/built-ins/RegExp/named-groups/future-duplicate.js"
+            outside = root / "test/built-ins/String/prototype/search/future-duplicate.js"
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for relative, admitted in (
+                        REGEXP_DUPLICATE_NAMED_GROUPS_FEATURES.items()
+                    ):
+                        path = root / "test" / relative
+                        self.assertEqual(
+                            tool.regexp_duplicate_named_groups_features(path),
+                            admitted,
+                            relative,
+                        )
+                        metadata = {"features": list(admitted)}
+                        self.assertFalse(tool.should_skip(metadata, path), relative)
+                    for path in (future, outside):
+                        self.assertEqual(
+                            tool.regexp_duplicate_named_groups_features(path),
+                            frozenset(),
+                        )
+                        self.assertTrue(
+                            tool.should_skip(
+                                {"features": ["regexp-duplicate-named-groups"]},
+                                path,
+                            )
+                        )
                 finally:
                     tool.TEST262 = original_root
 

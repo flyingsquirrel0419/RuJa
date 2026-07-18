@@ -93,61 +93,6 @@ impl<'t> CompiledCaptures<'t> {
         self.groups.get(index).copied().flatten()
     }
 
-    fn apply_ecmascript_capture_clearing(
-        &mut self,
-        source: &str,
-        flags: &str,
-        input: &str,
-        code_unit_input: bool,
-    ) {
-        let rules = regex_repeated_capture_clear_rules(source);
-        if rules.quantified_groups.is_empty() {
-            return;
-        }
-        let Some(full_match) = self.get(0) else {
-            return;
-        };
-        let mut quantified_spans = Vec::new();
-        for group in &rules.quantified_groups {
-            let span = match group.capture_index {
-                Some(capture_index) => self
-                    .groups
-                    .get(capture_index)
-                    .copied()
-                    .flatten()
-                    .map(|m| (m.start(), m.end())),
-                None => regex_final_iteration_span(
-                    &group.body,
-                    flags,
-                    input,
-                    full_match,
-                    code_unit_input,
-                ),
-            };
-            quantified_spans.push((group.group_id, span));
-        }
-        for capture_index in 1..self.groups.len() {
-            let Some(capture) = self.groups[capture_index] else {
-                continue;
-            };
-            let should_clear = rules
-                .ancestors
-                .get(capture_index)
-                .into_iter()
-                .flatten()
-                .any(|ancestor| {
-                    quantified_spans
-                        .iter()
-                        .find(|(group_id, _)| *group_id == ancestor.group_id)
-                        .and_then(|(_, span)| *span)
-                        .is_some_and(|(start, end)| capture.start < start || capture.end > end)
-                });
-            if should_clear {
-                self.groups[capture_index] = None;
-            }
-        }
-    }
-
     fn iter(&self) -> impl Iterator<Item = Option<CompiledMatch<'t>>> + '_ {
         self.groups.iter().copied()
     }
@@ -160,6 +105,10 @@ impl<'t> CompiledCaptures<'t> {
 enum CompiledRegex {
     Rust(RustRegex),
     Fancy(fancy_regex::Regex),
+    CaptureCorrected {
+        fast: RustRegex,
+        captures: fancy_regex::Regex,
+    },
 }
 
 #[derive(Clone, Copy)]
@@ -185,34 +134,71 @@ fn compile_regex_with_input_mode(
     code_unit_input: bool,
 ) -> Result<CompiledRegex, String> {
     let capture_count = regex_capture_count(source);
-    let capture_names = regex_capture_names(source)?;
-    let rewritten_source = rewrite_named_regex_groups_for_backend(source, flags, &capture_names)?;
-    let uses_backreference = regex_uses_backreference(&rewritten_source, capture_count);
-    let backend_source = normalize_regex_for_backend(
+    let capture_names = regex_capture_names(source, flags)?;
+    let capture_indices = regex_capture_indices_by_name(&capture_names);
+    let rewritten_source = rewrite_named_regex_groups_for_backend(source, flags, &capture_indices)?;
+    let uses_backreference = regex_uses_backreference(
         &rewritten_source,
-        flags,
         capture_count,
-        code_unit_input,
-        uses_backreference,
-    )?;
+        !capture_indices.is_empty(),
+    );
+    let needs_capture_correction = regex_contains_quantified_capture_group(&rewritten_source);
     if uses_backreference {
-        let mut b = fancy_regex::RegexBuilder::new(&backend_source);
+        let normalized = normalize_regex_for_backend(
+            &rewritten_source,
+            flags,
+            capture_count,
+            code_unit_input,
+            true,
+            &capture_indices,
+        )?;
+        let mut b = fancy_regex::RegexBuilder::new(&normalized.source);
         b.case_insensitive(flags.contains('i'));
         b.multi_line(flags.contains('m'));
         b.dot_matches_new_line(flags.contains('s'));
+        b.ecmascript_mode(true);
+        b.ecmascript_unicode_mode(flags.contains('u') || flags.contains('v'));
+        b.ecmascript_backref_sets(normalized.backref_sets);
         return b
             .build()
             .map(CompiledRegex::Fancy)
             .map_err(|e| e.to_string());
     }
 
-    let mut b = RustRegexBuilder::new(&backend_source);
+    let rust_normalized = normalize_regex_for_backend(
+        &rewritten_source,
+        flags,
+        capture_count,
+        code_unit_input,
+        false,
+        &capture_indices,
+    )?;
+    let mut b = RustRegexBuilder::new(&rust_normalized.source);
     b.case_insensitive(flags.contains('i'));
     b.multi_line(flags.contains('m'));
     b.dot_matches_new_line(flags.contains('s'));
-    b.build()
-        .map(CompiledRegex::Rust)
-        .map_err(|e| e.to_string())
+    let fast = b.build().map_err(|e| e.to_string())?;
+    if !needs_capture_correction {
+        return Ok(CompiledRegex::Rust(fast));
+    }
+
+    let capture_normalized = normalize_regex_for_backend(
+        &rewritten_source,
+        flags,
+        capture_count,
+        code_unit_input,
+        true,
+        &capture_indices,
+    )?;
+    let mut b = fancy_regex::RegexBuilder::new(&capture_normalized.source);
+    b.case_insensitive(flags.contains('i'));
+    b.multi_line(flags.contains('m'));
+    b.dot_matches_new_line(flags.contains('s'));
+    b.ecmascript_mode(true);
+    b.ecmascript_unicode_mode(flags.contains('u') || flags.contains('v'));
+    b.ecmascript_backref_sets(capture_normalized.backref_sets);
+    let captures = b.build().map_err(|e| e.to_string())?;
+    Ok(CompiledRegex::CaptureCorrected { fast, captures })
 }
 
 impl CompiledRegex {
@@ -226,7 +212,9 @@ impl CompiledRegex {
         start: usize,
     ) -> error::Result<Option<CompiledMatch<'t>>> {
         match self {
-            CompiledRegex::Rust(re) => Ok(re.find_at(input, start).map(CompiledMatch::from)),
+            CompiledRegex::Rust(re) | CompiledRegex::CaptureCorrected { fast: re, .. } => {
+                Ok(re.find_at(input, start).map(CompiledMatch::from))
+            }
             CompiledRegex::Fancy(re) => re
                 .find_from_pos(input, start)
                 .map(|m| m.map(CompiledMatch::from))
@@ -236,7 +224,9 @@ impl CompiledRegex {
 
     fn find_iter<'t>(&self, input: &'t str) -> error::Result<Vec<CompiledMatch<'t>>> {
         match self {
-            CompiledRegex::Rust(re) => Ok(re.find_iter(input).map(CompiledMatch::from).collect()),
+            CompiledRegex::Rust(re) | CompiledRegex::CaptureCorrected { fast: re, .. } => {
+                Ok(re.find_iter(input).map(CompiledMatch::from).collect())
+            }
             CompiledRegex::Fancy(re) => {
                 let mut matches = Vec::new();
                 let mut pos = 0;
@@ -265,16 +255,6 @@ impl CompiledRegex {
         self.captures_at(input, 0)
     }
 
-    fn captures_ecma<'t>(
-        &self,
-        input: &'t str,
-        source: &str,
-        flags: &str,
-        code_unit_input: bool,
-    ) -> error::Result<Option<CompiledCaptures<'t>>> {
-        self.captures_at_ecma(input, 0, source, flags, code_unit_input)
-    }
-
     fn captures_at<'t>(
         &self,
         input: &'t str,
@@ -286,22 +266,13 @@ impl CompiledRegex {
                 .captures_from_pos(input, start)
                 .map(|caps| caps.map(CompiledCaptures::from))
                 .map_err(regex_runtime_error),
+            CompiledRegex::CaptureCorrected { fast, captures } => {
+                let Some(expected) = fast.find_at(input, start) else {
+                    return Ok(None);
+                };
+                corrected_captures(captures, input, expected.start(), expected.end()).map(Some)
+            }
         }
-    }
-
-    fn captures_at_ecma<'t>(
-        &self,
-        input: &'t str,
-        start: usize,
-        source: &str,
-        flags: &str,
-        code_unit_input: bool,
-    ) -> error::Result<Option<CompiledCaptures<'t>>> {
-        let mut captures = self.captures_at(input, start)?;
-        if let Some(caps) = captures.as_mut() {
-            caps.apply_ecmascript_capture_clearing(source, flags, input, code_unit_input);
-        }
-        Ok(captures)
     }
 
     fn captures_iter<'t>(&self, input: &'t str) -> error::Result<Vec<CompiledCaptures<'t>>> {
@@ -336,34 +307,30 @@ impl CompiledRegex {
                 }
                 Ok(captures)
             }
+            CompiledRegex::CaptureCorrected { fast, captures } => fast
+                .find_iter(input)
+                .map(|expected| {
+                    corrected_captures(captures, input, expected.start(), expected.end())
+                })
+                .collect(),
         }
-    }
-
-    fn captures_iter_ecma<'t>(
-        &self,
-        input: &'t str,
-        source: &str,
-        flags: &str,
-        code_unit_input: bool,
-    ) -> error::Result<Vec<CompiledCaptures<'t>>> {
-        let mut captures = self.captures_iter(input)?;
-        for caps in &mut captures {
-            caps.apply_ecmascript_capture_clearing(source, flags, input, code_unit_input);
-        }
-        Ok(captures)
     }
 
     fn replace<'t>(&self, input: &'t str, replacement: &str) -> error::Result<Cow<'t, str>> {
         match self {
             CompiledRegex::Rust(re) => Ok(re.replace(input, replacement)),
-            CompiledRegex::Fancy(_) => self.replace_fancy(input, replacement, false),
+            CompiledRegex::Fancy(_) | CompiledRegex::CaptureCorrected { .. } => {
+                self.replace_fancy(input, replacement, false)
+            }
         }
     }
 
     fn replace_all<'t>(&self, input: &'t str, replacement: &str) -> error::Result<Cow<'t, str>> {
         match self {
             CompiledRegex::Rust(re) => Ok(re.replace_all(input, replacement)),
-            CompiledRegex::Fancy(_) => self.replace_fancy(input, replacement, true),
+            CompiledRegex::Fancy(_) | CompiledRegex::CaptureCorrected { .. } => {
+                self.replace_fancy(input, replacement, true)
+            }
         }
     }
 
@@ -394,6 +361,27 @@ impl CompiledRegex {
         result.push_str(&input[last_end..]);
         Ok(Cow::Owned(result))
     }
+}
+
+fn corrected_captures<'t>(
+    re: &fancy_regex::Regex,
+    input: &'t str,
+    expected_start: usize,
+    expected_end: usize,
+) -> error::Result<CompiledCaptures<'t>> {
+    let caps = re
+        .captures_from_pos(input, expected_start)
+        .map_err(regex_runtime_error)?
+        .ok_or_else(|| Error::internal("capture backend lost a prefiltered RegExp match"))?;
+    let actual = caps
+        .get(0)
+        .ok_or_else(|| Error::internal("capture backend omitted RegExp group zero"))?;
+    if actual.start() != expected_start || actual.end() != expected_end {
+        return Err(Error::internal(
+            "capture backend disagreed with the prefiltered RegExp match",
+        ));
+    }
+    Ok(CompiledCaptures::from(caps))
 }
 
 impl<'t> From<regex::Match<'t>> for CompiledMatch<'t> {
@@ -720,6 +708,34 @@ fn escape_annex_b_hyphen_before_class_set(out: &mut String) {
     }
 }
 
+fn push_regex_capture_set_backreference_for_backend(
+    out: &mut String,
+    indices: &[usize],
+    backref_set_id: Option<usize>,
+) {
+    debug_assert!(!indices.is_empty());
+    if indices.len() > 1 {
+        out.push_str("(?@");
+        out.push_str(
+            &backref_set_id
+                .expect("duplicate named captures must have a registered backend set")
+                .to_string(),
+        );
+        out.push(')');
+        return;
+    }
+    for capture_index in indices {
+        out.push_str("(?(");
+        out.push_str(&capture_index.to_string());
+        out.push_str(")\\");
+        out.push_str(&capture_index.to_string());
+        out.push('|');
+    }
+    for _ in indices {
+        out.push(')');
+    }
+}
+
 fn push_ecmascript_class_escape_for_backend(
     out: &mut String,
     escape: char,
@@ -761,16 +777,25 @@ fn push_ecmascript_class_escape_for_backend(
     out.push(']');
 }
 
+struct NormalizedRegex {
+    source: String,
+    backref_sets: Vec<Vec<usize>>,
+}
+
 fn normalize_regex_for_backend(
     source: &str,
     flags: &str,
     capture_count: usize,
     code_unit_input: bool,
     fancy_backend: bool,
-) -> Result<String, String> {
+    capture_indices: &IndexMap<Arc<str>, Vec<usize>>,
+) -> Result<NormalizedRegex, String> {
     let unicode_mode = flags.contains('u') || flags.contains('v');
     if source == "[]" {
-        return Ok(r"[^\s\S]".to_string());
+        return Ok(NormalizedRegex {
+            source: r"[^\s\S]".to_string(),
+            backref_sets: Vec::new(),
+        });
     }
     if source == "[^]" {
         let source = if unicode_mode {
@@ -778,9 +803,15 @@ fn normalize_regex_for_backend(
         } else {
             r"[\x00-\u{ffff}\u{f0000}-\u{f07ff}]".to_string()
         };
-        return Ok(source);
+        return Ok(NormalizedRegex {
+            source,
+            backref_sets: Vec::new(),
+        });
     }
     let mut out = String::with_capacity(source.len());
+    let mut backref_set_ids: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
+    let mut backref_sets = Vec::new();
     let mut chars = source.chars().peekable();
     let mut in_class = false;
     let mut unicode_sets_class_depth = 0usize;
@@ -799,7 +830,57 @@ fn normalize_regex_for_backend(
 
     while let Some(ch) = chars.next() {
         if escaped {
-            if ch.is_ascii_digit() && ch != '0' {
+            if ch == 'k' && !in_class && !capture_indices.is_empty() && chars.peek() == Some(&'<') {
+                out.pop();
+                chars.next();
+                let mut raw_name = String::new();
+                let mut terminated = false;
+                for next in chars.by_ref() {
+                    if next == '>' {
+                        terminated = true;
+                        break;
+                    }
+                    raw_name.push(next);
+                }
+                if !terminated {
+                    return Err("unterminated regular expression group name".to_string());
+                }
+                let name = crate::lexer::decode_regex_group_name(&raw_name)?;
+                let Some(indices) = capture_indices.get(name.as_str()) else {
+                    return Err(format!("unknown regular expression group name '{name}'"));
+                };
+                let references_open_capture = open_captures
+                    .iter()
+                    .flatten()
+                    .any(|capture| indices.contains(capture));
+                if !references_open_capture {
+                    if indices.len() == 1 && lookbehind_context.last().copied().unwrap_or(false) {
+                        // Keep the established fixed-width lookbehind route.
+                        // Backend conditionals can make an otherwise valid
+                        // lookbehind appear variable length.
+                        out.push('\\');
+                        out.push_str(&indices[0].to_string());
+                    } else {
+                        let backref_set_id = if indices.len() > 1 {
+                            if let Some(set_id) = backref_set_ids.get(&name) {
+                                Some(*set_id)
+                            } else {
+                                let set_id = backref_sets.len();
+                                backref_sets.push(indices.clone());
+                                backref_set_ids.insert(name.clone(), set_id);
+                                Some(set_id)
+                            }
+                        } else {
+                            None
+                        };
+                        push_regex_capture_set_backreference_for_backend(
+                            &mut out,
+                            &indices,
+                            backref_set_id,
+                        );
+                    }
+                }
+            } else if ch.is_ascii_digit() && ch != '0' {
                 let mut digits = String::from(ch);
                 while matches!(chars.peek(), Some(next) if next.is_ascii_digit()) {
                     digits.push(chars.next().unwrap());
@@ -1162,7 +1243,10 @@ fn normalize_regex_for_backend(
         }
     }
 
-    Ok(out)
+    Ok(NormalizedRegex {
+        source: out,
+        backref_sets,
+    })
 }
 
 fn regex_capture_count(source: &str) -> usize {
@@ -1208,55 +1292,33 @@ fn regex_group_name_end(chars: &[char], start: usize) -> Result<usize, String> {
     }
 }
 
-fn regex_capture_names(source: &str) -> Result<Vec<RegexCaptureName>, String> {
-    let mut names = Vec::new();
-    let mut capture_index = 0;
-    let chars: Vec<char> = source.chars().collect();
-    let mut index = 0usize;
-    let mut in_class = false;
-    while index < chars.len() {
-        let ch = chars[index];
-        if ch == '\\' {
-            index = (index + 2).min(chars.len());
-            continue;
-        }
-        match ch {
-            '[' if !in_class => in_class = true,
-            ']' if in_class => in_class = false,
-            '(' if !in_class => {
-                if chars.get(index + 1) != Some(&'?') {
-                    capture_index += 1;
-                } else if chars.get(index + 2) == Some(&'<')
-                    && !matches!(chars.get(index + 3), Some('=' | '!'))
-                {
-                    capture_index += 1;
-                    let end = regex_group_name_end(&chars, index + 3)?;
-                    let raw_name: String = chars[index + 3..end].iter().collect();
-                    let name = crate::lexer::decode_regex_group_name(&raw_name)?;
-                    if names
-                        .iter()
-                        .any(|capture: &RegexCaptureName| capture.name.as_ref() == name.as_str())
-                    {
-                        return Err(format!("duplicate regular expression group name '{name}'"));
-                    }
-                    names.push(RegexCaptureName {
-                        name: Arc::from(name.as_str()),
-                        index: capture_index,
-                    });
-                    index = end;
-                }
-            }
-            _ => {}
-        }
-        index += 1;
+fn regex_capture_names(source: &str, flags: &str) -> Result<Vec<RegexCaptureName>, String> {
+    crate::lexer::scan_regex_named_captures(source, flags).map(|captures| {
+        captures
+            .into_iter()
+            .map(|(name, index)| RegexCaptureName {
+                name: Arc::from(name.as_str()),
+                index,
+            })
+            .collect()
+    })
+}
+
+fn regex_capture_indices_by_name(captures: &[RegexCaptureName]) -> IndexMap<Arc<str>, Vec<usize>> {
+    let mut indices = IndexMap::new();
+    for capture in captures {
+        indices
+            .entry(capture.name.clone())
+            .or_insert_with(Vec::new)
+            .push(capture.index);
     }
-    Ok(names)
+    indices
 }
 
 fn rewrite_named_regex_groups_for_backend(
     source: &str,
     flags: &str,
-    capture_names: &[RegexCaptureName],
+    capture_indices: &IndexMap<Arc<str>, Vec<usize>>,
 ) -> Result<String, String> {
     let chars: Vec<char> = source.chars().collect();
     let mut out = String::with_capacity(source.len());
@@ -1268,7 +1330,7 @@ fn rewrite_named_regex_groups_for_backend(
         if ch == '\\' {
             if !in_class && chars.get(index + 1) == Some(&'k') && chars.get(index + 2) == Some(&'<')
             {
-                if capture_names.is_empty() && !flags.contains('u') && !flags.contains('v') {
+                if capture_indices.is_empty() && !flags.contains('u') && !flags.contains('v') {
                     out.push('\\');
                     out.push('k');
                     index += 2;
@@ -1277,15 +1339,17 @@ fn rewrite_named_regex_groups_for_backend(
                 let end = regex_group_name_end(&chars, index + 3)?;
                 let raw_name: String = chars[index + 3..end].iter().collect();
                 let name = crate::lexer::decode_regex_group_name(&raw_name)?;
-                let capture_index = named_capture_index(capture_names, &name)
-                    .ok_or_else(|| format!("unknown regular expression group name '{name}'"))?;
-                out.push_str("(?:\\");
-                out.push_str(&capture_index.to_string());
-                out.push(')');
+                if !capture_indices.contains_key(name.as_str()) {
+                    return Err(format!("unknown regular expression group name '{name}'"));
+                }
+                // Keep the source-level reference intact until normalization,
+                // where all same-name capture indices can be lowered into one
+                // backend conditional without losing capture-stack context.
+                out.extend(chars[index..=end].iter().copied());
                 index = end + 1;
                 continue;
             }
-            if capture_names.is_empty() || chars.get(index + 1) != Some(&'k') {
+            if capture_indices.is_empty() || chars.get(index + 1) != Some(&'k') {
                 out.push(ch);
                 if let Some(next) = chars.get(index + 1) {
                     out.push(*next);
@@ -1332,11 +1396,12 @@ fn rewrite_named_regex_groups_for_backend(
     Ok(out)
 }
 
-fn named_capture_index(names: &[RegexCaptureName], name: &str) -> Option<usize> {
+fn named_capture_indices(names: &[RegexCaptureName], name: &str) -> Vec<usize> {
     names
         .iter()
-        .find(|capture| capture.name.as_ref() == name)
+        .filter(|capture| capture.name.as_ref() == name)
         .map(|capture| capture.index)
+        .collect()
 }
 
 fn make_regexp_groups_object(
@@ -1358,11 +1423,19 @@ fn make_regexp_groups_object(
     vm.heap.with_obj(obj_idx.0, |obj| {
         let props = obj.props();
         let mut props = props.lock();
+        let mut matched_names = IndexSet::new();
         for capture in names {
             let value = caps
                 .get(capture.index)
                 .map(|m| Value::String(canonicalize_regexp_match_text(m.as_str())))
                 .unwrap_or(Value::Undefined);
+            if matched_names.contains(&capture.name) {
+                debug_assert!(value.is_undefined());
+                continue;
+            }
+            if !value.is_undefined() {
+                matched_names.insert(capture.name.clone());
+            }
             props.insert(
                 PropertyKey::from(capture.name.clone()),
                 PropertyDescriptor::data(value),
@@ -1377,34 +1450,9 @@ fn canonicalize_regexp_match_text(text: &str) -> Arc<str> {
     Arc::from(text.as_str())
 }
 
-struct RegexCaptureClearRules {
-    ancestors: Vec<Vec<RegexGroupAncestor>>,
-    quantified_groups: Vec<RegexQuantifiedGroup>,
-}
-
-#[derive(Clone, Copy)]
-struct RegexGroupAncestor {
-    group_id: usize,
-}
-
-struct RegexQuantifiedGroup {
-    group_id: usize,
-    capture_index: Option<usize>,
-    body: String,
-}
-
-struct RegexGroupFrame {
-    group_id: usize,
-    capture_index: Option<usize>,
-    body_start: usize,
-}
-
-fn regex_repeated_capture_clear_rules(source: &str) -> RegexCaptureClearRules {
+fn regex_contains_quantified_capture_group(source: &str) -> bool {
     let chars: Vec<char> = source.chars().collect();
-    let mut ancestors = vec![Vec::new()];
-    let mut quantified_groups = Vec::new();
-    let mut stack: Vec<RegexGroupFrame> = Vec::new();
-    let mut group_count = 0;
+    let mut capture_count_at_group_start = Vec::new();
     let mut capture_count = 0;
     let mut in_class = false;
     let mut escaped = false;
@@ -1421,46 +1469,24 @@ fn regex_repeated_capture_clear_rules(source: &str) -> RegexCaptureClearRules {
             '[' if !in_class => in_class = true,
             ']' if in_class => in_class = false,
             '(' if !in_class => {
-                group_count += 1;
-                let group_id = group_count;
-                let capture_index = if regex_group_is_capturing_chars(&chars, i) {
+                let captures_before_group = capture_count;
+                if regex_group_is_capturing_chars(&chars, i) {
                     capture_count += 1;
-                    let group_ancestors = stack
-                        .iter()
-                        .map(|frame| RegexGroupAncestor {
-                            group_id: frame.group_id,
-                        })
-                        .collect();
-                    ancestors.push(group_ancestors);
-                    Some(capture_count)
-                } else {
-                    None
-                };
-                stack.push(RegexGroupFrame {
-                    group_id,
-                    capture_index,
-                    body_start: regex_group_body_start_chars(&chars, i),
-                });
+                }
+                capture_count_at_group_start.push(captures_before_group);
             }
             ')' if !in_class => {
-                if let Some(frame) = stack.pop() {
-                    if regex_quantifier_starts_at_chars(&chars, i + 1) {
-                        quantified_groups.push(RegexQuantifiedGroup {
-                            group_id: frame.group_id,
-                            capture_index: frame.capture_index,
-                            body: chars[frame.body_start..i].iter().collect(),
-                        });
-                    }
+                if capture_count_at_group_start.pop().is_some_and(|before| {
+                    capture_count > before && regex_quantifier_starts_at_chars(&chars, i + 1)
+                }) {
+                    return true;
                 }
             }
             _ => {}
         }
         i += 1;
     }
-    RegexCaptureClearRules {
-        ancestors,
-        quantified_groups,
-    }
+    false
 }
 
 fn regex_group_is_capturing_chars(chars: &[char], idx: usize) -> bool {
@@ -1471,63 +1497,6 @@ fn regex_group_is_capturing_chars(chars: &[char], idx: usize) -> bool {
         return true;
     }
     chars.get(idx + 2) == Some(&'<') && !matches!(chars.get(idx + 3), Some('=' | '!'))
-}
-
-fn regex_group_body_start_chars(chars: &[char], idx: usize) -> usize {
-    if chars.get(idx) != Some(&'(') {
-        return idx;
-    }
-    if chars.get(idx + 1) != Some(&'?') {
-        return idx + 1;
-    }
-    match chars.get(idx + 2) {
-        Some(':') | Some('=') | Some('!') => idx + 3,
-        Some('<') if matches!(chars.get(idx + 3), Some('=' | '!')) => idx + 4,
-        Some('<') => {
-            let mut cursor = idx + 3;
-            while cursor < chars.len() {
-                if chars[cursor] == '>' {
-                    return cursor + 1;
-                }
-                cursor += 1;
-            }
-            idx + 2
-        }
-        _ => {
-            let mut cursor = idx + 2;
-            while cursor < chars.len() {
-                match chars[cursor] {
-                    ':' => return cursor + 1,
-                    ')' => break,
-                    _ => cursor += 1,
-                }
-            }
-            idx + 2
-        }
-    }
-}
-
-fn regex_final_iteration_span(
-    body: &str,
-    flags: &str,
-    input: &str,
-    full_match: CompiledMatch<'_>,
-    code_unit_input: bool,
-) -> Option<(usize, usize)> {
-    if body.is_empty() {
-        return None;
-    }
-    let re = compile_regex_with_input_mode(body, flags, code_unit_input).ok()?;
-    let mut last = None;
-    for m in re.find_iter(input).ok()? {
-        if m.start() >= full_match.start()
-            && m.end() <= full_match.end()
-            && (m.start() != m.end() || last.is_none())
-        {
-            last = Some((m.start(), m.end()));
-        }
-    }
-    last
 }
 
 fn regex_quantifier_starts_at_chars(chars: &[char], idx: usize) -> bool {
@@ -1555,7 +1524,7 @@ fn regex_quantifier_starts_at_chars(chars: &[char], idx: usize) -> bool {
     }
 }
 
-fn regex_uses_backreference(source: &str, capture_count: usize) -> bool {
+fn regex_uses_backreference(source: &str, capture_count: usize, has_named_captures: bool) -> bool {
     if capture_count == 0 {
         return false;
     }
@@ -1564,6 +1533,9 @@ fn regex_uses_backreference(source: &str, capture_count: usize) -> bool {
     let mut escaped = false;
     while let Some(ch) = chars.next() {
         if escaped {
+            if !in_class && has_named_captures && ch == 'k' && chars.peek() == Some(&'<') {
+                return true;
+            }
             if !in_class && ch.is_ascii_digit() && ch != '0' {
                 let mut digits = String::from(ch);
                 while matches!(chars.peek(), Some(next) if next.is_ascii_digit()) {
