@@ -4,6 +4,48 @@
 
 ### Fixed
 
+- RegExp named captures may now reuse a name when every pair is separated by
+  a disjunction alternative, matching ECMAScript `MightBothParticipate` early
+  errors. `exec`, `match`, `matchAll`, `replace`, `replaceAll`, `search`,
+  `split`, `test`, `groups`, and `indices.groups` select the sole
+  participating capture while retaining first-occurrence property order and
+  pair-object identity. Same-branch duplicates remain syntax errors.
+
+  Named backreferences use an ID-based backend capture-set table, match empty
+  when no alias participated, and preserve capture state across quantified
+  alternatives and backtracking. Repeated captures are cleared in the backend
+  rather than guessed after a match. A linear Rust matcher prefilters ordinary
+  repeated-capture patterns, so capture correction does not move no-match
+  probes onto a catastrophic backtracking path. Case-insensitive
+  backreferences now compare equal code-point counts with Unicode simple
+  folding under `u`/`v` and the legacy ECMAScript uppercase relation otherwise.
+
+  The vendored `fancy-regex` 0.18.0 fork isolates all changes behind
+  `ecmascript_mode`: mode-off patterns retain upstream delegation, capture-set
+  instructions store only IDs, copy-on-write save membership is bitset-backed,
+  and per-iteration clearing is charged to the backend work limit. Reviewer
+  stress cases improve from 1.22 seconds / 271 MB to 0.03 seconds / 14 MB for
+  4,000 aliases and references; doubling to 8,000 takes 0.06 seconds / 19 MB.
+  A 6,400-capture repeat that previously took about 4.8 seconds now terminates
+  at the work limit in 0.02 seconds.
+
+  Exact Test262 admission freezes 15 positive duplicate-name files and four
+  same-alternative parse-negative files. The admission is **19/19** and full
+  `built-ins/RegExp` is **991 pass / 52 fail / 836 skip / 0 timeout**, exactly
+  **+13 pass / -13 skip** with no failure increase. Rust all-target tests,
+  vendored tests, Python tooling **108/108**, release, wasm32, formatting, and
+  warnings-denied Clippy pass; the supported subset remains
+  **12751/0/7687/20438**. Two GPT 5.6 reviews found and closed capture
+  post-processing, Unicode byte-length, mode-isolation, quadratic resource,
+  and packaging hazards. Crates.io publication is explicitly disabled while
+  the fork is a path dependency; re-enabling it requires upstreaming the
+  patches or publishing the fork first. Feature commit `48b8b78` passed
+  ordinary CI `29662790684` and all 33 jobs in full matrix `29662790652`.
+  Twenty-eight of 30 result artifacts are byte-identical to the preceding
+  baseline; `built-ins` moves **+15 pass / -15 skip** and
+  `language/literals` moves **+4 / -4**, exactly the 19 frozen files. The
+  aggregate is **30423 pass / 6133 fail / 11905 skip / 6 timeout / 0 error /
+  48467 total**.
 - RegExp `d` now exposes the complete match-indices result shape. Native exec
   adds the own `indices` property after `groups`, creates method-Realm pair
   Arrays for every participating capture, stores explicit `undefined` for

@@ -253,6 +253,59 @@ prototype traversal.
 - 장점, 단점 및 영향: Eight skips become passes, the built-ins failure count drops by a net 100, all supported language tests remain green, and forced-GC/exact-cap cases use one rooted path. The cost is two more manually synchronized Realm registries and a larger property core; 137 broader RegExp failures remain explicit follow-up scope.
 ```
 
+### RegExp duplicate named captures
+
+RegExp source validation and runtime compilation share
+`scan_regex_named_captures`. Each nested disjunction frame unions names from
+completed alternatives but rejects a name when two concatenated terms can
+participate together. Capture occurrences remain ordered and retain separate
+numeric indices; a second index map groups all occurrences by decoded
+ECMAScript name. Result construction walks occurrence order, replaces an
+earlier `undefined` with the sole participating capture, and leaves the
+`IndexMap` slot in place so property enumeration follows the first occurrence.
+`indices.groups` reuses the numeric pair object rather than allocating a copy.
+
+```text
+pattern
+  -> structural named-capture scan and MightBothParticipate early errors
+  -> ordered (name, capture index) occurrences
+  -> name -> [capture indices] table
+  -> numbered backend pattern plus short (?@set_id) references
+  -> RegExp VM selects zero or one populated capture in each set
+  -> groups / indices.groups participating value with first-name order
+```
+
+RuJa vendors `fancy-regex` 0.18.0 because duplicate-name backreferences and
+ECMAScript repeated-capture clearing require matcher-state operations that
+cannot be repaired after a match. The fork stores each capture set once and
+keeps only its ID in parser, AST, compiler, and VM instructions. Quantified
+capture entry clears descendant slots through the backend's copy-on-write
+state; current-delta membership is a bitset, and every cleared slot consumes
+the existing backend work budget. Case-insensitive backreferences consume the
+same number of scalar values as the capture and use Unicode simple folding for
+`u`/`v`, otherwise the legacy ECMAScript uppercase relation.
+
+Patterns with backreferences use the bounded backend directly. Ordinary
+patterns with repeated captures use `CaptureCorrected`: the linear Rust
+matcher establishes whether and where a match exists, then the ECMAScript
+backend reconstructs captures only at those successful boundaries. This keeps
+no-match probes on the linear path while removing the old post-match heuristic
+that could mistake trailing text for the final quantified iteration. All fork
+behavior is gated by `ecmascript_mode`; mode-off analysis retains upstream
+delegation. Because Cargo substitutes a registry dependency when packaging a
+path dependency, crates.io publication remains disabled until the fork is
+upstreamed or published separately.
+
+```text
+[Decision Log]
+- 목적과 의도: Support ECMAScript duplicate named captures, participating backreferences, and repeated-capture state without introducing quadratic compilation or an unbounded no-match path.
+- 기존 구현 및 제약 조건: One name owned one index, duplicate declarations were always rejected, unmatched aliases needed empty backreference semantics, Rust captures retain stale values across iterations, post-match reconstruction could not observe matcher state, and path forks cannot transparently survive crates.io packaging.
+- 검토한 주요 대안: Expand every alias into nested conditionals, guess the last iteration after matching, route every repeated-capture pattern entirely through a backtracking VM, hand-roll a new RegExp engine, or add isolated matcher-state primitives to a vendored backend.
+- 선택한 방식: Share a structural early-error scanner, retain ordered occurrences plus one index table per name, lower references to ID-based BackrefSet instructions, clear captures transactionally in the VM, prefilter ordinary matches linearly, and gate the fork behind explicit ECMAScript options and a finite work budget.
+- 다른 대안 대신 이 방식을 선택한 이유: Conditional expansion and repeated name scans are quadratic, post-processing is observably wrong, broad backtracking routing regresses hostile no-match patterns, and a replacement engine is too broad for this conformance unit. Backend state is the only point that can clear captures with correct backtracking restoration.
+- 장점, 단점 및 영향: Exact duplicate-name syntax, groups, indices, replacement, backreference, Unicode case-fold, and quantified-state semantics are directly tested with linear source/table growth and bounded runtime work. The tradeoffs are a maintained backend fork, disabled crates.io publication until that fork has a registry path, and a remaining hard variable-lookbehind case for duplicate-name backreferences.
+```
+
 `MakeClosure` follows the same rule for an ordinary function's fresh
 `.prototype`: the prototype is pinned before a named-function environment or
 the function object can allocate, then released only after the function owns

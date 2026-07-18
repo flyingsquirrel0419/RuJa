@@ -27,12 +27,15 @@ The following resource limits are enforced:
 - **Call-stack depth**: JavaScript recursion is capped at 1000 frames.
   Exceeding this throws a catchable `RangeError("Maximum call stack size
   exceeded")`, not a native stack overflow (SIGSEGV/abort).
-- **Regex execution bounds**: patterns that do not require backreferences use
-  the RE2-style, linear-time Rust `regex` backend. Numeric backreferences use
-  `fancy-regex` instead; that path has a finite backtracking limit and reports
-  an `Invalid regex match` error when the limit is exhausted. Native matching
-  is still cooperative rather than preemptible, so hosts that need a hard wall
-  clock deadline must run RuJa in a separately killable process.
+- **Regex execution bounds**: ordinary matching uses the RE2-style,
+  linear-time Rust `regex` backend. Backreferences use the vendored
+  `fancy-regex` backend; that path has a finite work limit and reports an
+  `Invalid regex match` error when exhausted. Repeated-capture patterns use a
+  hybrid: the linear matcher prefilters match boundaries, and the bounded
+  backend reconstructs captures only for successful matches. Capture clearing
+  is charged per slot and uses bitset-backed copy-on-write state. Native
+  matching is still cooperative rather than preemptible, so hosts that need a
+  hard wall-clock deadline must use a separately killable process.
 - **String/array caps**: `"x".repeat(n)` is capped at 256 MiB output.
   `Array.from(iterable)` is capped at 65k elements. Dense arrays are capped
   at 1M elements (`MAX_DENSE_ARRAY_LEN`); beyond that, indices are stored
@@ -52,6 +55,11 @@ separately killable, memory-limited process when hard wall-clock or OOM
 guarantees are required.
 
 - No `eval`/`with` process-level security sandbox (local-trust execution model)
+- Crates.io publication is disabled with `package.publish = false` while RuJa
+  depends on a vendored `fancy-regex` fork. Cargo rewrites path dependencies to
+  their registry versions when packaging, which would silently remove RuJa's
+  required backend API and semantics. Publication can be re-enabled only after
+  these patches are upstream or the fork is published as a distinct dependency.
 - Dynamic Function constructors (`Function`, `AsyncFunction`,
   `GeneratorFunction`, and `AsyncGeneratorFunction`) follow the observable
   CreateDynamicFunction conversion, grammar, Realm, and allocation protocol,
@@ -68,20 +76,17 @@ guarantees are required.
   match indices are implemented and audited, but full RegExp conformance is
   not complete. The current `built-ins/RegExp` diagnostic has **52 failures**:
   **37** direct/root syntax and matcher files and **15** lookbehind files; the
-  match-indices subtree is **14/14**. Named groups support Unicode identifier
-  names, escaped names, early errors, and ordinary backreferences, but RuJa
-  still rejects duplicate names in structurally disjoint alternatives that
-  current ECMAScript permits. Unicode `iu`/`iv` `\b`/`\B` on the linear backend
-  still inherits Rust's broader Unicode word boundary instead of the
-  ECMAScript WordCharacters set; the exact lookaround lowering is used only
-  when a pattern already requires the bounded backreference backend.
-  Ignore-case backreferences do not yet canonicalize the captured and consumed
-  text; valid scalars in `U+F0000..U+F07FF` collide with the internal UTF-16
-  sentinel representation; and nested `v` set subtraction/intersection is
-  still delegated to an incomplete backend interpretation. Moving every
-  boundary onto `fancy-regex` was rejected because nested quantified patterns
-  can hit its backtracking limit; the eventual general fix needs a separate
-  linear matching design rather than weakening the execution bound.
+  match-indices subtree is **14/14**. Named groups support Unicode identifiers,
+  escaped names, structurally disjoint duplicate names, participating-capture
+  selection, and Unicode/legacy ignore-case backreferences. A valid duplicate
+  named backreference inside a hard variable-length lookbehind can still be
+  rejected by the backend. Unicode `iu`/`iv` `\b`/`\B` on linear-backend
+  patterns inherits Rust's broader Unicode word boundary instead of the
+  ECMAScript WordCharacters set. Valid scalars in `U+F0000..U+F07FF` collide
+  with the internal UTF-16 sentinel representation, and nested `v` set
+  subtraction/intersection remains incomplete. Moving every boundary onto the
+  backtracking backend was rejected because nested quantified patterns can hit
+  its finite work limit; the general fix needs a linear boundary operation.
 - Execution fuel is **cooperative, not preemptive**: `Vm::set_fuel(Some(n))`
   bounds execution to ~n opcodes (exhaustion throws a `RangeError` that is
   *not* catchable by user `try/catch`, so untrusted code cannot swallow it).

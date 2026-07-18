@@ -7781,13 +7781,11 @@ baseline `29646302891` at
 executed files. The unchanged matrix is expected because this unit corrects
 word-set cases that are not newly admitted by the current Test262 manifest.
 
-The remaining RegExp defects are intentionally separate: Unicode `iu`/`iv`
-word boundaries use the broad Rust set; ignore-case backreferences do not
-canonicalize captured text against consumed text; valid scalars in
-`U+F0000..U+F07FF` collide with sentinel-backed UTF-16 representation; and
-nested `v` subtraction/intersection is not fully interpreted. The full RegExp
-failure grouping remains **41** direct/root files, **16** lookbehind files,
-and **6** match-indices files.
+The remaining RegExp defects after this historical unit were intentionally
+separate. Unicode `iu`/`iv` word boundaries, sentinel-backed UTF-16 scalar
+collisions, nested `v` algebra, match indices, and ignore-case backreferences
+were not changed here. Match indices and ignore-case backreferences are closed
+by later units below; the other boundaries remain current work.
 
 ```text
 [Decision Log]
@@ -7796,7 +7794,7 @@ and **6** match-indices files.
 - 검토한 주요 대안: Keep Rust native word semantics, special-case only U+017F/U+212A, enumerate every class manually, express Unicode boundaries with fancy-regex lookarounds, or replace the regex backend in this unit.
 - 선택한 방식: Lower top-level escapes to exact scoped sets, parse ordinary classes through regex-syntax HIR, materialize the canonicalization closure before complement, bound and optimize class caching, retain depth-aware native fallback for complex v sets, and keep Unicode boundaries on the linear backend until a separate design exists.
 - 다른 대안 대신 이 방식을 선택한 이유: Native case folding admits the wrong characters, point fixes break complements and mixed classes, ad hoc class parsing is unsafe, lookarounds introduced a runtime backtracking-limit regression, and replacing the backend is too broad for a verified compatibility unit.
-- 장점, 단점 및 영향: Word escapes and simple classes now follow ECMAScript across i/iu/iv and local modifiers with bounded compile cost and no Test262 regression. Unicode boundaries, ignore-case backreferences, sentinel-range scalars, and full nested-v algebra remain explicit architectural work.
+- 장점, 단점 및 영향: Word escapes and simple classes now follow ECMAScript across i/iu/iv and local modifiers with bounded compile cost and no Test262 regression. Unicode boundaries, sentinel-range scalars, and full nested-v algebra remain explicit architectural work; ignore-case backreferences are completed by the later duplicate-name backend unit.
 ```
 
 ## RegExp match indices and named groups
@@ -7876,12 +7874,11 @@ clones an unpinned Test262 HEAD independently; it is not attributed to this
 engine change. The aggregate delta therefore combines the verified
 `built-ins` improvement with unrelated Annex B corpus drift.
 
-The remaining RegExp work is deliberately separate. Duplicate named groups in
-structurally disjoint alternatives need one name to own multiple capture
-indices and a participating-capture selection rule. Unicode word boundaries
-on linear-backend patterns, ignore-case backreference canonicalization, the
-reserved sentinel scalar range, nested `v` set algebra, and the remaining
-lookbehind backend limitations retain their existing boundaries.
+The remaining RegExp work is deliberately separate. The duplicate-name and
+ignore-case backreference work described by this historical boundary is now
+closed by the following unit. Unicode word boundaries on linear-backend
+patterns, the reserved sentinel scalar range, nested `v` set algebra, and the
+remaining lookbehind backend limitations retain their existing boundaries.
 
 ```text
 [Decision Log]
@@ -7890,7 +7887,90 @@ lookbehind backend limitations retain their existing boundaries.
 - 검토한 주요 대안: Re-run the pattern once per capture, derive indices from returned strings, expose backend byte offsets, move every pattern to fancy-regex, hand-roll a second matcher, or retain one match and convert all finalized capture boundaries together.
 - 선택한 방식: Preserve finalized backend capture ranges, normalize only Unicode inputs containing split surrogate pairs with an explicit boundary map, convert all endpoints once, lower named groups to numbered backend captures, and materialize Realm-local rooted index Arrays under the internal d flag.
 - 다른 대안 대신 이 방식을 선택한 이유: Re-matching changes observable capture state, string search is ambiguous and quadratic, byte offsets violate ECMAScript, broad fancy-regex routing weakens bounded linear execution, and a new matcher is too broad for this verified unit. One range pipeline reuses the existing successful match and keeps every coordinate conversion explicit.
-- 장점, 단점 및 영향: Match indices, named aliases, descriptors, order, Realm identity, surrogate coordinates, exact heap caps, and fuel are directly tested; seven exact files are safely admitted and five pre-existing RegExp failures also close. Duplicate names across disjoint alternatives and the larger boundary/backreference/lookbehind architecture remain explicit follow-up work.
+- 장점, 단점 및 영향: Match indices, named aliases, descriptors, order, Realm identity, surrogate coordinates, exact heap caps, and fuel are directly tested; seven exact files are safely admitted and five pre-existing RegExp failures also close. Duplicate names and ignore-case backreferences are completed by the following unit; boundary, sentinel, nested-v, and lookbehind architecture remains explicit follow-up work.
+```
+
+## RegExp duplicate named captures
+
+ECMAScript permits two capture groups to share a decoded name when
+[`MightBothParticipate`](https://tc39.es/ecma262/multipage/text-processing.html#sec-patterns-static-semantics-mightbothparticipate)
+is false. RuJa now applies that structural early error to literals and the
+`RegExp` constructor: names in alternatives of one disjunction are compatible,
+while a duplicate introduced by concatenated terms, a parent group, or the
+same branch remains a syntax error. Raw and escaped spellings are compared
+after decoding, so `x` and `\u0078` are the same name.
+
+Every occurrence keeps its own numeric capture index while one name maps to an
+ordered index set. `exec`, `match`, `matchAll`, `replace`, `replaceAll`,
+`search`, `split`, and `test` select the sole participating index. `groups`
+and `indices.groups` keep the property position established by the first
+occurrence, replace an earlier `undefined` when a later alias participated,
+and preserve identity with the selected numeric indices pair. Named
+backreferences consume the participating capture or the empty string when no
+alias participated.
+
+The matcher changes are isolated in a vendored `fancy-regex` 0.18.0 fork.
+Named references lower to `(?@set_id)` and the capture-index table is stored
+once, so parser, AST, compiler, and VM growth is linear in source size.
+Repeated capture slots are cleared on each iteration through backtracking-aware
+copy-on-write state. A bitset removes the old quadratic save lookup and each
+clear is charged to the backend work limit. Ordinary repeated-capture patterns
+use a linear prefilter and invoke the capture backend only for successful
+boundaries. Unicode ignore-case backreferences compare equal scalar counts
+using simple folding; non-`u` mode uses the legacy uppercase relation.
+
+`tools/test262_regexp_duplicate_named_groups_admission.txt` freezes exactly
+**19** paths. Fifteen positive files lift only
+`regexp-duplicate-named-groups`; four parse-negative literal files lift only
+`regexp-named-groups`. The runner and analyzer share the same exact-path map,
+and tooling checks the manifest against the live Test262 checkout when it is
+available. On Test262 `020cb74075849d1e404bbcdb62feb7a02e6966db`, the
+admission is **19 pass / 0 fail / 0 skip**. Full `built-ins/RegExp` moves from
+**978/52/849/0** to **991/52/836/0**, exactly **+13 pass / -13 skip** with no
+failure or timeout increase. The supported subset remains **12751 pass / 0
+fail / 7687 skip / 20438 total**.
+
+Focused regressions cover nested alternatives, escaped equivalent names,
+same-branch errors, forward/self/unmatched references, repeated aliases,
+trailing backreference text, property order and identity, replacement and
+split, Unicode `iu` folding, legacy `i`, backend mode isolation, invalid set
+IDs, and backtracking restoration. Reviewer stress probes improve from about
+**1.22 s / 271 MB** to **0.03 s / 14 MB** for 4,000 aliases and 4,000
+references; 8,000 of each takes **0.06 s / 19 MB**. A repeated 6,400-capture
+pattern drops from about **4.8 s** to a bounded work-limit error in **0.02 s**.
+
+Final local gates pass Rust all targets/features, warnings-denied Clippy,
+rustfmt/diff, release, wasm32, vendored tests, Python tooling **108/108**, the
+frozen admission **19/19**, full RegExp **991/52/836/0**, and the supported
+subset **12751/0/7687/20438**. Feature commit `48b8b78` passed ordinary CI
+`29662790684` and every setup, build, shard, and summary job in full matrix
+`29662790652`. Its 30 downloaded artifacts aggregate to **30423 pass / 6133
+fail / 11905 skip / 6 timeout / 0 error / 48467 total / 36556 pass-or-fail
+executed** (**62.8%** of all files, **83.2%** of executed files). Twenty-eight
+artifacts are byte-identical to the match-indices baseline; `built-ins` changes
+by exactly **+15 pass / -15 skip** and `language/literals` by **+4 / -4**,
+matching the frozen 19-file admission with no failure or timeout change.
+
+GPT 5.6 explorers Mendel
+(`019f76d1-333c-79b1-8bb2-639107e9f971`) and Hilbert
+(`019f76d1-33e3-7260-ad9f-544fde4a9ec5`) froze the specification/Test262
+surface and identified in-matcher clearing as necessary. GPT 5.6 reviewers
+Raman (`019f76fa-b61e-78a0-94eb-5f366d67a1b3`) and Sartre
+(`019f76fa-b484-7c71-8df8-acd15ca18dae`) found the post-match, Unicode byte
+length, mode isolation, quadratic resource, lookbehind, and packaging issues.
+All correctness/resource findings are closed, every agent is closed, and no
+coder or Umans route was used. Duplicate-name backreferences inside hard
+variable-length lookbehind remain an explicit backend limitation. Crates.io
+publication is disabled until the fork is upstreamed or published separately.
+
+```text
+[Decision Log]
+- 목적과 의도: Admit the exact ECMAScript duplicate-named-capture cluster with correct syntax, result objects, backreferences, quantified state, and bounded resource behavior.
+- 기존 구현 및 제약 조건: Named captures were represented one-to-one, all duplicates were rejected, Rust capture results retain stale iteration values, post-match cleanup cannot reconstruct matcher state, Unicode case-equivalent scalars may have different UTF-8 widths, and a path fork cannot be substituted by upstream during packaging.
+- 검토한 주요 대안: Broaden the feature gate, expand every reference into conditional source, retain post-match cleanup, route all repeated captures through a backtracking matcher, build a new RegExp engine, or add narrowly gated state operations to the existing backend.
+- 선택한 방식: Freeze 19 exact paths, share a structural MightBothParticipate scanner, store ordered occurrences plus ID-based capture sets, clear repeated captures inside the VM, use a linear match prefilter, implement ECMAScript case relations, and account all clearing work under the backend limit.
+- 다른 대안 대신 이 방식을 선택한 이유: Broad admission hides unrelated failures, conditional/source and lookup expansion is quadratic, post-processing is incorrect, broad VM routing regresses hostile no-match input, and replacing the matcher is disproportionate to this finite conformance cluster.
+- 장점, 단점 및 영향: Thirteen skips become passes with no failure increase; result identity/order and matcher state are observable and tested; large alias patterns scale linearly; mode-off upstream behavior is preserved. The maintained fork blocks crates.io publication until it has a registry path, and hard variable-lookbehind duplicate references remain separate work.
 ```
 
 ## Why the full-suite rate is not higher
