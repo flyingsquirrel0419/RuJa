@@ -30,7 +30,7 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 62.8% of all matrix files; 83.1% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 62.7% of all matrix files; 83.2% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (12751 pass / 0 fail on current Test262; 12752 / 0 on the pinned checkout) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
@@ -7578,6 +7578,134 @@ contracts.
 - 선택한 방식: Use dynamic RegExpExec to collect rooted result objects, process their properties in specification order, implement UTF-16 GetSubstitution locally, meter native work, and enforce the existing call-argument and allocation limits explicitly.
 - 다른 대안 대신 이 방식을 선택한 이유: Native shortcuts cannot preserve custom exec, getters, Proxy callability, side-effect order, or ECMAScript replacement-token behavior. A single generic path keeps observable semantics consistent and leaves backend optimization as a later non-semantic unit.
 - 장점, 단점 및 영향: All 29 executed Symbol.replace failures become passes with no skip, timeout, supported-subset, or non-built-ins matrix regression. The generic path retains all matches before replacement and therefore uses bounded heap proportional to global match count; fuel and the heap cap remain the controlling sandbox limits.
+```
+
+## RegExp CharacterClassEscape digit and whitespace sets
+
+RuJa now lowers `\d`, `\D`, `\s`, and `\S` according to the
+[ECMA-262 CharacterClassEscape semantics](https://tc39.es/ecma262/multipage/text-processing.html#sec-runtime-semantics-compiletocharset)
+before selecting either Rust regex backend. ECMAScript digits are exactly
+ASCII `0-9`, unlike Rust regex's default Unicode `Nd` set. ECMAScript `\s`
+is the lexical
+[WhiteSpace](https://tc39.es/ecma262/multipage/ecmascript-language-lexical-grammar.html#sec-white-space)
+plus LineTerminator set: it includes `U+FEFF`, and it excludes `U+0085` and
+the former whitespace character `U+180E`.
+
+The same normalization is used for ordinary patterns and patterns that need
+the backreference-capable backend. It handles positive and complemented sets
+outside classes and in ordinary, non-nested character classes. The existing
+non-Unicode code-unit mode still treats a supplementary character as two code
+units.
+Escaped-backslash parity remains intact, so a literal `\d` is not rewritten.
+
+In non-Unicode mode,
+[Annex B range compatibility](https://tc39.es/ecma262/multipage/additional-ecmascript-features-for-web-browsers.html#sec-regular-expressions-patterns)
+requires a range with a multi-character set endpoint to become the union of
+both endpoints and a literal hyphen. The normalizer therefore protects an
+unescaped hyphen before a right-hand set endpoint. Both `[\d-a]` and
+`[a-\d]`, chained forms, and already escaped hyphens have focused Rust
+regressions. Unicode `u`/`v` syntax remains governed by the stricter main
+grammar.
+
+Six generated complement-set files construct strings spanning roughly 1.1
+million code points and take 14-21 seconds after they reach the matcher. One
+root file exhaustively checks all 65,536 UTF-16 code units and takes about 25
+seconds. The runner and both analyzers therefore share exact path-scoped
+timeouts: 30 seconds for only the six generated files and 60 seconds for only
+the exhaustive root file. Every neighboring RegExp test retains the 8-second
+default.
+
+On Test262 `020cb74075849d1e404bbcdb62feb7a02e6966db`, focused
+`built-ins/RegExp/CharacterClassEscapes` moves from **4 pass / 2 fail / 0 skip
+/ 6 timeout** to **12 / 0 / 0 / 0**. The separate exhaustive root file also
+passes. The complete `built-ins/RegExp` subtree moves from **951 pass / 66
+fail / 856 skip / 6 timeout** to **960 / 63 / 856 / 0**, exactly **+9 pass /
+-3 fail / -6 timeout**. The supported subset remains **12751 pass / 0 fail /
+7687 skip / 20438 total**.
+
+Final local gates pass all targets/features, warnings-denied Clippy,
+formatting/diff, release, and wasm32. Python tooling is **105/105**, Rust
+lib/unit **124/124**, bugfixes **67/67**, builtins **469/469**, and Fuel
+**26/26**. GPT 5.6 reviewers Godel and Sagan found the Annex B right-hand
+range issue and the risk of partially changing active-ignoreCase word
+semantics. The range issue is fixed, the partial word-set change was removed,
+and both reviewers returned final `CLEAN`. Both are closed. No Umans provider
+route or coder model was used.
+
+Feature SHA `c9065fae2687fab9ac211e2b251cfde854f82d21` passed ordinary CI
+`29644825071` and full matrix `29644825073`. Of the 30 result files at
+`/tmp/ruja-artifacts-regexp-character-class-feature.k2utbC`, 28 are
+byte-identical to `/tmp/ruja-artifacts-regexp-replace-feature.1Cy2uW`.
+Built-ins changes from **14775 pass / 5334 fail / 3547 skip / 12 timeout**
+to **14784 / 5331 / 3547 / 6**, exactly **+9 pass / -3 fail / -6
+timeout**. Annex B changes from **195 / 817 / 74 / 0** to **196 / 816 /
+74 / 0**, exactly **+1 pass / -1 fail**, because
+`annexB/language/literals/regexp/non-empty-class-ranges-no-dash.js` now
+passes. A baseline-binary/new-binary differential over all 1,086 Annex B
+files confirms it is the only changed test there.
+
+Counting the human-readable result bodies gives **30383 pass / 6147 fail /
+11931 skip / 6 timeout / 0 error / 48467 total / 36530 pass-or-fail
+executed**. The feature run's `RATE=` aggregate undercounted the 150 files in
+three skipped-only directories; the separate accounting fix below makes that
+true total machine-readable.
+
+The remaining **63** RegExp failures group into **41** direct/root legacy
+syntax and matcher files, **16** lookbehind files, and **6** match-indices
+files. The next coherent character-set unit is active-ignoreCase
+WordCharacters: `\w`/`\W` matching inside and outside classes, plus
+outside-class `\b`/`\B` boundary checks, must derive from one set across plain
+`i`, `iu`, `iv`, and local modifiers. Unicode-aware canonicalization adds
+`U+017F` and `U+212A` without
+admitting unrelated Unicode letters or digits. That contract remains separate
+from this digit/whitespace patch.
+
+```text
+[Decision Log]
+- 목적과 의도: Make RegExp digit and whitespace character-class escapes match ECMAScript exactly without weakening sandbox, UTF-16, or backend invariants.
+- 기존 구현 및 제약 조건: Both Rust regex backends interpreted digit and whitespace escapes with Unicode-native sets, omitting FEFF and admitting characters that ECMAScript excludes. Generated complement tests and one exhaustive root test also exceed the generic 8-second process limit for legitimate work.
+- 검토한 주요 대안: Disable Unicode globally in the backend, post-filter match results, replace the regex engine, broaden every RegExp timeout, or lower only the affected escapes and grant exact per-file timeouts.
+- 선택한 방식: Normalize d/D/s/S to explicit ECMAScript sets before backend selection, preserve Annex B hyphen-union behavior in non-Unicode classes, and share narrowly enumerated timeout policies across the runner and analyzers.
+- 다른 대안 대신 이 방식을 선택한 이유: A global backend mode changes unrelated literals, properties, and case folding; post-filtering cannot reconstruct captures, backreferences, complements, or class ranges; replacing the backend is a separate architecture project; broad timeouts would hide regressions.
+- 장점, 단점 및 영향: Ten matrix outcomes become passes, all six prior timeouts disappear, the supported subset stays green, and 28 unrelated result files remain byte-identical. The explicit whitespace inventory must track future specification changes, while active-ignoreCase word and boundary semantics remain a separate complete unit.
+```
+
+## Test262 zero-execution aggregate accounting
+
+`tools/test262_runner.py` emits a human-readable count block followed by one
+machine-readable `RATE=` line consumed by CI. When `RAN=0`, meaning there is
+no pass/fail outcome, the old branch hardcoded every `RATE=` count to zero
+even if a directory contained skipped, timed-out, or errored files. The
+human-readable block
+remained correct, which is why direct artifact inspection exposed a
+150-file discrepancy in `language/{destructuring,export,import}`.
+
+The zero-execution branch now preserves `PASS`, `FAIL`, `SKIP`, and `TOTAL`
+from the same counters as the ordinary branch while retaining `RATE=0.0` and
+`RAN=0`. Key names and order are unchanged for workflow parsers. A focused
+test drives `main()` through an all-skipped temporary directory and asserts
+the complete output contract; a real `language/import` run reports its
+nonzero skipped total. Python tooling is **106/106**.
+
+Commit `8f705936f6a8a070fbc48ecb77102b065011aebe` passed ordinary CI
+`29646302861` and full matrix `29646302891`. Of the 30 result files at
+`/tmp/ruja-artifacts-zero-run-rate.yRcxW7`, 27 are byte-identical to feature
+run `29644825073`. The other three differ only in their final `RATE=` line:
+`language/export` preserves **3** skipped/total files, `language/import`
+preserves **128**, and `language/destructuring` preserves **19**. The
+machine and human aggregates now agree at **30383 pass / 6147 fail / 11931
+skip / 6 timeout / 0 error / 48467 total / 36530 pass-or-fail executed**, or
+**62.7%** of all files and **83.2%** of executed files. Pass, fail, timeout,
+and executed counts are unchanged from the feature run.
+
+```text
+[Decision Log]
+- 목적과 의도: Make the published full-matrix file count and skip count agree with the runner's own result summaries.
+- 기존 구현 및 제약 조건: The RAN=0 branch emitted an all-zero RATE line, while CI aggregates only RATE fields and cannot recover skipped or total counts from the preceding human-readable block.
+- 검토한 주요 대안: Leave the historical aggregate unchanged, teach the workflow to parse two output formats, count files independently in CI, or preserve counters in the existing RATE contract.
+- 선택한 방식: Keep RATE=0.0 and RAN=0 but emit the actual PASS, FAIL, SKIP, and TOTAL counters in the established key order.
+- 다른 대안 대신 이 방식을 선택한 이유: The runner already owns the authoritative counters, and preserving its stable single-line contract fixes every consumer without adding workflow-only parsing logic.
+- 장점, 단점 및 영향: Skipped-only files are included in the published denominator and artifacts become internally consistent. The all-file percentage decreases when the previously omitted files are counted, but executed-test results and the supported-subset rate do not change.
 ```
 
 ## Why the full-suite rate is not higher

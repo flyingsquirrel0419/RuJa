@@ -4,6 +4,45 @@
 
 ### Fixed
 
+- The Test262 runner's machine-readable `RATE=` line now preserves actual
+  `SKIP` and `TOTAL` counts when `RAN=0`. The old zero-execution branch
+  printed zeros even though the human-readable summary was correct, causing
+  the full workflow to omit 150 skipped-only files from its aggregate.
+  All-skip, empty, timeout-only, and error-only directories retain the
+  existing key order and zero pass rate while reporting their real totals.
+  The regression is covered by Python tooling **106/106**, formatting,
+  warnings-denied Clippy, and a real all-skipped directory run. Commit
+  `8f70593` passed CI `29646302861` and full matrix `29646302891`. Of 30
+  result files, 27 are byte-identical to the feature run and only the three
+  skipped-only `RATE=` lines change. The corrected aggregate is **30383 pass
+  / 6147 fail / 11931 skip / 6 timeout / 0 error / 48467 total** (**62.7%**
+  of all files, **83.2%** of executed files).
+- RegExp `\d`/`\D` now use the ECMAScript ASCII digit set instead of
+  Rust's Unicode `Nd` set, and `\s`/`\S` use the exact ECMAScript
+  WhiteSpace plus LineTerminator set. This includes `U+FEFF` and excludes
+  `U+0085` and `U+180E`. The lowering is shared by the linear and
+  backreference regex backends, works outside classes and in ordinary,
+  non-nested character classes, and preserves non-Unicode UTF-16 matching.
+  Annex B ranges with a character class escape endpoint, including
+  `[a-\d]`, now preserve the required
+  literal hyphen and set-union behavior.
+
+  The Test262 runner and analyzers give 30 seconds only to the six generated
+  complement-set files and 60 seconds only to the one 65,536-code-unit
+  exhaustive file; neighboring tests retain the 8-second default. Focused
+  `built-ins/RegExp/CharacterClassEscapes` closes at **12 pass / 0 fail / 0
+  skip / 0 timeout**. The complete `built-ins/RegExp` subtree improves from
+  **951 pass / 66 fail / 856 skip / 6 timeout** to **960 / 63 / 856 / 0**,
+  exactly **+9 pass / -3 fail / -6 timeout**. Final local gates include
+  tooling **105/105**, Rust lib/unit **124/124**, builtins **469/469**,
+  bugfixes **67/67**, Fuel **26/26**, release, wasm32, warnings-denied Clippy,
+  formatting, and the supported subset at **12751/12751**. GPT 5.6 reviewers
+  Godel and Sagan returned `CLEAN`; no coder or Umans route was used. Feature
+  commit `c9065fa` passed CI `29644825071` and full matrix `29644825073`.
+  Of 30 matrix result files, 28 are byte-identical to the preceding run;
+  built-ins improves by **+9 pass / -3 fail / -6 timeout**, and the Annex B
+  RegExp range test improves by **+1 pass / -1 fail**. Artifacts and the
+  corrected aggregate are recorded in `docs/test262.md`.
 - `RegExp.prototype[Symbol.replace]` now follows the generic ECMA-262
   algorithm instead of iterating the native regex backend directly. It
   observes replacement callability, global state, strict `lastIndex` writes,
