@@ -38,7 +38,6 @@ fn native_construct_mode(vm: &Vm, value: &Value) -> Option<NativeConstructMode> 
 
 const EAGER_NATIVE_CONSTRUCTOR_SOURCES: &[&str] = &[
     "Array",
-    "RegExp",
     "Map",
     "Set",
     "WeakMap",
@@ -63,6 +62,7 @@ const DEFERRED_NATIVE_CONSTRUCTOR_SOURCES: &[&str] = &[
     "Number",
     "Boolean",
     "Date",
+    "RegExp",
     "Proxy",
     "BigInt",
     "Symbol",
@@ -97,7 +97,6 @@ const NON_CONSTRUCTIBLE_NATIVE_FUNCTION_SOURCES: &[&str] = &[
 
 const FOREIGN_EAGER_NATIVE_CONSTRUCTOR_SOURCES: &[&str] = &[
     "Array",
-    "RegExp",
     "Error",
     "EvalError",
     "RangeError",
@@ -108,7 +107,7 @@ const FOREIGN_EAGER_NATIVE_CONSTRUCTOR_SOURCES: &[&str] = &[
     "AggregateError",
 ];
 
-fn realm_registry_counts(vm: &Vm) -> [usize; 29] {
+fn realm_registry_counts(vm: &Vm) -> [usize; 31] {
     [
         vm.realm_globals.len(),
         vm.realm_object_prototypes.len(),
@@ -136,7 +135,9 @@ fn realm_registry_counts(vm: &Vm) -> [usize; 29] {
         vm.realm_iterator_helper_prototypes.len(),
         vm.realm_error_prototypes.len(),
         vm.realm_heap_limit_errors.len(),
+        vm.realm_regexp_constructors.len(),
         vm.realm_regexp_prototypes.len(),
+        vm.realm_regexp_string_iterator_prototypes.len(),
         vm.realm_array_buffer_prototypes.len(),
         vm.realm_typed_array_constructors.len(),
     ]
@@ -179,7 +180,7 @@ fn assert_main_realm_range_error(vm: &Vm, error: &crate::error::Error) {
 fn assert_failed_realm_attempt(
     vm: &mut Vm,
     baseline_live: usize,
-    baseline_registries: [usize; 29],
+    baseline_registries: [usize; 31],
     baseline_pins: usize,
     extra_capacity: usize,
 ) {
@@ -501,6 +502,492 @@ fn body_controlled_native_constructors_skip_automatic_prototype_lookup() {
         .expect("body-controlled constructors should complete with expected errors"),
         Value::String("true|true|true|function|true||0".into())
     );
+}
+
+#[test]
+fn regexp_constructor_follows_classification_allocation_and_initialization_order() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    assert_eq!(
+        vm.run(
+            r#"
+            var events = [];
+            var pattern = {};
+            Object.defineProperty(pattern, Symbol.match, {
+              get: function () { events.push("match"); return true; }
+            });
+            Object.defineProperty(pattern, "source", {
+              get: function () {
+                events.push("source");
+                return { toString: function () {
+                  events.push("source-string");
+                  return "x";
+                } };
+              }
+            });
+            Object.defineProperty(pattern, "flags", {
+              get: function () {
+                events.push("flags");
+                return { toString: function () {
+                  events.push("flags-string");
+                  return "gi";
+                } };
+              }
+            });
+            var NewTarget = (function () {}).bind(null);
+            Object.defineProperty(NewTarget, "prototype", {
+              get: function () {
+                events.push("prototype");
+                return RegExp.prototype;
+              },
+              configurable: true
+            });
+            var result = Reflect.construct(RegExp, [pattern], NewTarget);
+            var constructOrder = events.join(",");
+
+            events = [];
+            var shortcutPattern = {};
+            Object.defineProperty(shortcutPattern, Symbol.match, {
+              get: function () { events.push("match"); return true; }
+            });
+            Object.defineProperty(shortcutPattern, "constructor", {
+              get: function () { events.push("constructor"); return RegExp; }
+            });
+            Object.defineProperty(shortcutPattern, "source", {
+              get: function () { events.push("source"); throw "unreachable"; }
+            });
+            var shortcut = RegExp(shortcutPattern) === shortcutPattern;
+            var shortcutOrder = events.join(",");
+
+            events = [];
+            var actual = /a/g;
+            Object.defineProperty(actual, Symbol.match, {
+              get: function () { events.push("actual-match"); return false; }
+            });
+            Object.defineProperty(actual, "source", {
+              get: function () { events.push("actual-source"); throw "unreachable"; }
+            });
+            Object.defineProperty(actual, "flags", {
+              get: function () { events.push("actual-flags"); throw "unreachable"; }
+            });
+            var copied = RegExp(actual);
+            var actualOrder = events.join(",");
+
+            var constructorReads = 0;
+            var regexpLike = { source: "y", flags: "m" };
+            regexpLike[Symbol.match] = true;
+            Object.defineProperty(regexpLike, "constructor", {
+              get: function () { constructorReads += 1; throw "unreachable"; }
+            });
+            var constructed = new RegExp(regexpLike);
+
+            var originalMatch = RegExp.prototype[Symbol.match];
+            RegExp.prototype[Symbol.match] = undefined;
+            var fromPrototype = RegExp(RegExp.prototype);
+            RegExp.prototype[Symbol.match] = originalMatch;
+
+            events = [];
+            var marker = {};
+            var abruptPattern = {};
+            Object.defineProperty(abruptPattern, Symbol.match, {
+              get: function () { events.push("match"); return true; }
+            });
+            Object.defineProperty(abruptPattern, "source", {
+              get: function () { events.push("source"); throw marker; }
+            });
+            var abrupt = false;
+            try { Reflect.construct(RegExp, [abruptPattern], NewTarget); }
+            catch (error) { abrupt = error === marker; }
+            var abruptOrder = events.join(",");
+
+            [
+              constructOrder,
+              result.source,
+              result.flags,
+              shortcutOrder,
+              shortcut,
+              actualOrder,
+              copied.source,
+              copied.flags,
+              copied !== actual,
+              constructorReads,
+              constructed.source,
+              constructed.flags,
+              fromPrototype !== RegExp.prototype && fromPrototype.test("//"),
+              abruptOrder,
+              abrupt
+            ].join("|");
+            "#,
+        )
+        .expect("RegExp construction should follow the specification phases"),
+        Value::String(
+            "match,source,flags,prototype,source-string,flags-string|x|gi|match,constructor|true|actual-match|a|g|true|0|y|m|true|match,source|true"
+                .into()
+        )
+    );
+    assert!(vm.pending_new_target.is_none());
+    assert!(vm.pending_new_target_prototype.is_none());
+}
+
+#[test]
+fn regexp_constructor_uses_immutable_foreign_realm_intrinsics() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("GC hook should register");
+
+    assert_eq!(
+        vm.run(
+            r#"
+            var other = $262.createRealm().global;
+            var OtherRegExp = other.RegExp;
+            var OtherRegExpPrototype = OtherRegExp.prototype;
+            var originalTest = OtherRegExpPrototype.test;
+
+            OtherRegExp.prototype = null;
+            var foreignCall = OtherRegExp("call", "i");
+            var callUsesIntrinsic =
+              Object.getPrototypeOf(foreignCall) === OtherRegExpPrototype;
+
+            var C = new other.Function();
+            C.prototype = null;
+            var BoundNewTarget = C.bind(null);
+            var ProxyNewTarget = new Proxy(C, {});
+            other.eval(
+              "RegExp = function ReplacementRegExp() {};" +
+              "RegExp.prototype = { wrong: true };"
+            );
+            OtherRegExp = null;
+            OtherRegExpPrototype = null;
+            foreignCall = null;
+            forceGc();
+
+            var plain = Reflect.construct(RegExp, ["plain"], C);
+            var bound = Reflect.construct(RegExp, ["bound"], BoundNewTarget);
+            var proxied = Reflect.construct(RegExp, ["proxy"], ProxyNewTarget);
+            var prototype = Object.getPrototypeOf(plain);
+            [
+              callUsesIntrinsic,
+              prototype.wrong === undefined,
+              prototype.test === originalTest,
+              Object.getPrototypeOf(prototype) === other.Object.prototype,
+              Object.getPrototypeOf(bound) === prototype,
+              Object.getPrototypeOf(proxied) === prototype,
+              originalTest.call(plain, "plain"),
+              originalTest.call(bound, "bound"),
+              originalTest.call(proxied, "proxy")
+            ].join("|");
+            "#,
+        )
+        .expect("RegExp fallback should use immutable foreign Realm intrinsics"),
+        Value::String("true|true|true|true|true|true|true|true|true".into())
+    );
+}
+
+#[test]
+fn regexp_constructor_roots_intermediates_across_observable_gc() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("GC hook should register");
+    vm.register_fn(
+        "fillHeapWithGarbage",
+        |vm, _, _| {
+            vm.gc();
+            vm.set_max_heap_objects(Some(vm.heap.live_count() + 1));
+            let _garbage = vm.new_object()?;
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("heap-cap hook should register");
+    vm.register_fn(
+        "uncapHeap",
+        |vm, _, _| {
+            vm.set_max_heap_objects(None);
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("heap uncap hook should register");
+
+    let result = vm.run(
+        r#"
+        var events = [];
+        var pattern = {};
+        Object.defineProperty(pattern, Symbol.match, {
+          get: function () { events.push("match"); return true; }
+        });
+        Object.defineProperty(pattern, "source", {
+          get: function () {
+            events.push("source");
+            return { toString: function () {
+              events.push("source-string");
+              forceGc();
+              return "rooted";
+            } };
+          }
+        });
+        Object.defineProperty(pattern, "flags", {
+          get: function () {
+            events.push("flags");
+            forceGc();
+            return { toString: function () {
+              events.push("flags-string");
+              forceGc();
+              return "g";
+            } };
+          }
+        });
+        var NewTarget = (function () {}).bind(null);
+        Object.defineProperty(NewTarget, "prototype", {
+          get: function () {
+            events.push("prototype");
+            var prototype = Object.create(RegExp.prototype);
+            prototype.marker = 41;
+            forceGc();
+            return prototype;
+          },
+          configurable: true
+        });
+        var regexp = Reflect.construct(RegExp, [pattern], NewTarget);
+
+        var CapNewTarget = (function () {}).bind(null);
+        Object.defineProperty(CapNewTarget, "prototype", {
+          get: function () {
+            var prototype = Object.create(RegExp.prototype);
+            prototype.marker = 42;
+            fillHeapWithGarbage();
+            return prototype;
+          },
+          configurable: true
+        });
+        var capped = Reflect.construct(RegExp, ["capped"], CapNewTarget);
+        uncapHeap();
+        [
+          events.join(","),
+          regexp.source,
+          regexp.flags,
+          Object.getPrototypeOf(regexp).marker,
+          regexp.test("rooted"),
+          capped.source,
+          Object.getPrototypeOf(capped).marker
+        ].join("|");
+        "#,
+    );
+    vm.set_max_heap_objects(None);
+    assert_eq!(
+        result.expect("RegExp intermediates should survive re-entrant collection"),
+        Value::String(
+            "match,source,flags,prototype,source-string,flags-string|rooted|g|41|true|capped|42"
+                .into()
+        )
+    );
+    assert!(vm.pending_new_target.is_none());
+    assert!(vm.pending_new_target_prototype.is_none());
+}
+
+#[test]
+fn regexp_allocation_retries_gc_and_obeys_the_exact_heap_cap() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.gc();
+    let baseline_live = vm.heap.live_count();
+    let baseline_pins = vm.gc_pins.len();
+    for _ in 0..64 {
+        let _garbage = vm.new_object().expect("garbage object should allocate");
+    }
+    let limit = baseline_live + 1;
+    vm.set_max_heap_objects(Some(limit));
+    assert_eq!(
+        vm.run("new RegExp('exact').source;")
+            .expect("RegExp allocation should collect garbage and use one cell"),
+        Value::String("exact".into())
+    );
+    assert!(vm.heap.live_count() <= limit);
+
+    vm.set_max_heap_objects(None);
+    vm.run(
+        "var regexpCoercions = 0; var regexpPattern = { toString: function () { regexpCoercions += 1; return 'x'; } };",
+    )
+    .expect("saturated-order fixture should initialize");
+    vm.gc();
+    vm.set_max_heap_objects(Some(vm.heap.live_count()));
+    let error = vm
+        .run("new RegExp(regexpPattern);")
+        .expect_err("a saturated heap must reject RegExp allocation");
+    vm.set_max_heap_objects(None);
+
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_main_realm_range_error(&vm, error.as_ref());
+    assert_eq!(
+        vm.run("regexpCoercions;")
+            .expect("coercion counter should remain readable"),
+        Value::Number(0.0),
+        "RegExpAlloc must fail before RegExpInitialize coercion"
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert!(vm.pending_new_target.is_none());
+    assert!(vm.pending_new_target_prototype.is_none());
+}
+
+#[test]
+fn proxy_define_property_trap_survives_descriptor_allocation_gc() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "makeFreshTrap",
+        |vm, _, _| {
+            vm.set_max_heap_objects(None);
+            vm.gc();
+            let trap = vm.new_native_function(
+                "fresh defineProperty trap",
+                |vm, _args, _this| {
+                    vm.set_max_heap_objects(None);
+                    Ok(Value::Bool(true))
+                },
+                3,
+            )?;
+            let trap = Value::Object(trap);
+            let trap_pin = vm.pin(&trap);
+            vm.gc();
+            vm.set_max_heap_objects(Some(vm.heap.live_count() + 1));
+            let _garbage = vm.new_object()?;
+            vm.unpin(trap_pin);
+            Ok(trap)
+        },
+        0,
+    )
+    .expect("heap-cap hook should register");
+    let baseline_pins = vm.gc_pins.len();
+
+    let result = vm.run(
+        r#"
+        var calls = 0;
+        var target = {};
+        var handler = {
+          get defineProperty() {
+            calls += 1;
+            return makeFreshTrap();
+          }
+        };
+        var proxy = new Proxy(target, handler);
+        var assignmentCalls = 0;
+        var assignmentTarget = {};
+        var assignmentHandler = {
+          set: null,
+          getOwnPropertyDescriptor: function () { return undefined; },
+          get defineProperty() {
+            assignmentCalls += 1;
+            return makeFreshTrap();
+          }
+        };
+        var assignmentProxy = new Proxy(assignmentTarget, assignmentHandler);
+        Object.defineProperty(proxy, "x", {
+          value: 42,
+          writable: true,
+          enumerable: true,
+          configurable: true
+        });
+        var assignmentResult = Reflect.set(assignmentProxy, "y", 7);
+        [
+          calls,
+          "x" in target,
+          assignmentResult,
+          assignmentCalls,
+          "y" in assignmentTarget
+        ].join("|");
+        "#,
+    );
+    vm.set_max_heap_objects(None);
+    assert_eq!(
+        result.expect("fresh defineProperty trap should survive descriptor allocation GC"),
+        Value::String("1|false|true|1|false".into())
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+}
+
+#[test]
+fn proxy_descriptor_conversion_roots_get_results_across_gc() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("GC hook should register");
+    let baseline_pins = vm.gc_pins.len();
+
+    let result = vm.run(
+        r#"
+        var dataTarget = {};
+        Object.defineProperty(dataTarget, "x", {
+          value: 0,
+          writable: true,
+          configurable: true
+        });
+        var dataDescriptor = new Proxy({}, {
+          has: function (_, key) {
+            if (key === "writable") {
+              forceGc();
+              globalThis.dataReuse = { marker: 99 };
+            }
+            return key === "configurable" || key === "value" || key === "writable";
+          },
+          get: function (_, key) {
+            if (key === "configurable" || key === "writable") return true;
+            if (key === "value") return { marker: 41 };
+          }
+        });
+        var dataProxy = new Proxy(dataTarget, {
+          getOwnPropertyDescriptor: function () { return dataDescriptor; }
+        });
+        var dataValue = Object.getOwnPropertyDescriptor(dataProxy, "x").value;
+
+        var accessorTarget = {};
+        Object.defineProperty(accessorTarget, "x", {
+          get: function () { return 0; },
+          configurable: true
+        });
+        var accessorDescriptor = new Proxy({}, {
+          has: function (_, key) {
+            if (key === "set") {
+              forceGc();
+              globalThis.accessorReuse = function () { return 99; };
+            }
+            return key === "configurable" || key === "get" || key === "set";
+          },
+          get: function (_, key) {
+            if (key === "configurable") return true;
+            if (key === "get") return function () { return 42; };
+            if (key === "set") return undefined;
+          }
+        });
+        var accessorProxy = new Proxy(accessorTarget, {
+          getOwnPropertyDescriptor: function () { return accessorDescriptor; }
+        });
+        var accessor = Object.getOwnPropertyDescriptor(accessorProxy, "x").get;
+        [dataValue.marker, accessor()].join("|");
+        "#,
+    );
+
+    assert_eq!(
+        result.expect("descriptor Get results should survive later Proxy traps"),
+        Value::String("41|42".into())
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
 }
 
 #[test]

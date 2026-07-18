@@ -710,11 +710,27 @@ impl Vm {
             return Some(desc);
         }
         if key.as_str().is_some_and(|s| s == "length") {
-            let is_array_length = self.heap.with_obj(idx.0, |o| {
-                matches!(o, HeapObj::Array(a) if !a.is_arguments.load(std::sync::atomic::Ordering::Relaxed))
+            let array_length = self.heap.with_obj(idx.0, |o| {
+                let HeapObj::Array(array) = o else {
+                    return None;
+                };
+                if array
+                    .is_arguments
+                    .load(std::sync::atomic::Ordering::Relaxed)
+                {
+                    return None;
+                }
+                Some(
+                    array
+                        .items
+                        .lock()
+                        .len()
+                        .max(array.sparse_max.lock().unwrap_or(0)),
+                )
             });
-            if is_array_length {
-                let mut desc = crate::value::PropertyDescriptor::data(Value::Undefined);
+            if let Some(length) = array_length {
+                let mut desc = crate::value::PropertyDescriptor::data(Value::Number(length as f64));
+                desc.enumerable = false;
                 desc.configurable = false;
                 return Some(desc);
             }
@@ -807,37 +823,42 @@ impl Vm {
             });
             if let Some(result) = proxy_info {
                 let (target, handler) = result?;
-                let trap = self.get_property(&handler, "has")?;
-                if !trap.is_nullish() {
-                    let key_val = Self::property_key_to_value(key);
-                    let trap_result =
-                        self.call_function(&trap, &[target.clone(), key_val], Some(handler))?;
-                    let boolean_trap_result = self.to_boolean(&trap_result);
+                let proxy_pins = self.pin_many(&[target.clone(), handler.clone()]);
+                let result = (|| {
+                    let trap = self.get_property(&handler, "has")?;
+                    if trap.is_nullish() {
+                        return self.has_property_key_inner(&target, key, depth + 1);
+                    }
+                    let trap_pin = self.pin(&trap);
+                    let trap_result = self.call_function(
+                        &trap,
+                        &[target.clone(), Self::property_key_to_value(key)],
+                        Some(handler.clone()),
+                    );
+                    self.unpin(trap_pin);
+                    let boolean_trap_result = self.to_boolean(&trap_result?);
                     if !boolean_trap_result {
-                        if let Some(desc) =
-                            self.own_property_descriptor_for_proxy_invariant(&target, key)
-                        {
-                            if !desc.configurable {
+                        let target_desc =
+                            crate::builtins::own_property_descriptor_for_key_or_throw(
+                                self, &target, key,
+                            )?;
+                        if let Some(target_desc) = target_desc {
+                            if !target_desc.configurable {
                                 return Err(Error::type_err(
                                     "Proxy has trap cannot hide non-configurable property",
                                 ));
                             }
-                        }
-                        let target_extensible = match &target {
-                            Value::Object(target_idx) => {
-                                self.heap.with_obj(target_idx.0, |o| o.is_extensible())
+                            if !self.is_extensible(&target)? {
+                                return Err(Error::type_err(
+                                    "Proxy has trap cannot hide non-extensible target property",
+                                ));
                             }
-                            _ => true,
-                        };
-                        if !target_extensible && self.has_own_property_key_raw(&target, key) {
-                            return Err(Error::type_err(
-                                "Proxy has trap cannot hide non-extensible target property",
-                            ));
                         }
                     }
-                    return Ok(boolean_trap_result);
-                }
-                return self.has_property_key_inner(&target, key, depth + 1);
+                    Ok(boolean_trap_result)
+                })();
+                self.unpin_many(proxy_pins);
+                return result;
             }
             if let Some(has_index) = self.typed_array_integer_index_has_property(obj, key) {
                 return Ok(has_index);

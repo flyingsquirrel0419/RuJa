@@ -3546,7 +3546,453 @@ fn string_match_all_uses_regexp_iterator_semantics() {
         "#),
         Value::String(Arc::from("c:2"))
     );
+    assert_eq!(
+        run(r#"
+            var inputReads = 0;
+            var intrinsicReads = 0;
+            Object.defineProperty(RegExp.prototype, Symbol.match, {
+              get: function () { intrinsicReads += 1; return true; }
+            });
+            var input = {
+              get flags() { return ""; },
+              get [Symbol.match]() { inputReads += 1; return false; }
+            };
+            RegExp.prototype[Symbol.matchAll].call(input, "");
+            [inputReads, intrinsicReads].join("|");
+        "#),
+        Value::String(Arc::from("1|0"))
+    );
+    assert_eq!(
+        run(r#"
+            var receiver = {};
+            Object.defineProperty(receiver, "constructor", {
+              get: function () { throw "constructor"; }
+            });
+            Object.defineProperty(receiver, "flags", {
+              get: function () { throw "flags"; }
+            });
+            try { RegExp.prototype[Symbol.matchAll].call(receiver, ""); }
+            catch (error) { error; }
+        "#),
+        Value::String(Arc::from("constructor"))
+    );
+    assert_eq!(
+        run(r#"
+            var writes = [];
+            var calls = 0;
+            var matcher = {
+              exec: function () {
+                calls += 1;
+                return calls === 1 ? { 0: "" } : null;
+              }
+            };
+            Object.defineProperty(matcher, "lastIndex", {
+              get: function () { return 0; },
+              set: function (value) { writes.push(value); },
+              configurable: true
+            });
+            function Species() { return matcher; }
+            var regexp = /a/g;
+            regexp.lastIndex = 2;
+            regexp.constructor = {};
+            regexp.constructor[Symbol.species] = Species;
+            var iterator = regexp[Symbol.matchAll]("a");
+            var first = iterator.next().value[0];
+            [first, writes.join(",")].join("|");
+        "#),
+        Value::String(Arc::from("|2,1"))
+    );
+    assert_eq!(
+        run(r#"
+            var writes = [];
+            var matcher = new Proxy(
+              { exec: function () { return null; }, lastIndex: 0 },
+              { set: function (target, key, value) {
+                  if (key === "lastIndex") writes.push(value);
+                  return true;
+                } }
+            );
+            function Species() { return matcher; }
+            var regexp = /a/g;
+            regexp.lastIndex = 3;
+            regexp.constructor = {};
+            regexp.constructor[Symbol.species] = Species;
+            regexp[Symbol.matchAll]("a").next();
+            writes.join(",");
+        "#),
+        Value::String(Arc::from("3"))
+    );
+    assert_eq!(
+        run(r#"
+            var calls = 0;
+            var deep = {};
+            Object.defineProperty(deep, "lastIndex", {
+              set: function () { calls += 1; }
+            });
+            var near = Object.create(deep);
+            Object.defineProperty(near, "lastIndex", {
+              value: 0,
+              writable: true
+            });
+            var matcher = Object.create(near);
+            matcher.exec = function () { return null; };
+            function Species() { return matcher; }
+            var regexp = /a/g;
+            regexp.lastIndex = 5;
+            regexp.constructor = { [Symbol.species]: Species };
+            regexp[Symbol.matchAll]("a");
+            [
+              calls,
+              matcher.hasOwnProperty("lastIndex"),
+              matcher.lastIndex
+            ].join("|");
+        "#),
+        Value::String(Arc::from("0|true|5"))
+    );
+    assert_eq!(
+        run(r#"
+            var defineCalls = 0;
+            var matcher = new Proxy(
+              { exec: function () { return null; }, lastIndex: 0 },
+              {
+                set: null,
+                defineProperty: function (target, key, descriptor) {
+                  defineCalls += 1;
+                  return Reflect.defineProperty(target, key, descriptor);
+                }
+              }
+            );
+            function Species() { return matcher; }
+            var regexp = /a/g;
+            regexp.lastIndex = 4;
+            regexp.constructor = { [Symbol.species]: Species };
+            regexp[Symbol.matchAll]("a");
+            [matcher.lastIndex, defineCalls].join("|");
+        "#),
+        Value::String(Arc::from("4|1"))
+    );
+    assert_eq!(
+        run(r#"
+            var descriptorKeys;
+            var target = { exec: function () { return null; }, lastIndex: 0 };
+            var matcher = new Proxy(target, {
+              set: null,
+              defineProperty: function (target, key, descriptor) {
+                descriptorKeys = Object.keys(descriptor).join(",");
+                return Reflect.defineProperty(target, key, descriptor);
+              }
+            });
+            function Species() { return matcher; }
+            var regexp = /a/g;
+            regexp.lastIndex = 7;
+            regexp.constructor = { [Symbol.species]: Species };
+            regexp[Symbol.matchAll]("a");
+            [descriptorKeys, target.lastIndex].join("|");
+        "#),
+        Value::String(Arc::from("value|7"))
+    );
+    assert_eq!(
+        run(r#"
+            var target = { exec: function () { return null; }, lastIndex: 0 };
+            var proxy = new Proxy(target, {
+              set: null,
+              getOwnPropertyDescriptor: function () {
+                return {
+                  value: 0,
+                  writable: true,
+                  enumerable: false,
+                  configurable: true
+                };
+              },
+              defineProperty: null
+            });
+            function Species() { return proxy; }
+            var regexp = /a/g;
+            regexp.lastIndex = 4;
+            regexp.constructor = { [Symbol.species]: Species };
+            regexp[Symbol.matchAll]("");
+            var descriptor = Object.getOwnPropertyDescriptor(target, "lastIndex");
+            [
+              descriptor.value,
+              descriptor.writable,
+              descriptor.enumerable,
+              descriptor.configurable
+            ].join("|");
+        "#),
+        Value::String(Arc::from("4|true|true|true"))
+    );
+    assert_eq!(
+        run(r#"
+            var target = { exec: function () { return null; }, lastIndex: 0 };
+            var reported = Object.create({ writable: true, configurable: true });
+            reported.value = 0;
+            var proxy = new Proxy(target, {
+              set: null,
+              getOwnPropertyDescriptor: function () { return reported; }
+            });
+            function Species() { return proxy; }
+            var regexp = /a/g;
+            regexp.lastIndex = 4;
+            regexp.constructor = { [Symbol.species]: Species };
+            var outcome = "ok";
+            try { regexp[Symbol.matchAll](""); }
+            catch (error) { outcome = "TypeError"; }
+            outcome + "|" + target.lastIndex;
+        "#),
+        Value::String(Arc::from("ok|4"))
+    );
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var seen;
+            var target = { exec: function () { return null; }, lastIndex: 0 };
+            var proxy = new Proxy(target, {
+              set: null,
+              defineProperty: function (target, key, descriptor) {
+                seen = Object.getPrototypeOf(descriptor);
+                return Reflect.defineProperty(target, key, descriptor);
+              }
+            });
+            function Species() { return proxy; }
+            var regexp = other.eval("/a/g");
+            regexp.constructor = { [Symbol.species]: Species };
+            other.RegExp.prototype[Symbol.matchAll].call(regexp, "");
+            [
+              seen === other.Object.prototype,
+              seen === Object.prototype
+            ].join("|");
+        "#),
+        Value::String(Arc::from("true|false"))
+    );
+    assert_eq!(
+        run(r#"
+            var target = { exec: function () { return null; } };
+            Object.defineProperty(target, "lastIndex", {
+              value: 0,
+              writable: false,
+              configurable: false
+            });
+            var matcher = new Proxy(target, {
+              set: function () { return true; }
+            });
+            function Species() { return matcher; }
+            var regexp = /a/g;
+            regexp.lastIndex = 4;
+            regexp.constructor = { [Symbol.species]: Species };
+            try { regexp[Symbol.matchAll](""); "NO_THROW"; }
+            catch (error) { error instanceof TypeError ? "TypeError" : "other"; }
+        "#),
+        Value::String(Arc::from("TypeError"))
+    );
+    assert_eq!(
+        run(r#"
+            var dataTarget = { exec: function () { return null; } };
+            Object.defineProperty(dataTarget, "lastIndex", {
+              value: 4,
+              writable: false,
+              configurable: false
+            });
+            var dataMatcher = new Proxy(dataTarget, {
+              set: function () { return true; }
+            });
+            function DataSpecies() { return dataMatcher; }
+            var dataRegExp = /a/g;
+            dataRegExp.lastIndex = 4;
+            dataRegExp.constructor = { [Symbol.species]: DataSpecies };
+            var sameValueAllowed = true;
+            try { dataRegExp[Symbol.matchAll](""); }
+            catch (error) { sameValueAllowed = false; }
+
+            var setterCalls = 0;
+            var accessorTarget = { exec: function () { return null; } };
+            Object.defineProperty(accessorTarget, "lastIndex", {
+              get: function () { return 0; },
+              set: function () { setterCalls += 1; },
+              configurable: false
+            });
+            var accessorMatcher = new Proxy(accessorTarget, {
+              set: function () { return true; }
+            });
+            function AccessorSpecies() { return accessorMatcher; }
+            var accessorRegExp = /a/g;
+            accessorRegExp.constructor = { [Symbol.species]: AccessorSpecies };
+            var setterAllowed = true;
+            try { accessorRegExp[Symbol.matchAll](""); }
+            catch (error) { setterAllowed = false; }
+            [sameValueAllowed, setterAllowed, setterCalls].join("|");
+        "#),
+        Value::String(Arc::from("true|true|0"))
+    );
+    assert_eq!(
+        run(r#"
+            var calls = 0;
+            var target = { exec: function () { return null; } };
+            Object.preventExtensions(target);
+            var matcher = new Proxy(target, {
+              set: null,
+              defineProperty: function () { calls += 1; return true; }
+            });
+            function Species() { return matcher; }
+            var regexp = /a/g;
+            regexp.constructor = { [Symbol.species]: Species };
+            var outcome;
+            try { regexp[Symbol.matchAll](""); outcome = "NO_THROW"; }
+            catch (error) {
+              outcome = error instanceof TypeError ? "TypeError" : "other";
+            }
+            [outcome, calls, "lastIndex" in target].join("|");
+        "#),
+        Value::String(Arc::from("TypeError|1|false"))
+    );
+    assert_eq!(
+        run(r#"
+            var calls = [], matcher;
+            var prototype = new Proxy({}, {
+              set: function (target, key, value, receiver) {
+                calls.push(key + ":" + value + ":" + (receiver === matcher));
+                return true;
+              }
+            });
+            matcher = Object.create(prototype);
+            Object.defineProperty(matcher, "exec", {
+              value: function () { return null; }
+            });
+            function Species() { return matcher; }
+            var regexp = /a/g;
+            regexp.lastIndex = 5;
+            regexp.constructor = { [Symbol.species]: Species };
+            regexp[Symbol.matchAll]("a");
+            [
+              calls.join(","),
+              matcher.hasOwnProperty("lastIndex"),
+              matcher.lastIndex
+            ].join("|");
+        "#),
+        Value::String(Arc::from("lastIndex:5:true|false|"))
+    );
+    assert_eq!(
+        run(r#"
+            var defineCalls = 0;
+            var target = { exec: function () { return null; }, lastIndex: 0 };
+            var matcher = new Proxy(target, {
+              set: null,
+              getOwnPropertyDescriptor: function (target, key) {
+                if (key === "lastIndex") {
+                  return { get: function () { return 0; }, configurable: true };
+                }
+                return Reflect.getOwnPropertyDescriptor(target, key);
+              },
+              defineProperty: function () { defineCalls += 1; return true; }
+            });
+            function Species() { return matcher; }
+            var regexp = /a/g;
+            regexp.lastIndex = 4;
+            regexp.constructor = { [Symbol.species]: Species };
+            var outcome;
+            try { regexp[Symbol.matchAll]("a"); outcome = "NO_THROW"; }
+            catch (error) {
+              outcome = error instanceof TypeError ? "TypeError" : "other";
+            }
+            outcome + "|" + defineCalls;
+        "#),
+        Value::String(Arc::from("TypeError|0"))
+    );
+    assert_eq!(
+        run(r#"
+            var IntrinsicRegExp = RegExp;
+            var regexp = /a/g;
+            regexp.constructor = undefined;
+            RegExp = null;
+            IntrinsicRegExp.prototype[Symbol.matchAll]
+              .call(regexp, "a").next().value[0];
+        "#),
+        Value::String(Arc::from("a"))
+    );
     assert!(run_err(r#""abc".matchAll(/./)"#).contains("TypeError"));
+}
+
+#[test]
+fn regexp_match_all_roots_species_values_and_uses_foreign_realm_intrinsics() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+
+    assert_eq!(
+        vm.run(
+            r#"
+            var other = $262.createRealm().global;
+            var matchAll = other.RegExp.prototype[Symbol.matchAll];
+            var regexp = other.eval("/a/g");
+            regexp.constructor = undefined;
+            other.RegExp.prototype.constructor = null;
+            other.RegExp = null;
+            forceGc();
+            var mainIterator = /a/g[Symbol.matchAll]("a");
+            var foreignIterator = matchAll.call(regexp, "a");
+            var foreignStep = foreignIterator.next();
+            var foreignDefault = foreignStep.value[0];
+
+            var speciesMatcher = {
+              exec: function () { return null; },
+              lastIndex: 0
+            };
+            var speciesReceiver = {
+              lastIndex: 0,
+              get flags() {
+                forceGc();
+                return "g";
+              }
+            };
+            speciesReceiver.constructor = {};
+            Object.defineProperty(speciesReceiver.constructor, Symbol.species, {
+              get: function () {
+                return function () { return speciesMatcher; };
+              }
+            });
+            var rootedSpecies = RegExp.prototype[Symbol.matchAll]
+              .call(speciesReceiver, "").next().done;
+            [
+              foreignDefault,
+              rootedSpecies,
+              Object.getPrototypeOf(mainIterator) !==
+                Object.getPrototypeOf(foreignIterator),
+              Object.getPrototypeOf(foreignStep) === other.Object.prototype
+            ].join("|");
+            "#,
+        )
+        .expect("RegExp @@matchAll roots and Realm defaults should survive GC"),
+        Value::String(Arc::from("a|true|true|true"))
+    );
+    assert_eq!(
+        vm.run(
+            r#"
+            var calls = 0;
+            var matcher = {
+              exec: function () {
+                return { 0: "", marker: 42, id: ++calls };
+              }
+            };
+            Object.defineProperty(matcher, "lastIndex", {
+              get: function () { return 0; },
+              set: function () { if (calls) forceGc(); }
+            });
+            function Species() { return matcher; }
+            var regexp = /a/g;
+            regexp.constructor = { [Symbol.species]: Species };
+            var step = regexp[Symbol.matchAll]("a").next();
+            [step.value.marker, step.value.id, step.value[0], step.done].join("|");
+            "#,
+        )
+        .expect("RegExp iterator result should survive observable GC"),
+        Value::String(Arc::from("42|1||false"))
+    );
 }
 
 #[test]
@@ -3829,7 +4275,7 @@ fn array_subclass_instances_use_new_target_prototype() {
 }
 
 #[test]
-fn internal_native_constructors_preserve_eager_lookup_and_forwarding() {
+fn native_constructors_preserve_regexp_allocation_order_and_forwarding() {
     assert_eq!(
         run(r#"
             var log = [];
@@ -14009,6 +14455,42 @@ fn foreign_realm_regexp_literals_survive_native_reentry() {
 }
 
 #[test]
+fn regexp_create_uses_raw_pattern_and_the_immutable_intrinsic() {
+    assert_eq!(
+        run(r#"
+            var regexp = /a/;
+            regexp[Symbol.match] = undefined;
+            var rawPattern = "a".match(regexp) === null;
+
+            var originalRegExp = RegExp;
+            var originalPrototype = RegExp.prototype;
+            var originalMatch = originalPrototype[Symbol.match];
+            var observed;
+            originalPrototype[Symbol.match] = function (value) {
+              observed = this;
+              return originalMatch.call(this, value);
+            };
+            globalThis.RegExp = null;
+            var result = "xa".match("a");
+            var prototypeSource = Object.getOwnPropertyDescriptor(
+              originalPrototype, "source"
+            ).get.call(originalPrototype);
+            var prototypeTag = Object.prototype.toString.call(originalPrototype);
+            [
+              rawPattern,
+              result[0],
+              observed.source,
+              Object.getPrototypeOf(observed) === originalPrototype,
+              observed.constructor === originalRegExp,
+              prototypeSource,
+              prototypeTag
+            ].join("|");
+            "#,),
+        Value::String(Arc::from("true|a|a|true|true|(?:)|[object Object]"))
+    );
+}
+
+#[test]
 fn regex_exec_captures() {
     let r = run("/(\\w+)@(\\w+)/.exec('user@host');");
     assert!(matches!(r, Value::Object(_)));
@@ -14069,8 +14551,8 @@ fn regexp_exec_result_shape_and_last_index_semantics() {
     assert_eq!(
         run(r#"var r = /b/g;
                r[Symbol.match] = undefined;
-               "abcbbc".match(r).join(",");"#),
-        Value::String(Arc::from("b,b,b"))
+               "abcbbc".match(r) === null;"#),
+        Value::Bool(true)
     );
     assert_eq!(
         run(r#"var r = /b/g;

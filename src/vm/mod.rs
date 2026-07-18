@@ -211,9 +211,13 @@ pub struct Vm {
     /// Realm global environment index -> immutable, preallocated RangeError
     /// used only when the strict heap cap leaves no cell for a fresh error.
     pub(crate) realm_heap_limit_errors: HashMap<usize, Value>,
-    /// Realm global environment index -> original `%RegExp.prototype%`.
-    /// RegExp literals must not consult a mutable `RegExp` binding.
+    /// Realm global environment index -> original `%RegExp%` and
+    /// `%RegExp.prototype%`. RegExp creation and species defaults must not
+    /// consult a mutable `RegExp` binding.
+    pub(crate) realm_regexp_constructors: HashMap<usize, Value>,
     pub(crate) realm_regexp_prototypes: HashMap<usize, Value>,
+    /// Realm global environment index -> `%RegExpStringIteratorPrototype%`.
+    pub(crate) realm_regexp_string_iterator_prototypes: HashMap<usize, Value>,
     /// Realm global environment index -> that Realm's original intrinsic
     /// `%ArrayBuffer.prototype%` object. Internal buffer allocation must not
     /// use the main Realm prototype or consult a mutable global binding.
@@ -669,7 +673,9 @@ impl Vm {
             realm_iterator_helper_prototypes: HashMap::new(),
             realm_error_prototypes: HashMap::new(),
             realm_heap_limit_errors: HashMap::new(),
+            realm_regexp_constructors: HashMap::new(),
             realm_regexp_prototypes: HashMap::new(),
+            realm_regexp_string_iterator_prototypes: HashMap::new(),
             realm_array_buffer_prototypes: HashMap::new(),
             realm_typed_array_constructors: HashMap::new(),
             module_records: HashMap::new(),
@@ -2082,7 +2088,9 @@ impl Vm {
         self.realm_error_prototypes
             .retain(|(owner, _), _| *owner != realm);
         self.realm_heap_limit_errors.remove(&realm);
+        self.realm_regexp_constructors.remove(&realm);
         self.realm_regexp_prototypes.remove(&realm);
+        self.realm_regexp_string_iterator_prototypes.remove(&realm);
         self.realm_array_buffer_prototypes.remove(&realm);
         self.realm_typed_array_constructors
             .retain(|(owner, _), _| *owner != realm);
@@ -2426,6 +2434,31 @@ impl Vm {
 
     pub(crate) fn current_realm_date_prototype(&self) -> Value {
         self.date_prototype_for_env(self.current_realm_global_env())
+    }
+
+    pub(crate) fn regexp_prototype_for_env(&self, env: GcIdx) -> Value {
+        let realm = crate::environment::global_env_root(&self.heap, env);
+        self.realm_regexp_prototypes
+            .get(&realm.0)
+            .cloned()
+            .unwrap_or_else(|| self.regexp_proto.clone())
+    }
+
+    pub(crate) fn current_realm_regexp_prototype(&self) -> Value {
+        self.regexp_prototype_for_env(self.current_realm_global_env())
+    }
+
+    pub(crate) fn regexp_constructor_for_env(&self, env: GcIdx) -> Value {
+        let realm = crate::environment::global_env_root(&self.heap, env);
+        self.realm_regexp_constructors
+            .get(&realm.0)
+            .cloned()
+            .or_else(|| self.realm_regexp_constructors.get(&self.global.0).cloned())
+            .unwrap_or(Value::Undefined)
+    }
+
+    pub(crate) fn current_realm_regexp_constructor(&self) -> Value {
+        self.regexp_constructor_for_env(self.current_realm_global_env())
     }
 
     pub(crate) fn promise_constructor_for_env(&self, env: GcIdx) -> Value {

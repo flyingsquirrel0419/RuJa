@@ -1051,6 +1051,30 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
             "built-ins/Date/proto-from-ctor-realm-two.js": {
                 "cross-realm", "Reflect",
             },
+            "built-ins/RegExp/is-a-constructor.js": {
+                "Reflect.construct",
+            },
+            "built-ins/RegExp/proto-from-ctor-realm.js": {
+                "cross-realm", "Reflect",
+            },
+            "built-ins/RegExp/from-regexp-like-flag-override.js": {
+                "Symbol", "Symbol.match",
+            },
+            "built-ins/RegExp/from-regexp-like-get-ctor-err.js": {
+                "Symbol", "Symbol.match",
+            },
+            "built-ins/RegExp/from-regexp-like-get-flags-err.js": {
+                "Symbol", "Symbol.match",
+            },
+            "built-ins/RegExp/from-regexp-like-get-source-err.js": {
+                "Symbol", "Symbol.match",
+            },
+            "built-ins/RegExp/from-regexp-like-short-circuit.js": {
+                "Symbol", "Symbol.match",
+            },
+            "built-ins/RegExp/from-regexp-like.js": {
+                "Symbol", "Symbol.match",
+            },
             "built-ins/Function/is-a-constructor.js": {"Reflect.construct"},
             "built-ins/Function/proto-from-ctor-realm-prototype.js": {
                 "cross-realm", "Reflect",

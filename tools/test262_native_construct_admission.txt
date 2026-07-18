@@ -19,6 +19,14 @@ built-ins/Date/subclassing.js
 built-ins/Date/proto-from-ctor-realm-zero.js
 built-ins/Date/proto-from-ctor-realm-one.js
 built-ins/Date/proto-from-ctor-realm-two.js
+built-ins/RegExp/is-a-constructor.js
+built-ins/RegExp/proto-from-ctor-realm.js
+built-ins/RegExp/from-regexp-like-flag-override.js
+built-ins/RegExp/from-regexp-like-get-ctor-err.js
+built-ins/RegExp/from-regexp-like-get-flags-err.js
+built-ins/RegExp/from-regexp-like-get-source-err.js
+built-ins/RegExp/from-regexp-like-short-circuit.js
+built-ins/RegExp/from-regexp-like.js
 built-ins/Function/is-a-constructor.js
 built-ins/Function/proto-from-ctor-realm-prototype.js
 built-ins/Function/proto-from-ctor-realm.js

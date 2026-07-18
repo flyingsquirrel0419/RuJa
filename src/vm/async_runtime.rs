@@ -986,6 +986,13 @@ impl Vm {
                 .cloned()
                 .unwrap_or(fallback));
         }
+        if intrinsic == "RegExp" {
+            return Ok(self
+                .realm_regexp_prototypes
+                .get(&realm.0)
+                .cloned()
+                .unwrap_or(fallback));
+        }
         if intrinsic == "Promise" {
             return Ok(self
                 .realm_promise_prototypes

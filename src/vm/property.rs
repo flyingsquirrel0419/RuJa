@@ -186,6 +186,65 @@ impl Vm {
         Some(desc)
     }
 
+    pub(crate) fn sync_array_length_descriptor_after_index(&mut self, obj_idx: usize) {
+        let updated = self.heap.with_obj(obj_idx, |object| {
+            let HeapObj::Array(array) = object else {
+                return false;
+            };
+            if array
+                .is_arguments
+                .load(std::sync::atomic::Ordering::Relaxed)
+            {
+                return false;
+            }
+            let length = array
+                .items
+                .lock()
+                .len()
+                .max(array.sparse_max.lock().unwrap_or(0));
+            if let Some(descriptor) = array
+                .props
+                .lock()
+                .get_mut(&crate::value::PropertyKey::from("length"))
+            {
+                descriptor.value = Value::Number(length as f64);
+            }
+            true
+        });
+        if updated {
+            self.ic_invalidate(obj_idx, "length");
+        }
+    }
+
+    pub(crate) fn array_index_blocked_by_non_writable_length(
+        &self,
+        obj_idx: usize,
+        index: usize,
+    ) -> bool {
+        self.heap.with_obj(obj_idx, |object| {
+            let HeapObj::Array(array) = object else {
+                return false;
+            };
+            if array
+                .is_arguments
+                .load(std::sync::atomic::Ordering::Relaxed)
+            {
+                return false;
+            }
+            let old_length = array
+                .items
+                .lock()
+                .len()
+                .max(array.sparse_max.lock().unwrap_or(0));
+            let length_writable = array
+                .props
+                .lock()
+                .get(&crate::value::PropertyKey::from("length"))
+                .is_none_or(|descriptor| descriptor.writable);
+            index >= old_length && !length_writable
+        })
+    }
+
     fn push_value_roots(roots: &mut Vec<usize>, value: &Value) {
         match value {
             Value::Object(idx) => roots.push(idx.0),
@@ -714,40 +773,85 @@ impl Vm {
             });
             if let Some(result) = proxy_info {
                 let (target, handler) = result?;
-                let trap = self.get_property(&handler, "defineProperty")?;
-                if trap.is_undefined() || trap.is_null() {
-                    return self.define_own_property(&target, key, desc);
-                }
-                let key_value = match &key {
-                    crate::value::PropertyKey::Str(s) => Value::String(s.clone()),
-                    crate::value::PropertyKey::Symbol(id) => Value::Symbol(*id),
-                };
-                let desc_obj = self.property_descriptor_object(&desc)?;
-                let trap_result = self.call_function(
-                    &trap,
-                    &[target.clone(), key_value, desc_obj],
-                    Some(handler),
-                )?;
-                if !self.to_boolean(&trap_result) {
-                    return Ok(false);
-                }
-                let target_desc =
-                    crate::builtins::own_property_descriptor_for_key_or_throw(self, &target, &key)?;
-                let extensible = self.is_extensible(&target)?;
-                if !compatible_complete_descriptor(target_desc.as_ref(), &desc, extensible)
-                    || target_desc.as_ref().is_some_and(|target_desc| {
-                        (!desc.configurable && target_desc.configurable)
-                            || (!target_desc.configurable
-                                && !target_desc.is_accessor
-                                && target_desc.writable
-                                && !desc.writable)
-                    })
-                {
-                    return Err(Error::type_err(
-                        "Proxy defineProperty trap violated the target invariant",
-                    ));
-                }
-                return Ok(true);
+                let mut roots = vec![target.clone(), handler.clone(), desc.value.clone()];
+                roots.extend(desc.get.iter().cloned());
+                roots.extend(desc.set.iter().cloned());
+                let pin_count = self.pin_many(&roots);
+                let result = (|| {
+                    let trap = self.get_property(&handler, "defineProperty")?;
+                    if trap.is_undefined() || trap.is_null() {
+                        return self.define_own_property(&target, key.clone(), desc.clone());
+                    }
+                    let trap_pin = self.pin(&trap);
+                    let result = (|| {
+                        let key_value = match &key {
+                            crate::value::PropertyKey::Str(s) => Value::String(s.clone()),
+                            crate::value::PropertyKey::Symbol(id) => Value::Symbol(*id),
+                        };
+                        let desc_obj = self.property_descriptor_object(&desc)?;
+                        let trap_result = self.call_function(
+                            &trap,
+                            &[target.clone(), key_value, desc_obj],
+                            Some(handler.clone()),
+                        )?;
+                        if !self.to_boolean(&trap_result) {
+                            return Ok(false);
+                        }
+                        let target_desc =
+                            crate::builtins::own_property_descriptor_for_key_or_throw(
+                                self, &target, &key,
+                            )?;
+                        let mut target_desc_roots = Vec::new();
+                        if let Some(target_desc) = target_desc.as_ref() {
+                            target_desc_roots.push(target_desc.value.clone());
+                            target_desc_roots.extend(target_desc.get.iter().cloned());
+                            target_desc_roots.extend(target_desc.set.iter().cloned());
+                        }
+                        let target_desc_pins = self.pin_many(&target_desc_roots);
+                        let validation = (|| {
+                            let extensible = self.is_extensible(&target)?;
+                            if !compatible_complete_descriptor(
+                                target_desc.as_ref(),
+                                &desc,
+                                extensible,
+                            ) || target_desc.as_ref().is_some_and(|target_desc| {
+                                (!desc.configurable && target_desc.configurable)
+                                    || (!target_desc.configurable
+                                        && !target_desc.is_accessor
+                                        && target_desc.writable
+                                        && !desc.writable)
+                            }) {
+                                return Err(Error::type_err(
+                                    "Proxy defineProperty trap violated the target invariant",
+                                ));
+                            }
+                            Ok(true)
+                        })();
+                        self.unpin_many(target_desc_pins);
+                        validation
+                    })();
+                    self.unpin(trap_pin);
+                    result
+                })();
+                self.unpin_many(pin_count);
+                return result;
+            }
+            let is_array_length = key.as_str() == Some("length")
+                && self.heap.with_obj(idx.0, |object| {
+                    matches!(object, HeapObj::Array(array) if !array.is_arguments.load(std::sync::atomic::Ordering::Relaxed))
+                });
+            if is_array_length {
+                return self.define_array_length_property(
+                    idx.0,
+                    (!desc.is_accessor).then(|| desc.value.clone()),
+                    !desc.is_accessor,
+                    desc.writable,
+                    true,
+                    desc.enumerable,
+                    true,
+                    desc.configurable,
+                    desc.is_accessor,
+                );
             }
             let is_namespace = self
                 .heap
@@ -763,6 +867,12 @@ impl Vm {
                 });
                 return Ok(compatible);
             }
+            let array_index = key.as_str().and_then(crate::value::parse_array_index);
+            if array_index
+                .is_some_and(|index| self.array_index_blocked_by_non_writable_length(idx.0, index))
+            {
+                return Ok(false);
+            }
             let current = self.own_property_descriptor_for_proxy_invariant(obj, &key);
             let extensible = self.heap.with_obj(idx.0, |o| o.is_extensible());
             if !compatible_complete_descriptor(current.as_ref(), &desc, extensible) {
@@ -770,7 +880,7 @@ impl Vm {
             }
             self.heap.with_obj(idx.0, |o| {
                 if let HeapObj::Array(a) = o {
-                    if let Some(index) = key.as_str().and_then(crate::value::parse_array_index) {
+                    if let Some(index) = array_index {
                         if !desc.is_accessor && index < crate::value::MAX_DENSE_ARRAY_LEN {
                             let mut items = a.items.lock();
                             let mut present = a.present.lock();
@@ -783,8 +893,12 @@ impl Vm {
                                 present.resize(index + 1, false);
                             }
                             present[index] = true;
-                            *a.sparse_max.lock() = None;
-                        } else if index >= crate::value::MAX_DENSE_ARRAY_LEN {
+                            let dense_length = items.len();
+                            let mut sparse_max = a.sparse_max.lock();
+                            if sparse_max.is_some_and(|sparse| sparse <= dense_length) {
+                                *sparse_max = None;
+                            }
+                        } else {
                             let mut sparse_max = a.sparse_max.lock();
                             if sparse_max.is_none_or(|current| index >= current) {
                                 *sparse_max = Some(index + 1);
@@ -794,6 +908,9 @@ impl Vm {
                 }
                 o.props().lock().insert(key, desc);
             });
+            if array_index.is_some() {
+                self.sync_array_length_descriptor_after_index(idx.0);
+            }
             Ok(true)
         } else {
             Err(Error::type_err(
@@ -806,7 +923,7 @@ impl Vm {
         &mut self,
         desc: &crate::value::PropertyDescriptor,
     ) -> error::Result<Value> {
-        let desc_idx = self.new_object()?;
+        let desc_idx = self.new_object_in_current_realm()?;
         let desc_obj = Value::Object(desc_idx);
         self.heap.with_obj(desc_idx.0, |o| {
             let props = o.props();
@@ -1008,46 +1125,15 @@ impl Vm {
                 let is_global_this = self.heap.with_obj(idx.0, |o| {
                     matches!(o, HeapObj::Object(od) if od.class_name.as_deref() == Some("global"))
                 });
-                // Proxy trap: if this object is a Proxy, call handler.set.
-                let proxy_info = self.heap.with_obj(idx.0, |o| {
-                    if let crate::value::HeapObj::Proxy(p) = o {
-                        if *p.revoked.lock() {
-                            return Some(Err(crate::error::Error::type_err(
-                                "Cannot perform 'set' on a proxy that has been revoked".to_string(),
-                            )));
-                        }
-                        Some(Ok((p.target.clone(), p.handler.clone())))
-                    } else {
-                        None
+                let is_proxy = self
+                    .heap
+                    .with_obj(idx.0, |object| matches!(object, HeapObj::Proxy(_)));
+                if is_proxy {
+                    let success = self.try_set_property_with_receiver(obj, key, value, obj)?;
+                    if !success && strict {
+                        return Err(Error::type_err("Proxy set operation returned false"));
                     }
-                });
-                if let Some(result) = proxy_info {
-                    match result {
-                        Err(e) => return Err(e),
-                        Ok((target, handler)) => {
-                            let key_val = Value::String(Arc::from(key));
-                            let trap = self.get_property(&handler, "set")?;
-                            if !trap.is_undefined() {
-                                let receiver = obj.clone();
-                                let trap_result = self.call_function(
-                                    &trap,
-                                    &[target, key_val, value, receiver],
-                                    Some(handler),
-                                )?;
-                                if !self.to_boolean(&trap_result) && strict {
-                                    return Err(Error::type_err("Proxy set trap returned false"));
-                                }
-                                return Ok(());
-                            }
-                            return self.set_property_impl(
-                                &target,
-                                key,
-                                value,
-                                route_global_this,
-                                force_strict,
-                            );
-                        }
-                    }
+                    return Ok(());
                 }
                 let is_namespace = self
                     .heap
@@ -1088,7 +1174,27 @@ impl Vm {
                         }
                         return Ok(());
                     }
-                    return self.set_array_length(idx.0, value);
+                    let length_writable = self.heap.with_obj(idx.0, |object| {
+                        let HeapObj::Array(array) = object else {
+                            return false;
+                        };
+                        array
+                            .props
+                            .lock()
+                            .get(&crate::value::PropertyKey::from("length"))
+                            .is_none_or(|descriptor| descriptor.writable)
+                    });
+                    if !length_writable {
+                        if strict {
+                            return Err(Error::type_err("Cannot assign to read only array length"));
+                        }
+                        return Ok(());
+                    }
+                    let success = self.try_set_array_length(idx.0, value)?;
+                    if !success && strict {
+                        return Err(Error::type_err("Cannot assign to read only array length"));
+                    }
+                    return Ok(());
                 }
                 let array_index = self.heap.with_obj(idx.0, |o| {
                     if matches!(o, HeapObj::Array(_)) {
@@ -1098,6 +1204,14 @@ impl Vm {
                     }
                 });
                 if let Some(i) = array_index {
+                    if self.array_index_blocked_by_non_writable_length(idx.0, i) {
+                        if strict {
+                            return Err(Error::type_err(
+                                "Cannot define Array index with non-writable length",
+                            ));
+                        }
+                        return Ok(());
+                    }
                     let pkey = crate::value::PropertyKey::from(key);
                     let own_desc = self.heap.with_obj(idx.0, |o| {
                         if let HeapObj::Array(a) = o {
@@ -1213,6 +1327,7 @@ impl Vm {
                         crate::environment::set(&self.heap, env, &name, value.clone());
                     }
                     self.set_array_index(idx.0, i, value)?;
+                    self.sync_array_length_descriptor_after_index(idx.0);
                     return Ok(());
                 }
 
@@ -1286,88 +1401,21 @@ impl Vm {
                     return Ok(());
                 }
 
-                // 2. Look for an accessor `set` up the prototype chain.
-                // find_setter returns:
-                //   Some(Some(setter)) — accessor with setter: call it.
-                //   Some(None)          — accessor without setter: throw in strict.
-                //   None               — no accessor found: proceed to data.
-                match self.find_setter(*idx, &pkey) {
-                    Some(Some(setter)) => {
-                        self.call_function(
-                            &setter,
-                            std::slice::from_ref(&value),
-                            Some(obj.clone()),
-                        )?;
-                        return Ok(());
-                    }
-                    Some(None) => {
-                        // Accessor property with no setter.
-                        if strict {
-                            return Err(Error::type_err(format!(
-                                "Cannot set property '{}' which has only a getter",
-                                key
-                            )));
-                        }
-                        return Ok(());
-                    }
-                    None => {} // No accessor found; continue to data property checks.
+                let success = self.ordinary_set_with_receiver(*idx, &pkey, value, obj)?;
+                if !success && strict {
+                    return Err(Error::type_err(format!(
+                        "Cannot assign to read only property '{}' of object",
+                        key
+                    )));
                 }
-
-                // 3. A writable inherited data property permits creating an own
-                // property on the receiver; a non-writable one blocks assignment.
-                if self.has_non_writable_data_property_in_proto(*idx, &pkey) {
-                    if strict {
-                        return Err(Error::type_err(format!(
-                            "Cannot assign to read only property '{}' of object",
-                            key
-                        )));
-                    }
-                    return Ok(());
+                if success {
+                    self.mirror_global_property_to_binding(
+                        *idx,
+                        key,
+                        route_global_this,
+                        is_global_this,
+                    );
                 }
-
-                if let Some(success) =
-                    self.set_typed_array_numeric_property_in_proto(*idx, key, &value)?
-                {
-                    if !success && strict {
-                        return Err(Error::type_err(format!(
-                            "Cannot assign to read only property '{}' of object",
-                            key
-                        )));
-                    }
-                    return Ok(());
-                }
-
-                // 4. Define a new own writable data property.
-                // Check extensibility: adding a new property to a
-                // non-extensible object throws TypeError in strict mode.
-                let is_extensible = self.heap.with_obj(idx.0, |o| o.is_extensible());
-                let has_own = self
-                    .heap
-                    .with_obj(idx.0, |o| o.props().lock().contains_key(&pkey));
-                if !is_extensible && !has_own {
-                    if strict {
-                        return Err(Error::type_err(format!(
-                            "Cannot add property '{}', object is not extensible",
-                            key
-                        )));
-                    }
-                    return Ok(());
-                }
-                self.heap.with_obj(idx.0, |o| {
-                    let props = o.props();
-                    let mut props = props.lock();
-                    if let Some(existing) = props.get_mut(&pkey) {
-                        existing.value = value;
-                    } else {
-                        props.insert(pkey, crate::value::PropertyDescriptor::data(value));
-                    }
-                });
-                self.mirror_global_property_to_binding(
-                    *idx,
-                    key,
-                    route_global_this,
-                    is_global_this,
-                );
                 Ok(())
             }
             _ => {
@@ -1477,25 +1525,72 @@ impl Vm {
                 return Err(Error::type_err("Prototype chain too deep".to_string()));
             }
             let (target, handler) = proxy_result?;
-            let trap = self.get_property(&handler, "set")?;
-            if !trap.is_undefined() {
+            let pin_count = self.pin_many(&[
+                target.clone(),
+                handler.clone(),
+                value.clone(),
+                receiver.clone(),
+            ]);
+            let result = (|| {
+                let trap = self.get_property(&handler, "set")?;
+                if trap.is_undefined() || trap.is_null() {
+                    return self.try_set_property_key_with_receiver_tracked(
+                        &target, key, value, receiver, traversal,
+                    );
+                }
+                let trap_pin = self.pin(&trap);
                 let trap_result = self.call_function(
                     &trap,
                     &[
-                        target,
+                        target.clone(),
                         Self::property_key_to_value(key),
-                        value,
+                        value.clone(),
                         receiver.clone(),
                     ],
-                    Some(handler),
-                )?;
-                return Ok(self.to_boolean(&trap_result));
-            }
-            return self.try_set_property_key_with_receiver_tracked(
-                &target, key, value, receiver, traversal,
-            );
+                    Some(handler.clone()),
+                );
+                self.unpin(trap_pin);
+                let trap_result = trap_result?;
+                if !self.to_boolean(&trap_result) {
+                    return Ok(false);
+                }
+                self.validate_proxy_set_result(&target, key, &value)?;
+                Ok(true)
+            })();
+            self.unpin_many(pin_count);
+            return result;
         }
         self.ordinary_set_with_receiver_tracked(*base_idx, key, value, receiver, traversal)
+    }
+
+    fn validate_proxy_set_result(
+        &mut self,
+        target: &Value,
+        key: &crate::value::PropertyKey,
+        value: &Value,
+    ) -> error::Result<()> {
+        let Some(target_desc) =
+            crate::builtins::own_property_descriptor_for_key_or_throw(self, target, key)?
+        else {
+            return Ok(());
+        };
+        if target_desc.configurable {
+            return Ok(());
+        }
+        if !target_desc.is_accessor {
+            if !target_desc.writable && !descriptor_same_value(value, &target_desc.value) {
+                return Err(Error::type_err(
+                    "Proxy set trap cannot change a non-writable, non-configurable property",
+                ));
+            }
+            return Ok(());
+        }
+        if target_desc.set.as_ref().is_none_or(Value::is_undefined) {
+            return Err(Error::type_err(
+                "Proxy set trap cannot set a non-configurable accessor without a setter",
+            ));
+        }
+        Ok(())
     }
 
     fn ordinary_set_with_receiver(
@@ -1540,17 +1635,27 @@ impl Vm {
             }
             let (desc, proto) = self.heap.with_obj(base_idx.0, |o| {
                 let ordinary = o.props().lock().get(pkey).cloned();
-                let array_dense = ordinary.or_else(|| {
+                let array_exotic = ordinary.or_else(|| {
                     let HeapObj::Array(a) = o else {
                         return None;
                     };
+                    if !a.is_arguments.load(std::sync::atomic::Ordering::Relaxed)
+                        && pkey.as_str() == Some("length")
+                    {
+                        let length = a.items.lock().len().max(a.sparse_max.lock().unwrap_or(0));
+                        let mut desc =
+                            crate::value::PropertyDescriptor::data(Value::Number(length as f64));
+                        desc.enumerable = false;
+                        desc.configurable = false;
+                        return Some(desc);
+                    }
                     let index = pkey.as_str().and_then(crate::value::parse_array_index)?;
                     if !a.is_dense_present(index) {
                         return None;
                     }
                     Some(crate::value::PropertyDescriptor::data(Value::Undefined))
                 });
-                let string_exotic = array_dense.or_else(|| {
+                let string_exotic = array_exotic.or_else(|| {
                     let HeapObj::Object(od) = o else {
                         return None;
                     };
@@ -1943,70 +2048,34 @@ impl Vm {
         let Value::Object(receiver_idx) = receiver else {
             return Ok(false);
         };
-        let receiver_proxy = self.heap.with_obj(receiver_idx.0, |o| {
-            if let HeapObj::Proxy(proxy) = o {
-                if *proxy.revoked.lock() {
-                    return Some(Err(Error::type_err(
-                        "Cannot perform 'defineProperty' on a proxy that has been revoked",
-                    )));
-                }
-                Some(Ok((proxy.target.clone(), proxy.handler.clone())))
-            } else {
-                None
-            }
-        });
-        if let Some(proxy_result) = receiver_proxy {
-            let (target, handler) = proxy_result?;
-            let proxy_pin_count = self.pin_many(&[
-                receiver.clone(),
-                target.clone(),
-                handler.clone(),
-                value.clone(),
-            ]);
-            let proxy_result = (|| {
-                let key_value = match &pkey {
-                    crate::value::PropertyKey::Str(s) => Value::String(s.clone()),
-                    crate::value::PropertyKey::Symbol(id) => Value::Symbol(*id),
-                };
-                let get_own = self.get_property(&handler, "getOwnPropertyDescriptor")?;
-                if !get_own.is_undefined() {
-                    self.call_function(
-                        &get_own,
-                        &[target.clone(), key_value.clone()],
-                        Some(handler.clone()),
-                    )?;
-                }
-
-                let desc_idx = self.new_object()?;
-                let desc_obj = Value::Object(desc_idx);
-                self.heap.with_obj(desc_idx.0, |o| {
-                    o.props().lock().insert(
-                        crate::value::PropertyKey::from("value"),
-                        crate::value::PropertyDescriptor::data(value.clone()),
-                    );
-                });
-
-                let desc_pin_count = self.pin(&desc_obj);
-                let define_result: error::Result<Option<bool>> = (|| {
-                    let define = self.get_property(&handler, "defineProperty")?;
-                    if define.is_undefined() {
-                        return Ok(None);
+        let receiver_is_proxy = self
+            .heap
+            .with_obj(receiver_idx.0, |object| matches!(object, HeapObj::Proxy(_)));
+        if receiver_is_proxy {
+            let pin_count = self.pin_many(&[receiver.clone(), value.clone()]);
+            let result = (|| {
+                let descriptor = crate::builtins::own_property_descriptor_for_key_or_throw(
+                    self, receiver, &pkey,
+                )?;
+                match descriptor {
+                    Some(descriptor) => {
+                        if descriptor.is_accessor || !descriptor.writable {
+                            return Ok(false);
+                        }
+                        self.define_receiver_value_property(
+                            receiver,
+                            pkey.clone(),
+                            value.clone(),
+                            0,
+                        )
                     }
-                    let trap_result = self.call_function(
-                        &define,
-                        &[target.clone(), key_value, desc_obj],
-                        Some(handler.clone()),
-                    )?;
-                    Ok(Some(self.to_boolean(&trap_result)))
-                })();
-                self.unpin_many(desc_pin_count);
-                if let Some(success) = define_result? {
-                    return Ok(success);
+                    None => {
+                        self.define_receiver_data_property(receiver, pkey.clone(), value.clone(), 0)
+                    }
                 }
-                self.set_receiver_data_property(&target, pkey.clone(), value.clone())
             })();
-            self.unpin_many(proxy_pin_count);
-            return proxy_result;
+            self.unpin_many(pin_count);
+            return result;
         }
         if let Some(success) = self.define_typed_array_integer_index_property(
             receiver,
@@ -2023,6 +2092,26 @@ impl Vm {
             },
         )? {
             return Ok(success);
+        }
+        let receiver_is_array_length = pkey.as_str() == Some("length")
+            && self.heap.with_obj(receiver_idx.0, |object| {
+                matches!(object, HeapObj::Array(array) if !array.is_arguments.load(std::sync::atomic::Ordering::Relaxed))
+            });
+        if receiver_is_array_length {
+            let length_writable = self.heap.with_obj(receiver_idx.0, |object| {
+                let HeapObj::Array(array) = object else {
+                    return false;
+                };
+                array
+                    .props
+                    .lock()
+                    .get(&crate::value::PropertyKey::from("length"))
+                    .is_none_or(|descriptor| descriptor.writable)
+            });
+            if !length_writable {
+                return Ok(false);
+            }
+            return self.try_set_array_length(receiver_idx.0, value);
         }
         let namespace_binding = self.heap.with_obj(receiver_idx.0, |object| {
             if let HeapObj::ModuleNamespace(namespace) = object {
@@ -2063,16 +2152,16 @@ impl Vm {
                     None
                 });
                 if let Some((present, extensible)) = array_receiver {
-                    if name == "length" {
-                        self.set_array_length(receiver_idx.0, value)?;
-                        return Ok(true);
-                    }
                     if let Some(index) = crate::value::parse_array_index(name) {
                         if !present && !extensible {
                             return Ok(false);
                         }
+                        if self.array_index_blocked_by_non_writable_length(receiver_idx.0, index) {
+                            return Ok(false);
+                        }
                         self.set_arguments_mapped_binding_for_key(receiver_idx.0, &pkey, &value);
                         self.set_array_index(receiver_idx.0, index, value)?;
+                        self.sync_array_length_descriptor_after_index(receiver_idx.0);
                         return Ok(true);
                     }
                 }
@@ -2100,6 +2189,393 @@ impl Vm {
             self.ic_invalidate(receiver_idx.0, &key);
         }
         Ok(true)
+    }
+
+    fn define_receiver_data_property(
+        &mut self,
+        object: &Value,
+        key: crate::value::PropertyKey,
+        value: Value,
+        depth: usize,
+    ) -> error::Result<bool> {
+        if depth >= MAX_PROXY_SET_DEPTH {
+            return Err(Error::type_err("Proxy defineProperty chain too deep"));
+        }
+        let Value::Object(object_idx) = object else {
+            return Ok(false);
+        };
+        let proxy_info = self.heap.with_obj(object_idx.0, |heap_object| {
+            if let HeapObj::Proxy(proxy) = heap_object {
+                if *proxy.revoked.lock() {
+                    return Some(Err(Error::type_err(
+                        "Cannot perform 'defineProperty' on a proxy that has been revoked",
+                    )));
+                }
+                Some(Ok((proxy.target.clone(), proxy.handler.clone())))
+            } else {
+                None
+            }
+        });
+        if let Some(proxy_info) = proxy_info {
+            let (target, handler) = proxy_info?;
+            let pin_count = self.pin_many(&[
+                object.clone(),
+                target.clone(),
+                handler.clone(),
+                value.clone(),
+            ]);
+            let result = (|| {
+                let trap = self.get_property(&handler, "defineProperty")?;
+                if trap.is_nullish() {
+                    return self.define_receiver_data_property(
+                        &target,
+                        key.clone(),
+                        value.clone(),
+                        depth + 1,
+                    );
+                }
+
+                let trap_pin = self.pin(&trap);
+                let descriptor = crate::value::PropertyDescriptor::data(value.clone());
+                let descriptor_object = match self.property_descriptor_object(&descriptor) {
+                    Ok(descriptor) => descriptor,
+                    Err(error) => {
+                        self.unpin(trap_pin);
+                        return Err(error);
+                    }
+                };
+                let descriptor_pin = self.pin(&descriptor_object);
+                let trap_result = self.call_function(
+                    &trap,
+                    &[
+                        target.clone(),
+                        Self::property_key_to_value(&key),
+                        descriptor_object,
+                    ],
+                    Some(handler.clone()),
+                );
+                self.unpin(trap_pin);
+                self.unpin(descriptor_pin);
+                let trap_result = trap_result?;
+                if !self.to_boolean(&trap_result) {
+                    return Ok(false);
+                }
+                self.validate_proxy_define_data_result(&target, &key, &value)?;
+                Ok(true)
+            })();
+            self.unpin_many(pin_count);
+            return result;
+        }
+
+        if let Some(success) = self.define_typed_array_integer_index_property(
+            object,
+            &key,
+            TypedArrayDefineDescriptor {
+                value: Some(&value),
+                has_configurable: true,
+                configurable: true,
+                has_enumerable: true,
+                enumerable: true,
+                is_accessor: false,
+                has_writable: true,
+                writable: true,
+            },
+        )? {
+            return Ok(success);
+        }
+
+        if let Some(index) = key.as_str().and_then(crate::value::parse_array_index) {
+            let blocked_by_array_length = self.heap.with_obj(object_idx.0, |heap_object| {
+                let HeapObj::Array(array) = heap_object else {
+                    return false;
+                };
+                if array
+                    .is_arguments
+                    .load(std::sync::atomic::Ordering::Relaxed)
+                    || self
+                        .array_index_own_property_descriptor(object_idx.0, index, &key)
+                        .is_some()
+                {
+                    return false;
+                }
+                let old_length = array
+                    .items
+                    .lock()
+                    .len()
+                    .max(array.sparse_max.lock().unwrap_or(0));
+                let length_writable = array
+                    .props
+                    .lock()
+                    .get(&crate::value::PropertyKey::from("length"))
+                    .is_none_or(|descriptor| descriptor.writable);
+                index >= old_length && !length_writable
+            });
+            if blocked_by_array_length {
+                return Ok(false);
+            }
+        }
+
+        let descriptor = crate::value::PropertyDescriptor::data(value.clone());
+        let success = self.define_own_property(object, key.clone(), descriptor)?;
+        if success {
+            self.set_arguments_mapped_binding_for_key(object_idx.0, &key, &value);
+        }
+        Ok(success)
+    }
+
+    fn define_receiver_value_property(
+        &mut self,
+        object: &Value,
+        key: crate::value::PropertyKey,
+        value: Value,
+        depth: usize,
+    ) -> error::Result<bool> {
+        if depth >= MAX_PROXY_SET_DEPTH {
+            return Err(Error::type_err("Proxy defineProperty chain too deep"));
+        }
+        let Value::Object(object_idx) = object else {
+            return Ok(false);
+        };
+        let proxy_info = self.heap.with_obj(object_idx.0, |heap_object| {
+            if let HeapObj::Proxy(proxy) = heap_object {
+                if *proxy.revoked.lock() {
+                    return Some(Err(Error::type_err(
+                        "Cannot perform 'defineProperty' on a proxy that has been revoked",
+                    )));
+                }
+                Some(Ok((proxy.target.clone(), proxy.handler.clone())))
+            } else {
+                None
+            }
+        });
+        if let Some(proxy_info) = proxy_info {
+            let (target, handler) = proxy_info?;
+            let pin_count = self.pin_many(&[
+                object.clone(),
+                target.clone(),
+                handler.clone(),
+                value.clone(),
+            ]);
+            let result = (|| {
+                let trap = self.get_property(&handler, "defineProperty")?;
+                if trap.is_undefined() || trap.is_null() {
+                    return self.define_receiver_value_property(
+                        &target,
+                        key.clone(),
+                        value.clone(),
+                        depth + 1,
+                    );
+                }
+
+                let trap_pin = self.pin(&trap);
+                let descriptor_idx = match self.new_object_in_current_realm() {
+                    Ok(descriptor_idx) => descriptor_idx,
+                    Err(error) => {
+                        self.unpin(trap_pin);
+                        return Err(error);
+                    }
+                };
+                let descriptor = Value::Object(descriptor_idx);
+                self.heap.with_obj(descriptor_idx.0, |descriptor_object| {
+                    descriptor_object.props().lock().insert(
+                        crate::value::PropertyKey::from("value"),
+                        crate::value::PropertyDescriptor::data(value.clone()),
+                    );
+                });
+                let descriptor_pin = self.pin(&descriptor);
+                let trap_result = self.call_function(
+                    &trap,
+                    &[
+                        target.clone(),
+                        Self::property_key_to_value(&key),
+                        descriptor,
+                    ],
+                    Some(handler.clone()),
+                );
+                self.unpin(trap_pin);
+                self.unpin(descriptor_pin);
+                let trap_result = trap_result?;
+                if !self.to_boolean(&trap_result) {
+                    return Ok(false);
+                }
+                self.validate_proxy_define_value_result(&target, &key, &value)?;
+                Ok(true)
+            })();
+            self.unpin_many(pin_count);
+            return result;
+        }
+
+        if let Some(success) = self.define_typed_array_integer_index_property(
+            object,
+            &key,
+            TypedArrayDefineDescriptor {
+                value: Some(&value),
+                has_configurable: false,
+                configurable: false,
+                has_enumerable: false,
+                enumerable: false,
+                is_accessor: false,
+                has_writable: false,
+                writable: false,
+            },
+        )? {
+            return Ok(success);
+        }
+
+        let object_is_array_length = key.as_str() == Some("length")
+            && self.heap.with_obj(object_idx.0, |heap_object| {
+                matches!(heap_object, HeapObj::Array(array) if !array.is_arguments.load(std::sync::atomic::Ordering::Relaxed))
+            });
+        if object_is_array_length {
+            return self.try_set_array_length(object_idx.0, value);
+        }
+
+        let current =
+            crate::builtins::own_property_descriptor_for_key_or_throw(self, object, &key)?;
+        let array_index_state = key
+            .as_str()
+            .and_then(crate::value::parse_array_index)
+            .and_then(|index| {
+                self.heap.with_obj(object_idx.0, |heap_object| {
+                    let HeapObj::Array(array) = heap_object else {
+                        return None;
+                    };
+                    if array
+                        .is_arguments
+                        .load(std::sync::atomic::Ordering::Relaxed)
+                    {
+                        return None;
+                    }
+                    let old_length = array
+                        .items
+                        .lock()
+                        .len()
+                        .max(array.sparse_max.lock().unwrap_or(0));
+                    let length_writable = array
+                        .props
+                        .lock()
+                        .get(&crate::value::PropertyKey::from("length"))
+                        .is_none_or(|descriptor| descriptor.writable);
+                    Some((index, old_length, length_writable))
+                })
+            });
+        if current.is_none()
+            && array_index_state.is_some_and(|(index, old_length, length_writable)| {
+                index >= old_length && !length_writable
+            })
+        {
+            return Ok(false);
+        }
+        let descriptor = match current {
+            Some(current) if current.is_accessor => {
+                if !current.configurable {
+                    return Ok(false);
+                }
+                crate::value::PropertyDescriptor {
+                    value: value.clone(),
+                    writable: false,
+                    enumerable: current.enumerable,
+                    configurable: current.configurable,
+                    get: None,
+                    set: None,
+                    is_accessor: false,
+                }
+            }
+            Some(mut current) => {
+                if !current.writable && !descriptor_same_value(&value, &current.value) {
+                    return Ok(false);
+                }
+                current.value = value.clone();
+                current
+            }
+            None => crate::value::PropertyDescriptor {
+                value: value.clone(),
+                writable: false,
+                enumerable: false,
+                configurable: false,
+                get: None,
+                set: None,
+                is_accessor: false,
+            },
+        };
+        let success = self.define_own_property(object, key.clone(), descriptor)?;
+        if success {
+            self.set_arguments_mapped_binding_for_key(object_idx.0, &key, &value);
+        }
+        Ok(success)
+    }
+
+    fn validate_proxy_define_value_result(
+        &mut self,
+        target: &Value,
+        key: &crate::value::PropertyKey,
+        value: &Value,
+    ) -> error::Result<()> {
+        let target_desc =
+            crate::builtins::own_property_descriptor_for_key_or_throw(self, target, key)?;
+        let mut target_desc_roots = Vec::new();
+        if let Some(target_desc) = target_desc.as_ref() {
+            target_desc_roots.push(target_desc.value.clone());
+            target_desc_roots.extend(target_desc.get.iter().cloned());
+            target_desc_roots.extend(target_desc.set.iter().cloned());
+        }
+        let target_desc_pins = self.pin_many(&target_desc_roots);
+        let validation = (|| {
+            // Proxy [[DefineOwnProperty]] always observes target
+            // extensibility after [[GetOwnProperty]], even when a target
+            // descriptor already exists.
+            let extensible = self.is_extensible(target)?;
+            let Some(target_desc) = target_desc.as_ref() else {
+                if !extensible {
+                    return Err(Error::type_err(
+                        "Proxy defineProperty trap cannot add a property to a non-extensible target",
+                    ));
+                }
+                return Ok(());
+            };
+            if target_desc.configurable {
+                return Ok(());
+            }
+            if target_desc.is_accessor
+                || (!target_desc.writable && !descriptor_same_value(value, &target_desc.value))
+            {
+                return Err(Error::type_err(
+                    "Proxy defineProperty trap violated the target descriptor invariant",
+                ));
+            }
+            Ok(())
+        })();
+        self.unpin_many(target_desc_pins);
+        validation
+    }
+
+    fn validate_proxy_define_data_result(
+        &mut self,
+        target: &Value,
+        key: &crate::value::PropertyKey,
+        value: &Value,
+    ) -> error::Result<()> {
+        let descriptor = crate::value::PropertyDescriptor::data(value.clone());
+        let target_desc =
+            crate::builtins::own_property_descriptor_for_key_or_throw(self, target, key)?;
+        let mut target_desc_roots = Vec::new();
+        if let Some(target_desc) = target_desc.as_ref() {
+            target_desc_roots.push(target_desc.value.clone());
+            target_desc_roots.extend(target_desc.get.iter().cloned());
+            target_desc_roots.extend(target_desc.set.iter().cloned());
+        }
+        let target_desc_pins = self.pin_many(&target_desc_roots);
+        let validation = (|| {
+            let extensible = self.is_extensible(target)?;
+            if !compatible_complete_descriptor(target_desc.as_ref(), &descriptor, extensible) {
+                return Err(Error::type_err(
+                    "Proxy defineProperty trap violated the target descriptor invariant",
+                ));
+            }
+            Ok(())
+        })();
+        self.unpin_many(target_desc_pins);
+        validation
     }
 
     /// Internal `[[GetPrototypeOf]]`, including Proxy `getPrototypeOf` traps
@@ -2533,20 +3009,22 @@ impl Vm {
         let mut depth = 0;
         while depth < 1024 {
             depth += 1;
-            let (found, proto) = self.heap.with_obj(idx.0, |o| {
+            let (found, data_descriptor, proto) = self.heap.with_obj(idx.0, |o| {
                 let props = o.props();
-                let result = props.lock().get(key).and_then(|d| {
-                    if d.is_accessor {
-                        Some(d.set.clone())
-                    } else {
-                        None
-                    }
-                });
+                let descriptor = props.lock().get(key).cloned();
+                let result = descriptor
+                    .as_ref()
+                    .filter(|descriptor| descriptor.is_accessor)
+                    .map(|descriptor| descriptor.set.clone());
+                let data_descriptor = descriptor.is_some_and(|descriptor| !descriptor.is_accessor);
                 let proto = o.proto().lock().clone();
-                (result, proto)
+                (result, data_descriptor, proto)
             });
             if let Some(setter_opt) = found {
                 return Some(setter_opt);
+            }
+            if data_descriptor {
+                return None;
             }
             match proto {
                 Some(Value::Object(pidx)) => idx = pidx,
@@ -2569,17 +3047,17 @@ impl Vm {
                 Some(Value::Object(proto_idx)) => proto_idx,
                 _ => return false,
             };
-            let (found_non_writable, proto) = self.heap.with_obj(proto_idx.0, |o| {
-                let found = o
+            let (descriptor_result, proto) = self.heap.with_obj(proto_idx.0, |o| {
+                let descriptor_result = o
                     .props()
                     .lock()
                     .get(key)
-                    .is_some_and(|d| !d.is_accessor && !d.writable);
+                    .map(|descriptor| !descriptor.is_accessor && !descriptor.writable);
                 let proto = o.proto().lock().clone();
-                (found, proto)
+                (descriptor_result, proto)
             });
-            if found_non_writable {
-                return true;
+            if let Some(found_non_writable) = descriptor_result {
+                return found_non_writable;
             }
             next = proto;
         }
@@ -2647,86 +3125,123 @@ impl Vm {
     /// ES [[Set]] for `Array.prototype.length`. Validates the value per
     /// `ArraySetLength`: must be a non-negative integer in the 32-bit range,
     /// else a RangeError ("Invalid array length"); then truncate or extend.
-    pub(crate) fn set_array_length(&mut self, idx: usize, value: Value) -> error::Result<()> {
-        let length_writable = self.heap.with_obj(idx, |o| {
-            if let HeapObj::Array(a) = o {
-                return a
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn define_array_length_property(
+        &mut self,
+        idx: usize,
+        value: Option<Value>,
+        has_writable: bool,
+        writable: bool,
+        has_enumerable: bool,
+        enumerable: bool,
+        has_configurable: bool,
+        configurable: bool,
+        is_accessor: bool,
+    ) -> error::Result<bool> {
+        let mut roots = vec![Value::Object(GcIdx(idx))];
+        roots.extend(value.iter().cloned());
+        let pin_count = self.pin_many(&roots);
+        let result = (|| {
+            let new_len = if let Some(value) = value.as_ref() {
+                let new_len = crate::vm::to_uint32(self.to_number(value)?) as usize;
+                let number_len = self.to_number(value)?;
+                if new_len as f64 != number_len {
+                    return Err(Error::range("Invalid array length"));
+                }
+                Some(new_len)
+            } else {
+                None
+            };
+
+            // ArraySetLength performs both observable conversions before it
+            // reads and validates the current length descriptor.
+            let (old_len, old_writable) = self.heap.with_obj(idx, |object| {
+                let HeapObj::Array(array) = object else {
+                    return (0, false);
+                };
+                let old_len = array
+                    .items
+                    .lock()
+                    .len()
+                    .max(array.sparse_max.lock().unwrap_or(0));
+                let old_writable = array
                     .props
                     .lock()
                     .get(&crate::value::PropertyKey::from("length"))
-                    .is_none_or(|desc| desc.writable);
+                    .is_none_or(|descriptor| descriptor.writable);
+                (old_len, old_writable)
+            });
+            if is_accessor
+                || (has_configurable && configurable)
+                || (has_enumerable && enumerable)
+                || (has_writable && writable && !old_writable)
+            {
+                return Ok(false);
             }
-            true
-        });
-        if !length_writable {
-            if self.current_strict() {
-                return Err(Error::type_err("Cannot assign to read only array length"));
+
+            let Some(new_len) = new_len else {
+                if has_writable {
+                    self.heap.with_obj(idx, |object| {
+                        if let HeapObj::Array(array) = object {
+                            let mut props = array.props.lock();
+                            let descriptor = props
+                                .entry(crate::value::PropertyKey::from("length"))
+                                .or_insert_with(|| {
+                                    let mut descriptor = crate::value::PropertyDescriptor::data(
+                                        Value::Number(old_len as f64),
+                                    );
+                                    descriptor.enumerable = false;
+                                    descriptor.configurable = false;
+                                    descriptor
+                                });
+                            descriptor.writable = writable;
+                        }
+                    });
+                    self.ic_invalidate(idx, "length");
+                }
+                return Ok(true);
+            };
+
+            if !old_writable {
+                return Ok(new_len == old_len);
             }
-            return Ok(());
-        }
-        let new_len = match value {
-            Value::Number(n) => {
-                // Must be a non-negative integer that fits in u32, and equal
-                // to its uint32 truncation (i.e. no fractional part).
-                if n.is_nan() || n < 0.0 || n.is_infinite() {
-                    return Err(Error::range("Invalid array length"));
-                }
-                if n.fract() != 0.0 {
-                    return Err(Error::range("Invalid array length"));
-                }
-                let as_u32 = n as u32;
-                if (as_u32 as f64) != n {
-                    return Err(Error::range("Invalid array length"));
-                }
-                if n >= (1u64 << 32) as f64 {
-                    return Err(Error::range("Invalid array length"));
-                }
-                as_u32 as usize
-            }
-            _ => {
-                // Non-numeric assignment to length: ToUint32 semantics would
-                // require conversion; for explicit non-numbers we throw as
-                // V8 does for clearly-invalid values like "abc".
-                return Err(Error::range("Invalid array length"));
-            }
-        };
-        self.heap.with_obj(idx, |o| {
-            if let HeapObj::Array(a) = o {
+
+            let delete_succeeded = self.heap.with_obj(idx, |object| {
+                let HeapObj::Array(array) = object else {
+                    return false;
+                };
                 let cap = crate::value::MAX_DENSE_ARRAY_LEN;
-                let mut items = a.items.lock();
-                let mut present = a.present.lock();
+                let mut items = array.items.lock();
+                let mut present = array.present.lock();
                 let mut effective_len = new_len;
 
-                // ArraySetLength deletes indexed own properties from the end
-                // down. If a non-configurable property cannot be deleted, the
-                // length rolls back to that index + 1.
-                {
-                    let mut props = a.props.lock();
-                    for (key, desc) in props.iter() {
+                if new_len < old_len {
+                    // Delete in descending-index effect: the highest
+                    // non-configurable index is the first failure, so lower
+                    // indices must remain and length rolls back above it.
+                    let mut props = array.props.lock();
+                    for (key, descriptor) in props.iter() {
                         let Some(index) = key.as_str().and_then(crate::value::parse_array_index)
                         else {
                             continue;
                         };
-                        if index >= new_len && !desc.configurable {
+                        if index >= new_len && !descriptor.configurable {
                             effective_len = effective_len.max(index + 1);
                         }
                     }
-                    let mut to_remove = Vec::new();
-                    for (key, desc) in props.iter() {
-                        let Some(index) = key.as_str().and_then(crate::value::parse_array_index)
-                        else {
-                            continue;
-                        };
-                        if index >= effective_len && desc.configurable {
-                            to_remove.push(key.clone());
-                        }
-                    }
-                    for k in to_remove {
-                        props.shift_remove(&k);
+                    let removable: Vec<_> = props
+                        .iter()
+                        .filter_map(|(key, descriptor)| {
+                            let index = key.as_str().and_then(crate::value::parse_array_index)?;
+                            (index >= effective_len && descriptor.configurable).then(|| key.clone())
+                        })
+                        .collect();
+                    for key in removable {
+                        props.shift_remove(&key);
                     }
                 }
+
                 if effective_len <= cap {
-                    // Fits in the dense backing store.
                     if effective_len < items.len() {
                         items.truncate(effective_len);
                         present.truncate(effective_len);
@@ -2738,28 +3253,60 @@ impl Vm {
                     }
                     drop(present);
                     drop(items);
-                    *a.sparse_max.lock() = None;
+                    *array.sparse_max.lock() = None;
                 } else {
-                    // Beyond the dense cap: keep the dense store capped,
-                    // advance length via sparse_max, and do NOT allocate
-                    // millions of holes.
                     if items.len() > cap {
                         items.truncate(cap);
                         present.truncate(cap);
                     }
                     drop(present);
                     drop(items);
-                    *a.sparse_max.lock() = Some(effective_len);
+                    *array.sparse_max.lock() = Some(effective_len);
                 }
-                if let Some(desc) = a
-                    .props
-                    .lock()
-                    .get_mut(&crate::value::PropertyKey::from("length"))
-                {
-                    desc.value = Value::Number(effective_len as f64);
+
+                let mut props = array.props.lock();
+                let length = props
+                    .entry(crate::value::PropertyKey::from("length"))
+                    .or_insert_with(|| {
+                        let mut descriptor = crate::value::PropertyDescriptor::data(Value::Number(
+                            effective_len as f64,
+                        ));
+                        descriptor.enumerable = false;
+                        descriptor.configurable = false;
+                        descriptor
+                    });
+                length.value = Value::Number(effective_len as f64);
+                if has_writable && !writable {
+                    length.writable = false;
                 }
-            }
-        });
+                effective_len == new_len
+            });
+            self.ic_invalidate(idx, "length");
+            Ok(delete_succeeded)
+        })();
+        self.unpin_many(pin_count);
+        result
+    }
+
+    fn try_set_array_length(&mut self, idx: usize, value: Value) -> error::Result<bool> {
+        self.define_array_length_property(
+            idx,
+            Some(value),
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+        )
+    }
+
+    pub(crate) fn set_array_length(&mut self, idx: usize, value: Value) -> error::Result<()> {
+        let success = self.try_set_array_length(idx, value)?;
+        if !success && self.current_strict() {
+            return Err(Error::type_err("Cannot assign to read only array length"));
+        }
         Ok(())
     }
 
@@ -3075,7 +3622,13 @@ impl Vm {
         for v in self.realm_heap_limit_errors.values() {
             Self::push_value_roots(&mut roots, v);
         }
+        for v in self.realm_regexp_constructors.values() {
+            Self::push_value_roots(&mut roots, v);
+        }
         for v in self.realm_regexp_prototypes.values() {
+            Self::push_value_roots(&mut roots, v);
+        }
+        for v in self.realm_regexp_string_iterator_prototypes.values() {
             Self::push_value_roots(&mut roots, v);
         }
         for v in self.realm_array_buffer_prototypes.values() {

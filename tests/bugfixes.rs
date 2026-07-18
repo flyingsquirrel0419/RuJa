@@ -210,6 +210,455 @@ fn own_data_property_shadows_inherited_non_writable_on_assignment() {
 }
 
 #[test]
+fn nearest_inherited_data_property_stops_deeper_setter_lookup() {
+    let v = run(r#"var calls = 0;
+           var deep = {};
+           Object.defineProperty(deep, 'x', {
+             set: function () { calls += 1; },
+             configurable: true
+           });
+           var near = Object.create(deep);
+           Object.defineProperty(near, 'x', {
+             value: 1,
+             writable: true,
+             configurable: true
+           });
+           var object = Object.create(near);
+           object.x = 99;
+
+           var array = [];
+           Object.setPrototypeOf(array, near);
+           array.x = 100;
+           [
+             calls,
+             object.hasOwnProperty('x'), object.x,
+             array.hasOwnProperty('x'), array.x
+           ].join(':');"#);
+    assert_eq!(v, Value::String(Arc::from("0:true:99:true:100")));
+}
+
+#[test]
+fn proxy_define_property_validation_observes_nested_target_extensibility() {
+    let v = run(r#"var log = [];
+           var base = {};
+           Object.defineProperty(base, 'x', {
+             value: 0,
+             writable: true,
+             configurable: true
+           });
+           var inner = new Proxy(base, {
+             getOwnPropertyDescriptor: function (target, key) {
+               log.push('gopd');
+               return Reflect.getOwnPropertyDescriptor(target, key);
+             },
+             isExtensible: function (target) {
+               log.push('ext');
+               return Reflect.isExtensible(target);
+             }
+           });
+           var outer = new Proxy(inner, {
+             set: null,
+             defineProperty: function () {
+               log.push('define');
+               return true;
+             }
+           });
+           Reflect.set(outer, 'x', 2);
+           log.join(',');"#);
+    assert_eq!(v, Value::String(Arc::from("gopd,define,gopd,ext")));
+}
+
+#[test]
+fn proxy_has_false_validates_nested_target_internal_methods() {
+    let v = run(r#"var log = [];
+           var descriptorTarget = {
+             value: 0,
+             writable: true,
+             configurable: true
+           };
+           Object.defineProperty(descriptorTarget, 'enumerable', {
+             value: false,
+             configurable: false
+           });
+           var inner = new Proxy(descriptorTarget, {
+             getOwnPropertyDescriptor: function (target, key) {
+               log.push('gopd:' + key);
+               return Reflect.getOwnPropertyDescriptor(target, key);
+             }
+           });
+           var descriptor = new Proxy(inner, {
+             has: function (target, key) {
+               log.push('has:' + key);
+               if (key === 'enumerable') return false;
+               return Reflect.has(target, key);
+             }
+           });
+           var target = {};
+           Object.defineProperty(target, 'x', {
+             value: 0,
+             writable: true,
+             enumerable: false,
+             configurable: true
+           });
+           var proxy = new Proxy(target, {
+             getOwnPropertyDescriptor: function () { return descriptor; }
+           });
+           var outcome = 'ok';
+           try {
+             Object.getOwnPropertyDescriptor(proxy, 'x');
+           } catch (error) {
+             outcome = error instanceof TypeError ? 'TypeError' : 'other';
+           }
+           outcome + '|' + log.join(',');"#);
+    assert_eq!(
+        v,
+        Value::String(Arc::from("TypeError|has:enumerable,gopd:enumerable"))
+    );
+}
+
+#[test]
+fn proxy_value_only_define_preserves_array_and_mapped_arguments_exotics() {
+    let v = run(r#"var array = [1, 2, 3];
+           var arrayProxy = new Proxy(array, {
+             set: null,
+             defineProperty: null
+           });
+           var lengthResult = Reflect.set(arrayProxy, 'length', 1);
+
+           var direct = [4, 5];
+           var directResult = Reflect.set(direct, 'length', 1);
+
+           var blocked = [1, 2, 3];
+           Object.defineProperty(blocked, '2', { configurable: false });
+           var blockedProxy = new Proxy(blocked, {
+             set: null,
+             defineProperty: null
+           });
+           var blockedResult = Reflect.set(blockedProxy, 'length', 1);
+
+           function update(argument) {
+             var argumentsProxy = new Proxy(arguments, {
+               set: null,
+               defineProperty: null
+             });
+             var setResult = Reflect.set(argumentsProxy, '0', 7);
+             return [setResult, argument, arguments[0]].join('|');
+           }
+           [
+             lengthResult, array.length, array.join(','),
+             directResult, direct.length, direct.join(','),
+             blockedResult, blocked.length,
+             update(1)
+           ].join('|');"#);
+    assert_eq!(
+        v,
+        Value::String(Arc::from("true|1|1|true|1|4|false|3|true|7|7"))
+    );
+}
+
+#[test]
+fn proxy_create_data_property_preserves_exotic_targets() {
+    let v = run(r#"function makeLockedArray() {
+             var array = [];
+             Object.defineProperty(array, 'length', { writable: false });
+             return {
+               array: array,
+               proxy: new Proxy(array, { set: null, defineProperty: null })
+             };
+           }
+
+           var reflected = makeLockedArray();
+           var reflectResult = Reflect.set(reflected.proxy, '0', 1);
+
+           var materialized = [];
+           Object.defineProperty(materialized, 'length', { writable: true });
+           var materializedProxy = new Proxy(materialized, {
+             set: null,
+             getOwnPropertyDescriptor: function () { return undefined; },
+             defineProperty: null
+           });
+           var materializedLengthBefore = materialized.length;
+           var materializedResult = Reflect.set(materializedProxy, '0', 7);
+
+           var direct = [];
+           Object.defineProperty(direct, 'length', { writable: true });
+           Object.defineProperty(direct, '0', { value: 8 });
+
+           var directBlocked = [];
+           Object.defineProperty(directBlocked, 'length', { writable: false });
+           var directBlockedResult = 'ok';
+           try {
+             Object.defineProperty(directBlocked, '0', { value: 9 });
+           } catch (error) {
+             directBlockedResult = error instanceof TypeError ? 'TypeError' : 'other';
+           }
+
+           var reflectBlocked = [];
+           Object.defineProperty(reflectBlocked, 'length', { writable: false });
+           var reflectBlockedResult = Reflect.defineProperty(
+             reflectBlocked,
+             '0',
+             { value: 10 }
+           );
+
+           var assigned = makeLockedArray();
+           var strictResult = 'ok';
+           try {
+             (function () { 'use strict'; assigned.proxy[0] = 1; })();
+           } catch (error) {
+             strictResult = error instanceof TypeError ? 'TypeError' : 'other';
+           }
+
+           var typedArray = new Uint8Array([1]);
+           var typedProxy = new Proxy(typedArray, {
+             set: null,
+             getOwnPropertyDescriptor: function () { return undefined; },
+             defineProperty: null
+           });
+           var typedResult = Reflect.set(typedProxy, '0', 7);
+
+           function update(argument) {
+             var argumentsProxy = new Proxy(arguments, {
+               set: null,
+               getOwnPropertyDescriptor: function () { return undefined; },
+               defineProperty: null
+             });
+             return [
+               Reflect.set(argumentsProxy, '0', 7),
+               argument,
+               arguments[0]
+             ].join('|');
+           }
+
+           [
+             reflectResult,
+             reflected.array.length,
+             reflected.array.hasOwnProperty('0'),
+             strictResult,
+             assigned.array.length,
+             assigned.array.hasOwnProperty('0'),
+             typedResult,
+             typedArray[0],
+             materializedLengthBefore,
+             materializedResult,
+             materialized.length,
+             materialized[0],
+             Object.getOwnPropertyDescriptor(materialized, 'length').value,
+             direct.length,
+             direct[0],
+             Object.getOwnPropertyDescriptor(direct, 'length').value,
+             directBlockedResult,
+             directBlocked.length,
+             directBlocked.hasOwnProperty('0'),
+             reflectBlockedResult,
+             reflectBlocked.length,
+             reflectBlocked.hasOwnProperty('0'),
+             update(1)
+           ].join('|');"#);
+    assert_eq!(
+        v,
+        Value::String(Arc::from(
+            "false|0|false|TypeError|0|false|true|7|0|true|1|7|1|1|8|1|TypeError|0|false|false|0|false|true|7|7"
+        ))
+    );
+}
+
+#[test]
+fn array_set_length_observes_two_conversions_before_writability() {
+    let v = run(r#"var log = [];
+           var array = [1, 2, 3];
+           var proxy = new Proxy(array, { set: null, defineProperty: null });
+           var value = {
+             valueOf: function () {
+               log.push('valueOf');
+               return 1;
+             }
+           };
+           var result = Reflect.set(proxy, 'length', value);
+
+           var changed = [1, 2];
+           var changedLog = [];
+           var changedResult = Reflect.set(changed, 'length', {
+             valueOf: function () {
+               changedLog.push('valueOf');
+               Object.defineProperty(changed, 'length', { writable: false });
+               return 1;
+             }
+           });
+
+           var locked = [1];
+           Object.defineProperty(locked, 'length', { writable: false });
+           var lockedCoercions = 0;
+           var lockedResult = Reflect.set(locked, 'length', {
+             valueOf: function () {
+               lockedCoercions += 1;
+               return 1;
+             }
+           });
+           var lockedIndexResult = Reflect.set(locked, '1', 9);
+           var lockedIndexStrict = 'ok';
+           try {
+             (function () { 'use strict'; locked[1] = 9; })();
+           } catch (error) {
+             lockedIndexStrict = error instanceof TypeError ? 'TypeError' : 'other';
+           }
+           var strictResult = 'ok';
+           try {
+             (function () { 'use strict'; locked.length = 1; })();
+           } catch (error) {
+             strictResult = error instanceof TypeError ? 'TypeError' : 'other';
+           }
+
+           var customCoercions = 0;
+           var customResult = Reflect.set([], 'length', {
+             valueOf: function () {
+               customCoercions += 1;
+               return 1;
+             }
+           }, locked);
+
+           var same = [1];
+           var sameProxy = new Proxy(same, {
+             set: null,
+             get defineProperty() {
+               Object.defineProperty(same, 'length', { writable: false });
+               return undefined;
+             }
+           });
+           var sameResult = Reflect.set(sameProxy, 'length', 1);
+           [
+             result, array.length, log.join(','),
+             changedResult, changed.length, changedLog.join(','),
+             lockedResult, lockedCoercions,
+             lockedIndexResult, locked.hasOwnProperty('1'), lockedIndexStrict,
+             strictResult,
+             customResult, customCoercions,
+             sameResult,
+             Object.getOwnPropertyDescriptor(same, 'length').writable
+           ].join('|');"#);
+    assert_eq!(
+        v,
+        Value::String(Arc::from(
+            "true|1|valueOf,valueOf|false|2|valueOf,valueOf|false|0|false|false|TypeError|TypeError|false|0|true|false"
+        ))
+    );
+}
+
+#[test]
+fn array_ordinary_set_treats_unmaterialized_length_as_own_property() {
+    let v = run(r#"var setterCalls = 0;
+           var proto = {};
+           Object.defineProperty(proto, 'length', {
+             set: function () { setterCalls += 1; }
+           });
+
+           var direct = [1, 2, 3];
+           Object.setPrototypeOf(direct, proto);
+           direct.length = 1;
+
+           var reflected = [1, 2, 3];
+           Object.setPrototypeOf(reflected, proto);
+           var reflectedResult = Reflect.set(reflected, 'length', 1);
+
+           var proxyCalls = 0;
+           var proxyProto = new Proxy({}, {
+             set: function () {
+               proxyCalls += 1;
+               return true;
+             }
+           });
+           var proxyArray = [1, 2, 3];
+           Object.setPrototypeOf(proxyArray, proxyProto);
+           var proxyResult = Reflect.set(proxyArray, 'length', 1);
+
+           var sparse = [];
+           Object.defineProperty(sparse, '2097152', {
+             value: 1,
+             writable: true,
+             configurable: true
+           });
+           Object.setPrototypeOf(sparse, proto);
+           var sparseResult = Reflect.set(sparse, 'length', 1);
+
+           [
+             direct.length,
+             reflectedResult,
+             reflected.length,
+             setterCalls,
+             proxyResult,
+             proxyArray.length,
+             proxyCalls,
+             sparseResult,
+             sparse.length,
+             sparse.hasOwnProperty('2097152'),
+             Object.getOwnPropertyDescriptor(sparse, 'length').value
+           ].join('|');"#);
+    assert_eq!(
+        v,
+        Value::String(Arc::from("1|true|1|0|true|1|0|true|1|false|1"))
+    );
+}
+
+#[test]
+fn array_define_length_deletes_rolls_back_and_applies_writability() {
+    let v = run(r#"var blocked = [1, 2, 3];
+           Object.defineProperty(blocked, '2', { configurable: false });
+           var reflected = Reflect.defineProperty(blocked, 'length', { value: 1 });
+
+           var thrown = [1, 2, 3];
+           Object.defineProperty(thrown, '2', { configurable: false });
+           var thrownResult = 'ok';
+           try {
+             Object.defineProperty(thrown, 'length', { value: 1 });
+           } catch (error) {
+             thrownResult = error instanceof TypeError ? 'TypeError' : 'other';
+           }
+
+           var shrunk = [1, 2, 3];
+           Object.defineProperty(shrunk, 'length', {
+             value: 1,
+             writable: false
+           });
+           var sameLength = Reflect.defineProperty(shrunk, 'length', { value: 1 });
+           [
+             reflected,
+             blocked.length,
+             blocked.hasOwnProperty('1'),
+             blocked.hasOwnProperty('2'),
+             Object.getOwnPropertyDescriptor(blocked, 'length').value,
+             thrownResult,
+             thrown.length,
+             thrown.hasOwnProperty('1'),
+             thrown.hasOwnProperty('2'),
+             shrunk.length,
+             shrunk.join(','),
+             Object.getOwnPropertyDescriptor(shrunk, 'length').value,
+             Object.getOwnPropertyDescriptor(shrunk, 'length').writable,
+             sameLength
+           ].join('|');"#);
+    assert_eq!(
+        v,
+        Value::String(Arc::from(
+            "false|3|true|true|3|TypeError|3|true|true|1|1|1|false|true"
+        ))
+    );
+}
+
+#[test]
+fn sparse_array_length_descriptor_tracks_sparse_max() {
+    let v = run(r#"var array = [];
+           Object.defineProperty(array, '2097152', {
+             get: function () { return 1; }
+           });
+           [
+             array.length,
+             Object.getOwnPropertyDescriptor(array, 'length').value,
+             array[2097152]
+           ].join('|');"#);
+    assert_eq!(v, Value::String(Arc::from("2097153|2097153|1")));
+}
+
+#[test]
 fn object_literal_defines_own_property_over_inherited_read_only() {
     let v = run(r#"Object.defineProperty(Object.prototype, 'x', {
              value: 1,

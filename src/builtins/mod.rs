@@ -2555,18 +2555,21 @@ fn define_realm_global(vm: &mut Vm, env: GcIdx, global: &Value, name: &str, valu
 }
 
 fn make_regexp_constructor_in_env(vm: &mut Vm, env: GcIdx) -> error::Result<(GcIdx, GcIdx)> {
-    let (regex_ctor, regex_proto) = make_builtin_constructor_with_in_env(
+    let (regex_ctor, regex_proto) = make_builtin_constructor_with_proto_class_in_env(
         vm,
         "RegExp",
         2,
-        regexp_constructor,
-        NativeConstructMode::InternalEagerPrototype,
+        (
+            regexp_constructor,
+            NativeConstructMode::InternalDeferredPrototype,
+        ),
         &[
             ("test", regexp_test, 1),
             ("exec", regexp_exec, 1),
             ("toString", regexp_to_string, 0),
         ],
         env,
+        None,
     )?;
     let source_getter = vm.new_native_function_in_env("get source", regexp_source_get, 0, env)?;
     let flags_getter = vm.new_native_function_in_env("get flags", regexp_flags_get, 0, env)?;
@@ -3364,6 +3367,7 @@ fn populate_test262_realm(vm: &mut Vm, realm_env: GcIdx) -> error::Result<Value>
         .ok_or_else(|| Error::internal("missing Object prototype intrinsic"))?;
     let realm_iterator_proto =
         install_iterator_intrinsic_in_env(vm, realm_env, Some(&global), object_proto.clone())?;
+    setup_regexp_string_iterator_proto_in_env(vm, realm_env, realm_iterator_proto.clone())?;
     install_generator_intrinsics_in_env(
         vm,
         realm_env,
@@ -3508,6 +3512,8 @@ fn populate_test262_realm(vm: &mut Vm, realm_env: GcIdx) -> error::Result<Value>
     define_realm_global(vm, realm_env, &global, "BigInt", Value::Object(bigint_idx));
 
     let (regexp_ctor, regexp_proto) = make_regexp_constructor_in_env(vm, realm_env)?;
+    vm.realm_regexp_constructors
+        .insert(realm_env.0, Value::Object(regexp_ctor));
     vm.realm_regexp_prototypes
         .insert(realm_env.0, Value::Object(regexp_proto));
     define_realm_global(vm, realm_env, &global, "RegExp", Value::Object(regexp_ctor));
@@ -6163,8 +6169,8 @@ fn own_property_descriptor_for_key(
                     if a.is_arguments.load(Ordering::Relaxed) {
                         return None;
                     }
-                    let mut desc =
-                        PropertyDescriptor::data(Value::Number(a.items.lock().len() as f64));
+                    let length = a.items.lock().len().max(a.sparse_max.lock().unwrap_or(0));
+                    let mut desc = PropertyDescriptor::data(Value::Number(length as f64));
                     desc.writable = true;
                     desc.enumerable = false;
                     desc.configurable = false;
@@ -6230,85 +6236,93 @@ fn property_descriptor_from_object(vm: &mut Vm, desc: &Value) -> error::Result<P
         ));
     }
 
-    let mut value = Value::Undefined;
-    let mut writable = false;
-    let mut enumerable = false;
-    let mut configurable = false;
-    let mut get = None;
-    let mut set = None;
-    let mut has_value = false;
-    let mut has_writable = false;
-    let mut has_get = false;
-    let mut has_set = false;
+    let mut pin_count = vm.pin(desc);
+    let result = (|| {
+        let mut value = Value::Undefined;
+        let mut writable = false;
+        let mut enumerable = false;
+        let mut configurable = false;
+        let mut get = None;
+        let mut set = None;
+        let mut has_value = false;
+        let mut has_writable = false;
+        let mut has_get = false;
+        let mut has_set = false;
 
-    if vm.has_own(desc, "enumerable") {
-        enumerable = vm.get_property(desc, "enumerable")?.is_truthy();
-    }
-    if vm.has_own(desc, "configurable") {
-        configurable = vm.get_property(desc, "configurable")?.is_truthy();
-    }
-    if vm.has_own(desc, "value") {
-        value = vm.get_property(desc, "value")?;
-        has_value = true;
-    }
-    if vm.has_own(desc, "writable") {
-        writable = vm.get_property(desc, "writable")?.is_truthy();
-        has_writable = true;
-    }
-    if vm.has_own(desc, "get") {
-        let getter = vm.get_property(desc, "get")?;
-        if !getter.is_undefined() && !is_callable(&getter, &vm.heap) {
-            return Err(Error::type_err("Getter must be a function"));
+        if vm.has_property(desc, "enumerable")? {
+            enumerable = vm.get_property(desc, "enumerable")?.is_truthy();
         }
-        get = if getter.is_undefined() {
-            None
+        if vm.has_property(desc, "configurable")? {
+            configurable = vm.get_property(desc, "configurable")?.is_truthy();
+        }
+        if vm.has_property(desc, "value")? {
+            value = vm.get_property(desc, "value")?;
+            pin_count += vm.pin(&value);
+            has_value = true;
+        }
+        if vm.has_property(desc, "writable")? {
+            writable = vm.get_property(desc, "writable")?.is_truthy();
+            has_writable = true;
+        }
+        if vm.has_property(desc, "get")? {
+            let getter = vm.get_property(desc, "get")?;
+            pin_count += vm.pin(&getter);
+            if !getter.is_undefined() && !is_callable(&getter, &vm.heap) {
+                return Err(Error::type_err("Getter must be a function"));
+            }
+            get = if getter.is_undefined() {
+                None
+            } else {
+                Some(getter)
+            };
+            has_get = true;
+        }
+        if vm.has_property(desc, "set")? {
+            let setter = vm.get_property(desc, "set")?;
+            pin_count += vm.pin(&setter);
+            if !setter.is_undefined() && !is_callable(&setter, &vm.heap) {
+                return Err(Error::type_err("Setter must be a function"));
+            }
+            set = if setter.is_undefined() {
+                None
+            } else {
+                Some(setter)
+            };
+            has_set = true;
+        }
+
+        let is_accessor = has_get || has_set;
+        let is_data = has_value || has_writable;
+        if is_accessor && is_data {
+            return Err(Error::type_err(
+                "Invalid property descriptor. Cannot both specify accessors and a value or writable attribute",
+            ));
+        }
+
+        Ok(if is_accessor {
+            PropertyDescriptor {
+                value: Value::Undefined,
+                writable: false,
+                enumerable,
+                configurable,
+                get,
+                set,
+                is_accessor: true,
+            }
         } else {
-            Some(getter)
-        };
-        has_get = true;
-    }
-    if vm.has_own(desc, "set") {
-        let setter = vm.get_property(desc, "set")?;
-        if !setter.is_undefined() && !is_callable(&setter, &vm.heap) {
-            return Err(Error::type_err("Setter must be a function"));
-        }
-        set = if setter.is_undefined() {
-            None
-        } else {
-            Some(setter)
-        };
-        has_set = true;
-    }
-
-    let is_accessor = has_get || has_set;
-    let is_data = has_value || has_writable;
-    if is_accessor && is_data {
-        return Err(Error::type_err(
-            "Invalid property descriptor. Cannot both specify accessors and a value or writable attribute",
-        ));
-    }
-
-    Ok(if is_accessor {
-        PropertyDescriptor {
-            value: Value::Undefined,
-            writable: false,
-            enumerable,
-            configurable,
-            get,
-            set,
-            is_accessor: true,
-        }
-    } else {
-        PropertyDescriptor {
-            value,
-            writable,
-            enumerable,
-            configurable,
-            get: None,
-            set: None,
-            is_accessor: false,
-        }
-    })
+            PropertyDescriptor {
+                value,
+                writable,
+                enumerable,
+                configurable,
+                get: None,
+                set: None,
+                is_accessor: false,
+            }
+        })
+    })();
+    vm.unpin_many(pin_count);
+    result
 }
 
 pub(crate) fn own_property_descriptor_for_key_or_throw(
@@ -6791,6 +6805,27 @@ pub(crate) fn object_define_property_result(
                     }
                     return Ok(true);
                 }
+                let is_array_length = key.as_str() == Some("length")
+                    && vm.heap.with_obj(idx.0, |object| {
+                        matches!(object, HeapObj::Array(array) if !array.is_arguments.load(Ordering::Relaxed))
+                    });
+                if is_array_length {
+                    let success = vm.define_array_length_property(
+                        idx.0,
+                        has_value.then(|| value.clone()),
+                        has_writable,
+                        writable,
+                        has_enumerable,
+                        enumerable,
+                        has_configurable,
+                        configurable,
+                        is_accessor,
+                    )?;
+                    if !success && throw_on_failure {
+                        return Err(Error::type_err("Cannot redefine Array length"));
+                    }
+                    return Ok(success);
+                }
                 let is_namespace = vm.heap.with_obj(idx.0, |object| {
                     matches!(object, HeapObj::ModuleNamespace(_))
                 });
@@ -6826,6 +6861,20 @@ pub(crate) fn object_define_property_result(
                         return Err(Error::type_err("Cannot define TypedArray integer index"));
                     }
                     return Ok(success);
+                }
+                if key
+                    .as_str()
+                    .and_then(crate::value::parse_array_index)
+                    .is_some_and(|index| {
+                        vm.array_index_blocked_by_non_writable_length(idx.0, index)
+                    })
+                {
+                    if throw_on_failure {
+                        return Err(Error::type_err(
+                            "Cannot define Array index with non-writable length",
+                        ));
+                    }
+                    return Ok(false);
                 }
                 let current = own_property_descriptor_for_key(vm, &target, &key);
                 let mapped_arguments_index = key
@@ -6970,9 +7019,10 @@ pub(crate) fn object_define_property_result(
                         is_accessor: false,
                     }
                 };
+                let array_index = key.as_str().and_then(crate::value::parse_array_index);
                 vm.heap.with_obj(idx.0, |obj| {
                     if let HeapObj::Array(a) = obj {
-                        if let Some(i) = key.as_str().and_then(crate::value::parse_array_index) {
+                        if let Some(i) = array_index {
                             if i >= a.items.lock().len() {
                                 let new_len = i + 1;
                                 if new_len <= crate::value::MAX_DENSE_ARRAY_LEN {
@@ -6982,15 +7032,25 @@ pub(crate) fn object_define_property_result(
                                         items.push(Value::Undefined);
                                         present.push(false);
                                     }
-                                    *a.sparse_max.lock() = None;
+                                    let dense_length = items.len();
+                                    let mut sparse_max = a.sparse_max.lock();
+                                    if sparse_max.is_some_and(|sparse| sparse <= dense_length) {
+                                        *sparse_max = None;
+                                    }
                                 } else {
-                                    *a.sparse_max.lock() = Some(new_len);
+                                    let mut sparse_max = a.sparse_max.lock();
+                                    if sparse_max.is_none_or(|current| new_len > current) {
+                                        *sparse_max = Some(new_len);
+                                    }
                                 }
                             }
                         }
                     }
                     obj.props().lock().insert(key.clone(), descriptor);
                 });
+                if array_index.is_some() {
+                    vm.sync_array_length_descriptor_after_index(idx.0);
+                }
                 if let Some((i, (env, name))) = mapped_arguments_index {
                     if is_accessor {
                         vm.remove_arguments_mapping_for_index(idx.0, i);
@@ -10103,6 +10163,8 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
     // RegExp
     let (regex_ctor, regex_proto) = make_regexp_constructor_in_env(vm, vm.global)?;
     vm.regexp_proto = Value::Object(regex_proto);
+    vm.realm_regexp_constructors
+        .insert(vm.global.0, Value::Object(regex_ctor));
     vm.realm_regexp_prototypes
         .insert(vm.global.0, vm.regexp_proto.clone());
     define_global(vm, "RegExp", Value::Object(regex_ctor));

@@ -46,6 +46,28 @@ NATIVE_CONSTRUCT_FEATURES = {
     "built-ins/Date/proto-from-ctor-realm-two.js": frozenset(
         {"cross-realm", "Reflect"}
     ),
+    "built-ins/RegExp/is-a-constructor.js": frozenset({"Reflect.construct"}),
+    "built-ins/RegExp/proto-from-ctor-realm.js": frozenset(
+        {"cross-realm", "Reflect"}
+    ),
+    "built-ins/RegExp/from-regexp-like-flag-override.js": frozenset(
+        {"Symbol", "Symbol.match"}
+    ),
+    "built-ins/RegExp/from-regexp-like-get-ctor-err.js": frozenset(
+        {"Symbol", "Symbol.match"}
+    ),
+    "built-ins/RegExp/from-regexp-like-get-flags-err.js": frozenset(
+        {"Symbol", "Symbol.match"}
+    ),
+    "built-ins/RegExp/from-regexp-like-get-source-err.js": frozenset(
+        {"Symbol", "Symbol.match"}
+    ),
+    "built-ins/RegExp/from-regexp-like-short-circuit.js": frozenset(
+        {"Symbol", "Symbol.match"}
+    ),
+    "built-ins/RegExp/from-regexp-like.js": frozenset(
+        {"Symbol", "Symbol.match"}
+    ),
     "built-ins/Function/is-a-constructor.js": frozenset({"Reflect.construct"}),
     "built-ins/Function/proto-from-ctor-realm-prototype.js": frozenset(
         {"cross-realm", "Reflect"}

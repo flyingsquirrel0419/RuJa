@@ -11,6 +11,7 @@ fn regexp_last_index_prop(value: Value) -> PropertyDescriptor {
 
 const REGEXP_SOURCE_SLOT: &str = "[[RegExpSource]]";
 const REGEXP_FLAGS_SLOT: &str = "[[RegExpFlags]]";
+const REGEXP_MATCHER_SLOT: &str = "[[RegExpMatcher]]";
 const REGEXP_HAS_INDICES_SLOT: &str = "[[RegExpHasIndices]]";
 const REGEXP_GLOBAL_SLOT: &str = "[[RegExpGlobal]]";
 const REGEXP_IGNORE_CASE_SLOT: &str = "[[RegExpIgnoreCase]]";
@@ -24,46 +25,95 @@ fn regexp_internal_slot_key(name: &str) -> crate::value::PrivateSlotKey {
     crate::value::PrivateSlotKey::Internal(Arc::from(name))
 }
 
+fn has_regexp_matcher_slot(vm: &Vm, value: &Value) -> bool {
+    let Value::Object(idx) = value else {
+        return false;
+    };
+    vm.heap.with_obj(idx.0, |object| {
+        let HeapObj::Object(data) = object else {
+            return false;
+        };
+        data.private_fields
+            .lock()
+            .contains_key(&regexp_internal_slot_key(REGEXP_MATCHER_SLOT))
+    })
+}
+
+fn regexp_prototype_from_constructor(vm: &mut Vm, new_target: &Value) -> error::Result<Value> {
+    let prototype = vm.get_property_by_key(new_target, &PropertyKey::from("prototype"))?;
+    if matches!(prototype, Value::Object(_)) {
+        return Ok(prototype);
+    }
+    vm.constructor_realm_default_prototype(
+        new_target,
+        "RegExp",
+        vm.current_realm_regexp_prototype(),
+    )
+}
+
 pub(crate) fn regexp_constructor(
     vm: &mut Vm,
     args: &[Value],
     _this: Option<Value>,
 ) -> error::Result<Value> {
-    let pattern_is_regexp = matches!(args.first(), Some(Value::Object(idx)) if {
-        vm.heap.with_obj(idx.0, |o| {
-            matches!(o, HeapObj::Object(od) if od.class_name.as_deref() == Some("RegExp"))
-        })
-    });
-    let pattern = match args.first() {
-        Some(v) if pattern_is_regexp => read_regexp_source(vm, &Some(v.clone()))?,
-        Some(Value::String(s)) => s.to_string(),
-        Some(v) if !v.is_undefined() => vm.to_string(v)?.to_string(),
-        _ => String::new(),
-    };
-    let flags = match args.get(1) {
-        Some(Value::String(s)) => s.to_string(),
-        Some(v) if !v.is_undefined() => vm.to_string(v)?.to_string(),
-        _ if pattern_is_regexp => read_regexp_flags(vm, &args.first().cloned())?,
-        _ => String::new(),
-    };
-    // Look up RegExp.prototype via the global RegExp constructor.
-    let regex_proto_val = {
-        let reg = crate::environment::get(&vm.heap, vm.global, "RegExp");
-        match reg {
-            Some(Value::Object(ci)) => vm
-                .heap
-                .with_obj(ci.0, |o| {
-                    o.props()
-                        .lock()
-                        .get(&crate::value::PropertyKey::from("prototype"))
-                        .map(|d| d.value.clone())
-                })
-                .unwrap_or(vm.object_proto.clone()),
-            _ => vm.object_proto.clone(),
+    let pattern = args.first().cloned().unwrap_or(Value::Undefined);
+    let supplied_flags = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let pattern_is_regexp = is_regexp_spec(vm, &pattern)?;
+    let constructing = vm.current_native_new_target().is_some();
+    let new_target = vm
+        .current_native_new_target()
+        .or_else(|| vm.current_native_callee())
+        .cloned()
+        .ok_or_else(|| Error::type_err("RegExp constructor has no active function"))?;
+
+    if !constructing && pattern_is_regexp && supplied_flags.is_undefined() {
+        let pattern_constructor = vm.get_property(&pattern, "constructor")?;
+        if same_value(&new_target, &pattern_constructor) {
+            return Ok(pattern);
         }
-    };
-    let regex_proto_val = native_constructor_prototype_with_default(vm, "RegExp", regex_proto_val)?;
-    create_regexp_object(vm, pattern, flags, regex_proto_val)
+    }
+
+    // The extracted values can be fresh getter results. Root each result as
+    // soon as it becomes observable because the following getter, prototype
+    // lookup, allocation, and ToString operations can all re-enter the VM.
+    let mut pin_count = 0;
+    let result = (|| {
+        let (pattern_source, flags) = if has_regexp_matcher_slot(vm, &pattern) {
+            let pattern_source = Value::String(Arc::from(
+                read_regexp_source(vm, &Some(pattern.clone()))?.as_str(),
+            ));
+            let flags = if supplied_flags.is_undefined() {
+                Value::String(Arc::from(
+                    read_regexp_flags(vm, &Some(pattern.clone()))?.as_str(),
+                ))
+            } else {
+                supplied_flags.clone()
+            };
+            pin_count += vm.pin(&pattern_source);
+            pin_count += vm.pin(&flags);
+            (pattern_source, flags)
+        } else if pattern_is_regexp {
+            let pattern_source = vm.get_property(&pattern, "source")?;
+            pin_count += vm.pin(&pattern_source);
+            let flags = if supplied_flags.is_undefined() {
+                vm.get_property(&pattern, "flags")?
+            } else {
+                supplied_flags.clone()
+            };
+            pin_count += vm.pin(&flags);
+            (pattern_source, flags)
+        } else {
+            pin_count += vm.pin(&pattern);
+            pin_count += vm.pin(&supplied_flags);
+            (pattern.clone(), supplied_flags.clone())
+        };
+
+        let prototype = regexp_prototype_from_constructor(vm, &new_target)?;
+        let object = regexp_alloc(vm, prototype)?;
+        regexp_initialize(vm, object, pattern_source, flags)
+    })();
+    vm.unpin_many(pin_count);
+    result
 }
 
 pub(crate) fn regexp_escape(
@@ -107,30 +157,11 @@ pub(crate) fn regexp_create_intrinsic_with_flags(
     pattern: &Value,
     flags_override: Option<&str>,
 ) -> error::Result<Value> {
-    let (pattern, flags) = if matches!(pattern, Value::Object(idx) if {
-        vm.heap.with_obj(idx.0, |o| {
-            matches!(o, HeapObj::Object(od) if od.class_name.as_deref() == Some("RegExp"))
-        })
-    }) {
-        (
-            read_regexp_source(vm, &Some(pattern.clone()))?,
-            match flags_override {
-                Some(flags) => flags.to_string(),
-                None => read_regexp_flags(vm, &Some(pattern.clone()))?,
-            },
-        )
-    } else if pattern.is_undefined() {
-        (
-            String::new(),
-            flags_override.map(str::to_string).unwrap_or_default(),
-        )
-    } else {
-        (
-            vm.to_string(pattern)?.to_string(),
-            flags_override.map(str::to_string).unwrap_or_default(),
-        )
-    };
-    create_regexp_object(vm, pattern, flags, vm.regexp_proto.clone())
+    let flags = flags_override
+        .map(|flags| Value::String(Arc::from(flags)))
+        .unwrap_or(Value::Undefined);
+    let object = regexp_alloc(vm, vm.current_realm_regexp_prototype())?;
+    regexp_initialize(vm, object, pattern.clone(), flags)
 }
 
 fn create_regexp_object(
@@ -139,69 +170,116 @@ fn create_regexp_object(
     flags: String,
     proto: Value,
 ) -> error::Result<Value> {
-    crate::lexer::validate_regex_literal(&pattern, &flags).map_err(Error::syntax)?;
-    // Validate the pattern eagerly so bad regexes throw at construction time.
-    compile_regex(&pattern, &flags).map_err(|e| Error::syntax(format!("Invalid regex: {}", e)))?;
-    let obj_idx = vm.heap.allocate(HeapObj::Object(crate::value::ObjectData {
-        props: Mutex::new(IndexMap::new()),
-        proto: Mutex::new(Some(proto)),
-        extensible: AtomicBool::new(true),
-        class_name: Some(Arc::from("RegExp")),
-        private_fields: Mutex::new(std::collections::HashMap::new()),
-        primitive: Mutex::new(None),
-    }))?;
+    let object = regexp_alloc(vm, proto)?;
+    regexp_initialize(
+        vm,
+        object,
+        Value::String(Arc::from(pattern.as_str())),
+        Value::String(Arc::from(flags.as_str())),
+    )
+}
+
+fn regexp_alloc(vm: &mut Vm, proto: Value) -> error::Result<Value> {
     let mut props = IndexMap::new();
     props.insert(
         PropertyKey::from("lastIndex"),
         regexp_last_index_prop(Value::Number(0.0)),
     );
-    vm.heap.with_obj(obj_idx, |o| {
-        if let HeapObj::Object(obj) = o {
-            let mut private_fields = obj.private_fields.lock();
-            private_fields.insert(
-                regexp_internal_slot_key(REGEXP_SOURCE_SLOT),
-                crate::value::PrivateSlot::Value(Value::String(Arc::from(pattern.as_str()))),
-            );
-            private_fields.insert(
-                regexp_internal_slot_key(REGEXP_FLAGS_SLOT),
-                crate::value::PrivateSlot::Value(Value::String(Arc::from(flags.as_str()))),
-            );
-            private_fields.insert(
-                regexp_internal_slot_key(REGEXP_HAS_INDICES_SLOT),
-                crate::value::PrivateSlot::Value(Value::Bool(flags.contains('d'))),
-            );
-            private_fields.insert(
-                regexp_internal_slot_key(REGEXP_GLOBAL_SLOT),
-                crate::value::PrivateSlot::Value(Value::Bool(flags.contains('g'))),
-            );
-            private_fields.insert(
-                regexp_internal_slot_key(REGEXP_IGNORE_CASE_SLOT),
-                crate::value::PrivateSlot::Value(Value::Bool(flags.contains('i'))),
-            );
-            private_fields.insert(
-                regexp_internal_slot_key(REGEXP_MULTILINE_SLOT),
-                crate::value::PrivateSlot::Value(Value::Bool(flags.contains('m'))),
-            );
-            private_fields.insert(
-                regexp_internal_slot_key(REGEXP_DOT_ALL_SLOT),
-                crate::value::PrivateSlot::Value(Value::Bool(flags.contains('s'))),
-            );
-            private_fields.insert(
-                regexp_internal_slot_key(REGEXP_UNICODE_SLOT),
-                crate::value::PrivateSlot::Value(Value::Bool(flags.contains('u'))),
-            );
-            private_fields.insert(
-                regexp_internal_slot_key(REGEXP_UNICODE_SETS_SLOT),
-                crate::value::PrivateSlot::Value(Value::Bool(flags.contains('v'))),
-            );
-            private_fields.insert(
-                regexp_internal_slot_key(REGEXP_STICKY_SLOT),
-                crate::value::PrivateSlot::Value(Value::Bool(flags.contains('y'))),
-            );
-            *obj.props.lock() = props;
-        }
-    });
-    Ok(Value::Object(GcIdx(obj_idx)))
+    let private_fields = std::collections::HashMap::from([(
+        regexp_internal_slot_key(REGEXP_MATCHER_SLOT),
+        crate::value::PrivateSlot::Value(Value::Bool(true)),
+    )]);
+    let pin_count = vm.pin(&proto);
+    let result = vm
+        .alloc(HeapObj::Object(crate::value::ObjectData {
+            props: Mutex::new(props),
+            proto: Mutex::new(Some(proto)),
+            extensible: AtomicBool::new(true),
+            class_name: Some(Arc::from("RegExp")),
+            private_fields: Mutex::new(private_fields),
+            primitive: Mutex::new(None),
+        }))
+        .map(Value::Object);
+    vm.unpin_many(pin_count);
+    result
+}
+
+fn regexp_initialize(
+    vm: &mut Vm,
+    object: Value,
+    pattern: Value,
+    flags: Value,
+) -> error::Result<Value> {
+    let pin_count = vm.pin_many(&[object.clone(), pattern.clone(), flags.clone()]);
+    let result = (|| {
+        let pattern = if pattern.is_undefined() {
+            String::new()
+        } else {
+            vm.to_string(&pattern)?.to_string()
+        };
+        let flags = if flags.is_undefined() {
+            String::new()
+        } else {
+            vm.to_string(&flags)?.to_string()
+        };
+
+        crate::lexer::validate_regex_literal(&pattern, &flags).map_err(Error::syntax)?;
+        // Validate the pattern eagerly so bad regexes throw at construction time.
+        compile_regex(&pattern, &flags)
+            .map_err(|e| Error::syntax(format!("Invalid regex: {}", e)))?;
+        let Value::Object(object_idx) = object else {
+            unreachable!("RegExpAlloc must return an object");
+        };
+        vm.heap.with_obj(object_idx.0, |o| {
+            if let HeapObj::Object(obj) = o {
+                let mut private_fields = obj.private_fields.lock();
+                private_fields.insert(
+                    regexp_internal_slot_key(REGEXP_SOURCE_SLOT),
+                    crate::value::PrivateSlot::Value(Value::String(Arc::from(pattern.as_str()))),
+                );
+                private_fields.insert(
+                    regexp_internal_slot_key(REGEXP_FLAGS_SLOT),
+                    crate::value::PrivateSlot::Value(Value::String(Arc::from(flags.as_str()))),
+                );
+                private_fields.insert(
+                    regexp_internal_slot_key(REGEXP_HAS_INDICES_SLOT),
+                    crate::value::PrivateSlot::Value(Value::Bool(flags.contains('d'))),
+                );
+                private_fields.insert(
+                    regexp_internal_slot_key(REGEXP_GLOBAL_SLOT),
+                    crate::value::PrivateSlot::Value(Value::Bool(flags.contains('g'))),
+                );
+                private_fields.insert(
+                    regexp_internal_slot_key(REGEXP_IGNORE_CASE_SLOT),
+                    crate::value::PrivateSlot::Value(Value::Bool(flags.contains('i'))),
+                );
+                private_fields.insert(
+                    regexp_internal_slot_key(REGEXP_MULTILINE_SLOT),
+                    crate::value::PrivateSlot::Value(Value::Bool(flags.contains('m'))),
+                );
+                private_fields.insert(
+                    regexp_internal_slot_key(REGEXP_DOT_ALL_SLOT),
+                    crate::value::PrivateSlot::Value(Value::Bool(flags.contains('s'))),
+                );
+                private_fields.insert(
+                    regexp_internal_slot_key(REGEXP_UNICODE_SLOT),
+                    crate::value::PrivateSlot::Value(Value::Bool(flags.contains('u'))),
+                );
+                private_fields.insert(
+                    regexp_internal_slot_key(REGEXP_UNICODE_SETS_SLOT),
+                    crate::value::PrivateSlot::Value(Value::Bool(flags.contains('v'))),
+                );
+                private_fields.insert(
+                    regexp_internal_slot_key(REGEXP_STICKY_SLOT),
+                    crate::value::PrivateSlot::Value(Value::Bool(flags.contains('y'))),
+                );
+            }
+        });
+        set_regexp_last_index(vm, &Value::Object(object_idx), 0.0)?;
+        Ok(Value::Object(object_idx))
+    })();
+    vm.unpin_many(pin_count);
+    result
 }
 
 pub(crate) fn regexp_test(
@@ -294,25 +372,29 @@ pub(crate) fn regexp_symbol_match_all(
     let s = vm
         .to_string(args.first().unwrap_or(&Value::Undefined))?
         .to_string();
-    let flags_value = vm.get_property(&rx, "flags")?;
-    let flags = vm.to_string(&flags_value)?.to_string();
-    let default_constructor = current_realm_regexp_constructor(vm)?;
-    let constructor = regexp_species_constructor(vm, &rx, default_constructor.clone())?;
+    let default_constructor = vm.current_realm_regexp_constructor();
+    let constructor = regexp_species_constructor(vm, &rx, default_constructor)?;
+    let mut pin_count = vm.pin(&constructor);
+    let result = (|| {
+        let flags_value = vm.get_property(&rx, "flags")?;
+        pin_count += vm.pin(&flags_value);
+        let flags = vm.to_string(&flags_value)?.to_string();
 
-    if same_value(&constructor, &default_constructor) {
-        let _ = is_regexp_spec(vm, &rx)?;
-    }
-
-    let matcher = vm.construct(
-        &constructor,
-        &[rx.clone(), Value::String(Arc::from(flags.as_str()))],
-    )?;
-    let last_index_value = vm.get_property(&rx, "lastIndex")?;
-    let last_index = regexp_to_length(vm, &last_index_value)?;
-    set_regexp_last_index(vm, &matcher, last_index)?;
-    let global = flags.contains('g');
-    let full_unicode = flags.contains('u') || flags.contains('v');
-    new_regexp_string_iterator(vm, matcher, Arc::from(s.as_str()), global, full_unicode)
+        let matcher = vm.construct(
+            &constructor,
+            &[rx.clone(), Value::String(Arc::from(flags.as_str()))],
+        )?;
+        pin_count += vm.pin(&matcher);
+        let last_index_value = vm.get_property(&rx, "lastIndex")?;
+        pin_count += vm.pin(&last_index_value);
+        let last_index = regexp_to_length(vm, &last_index_value)?;
+        set_regexp_last_index(vm, &matcher, last_index)?;
+        let global = flags.contains('g');
+        let full_unicode = flags.contains('u') || flags.contains('v');
+        new_regexp_string_iterator(vm, matcher, Arc::from(s.as_str()), global, full_unicode)
+    })();
+    vm.unpin_many(pin_count);
+    result
 }
 
 fn new_regexp_string_iterator(
@@ -322,48 +404,77 @@ fn new_regexp_string_iterator(
     global: bool,
     full_unicode: bool,
 ) -> error::Result<Value> {
-    let obj_idx = vm
-        .heap
-        .allocate(HeapObj::RegExpStringIterator(RegExpStringIteratorData {
+    let realm = vm.current_realm_global_env();
+    let prototype = vm
+        .realm_regexp_string_iterator_prototypes
+        .get(&realm.0)
+        .cloned()
+        .ok_or_else(|| Error::internal("missing RegExp String Iterator prototype intrinsic"))?;
+    let pin_count = vm.pin_many(&[matcher.clone(), prototype.clone()]);
+    let result = vm
+        .alloc(HeapObj::RegExpStringIterator(RegExpStringIteratorData {
             matcher,
             string,
             global,
             full_unicode,
             done: AtomicBool::new(false),
             props: Mutex::new(IndexMap::new()),
-            proto: Mutex::new(Some(vm.regexp_string_iterator_proto.clone())),
-        }))?;
-    Ok(Value::Object(GcIdx(obj_idx)))
+            proto: Mutex::new(Some(prototype)),
+        }))
+        .map(Value::Object);
+    vm.unpin_many(pin_count);
+    result
 }
 
 pub(crate) fn setup_regexp_string_iterator_proto(vm: &mut Vm) -> error::Result<()> {
-    let next_fn = vm.new_native_function("next", regexp_string_iterator_next, 0)?;
-    let proto_idx = vm.heap.allocate(HeapObj::Object(ObjectData {
-        props: Mutex::new(IndexMap::new()),
-        proto: Mutex::new(Some(vm.iterator_base_proto.clone())),
-        extensible: AtomicBool::new(true),
-        class_name: Some(Arc::from("RegExp String Iterator")),
-        private_fields: Mutex::new(std::collections::HashMap::new()),
-        primitive: Mutex::new(None),
-    }))?;
-    vm.heap.with_obj(proto_idx, |obj| {
-        let mut props = obj.props().lock();
-        props.insert(PropertyKey::from("next"), data_prop(Value::Object(next_fn)));
-        props.insert(
-            PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
-            PropertyDescriptor {
-                value: Value::String(Arc::from("RegExp String Iterator")),
-                writable: false,
-                enumerable: false,
-                configurable: true,
-                get: None,
-                set: None,
-                is_accessor: false,
-            },
-        );
-    });
-    vm.regexp_string_iterator_proto = Value::Object(GcIdx(proto_idx));
+    let iterator_base = vm.iterator_base_proto.clone();
+    setup_regexp_string_iterator_proto_in_env(vm, vm.global, iterator_base)?;
     Ok(())
+}
+
+pub(crate) fn setup_regexp_string_iterator_proto_in_env(
+    vm: &mut Vm,
+    realm: GcIdx,
+    iterator_base: Value,
+) -> error::Result<Value> {
+    let next_fn = vm.new_native_function_in_env("next", regexp_string_iterator_next, 0, realm)?;
+    let roots = [Value::Object(next_fn), iterator_base.clone()];
+    let pin_count = vm.pin_many(&roots);
+    let result = (|| {
+        let proto_idx = vm.alloc(HeapObj::Object(ObjectData {
+            props: Mutex::new(IndexMap::new()),
+            proto: Mutex::new(Some(iterator_base)),
+            extensible: AtomicBool::new(true),
+            class_name: Some(Arc::from("RegExp String Iterator")),
+            private_fields: Mutex::new(std::collections::HashMap::new()),
+            primitive: Mutex::new(None),
+        }))?;
+        vm.heap.with_obj(proto_idx.0, |obj| {
+            let mut props = obj.props().lock();
+            props.insert(PropertyKey::from("next"), data_prop(Value::Object(next_fn)));
+            props.insert(
+                PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
+                PropertyDescriptor {
+                    value: Value::String(Arc::from("RegExp String Iterator")),
+                    writable: false,
+                    enumerable: false,
+                    configurable: true,
+                    get: None,
+                    set: None,
+                    is_accessor: false,
+                },
+            );
+        });
+        let prototype = Value::Object(proto_idx);
+        vm.realm_regexp_string_iterator_prototypes
+            .insert(realm.0, prototype.clone());
+        if realm == vm.global {
+            vm.regexp_string_iterator_proto = prototype.clone();
+        }
+        Ok(prototype)
+    })();
+    vm.unpin_many(pin_count);
+    result
 }
 
 fn regexp_string_iterator_next(
@@ -407,30 +518,30 @@ fn regexp_string_iterator_next(
         return gen_result(vm, Value::Undefined, true, false);
     }
 
-    if global {
-        let matched_value = vm.get_property(&result, "0")?;
-        let matched = vm.to_string(&matched_value)?.to_string();
-        if matched.is_empty() {
-            let last_index = vm.get_property(&matcher, "lastIndex")?;
-            let this_index = regexp_to_length(vm, &last_index)? as usize;
-            let next_index = advance_string_index(&string, this_index, full_unicode);
-            set_regexp_last_index(vm, &matcher, next_index as f64)?;
-        }
-    } else {
-        vm.heap.with_obj(iter_idx.0, |obj| {
-            if let HeapObj::RegExpStringIterator(iter) = obj {
-                iter.done.store(true, Ordering::Relaxed);
+    let mut pin_count = vm.pin(&result);
+    let outcome = (|| {
+        if global {
+            let matched_value = vm.get_property(&result, "0")?;
+            pin_count += vm.pin(&matched_value);
+            let matched = vm.to_string(&matched_value)?.to_string();
+            if matched.is_empty() {
+                let last_index = vm.get_property(&matcher, "lastIndex")?;
+                pin_count += vm.pin(&last_index);
+                let this_index = regexp_to_length(vm, &last_index)? as usize;
+                let next_index = advance_string_index(&string, this_index, full_unicode);
+                set_regexp_last_index(vm, &matcher, next_index as f64)?;
             }
-        });
-    }
-    gen_result(vm, result, false, false)
-}
-
-fn current_realm_regexp_constructor(vm: &mut Vm) -> error::Result<Value> {
-    let realm_env = vm.native_callee_closure().unwrap_or(vm.global);
-    crate::environment::get(&vm.heap, realm_env, "RegExp")
-        .or_else(|| crate::environment::get(&vm.heap, vm.global, "RegExp"))
-        .ok_or_else(|| Error::type_err("RegExp constructor is not available"))
+        } else {
+            vm.heap.with_obj(iter_idx.0, |obj| {
+                if let HeapObj::RegExpStringIterator(iter) = obj {
+                    iter.done.store(true, Ordering::Relaxed);
+                }
+            });
+        }
+        gen_result(vm, result, false, false)
+    })();
+    vm.unpin_many(pin_count);
+    outcome
 }
 
 fn regexp_species_constructor(
@@ -457,7 +568,7 @@ fn regexp_species_constructor(
 }
 
 pub(crate) fn is_regexp_spec(vm: &mut Vm, value: &Value) -> error::Result<bool> {
-    let Value::Object(idx) = value else {
+    let Value::Object(_) = value else {
         return Ok(false);
     };
     let match_key = PropertyKey::Symbol(vm.well_known_symbols.r#match);
@@ -465,10 +576,7 @@ pub(crate) fn is_regexp_spec(vm: &mut Vm, value: &Value) -> error::Result<bool> 
     if !matcher.is_undefined() {
         return Ok(vm.to_boolean(&matcher));
     }
-    Ok(vm.heap.with_obj(
-        idx.0,
-        |o| matches!(o, HeapObj::Object(od) if od.class_name.as_deref() == Some("RegExp")),
-    ))
+    Ok(has_regexp_matcher_slot(vm, value))
 }
 
 fn regexp_exec_dispatch(vm: &mut Vm, rx: &Value, s: &str) -> error::Result<Value> {
@@ -966,33 +1074,7 @@ pub(crate) fn add_regexp_exec_result_props(
 }
 
 fn set_regexp_last_index(vm: &mut Vm, target: &Value, value: f64) -> error::Result<()> {
-    let Value::Object(idx) = target else {
-        return Err(Error::type_err("not a RegExp".to_string()));
-    };
-    let key = PropertyKey::from("lastIndex");
-    let outcome = vm.heap.with_obj(idx.0, |obj| {
-        let props = obj.props();
-        let mut props = props.lock();
-        match props.get_mut(&key) {
-            Some(desc) if desc.is_accessor || !desc.writable => false,
-            Some(desc) => {
-                desc.value = Value::Number(value);
-                true
-            }
-            None => {
-                props.insert(key, regexp_last_index_prop(Value::Number(value)));
-                true
-            }
-        }
-    });
-    if outcome {
-        vm.ic_invalidate(idx.0, "lastIndex");
-        Ok(())
-    } else {
-        Err(Error::type_err(
-            "Cannot assign to read only property 'lastIndex' of object",
-        ))
-    }
+    vm.set_property_strict(target, "lastIndex", Value::Number(value))
 }
 
 pub(crate) fn read_regexp_source(vm: &mut Vm, this: &Option<Value>) -> error::Result<String> {
@@ -1221,18 +1303,12 @@ fn push_unicode_escape(out: &mut String, unit: u16) {
 }
 
 fn is_current_realm_regexp_prototype(vm: &mut Vm, value: GcIdx) -> bool {
-    let realm_env = vm.native_callee_closure().unwrap_or(vm.global);
-    let Some(Value::Object(regexp_ctor)) = crate::environment::get(&vm.heap, realm_env, "RegExp")
-    else {
-        return false;
-    };
-    let proto = vm.heap.with_obj(regexp_ctor.0, |o| {
-        o.props()
-            .lock()
-            .get(&PropertyKey::from("prototype"))
-            .map(|desc| desc.value.clone())
-    });
-    matches!(proto, Some(Value::Object(proto_idx)) if proto_idx == value)
+    let closure = vm.native_callee_closure().unwrap_or(vm.global);
+    let realm = crate::environment::global_env_root(&vm.heap, closure);
+    matches!(
+        vm.realm_regexp_prototypes.get(&realm.0),
+        Some(Value::Object(prototype)) if *prototype == value
+    )
 }
 
 pub(crate) fn generator_next(

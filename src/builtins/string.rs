@@ -99,18 +99,7 @@ fn is_js_trim_whitespace(ch: char) -> bool {
 }
 
 fn is_regexp(vm: &mut Vm, value: &Value) -> error::Result<bool> {
-    let Value::Object(idx) = value else {
-        return Ok(false);
-    };
-    let match_key = crate::value::PropertyKey::Symbol(vm.well_known_symbols.r#match);
-    let matcher = vm.get_property_by_key(value, &match_key)?;
-    if !matcher.is_undefined() {
-        return Ok(vm.to_boolean(&matcher));
-    }
-    Ok(vm.heap.with_obj(
-        idx.0,
-        |o| matches!(o, HeapObj::Object(od) if od.class_name.as_deref() == Some("RegExp")),
-    ))
+    is_regexp_spec(vm, value)
 }
 
 fn is_well_formed_utf16(units: &[u16]) -> bool {
