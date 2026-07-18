@@ -4,6 +4,37 @@
 
 ### Fixed
 
+- `RegExp.prototype[Symbol.split]` now follows the generic specification
+  algorithm instead of relying on `String.prototype.split`'s RegExp class-name
+  shortcut. It performs ordered string conversion, species construction,
+  flags handling, sticky matching, strict `lastIndex` writes, capture
+  insertion, limit checks, and UTF-16 index advancement. Result arrays use the
+  method Realm and the sandbox allocator; every observable intermediate is
+  rooted across re-entrant GC, and native search/capture work consumes fuel.
+  `String.prototype.split` delegates only through a callable `@@split`; a
+  nullish hook now falls back to ordinary UTF-16 code-unit string splitting.
+
+  Non-Unicode RegExp execution now has an explicit code-unit backend mode, so
+  raw supplementary characters, escaped surrogate pairs, lone-surrogate
+  matches, sticky mid-pair `lastIndex`, captures, and repeated-capture clearing
+  agree with ECMAScript without changing scalar-backed replacement behavior.
+  Callable Proxy hooks are recognized. Native RegExp match arrays are created
+  through a narrowly scoped GC-retrying path in the executing Realm, allowing
+  earlier split matches to be reclaimed at an exact heap cap without changing
+  the allocation contract of unrelated array helpers.
+
+  Focused Test262 closes at **43 pass / 0 fail / 1 skip** for `@@split` and
+  **117 / 0 / 3** for `String.prototype.split`. The complete
+  `built-ins/RegExp` subtree improves from **880 pass / 137 fail / 856 skip / 6
+  timeout** to **922 / 95 / 856 / 6**, exactly **+42 pass / -42 fail**. Final
+  local gates include tooling **101/101**, Rust lib/unit **122/122**, builtins
+  **467/467**, release, wasm32, warnings-denied Clippy, formatting, and the
+  supported subset at **12751/12751**. GPT 5.6 reviewers Fermat and Beauvoir
+  returned `CLEAN`. Feature commit `0e08dc8` passed CI `29638102394` and full
+  matrix `29638102407`. Of 30 result files, 29 are byte-identical to the
+  preceding RegExp artifacts; built-ins changed by **+42 pass / -42 fail**.
+  The aggregate is **30344 pass / 6180 fail / 11781 skip / 12 timeout / 0
+  error / 48317 total** (**62.8%** of all files, **83.1%** of executed files).
 - RegExp construction now follows the specification's `IsRegExp` and
   constructor phases. An explicit internal `[[RegExpMatcher]]` marker replaces
   the observable class-name approximation; `Symbol.match` overrides are

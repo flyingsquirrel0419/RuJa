@@ -30,7 +30,7 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 62.5% of all matrix files; 82.7% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 62.8% of all matrix files; 83.1% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (12751 pass / 0 fail on current Test262; 12752 / 0 on the pinned checkout) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
@@ -7430,6 +7430,82 @@ matching, and method semantics and are not claimed complete by this unit.
 - 선택한 방식: Freeze eight constructor paths, use a deferred internal-slot-based constructor and immutable Realm registries, and route strict matcher writes through receiver-aware Proxy and exotic-object dispatch with full ArraySetLength behavior.
 - 다른 대안 대신 이 방식을 선택한 이유: Exact admission ties each skip transition to audited behavior, while shared operations fix the same correctness defects for ordinary built-ins without claiming the remaining RegExp surface. Local exceptions would leave divergent Proxy, Array, and GC semantics.
 - 장점, 단점 및 영향: The full matrix gains 108 passes and removes 100 failures with no language-subset regression. Two Realm registry families and the property core require synchronized maintenance; 137 RegExp failures remain explicit future work.
+```
+
+## RegExp Symbol.split and UTF-16 execution
+
+`RegExp.prototype[Symbol.split]` now implements the generic ECMA-262 algorithm.
+It converts the input before species lookup, reads and converts flags, appends
+sticky mode when required, constructs the splitter, creates the result with the
+method Realm's `%Array.prototype%`, converts the limit with `ToUint32`, and
+performs strict `lastIndex` writes plus dynamic `RegExpExec` calls. Empty
+matches advance with `AdvanceStringIndex`; separators, captures, and the tail
+are sliced at UTF-16 indices and appended with CreateDataProperty semantics.
+
+`String.prototype.split` no longer contains a class-name-based RegExp branch.
+It delegates through `separator[Symbol.split]` only when that value is
+non-nullish and callable, including callable Proxies. A nullish hook follows
+the ordinary separator path, whose search and slicing operate on UTF-16 code
+units rather than Rust scalar boundaries. This preserves lone-surrogate
+separators, empty separators, and supplementary strings.
+
+The Rust regex backends consume Unicode scalars, while non-Unicode ECMAScript
+patterns consume UTF-16 code units. RuJa therefore uses a sentinel-backed input
+view only for non-Unicode `RegExp.exec`, paired with a code-unit pattern
+normalization mode. Raw supplementary pattern characters and escaped surrogate
+pairs become two backend atoms in that mode. Scalar-backed direct replacement
+keeps its existing compile mode, avoiding a regression for raw supplementary
+patterns. The same mode is propagated into repeated-capture clearing so the
+last iteration cannot retain a stale earlier capture.
+
+Every observable `@@split` intermediate is pinned across conversion,
+construction, property access, and custom `exec` calls. Search and capture
+loops, plus code-unit input conversion, consume VM fuel. Native match arrays
+use a private GC-retrying allocator because their elements are restricted to
+strings and `undefined`; the helper uses the executing Realm's Array prototype.
+Keeping this path private is intentional: changing the shared array helper to
+collect would invalidate unrelated callers that still hold unpinned
+object-valued Rust locals.
+
+On Test262 `020cb74075849d1e404bbcdb62feb7a02e6966db`, focused
+`built-ins/RegExp/prototype/Symbol.split` is **43 pass / 0 fail / 1 skip** and
+`built-ins/String/prototype/split` is **117 / 0 / 3**. The complete
+`built-ins/RegExp` subtree moves from **880 pass / 137 fail / 856 skip / 6
+timeout** to **922 / 95 / 856 / 6**, exactly **+42 pass / -42 fail**. The
+supported subset remains **12751 pass / 0 fail / 7687 skip / 20438 total**.
+
+Final local gates pass all targets/features, warnings-denied Clippy,
+formatting/diff, release, and wasm32. Python tooling is **101/101**, Rust
+lib/unit **122/122**, bugfixes **67/67**, builtins **467/467**, and Fuel
+**25/25**. GPT 5.6 reviewers Fermat and Beauvoir returned `CLEAN` after fixes
+for surrogate boundaries, callable Proxy hooks, nullish fallback, repeated
+capture clearing, exact-cap allocation, and foreign-Realm match arrays. No
+Umans provider route or coder model was used.
+
+Feature SHA `0e08dc87c288789fe1c7f5b9e21809b053eff131` passed ordinary CI
+`29638102394` and full matrix `29638102407`. Of the 30 result files at
+`/tmp/ruja-artifacts-regexp-split-feature.0TQyVs`, 29 are byte-identical to
+`/tmp/ruja-artifacts-regexp-feature.kNQTlF`. Built-ins changes from **14704
+pass / 5405 fail / 3547 skip / 12 timeout** to **14746 / 5363 / 3547 / 12**,
+exactly **+42 pass / -42 fail**. The aggregate is **30344 pass / 6180 fail /
+11781 skip / 12 timeout / 0 error / 48317 total / 36524 pass-or-fail
+executed**, or **62.8%** of all files and **83.1%** of executed files.
+
+The remaining **95** RegExp failures group exactly into **42** direct/root
+legacy syntax and matcher files, **29** `prototype/Symbol.replace` files,
+**16** lookbehind files, **6** match-indices files, and **2**
+CharacterClassEscapes files. `Symbol.replace` is the next safest coherent
+method unit; the larger 42-file root bucket is heterogeneous and should not be
+treated as one patch.
+
+```text
+[Decision Log]
+- 목적과 의도: Implement the complete generic RegExp Symbol.split contract while preserving sandbox GC, Realm, UTF-16, and fuel invariants.
+- 기존 구현 및 제약 조건: String split recognized RegExp by observable class name, bypassed species and dynamic exec, searched Rust scalar strings directly, and allocated native match arrays without GC retry. The regex backends cannot directly address the middle of a supplementary scalar.
+- 검토한 주요 대안: Keep a special String split regex branch, rewrite the regex engine, convert every regex consumer to sentinel-backed input, or isolate code-unit execution and implement the specification method directly.
+- 선택한 방식: Register Realm-local Symbol.split, follow the specification algorithm with rooted observable state, use Realm-aware ArrayCreate, isolate sentinel-backed code-unit compilation to non-Unicode exec, retain scalar replacement mode, and give native match arrays a private GC-retrying allocator.
+- 다른 대안 대신 이 방식을 선택한 이유: A String-only shortcut cannot satisfy generic species and exec observability; a global backend conversion regresses direct replacement and changes unrelated allocation contracts; replacing the regex engine is a separate architectural project.
+- 장점, 단점 및 영향: All 42 executed Symbol.split failures become passes with no RegExp skip, timeout, language-subset, or matrix regression. Non-Unicode execution now preserves code units, but rebuilding the sentinel input on each native exec remains a bounded performance issue for future optimization.
 ```
 
 ## Why the full-suite rate is not higher
