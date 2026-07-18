@@ -7708,6 +7708,97 @@ and executed counts are unchanged from the feature run.
 - 장점, 단점 및 영향: Skipped-only files are included in the published denominator and artifacts become internally consistent. The all-file percentage decreases when the previously omitted files are counted, but executed-test results and the supported-subset rate do not change.
 ```
 
+## RegExp ignore-case word escapes
+
+Active-ignoreCase `\w` and `\W` now derive from the ECMA-262
+[WordCharacters](https://tc39.es/ecma262/multipage/text-processing.html#sec-runtime-semantics-wordcharacters)
+set. Plain `i` mode uses exactly ASCII letters, digits, and underscore.
+Unicode-aware `iu` and `iv` modes add only `U+017F` and `U+212A`, because
+those are the non-ASCII characters whose simple case fold enters the ASCII
+word set. Unrelated Unicode letters, CJK characters, and digits such as
+`U+0660` remain outside the set. The same active modifier state applies to
+top-level escapes, local `(?i:...)`/`(?-i:...)` scopes, and character classes.
+
+Outside a class, each active escape becomes an exact, scoped case-sensitive
+backend set. Inside an ordinary class, normalization first parses the class
+with the `regex-syntax` HIR parser, materializes the applicable
+[Canonicalize](https://tc39.es/ecma262/multipage/text-processing.html#sec-runtime-semantics-canonicalize-ch)
+equivalence closure, applies outer negation after that closure, serializes the
+result, and disables backend case folding only for the emitted set. This order
+matches the specification's
+[CharacterSetMatcher](https://tc39.es/ecma262/multipage/text-processing.html#sec-runtime-semantics-charactersetmatcher)
+contract and avoids Rust regex's wider Unicode case behavior. Non-Unicode
+mode uses the legacy uppercase relation, including its multi-character and
+non-ASCII-to-ASCII restrictions; Unicode mode uses simple case folding.
+
+Dynamic class compilation is bounded by a 128-entry cache. Only source keys
+up to 512 bytes and normalized results up to 4096 bytes are cached. The legacy
+closure path uses precomputed nontrivial equivalence groups, so a cache miss
+does not scan all 65,536 BMP code units. A 100-pattern probe with distinct
+600-byte classes completes in about 0.64 seconds including process startup.
+
+Unicode Sets classes require a conservative split. Classes containing nested
+sets, `&&`, `--`, `\p`, `\P`, or `\q` retain native fallback, while simple
+`v` classes are materialized. Fallback is tracked per class and with explicit
+nested depth: a complex class cannot disable normalization for a later simple
+class, and a nested operand cannot escape fallback early. This preserves the
+pre-existing backend behavior for complex set algebra without presenting it
+as complete ECMAScript `v` semantics.
+
+Plain-`i` `\b` and `\B` are lowered to the same ASCII inventory. Unicode
+boundaries intentionally remain on Rust's native Unicode boundary. A first
+implementation expressed the ECMAScript boundary with `fancy-regex`
+lookarounds, but a nested quantified regression such as `^(a+)+\b$` could hit
+the backend backtracking limit at runtime. Preserving the linear path is more
+important than hiding the remaining mismatch: for example, `é` and CJK are
+still treated as word characters by `\b` under `iu`/`iv`. A complete fix needs
+a separate linear boundary representation.
+
+Focused tests cover plain/Unicode/Unicode-Sets modes, complements and negated
+classes, long s and Kelvin, unrelated Unicode exclusions, local modifiers,
+Annex B ranges, escape parity, lone surrogates, supplementary input, nested
+`v` fallback, class-order isolation, and the backtracking regression. A
+curated differential matrix agrees with Node. On Test262
+`020cb74075849d1e404bbcdb62feb7a02e6966db`, `regexp-modifiers` remains **70
+pass / 0 fail**, complete `built-ins/RegExp` remains **960 pass / 63 fail /
+856 skip / 0 timeout**, and the supported subset remains **12751 pass / 0
+fail / 7687 skip / 20438 total**.
+
+Final local gates pass all targets/features, warnings-denied Clippy,
+formatting/diff, release, and wasm32. Python tooling is **106/106**, Rust
+lib/unit **124/124**, bugfixes **67/67**, builtins **470/470**, and Fuel
+**26/26**. GPT 5.6 reviewers Ohm and Boole found the unsafe lookaround path,
+nested-`v` depth leaks, repeated BMP scans, and pattern-wide fallback. All
+findings were fixed or explicitly deferred, Boole's final follow-up returned
+`CLEAN`, and both agents were closed. No coder model or Umans provider route
+was used. Feature SHA `844593bdb808c385200076f9f4242d8956f47080`
+passed ordinary CI `29653243121` and full matrix `29653243102`. The 30 result
+files at `/tmp/ruja-regexp-word-feature.WNQIpn` are byte-identical to corrected
+baseline `29646302891` at
+`/tmp/ruja-regexp-word-baseline.1D3kiS`. The aggregate therefore remains
+**30383 pass / 6147 fail / 11931 skip / 6 timeout / 0 error / 48467 total /
+36530 pass-or-fail executed**, or **62.7%** of all files and **83.2%** of
+executed files. The unchanged matrix is expected because this unit corrects
+word-set cases that are not newly admitted by the current Test262 manifest.
+
+The remaining RegExp defects are intentionally separate: Unicode `iu`/`iv`
+word boundaries use the broad Rust set; ignore-case backreferences do not
+canonicalize captured text against consumed text; valid scalars in
+`U+F0000..U+F07FF` collide with sentinel-backed UTF-16 representation; and
+nested `v` subtraction/intersection is not fully interpreted. The full RegExp
+failure grouping remains **41** direct/root files, **16** lookbehind files,
+and **6** match-indices files.
+
+```text
+[Decision Log]
+- 목적과 의도: Implement active-ignoreCase word escapes as one coherent ECMAScript set while preserving UTF-16 behavior and bounded regex execution.
+- 기존 구현 및 제약 조건: Rust regex applies a broader Unicode word inventory and case closure than ECMAScript, character-class negation must occur after canonicalization, local modifiers change the active relation, complex v classes need nested state, and the backreference backend can exhaust a finite backtracking limit.
+- 검토한 주요 대안: Keep Rust native word semantics, special-case only U+017F/U+212A, enumerate every class manually, express Unicode boundaries with fancy-regex lookarounds, or replace the regex backend in this unit.
+- 선택한 방식: Lower top-level escapes to exact scoped sets, parse ordinary classes through regex-syntax HIR, materialize the canonicalization closure before complement, bound and optimize class caching, retain depth-aware native fallback for complex v sets, and keep Unicode boundaries on the linear backend until a separate design exists.
+- 다른 대안 대신 이 방식을 선택한 이유: Native case folding admits the wrong characters, point fixes break complements and mixed classes, ad hoc class parsing is unsafe, lookarounds introduced a runtime backtracking-limit regression, and replacing the backend is too broad for a verified compatibility unit.
+- 장점, 단점 및 영향: Word escapes and simple classes now follow ECMAScript across i/iu/iv and local modifiers with bounded compile cost and no Test262 regression. Unicode boundaries, ignore-case backreferences, sentinel-range scalars, and full nested-v algebra remain explicit architectural work.
+```
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is

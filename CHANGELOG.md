@@ -4,6 +4,41 @@
 
 ### Fixed
 
+- Active-ignoreCase RegExp `\w`/`\W` escapes now use ECMAScript
+  WordCharacters outside classes and in ordinary character classes. Plain
+  `i` mode remains exactly ASCII alphanumeric plus underscore; `iu` and `iv`
+  add only the canonicalized `U+017F` long s and `U+212A` Kelvin sign. Local
+  modifier add/remove scopes, complements, negated classes, Annex B ranges,
+  escaped-backslash parity, UTF-16 code-unit input, and mixed literal/word
+  classes are covered.
+
+  Ordinary classes are normalized through `regex-syntax` HIR, closed under
+  the applicable ECMAScript canonicalization relation, complemented only
+  after closure, and emitted under a scoped backend case-disable. Legacy
+  non-Unicode equivalence groups and a **128-entry** size-bounded class cache
+  avoid rescanning the BMP for repeated dynamic patterns. Complex nested `v`
+  set operations retain native fallback with explicit nesting depth so one
+  class cannot corrupt normalization of a later class.
+
+  Plain-`i` `\b`/`\B` uses the same ASCII word inventory. Unicode boundaries
+  deliberately remain on the existing linear backend: a lookaround rewrite
+  moved nested quantified input onto `fancy-regex` and could exhaust its
+  backtracking limit. Unicode boundaries, ignore-case backreferences, the
+  `U+F0000..U+F07FF` UTF-16 sentinel collision, and full nested-`v` set algebra
+  remain documented limitations instead of being hidden by a partial fix.
+
+  Final local gates include tooling **106/106**, Rust lib/unit **124/124**,
+  builtins **470/470**, bugfixes **67/67**, Fuel **26/26**, release, wasm32,
+  warnings-denied Clippy, formatting, `regexp-modifiers` **70/0**, full RegExp
+  **960/63/856/0**, and the supported subset **12751/0/7687/20438**. GPT 5.6
+  reviewers Ohm and Boole reproduced the backtracking, nested-`v`, cache-cost,
+  and per-class fallback defects. All findings were addressed, Boole's final
+  follow-up returned `CLEAN`, and both sessions were closed. No coder model or
+  Umans provider route was used. Feature commit `844593b` passed CI
+  `29653243121` and full matrix `29653243102`. All 30 result files are
+  byte-identical to corrected baseline `29646302891`; the aggregate remains
+  **30383 pass / 6147 fail / 11931 skip / 6 timeout / 0 error / 48467 total**
+  with **36530** pass-or-fail executions.
 - The Test262 runner's machine-readable `RATE=` line now preserves actual
   `SKIP` and `TOTAL` counts when `RAN=0`. The old zero-execution branch
   printed zeros even though the human-readable summary was correct, causing

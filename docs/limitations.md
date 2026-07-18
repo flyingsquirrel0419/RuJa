@@ -27,9 +27,12 @@ The following resource limits are enforced:
 - **Call-stack depth**: JavaScript recursion is capped at 1000 frames.
   Exceeding this throws a catchable `RangeError("Maximum call stack size
   exceeded")`, not a native stack overflow (SIGSEGV/abort).
-- **ReDoS-safe regex**: The `regex` crate uses RE2-style linear-time matching
-  with no backtracking, so catastrophic regex patterns cannot cause
-  exponential-time hangs.
+- **Regex execution bounds**: patterns that do not require backreferences use
+  the RE2-style, linear-time Rust `regex` backend. Numeric backreferences use
+  `fancy-regex` instead; that path has a finite backtracking limit and reports
+  an `Invalid regex match` error when the limit is exhausted. Native matching
+  is still cooperative rather than preemptible, so hosts that need a hard wall
+  clock deadline must run RuJa in a separately killable process.
 - **String/array caps**: `"x".repeat(n)` is capped at 256 MiB output.
   `Array.from(iterable)` is capped at 65k elements. Dense arrays are capped
   at 1M elements (`MAX_DENSE_ARRAY_LEN`); beyond that, indices are stored
@@ -42,9 +45,11 @@ The following resource limits are enforced:
   resource policy is stricter than ECMAScript's full `ToLength` range and
   intentionally prevents enormous argument-list allocation.
 
-These limits make it safe to pass untrusted JS to `Vm::run` without risking
-process crashes, infinite loops, or OOM kills. For truly hard real-time
-guarantees, run RuJa in a separately killable process as well.
+These limits bound the major interpreter-controlled resources, but they are
+not OS-level isolation. A long native call is not preempted by fuel, and the
+heap-object cap does not replace a process memory limit. Run hostile code in a
+separately killable, memory-limited process when hard wall-clock or OOM
+guarantees are required.
 
 - No `eval`/`with` process-level security sandbox (local-trust execution model)
 - Dynamic Function constructors (`Function`, `AsyncFunction`,
@@ -58,12 +63,20 @@ guarantees, run RuJa in a separately killable process as well.
   `Function.prototype.toString` source-preservation tests still fail. Hosts
   that need a hard wall around attacker-controlled compilation must isolate
   the VM in a separately killable process.
-- RegExp construction, `IsRegExp`, Realm fallback, and `@@matchAll` ordering are
+- RegExp construction, `IsRegExp`, Realm fallback, the String-symbol methods,
+  character-class escapes, and active-ignoreCase `\w`/`\W` lowering are
   implemented and audited, but full RegExp conformance is not complete. The
-  current `built-ins/RegExp` run still has **137 failures** outside this
-  constructor/iterator/property unit. RuJa also deliberately uses the
-  linear-time Rust `regex` backend, so future syntax and matching work must
-  preserve the ReDoS guarantee rather than importing a backtracking engine.
+  current `built-ins/RegExp` diagnostic has **63 failures**: **41** direct/root
+  syntax and matcher files, **16** lookbehind files, and **6** match-indices
+  files. Unicode `iu`/`iv` `\b`/`\B` still inherits Rust's broader Unicode
+  word boundary instead of the ECMAScript WordCharacters set; ignore-case
+  backreferences do not yet canonicalize the captured and consumed text;
+  valid scalars in `U+F0000..U+F07FF` collide with the non-Unicode UTF-16
+  sentinel representation; and nested `v` set subtraction/intersection is
+  still delegated to an incomplete backend interpretation. A boundary rewrite
+  through `fancy-regex` was rejected because nested quantified patterns hit
+  its backtracking limit; the eventual fix needs a separate linear matching
+  design rather than weakening the execution bound.
 - Execution fuel is **cooperative, not preemptive**: `Vm::set_fuel(Some(n))`
   bounds execution to ~n opcodes (exhaustion throws a `RangeError` that is
   *not* catchable by user `try/catch`, so untrusted code cannot swallow it).
