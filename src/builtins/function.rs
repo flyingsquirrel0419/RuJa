@@ -111,6 +111,15 @@ pub(crate) fn function_bind(
         Value::Object(i) => *i,
         _ => return Err(error::Error::type_err("not a function")),
     };
+    // BoundFunctionCreate copies the target's actual [[Prototype]], including
+    // an observable Proxy getPrototypeOf trap. The surrounding call roots the
+    // target and captured arguments, but this returned prototype is a new Rust
+    // local and must survive the bound function's GC-aware allocation.
+    let function_proto = vm.get_prototype_of(&target)?;
+    let proto_pin = function_proto
+        .as_ref()
+        .map(|prototype| vm.pin(prototype))
+        .unwrap_or(0);
     let bound = crate::value::FunctionData {
         name: Some(Arc::from("bound")),
         kind: crate::value::FunctionKind::Bound {
@@ -123,16 +132,14 @@ pub(crate) fn function_bind(
         home_object: Mutex::new(None),
         is_class_ctor: std::sync::atomic::AtomicBool::new(false),
         prototype: Mutex::new(None),
-        proto: Mutex::new(match vm.function_proto {
-            Value::Object(_) => Some(vm.function_proto.clone()),
-            _ => None,
-        }),
+        proto: Mutex::new(function_proto),
         props: Mutex::new(IndexMap::new()),
         extensible: std::sync::atomic::AtomicBool::new(true),
         private_fields: Mutex::new(std::collections::HashMap::new()),
     };
-    let fidx = vm.heap.allocate(HeapObj::Function(bound))?;
-    Ok(Value::Object(GcIdx(fidx)))
+    let result = vm.alloc(HeapObj::Function(bound)).map(Value::Object);
+    vm.unpin_many(proto_pin);
+    result
 }
 
 /// `Function.prototype[Symbol.hasInstance](value)`: expose

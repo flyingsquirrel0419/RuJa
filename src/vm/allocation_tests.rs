@@ -39,7 +39,6 @@ fn native_construct_mode(vm: &Vm, value: &Value) -> Option<NativeConstructMode> 
 const EAGER_NATIVE_CONSTRUCTOR_SOURCES: &[&str] = &[
     "Array",
     "RegExp",
-    "Function",
     "Map",
     "Set",
     "WeakMap",
@@ -52,13 +51,14 @@ const EAGER_NATIVE_CONSTRUCTOR_SOURCES: &[&str] = &[
     "TypeError",
     "URIError",
     "AggregateError",
-    "(async function () {}).constructor",
-    "(function* () {}).constructor",
-    "(async function* () {}).constructor",
 ];
 
 const DEFERRED_NATIVE_CONSTRUCTOR_SOURCES: &[&str] = &[
     "Object",
+    "Function",
+    "(async function () {}).constructor",
+    "(function* () {}).constructor",
+    "(async function* () {}).constructor",
     "String",
     "Number",
     "Boolean",
@@ -98,7 +98,6 @@ const NON_CONSTRUCTIBLE_NATIVE_FUNCTION_SOURCES: &[&str] = &[
 const FOREIGN_EAGER_NATIVE_CONSTRUCTOR_SOURCES: &[&str] = &[
     "Array",
     "RegExp",
-    "Function",
     "Error",
     "EvalError",
     "RangeError",
@@ -107,9 +106,6 @@ const FOREIGN_EAGER_NATIVE_CONSTRUCTOR_SOURCES: &[&str] = &[
     "TypeError",
     "URIError",
     "AggregateError",
-    "(async function () {}).constructor",
-    "(function* () {}).constructor",
-    "(async function* () {}).constructor",
 ];
 
 fn realm_registry_counts(vm: &Vm) -> [usize; 29] {
@@ -246,6 +242,33 @@ fn function_prototype_survives_collection_before_function_allocation() {
     );
 
     fs::remove_dir_all(dir).expect("module fixture directory should be removed");
+}
+
+#[test]
+fn bound_function_prototype_survives_gc_aware_allocation() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn("capHeap", |vm, _, _| cap_heap_at_current_live_count(vm), 0)
+        .expect("heap-cap hook should register");
+    let result = vm.run(
+        r#"
+        var target = new Proxy(function () {}, {
+          getPrototypeOf: function () {
+            var prototype = { marker: 41 };
+            var garbage1 = {};
+            var garbage2 = {};
+            capHeap();
+            return prototype;
+          }
+        });
+        var bound = target.bind(null);
+        Object.getPrototypeOf(bound).marker;
+        "#,
+    );
+    vm.set_max_heap_objects(None);
+    assert_eq!(
+        result.expect("trap-produced prototype should survive bound allocation"),
+        Value::Number(41.0)
+    );
 }
 
 #[test]
@@ -945,6 +968,466 @@ fn date_allocation_obeys_gc_retry_and_the_exact_heap_cap() {
         vm.run("Date.call({}, { valueOf: function () { throw 1; } });"),
         Ok(Value::String(_))
     ));
+}
+
+#[test]
+fn dynamic_function_constructors_follow_conversion_and_parse_order() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    let baseline_pins = vm.gc_pins.len();
+    let baseline_contexts = vm.execution_contexts.len();
+    assert_eq!(
+        vm.run(
+            r#"
+            var constructors = [
+              Function,
+              (async function () {}).constructor,
+              (function* () {}).constructor,
+              (async function* () {}).constructor
+            ];
+            var all = true;
+            for (var i = 0; i < constructors.length; i++) {
+              var C = constructors[i];
+              var log = [];
+              function source(label, text) {
+                return {
+                  toString: function () {
+                    log.push(label);
+                    return text;
+                  }
+                };
+              }
+              var NewTarget = (function () {}).bind(null);
+              Object.defineProperty(NewTarget, "prototype", {
+                get: function () {
+                  log.push("prototype");
+                  return C.prototype;
+                },
+                configurable: true
+              });
+              var created = Reflect.construct(C, [
+                source("p1", "a"),
+                source("p2", "b"),
+                source("body", "return 1;")
+              ], NewTarget);
+              all = all && log.join(",") === "p1,p2,body,prototype";
+              all = all && Object.getPrototypeOf(created) === C.prototype;
+              var constructable = true;
+              try { Reflect.construct(function () {}, [], created); }
+              catch (error) { constructable = false; }
+              all = all && constructable === (i === 0);
+              all = all && (i === 1 ? created.prototype === undefined :
+                Object.prototype.hasOwnProperty.call(created, "prototype"));
+
+              var marker = {};
+              log = [];
+              var parameterAbrupt = false;
+              try {
+                Reflect.construct(C, [{
+                  toString: function () {
+                    log.push("p1");
+                    throw marker;
+                  }
+                }, source("p2", "b"), source("body", "")], NewTarget);
+              } catch (error) {
+                parameterAbrupt = error === marker;
+              }
+              all = all && parameterAbrupt && log.join(",") === "p1";
+
+              log = [];
+              var bodyAbrupt = false;
+              try {
+                Reflect.construct(C, [
+                  source("p1", "a"),
+                  source("p2", "b"),
+                  { toString: function () { log.push("body"); throw marker; } }
+                ], NewTarget);
+              } catch (error) {
+                bodyAbrupt = error === marker;
+              }
+              all = all && bodyAbrupt && log.join(",") === "p1,p2,body";
+
+              log = [];
+              var syntaxBeforePrototype = false;
+              try { Reflect.construct(C, ["("], NewTarget); }
+              catch (error) { syntaxBeforePrototype = error instanceof SyntaxError; }
+              all = all && syntaxBeforePrototype && log.length === 0;
+
+              log = [];
+              var ThrowingNewTarget = (function () {}).bind(null);
+              Object.defineProperty(ThrowingNewTarget, "prototype", {
+                get: function () { log.push("prototype"); throw marker; },
+                configurable: true
+              });
+              var getterAbrupt = false;
+              try { Reflect.construct(C, [""], ThrowingNewTarget); }
+              catch (error) { getterAbrupt = error === marker; }
+              all = all && getterAbrupt && log.join(",") === "prototype";
+
+              var separateParse = false;
+              try { C("/*", "*/ ) {"); }
+              catch (error) { separateParse = error instanceof SyntaxError; }
+              all = all && separateParse;
+
+              var parameterInjection = false;
+              try { C(") {} function x(", ""); }
+              catch (error) { parameterInjection = error instanceof SyntaxError; }
+              var bodyInjection = false;
+              try { C("", "} function x() {"); }
+              catch (error) { bodyInjection = error instanceof SyntaxError; }
+              all = all && parameterInjection && bodyInjection;
+
+              var objectParameter = C("{x}", "return x;");
+              var arrayParameter = C("[x]", "return x;");
+              var undefinedParameter = C(undefined, "return undefined;");
+              var restUndefinedParameter = C("...undefined", "return undefined.length;");
+              var lineCommentBoundary = C("x //", "return x //");
+              var contextualParameters = C(
+                "async", "of", "static", "let", "get", "set",
+                "return async + of + static + let + get + set;"
+              );
+              var bodyArrow = C("return (undefined) => undefined;");
+              all = all && objectParameter.length === 1;
+              all = all && arrayParameter.length === 1;
+              all = all && undefinedParameter.length === 1;
+              all = all && restUndefinedParameter.length === 0;
+              all = all && lineCommentBoundary.length === 1;
+              all = all && contextualParameters.length === 6;
+              all = all && bodyArrow.length === 0;
+              if (i === 0) {
+                all = all && objectParameter({ x: 7 }) === 7;
+                all = all && arrayParameter([8]) === 8;
+                all = all && undefinedParameter(9) === 9;
+                all = all && restUndefinedParameter(1, 2, 3) === 3;
+                all = all && lineCommentBoundary(10) === 10;
+                all = all && contextualParameters(1, 2, 3, 4, 5, 6) === 21;
+                all = all && bodyArrow()(11) === 11;
+              } else if (i === 2) {
+                all = all && objectParameter({ x: 12 }).next().value === 12;
+                all = all && arrayParameter([13]).next().value === 13;
+                all = all && undefinedParameter(14).next().value === 14;
+                all = all && restUndefinedParameter(1, 2).next().value === 2;
+                all = all && lineCommentBoundary(15).next().value === 15;
+                all = all && contextualParameters(1, 2, 3, 4, 5, 6).next().value === 21;
+                all = all && bodyArrow().next().value(16) === 16;
+              }
+
+              var strictNonSimple = false;
+              try { C("x = 1", '"use strict";'); }
+              catch (error) { strictNonSimple = error instanceof SyntaxError; }
+              all = all && strictNonSimple;
+              var strictReserved = true;
+              var reservedNames = ["public", "package", "yield"];
+              for (var r = 0; r < reservedNames.length; r++) {
+                try {
+                  C(reservedNames[r], '"use strict";');
+                  strictReserved = false;
+                } catch (error) {
+                  strictReserved = strictReserved && error instanceof SyntaxError;
+                }
+              }
+              all = all && strictReserved;
+
+              var called = C.call({ marker: "ignored" }, "return 1;");
+              var boundCalled = C.bind({ marker: "ignored" }, "return 1;")();
+              all = all && Object.getPrototypeOf(called) === C.prototype;
+              all = all && Object.getPrototypeOf(boundCalled) === C.prototype;
+            }
+            all;
+            "#,
+        )
+        .expect("dynamic Function families should follow CreateDynamicFunction order"),
+        Value::Bool(true)
+    );
+    // The script above contains ordinary function syntax, whose compiled
+    // definitions legitimately remain in the VM table. Take the checkpoint
+    // after that compilation, then isolate successful dynamic constructors
+    // with a source string that contains no additional function definitions.
+    let baseline_functions = vm.functions.len();
+    assert_eq!(
+        vm.run(
+            "for (var i = 0; i < constructors.length; i++) constructors[i](''); constructors.length;"
+        )
+        .expect("simple dynamic functions should compile without table entries"),
+        Value::Number(4.0)
+    );
+    assert_eq!(vm.functions.len(), baseline_functions);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.execution_contexts.len(), baseline_contexts);
+    assert!(vm.pending_new_target.is_none());
+    assert!(vm.pending_new_target_prototype.is_none());
+}
+
+#[test]
+fn dynamic_function_constructors_use_immutable_new_target_realm_fallbacks() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("GC hook should register");
+    assert_eq!(
+        vm.run(
+            r#"
+            var realmA = $262.createRealm().global;
+            var realmB = $262.createRealm().global;
+            var evalA = realmA.eval;
+            var evalB = realmB.eval;
+            var nestedTarget = new Proxy(function () {}, {
+              isExtensible: function () {
+                forceGc();
+                return true;
+              }
+            });
+            var nestedProxy = new Proxy(nestedTarget, {
+              getPrototypeOf: function () {
+                return { marker: 23 };
+              }
+            });
+            var nestedBound = Function.prototype.bind.call(nestedProxy, null);
+            var nestedPrototype = Object.getPrototypeOf(nestedBound);
+            var nestedProxyPrototypeOk = nestedPrototype.marker === 23;
+            var constructors = [
+              realmA.Function,
+              Object.getPrototypeOf(evalA("(async function () {})")).constructor,
+              Object.getPrototypeOf(evalA("(function* () {})")).constructor,
+              Object.getPrototypeOf(evalA("(async function* () {})")).constructor
+            ];
+            var expected = [
+              realmB.Function.prototype,
+              Object.getPrototypeOf(evalB("(async function () {})")),
+              Object.getPrototypeOf(evalB("(function* () {})")),
+              Object.getPrototypeOf(evalB("(async function* () {})"))
+            ];
+            var expectedRefs = expected.map(function (value) {
+              return new WeakRef(value);
+            });
+            var ownPrototypeParents = [
+              realmA.Object.prototype,
+              undefined,
+              Object.getPrototypeOf(evalA("(function* () {}).prototype")),
+              Object.getPrototypeOf(evalA("(async function* () {}).prototype"))
+            ];
+            var inheritedPrototype = { marker: 37 };
+            realmB.Function.prototype.prototype = inheritedPrototype;
+            var BoundTarget = new realmB.Function();
+            var BoundNewTarget = BoundTarget.bind(null);
+            var boundPrototypeOk =
+              Object.getPrototypeOf(BoundNewTarget) === realmB.Function.prototype;
+            for (var b = 0; b < constructors.length; b++) {
+              var boundGenerated = Reflect.construct(constructors[b], [], BoundNewTarget);
+              boundPrototypeOk = boundPrototypeOk &&
+                Object.getPrototypeOf(boundGenerated) === inheritedPrototype;
+            }
+            delete realmB.Function.prototype.prototype;
+
+            var NewTarget = new realmB.Function();
+            NewTarget.prototype = null;
+            var targets = [
+              NewTarget,
+              NewTarget.bind(null),
+              new Proxy(NewTarget, {})
+            ];
+
+            delete constructors[2].prototype.prototype;
+            delete constructors[3].prototype.prototype;
+            evalA("Function = null; Object = null;");
+            evalB("Function = null; Object = null;");
+            expected = null;
+            forceGc();
+
+            var all = boundPrototypeOk && nestedProxyPrototypeOk;
+            for (var i = 0; i < constructors.length; i++) {
+              var expectedPrototype = expectedRefs[i].deref();
+              all = all && expectedPrototype !== undefined;
+              for (var j = 0; j < targets.length; j++) {
+                var generated = Reflect.construct(constructors[i], [], targets[j]);
+                all = all && Object.getPrototypeOf(generated) === expectedPrototype;
+                if (i !== 1) {
+                  all = all && Object.getPrototypeOf(generated.prototype) ===
+                    ownPrototypeParents[i];
+                } else {
+                  all = all && generated.prototype === undefined;
+                }
+              }
+              var syntaxRealm = false;
+              try { constructors[i]("("); }
+              catch (error) { syntaxRealm = error instanceof realmA.SyntaxError; }
+              all = all && syntaxRealm;
+            }
+            all;
+            "#,
+        )
+        .expect("dynamic Function fallbacks should use immutable Realm intrinsics"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn dynamic_function_allocation_retries_gc_and_obeys_the_exact_cap() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.gc();
+    let baseline_live = vm.heap.live_count();
+    let baseline_pins = vm.gc_pins.len();
+    let baseline_functions = vm.functions.len();
+    for _ in 0..64 {
+        let _garbage = vm.new_object().expect("garbage object should allocate");
+    }
+    let limit = baseline_live + 2;
+    vm.set_max_heap_objects(Some(limit));
+    assert_eq!(
+        vm.run(
+            "var dynamic = Function(''); Object.getPrototypeOf(dynamic.prototype) === Object.prototype;"
+        )
+        .expect("normal Function should collect garbage and allocate exactly two cells"),
+        Value::Bool(true)
+    );
+    assert!(vm.heap.live_count() <= limit);
+
+    vm.set_max_heap_objects(None);
+    vm.gc();
+    vm.set_max_heap_objects(Some(vm.heap.live_count()));
+    let error = vm
+        .run("Function('');")
+        .expect_err("a saturated heap must reject dynamic Function allocation");
+    vm.set_max_heap_objects(None);
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_main_realm_range_error(&vm, error.as_ref());
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.functions.len(), baseline_functions);
+    assert!(vm.pending_new_target.is_none());
+    assert!(vm.pending_new_target_prototype.is_none());
+
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.gc();
+    let baseline_live = vm.heap.live_count();
+    let baseline_pins = vm.gc_pins.len();
+    let baseline_functions = vm.functions.len();
+    let limit = baseline_live + 1;
+    vm.set_max_heap_objects(Some(limit));
+    let error = vm
+        .run("Function('return function nested() {};');")
+        .expect_err("one free cell must fail when normal Function needs its prototype");
+    vm.set_max_heap_objects(None);
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_main_realm_range_error(&vm, error.as_ref());
+    assert!(vm.heap.live_count() <= limit);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.functions.len(), baseline_functions);
+    assert!(vm.pending_new_target.is_none());
+    assert!(vm.pending_new_target_prototype.is_none());
+    vm.gc();
+    assert_eq!(vm.heap.live_count(), baseline_live);
+
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn("capHeap", |vm, _, _| cap_heap_at_current_live_count(vm), 0)
+        .expect("heap-cap hook should register");
+    vm.run(
+        r#"
+        var OuterNewTarget = (function () {}).bind(null);
+        Object.defineProperty(OuterNewTarget, "prototype", {
+          get: function () {
+            globalThis.savedDynamic = Function(
+              "return function inner() { return 17; };"
+            );
+            var captured = savedDynamic;
+            globalThis.keepGetterEnvironment = function () { return captured; };
+            capHeap();
+            return Function.prototype;
+          },
+          configurable: true
+        });
+        "#,
+    )
+    .expect("reentrant allocation fixture should initialize");
+    let baseline_functions = vm.functions.len();
+    let baseline_pins = vm.gc_pins.len();
+    let baseline_contexts = vm.execution_contexts.len();
+    let error = vm
+        .run("Reflect.construct(Function, ['return function outer() {};'], OuterNewTarget);")
+        .expect_err("the outer allocation should fail after reentrant compilation");
+    vm.set_max_heap_objects(None);
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_main_realm_range_error(&vm, error.as_ref());
+    assert_eq!(vm.functions.len(), baseline_functions + 1);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.execution_contexts.len(), baseline_contexts);
+    assert!(vm.pending_new_target.is_none());
+    assert!(vm.pending_new_target_prototype.is_none());
+    assert_eq!(
+        vm.run("savedDynamic()();")
+            .expect("the successful reentrant function should remain usable"),
+        Value::Number(17.0)
+    );
+
+    for (setup, create, label) in [
+        (
+            "var DynamicConstructor = (function* () {}).constructor;",
+            "var dynamic = DynamicConstructor(''); Object.getPrototypeOf(dynamic.prototype) === DynamicConstructor.prototype.prototype;",
+            "GeneratorFunction",
+        ),
+        (
+            "var DynamicConstructor = (async function* () {}).constructor;",
+            "var dynamic = DynamicConstructor(''); Object.getPrototypeOf(dynamic.prototype) === DynamicConstructor.prototype.prototype;",
+            "AsyncGeneratorFunction",
+        ),
+    ] {
+        let mut vm = Vm::new().expect("VM should initialize");
+        vm.run(setup)
+            .unwrap_or_else(|error| panic!("{label} setup should run: {error}"));
+        vm.gc();
+        let baseline_live = vm.heap.live_count();
+        let baseline_pins = vm.gc_pins.len();
+        let baseline_functions = vm.functions.len();
+        for _ in 0..64 {
+            let _garbage = vm.new_object().expect("garbage object should allocate");
+        }
+        let limit = baseline_live + 2;
+        vm.set_max_heap_objects(Some(limit));
+        assert_eq!(
+            vm.run(create)
+                .unwrap_or_else(|error| panic!("{label} exact-cap allocation failed: {error}")),
+            Value::Bool(true)
+        );
+        vm.set_max_heap_objects(None);
+        assert!(vm.heap.live_count() <= limit);
+        assert_eq!(vm.gc_pins.len(), baseline_pins);
+        assert_eq!(vm.functions.len(), baseline_functions);
+        assert!(vm.pending_new_target.is_none());
+        assert!(vm.pending_new_target_prototype.is_none());
+    }
+
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn("capHeap", |vm, _, _| cap_heap_at_current_live_count(vm), 0)
+        .expect("heap-cap hook should register");
+    let result = vm.run(
+        r#"
+        var AsyncFunction = (async function () {}).constructor;
+        var NewTarget = (function () {}).bind(null);
+        Object.defineProperty(NewTarget, "prototype", {
+          get: function () {
+            var prototype = { marker: 41 };
+            var garbage1 = {};
+            var garbage2 = {};
+            capHeap();
+            return prototype;
+          },
+          configurable: true
+        });
+        var dynamic = Reflect.construct(AsyncFunction, ["return 1;"], NewTarget);
+        Object.getPrototypeOf(dynamic).marker;
+        "#,
+    );
+    vm.set_max_heap_objects(None);
+    assert_eq!(
+        result.expect("getter-produced prototype should survive collecting allocation"),
+        Value::Number(41.0)
+    );
+    assert!(vm.pending_new_target.is_none());
+    assert!(vm.pending_new_target_prototype.is_none());
 }
 
 #[test]

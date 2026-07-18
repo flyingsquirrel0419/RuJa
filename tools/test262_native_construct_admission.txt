@@ -19,3 +19,10 @@ built-ins/Date/subclassing.js
 built-ins/Date/proto-from-ctor-realm-zero.js
 built-ins/Date/proto-from-ctor-realm-one.js
 built-ins/Date/proto-from-ctor-realm-two.js
+built-ins/Function/is-a-constructor.js
+built-ins/Function/proto-from-ctor-realm-prototype.js
+built-ins/Function/proto-from-ctor-realm.js
+built-ins/AsyncFunction/is-a-constructor.js
+built-ins/AsyncFunction/proto-from-ctor-realm.js
+built-ins/GeneratorFunction/is-a-constructor.js
+built-ins/AsyncGeneratorFunction/is-a-constructor.js

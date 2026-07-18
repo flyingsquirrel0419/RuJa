@@ -46,4 +46,23 @@ NATIVE_CONSTRUCT_FEATURES = {
     "built-ins/Date/proto-from-ctor-realm-two.js": frozenset(
         {"cross-realm", "Reflect"}
     ),
+    "built-ins/Function/is-a-constructor.js": frozenset({"Reflect.construct"}),
+    "built-ins/Function/proto-from-ctor-realm-prototype.js": frozenset(
+        {"cross-realm", "Reflect"}
+    ),
+    "built-ins/Function/proto-from-ctor-realm.js": frozenset(
+        {"cross-realm", "Reflect"}
+    ),
+    "built-ins/AsyncFunction/is-a-constructor.js": frozenset(
+        {"Reflect.construct"}
+    ),
+    "built-ins/AsyncFunction/proto-from-ctor-realm.js": frozenset(
+        {"async-functions", "cross-realm", "Reflect", "Symbol"}
+    ),
+    "built-ins/GeneratorFunction/is-a-constructor.js": frozenset(
+        {"Reflect.construct"}
+    ),
+    "built-ins/AsyncGeneratorFunction/is-a-constructor.js": frozenset(
+        {"Reflect.construct"}
+    ),
 }

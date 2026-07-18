@@ -1842,7 +1842,7 @@ impl Compiler {
             || Self::parameter_prelude_len(f) > 0
     }
 
-    fn parameter_prelude_len(f: &FunctionExpr) -> usize {
+    pub(crate) fn parameter_prelude_len(f: &FunctionExpr) -> usize {
         f.body
             .iter()
             .take_while(|stmt| {

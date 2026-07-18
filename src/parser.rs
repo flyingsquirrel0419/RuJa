@@ -371,6 +371,40 @@ impl Parser {
         Ok(())
     }
 
+    /// Return the source name when the current token can participate in the
+    /// BindingIdentifier grammar. The lexer promotes several contextual names
+    /// to dedicated tokens, so formal parameters and patterns must not assume
+    /// every valid binding arrives as `TokenKind::Ident`.
+    fn binding_identifier_name(&self) -> Option<Arc<str>> {
+        self.binding_identifier_name_at(0)
+    }
+
+    fn binding_identifier_name_at(&self, offset: usize) -> Option<Arc<str>> {
+        let name = match &self.peek_at_tok(offset).kind {
+            TokenKind::Ident(name) => return Some(Arc::from(name.as_str())),
+            TokenKind::Undefined => "undefined",
+            TokenKind::Of => "of",
+            TokenKind::Async => "async",
+            TokenKind::Get => "get",
+            TokenKind::Set => "set",
+            TokenKind::Static => "static",
+            TokenKind::Let => "let",
+            TokenKind::Await if self.await_as_identifier_allowed() => "await",
+            TokenKind::Yield if self.yield_as_identifier_allowed() => "yield",
+            _ => return None,
+        };
+        Some(Arc::from(name))
+    }
+
+    fn parse_binding_identifier(&mut self, expected: &str) -> error::Result<Arc<str>> {
+        let name = self
+            .binding_identifier_name()
+            .ok_or_else(|| error::Error::syntax(expected.to_string()))?;
+        self.check_binding_name(&name)?;
+        self.advance();
+        Ok(name)
+    }
+
     fn yield_as_identifier_allowed(&self) -> bool {
         !self.is_strict_context && self.generator_depth == 0
     }
@@ -1618,11 +1652,13 @@ impl Parser {
             body = pre;
         }
         let is_strict = self.is_strict_context || body_contains_use_strict;
-        // Strict mode (inherited or from body directive): validate that no
-        // parameter name is `eval` or `arguments`, and no duplicate params.
+        // A body directive is discovered after parsing the parameters, so
+        // strict-only reserved words must be validated again here.
         if is_strict {
             if let Some(ref n) = name {
-                if matches!(&**n, "eval" | "arguments") {
+                if matches!(&**n, "eval" | "arguments")
+                    || Self::is_strict_identifier_reference_reserved(n)
+                {
                     return Err(error::Error::syntax(format!(
                         "'{}' cannot be used as a function name in strict mode",
                         n
@@ -1630,7 +1666,9 @@ impl Parser {
                 }
             }
             for p in &params {
-                if matches!(&**p, "eval" | "arguments") {
+                if matches!(&**p, "eval" | "arguments")
+                    || Self::is_strict_identifier_reference_reserved(p)
+                {
                     return Err(error::Error::syntax(format!(
                         "Parameter name '{}' is not allowed in strict mode",
                         p
@@ -1683,79 +1721,31 @@ impl Parser {
                     self.cur_param_destructure_decls.push((p, tmp, None));
                     break;
                 }
-                let rest = match self.peek().clone() {
-                    TokenKind::Ident(s) => {
-                        self.advance();
-                        s
-                    }
-                    TokenKind::Yield if self.yield_as_identifier_allowed() => {
-                        self.advance();
-                        "yield".to_string()
-                    }
-                    TokenKind::Await if self.await_as_identifier_allowed() => {
-                        self.advance();
-                        "await".to_string()
-                    }
-                    _ => {
-                        return Err(error::Error::syntax(
-                            "Expected rest parameter name".to_string(),
-                        ))
-                    }
-                };
-                self.check_binding_name(&rest)?;
-                self.cur_rest_param = Some(Arc::from(rest.as_str()));
+                self.cur_rest_param =
+                    Some(self.parse_binding_identifier("Expected rest parameter name")?);
                 break;
             }
-            match self.peek().clone() {
-                TokenKind::Ident(s) => {
-                    self.advance();
-                    self.check_binding_name(&s)?;
-                    params.push(Arc::from(s.as_str()));
-                    let default = if self.eat(&TokenKind::Assign) {
-                        Some(self.parse_assign()?)
-                    } else {
-                        None
-                    };
-                    self.cur_param_defaults.push(default);
-                }
-                TokenKind::Yield if self.yield_as_identifier_allowed() => {
-                    self.advance();
-                    let s = "yield";
-                    self.check_binding_name(s)?;
-                    params.push(Arc::from(s));
-                    let default = if self.eat(&TokenKind::Assign) {
-                        Some(self.parse_assign()?)
-                    } else {
-                        None
-                    };
-                    self.cur_param_defaults.push(default);
-                }
-                TokenKind::Await if self.await_as_identifier_allowed() => {
-                    self.advance();
-                    let s = "await";
-                    self.check_binding_name(s)?;
-                    params.push(Arc::from(s));
-                    let default = if self.eat(&TokenKind::Assign) {
-                        Some(self.parse_assign()?)
-                    } else {
-                        None
-                    };
-                    self.cur_param_defaults.push(default);
-                }
-                TokenKind::LBracket | TokenKind::LBrace => {
-                    // Destructuring parameter: `function f([a, b])` / `f({x, y})`.
-                    let p = self.parse_destructure_pattern()?;
-                    let tmp = format!("__arg{}", params.len());
-                    params.push(Arc::from(tmp.as_str()));
-                    self.cur_param_defaults.push(None);
-                    let default = if self.eat(&TokenKind::Assign) {
-                        Some(self.parse_assign()?)
-                    } else {
-                        None
-                    };
-                    self.cur_param_destructure_decls.push((p, tmp, default));
-                }
-                _ => return Err(error::Error::syntax("Expected parameter name".to_string())),
+            if self.check(&TokenKind::LBracket) || self.check(&TokenKind::LBrace) {
+                // Destructuring parameter: `function f([a, b])` / `f({x, y})`.
+                let p = self.parse_destructure_pattern()?;
+                let tmp = format!("__arg{}", params.len());
+                params.push(Arc::from(tmp.as_str()));
+                self.cur_param_defaults.push(None);
+                let default = if self.eat(&TokenKind::Assign) {
+                    Some(self.parse_assign()?)
+                } else {
+                    None
+                };
+                self.cur_param_destructure_decls.push((p, tmp, default));
+            } else {
+                let param = self.parse_binding_identifier("Expected parameter name")?;
+                params.push(param);
+                let default = if self.eat(&TokenKind::Assign) {
+                    Some(self.parse_assign()?)
+                } else {
+                    None
+                };
+                self.cur_param_defaults.push(default);
             }
             if !self.eat(&TokenKind::Comma) {
                 break;
@@ -2094,7 +2084,9 @@ impl Parser {
             }
         }
         for name in names {
-            if matches!(&*name, "eval" | "arguments") {
+            if matches!(&*name, "eval" | "arguments")
+                || Self::is_strict_identifier_reference_reserved(&name)
+            {
                 return Err(error::Error::syntax(format!(
                     "Parameter name '{}' is not allowed in strict mode",
                     name
@@ -2470,6 +2462,9 @@ impl Parser {
             // Destructuring pattern: `let [a,b] = ...` / `let {x,y} = ...`.
             if self.check(&TokenKind::LBracket) || self.check(&TokenKind::LBrace) {
                 let pattern = self.parse_destructure_pattern()?;
+                if kind != VarKind::Var {
+                    check_pattern_disallows_let(&pattern)?;
+                }
                 // `for (let [a,b] of ...)` has no `=`; a plain decl requires one.
                 let init = if self.eat(&TokenKind::Assign) {
                     Some(self.parse_assign()?)
@@ -2554,6 +2549,9 @@ impl Parser {
         if self.eat(&TokenKind::Catch) {
             if self.eat(&TokenKind::LParen) {
                 let pat = self.parse_destructure_pattern()?;
+                if !matches!(pat, Pattern::Ident(_)) {
+                    check_pattern_disallows_let(&pat)?;
+                }
                 if self.is_strict_context {
                     check_pattern_strict(&pat)?;
                 }
@@ -3558,6 +3556,22 @@ impl Parser {
     }
 
     fn parse_primary(&mut self) -> error::Result<Expr> {
+        // Dedicated lexer tokens such as `undefined`, `of`, and `static` are
+        // still BindingIdentifiers where the grammar permits them.
+        if matches!(self.peek_at_tok(1).kind, TokenKind::Arrow)
+            && self.binding_identifier_name().is_some()
+        {
+            if self.peek_at_tok(1).preceded_by_newline {
+                return Err(error::Error::syntax(
+                    "Line terminator not allowed before =>".to_string(),
+                ));
+            }
+            let name = self.parse_binding_identifier("Expected arrow parameter")?;
+            self.arrow_defaults = Vec::new();
+            self.arrow_rest = None;
+            self.advance(); // =>
+            return self.parse_arrow_body(vec![name]);
+        }
         match self.peek().clone() {
             TokenKind::Await => {
                 if self.async_depth > 0 && !self.await_expression_allowed {
@@ -3581,18 +3595,6 @@ impl Parser {
             }
             TokenKind::Yield => {
                 if self.yield_as_identifier_allowed() {
-                    if let TokenKind::Arrow = self.peek_at_tok(1).kind {
-                        if self.peek_at_tok(1).preceded_by_newline {
-                            return Err(error::Error::syntax(
-                                "Line terminator not allowed before =>".to_string(),
-                            ));
-                        }
-                        self.arrow_defaults = Vec::new();
-                        self.arrow_rest = None;
-                        self.advance(); // yield
-                        self.advance(); // =>
-                        return self.parse_arrow_body(vec![Arc::from("yield")]);
-                    }
                     self.advance();
                     return Ok(Expr::Ident(Arc::from("yield")));
                 }
@@ -3612,10 +3614,10 @@ impl Parser {
                 // async arrow: `async (params) => body` or `async ident => body`
                 let is_async_arrow_paren = !self.peek_at_tok(1).preceded_by_newline
                     && matches!(self.peek_at_tok(1).kind, TokenKind::LParen);
-                let is_async_arrow_ident = matches!(
-                    self.peek_at_tok(1).kind,
-                    TokenKind::Ident(_) | TokenKind::Of
-                ) && !self.peek_at_tok(1).preceded_by_newline
+                let is_async_arrow_ident = self
+                    .binding_identifier_name_at(1)
+                    .is_some_and(|name| name.as_ref() != "await")
+                    && !self.peek_at_tok(1).preceded_by_newline
                     && matches!(self.peek_at_tok(2).kind, TokenKind::Arrow);
                 if is_async_arrow_paren {
                     self.advance(); // async
@@ -3643,17 +3645,9 @@ impl Parser {
                         return Ok(Expr::Ident(Arc::from("async")));
                     }
                     self.advance(); // async
-                    let name = match self.peek().clone() {
-                        TokenKind::Ident(s) => {
-                            self.advance();
-                            Arc::from(s.as_str())
-                        }
-                        TokenKind::Of => {
-                            self.advance();
-                            Arc::from("of")
-                        }
-                        _ => unreachable!(),
-                    };
+                    let name = self.with_async_context(true, |p| {
+                        p.parse_binding_identifier("Expected async arrow parameter")
+                    })?;
                     self.advance(); // =>
                     return self.parse_arrow_body_with_async(vec![name], true);
                 }
@@ -3808,20 +3802,6 @@ impl Parser {
                         s
                     )));
                 }
-                // Could be arrow: x => ...
-                if let TokenKind::Arrow = self.peek_at_tok(1).kind {
-                    if self.peek_at_tok(1).preceded_by_newline {
-                        return Err(error::Error::syntax(
-                            "Line terminator not allowed before =>".to_string(),
-                        ));
-                    }
-                    self.arrow_defaults = Vec::new();
-                    self.arrow_rest = None;
-                    self.advance(); // ident
-                    self.advance(); // =>
-                    self.check_binding_name(&s)?;
-                    return self.parse_arrow_body(vec![Arc::from(s.as_str())]);
-                }
                 self.advance();
                 Ok(Expr::Ident(Arc::from(s.as_str())))
             }
@@ -3836,6 +3816,18 @@ impl Parser {
                 // outside of for-of heads.
                 self.advance();
                 Ok(Expr::Ident(Arc::from("of")))
+            }
+            TokenKind::Static if !self.is_strict_context => {
+                self.advance();
+                Ok(Expr::Ident(Arc::from("static")))
+            }
+            TokenKind::Get => {
+                self.advance();
+                Ok(Expr::Ident(Arc::from("get")))
+            }
+            TokenKind::Set => {
+                self.advance();
+                Ok(Expr::Ident(Arc::from("set")))
             }
             TokenKind::LParen => {
                 // Could be arrow: (a, b) => ...
@@ -4456,10 +4448,13 @@ impl Parser {
             body = pre;
         }
         let is_strict = self.is_strict_context || body_contains_use_strict;
-        // Strict mode: validate parameter names and duplicates (same as decl).
+        // A body directive is discovered after parsing the parameters, so
+        // strict-only reserved words must be validated again here.
         if is_strict {
             if let Some(ref n) = name {
-                if matches!(&**n, "eval" | "arguments") {
+                if matches!(&**n, "eval" | "arguments")
+                    || Self::is_strict_identifier_reference_reserved(n)
+                {
                     return Err(error::Error::syntax(format!(
                         "'{}' cannot be used as a function name in strict mode",
                         n
@@ -4467,7 +4462,9 @@ impl Parser {
                 }
             }
             for p in &params {
-                if matches!(&**p, "eval" | "arguments") {
+                if matches!(&**p, "eval" | "arguments")
+                    || Self::is_strict_identifier_reference_reserved(p)
+                {
                     return Err(error::Error::syntax(format!(
                         "Parameter name '{}' is not allowed in strict mode",
                         p
@@ -4649,83 +4646,50 @@ impl Parser {
                     dstr_decls.push((p, tmp, None));
                     break;
                 }
-                match self.advance() {
-                    TokenKind::Ident(s) => rest = Some(Arc::from(s.as_str())),
-                    TokenKind::Await if self.await_as_identifier_allowed() => {
-                        rest = Some(Arc::from("await"))
-                    }
-                    TokenKind::Yield if self.yield_as_identifier_allowed() => {
-                        rest = Some(Arc::from("yield"))
-                    }
-                    _ => {
-                        self.pos = save;
-                        return Ok(false);
-                    }
-                }
-                break;
-            }
-            match self.peek().clone() {
-                TokenKind::Ident(s) => {
-                    self.advance();
-                    params.push(Arc::from(s.as_str()));
-                    let d = if self.eat(&TokenKind::Assign) {
-                        Some(self.parse_assign()?)
-                    } else {
-                        None
-                    };
-                    defaults.push(d);
-                }
-                TokenKind::Await if self.await_as_identifier_allowed() => {
-                    self.advance();
-                    params.push(Arc::from("await"));
-                    let d = if self.eat(&TokenKind::Assign) {
-                        Some(self.parse_assign()?)
-                    } else {
-                        None
-                    };
-                    defaults.push(d);
-                }
-                TokenKind::Yield if self.yield_as_identifier_allowed() => {
-                    self.advance();
-                    params.push(Arc::from("yield"));
-                    let d = if self.eat(&TokenKind::Assign) {
-                        Some(self.parse_assign()?)
-                    } else {
-                        None
-                    };
-                    defaults.push(d);
-                }
-                TokenKind::LBracket | TokenKind::LBrace => {
-                    // Destructuring parameter: `([a, b]) =>` / `({x, y}) =>`.
-                    // Synthesize a positional temp param and remember the
-                    // pattern so the body can bind it: `let <pat> = __argN;`.
-                    // If the pattern fails to parse (e.g. `({a:1})` is an object
-                    // literal, not a binding pattern), rewind and treat this as
-                    // not-an-arrow so the caller parses a parenthesised expr.
-                    let saved = self.pos;
-                    let p = match self.parse_destructure_pattern() {
-                        Ok(p) => p,
-                        Err(_) => {
-                            self.pos = save;
-                            return Ok(false);
-                        }
-                    };
-                    let _ = saved;
-                    let tmp = format!("__arg{}", params.len());
-                    params.push(Arc::from(tmp.as_str()));
-                    defaults.push(None);
-                    // Optional default: `({a} = {}) =>`
-                    let default = if self.eat(&TokenKind::Assign) {
-                        Some(self.parse_assign()?)
-                    } else {
-                        None
-                    };
-                    dstr_decls.push((p, tmp, default));
-                }
-                _ => {
+                if self.binding_identifier_name().is_none() {
                     self.pos = save;
                     return Ok(false);
                 }
+                rest = Some(self.parse_binding_identifier("Expected rest parameter name")?);
+                break;
+            }
+            if self.check(&TokenKind::LBracket) || self.check(&TokenKind::LBrace) {
+                // Destructuring parameter: `([a, b]) =>` / `({x, y}) =>`.
+                // Synthesize a positional temp param and remember the
+                // pattern so the body can bind it: `let <pat> = __argN;`.
+                // If the pattern fails to parse (e.g. `({a:1})` is an object
+                // literal, not a binding pattern), rewind and treat this as
+                // not-an-arrow so the caller parses a parenthesised expr.
+                let saved = self.pos;
+                let p = match self.parse_destructure_pattern() {
+                    Ok(p) => p,
+                    Err(_) => {
+                        self.pos = save;
+                        return Ok(false);
+                    }
+                };
+                let _ = saved;
+                let tmp = format!("__arg{}", params.len());
+                params.push(Arc::from(tmp.as_str()));
+                defaults.push(None);
+                // Optional default: `({a} = {}) =>`
+                let default = if self.eat(&TokenKind::Assign) {
+                    Some(self.parse_assign()?)
+                } else {
+                    None
+                };
+                dstr_decls.push((p, tmp, default));
+            } else if self.binding_identifier_name().is_some() {
+                params.push(self.parse_binding_identifier("Expected arrow parameter")?);
+                let default = if self.eat(&TokenKind::Assign) {
+                    Some(self.parse_assign()?)
+                } else {
+                    None
+                };
+                defaults.push(default);
+            } else {
+                self.pos = save;
+                return Ok(false);
             }
             if self.check(&TokenKind::Comma) {
                 self.advance();
@@ -4771,7 +4735,10 @@ impl Parser {
     ) -> error::Result<()> {
         let mut seen = std::collections::HashSet::new();
         for p in params {
-            if reject_eval_arguments && matches!(&**p, "eval" | "arguments") {
+            if reject_eval_arguments
+                && (matches!(&**p, "eval" | "arguments")
+                    || Self::is_strict_identifier_reference_reserved(p))
+            {
                 return Err(error::Error::syntax(format!(
                     "Parameter name '{}' is not allowed in arrow function",
                     p
@@ -4788,7 +4755,10 @@ impl Parser {
             Self::check_pattern_binding_names(pattern, &mut seen, reject_eval_arguments)?;
         }
         if let Some(r) = rest_param {
-            if reject_eval_arguments && matches!(&**r, "eval" | "arguments") {
+            if reject_eval_arguments
+                && (matches!(&**r, "eval" | "arguments")
+                    || Self::is_strict_identifier_reference_reserved(r))
+            {
                 return Err(error::Error::syntax(format!(
                     "Parameter name '{}' is not allowed in arrow function",
                     r
@@ -4812,7 +4782,10 @@ impl Parser {
     ) -> error::Result<()> {
         match pattern {
             Pattern::Ident(name) => {
-                if reject_eval_arguments && matches!(&**name, "eval" | "arguments") {
+                if reject_eval_arguments
+                    && (matches!(&**name, "eval" | "arguments")
+                        || Self::is_strict_identifier_reference_reserved(name))
+                {
                     return Err(error::Error::syntax(format!(
                         "Parameter name '{}' is not allowed in arrow function",
                         name
@@ -5768,11 +5741,35 @@ impl Parser {
                 Ok(())
             }
             Expr::Arrow(func) => {
+                for param in &func.params {
+                    Self::check_static_block_name(param)?;
+                }
+                if let Some(rest) = &func.rest_param {
+                    Self::check_static_block_name(rest)?;
+                }
                 for default in func.param_defaults.iter().flatten() {
                     Self::check_static_block_expr(default)?;
                 }
                 for pattern in &func.param_decls {
                     Self::check_static_block_pattern(pattern)?;
+                }
+                // Destructuring arrow parameters are lowered to line-zero
+                // prelude declarations. They remain parameter syntax for the
+                // static-block early error even though the executable body
+                // must otherwise stay behind the nested-function boundary.
+                for statement in func.body.iter().take_while(|statement| statement.line == 0) {
+                    if let StmtNode::Destructure { pattern, .. } = &statement.node {
+                        Self::check_static_block_pattern(pattern)?;
+                    }
+                }
+                if func
+                    .body
+                    .iter()
+                    .any(Self::class_field_initializer_contains_arguments_stmt)
+                {
+                    return Err(error::Error::syntax(
+                        "'arguments' is not allowed in class static block".to_string(),
+                    ));
                 }
                 Ok(())
             }
@@ -7230,25 +7227,9 @@ impl Parser {
                 self.expect(&TokenKind::RBrace, "}")?;
                 Ok(Pattern::Object(props, rest))
             }
-            TokenKind::Ident(s) => {
-                self.check_binding_name(&s)?;
-                self.advance();
-                Ok(Pattern::Ident(Arc::from(s.as_str())))
-            }
-            TokenKind::Yield if self.yield_as_identifier_allowed() => {
-                self.check_binding_name("yield")?;
-                self.advance();
-                Ok(Pattern::Ident(Arc::from("yield")))
-            }
-            TokenKind::Await if self.await_as_identifier_allowed() => {
-                self.check_binding_name("await")?;
-                self.advance();
-                Ok(Pattern::Ident(Arc::from("await")))
-            }
-            other => Err(error::Error::syntax(format!(
-                "Expected pattern, got {:?}",
-                other
-            ))),
+            other => self
+                .parse_binding_identifier(&format!("Expected pattern, got {other:?}"))
+                .map(Pattern::Ident),
         }
     }
 }
@@ -8017,6 +7998,69 @@ mod tests {
     }
 
     #[test]
+    fn parse_contextual_formal_binding_identifiers_consistently() {
+        for src in [
+            "function f(undefined, async, of, static, let, get, set, ...rest) {}",
+            "function f([undefined], {x: static}) {}",
+            "var f = (undefined, async, of, static, let, get, set, ...rest) => undefined;",
+            "undefined => undefined;",
+            "async => async;",
+            "of => of;",
+            "static => static;",
+            "let => let;",
+            "get => get;",
+            "set => set;",
+            "async undefined => undefined;",
+            "async static => static;",
+            "async yield => yield;",
+            "class C { static { (() => await); } }",
+            "class C { static { (() => { function f() { return arguments; } }); } }",
+        ] {
+            assert!(Parser::parse(src).is_ok(), "{src}");
+        }
+
+        for src in [
+            "function f(public) { 'use strict'; }",
+            "function f(package) { 'use strict'; }",
+            "function f(yield) { 'use strict'; }",
+            "var f = function(static) { 'use strict'; };",
+            "var f = public => { 'use strict'; };",
+            "var o = { m(package) { 'use strict'; } };",
+            "class C { static { (await => 0); } }",
+            "class C { static { (arguments => 0); } }",
+            "class C { static { (([await]) => 0); } }",
+            "class C { static { (({x: arguments}) => 0); } }",
+            "class C { static { (() => arguments); } }",
+            "class C { static { (() => { return arguments; }); } }",
+        ] {
+            assert!(Parser::parse(src).is_err(), "{src}");
+        }
+    }
+
+    #[test]
+    fn parse_let_binding_name_obeys_binding_context() {
+        for src in [
+            "var [let] = [];",
+            "var {x: let} = {};",
+            "function f([let]) {} function g({x: let}) {}",
+            "([let]) => let; ({x: let}) => let;",
+            "try {} catch (let) {}",
+        ] {
+            assert!(Parser::parse(src).is_ok(), "{src}");
+        }
+
+        for src in [
+            "let [let] = [];",
+            "const {x: let} = {};",
+            "for (let [let] of []);",
+            "try {} catch ([let]) {}",
+            "try {} catch ({x: let}) {}",
+        ] {
+            assert!(Parser::parse(src).is_err(), "{src}");
+        }
+    }
+
+    #[test]
     fn parse_escaped_use_strict_is_not_strict_directive() {
         for src in [
             "'use\\u0020strict'; var public = 1;",
@@ -8426,6 +8470,17 @@ fn collect_pattern_names(pattern: &Pattern, names: &mut Vec<Arc<str>>) {
         Pattern::Assign(p, _) => collect_pattern_names(p, names),
         Pattern::Rest(p) => collect_pattern_names(p, names),
     }
+}
+
+fn check_pattern_disallows_let(pattern: &Pattern) -> error::Result<()> {
+    let mut names = Vec::new();
+    collect_pattern_names(pattern, &mut names);
+    if names.iter().any(|name| name.as_ref() == "let") {
+        return Err(error::Error::syntax(
+            "'let' cannot be used as a lexical or catch binding name".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 fn check_pattern_strict(pattern: &Pattern) -> error::Result<()> {

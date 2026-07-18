@@ -364,6 +364,56 @@ pub(crate) fn async_generator_function_constructor(
     dynamic_function_constructor(vm, args, true, true)
 }
 
+fn parse_dynamic_function_source(
+    params_src: &str,
+    body_src: &str,
+    is_generator: bool,
+    is_async: bool,
+) -> error::Result<crate::ast::FunctionExpr> {
+    let wrapped = match (is_async, is_generator) {
+        (true, true) => format!("async function* _f({params_src}\n) {{\n{body_src}\n}}"),
+        (true, false) => format!("async function _f({params_src}\n) {{\n{body_src}\n}}"),
+        (false, true) => format!("function* _f({params_src}\n) {{\n{body_src}\n}}"),
+        (false, false) => format!("function _f({params_src}\n) {{\n{body_src}\n}}"),
+    };
+    let program = crate::parser::Parser::parse(&wrapped)?;
+    let mut statements = program.body.into_iter();
+    let Some(statement) = statements.next() else {
+        return Err(error::Error::syntax("invalid Function body".to_string()));
+    };
+    if statements.next().is_some() {
+        return Err(error::Error::syntax("invalid Function body".to_string()));
+    }
+    let crate::ast::StmtNode::FunctionDecl(function) = statement.node else {
+        return Err(error::Error::syntax("invalid Function body".to_string()));
+    };
+    if function.name.as_deref() != Some("_f")
+        || function.is_async != is_async
+        || function.is_generator != is_generator
+    {
+        return Err(error::Error::syntax("invalid Function body".to_string()));
+    }
+    Ok(function)
+}
+
+fn dynamic_function_prototype_with_default(
+    vm: &mut Vm,
+    intrinsic: &str,
+    fallback: Value,
+) -> error::Result<Value> {
+    if vm.current_native_new_target().is_some() {
+        return native_constructor_prototype_with_default(vm, intrinsic, fallback);
+    }
+    let Some(constructor) = vm.current_native_callee().cloned() else {
+        return Ok(fallback);
+    };
+    let prototype = vm.get_property_by_key(&constructor, &PropertyKey::from("prototype"))?;
+    if matches!(prototype, Value::Object(_)) {
+        return Ok(prototype);
+    }
+    vm.constructor_realm_default_prototype(&constructor, intrinsic, fallback)
+}
+
 fn dynamic_function_constructor(
     vm: &mut Vm,
     args: &[Value],
@@ -374,7 +424,8 @@ fn dynamic_function_constructor(
     use crate::value::{FunctionData, FunctionKind, PropertyDescriptor, PropertyKey};
     use std::sync::Arc;
 
-    // Build the parameter source: all args except the last, joined by commas.
+    // CreateDynamicFunction converts every parameter before the body. Keeping
+    // the loop explicit also preserves abrupt-completion order.
     let (params_src, body_src) = if args.is_empty() {
         (String::new(), String::new())
     } else if args.len() == 1 {
@@ -384,33 +435,34 @@ fn dynamic_function_constructor(
                 .to_string(),
         )
     } else {
+        let mut param_strings = Vec::with_capacity(args.len() - 1);
+        for arg in &args[..args.len() - 1] {
+            param_strings.push(vm.to_string(arg)?.to_string());
+        }
+        let params = param_strings.join(",");
         let body = vm.to_string(&args[args.len() - 1])?.to_string();
-        let params = args[..args.len() - 1]
-            .iter()
-            .map(|a| vm.to_string(a).map(|s| s.to_string()))
-            .collect::<error::Result<Vec<String>>>()?
-            .join(",");
         (params, body)
     };
 
-    // Parse params + body together by wrapping in `function _f(PARAMS){ BODY }`,
-    // so directives (e.g. "use strict") in the body are honored and the body
-    // is parsed as a function statement list (not a top-level block).
-    let wrapped = match (is_async, is_generator) {
-        (true, true) => format!("async function* _f({}) {{ {} }}", params_src, body_src),
-        (true, false) => format!("async function _f({}) {{ {} }}", params_src, body_src),
-        (false, true) => format!("function* _f({}) {{ {} }}", params_src, body_src),
-        _ => format!("function _f({}) {{ {} }}", params_src, body_src),
-    };
-    let prog = crate::parser::Parser::parse(&wrapped)?;
-    let params_fn = prog
-        .body
-        .into_iter()
-        .find_map(|st| match st.node {
-            crate::ast::StmtNode::FunctionDecl(f) => Some(f),
-            _ => None,
-        })
-        .ok_or_else(|| error::Error::syntax("invalid Function body".to_string()))?;
+    // RuJa's local-trust host policy permits string compilation unconditionally.
+    // This is the HostEnsureCanCompileStrings boundary: it must remain after
+    // every observable ToString and before any parse or prototype lookup.
+
+    // Parameters and body are separate grammar parses in ECMA-262. Validate
+    // each side independently so comments or delimiters cannot bridge the
+    // synthetic boundary, then parse the combined source for direct early
+    // errors such as a strict body with non-simple parameters.
+    let params_only = parse_dynamic_function_source(&params_src, "", is_generator, is_async)?;
+    if crate::compiler::Compiler::parameter_prelude_len(&params_only) != params_only.body.len() {
+        return Err(error::Error::syntax(
+            "invalid Function parameters".to_string(),
+        ));
+    }
+    let body_only = parse_dynamic_function_source("", &body_src, is_generator, is_async)?;
+    if !body_only.params.is_empty() || body_only.rest_param.is_some() {
+        return Err(error::Error::syntax("invalid Function body".to_string()));
+    }
+    let params_fn = parse_dynamic_function_source(&params_src, &body_src, is_generator, is_async)?;
     let params = params_fn.params.clone();
     let param_defaults = params_fn.param_defaults.clone();
     let rest_param = params_fn.rest_param.clone();
@@ -434,49 +486,8 @@ fn dynamic_function_constructor(
     };
     let mut compiler = crate::compiler::Compiler::new();
     let (chunk, param_slots) = compiler.compile_function(&f)?;
-    let chunk = vm.append_compiled_functions(chunk, compiler.take_functions());
+    let compiled_functions = compiler.take_functions();
     let function_realm = vm.native_callee_closure().unwrap_or(vm.global);
-    let fdef = std::sync::Arc::new(crate::function::FunctionDef {
-        name: Some(Arc::from("anonymous")),
-        params: f.params.clone(),
-        param_slots,
-        rest_param: f.rest_param.clone(),
-        chunk: std::sync::Arc::new(chunk),
-        num_locals: f.params.len() + 16,
-        is_arrow: false,
-        is_async,
-        is_generator,
-        has_parameter_expressions: crate::compiler::Compiler::has_parameter_expressions(&f),
-        length: crate::compiler::Compiler::fn_length(&f),
-        is_method: false,
-        has_name_binding: false,
-        is_derived: false,
-    });
-    vm.functions.push(fdef.clone());
-    let func_idx = vm.functions.len() - 1;
-    // Create the function object with a fresh prototype.
-    let has_prototype = !is_async || is_generator;
-    let proto_val = if has_prototype {
-        let proto = HeapObj::Object(crate::value::ObjectData {
-            props: Mutex::new(IndexMap::new()),
-            proto: Mutex::new(Some(if is_generator {
-                if is_async {
-                    vm.async_generator_prototype_for_env(function_realm)
-                } else {
-                    vm.generator_prototype_for_env(function_realm)
-                }
-            } else {
-                vm.object_proto.clone()
-            })),
-            extensible: AtomicBool::new(true),
-            class_name: None,
-            private_fields: Mutex::new(std::collections::HashMap::new()),
-            primitive: Mutex::new(None),
-        });
-        Value::Object(GcIdx(vm.heap.allocate(proto)?))
-    } else {
-        Value::Undefined
-    };
     let fallback_function_proto = if is_generator {
         let proto = if is_async {
             vm.async_generator_function_prototype_for_env(function_realm)
@@ -505,29 +516,38 @@ fn dynamic_function_constructor(
             .cloned()
             .unwrap_or_else(|| vm.function_proto.clone())
     };
-    let function_object_proto = if is_generator {
-        let intrinsic = if is_async {
+    let intrinsic = if is_generator {
+        if is_async {
             "AsyncGeneratorFunction"
         } else {
             "GeneratorFunction"
-        };
-        native_constructor_prototype_with_default(vm, intrinsic, fallback_function_proto.clone())?
-    } else if let Some(proto) = vm.current_native_new_target_prototype().cloned() {
-        if matches!(proto, Value::Object(_)) {
-            proto
-        } else {
-            fallback_function_proto.clone()
         }
-    } else if let Some(new_target) = vm.current_native_new_target().cloned() {
-        let proto = vm.get_property_by_key(&new_target, &PropertyKey::from("prototype"))?;
-        if matches!(proto, Value::Object(_)) {
-            proto
-        } else {
-            fallback_function_proto.clone()
-        }
+    } else if is_async {
+        "AsyncFunction"
     } else {
-        fallback_function_proto
+        "Function"
     };
+    let function_object_proto =
+        dynamic_function_prototype_with_default(vm, intrinsic, fallback_function_proto)?;
+    let mut pin_count = vm.pin(&function_object_proto);
+    let function_checkpoint = vm.functions.len();
+    let chunk = vm.append_compiled_functions(chunk, compiled_functions);
+    let fdef = std::sync::Arc::new(crate::function::FunctionDef {
+        name: Some(Arc::from("anonymous")),
+        params: f.params.clone(),
+        param_slots,
+        rest_param: f.rest_param.clone(),
+        chunk: std::sync::Arc::new(chunk),
+        num_locals: f.params.len() + 16,
+        is_arrow: false,
+        is_async,
+        is_generator,
+        has_parameter_expressions: crate::compiler::Compiler::has_parameter_expressions(&f),
+        length: crate::compiler::Compiler::fn_length(&f),
+        is_method: false,
+        has_name_binding: false,
+        is_derived: false,
+    });
     let mut props = IndexMap::new();
     let mut len_desc = PropertyDescriptor::data(Value::Number(fdef.length as f64));
     len_desc.writable = false;
@@ -539,13 +559,6 @@ fn dynamic_function_constructor(
     name_desc.enumerable = false;
     name_desc.configurable = true;
     props.insert(PropertyKey::from("name"), name_desc);
-    if has_prototype {
-        let mut proto_desc = PropertyDescriptor::data(proto_val.clone());
-        proto_desc.enumerable = false;
-        proto_desc.configurable = false;
-        props.insert(PropertyKey::from("prototype"), proto_desc);
-    }
-
     let fd = FunctionData {
         name: Some(Arc::from("anonymous")),
         kind: FunctionKind::Interpreted { func: fdef },
@@ -553,30 +566,72 @@ fn dynamic_function_constructor(
         lexical_new_target: Value::Undefined,
         home_object: Mutex::new(None),
         is_class_ctor: std::sync::atomic::AtomicBool::new(false),
-        prototype: Mutex::new(has_prototype.then_some(proto_val.clone())),
-        proto: Mutex::new(match function_object_proto {
-            Value::Object(_) => Some(function_object_proto),
+        prototype: Mutex::new(None),
+        proto: Mutex::new(match &function_object_proto {
+            Value::Object(_) => Some(function_object_proto.clone()),
             _ => None,
         }),
         props: Mutex::new(props),
         extensible: std::sync::atomic::AtomicBool::new(true),
         private_fields: Mutex::new(std::collections::HashMap::new()),
     };
-    let f_idx = vm.heap.allocate(HeapObj::Function(fd))?;
-    // link prototype.constructor back to the function
-    if has_prototype && !is_generator {
-        if let Value::Object(pidx) = &proto_val {
-            vm.heap.with_obj(pidx.0, |obj| {
-                let mut desc = crate::value::PropertyDescriptor::data(Value::Object(GcIdx(f_idx)));
-                desc.enumerable = false;
-                obj.props()
+    let result = (|| -> error::Result<Value> {
+        let f_idx = vm.alloc(HeapObj::Function(fd))?;
+        let function = Value::Object(f_idx);
+        pin_count += vm.pin(&function);
+
+        let has_prototype = !is_async || is_generator;
+        if has_prototype {
+            let prototype_parent = if is_generator {
+                if is_async {
+                    vm.async_generator_prototype_for_env(function_realm)
+                } else {
+                    vm.generator_prototype_for_env(function_realm)
+                }
+            } else {
+                vm.object_prototype_for_env(function_realm)
+            };
+            pin_count += vm.pin(&prototype_parent);
+            let prototype_idx = vm.alloc(HeapObj::Object(crate::value::ObjectData {
+                props: Mutex::new(IndexMap::new()),
+                proto: Mutex::new(Some(prototype_parent)),
+                extensible: AtomicBool::new(true),
+                class_name: None,
+                private_fields: Mutex::new(std::collections::HashMap::new()),
+                primitive: Mutex::new(None),
+            }))?;
+            let prototype = Value::Object(prototype_idx);
+            pin_count += vm.pin(&prototype);
+
+            let mut descriptor = PropertyDescriptor::data(prototype.clone());
+            descriptor.enumerable = false;
+            descriptor.configurable = false;
+            vm.heap.with_obj(f_idx.0, |object| {
+                let HeapObj::Function(data) = object else {
+                    return;
+                };
+                *data.prototype.lock() = Some(prototype.clone());
+                data.props
                     .lock()
-                    .insert(crate::value::PropertyKey::from("constructor"), desc);
+                    .insert(PropertyKey::from("prototype"), descriptor);
             });
+
+            if !is_generator {
+                vm.heap.with_obj(prototype_idx.0, |object| {
+                    let mut descriptor = PropertyDescriptor::data(function.clone());
+                    descriptor.enumerable = false;
+                    object
+                        .props()
+                        .lock()
+                        .insert(PropertyKey::from("constructor"), descriptor);
+                });
+            }
         }
+        Ok(function)
+    })();
+    vm.unpin_many(pin_count);
+    if result.is_err() {
+        vm.functions.truncate(function_checkpoint);
     }
-    // Emit MakeClosure at top level is not needed; the function object is
-    // already fully formed. We do NOT push a frame; the caller invokes it.
-    let _ = func_idx;
-    Ok(Value::Object(GcIdx(f_idx)))
+    result
 }

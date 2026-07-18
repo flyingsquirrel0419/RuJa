@@ -2143,16 +2143,26 @@ impl Vm {
                     ))
                 }
             };
-            if self.is_extensible(&target)? {
-                return Ok(proto);
-            }
-            let target_proto = self.get_prototype_of(&target)?;
-            if proto != target_proto {
-                return Err(Error::type_err(
-                    "Proxy getPrototypeOf trap returned incompatible prototype",
-                ));
-            }
-            return Ok(proto);
+            // A trap may return a fresh object that is not otherwise reachable.
+            // Keep it alive while nested Proxy invariant checks re-enter JS.
+            let proto_pin = proto
+                .as_ref()
+                .map(|prototype| self.pin(prototype))
+                .unwrap_or(0);
+            let result = (|| {
+                if self.is_extensible(&target)? {
+                    return Ok(proto.clone());
+                }
+                let target_proto = self.get_prototype_of(&target)?;
+                if proto != target_proto {
+                    return Err(Error::type_err(
+                        "Proxy getPrototypeOf trap returned incompatible prototype",
+                    ));
+                }
+                Ok(proto.clone())
+            })();
+            self.unpin_many(proto_pin);
+            return result;
         }
 
         Ok(self.heap.with_obj(idx.0, |o| o.proto().lock().clone()))

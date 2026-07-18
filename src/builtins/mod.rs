@@ -2912,7 +2912,7 @@ fn install_generator_intrinsics_in_env(
         generator_function_constructor,
         1,
         realm,
-        NativeConstructMode::InternalEagerPrototype,
+        NativeConstructMode::InternalDeferredPrototype,
     )?;
     let constructor_value = Value::Object(constructor);
     pins += vm.pin(&constructor_value);
@@ -3044,7 +3044,7 @@ fn install_async_generator_intrinsics_in_env(
         async_generator_function_constructor,
         1,
         realm,
-        NativeConstructMode::InternalEagerPrototype,
+        NativeConstructMode::InternalDeferredPrototype,
     )?;
     let constructor_value = Value::Object(constructor);
     pins += vm.pin(&constructor_value);
@@ -3201,7 +3201,7 @@ fn populate_test262_realm(vm: &mut Vm, realm_env: GcIdx) -> error::Result<Value>
         function_constructor,
         1,
         realm_env,
-        NativeConstructMode::InternalEagerPrototype,
+        NativeConstructMode::InternalDeferredPrototype,
     )?;
     set_function_object_proto(vm, function_ctor_idx, &realm_function_proto);
     let call_fn = vm.new_native_function_in_env("call", function_call, 1, realm_env)?;
@@ -7354,7 +7354,7 @@ fn install_async_function_intrinsic(
         async_function_constructor,
         1,
         env,
-        NativeConstructMode::InternalEagerPrototype,
+        NativeConstructMode::InternalDeferredPrototype,
     )?;
     set_function_object_proto(vm, constructor, &Value::Object(function_ctor));
     let prototype = Value::Object(GcIdx(vm.heap.allocate(HeapObj::Object(ObjectData {
@@ -10111,7 +10111,7 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
         "Function",
         function_constructor,
         1,
-        NativeConstructMode::InternalEagerPrototype,
+        NativeConstructMode::InternalDeferredPrototype,
     )?;
     vm.heap.with_obj(function_ctor_idx.0, |obj| {
         if let HeapObj::Function(f) = obj {

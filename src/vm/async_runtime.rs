@@ -993,6 +993,20 @@ impl Vm {
                 .cloned()
                 .unwrap_or(fallback));
         }
+        if intrinsic == "Function" {
+            return Ok(self
+                .realm_function_prototypes
+                .get(&realm.0)
+                .cloned()
+                .unwrap_or(fallback));
+        }
+        if intrinsic == "AsyncFunction" {
+            return Ok(self
+                .realm_async_function_prototypes
+                .get(&realm.0)
+                .cloned()
+                .unwrap_or(fallback));
+        }
         if intrinsic == "GeneratorFunction" {
             return Ok(self
                 .realm_generator_function_prototypes
