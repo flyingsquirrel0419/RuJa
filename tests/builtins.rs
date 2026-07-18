@@ -15020,6 +15020,190 @@ fn regexp_exec_result_shape_and_last_index_semantics() {
 }
 
 #[test]
+fn regexp_match_indices_follow_utf16_realm_and_property_semantics() {
+    assert_eq!(
+        run(r#"
+            var match = /(a)(z)?/d.exec("ba");
+            var desc = Object.getOwnPropertyDescriptor(match, "indices");
+            var groupsDesc = Object.getOwnPropertyDescriptor(match.indices, "groups");
+            [
+              match.index,
+              match.indices.length,
+              match.indices[0].join(","),
+              match.indices[1].join(","),
+              match.indices[2] === undefined,
+              match.indices.groups === undefined,
+              desc.value === match.indices,
+              desc.writable,
+              desc.enumerable,
+              desc.configurable,
+              groupsDesc.writable,
+              groupsDesc.enumerable,
+              groupsDesc.configurable,
+              Object.getPrototypeOf(match.indices) === Array.prototype,
+              Object.getPrototypeOf(match.indices[0]) === Array.prototype,
+              Object.keys(match).join(","),
+              Object.prototype.hasOwnProperty.call(/a/.exec("a"), "indices")
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "1|3|1,2|1,2|true|true|true|true|true|true|true|true|true|true|true|0,1,2,index,input,groups,indices|false"
+        ))
+    );
+
+    assert_eq!(
+        run(r#"
+            var match = /(?<first>a)(?<missing>z)?/d.exec("a");
+            var groups = match.indices.groups;
+            var desc = Object.getOwnPropertyDescriptor(groups, "first");
+            [
+              groups.first === match.indices[1],
+              groups.missing === undefined,
+              Object.prototype.hasOwnProperty.call(groups, "missing"),
+              Object.getPrototypeOf(groups) === null,
+              Object.getOwnPropertyNames(groups).join(","),
+              desc.writable,
+              desc.enumerable,
+              desc.configurable,
+              /(?<__proto__>a)/d.exec("a").indices.groups.__proto__.join(",")
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "true|true|true|true|first,missing|true|true|true|0,1"
+        ))
+    );
+
+    assert_eq!(
+        run(r#"
+            var scalar = "𝐁";
+            var legacy = /./d.exec(scalar);
+            var unicode = /(.)/du.exec(scalar);
+            var splitScalar = String.fromCharCode(0xD835) + String.fromCharCode(0xDC01);
+            var splitUnicode = /(?<value>.)/du.exec(splitScalar);
+            var splitGlobal = /./dgu;
+            splitGlobal.exec(splitScalar);
+            var literalMiddle = /./dgu;
+            literalMiddle.lastIndex = 1;
+            var literalMiddleMatch = literalMiddle.exec(scalar);
+            var splitMiddle = /./dgu;
+            splitMiddle.lastIndex = 1;
+            var splitMiddleMatch = splitMiddle.exec(splitScalar);
+            var viaMatch = "ba".match(/(a)/d);
+            [
+              legacy[0].length,
+              legacy.indices[0].join(","),
+              unicode[0].length,
+              unicode.indices[0].join(","),
+              unicode.indices[1].join(","),
+              splitUnicode[0].length,
+              splitUnicode[0].charCodeAt(0),
+              splitUnicode[0].charCodeAt(1),
+              splitUnicode.indices[0].join(","),
+              splitUnicode.indices.groups.value.join(","),
+              splitUnicode.groups.value.length,
+              splitGlobal.lastIndex,
+              literalMiddleMatch.index,
+              literalMiddleMatch.indices[0].join(","),
+              literalMiddle.lastIndex,
+              splitMiddleMatch.index,
+              splitMiddleMatch.indices[0].join(","),
+              splitMiddle.lastIndex,
+              viaMatch.indices[1].join(",")
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "1|0,1|2|0,2|0,2|2|55349|56321|0,2|0,2|2|2|0|0,2|2|0|0,2|2|1,2"
+        ))
+    );
+
+    assert_eq!(
+        run(r#"
+            var repeated = /((a)|(b))*/d.exec("ab").indices;
+            var empty = /a()/d.exec("a").indices[1];
+            var afterScalar = /a/d.exec("𝐁a").indices[0];
+            var lone = String.fromCharCode(0xD800);
+            var regexp = /(a)/d;
+            Object.defineProperty(regexp, "hasIndices", { value: false });
+            Object.defineProperty(regexp, "flags", { value: "" });
+            [
+              repeated[1].join(","),
+              repeated[2] === undefined,
+              repeated[3].join(","),
+              empty.join(","),
+              afterScalar.join(","),
+              /./d.exec(lone).indices[0].join(","),
+              /./du.exec(lone).indices[0].join(","),
+              regexp.exec("a").indices[1].join(",")
+            ].join("|");
+        "#),
+        Value::String(Arc::from("1,2|true|1,2|1,1|2,3|0,1|0,1|0,1"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var result = other.RegExp.prototype.exec.call(
+              other.eval("/(?<x>a)/d"),
+              "a"
+            );
+            [
+              Object.getPrototypeOf(result) === other.Array.prototype,
+              Object.getPrototypeOf(result.indices) === other.Array.prototype,
+              Object.getPrototypeOf(result.indices[0]) === other.Array.prototype,
+              Object.getPrototypeOf(result.indices.groups) === null,
+              result.indices.groups.x === result.indices[1],
+              Object.getPrototypeOf(result.indices) === Array.prototype
+            ].join("|");
+        "#),
+        Value::String(Arc::from("true|true|true|true|true|false"))
+    );
+}
+
+#[test]
+fn regexp_named_group_backend_lowering_preserves_names_and_backreferences() {
+    assert_eq!(
+        run(r#"
+            var escaped = /(?<\u{03C0}>a)(?<_\u200C>b)(?<$𐒤>c)/du.exec("abc");
+            [
+              escaped.indices.groups.π.join(","),
+              escaped.indices.groups._\u200C.join(","),
+              escaped.indices.groups.$𐒤.join(","),
+              Object.getOwnPropertyNames(escaped.indices.groups).join(","),
+              /(?<a>.)(?<b>.)\k<b>\k<a>/u.test("abba"),
+              /(?<a>.)(?<b>.)\k<b>\k<a>/.test("abbb"),
+              new RegExp("\\k<x>").test("k<x>"),
+              /(?:(?<a>a)|b)\k<a>/u.test("b"),
+              /\k<a>(?<a>a)/u.test("a"),
+              /(?<a>\k<a>a)/u.test("a"),
+              /(?<a>a)\k<a>0/u.test("aa0"),
+              /(?<x>a)(b)(c)(d)(e)(f)(g)(h)(i)(j)(k)(z)\k<x>2/u.test("abcdefghijkza2"),
+              /(?<x>a)(b)(c)(d)(e)(f)(g)(h)(i)(j)(k)(z)\k<x>2/u.test("abcdefghijkzz"),
+              /(?<x>a)\w\k<x>/u.exec("aba")[0],
+              /\b(?<x>a)\k<x>\b/u.test("aa"),
+              new RegExp("(?<\\u037A>a)\\k<\\u037A>", "u").test("aa"),
+              /(?<\u{03C0}>a)/du.source
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "0,1|1,2|2,3|π,_\u{200c},$𐒤|true|false|true|true|true|true|true|true|false|aba|true|true|(?<\\u{03C0}>a)"
+        ))
+    );
+    assert!(run_err(r#"new RegExp("(?<a-b>x)");"#).contains("SyntaxError"));
+    assert!(run_err(r#"new RegExp("(?<x>a)(?<x>b)");"#).contains("SyntaxError"));
+    assert!(run_err(r#"new RegExp("\\k<missing>", "u");"#).contains("SyntaxError"));
+    assert!(run_err(r#"new RegExp("(?<x>a)\\k");"#).contains("SyntaxError"));
+    assert!(run_err(r#"new RegExp("(?<x>a)[\\k]");"#).contains("SyntaxError"));
+    assert_eq!(
+        run(r#"
+            var side = 0;
+            try { eval("side = 1; /(?<0>a)/;"); } catch (error) {}
+            side;
+        "#),
+        Value::Number(0.0)
+    );
+}
+
+#[test]
 fn regexp_repeated_capture_clears_nonparticipating_groups() {
     assert_eq!(
         run("var m = /(z)((a+)?(b+)?(c))*/.exec('zaacbbbcac'); [m[0], m[1], m[2], m[3], String(m[4]), m[5]].join('|');"),
@@ -15504,6 +15688,24 @@ fn regexp_non_unicode_ignore_case_does_not_apply_unicode_folding() {
     assert_eq!(
         run("var r = /\\u212a/i; r.source;"),
         Value::String(Arc::from("\\u212a"))
+    );
+}
+
+#[test]
+fn regexp_non_unicode_incomplete_unicode_escapes_are_identity_escapes() {
+    assert_eq!(run(r#"new RegExp("\\u").test("u");"#), Value::Bool(true));
+    assert_eq!(
+        run(r#"new RegExp("\\u{61}").test("u".repeat(61));"#),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run(r#"
+            var pattern = new RegExp("[\\u{61}]");
+            ["u", "{", "6", "1", "}"].every(function(value) {
+              return pattern.test(value);
+            });
+        "#),
+        Value::Bool(true)
     );
 }
 

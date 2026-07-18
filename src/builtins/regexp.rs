@@ -1214,6 +1214,64 @@ pub(crate) fn regexp_sticky_get(
     regexp_bool_field_get(vm, this, "sticky")
 }
 
+struct RegExpBackendInput<'a> {
+    text: std::borrow::Cow<'a, str>,
+    byte_to_utf16: Option<Vec<(usize, usize)>>,
+}
+
+impl RegExpBackendInput<'_> {
+    fn as_str(&self) -> &str {
+        self.text.as_ref()
+    }
+
+    fn utf16_len(&self) -> usize {
+        self.byte_to_utf16
+            .as_ref()
+            .and_then(|boundaries| boundaries.last().map(|(_, offset)| *offset))
+            .unwrap_or_else(|| crate::value::utf16_len(self.as_str()))
+    }
+
+    fn byte_index_for_utf16(&self, offset: usize) -> Option<usize> {
+        if let Some(boundaries) = &self.byte_to_utf16 {
+            return match boundaries.binary_search_by_key(&offset, |(_, utf16)| *utf16) {
+                Ok(index) => Some(boundaries[index].0),
+                Err(index) if index > 0 && index < boundaries.len() => {
+                    Some(boundaries[index - 1].0)
+                }
+                Err(_) => None,
+            };
+        }
+        if let Some(byte) = crate::value::utf16_index_to_byte(self.as_str(), offset) {
+            return Some(byte);
+        }
+        let mut utf16 = 0usize;
+        for (byte, ch) in self.as_str().char_indices() {
+            let width = if crate::value::utf16_single_unit_from_internal_char(ch).is_some() {
+                1
+            } else {
+                ch.len_utf16()
+            };
+            if utf16 < offset && offset < utf16 + width {
+                return Some(byte);
+            }
+            utf16 += width;
+        }
+        None
+    }
+
+    fn utf16_offset_for_byte(&self, byte: usize) -> Option<usize> {
+        if let Some(boundaries) = &self.byte_to_utf16 {
+            return boundaries
+                .binary_search_by_key(&byte, |(boundary, _)| *boundary)
+                .ok()
+                .map(|index| boundaries[index].1);
+        }
+        self.as_str()
+            .is_char_boundary(byte)
+            .then(|| crate::value::utf16_len(&self.as_str()[..byte]))
+    }
+}
+
 pub(crate) fn regexp_exec(
     vm: &mut Vm,
     args: &[Value],
@@ -1233,7 +1291,7 @@ pub(crate) fn regexp_exec(
         compile_regex_for_code_units(&source, &flags)
     }
     .map_err(|e| Error::syntax(format!("Invalid regex: {}", e)))?;
-    let capture_names = regex_capture_names(&source);
+    let capture_names = regex_capture_names(&source).map_err(Error::syntax)?;
     let global = flags.contains('g');
     let sticky = flags.contains('y');
     let this_value = match &this {
@@ -1253,7 +1311,7 @@ pub(crate) fn regexp_exec(
     } else {
         0
     };
-    let utf16_len = crate::value::utf16_len(&backend_input);
+    let utf16_len = backend_input.utf16_len();
     if start > utf16_len {
         if global || sticky {
             if let Some(value) = &this_value {
@@ -1262,7 +1320,7 @@ pub(crate) fn regexp_exec(
         }
         return Ok(Value::Null);
     }
-    let Some(start_byte) = crate::value::utf16_index_to_byte(&backend_input, start) else {
+    let Some(start_byte) = backend_input.byte_index_for_utf16(start) else {
         if global || sticky {
             if let Some(value) = &this_value {
                 set_regexp_last_index(vm, value, 0.0)?;
@@ -1275,7 +1333,7 @@ pub(crate) fn regexp_exec(
     // lastIndex.
     let m = re
         .captures_at_ecma(
-            &backend_input,
+            backend_input.as_str(),
             start_byte,
             &source,
             &flags,
@@ -1289,32 +1347,60 @@ pub(crate) fn regexp_exec(
         });
     match m {
         Some(caps) => {
-            let items: Vec<Value> = caps
+            let capture_ranges = regexp_capture_index_pairs(&caps, &backend_input);
+            let items: Vec<Value> = capture_ranges
                 .iter()
-                .map(|c| match c {
-                    Some(mch) => Value::String(canonicalize_regexp_match_text(mch.as_str())),
+                .map(|range| match range {
+                    Some((start, end)) => Value::String(Arc::from(
+                        crate::value::utf16_slice(&input, *start, *end).as_str(),
+                    )),
                     None => Value::Undefined,
                 })
                 .collect();
             if global || sticky {
-                let match_end = caps
-                    .get(0)
-                    .map(|mch| crate::value::utf16_len(&backend_input[..mch.end()]))
+                let match_end = capture_ranges
+                    .first()
+                    .copied()
+                    .flatten()
+                    .map(|(_, end)| end)
                     .unwrap_or(start);
                 if let Some(value) = &this_value {
                     set_regexp_last_index(vm, value, match_end as f64)?;
                 }
             }
-            let match_start = caps
-                .get(0)
-                .map(|mch| crate::value::utf16_len(&backend_input[..mch.start()]))
+            let match_start = capture_ranges
+                .first()
+                .copied()
+                .flatten()
+                .map(|(start, _)| start)
                 .unwrap_or(start);
             let result = make_regexp_exec_array(vm, items)?;
             let result_pin = vm.pin(&result);
             let completion = (|| {
-                let groups = make_regexp_groups_object(vm, &caps, &capture_names)?;
-                add_regexp_exec_result_props(vm, &result, match_start, &input, groups)?;
-                Ok(result)
+                let groups = make_regexp_groups_object_from_ranges(
+                    vm,
+                    &input,
+                    &capture_ranges,
+                    &capture_names,
+                )?;
+                let groups_pin = vm.pin(&groups);
+                let completion = (|| {
+                    let indices = flags
+                        .contains('d')
+                        .then(|| make_regexp_indices_array(vm, &capture_ranges, &capture_names))
+                        .transpose()?;
+                    add_regexp_exec_result_props(
+                        vm,
+                        &result,
+                        match_start,
+                        &input,
+                        groups,
+                        indices,
+                    )?;
+                    Ok(result)
+                })();
+                vm.unpin_many(groups_pin);
+                completion
             })();
             vm.unpin_many(result_pin);
             completion
@@ -1340,20 +1426,237 @@ fn make_regexp_exec_array(vm: &mut Vm, items: Vec<Value>) -> error::Result<Value
         .map(Value::Object)
 }
 
+fn regexp_capture_index_pairs(
+    caps: &CompiledCaptures<'_>,
+    backend_input: &RegExpBackendInput<'_>,
+) -> Vec<Option<(usize, usize)>> {
+    let byte_ranges: Vec<Option<(usize, usize)>> = caps
+        .iter()
+        .map(|capture| capture.map(|matched| (matched.start(), matched.end())))
+        .collect();
+    let mut endpoints: Vec<usize> = byte_ranges
+        .iter()
+        .flatten()
+        .flat_map(|(start, end)| [*start, *end])
+        .collect();
+    endpoints.sort_unstable();
+    endpoints.dedup();
+
+    if backend_input.byte_to_utf16.is_some() {
+        return byte_ranges
+            .into_iter()
+            .map(|range| {
+                range.map(|(start, end)| {
+                    (
+                        backend_input
+                            .utf16_offset_for_byte(start)
+                            .expect("capture start must map to a UTF-16 offset"),
+                        backend_input
+                            .utf16_offset_for_byte(end)
+                            .expect("capture end must map to a UTF-16 offset"),
+                    )
+                })
+            })
+            .collect();
+    }
+
+    // Convert all capture boundaries in one left-to-right pass. Re-scanning
+    // the input once per capture makes a large, attacker-controlled pattern
+    // quadratic in the number of captures and input length.
+    let mut utf16_offsets = std::collections::HashMap::with_capacity(endpoints.len());
+    let mut previous_byte = 0usize;
+    let mut previous_utf16 = 0usize;
+    for endpoint in endpoints {
+        debug_assert!(backend_input.as_str().is_char_boundary(endpoint));
+        previous_utf16 += crate::value::utf16_len(&backend_input.as_str()[previous_byte..endpoint]);
+        utf16_offsets.insert(endpoint, previous_utf16);
+        previous_byte = endpoint;
+    }
+
+    byte_ranges
+        .into_iter()
+        .map(|range| {
+            range.map(|(start, end)| {
+                (
+                    *utf16_offsets
+                        .get(&start)
+                        .expect("capture start must have a UTF-16 offset"),
+                    *utf16_offsets
+                        .get(&end)
+                        .expect("capture end must have a UTF-16 offset"),
+                )
+            })
+        })
+        .collect()
+}
+
+fn make_regexp_groups_object_from_ranges(
+    vm: &mut Vm,
+    input: &str,
+    ranges: &[Option<(usize, usize)>],
+    names: &[RegexCaptureName],
+) -> error::Result<Value> {
+    if names.is_empty() {
+        return Ok(Value::Undefined);
+    }
+    let groups = vm.alloc(HeapObj::Object(ObjectData {
+        props: Mutex::new(IndexMap::new()),
+        proto: Mutex::new(None),
+        extensible: AtomicBool::new(true),
+        class_name: Some(Arc::from("Object")),
+        private_fields: Mutex::new(std::collections::HashMap::new()),
+        primitive: Mutex::new(None),
+    }))?;
+    vm.heap.with_obj(groups.0, |object| {
+        let props = object.props();
+        let mut props = props.lock();
+        for capture in names {
+            let value = ranges
+                .get(capture.index)
+                .copied()
+                .flatten()
+                .map(|(start, end)| {
+                    Value::String(Arc::from(
+                        crate::value::utf16_slice(input, start, end).as_str(),
+                    ))
+                })
+                .unwrap_or(Value::Undefined);
+            props.insert(
+                PropertyKey::from(capture.name.clone()),
+                PropertyDescriptor::data(value),
+            );
+        }
+    });
+    Ok(Value::Object(groups))
+}
+
+fn make_regexp_indices_array(
+    vm: &mut Vm,
+    pairs: &[Option<(usize, usize)>],
+    capture_names: &[RegexCaptureName],
+) -> error::Result<Value> {
+    let prototype = vm.array_prototype_for_env(vm.current_realm_global_env());
+    let mut pair_values = Vec::with_capacity(pairs.len());
+    let mut pin_count = 0usize;
+    let completion = (|| {
+        for pair in pairs {
+            vm.consume_fuel()?;
+            let value = match pair {
+                Some((start, end)) => {
+                    let pair = vm.alloc(HeapObj::Array(ArrayData::new(
+                        vec![Value::Number(*start as f64), Value::Number(*end as f64)],
+                        Some(prototype.clone()),
+                    )))?;
+                    let value = Value::Object(pair);
+                    pin_count += vm.pin(&value);
+                    value
+                }
+                None => Value::Undefined,
+            };
+            pair_values.push(value);
+        }
+
+        let groups = if capture_names.is_empty() {
+            Value::Undefined
+        } else {
+            let groups = vm.alloc(HeapObj::Object(ObjectData {
+                props: Mutex::new(IndexMap::new()),
+                proto: Mutex::new(None),
+                extensible: AtomicBool::new(true),
+                class_name: Some(Arc::from("Object")),
+                private_fields: Mutex::new(std::collections::HashMap::new()),
+                primitive: Mutex::new(None),
+            }))?;
+            let groups = Value::Object(groups);
+            pin_count += vm.pin(&groups);
+            let Value::Object(groups_idx) = groups else {
+                unreachable!("indices groups allocation must return an object");
+            };
+            vm.heap.with_obj(groups_idx.0, |object| {
+                let props = object.props();
+                let mut props = props.lock();
+                for capture in capture_names {
+                    if let Some(value) = pair_values.get(capture.index) {
+                        props.insert(
+                            PropertyKey::from(capture.name.clone()),
+                            enumerable_data_prop(value.clone()),
+                        );
+                    }
+                }
+            });
+            Value::Object(groups_idx)
+        };
+
+        let indices = ArrayData::new(pair_values, Some(prototype));
+        indices
+            .props
+            .lock()
+            .insert(PropertyKey::from("groups"), enumerable_data_prop(groups));
+        vm.alloc(HeapObj::Array(indices)).map(Value::Object)
+    })();
+    vm.unpin_many(pin_count);
+    completion
+}
+
 fn regexp_backend_input<'a>(
     vm: &mut Vm,
     input: &'a str,
     flags: &str,
-) -> error::Result<std::borrow::Cow<'a, str>> {
+) -> error::Result<RegExpBackendInput<'a>> {
+    if flags.contains('u') || flags.contains('v') {
+        let mut previous_high_surrogate = false;
+        let has_split_surrogate_pair = input.chars().any(|ch| {
+            let unit = crate::value::utf16_single_unit_from_internal_char(ch);
+            let found = previous_high_surrogate
+                && unit.is_some_and(|unit| (0xdc00..=0xdfff).contains(&unit));
+            previous_high_surrogate = unit.is_some_and(|unit| (0xd800..=0xdbff).contains(&unit));
+            found
+        });
+        if !has_split_surrogate_pair {
+            return Ok(RegExpBackendInput {
+                text: std::borrow::Cow::Borrowed(input),
+                byte_to_utf16: None,
+            });
+        }
+
+        let units = crate::value::utf16_from_str(input);
+        let mut backend = String::new();
+        let mut boundaries = vec![(0usize, 0usize)];
+        let mut index = 0usize;
+        while index < units.len() {
+            vm.consume_fuel()?;
+            let unit = units[index];
+            if (0xd800..=0xdbff).contains(&unit)
+                && units
+                    .get(index + 1)
+                    .is_some_and(|low| (0xdc00..=0xdfff).contains(low))
+            {
+                let low = units[index + 1];
+                let scalar = 0x10000 + (((unit as u32 - 0xd800) << 10) | (low as u32 - 0xdc00));
+                backend.push(char::from_u32(scalar).expect("valid surrogate pair scalar"));
+                index += 2;
+            } else {
+                backend.push_str(crate::value::utf16_to_string(&[unit]).as_str());
+                index += 1;
+            }
+            boundaries.push((backend.len(), index));
+        }
+        return Ok(RegExpBackendInput {
+            text: std::borrow::Cow::Owned(backend),
+            byte_to_utf16: Some(boundaries),
+        });
+    }
+
     // Sentinel-backed code units make every legal non-Unicode lastIndex a
     // backend string boundary without changing the original JS String.
-    if flags.contains('u')
-        || flags.contains('v')
-        || input
-            .chars()
-            .all(|ch| crate::value::utf16_single_unit_from_internal_char(ch).is_some())
+    if input
+        .chars()
+        .all(|ch| crate::value::utf16_single_unit_from_internal_char(ch).is_some())
     {
-        return Ok(std::borrow::Cow::Borrowed(input));
+        return Ok(RegExpBackendInput {
+            text: std::borrow::Cow::Borrowed(input),
+            byte_to_utf16: None,
+        });
     }
 
     let mut backend = String::new();
@@ -1361,7 +1664,10 @@ fn regexp_backend_input<'a>(
         vm.consume_fuel()?;
         backend.push_str(crate::value::utf16_to_string(&[unit]).as_str());
     }
-    Ok(std::borrow::Cow::Owned(backend))
+    Ok(RegExpBackendInput {
+        text: std::borrow::Cow::Owned(backend),
+        byte_to_utf16: None,
+    })
 }
 
 fn regexp_to_length(vm: &mut Vm, value: &Value) -> error::Result<f64> {
@@ -1393,6 +1699,7 @@ pub(crate) fn add_regexp_exec_result_props(
     match_start: usize,
     input: &str,
     groups: Value,
+    indices: Option<Value>,
 ) -> error::Result<()> {
     let Value::Object(idx) = result else {
         return Ok(());
@@ -1409,6 +1716,9 @@ pub(crate) fn add_regexp_exec_result_props(
             enumerable_data_prop(Value::String(Arc::from(input))),
         );
         props.insert(PropertyKey::from("groups"), enumerable_data_prop(groups));
+        if let Some(indices) = indices {
+            props.insert(PropertyKey::from("indices"), enumerable_data_prop(indices));
+        }
     });
     Ok(())
 }

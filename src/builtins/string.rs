@@ -591,7 +591,7 @@ pub(crate) fn str_replace(
             let global = flags_str.contains('g');
             let re = compile_regex(&source, &flags_str)
                 .map_err(|e| Error::syntax(format!("Invalid regex: {}", e)))?;
-            let capture_names = regex_capture_names(&source);
+            let capture_names = regex_capture_names(&source).map_err(Error::syntax)?;
             if is_fn {
                 let mut result = String::new();
                 let mut last_end = 0;
@@ -1012,7 +1012,7 @@ fn regexp_match_internal(vm: &mut Vm, regexp: Value, s: &str) -> error::Result<V
     let flags_str = read_regexp_flags(vm, &regexp).unwrap_or_default();
     let re = compile_regex(&source, &flags_str)
         .map_err(|e| Error::syntax(format!("Invalid regex: {}", e)))?;
-    let capture_names = regex_capture_names(&source);
+    let capture_names = regex_capture_names(&source).map_err(Error::syntax)?;
     let global = flags_str.contains('g');
     if global {
         let items: Vec<Value> = re
@@ -1043,7 +1043,7 @@ fn regexp_match_internal(vm: &mut Vm, regexp: Value, s: &str) -> error::Result<V
                 let groups_pin = vm.pin(&groups);
                 let completion = (|| {
                     let result = make_value_array(vm, items)?;
-                    add_regexp_exec_result_props(vm, &result, match_start, s, groups)?;
+                    add_regexp_exec_result_props(vm, &result, match_start, s, groups, None)?;
                     Ok(result)
                 })();
                 vm.unpin_many(groups_pin);

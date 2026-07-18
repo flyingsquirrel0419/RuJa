@@ -1093,6 +1093,49 @@ fn regexp_allocation_retries_gc_and_obeys_the_exact_heap_cap() {
 }
 
 #[test]
+fn regexp_match_indices_root_nested_arrays_and_obey_the_exact_heap_cap() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.run("globalThis.indicesRegexp = /(?<a>a)(?<b>b)?/d; globalThis.indicesInput = 'a';")
+        .expect("match-indices fixtures should initialize");
+    vm.gc();
+    let baseline_live = vm.heap.live_count();
+    let baseline_pins = vm.gc_pins.len();
+    for _ in 0..64 {
+        let _garbage = vm.new_object().expect("garbage object should allocate");
+    }
+
+    // Result Array, string groups, two matched index pairs, indices groups,
+    // and the outer indices Array are the six live objects retained by exec.
+    let exact_limit = baseline_live + 6;
+    vm.set_max_heap_objects(Some(exact_limit));
+    vm.run("globalThis.indicesResult = indicesRegexp.exec(indicesInput);")
+        .expect("nested match-indices objects should survive exact-cap GC");
+    assert!(vm.heap.live_count() <= exact_limit);
+    vm.set_max_heap_objects(None);
+    assert_eq!(
+        vm.run(
+            "[indicesResult.indices[0].join(','), indicesResult.indices.groups.a === indicesResult.indices[1], indicesResult.indices.groups.b === undefined].join('|');"
+        )
+        .expect("match-indices result should remain intact"),
+        Value::String("0,1|true|true".into())
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    vm.run("indicesResult = null;")
+        .expect("match-indices result should be releasable");
+    vm.gc();
+    let failure_baseline = vm.heap.live_count();
+    vm.set_max_heap_objects(Some(failure_baseline + 5));
+    let error = vm
+        .run("indicesRegexp.exec(indicesInput);")
+        .expect_err("one cell below the exact requirement must fail");
+    vm.set_max_heap_objects(None);
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_main_realm_range_error(&vm, error.as_ref());
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+}
+
+#[test]
 fn proxy_define_property_trap_survives_descriptor_allocation_gc() {
     let mut vm = Vm::new().expect("VM should initialize");
     vm.register_fn(

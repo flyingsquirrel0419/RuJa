@@ -75,6 +75,10 @@ from test262_promise_finally_admission import (
     PROMISE_FINALLY_FEATURES,
     PROMISE_FINALLY_FILES,
 )
+from test262_regexp_match_indices_admission import (
+    REGEXP_MATCH_INDICES_FEATURES,
+    REGEXP_MATCH_INDICES_FILES,
+)
 from test262_proxy_get_admission import PROXY_GET_FEATURES, PROXY_GET_FILES
 from test262_proxy_own_keys_admission import (
     PROXY_OWN_KEYS_FEATURES,
@@ -2036,6 +2040,52 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                     )
                 finally:
                     tool.TEST262 = original_root
+
+
+class RegExpMatchIndicesAdmissionTests(unittest.TestCase):
+    def test_manifest_is_exact_live_and_shared(self):
+        self.assertEqual(len(REGEXP_MATCH_INDICES_FILES), 7)
+        self.assertEqual(
+            frozenset(REGEXP_MATCH_INDICES_FEATURES),
+            REGEXP_MATCH_INDICES_FILES,
+        )
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        if test_root.is_dir():
+            for relative in REGEXP_MATCH_INDICES_FILES:
+                path = test_root / relative
+                self.assertTrue(path.is_file(), relative)
+                features = set(
+                    test262_runner.parse_meta(path.read_text()).get("features", [])
+                )
+                self.assertIn("regexp-match-indices", features, relative)
+                self.assertIn("regexp-named-groups", features, relative)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            future = root / "test/built-ins/RegExp/match-indices/future.js"
+            outside = root / "test/built-ins/RegExp/future-indices.js"
+            metadata = {
+                "features": ["regexp-match-indices", "regexp-named-groups"]
+            }
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for relative, admitted in REGEXP_MATCH_INDICES_FEATURES.items():
+                        path = root / "test" / relative
+                        self.assertEqual(
+                            tool.regexp_match_indices_features(path), admitted, relative
+                        )
+                        self.assertFalse(tool.should_skip(metadata, path), relative)
+                    for path in (future, outside):
+                        self.assertEqual(
+                            tool.regexp_match_indices_features(path), frozenset()
+                        )
+                        self.assertTrue(tool.should_skip(metadata, path))
+                finally:
+                    tool.TEST262 = original_root
+
 
 class TypedArrayResizableAdmissionTests(unittest.TestCase):
     def test_typed_array_static_features_are_frozen_to_audited_files(self):

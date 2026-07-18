@@ -1,0 +1,9 @@
+# Frozen Test262 files whose regexp-named-groups dependency is covered by
+# RuJa's RegExp match-indices implementation.
+built-ins/RegExp/match-indices/indices-array-non-unicode-match.js
+built-ins/RegExp/match-indices/indices-array-unicode-match.js
+built-ins/RegExp/match-indices/indices-array-unicode-property-names.js
+built-ins/RegExp/match-indices/indices-groups-object-undefined.js
+built-ins/RegExp/match-indices/indices-groups-object-unmatched.js
+built-ins/RegExp/match-indices/indices-groups-object.js
+built-ins/RegExp/match-indices/indices-groups-properties.js

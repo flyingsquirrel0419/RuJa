@@ -63,6 +63,124 @@ fn is_other_id_continue(c: char) -> bool {
     )
 }
 
+fn regexp_group_unicode_property_matches(pattern: &'static str, c: char) -> bool {
+    static ID_START: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    static ID_CONTINUE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let regex = match pattern {
+        r"^\p{ID_Start}$" => ID_START.get_or_init(|| {
+            regex::Regex::new(r"^\p{ID_Start}$").expect("valid ID_Start property regex")
+        }),
+        r"^\p{ID_Continue}$" => ID_CONTINUE.get_or_init(|| {
+            regex::Regex::new(r"^\p{ID_Continue}$").expect("valid ID_Continue property regex")
+        }),
+        _ => unreachable!(),
+    };
+    let mut encoded = [0; 4];
+    regex.is_match(c.encode_utf8(&mut encoded))
+}
+
+fn is_regexp_group_id_start(c: char) -> bool {
+    c == '$' || c == '_' || regexp_group_unicode_property_matches(r"^\p{ID_Start}$", c)
+}
+
+fn is_regexp_group_id_continue(c: char) -> bool {
+    c == '$'
+        || c == '\u{200C}'
+        || c == '\u{200D}'
+        || regexp_group_unicode_property_matches(r"^\p{ID_Continue}$", c)
+}
+
+fn decode_regex_group_unicode_escape(
+    chars: &[char],
+    start: usize,
+) -> Result<(char, usize), String> {
+    if chars.get(start) != Some(&'\\') || chars.get(start + 1) != Some(&'u') {
+        return Err("invalid regular expression group name escape".to_string());
+    }
+
+    if chars.get(start + 2) == Some(&'{') {
+        let mut end = start + 3;
+        let digits_start = end;
+        while chars.get(end).is_some_and(|ch| ch.is_ascii_hexdigit()) {
+            end += 1;
+        }
+        if end == digits_start || chars.get(end) != Some(&'}') {
+            return Err("invalid regular expression group name escape".to_string());
+        }
+        let digits: String = chars[digits_start..end].iter().collect();
+        let value = u32::from_str_radix(&digits, 16)
+            .map_err(|_| "invalid regular expression group name escape".to_string())?;
+        let ch = char::from_u32(value)
+            .ok_or_else(|| "invalid regular expression group name escape".to_string())?;
+        return Ok((ch, end + 1));
+    }
+
+    let fixed_end = start + 6;
+    if fixed_end > chars.len()
+        || !chars[start + 2..fixed_end]
+            .iter()
+            .all(|ch| ch.is_ascii_hexdigit())
+    {
+        return Err("invalid regular expression group name escape".to_string());
+    }
+    let digits: String = chars[start + 2..fixed_end].iter().collect();
+    let lead = u32::from_str_radix(&digits, 16)
+        .map_err(|_| "invalid regular expression group name escape".to_string())?;
+    if (0xd800..=0xdbff).contains(&lead) {
+        let trail_end = fixed_end + 6;
+        if trail_end > chars.len()
+            || chars.get(fixed_end) != Some(&'\\')
+            || chars.get(fixed_end + 1) != Some(&'u')
+            || !chars[fixed_end + 2..trail_end]
+                .iter()
+                .all(|ch| ch.is_ascii_hexdigit())
+        {
+            return Err("invalid regular expression group name escape".to_string());
+        }
+        let trail_digits: String = chars[fixed_end + 2..trail_end].iter().collect();
+        let trail = u32::from_str_radix(&trail_digits, 16)
+            .map_err(|_| "invalid regular expression group name escape".to_string())?;
+        if !(0xdc00..=0xdfff).contains(&trail) {
+            return Err("invalid regular expression group name escape".to_string());
+        }
+        let scalar = 0x10000 + ((lead - 0xd800) << 10) + (trail - 0xdc00);
+        let ch = char::from_u32(scalar)
+            .ok_or_else(|| "invalid regular expression group name escape".to_string())?;
+        return Ok((ch, trail_end));
+    }
+    let ch = char::from_u32(lead)
+        .ok_or_else(|| "invalid regular expression group name escape".to_string())?;
+    Ok((ch, fixed_end))
+}
+
+pub(crate) fn decode_regex_group_name(raw: &str) -> Result<String, String> {
+    let chars: Vec<char> = raw.chars().collect();
+    let mut decoded = Vec::new();
+    let mut index = 0usize;
+    while index < chars.len() {
+        if chars[index] == '\\' {
+            let (ch, next) = decode_regex_group_unicode_escape(&chars, index)?;
+            decoded.push(ch);
+            index = next;
+        } else {
+            decoded.push(chars[index]);
+            index += 1;
+        }
+    }
+    let Some(first) = decoded.first().copied() else {
+        return Err("regular expression group name cannot be empty".to_string());
+    };
+    if !is_regexp_group_id_start(first)
+        || decoded
+            .iter()
+            .skip(1)
+            .any(|ch| !is_regexp_group_id_continue(*ch))
+    {
+        return Err("invalid regular expression group name".to_string());
+    }
+    Ok(decoded.into_iter().collect())
+}
+
 fn is_unicode_space_separator(c: char) -> bool {
     matches!(
         c,
@@ -1786,10 +1904,102 @@ impl<'a> Lexer<'a> {
 
 pub(crate) fn validate_regex_literal(pattern: &str, flags: &str) -> Result<(), String> {
     validate_regex_flags(flags)?;
+    validate_regex_named_groups(pattern, flags)?;
     validate_regex_unicode_mode_syntax(pattern, flags)?;
     validate_regex_quantifier_positions(pattern)?;
     validate_regex_assertion_quantifiers(pattern, flags)?;
     validate_regex_modifier_groups(pattern)
+}
+
+fn validate_regex_named_groups(pattern: &str, flags: &str) -> Result<(), String> {
+    let chars: Vec<char> = pattern.chars().collect();
+    let mut names = Vec::new();
+    let mut index = 0usize;
+    let mut in_class = false;
+
+    while index < chars.len() {
+        match chars[index] {
+            '\\' => index = (index + 2).min(chars.len()),
+            '[' if !in_class => {
+                in_class = true;
+                index += 1;
+            }
+            ']' if in_class => {
+                in_class = false;
+                index += 1;
+            }
+            '(' if !in_class
+                && chars.get(index + 1) == Some(&'?')
+                && chars.get(index + 2) == Some(&'<')
+                && !matches!(chars.get(index + 3), Some('=' | '!')) =>
+            {
+                let mut end = index + 3;
+                while chars.get(end).is_some_and(|ch| *ch != '>') {
+                    end += 1;
+                }
+                if chars.get(end) != Some(&'>') {
+                    return Err("unterminated regular expression group name".to_string());
+                }
+                let raw_name: String = chars[index + 3..end].iter().collect();
+                let name = decode_regex_group_name(&raw_name)?;
+                if names.contains(&name) {
+                    return Err(format!("duplicate regular expression group name '{name}'"));
+                }
+                names.push(name);
+                index = end + 1;
+            }
+            _ => index += 1,
+        }
+    }
+
+    index = 0;
+    in_class = false;
+    let unicode_mode = flags.contains('u') || flags.contains('v');
+    while index < chars.len() {
+        let ch = chars[index];
+        if ch == '\\' {
+            let Some(next) = chars.get(index + 1).copied() else {
+                index += 1;
+                continue;
+            };
+            if next != 'k' {
+                index += 2;
+                continue;
+            }
+            if !in_class && chars.get(index + 2) == Some(&'<') {
+                if names.is_empty() && !unicode_mode {
+                    index += 2;
+                    continue;
+                }
+                let mut end = index + 3;
+                while chars.get(end).is_some_and(|candidate| *candidate != '>') {
+                    end += 1;
+                }
+                if chars.get(end) != Some(&'>') {
+                    return Err("unterminated regular expression group name".to_string());
+                }
+                let raw_name: String = chars[index + 3..end].iter().collect();
+                let name = decode_regex_group_name(&raw_name)?;
+                if !names.contains(&name) {
+                    return Err(format!("unknown regular expression group name '{name}'"));
+                }
+                index = end + 1;
+                continue;
+            }
+            if !names.is_empty() || unicode_mode {
+                return Err("invalid regular expression named backreference".to_string());
+            }
+            index += 2;
+            continue;
+        }
+        match ch {
+            '[' if !in_class => in_class = true,
+            ']' if in_class => in_class = false,
+            _ => {}
+        }
+        index += 1;
+    }
+    Ok(())
 }
 
 fn validate_regex_flags(flags: &str) -> Result<(), String> {
@@ -1851,6 +2061,20 @@ fn validate_regex_unicode_mode_syntax(pattern: &str, flags: &str) -> Result<(), 
                 }
                 'p' | 'P' => {
                     i = validate_regex_unicode_property_escape_at(&chars, i + 1)?;
+                    continue;
+                }
+                'k' if !in_class && chars.get(i + 2) == Some(&'<') => {
+                    let name_start = i + 3;
+                    let mut name_end = name_start;
+                    while chars.get(name_end).is_some_and(|ch| *ch != '>') {
+                        name_end += 1;
+                    }
+                    if chars.get(name_end) != Some(&'>') {
+                        return Err("unterminated regular expression group name".to_string());
+                    }
+                    let raw_name: String = chars[name_start..name_end].iter().collect();
+                    decode_regex_group_name(&raw_name)?;
+                    i = name_end + 1;
                     continue;
                 }
                 '1'..='9' => {
@@ -2863,6 +3087,32 @@ mod tests {
                 Regex("(a)\\1".into(), "u".into()),
                 Semicolon,
                 Regex("[a-\\-]".into(), "u".into()),
+                Semicolon,
+                Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn regex_named_groups_report_early_errors() {
+        for source in [
+            "/(?<0>a)/",
+            "/(?<x>a)\\k/",
+            "/(?<x>a)[\\k]/",
+            "/\\k<missing>/u",
+            "/(?<x>a)\\k<missing>/",
+        ] {
+            assert!(matches!(
+                Lexer::new(source).tokens()[0].kind,
+                LexError(ref msg) if msg.contains("regular expression")
+            ));
+        }
+        assert_eq!(
+            kinds("/\\k<x>/; /(?<\\u037A>a)\\k<\\u037A>/u;"),
+            vec![
+                Regex("\\k<x>".into(), "".into()),
+                Semicolon,
+                Regex("(?<\\u037A>a)\\k<\\u037A>".into(), "u".into()),
                 Semicolon,
                 Eof,
             ]

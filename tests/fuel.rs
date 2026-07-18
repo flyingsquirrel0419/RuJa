@@ -79,6 +79,30 @@ fn regexp_symbol_replace_native_loops_consume_fuel() {
 }
 
 #[test]
+fn regexp_match_indices_materialization_consumes_fuel() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        globalThis.manyIndexCaptures = new RegExp("a" + "()".repeat(200), "d");
+        "#,
+    )
+    .expect("RegExp match-indices fuel fixture should initialize");
+
+    vm.set_fuel(Some(50));
+    let error = vm
+        .run("manyIndexCaptures.exec('a');")
+        .expect_err("match-indices pair materialization should consume fuel");
+    assert_eq!(error.kind, ruja::ErrorKind::Fuel);
+
+    vm.set_fuel(Some(1_000_000));
+    assert_eq!(
+        vm.run("manyIndexCaptures.exec('a').indices.length;")
+            .expect("a sufficient fuel budget should finish match indices"),
+        ruja::Value::Number(201.0)
+    );
+}
+
+#[test]
 fn fuel_can_be_refilled_between_runs() {
     let mut vm = Vm::new().expect("failed to initialize VM");
     vm.set_fuel(Some(100));

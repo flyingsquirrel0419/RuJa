@@ -185,9 +185,17 @@ fn compile_regex_with_input_mode(
     code_unit_input: bool,
 ) -> Result<CompiledRegex, String> {
     let capture_count = regex_capture_count(source);
-    let backend_source =
-        normalize_regex_for_backend(source, flags, capture_count, code_unit_input)?;
-    if regex_uses_backreference(source, capture_count) {
+    let capture_names = regex_capture_names(source)?;
+    let rewritten_source = rewrite_named_regex_groups_for_backend(source, flags, &capture_names)?;
+    let uses_backreference = regex_uses_backreference(&rewritten_source, capture_count);
+    let backend_source = normalize_regex_for_backend(
+        &rewritten_source,
+        flags,
+        capture_count,
+        code_unit_input,
+        uses_backreference,
+    )?;
+    if uses_backreference {
         let mut b = fancy_regex::RegexBuilder::new(&backend_source);
         b.case_insensitive(flags.contains('i'));
         b.multi_line(flags.contains('m'));
@@ -470,6 +478,42 @@ fn push_ecmascript_word_escape_for_backend(
     }
 }
 
+fn push_ecmascript_word_boundary_for_backend(
+    out: &mut String,
+    escape: char,
+    unicode_ignore_case: bool,
+) {
+    out.pop();
+    let word = ecmascript_word_class_body(unicode_ignore_case);
+    out.push_str("(?-i:(?:");
+    match escape {
+        'b' => {
+            out.push_str("(?<=[");
+            out.push_str(word);
+            out.push_str("])(?![");
+            out.push_str(word);
+            out.push_str("])|(?<![");
+            out.push_str(word);
+            out.push_str("])(?=[");
+            out.push_str(word);
+            out.push_str("])");
+        }
+        'B' => {
+            out.push_str("(?<=[");
+            out.push_str(word);
+            out.push_str("])(?=[");
+            out.push_str(word);
+            out.push_str("])|(?<![");
+            out.push_str(word);
+            out.push_str("])(?![");
+            out.push_str(word);
+            out.push_str("])");
+        }
+        _ => unreachable!(),
+    }
+    out.push_str("))");
+}
+
 fn legacy_regex_canonicalize_code_unit(unit: u16) -> u16 {
     if (0xd800..=0xdfff).contains(&unit) {
         return unit;
@@ -722,6 +766,7 @@ fn normalize_regex_for_backend(
     flags: &str,
     capture_count: usize,
     code_unit_input: bool,
+    fancy_backend: bool,
 ) -> Result<String, String> {
     let unicode_mode = flags.contains('u') || flags.contains('v');
     if source == "[]" {
@@ -744,6 +789,9 @@ fn normalize_regex_for_backend(
     let mut class_output_start = None;
     let mut class_has_active_word_escape = false;
     let mut materialize_current_word_class = true;
+    let mut capture_index = 0usize;
+    let mut open_captures: Vec<Option<usize>> = Vec::new();
+    let mut lookbehind_context = Vec::new();
     let mut modifier_stack = vec![RegexModifierState {
         dot_all: flags.contains('s'),
         ignore_case: flags.contains('i'),
@@ -757,7 +805,24 @@ fn normalize_regex_for_backend(
                     digits.push(chars.next().unwrap());
                 }
                 let value = digits.parse::<usize>().unwrap_or(usize::MAX);
-                if flags.contains('u') || (!in_class && value > 0 && value <= capture_count) {
+                if !in_class && value > 0 && value <= capture_count {
+                    let references_open_capture = open_captures
+                        .iter()
+                        .flatten()
+                        .any(|capture| *capture == value);
+                    if references_open_capture {
+                        out.pop();
+                    } else if !lookbehind_context.last().copied().unwrap_or(false) {
+                        out.pop();
+                        out.push_str("(?(");
+                        out.push_str(&digits);
+                        out.push_str(")\\");
+                        out.push_str(&digits);
+                        out.push_str("|)");
+                    } else {
+                        out.push_str(&digits);
+                    }
+                } else if flags.contains('u') {
                     out.push_str(&digits);
                 } else {
                     out.pop();
@@ -793,6 +858,10 @@ fn normalize_regex_for_backend(
                 && modifier_stack.last().is_some_and(|state| state.ignore_case)
             {
                 push_ecmascript_word_escape_for_backend(&mut out, ch, false, unicode_mode);
+            } else if !in_class && matches!(ch, 'b' | 'B') && fancy_backend {
+                let unicode_ignore_case =
+                    unicode_mode && modifier_stack.last().is_some_and(|state| state.ignore_case);
+                push_ecmascript_word_boundary_for_backend(&mut out, ch, unicode_ignore_case);
             } else if !in_class
                 && matches!(ch, 'b' | 'B')
                 && modifier_stack.last().is_some_and(|state| state.ignore_case)
@@ -820,7 +889,7 @@ fn normalize_regex_for_backend(
             {
                 out.pop();
                 match ch {
-                    'w' => out.push_str(r"(?-iu:\w)"),
+                    'w' => out.push_str(r"(?-i:[A-Za-z0-9_])"),
                     'W' => out.push_str(r"(?-i:[^A-Za-z0-9_])"),
                     'b' => out.push_str(r"(?-iu:\b)"),
                     'B' => out.push_str(r"(?-iu:\B)"),
@@ -889,34 +958,11 @@ fn normalize_regex_for_backend(
                 out.pop();
                 out.push_str("\\x");
                 out.push_str(&format!("{control:02x}"));
-            } else if ch == 'x' && !has_exact_hex_escape(&chars, 2) {
+            } else if (ch == 'x' && !has_exact_hex_escape(&chars, 2))
+                || (ch == 'u' && !unicode_mode)
+            {
                 out.pop();
                 push_regex_literal_for_backend(&mut out, ch);
-            } else if protect_non_unicode_case && !in_class && ch == 'u' {
-                let mut hex = String::new();
-                for _ in 0..4 {
-                    match chars.peek().copied() {
-                        Some(next) if next.is_ascii_hexdigit() => {
-                            hex.push(chars.next().unwrap());
-                        }
-                        _ => break,
-                    }
-                }
-                if hex.len() == 4 {
-                    let code = u32::from_str_radix(&hex, 16).unwrap_or(0);
-                    if code > 0x7f {
-                        out.pop();
-                        out.push_str("(?-i:\\u");
-                        out.push_str(&hex);
-                        out.push(')');
-                    } else {
-                        out.push('u');
-                        out.push_str(&hex);
-                    }
-                } else {
-                    out.push(ch);
-                    out.push_str(&hex);
-                }
             } else if protect_non_unicode_case && !in_class && ch == 'x' {
                 let mut hex = String::new();
                 for _ in 0..2 {
@@ -1011,6 +1057,13 @@ fn normalize_regex_for_backend(
         }
 
         if !in_class && ch == '(' && chars.peek() == Some(&'?') {
+            let mut lookahead = chars.clone();
+            lookahead.next();
+            let starts_lookbehind =
+                lookahead.next() == Some('<') && matches!(lookahead.next(), Some('=' | '!'));
+            lookbehind_context
+                .push(lookbehind_context.last().copied().unwrap_or(false) || starts_lookbehind);
+            open_captures.push(None);
             out.push(ch);
             out.push(chars.next().unwrap());
             let mut add_modifiers = String::new();
@@ -1069,12 +1122,17 @@ fn normalize_regex_for_backend(
         }
 
         if !in_class && ch == '(' {
+            capture_index += 1;
+            open_captures.push(Some(capture_index));
+            lookbehind_context.push(lookbehind_context.last().copied().unwrap_or(false));
             modifier_stack.push(*modifier_stack.last().unwrap());
             out.push(ch);
             continue;
         }
 
         if !in_class && ch == ')' {
+            open_captures.pop();
+            lookbehind_context.pop();
             if modifier_stack.len() > 1 {
                 modifier_stack.pop();
             }
@@ -1138,49 +1196,140 @@ fn regex_capture_count(source: &str) -> usize {
     count
 }
 
-fn regex_capture_names(source: &str) -> Vec<RegexCaptureName> {
+fn regex_group_name_end(chars: &[char], start: usize) -> Result<usize, String> {
+    let mut end = start;
+    while chars.get(end).is_some_and(|ch| *ch != '>') {
+        end += 1;
+    }
+    if chars.get(end) == Some(&'>') {
+        Ok(end)
+    } else {
+        Err("unterminated regular expression group name".to_string())
+    }
+}
+
+fn regex_capture_names(source: &str) -> Result<Vec<RegexCaptureName>, String> {
     let mut names = Vec::new();
     let mut capture_index = 0;
-    let mut chars = source.chars().peekable();
+    let chars: Vec<char> = source.chars().collect();
+    let mut index = 0usize;
     let mut in_class = false;
-    let mut escaped = false;
-    while let Some(ch) = chars.next() {
-        if escaped {
-            escaped = false;
+    while index < chars.len() {
+        let ch = chars[index];
+        if ch == '\\' {
+            index = (index + 2).min(chars.len());
             continue;
         }
         match ch {
-            '\\' => escaped = true,
             '[' if !in_class => in_class = true,
             ']' if in_class => in_class = false,
             '(' if !in_class => {
-                if chars.peek() != Some(&'?') {
+                if chars.get(index + 1) != Some(&'?') {
                     capture_index += 1;
-                    continue;
-                }
-                let mut lookahead = chars.clone();
-                lookahead.next();
-                if lookahead.next() == Some('<') && !matches!(lookahead.peek(), Some('=' | '!')) {
+                } else if chars.get(index + 2) == Some(&'<')
+                    && !matches!(chars.get(index + 3), Some('=' | '!'))
+                {
                     capture_index += 1;
-                    let mut name = String::new();
-                    for next in lookahead.by_ref() {
-                        if next == '>' {
-                            break;
-                        }
-                        name.push(next);
+                    let end = regex_group_name_end(&chars, index + 3)?;
+                    let raw_name: String = chars[index + 3..end].iter().collect();
+                    let name = crate::lexer::decode_regex_group_name(&raw_name)?;
+                    if names
+                        .iter()
+                        .any(|capture: &RegexCaptureName| capture.name.as_ref() == name.as_str())
+                    {
+                        return Err(format!("duplicate regular expression group name '{name}'"));
                     }
-                    if !name.is_empty() {
-                        names.push(RegexCaptureName {
-                            name: Arc::from(name.as_str()),
-                            index: capture_index,
-                        });
-                    }
+                    names.push(RegexCaptureName {
+                        name: Arc::from(name.as_str()),
+                        index: capture_index,
+                    });
+                    index = end;
                 }
             }
             _ => {}
         }
+        index += 1;
     }
-    names
+    Ok(names)
+}
+
+fn rewrite_named_regex_groups_for_backend(
+    source: &str,
+    flags: &str,
+    capture_names: &[RegexCaptureName],
+) -> Result<String, String> {
+    let chars: Vec<char> = source.chars().collect();
+    let mut out = String::with_capacity(source.len());
+    let mut index = 0usize;
+    let mut in_class = false;
+
+    while index < chars.len() {
+        let ch = chars[index];
+        if ch == '\\' {
+            if !in_class && chars.get(index + 1) == Some(&'k') && chars.get(index + 2) == Some(&'<')
+            {
+                if capture_names.is_empty() && !flags.contains('u') && !flags.contains('v') {
+                    out.push('\\');
+                    out.push('k');
+                    index += 2;
+                    continue;
+                }
+                let end = regex_group_name_end(&chars, index + 3)?;
+                let raw_name: String = chars[index + 3..end].iter().collect();
+                let name = crate::lexer::decode_regex_group_name(&raw_name)?;
+                let capture_index = named_capture_index(capture_names, &name)
+                    .ok_or_else(|| format!("unknown regular expression group name '{name}'"))?;
+                out.push_str("(?:\\");
+                out.push_str(&capture_index.to_string());
+                out.push(')');
+                index = end + 1;
+                continue;
+            }
+            if capture_names.is_empty() || chars.get(index + 1) != Some(&'k') {
+                out.push(ch);
+                if let Some(next) = chars.get(index + 1) {
+                    out.push(*next);
+                    index += 2;
+                } else {
+                    index += 1;
+                }
+                continue;
+            }
+            return Err("invalid regular expression named backreference".to_string());
+        }
+
+        if ch == '[' && !in_class {
+            in_class = true;
+            out.push(ch);
+            index += 1;
+            continue;
+        }
+        if ch == ']' && in_class {
+            in_class = false;
+            out.push(ch);
+            index += 1;
+            continue;
+        }
+
+        if !in_class
+            && ch == '('
+            && chars.get(index + 1) == Some(&'?')
+            && chars.get(index + 2) == Some(&'<')
+            && !matches!(chars.get(index + 3), Some('=' | '!'))
+        {
+            let end = regex_group_name_end(&chars, index + 3)?;
+            let raw_name: String = chars[index + 3..end].iter().collect();
+            crate::lexer::decode_regex_group_name(&raw_name)?;
+            out.push('(');
+            index = end + 1;
+            continue;
+        }
+
+        out.push(ch);
+        index += 1;
+    }
+
+    Ok(out)
 }
 
 fn named_capture_index(names: &[RegexCaptureName], name: &str) -> Option<usize> {
