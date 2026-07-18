@@ -4,6 +4,46 @@
 
 ### Fixed
 
+- RegExp construction now follows the specification's `IsRegExp` and
+  constructor phases. An explicit internal `[[RegExpMatcher]]` marker replaces
+  the observable class-name approximation; `Symbol.match` overrides are
+  honored before the internal fallback; calls can return the input only under
+  the constructor shortcut; RegExp inputs copy internal source/flags while
+  regexp-like inputs perform ordered property access; and allocation occurs
+  after new-target prototype selection but before source/flags conversion.
+  `%RegExp%`, `%RegExp.prototype%`, and
+  `%RegExpStringIteratorPrototype%` are immutable per-Realm registry entries,
+  traced and transactionally rolled back. RegExp literals, `RegExpCreate`, and
+  `@@matchAll` use those Realm-local intrinsics without consulting replaced
+  globals. `@@matchAll` now preserves `ToString`/species/flags/`lastIndex`
+  order, uses strict `Set`, returns Realm-correct iterator/result objects, and
+  roots every observable intermediate across GC.
+
+  The adjacent receiver-aware property path now follows OrdinarySet and Proxy
+  invariants through nested Proxies, null traps, custom receivers, fresh
+  descriptor objects, TypedArray/Array/mapped-arguments exotics, and
+  allocation-triggered GC. Array index writes honor non-writable length and
+  synchronize sparse/materialized length descriptors and inline caches.
+  Array length definition performs both observable conversions, descending
+  deletion with rollback above a non-configurable index, requested
+  writability changes, and synthetic own-length lookup before prototype
+  setters or Proxy traps. Registration is now **13 eager / 32 deferred**
+  native constructors and the transactional Realm inventory is **31**
+  registry families.
+
+  Eight exact RegExp construction files are newly admitted and pass. The full
+  `built-ins/RegExp` result improves from **865 pass / 144 fail / 864 skip / 6
+  timeout** to **880 / 137 / 856 / 6**; focused `@@matchAll` is **25 pass / 0
+  fail / 1 skip**, and the supported subset remains **12751 / 0 / 7687**.
+  Final local gates include tooling **101/101**, Rust lib/unit **120/120**,
+  bugfixes **67/67**, builtins **463/463**, release, wasm32, warnings-denied
+  Clippy, and formatting. GPT 5.6 reviewers Dirac and Laplace returned `CLEAN`.
+  Feature commit `ff492ff` passed CI `29633368519` and full matrix
+  `29633368501`. Of the 30 artifacts at
+  `/tmp/ruja-artifacts-regexp-feature.kNQTlF`, 29 are byte-identical to the
+  Dynamic Function baseline; built-ins changed by **+108 pass / -100 fail / -8
+  skip**. The aggregate is **30302 pass / 6222 fail / 11781 skip / 12 timeout /
+  0 error / 48317 total** (**62.7%** of all files, **83.0%** of executed files).
 - The Dynamic Function family now follows the shared CreateDynamicFunction
   protocol. `Function`, `AsyncFunction`, `GeneratorFunction`, and
   `AsyncGeneratorFunction` convert parameter arguments left-to-right before

@@ -58,6 +58,12 @@ guarantees, run RuJa in a separately killable process as well.
   `Function.prototype.toString` source-preservation tests still fail. Hosts
   that need a hard wall around attacker-controlled compilation must isolate
   the VM in a separately killable process.
+- RegExp construction, `IsRegExp`, Realm fallback, and `@@matchAll` ordering are
+  implemented and audited, but full RegExp conformance is not complete. The
+  current `built-ins/RegExp` run still has **137 failures** outside this
+  constructor/iterator/property unit. RuJa also deliberately uses the
+  linear-time Rust `regex` backend, so future syntax and matching work must
+  preserve the ReDoS guarantee rather than importing a backtracking engine.
 - Execution fuel is **cooperative, not preemptive**: `Vm::set_fuel(Some(n))`
   bounds execution to ~n opcodes (exhaustion throws a `RangeError` that is
   *not* catchable by user `try/catch`, so untrusted code cannot swallow it).

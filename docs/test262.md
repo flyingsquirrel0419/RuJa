@@ -7016,7 +7016,7 @@ therefore remains **30159 pass / 6330 fail / 11816 skip / 12 timeout / 0 error
 `$262.createRealm()` now treats intrinsic population and final host-wrapper
 attachment as one transaction. The fresh environment is pinned before any
 publication, nested installer pins are owned as one suffix, and an error
-removes all 29 per-Realm registry families before native error materialization
+removes all 31 per-Realm registry families before native error materialization
 runs in the caller Realm. The heap allocator, cache, fuel, and unrelated
 finalization jobs are intentionally not rewound.
 
@@ -7351,6 +7351,85 @@ synchronous host operation rather than fuel-metered bytecode.
 - 선택한 방식: Move all four constructors to deferred native construction, parse parameter/body/combined sources with newline guards, use immutable constructor-Realm registries, publish nested definitions after observable lookup, and allocate through rooted sandbox paths with suffix rollback.
 - 다른 대안 대신 이 방식을 선택한 이유: Broad admission exposes unrelated source-text and async gaps, generic preallocation has the wrong observable order, and separate per-kind implementations would duplicate the same abstract operation and GC cleanup.
 - 장점, 단점 및 영향: Seven skips and six previously executed failures become passes with no new fail, timeout, or error. The exact manifest remains narrow; source-text preservation, a restrictive host compile hook, and native parse-time metering remain explicit follow-up work.
+```
+
+## RegExp construction, matchAll, and exotic property writes
+
+RegExp now uses body-controlled native construction. The shared `IsRegExp`
+operation observes `Symbol.match` before consulting the internal
+`[[RegExpMatcher]]` marker. The call identity shortcut, actual-RegExp internal
+source/flags copy, regexp-like property gets, new-target prototype selection,
+allocation, and final string conversions follow their separate specification
+phases. Non-object new-target prototypes use the immutable
+`%RegExp.prototype%` from the actual new target's Realm. Created Realms retain
+their own immutable `%RegExp%`, `%RegExp.prototype%`, and
+`%RegExpStringIteratorPrototype%`; literals, RegExpCreate, species defaults,
+iterators, and match result objects use those identities without consulting
+replaced globals.
+
+`RegExp.prototype[Symbol.matchAll]` now performs input `ToString` before species
+lookup, reads flags and lastIndex in order, writes matcher lastIndex through
+strict `Set`, and returns a Realm-correct branded iterator. Observable species,
+getter, trap, matcher, iterator, and result values remain pinned through
+re-entrant GC and exact-cap allocation.
+
+The property support required by strict `Set` is shared rather than
+matchAll-specific. OrdinarySet preserves the original receiver and stops at
+the nearest data descriptor. Proxy prototypes and nested Proxy invariant
+checks observe null/missing traps and current target state in order. Fresh
+descriptor values are rooted across later traps. CreateDataProperty and
+value-only DefineProperty preserve Array, integer-indexed TypedArray, and
+mapped-arguments exotic semantics. ArraySetLength performs both observable
+number conversions, rejects indices beyond a non-writable length, deletes in
+descending order with rollback above a non-configurable element, tracks sparse
+maximum indices, synchronizes materialized length descriptors, and invalidates
+the length inline cache.
+
+The frozen native-construction manifest adds exactly eight audited files:
+
+- `built-ins/RegExp/is-a-constructor.js`
+- `built-ins/RegExp/proto-from-ctor-realm.js`
+- `built-ins/RegExp/from-regexp-like-flag-override.js`
+- `built-ins/RegExp/from-regexp-like-get-ctor-err.js`
+- `built-ins/RegExp/from-regexp-like-get-flags-err.js`
+- `built-ins/RegExp/from-regexp-like-get-source-err.js`
+- `built-ins/RegExp/from-regexp-like-short-circuit.js`
+- `built-ins/RegExp/from-regexp-like.js`
+
+All eight pass against Test262
+`020cb74075849d1e404bbcdb62feb7a02e6966db`. The complete
+`built-ins/RegExp` subtree improves from **865 pass / 144 fail / 864 skip / 6
+timeout** to **880 / 137 / 856 / 6**. The focused
+`built-ins/RegExp/prototype/Symbol.matchAll` result is **25 pass / 0 fail / 1
+skip**, and the supported subset remains **12751 pass / 0 fail / 7687 skip /
+20438 total**.
+
+Final local gates pass all targets/features, warnings-denied Clippy,
+formatting/diff, release, and wasm32. Python tooling is **101/101**, Rust
+lib/unit **120/120**, bugfixes **67/67**, and builtins **463/463**. GPT 5.6
+reviewers Dirac and Laplace returned `CLEAN` after the ArraySetLength,
+sparse-length, and synthetic-own-length findings were fixed, and both were
+closed. No Umans provider route or coder model was used.
+
+Feature commit `ff492ff` passed CI `29633368519` and full matrix
+`29633368501`. Of the 30 result files at
+`/tmp/ruja-artifacts-regexp-feature.kNQTlF`, 29 are byte-identical to
+`/tmp/ruja-artifacts-dynamic-function-feature.upHgF8`. Only built-ins changed,
+from **14596 pass / 5505 fail / 3555 skip / 12 timeout** to **14704 / 5405 /
+3547 / 12**, a net **+108 pass / -100 fail / -8 skip**. The aggregate is
+**30302 pass / 6222 fail / 11781 skip / 12 timeout / 0 error / 48317 total /
+36524 pass-or-fail executed**, or **62.7%** of all files and **83.0%** of
+executed files. The remaining **137** RegExp failures are broader syntax,
+matching, and method semantics and are not claimed complete by this unit.
+
+```text
+[Decision Log]
+- 목적과 의도: Admit only RegExp construction and matchAll behavior whose observable ordering, Realm identity, Proxy/exotic property semantics, GC rooting, and exact-cap allocation are directly verified.
+- 기존 구현 및 제약 조건: Class-name branding, eager preallocation, mutable global fallbacks, partial Set/DefineProperty helpers, and unrooted fresh trap results produced wrong order or unsafe lifetime behavior. Broad RegExp support still contains unrelated syntax and matching gaps.
+- 검토한 주요 대안: Remove RegExp-related feature gates globally, admit the complete RegExp directory, patch matchAll locally, or extend the exact native-construction manifest after implementing shared abstract operations.
+- 선택한 방식: Freeze eight constructor paths, use a deferred internal-slot-based constructor and immutable Realm registries, and route strict matcher writes through receiver-aware Proxy and exotic-object dispatch with full ArraySetLength behavior.
+- 다른 대안 대신 이 방식을 선택한 이유: Exact admission ties each skip transition to audited behavior, while shared operations fix the same correctness defects for ordinary built-ins without claiming the remaining RegExp surface. Local exceptions would leave divergent Proxy, Array, and GC semantics.
+- 장점, 단점 및 영향: The full matrix gains 108 passes and removes 100 failures with no language-subset regression. Two Realm registry families and the property core require synchronized maintenance; 137 RegExp failures remain explicit future work.
 ```
 
 ## Why the full-suite rate is not higher

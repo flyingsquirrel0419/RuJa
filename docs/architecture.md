@@ -146,11 +146,11 @@ Realm-local emergency `RangeError` path.
 ```
 
 The four Dynamic Function constructors use `InternalDeferredPrototype` so
-CreateDynamicFunction owns every observable step, leaving the registration
-inventory at **14 eager / 31 deferred** native constructors. Parameter
-arguments are converted left-to-right before the body, after which RuJa's local-trust
-`HostEnsureCanCompileStrings` policy permits compilation. Parameters and body
-are parsed separately with line terminators at both synthetic boundaries; a
+CreateDynamicFunction owns every observable step. At that milestone the
+registration inventory was **14 eager / 31 deferred** native constructors.
+Parameter arguments are converted left-to-right before the body, after which
+RuJa's local-trust `HostEnsureCanCompileStrings` policy permits compilation.
+Parameters and body are parsed separately with line terminators at both synthetic boundaries; a
 third combined parse enforces cross-part early errors such as a strict body
 with non-simple parameters. This prevents comments or delimiter text in one
 part from consuming the other part while preserving the specification's
@@ -188,6 +188,50 @@ through bound-function allocation.
 - 선택한 방식: Use deferred native construction, three grammar checks with newline boundaries, immutable constructor-Realm registries, post-lookup table publication, and rooted one- or two-cell allocation with suffix rollback.
 - 다른 대안 대신 이 방식을 선택한 이유: Generic preallocation observes `NewTarget.prototype` too early, a combined-only parse does not model separate parameter/body grammar, and per-kind copies would drift on ordering and GC cleanup. One kind-parameterized path keeps the shared abstract operation explicit.
 - 장점, 단점 및 영향: Call/construct order, all four Realm fallbacks, Bound/Proxy new targets, parser early errors, forced GC, and exact-cap failures now share tested invariants. String compilation remains synchronous and is governed by the local-trust host policy rather than opcode fuel; source-text preservation is a separate limitation.
+```
+
+RegExp construction also uses `InternalDeferredPrototype`, bringing the
+current native-constructor inventory to **13 eager / 32 deferred**. The
+constructor first classifies its pattern through the shared specification
+`IsRegExp` operation. An explicit internal `[[RegExpMatcher]]` marker provides
+the fallback brand only when an observable `Symbol.match` value is absent.
+Calls take the identity shortcut only when the pattern is RegExp, flags are
+absent, and the pattern's constructor is the active constructor. Otherwise the
+algorithm selects copied internal source/flags or ordered regexp-like property
+gets, resolves the actual new target's prototype and Realm fallback, allocates
+one matcher object, and only then performs source/flags string conversion and
+initialization.
+
+Each Realm now retains immutable `%RegExp%`, `%RegExp.prototype%`, and
+`%RegExpStringIteratorPrototype%` identities. These add two registry families
+because the RegExp prototype map already existed for literals; the complete
+transactional inventory is now **31**. Literal creation, `RegExpCreate`,
+species fallback, and `@@matchAll` use those maps rather than mutable global
+bindings. The RegExp String Iterator and each match result use the method's
+Realm, while species values, flags, lastIndex values, matcher state, and
+iterator state are pinned across every re-entrant conversion, trap, call, and
+allocation.
+
+The same work made the write pipeline receiver-aware end to end. OrdinarySet
+stops at the nearest data descriptor, delegates through Proxy prototypes, and
+preserves the original receiver. Proxy `set`, `getOwnPropertyDescriptor`,
+`defineProperty`, `has`, and `isExtensible` invariant checks support nested
+Proxies and root fresh trap results. CreateDataProperty and value-only
+DefineProperty retain Array, integer-indexed TypedArray, and mapped-arguments
+exotic behavior. ArraySetLength owns its two observable conversions, sparse
+length calculation, non-writable guards, descending deletion and rollback,
+descriptor synchronization, and inline-cache invalidation. An unmaterialized
+Array `length` is synthesized as an own non-configurable data descriptor before
+prototype traversal.
+
+```text
+[Decision Log]
+- 목적과 의도: Make RegExp construction, RegExp String iteration, and their observable property writes follow ECMAScript ordering, Realm identity, Proxy invariants, and the exact sandbox heap contract.
+- 기존 구현 및 제약 조건: RegExp identity depended on an observable class-name approximation, generic preallocation selected prototypes too early, mutable globals supplied Realm fallbacks, matchAll intermediates were not uniformly rooted, and partial property helpers bypassed Proxy and Array/TypedArray/arguments exotic methods.
+- 검토한 주요 대안: Patch individual Test262 failures, retain eager allocation with RegExp exceptions, broaden feature admission, or centralize the abstract operations and exotic dispatch before admitting exact files.
+- 선택한 방식: Use deferred RegExp allocation with an internal matcher marker and immutable Realm registries; route matchAll through ordered species and strict Set operations; and share receiver-aware Set/DefineProperty dispatchers with a complete ArraySetLength implementation.
+- 다른 대안 대신 이 방식을 선택한 이유: Local exceptions preserve the same incorrect observable order and GC hazards, while broad admission would mix unsupported RegExp syntax and matching semantics into a constructor/iterator/property unit. Shared abstract operations keep Proxy invariants and exotic receivers consistent across callers.
+- 장점, 단점 및 영향: Eight skips become passes, the built-ins failure count drops by a net 100, all supported language tests remain green, and forced-GC/exact-cap cases use one rooted path. The cost is two more manually synchronized Realm registries and a larger property core; 137 broader RegExp failures remain explicit follow-up scope.
 ```
 
 `MakeClosure` follows the same rule for an ordinary function's fresh
@@ -237,7 +281,7 @@ allocation through final wrapper attachment. It records the incoming
 the intrinsic graph, allocates the host wrapper, and attaches the Realm global.
 A successful commit releases only the transaction's pins. Any error first
 truncates the complete transaction-owned pin suffix and then removes that
-environment's entries from all 29 per-Realm registry families. Native error
+environment's entries from all 31 per-Realm registry families. Native error
 materialization runs afterward in the calling Realm, so its collecting retry
 can reclaim the abandoned graph.
 
@@ -252,7 +296,7 @@ logical rollback surface.
 ```text
 [Decision Log]
 - 목적과 의도: Make failed test262 Realm construction leave no inaccessible GC roots while preserving exact heap-cap and error-Realm behavior.
-- 기존 구현 및 제약 조건: Intrinsic installers publish 29 families of Realm roots incrementally and use fallible LIFO temporary pins; wrapper allocation remains fallible after every registry has been populated.
+- 기존 구현 및 제약 조건: Intrinsic installers publish 31 families of Realm roots incrementally and use fallible LIFO temporary pins; wrapper allocation remains fallible after every registry has been populated.
 - 검토한 주요 대안: Publish nothing until setup completes; clean only the last inserted map; make every installer independently error-safe; or own all provisional roots and pins in one outer transaction.
 - 선택한 방식: Keep provisional registry publication, pin the fresh environment, capture the incoming pin depth, include wrapper attachment in the transaction, truncate the owned pin suffix on every result, and remove every Realm registry entry on error.
 - 다른 대안 대신 이 방식을 선택한 이유: Later installers require earlier intrinsic identities, map-specific cleanup misses other roots, and duplicating rollback in every installer creates drift. One lexical owner matches the actual observability boundary.
