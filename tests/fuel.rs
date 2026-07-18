@@ -29,6 +29,31 @@ fn fuel_unbounded_by_default() {
 }
 
 #[test]
+fn regexp_symbol_split_native_loops_consume_fuel() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        globalThis.longInput = "a".repeat(500);
+        globalThis.noMatch = /z/;
+        globalThis.manyCaptures = new RegExp("a" + "()".repeat(200));
+        "#,
+    )
+    .expect("RegExp split fuel fixtures should initialize");
+
+    vm.set_fuel(Some(50));
+    let search_error = vm
+        .run("noMatch[Symbol.split](longInput);")
+        .expect_err("RegExp split search loop should consume fuel");
+    assert_eq!(search_error.kind, ruja::ErrorKind::Fuel);
+
+    vm.set_fuel(Some(50));
+    let capture_error = vm
+        .run("manyCaptures[Symbol.split]('a');")
+        .expect_err("RegExp split capture loop should consume fuel");
+    assert_eq!(capture_error.kind, ruja::ErrorKind::Fuel);
+}
+
+#[test]
 fn fuel_can_be_refilled_between_runs() {
     let mut vm = Vm::new().expect("failed to initialize VM");
     vm.set_fuel(Some(100));

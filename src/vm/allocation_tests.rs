@@ -690,6 +690,128 @@ fn regexp_constructor_uses_immutable_foreign_realm_intrinsics() {
 }
 
 #[test]
+fn regexp_symbol_split_roots_every_observable_intermediate() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("GC hook should register");
+    let baseline_pins = vm.gc_pins.len();
+
+    assert_eq!(
+        vm.run(
+            r#"
+            var receiver = {};
+            Object.defineProperty(receiver, "constructor", {
+              get: function () {
+                forceGc();
+                var holder = {};
+                Object.defineProperty(holder, Symbol.species, {
+                  get: function () {
+                    forceGc();
+                    return function () {
+                      forceGc();
+                      var index = 0;
+                      return {
+                        set lastIndex(value) { index = value; forceGc(); },
+                        get lastIndex() {
+                          return {
+                            valueOf: function () { forceGc(); return index + 1; }
+                          };
+                        },
+                        exec: function () {
+                          forceGc();
+                          return {
+                            get length() {
+                              return {
+                                valueOf: function () { forceGc(); return 3; }
+                              };
+                            },
+                            get 1() { return { marker: 41 }; },
+                            get 2() { forceGc(); return { marker: 42 }; }
+                          };
+                        }
+                      };
+                    };
+                  }
+                });
+                return holder;
+              }
+            });
+            Object.defineProperty(receiver, "flags", {
+              get: function () {
+                forceGc();
+                return {
+                  toString: function () { forceGc(); return ""; }
+                };
+              }
+            });
+            var input = {
+              toString: function () { forceGc(); return "a"; }
+            };
+            var limit = {
+              valueOf: function () { forceGc(); return 4; }
+            };
+            var result = RegExp.prototype[Symbol.split].call(receiver, input, limit);
+            forceGc();
+            [result.length, result[0], result[1].marker, result[2].marker, result[3]].join("|");
+            "#,
+        )
+        .expect("RegExp @@split intermediates should survive observable GC"),
+        Value::String("4||41|42|".into())
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    let error = vm
+        .run(
+            r#"
+            var abrupt = {
+              flags: "",
+              constructor: {
+                [Symbol.species]: function () {
+                  return {
+                    lastIndex: 0,
+                    exec: function () {
+                      this.lastIndex = 1;
+                      return {
+                        length: 2,
+                        get 1() { forceGc(); throw new Error("capture-abrupt"); }
+                      };
+                    }
+                  };
+                }
+              }
+            };
+            RegExp.prototype[Symbol.split].call(abrupt, "a");
+            "#,
+        )
+        .expect_err("capture getter should remain abrupt");
+    assert!(error.to_string().contains("capture-abrupt"));
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+}
+
+#[test]
+fn regexp_symbol_split_reclaims_native_match_arrays_at_the_heap_cap() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.run("globalThis.regexp = /,/; globalThis.input = 'a,b,c';")
+        .expect("RegExp split fixtures should initialize");
+    vm.gc();
+    vm.set_max_heap_objects(Some(vm.heap.live_count() + 3));
+
+    assert_eq!(
+        vm.run("regexp[Symbol.split](input).join('|');")
+            .expect("RegExp split should reclaim earlier native match arrays"),
+        Value::String("a|b|c".into())
+    );
+    vm.set_max_heap_objects(None);
+}
+
+#[test]
 fn regexp_constructor_roots_intermediates_across_observable_gc() {
     let mut vm = Vm::new().expect("VM should initialize");
     vm.register_fn(

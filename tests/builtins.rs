@@ -3996,6 +3996,150 @@ fn regexp_match_all_roots_species_values_and_uses_foreign_realm_intrinsics() {
 }
 
 #[test]
+fn regexp_symbol_split_installs_with_spec_order_and_metadata() {
+    assert_eq!(
+        run(r#"
+            var method = RegExp.prototype[Symbol.split];
+            var descriptor = Object.getOwnPropertyDescriptor(RegExp.prototype, Symbol.split);
+            var log = [];
+            var receiver = {};
+            var constructor = {};
+            Object.defineProperty(receiver, "constructor", {
+              get: function () { log.push("constructor"); return constructor; }
+            });
+            Object.defineProperty(constructor, Symbol.species, {
+              get: function () {
+                log.push("species");
+                return function (pattern, flags) {
+                  log.push("construct:" + (pattern === receiver) + ":" + flags);
+                  return { exec: function () { throw new Error("unexpected exec"); } };
+                };
+              }
+            });
+            Object.defineProperty(receiver, "flags", {
+              get: function () {
+                log.push("flags");
+                return { toString: function () { log.push("flags-string"); return ""; } };
+              }
+            });
+            var input = {
+              toString: function () { log.push("string"); return "abc"; }
+            };
+            var limit = {
+              valueOf: function () { log.push("limit"); return 0; }
+            };
+            var result = method.call(receiver, input, limit);
+            var constructThrows = false;
+            try { new method(); } catch (error) { constructThrows = error instanceof TypeError; }
+            [
+              method.name,
+              method.length,
+              descriptor.writable,
+              descriptor.enumerable,
+              descriptor.configurable,
+              log.join(","),
+              Array.isArray(result),
+              result.length,
+              constructThrows
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "[Symbol.split]|2|true|false|true|string,constructor,species,flags,flags-string,construct:true:y,limit|true|0|true"
+        ))
+    );
+}
+
+#[test]
+fn regexp_symbol_split_handles_captures_empty_matches_and_disabled_hook() {
+    assert_eq!(
+        run(r#"
+            var captures = /c(d)(e)/[Symbol.split]("abcdefg", 2);
+            var empty = /(?:)/[Symbol.split]("abc");
+            var unicode = /./u[Symbol.split]("\ud834\udf06");
+            var disabled = /,/;
+            disabled[Symbol.split] = undefined;
+            [
+              captures.join(","),
+              empty.join(","),
+              unicode.join(","),
+              "a,b".split(disabled).join(",")
+            ].join("|");
+        "#),
+        Value::String(Arc::from("ab,d|a,b,c|,|a,b"))
+    );
+}
+
+#[test]
+fn regexp_symbol_split_preserves_code_units_and_callable_proxy_hooks() {
+    assert_eq!(
+        run(r#"
+            var pair = "\ud834\udf06";
+            var empty = /(?:)/[Symbol.split](pair);
+            var dot = /./[Symbol.split](pair);
+            var high = /\ud834/[Symbol.split](pair);
+            var low = /\udf06/[Symbol.split](pair);
+            var escapedPair = /\ud834\udf06/[Symbol.split](pair);
+            var escapedClass = /[\ud834\udf06]/[Symbol.split](pair);
+            var repeated = /(?:(a)|\ud834\udf06)*/[Symbol.split]("a" + pair + "X", 3);
+
+            var hookCalls = 0;
+            var separator = {};
+            separator[Symbol.split] = new Proxy(function (value, limit) {
+              hookCalls += 1;
+              return [this === separator, value, limit];
+            }, {});
+            var delegated = "value".split(separator, 7);
+
+            var execCalls = 0;
+            var exec = new Proxy(function () { execCalls += 1; return null; }, {});
+            var splitter = { lastIndex: 0, exec: exec };
+            var receiver = {
+              flags: "",
+              constructor: { [Symbol.species]: function () { return splitter; } }
+            };
+            var generic = RegExp.prototype[Symbol.split].call(receiver, "ab");
+
+            [
+              empty.length, empty[0].length, empty[0].charCodeAt(0),
+              empty[1].length, empty[1].charCodeAt(0),
+              dot.length,
+              high.length, high[1].length, high[1].charCodeAt(0),
+              low.length, low[0].length, low[0].charCodeAt(0),
+              escapedPair.length, escapedPair[0].length, escapedPair[1].length,
+              escapedClass.length,
+              repeated[1] === undefined, String(repeated[1]),
+              hookCalls, delegated.join(","),
+              execCalls, generic.length, generic[0]
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "2|1|55348|1|57094|3|2|1|57094|2|1|55348|2|0|0|3|true|undefined|1|true,value,7|2|1|ab"
+        ))
+    );
+}
+
+#[test]
+fn regexp_symbol_split_uses_the_method_realm_intrinsics() {
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var split = other.RegExp.prototype[Symbol.split];
+            var regexp = other.eval("/,/");
+            regexp.constructor = undefined;
+            other.RegExp.prototype.constructor = null;
+            other.RegExp = null;
+            var result = split.call(regexp, "a,b");
+            [
+              result.join("|"),
+              Object.getPrototypeOf(result) === other.Array.prototype,
+              Object.getPrototypeOf(result) !== Array.prototype
+            ].join(":");
+        "#),
+        Value::String(Arc::from("a|b:true:true"))
+    );
+}
+
+#[test]
 fn string_match_all_delegates_custom_matcher_before_string_coercion() {
     assert_eq!(
         run(r#"
@@ -8596,6 +8740,22 @@ fn string_split_observes_symbol_split_and_coercion_order() {
     assert_eq!(
         run(r#""undefined is not a function".split(undefined, 0).length"#),
         Value::Number(0.0)
+    );
+    assert_eq!(
+        run(r#"
+            var separator = {
+              [Symbol.split]: null,
+              toString: function () { return "\ud834"; }
+            };
+            var result = "\ud834\udf06".split(separator);
+            [
+              result.length,
+              result[0].length,
+              result[1].length,
+              result[1].charCodeAt(0)
+            ].join("|");
+        "#),
+        Value::String(Arc::from("2|0|1|57094"))
     );
     assert!(run_err(
         r#"var limit = { valueOf: function(){ throw new Error("limit-value"); } };
@@ -14511,6 +14671,17 @@ fn regex_exec_captures() {
 #[test]
 fn regexp_exec_result_shape_and_last_index_semantics() {
     assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var result = other.RegExp.prototype.exec.call(other.eval("/a/"), "a");
+            [
+              Object.getPrototypeOf(result) === other.Array.prototype,
+              Object.getPrototypeOf(result) === Array.prototype
+            ].join("|");
+        "#),
+        Value::String(Arc::from("true|false"))
+    );
+    assert_eq!(
         run("var m = /b(c)/.exec('abc'); [m[0], m[1], m.index, m.input].join('|');"),
         Value::String(Arc::from("bc|c|1|abc"))
     );
@@ -15170,6 +15341,25 @@ fn regexp_non_unicode_surrogate_escapes_match_code_units() {
         run("var r = /\\udf06/u; Object.defineProperty(r, 'unicode', { value: false }); r[Symbol.match]('\\ud834\\udf06') === null;"),
         Value::Bool(true)
     );
+    assert_eq!(
+        run(r#"
+            var pair = "\ud834\udf06";
+            var sticky = /./y;
+            sticky.lastIndex = 1;
+            var match = sticky.exec(pair);
+            var captures = /(.)(.)/.exec(pair);
+            [
+              match[0].length,
+              match[0].charCodeAt(0),
+              sticky.lastIndex,
+              captures[0] === pair,
+              captures[1].charCodeAt(0),
+              captures[2].charCodeAt(0),
+              new RegExp(pair).exec(pair)[0] === pair
+            ].join("|");
+        "#),
+        Value::String(Arc::from("1|57094|2|true|55348|57094|true"))
+    );
 }
 
 #[test]
@@ -15192,6 +15382,14 @@ fn regexp_backreferences_and_legacy_decimal_escapes_compile() {
 
 #[test]
 fn string_replace_with_regex() {
+    assert_eq!(
+        run(r#""\ud834\udf06".replace(/𝌆/, "x");"#),
+        Value::String(Arc::from("x"))
+    );
+    assert_eq!(
+        run(r#""\ud834\udf06".replace(/\ud834\udf06/, "x");"#),
+        Value::String(Arc::from("x"))
+    );
     assert_eq!(
         run("'hello'.replace(/l/, 'L');"),
         Value::String(Arc::from("heLlo"))

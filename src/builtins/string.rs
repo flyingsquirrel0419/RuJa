@@ -44,12 +44,67 @@ fn split_limit(vm: &mut Vm, value: Option<&Value>) -> error::Result<usize> {
 }
 
 fn string_array_from_parts(vm: &mut Vm, parts: Vec<String>) -> error::Result<Value> {
-    let items: Vec<Value> = parts
-        .into_iter()
-        .map(|p| Value::String(Arc::from(p.as_str())))
-        .collect();
-    let arr = HeapObj::Array(ArrayData::new(items, Some(vm.array_proto.clone())));
-    Ok(Value::Object(GcIdx(vm.heap.allocate(arr)?)))
+    let array = array_create_in_current_realm(vm, 0)?;
+    let array_pin = vm.pin(&array);
+    let result = (|| {
+        for (index, part) in parts.into_iter().enumerate() {
+            vm.consume_fuel()?;
+            vm.define_data_property(
+                &array,
+                PropertyKey::from(index.to_string().as_str()),
+                Value::String(Arc::from(part.as_str())),
+            )?;
+        }
+        Ok(array)
+    })();
+    vm.unpin_many(array_pin);
+    result
+}
+
+fn split_string_parts(
+    vm: &mut Vm,
+    input: &str,
+    separator: &str,
+    limit: usize,
+) -> error::Result<Vec<String>> {
+    // StringIndexOf is defined over UTF-16 code units, not Rust Unicode scalar
+    // boundaries; this also preserves lone-surrogate separators and results.
+    let input = crate::value::utf16_from_str(input);
+    let separator = crate::value::utf16_from_str(separator);
+    if separator.is_empty() {
+        let mut parts = Vec::with_capacity(input.len().min(limit));
+        for unit in input.into_iter().take(limit) {
+            vm.consume_fuel()?;
+            parts.push(crate::value::utf16_to_string(&[unit]));
+        }
+        return Ok(parts);
+    }
+
+    let mut parts = Vec::new();
+    if separator.len() > input.len() {
+        parts.push(crate::value::utf16_to_string(&input));
+        return Ok(parts);
+    }
+    let mut part_start = 0usize;
+    let mut search_index = 0usize;
+    let last_search_index = input.len() - separator.len();
+    while search_index <= last_search_index {
+        vm.consume_fuel()?;
+        if input[search_index..search_index + separator.len()] == separator {
+            parts.push(crate::value::utf16_to_string(
+                &input[part_start..search_index],
+            ));
+            if parts.len() == limit {
+                return Ok(parts);
+            }
+            part_start = search_index + separator.len();
+            search_index = part_start;
+        } else {
+            search_index += 1;
+        }
+    }
+    parts.push(crate::value::utf16_to_string(&input[part_start..]));
+    Ok(parts)
 }
 
 fn string_search_position(
@@ -461,10 +516,7 @@ pub(crate) fn str_split(vm: &mut Vm, args: &[Value], this: Option<Value>) -> err
         let split_key = PropertyKey::Symbol(vm.well_known_symbols.split);
         let splitter = vm.get_property_by_key(&separator, &split_key)?;
         if !splitter.is_nullish() {
-            let is_callable = matches!(&splitter, Value::Object(idx) if {
-                vm.heap.with_obj(idx.0, |o| o.is_function())
-            });
-            if !is_callable {
+            if !is_callable(&splitter, &vm.heap) {
                 return Err(Error::type_err("Symbol.split method is not callable"));
             }
             return vm.call_function(&splitter, &[receiver.clone(), limit_value], Some(separator));
@@ -472,50 +524,6 @@ pub(crate) fn str_split(vm: &mut Vm, args: &[Value], this: Option<Value>) -> err
     }
     let s = str_val(vm, &Some(receiver))?;
     let limit = split_limit(vm, args.get(1))?;
-    // If the separator is a RegExp, split on regex matches.
-    if let Value::Object(idx) = &separator {
-        let is_regexp_obj = vm.heap.with_obj(
-            idx.0,
-            |o| matches!(o, HeapObj::Object(od) if od.class_name.as_deref() == Some("RegExp")),
-        );
-        if is_regexp_obj {
-            let regexp = Some(Value::Object(*idx));
-            let source = read_regexp_source(vm, &regexp)?;
-            let flags_str = read_regexp_flags(vm, &regexp).unwrap_or_default();
-            let re = compile_regex(&source, &flags_str)
-                .map_err(|e| Error::syntax(format!("Invalid regex: {}", e)))?;
-            let mut parts: Vec<String> = Vec::new();
-            let mut last_end = 0;
-            if limit == 0 {
-                return string_array_from_parts(vm, parts);
-            }
-            for caps in re.captures_iter_ecma(&s, &source, &flags_str)? {
-                let m = caps.get(0).unwrap();
-                if m.start() == m.end() && (m.start() == 0 || m.end() == s.len()) {
-                    continue;
-                }
-                if parts.len() >= limit {
-                    break;
-                }
-                parts.push(s[last_end..m.start()].to_string());
-                for i in 1..caps.len() {
-                    if parts.len() >= limit {
-                        break;
-                    }
-                    parts.push(
-                        caps.get(i)
-                            .map(|capture| capture.as_str().to_string())
-                            .unwrap_or_default(),
-                    );
-                }
-                last_end = m.end();
-            }
-            if parts.len() < limit {
-                parts.push(s[last_end..].to_string());
-            }
-            return string_array_from_parts(vm, parts);
-        }
-    }
     let sep = if separator.is_undefined() {
         None
     } else {
@@ -526,15 +534,7 @@ pub(crate) fn str_split(vm: &mut Vm, args: &[Value], this: Option<Value>) -> err
     }
     let parts: Vec<String> = match sep {
         None => vec![s],
-        Some(sep) if sep.is_empty() => {
-            let units = crate::value::utf16_from_str(&s);
-            units
-                .iter()
-                .take(limit)
-                .map(|&u| crate::value::utf16_to_string(&[u]))
-                .collect()
-        }
-        Some(sep) => s.split(&sep).take(limit).map(|p| p.to_string()).collect(),
+        Some(sep) => split_string_parts(vm, &s, &sep, limit)?,
     };
     string_array_from_parts(vm, parts)
 }
@@ -595,7 +595,7 @@ pub(crate) fn str_replace(
             if is_fn {
                 let mut result = String::new();
                 let mut last_end = 0;
-                for caps in re.captures_iter_ecma(&s, &source, &flags_str)? {
+                for caps in re.captures_iter_ecma(&s, &source, &flags_str, false)? {
                     let m = caps.get(0).unwrap();
                     result.push_str(&s[last_end..m.start()]);
                     let mut cap_args = vec![Value::String(Arc::from(m.as_str()))];
@@ -628,7 +628,7 @@ pub(crate) fn str_replace(
             let mut result = String::new();
             let mut last_end = 0;
             let mut replaced = false;
-            for caps in re.captures_iter_ecma(&s, &source, &flags_str)? {
+            for caps in re.captures_iter_ecma(&s, &source, &flags_str, false)? {
                 let Some(m) = caps.get(0) else {
                     continue;
                 };
@@ -1026,7 +1026,7 @@ fn regexp_match_internal(vm: &mut Vm, regexp: Value, s: &str) -> error::Result<V
             make_value_array(vm, items)
         }
     } else {
-        match re.captures_ecma(s, &source, &flags_str)? {
+        match re.captures_ecma(s, &source, &flags_str, false)? {
             Some(caps) => {
                 let items: Vec<Value> = caps
                     .iter()

@@ -101,7 +101,13 @@ fn await_array_from_async(
     result
 }
 
-fn array_from_async_create_array(vm: &mut Vm, length: usize, realm: GcIdx) -> error::Result<Value> {
+/// Shared ArrayCreate path for built-ins that must preserve both the method
+/// Realm's intrinsic prototype and the sandbox allocator's GC retry.
+pub(crate) fn array_create_in_realm(
+    vm: &mut Vm,
+    length: usize,
+    realm: GcIdx,
+) -> error::Result<Value> {
     if length > u32::MAX as usize {
         return Err(Error::range("Invalid array length"));
     }
@@ -115,6 +121,11 @@ fn array_from_async_create_array(vm: &mut Vm, length: usize, realm: GcIdx) -> er
         vm.set_array_length(array.0, Value::Number(length as f64))?;
     }
     Ok(Value::Object(array))
+}
+
+pub(crate) fn array_create_in_current_realm(vm: &mut Vm, length: usize) -> error::Result<Value> {
+    let realm = vm.current_realm_global_env();
+    array_create_in_realm(vm, length, realm)
 }
 
 fn pin_array_from_async_frame(
@@ -509,7 +520,7 @@ pub(crate) fn array_from_async(
                     }
                 }
             } else {
-                match array_from_async_create_array(vm, 0, realm) {
+                match array_create_in_realm(vm, 0, realm) {
                     Ok(value) => value,
                     Err(error) => {
                         vm.unpin_many(iterator_pins);
@@ -551,7 +562,7 @@ pub(crate) fn array_from_async(
                     Err(error) => return reject_array_from_async_error(vm, &initial, &error),
                 }
             } else {
-                match array_from_async_create_array(vm, length, realm) {
+                match array_create_in_realm(vm, length, realm) {
                     Ok(value) => value,
                     Err(error) => return reject_array_from_async_error(vm, &initial, &error),
                 }

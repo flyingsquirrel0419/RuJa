@@ -397,6 +397,149 @@ pub(crate) fn regexp_symbol_match_all(
     result
 }
 
+pub(crate) fn regexp_symbol_split(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let Some(rx @ Value::Object(_)) = this else {
+        return Err(Error::type_err("RegExp method called on non-object"));
+    };
+
+    let mut pin_count = vm.pin(&rx);
+    let result = (|| {
+        let string = vm
+            .to_string(args.first().unwrap_or(&Value::Undefined))?
+            .to_string();
+        let default_constructor = vm.current_realm_regexp_constructor();
+        let constructor = regexp_species_constructor(vm, &rx, default_constructor)?;
+        pin_count += vm.pin(&constructor);
+
+        let flags_value = vm.get_property(&rx, "flags")?;
+        pin_count += vm.pin(&flags_value);
+        let flags = vm.to_string(&flags_value)?.to_string();
+        let full_unicode = flags.contains('u') || flags.contains('v');
+        let new_flags = if flags.contains('y') {
+            flags.clone()
+        } else {
+            format!("{flags}y")
+        };
+
+        let splitter = vm.construct(
+            &constructor,
+            &[rx.clone(), Value::String(Arc::from(new_flags.as_str()))],
+        )?;
+        pin_count += vm.pin(&splitter);
+
+        let array = array_create_in_current_realm(vm, 0)?;
+        pin_count += vm.pin(&array);
+        let limit = match args.get(1) {
+            None | Some(Value::Undefined) => u32::MAX as usize,
+            Some(value) => crate::vm::to_uint32(vm.to_number(value)?) as usize,
+        };
+        if limit == 0 {
+            return Ok(array);
+        }
+
+        if string.is_empty() {
+            let match_result = regexp_exec_dispatch(vm, &splitter, &string)?;
+            if !match_result.is_null() {
+                return Ok(array);
+            }
+            regexp_split_append(vm, &array, 0, Value::String(Arc::from("")))?;
+            return Ok(array);
+        }
+
+        let size = crate::value::utf16_len(&string);
+        let mut length_a = 0usize;
+        let mut last_match_end = 0usize;
+        let mut search_index = 0usize;
+
+        while search_index < size {
+            vm.consume_fuel()?;
+            vm.set_property_strict(&splitter, "lastIndex", Value::Number(search_index as f64))?;
+            let match_result = regexp_exec_dispatch(vm, &splitter, &string)?;
+            if match_result.is_null() {
+                search_index = advance_string_index(&string, search_index, full_unicode);
+                continue;
+            }
+
+            let match_pin = vm.pin(&match_result);
+            let reached_limit: error::Result<bool> = (|| {
+                let last_index_value = vm.get_property(&splitter, "lastIndex")?;
+                let last_index_pin = vm.pin(&last_index_value);
+                let match_end = regexp_to_length(vm, &last_index_value);
+                vm.unpin_many(last_index_pin);
+                let match_end = (match_end? as usize).min(size);
+
+                if match_end == last_match_end {
+                    search_index = advance_string_index(&string, search_index, full_unicode);
+                    return Ok(false);
+                }
+
+                let substring = crate::value::utf16_slice(&string, last_match_end, search_index);
+                regexp_split_append(
+                    vm,
+                    &array,
+                    length_a,
+                    Value::String(Arc::from(substring.as_str())),
+                )?;
+                length_a += 1;
+                if length_a == limit {
+                    return Ok(true);
+                }
+
+                last_match_end = match_end;
+                let result_length_value = vm.get_property(&match_result, "length")?;
+                let result_length_pin = vm.pin(&result_length_value);
+                let result_length = regexp_to_length(vm, &result_length_value);
+                vm.unpin_many(result_length_pin);
+                let capture_count = (result_length? as usize).saturating_sub(1);
+
+                for capture_index in 1..=capture_count {
+                    vm.consume_fuel()?;
+                    let next_capture =
+                        vm.get_property(&match_result, capture_index.to_string().as_str())?;
+                    let capture_pin = vm.pin(&next_capture);
+                    let append_result = regexp_split_append(vm, &array, length_a, next_capture);
+                    vm.unpin_many(capture_pin);
+                    append_result?;
+                    length_a += 1;
+                    if length_a == limit {
+                        return Ok(true);
+                    }
+                }
+                search_index = last_match_end;
+                Ok(false)
+            })();
+            vm.unpin_many(match_pin);
+            if reached_limit? {
+                return Ok(array);
+            }
+        }
+
+        let substring = crate::value::utf16_slice(&string, last_match_end, size);
+        regexp_split_append(
+            vm,
+            &array,
+            length_a,
+            Value::String(Arc::from(substring.as_str())),
+        )?;
+        Ok(array)
+    })();
+    vm.unpin_many(pin_count);
+    result
+}
+
+fn regexp_split_append(
+    vm: &mut Vm,
+    array: &Value,
+    index: usize,
+    value: Value,
+) -> error::Result<()> {
+    vm.define_data_property(array, PropertyKey::from(index.to_string().as_str()), value)
+}
+
 fn new_regexp_string_iterator(
     vm: &mut Vm,
     matcher: Value,
@@ -581,10 +724,7 @@ pub(crate) fn is_regexp_spec(vm: &mut Vm, value: &Value) -> error::Result<bool> 
 
 fn regexp_exec_dispatch(vm: &mut Vm, rx: &Value, s: &str) -> error::Result<Value> {
     let exec = vm.get_property(rx, "exec")?;
-    let is_callable = matches!(&exec, Value::Object(idx) if {
-        vm.heap.with_obj(idx.0, |o| o.is_function())
-    });
-    if is_callable {
+    if is_callable(&exec, &vm.heap) {
         let result = vm.call_function(&exec, &[Value::String(Arc::from(s))], Some(rx.clone()))?;
         if matches!(result, Value::Object(_) | Value::Null) {
             return Ok(result);
@@ -692,7 +832,7 @@ pub(crate) fn regexp_symbol_replace(
             break;
         };
         let caps = re
-            .captures_at_ecma(&s, start_byte, &source, &flags)?
+            .captures_at_ecma(&s, start_byte, &source, &flags, false)?
             .filter(|caps| {
                 !sticky
                     || caps
@@ -935,8 +1075,15 @@ pub(crate) fn regexp_exec(
         .to_string(args.first().unwrap_or(&Value::Undefined))?
         .to_string();
     let flags = read_regexp_flags(vm, &this).unwrap_or_default();
-    let re = compile_regex(&source, &flags)
-        .map_err(|e| Error::syntax(format!("Invalid regex: {}", e)))?;
+    let backend_input = regexp_backend_input(vm, &input, &flags)?;
+    let re = if flags.contains('u') || flags.contains('v') {
+        compile_regex(&source, &flags)
+    } else {
+        // The non-Unicode matcher runs on a sentinel-backed UTF-16 view so
+        // lastIndex may address either half of a supplementary code point.
+        compile_regex_for_code_units(&source, &flags)
+    }
+    .map_err(|e| Error::syntax(format!("Invalid regex: {}", e)))?;
     let capture_names = regex_capture_names(&source);
     let global = flags.contains('g');
     let sticky = flags.contains('y');
@@ -957,7 +1104,7 @@ pub(crate) fn regexp_exec(
     } else {
         0
     };
-    let utf16_len = crate::value::utf16_len(&input);
+    let utf16_len = crate::value::utf16_len(&backend_input);
     if start > utf16_len {
         if global || sticky {
             if let Some(value) = &this_value {
@@ -966,7 +1113,7 @@ pub(crate) fn regexp_exec(
         }
         return Ok(Value::Null);
     }
-    let Some(start_byte) = crate::value::utf16_index_to_byte(&input, start) else {
+    let Some(start_byte) = crate::value::utf16_index_to_byte(&backend_input, start) else {
         if global || sticky {
             if let Some(value) = &this_value {
                 set_regexp_last_index(vm, value, 0.0)?;
@@ -978,7 +1125,13 @@ pub(crate) fn regexp_exec(
     // and multiline line starts; sticky only requires the match to begin at
     // lastIndex.
     let m = re
-        .captures_at_ecma(&input, start_byte, &source, &flags)?
+        .captures_at_ecma(
+            &backend_input,
+            start_byte,
+            &source,
+            &flags,
+            !(flags.contains('u') || flags.contains('v')),
+        )?
         .filter(|c| {
             !sticky
                 || c.get(0)
@@ -990,14 +1143,14 @@ pub(crate) fn regexp_exec(
             let items: Vec<Value> = caps
                 .iter()
                 .map(|c| match c {
-                    Some(mch) => Value::String(Arc::from(mch.as_str())),
+                    Some(mch) => Value::String(canonicalize_regexp_match_text(mch.as_str())),
                     None => Value::Undefined,
                 })
                 .collect();
             if global || sticky {
                 let match_end = caps
                     .get(0)
-                    .map(|mch| crate::value::utf16_len(&input[..mch.end()]))
+                    .map(|mch| crate::value::utf16_len(&backend_input[..mch.end()]))
                     .unwrap_or(start);
                 if let Some(value) = &this_value {
                     set_regexp_last_index(vm, value, match_end as f64)?;
@@ -1005,9 +1158,9 @@ pub(crate) fn regexp_exec(
             }
             let match_start = caps
                 .get(0)
-                .map(|mch| crate::value::utf16_len(&input[..mch.start()]))
+                .map(|mch| crate::value::utf16_len(&backend_input[..mch.start()]))
                 .unwrap_or(start);
-            let result = make_value_array(vm, items)?;
+            let result = make_regexp_exec_array(vm, items)?;
             let groups = make_regexp_groups_object(vm, &caps, &capture_names)?;
             add_regexp_exec_result_props(vm, &result, match_start, &input, groups)?;
             Ok(result)
@@ -1022,6 +1175,39 @@ pub(crate) fn regexp_exec(
             Ok(Value::Null)
         }
     }
+}
+
+fn make_regexp_exec_array(vm: &mut Vm, items: Vec<Value>) -> error::Result<Value> {
+    // Native RegExp captures contain only strings and undefined, so this
+    // operation can retry GC without exposing unrooted object-valued locals.
+    debug_assert!(items.iter().all(|value| !matches!(value, Value::Object(_))));
+    let prototype = vm.array_prototype_for_env(vm.current_realm_global_env());
+    vm.alloc(HeapObj::Array(ArrayData::new(items, Some(prototype))))
+        .map(Value::Object)
+}
+
+fn regexp_backend_input<'a>(
+    vm: &mut Vm,
+    input: &'a str,
+    flags: &str,
+) -> error::Result<std::borrow::Cow<'a, str>> {
+    // Sentinel-backed code units make every legal non-Unicode lastIndex a
+    // backend string boundary without changing the original JS String.
+    if flags.contains('u')
+        || flags.contains('v')
+        || input
+            .chars()
+            .all(|ch| crate::value::utf16_single_unit_from_internal_char(ch).is_some())
+    {
+        return Ok(std::borrow::Cow::Borrowed(input));
+    }
+
+    let mut backend = String::new();
+    for unit in crate::value::utf16_from_str(input) {
+        vm.consume_fuel()?;
+        backend.push_str(crate::value::utf16_to_string(&[unit]).as_str());
+    }
+    Ok(std::borrow::Cow::Owned(backend))
 }
 
 fn regexp_to_length(vm: &mut Vm, value: &Value) -> error::Result<f64> {

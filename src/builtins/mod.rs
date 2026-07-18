@@ -91,7 +91,13 @@ impl<'t> CompiledCaptures<'t> {
         self.groups.get(index).copied().flatten()
     }
 
-    fn apply_ecmascript_capture_clearing(&mut self, source: &str, flags: &str, input: &str) {
+    fn apply_ecmascript_capture_clearing(
+        &mut self,
+        source: &str,
+        flags: &str,
+        input: &str,
+        code_unit_input: bool,
+    ) {
         let rules = regex_repeated_capture_clear_rules(source);
         if rules.quantified_groups.is_empty() {
             return;
@@ -108,7 +114,13 @@ impl<'t> CompiledCaptures<'t> {
                     .copied()
                     .flatten()
                     .map(|m| (m.start(), m.end())),
-                None => regex_final_iteration_span(&group.body, flags, input, full_match),
+                None => regex_final_iteration_span(
+                    &group.body,
+                    flags,
+                    input,
+                    full_match,
+                    code_unit_input,
+                ),
             };
             quantified_spans.push((group.group_id, span));
         }
@@ -158,8 +170,20 @@ struct RegexModifierState {
 /// `m` (multiline ^/$), `s` (dotall). Other flags (`g`/`y`/`u`) do not affect
 /// the regex engine here and are handled by the caller.
 fn compile_regex(source: &str, flags: &str) -> Result<CompiledRegex, String> {
+    compile_regex_with_input_mode(source, flags, false)
+}
+
+fn compile_regex_for_code_units(source: &str, flags: &str) -> Result<CompiledRegex, String> {
+    compile_regex_with_input_mode(source, flags, true)
+}
+
+fn compile_regex_with_input_mode(
+    source: &str,
+    flags: &str,
+    code_unit_input: bool,
+) -> Result<CompiledRegex, String> {
     let capture_count = regex_capture_count(source);
-    let backend_source = normalize_regex_for_backend(source, flags, capture_count);
+    let backend_source = normalize_regex_for_backend(source, flags, capture_count, code_unit_input);
     if regex_uses_backreference(source, capture_count) {
         let mut b = fancy_regex::RegexBuilder::new(&backend_source);
         b.case_insensitive(flags.contains('i'));
@@ -235,8 +259,9 @@ impl CompiledRegex {
         input: &'t str,
         source: &str,
         flags: &str,
+        code_unit_input: bool,
     ) -> error::Result<Option<CompiledCaptures<'t>>> {
-        self.captures_at_ecma(input, 0, source, flags)
+        self.captures_at_ecma(input, 0, source, flags, code_unit_input)
     }
 
     fn captures_at<'t>(
@@ -259,10 +284,11 @@ impl CompiledRegex {
         start: usize,
         source: &str,
         flags: &str,
+        code_unit_input: bool,
     ) -> error::Result<Option<CompiledCaptures<'t>>> {
         let mut captures = self.captures_at(input, start)?;
         if let Some(caps) = captures.as_mut() {
-            caps.apply_ecmascript_capture_clearing(source, flags, input);
+            caps.apply_ecmascript_capture_clearing(source, flags, input, code_unit_input);
         }
         Ok(captures)
     }
@@ -307,10 +333,11 @@ impl CompiledRegex {
         input: &'t str,
         source: &str,
         flags: &str,
+        code_unit_input: bool,
     ) -> error::Result<Vec<CompiledCaptures<'t>>> {
         let mut captures = self.captures_iter(input)?;
         for caps in &mut captures {
-            caps.apply_ecmascript_capture_clearing(source, flags, input);
+            caps.apply_ecmascript_capture_clearing(source, flags, input, code_unit_input);
         }
         Ok(captures)
     }
@@ -402,7 +429,12 @@ fn regex_runtime_error(error: fancy_regex::Error) -> Arc<Error> {
     Error::syntax(format!("Invalid regex match: {error}"))
 }
 
-fn normalize_regex_for_backend(source: &str, flags: &str, capture_count: usize) -> String {
+fn normalize_regex_for_backend(
+    source: &str,
+    flags: &str,
+    capture_count: usize,
+    code_unit_input: bool,
+) -> String {
     if source == "[]" {
         return r"[^\s\S]".to_string();
     }
@@ -498,11 +530,17 @@ fn normalize_regex_for_backend(source: &str, flags: &str, capture_count: usize) 
                     let trail = u32::from_str_radix(&trail_hex, 16).unwrap_or(0);
                     if (0xdc00..=0xdfff).contains(&trail) {
                         chars = lookahead;
-                        let scalar = 0x10000 + ((lead - 0xd800) << 10) + (trail - 0xdc00);
-                        out.pop();
-                        out.push_str("\\u{");
-                        out.push_str(&format!("{scalar:x}"));
-                        out.push('}');
+                        if code_unit_input && !unicode_mode {
+                            push_surrogate_code_unit_escape_for_backend(&mut out, lead, in_class);
+                            out.push('\\');
+                            push_surrogate_code_unit_escape_for_backend(&mut out, trail, in_class);
+                        } else {
+                            let scalar = 0x10000 + ((lead - 0xd800) << 10) + (trail - 0xdc00);
+                            out.pop();
+                            out.push_str("\\u{");
+                            out.push_str(&format!("{scalar:x}"));
+                            out.push('}');
+                        }
                     } else if unicode_mode {
                         push_surrogate_sentinel_escape_for_backend(&mut out, lead);
                     } else {
@@ -694,6 +732,19 @@ fn normalize_regex_for_backend(source: &str, flags: &str, capture_count: usize) 
             continue;
         }
 
+        // The Rust regex backends match Unicode scalars. Non-Unicode ES regexes
+        // instead consume UTF-16 code units, so preserve each half explicitly.
+        if code_unit_input
+            && !unicode_mode
+            && crate::value::utf16_single_unit_from_internal_char(ch).is_none()
+        {
+            let mut units = [0; 2];
+            for unit in ch.encode_utf16(&mut units) {
+                push_surrogate_sentinel_atom_for_backend(&mut out, *unit as u32);
+            }
+            continue;
+        }
+
         if protect_non_unicode_case && !in_class && !ch.is_ascii() {
             out.push_str("(?-i:");
             out.push(ch);
@@ -811,7 +862,7 @@ fn make_regexp_groups_object(
         for capture in names {
             let value = caps
                 .get(capture.index)
-                .map(|m| Value::String(Arc::from(m.as_str())))
+                .map(|m| Value::String(canonicalize_regexp_match_text(m.as_str())))
                 .unwrap_or(Value::Undefined);
             props.insert(
                 PropertyKey::from(capture.name.clone()),
@@ -820,6 +871,11 @@ fn make_regexp_groups_object(
         }
     });
     Ok(Value::Object(GcIdx(obj_idx)))
+}
+
+fn canonicalize_regexp_match_text(text: &str) -> Arc<str> {
+    let text = crate::value::utf16_to_string(&crate::value::utf16_from_str(text));
+    Arc::from(text.as_str())
 }
 
 struct RegexCaptureClearRules {
@@ -957,11 +1013,12 @@ fn regex_final_iteration_span(
     flags: &str,
     input: &str,
     full_match: CompiledMatch<'_>,
+    code_unit_input: bool,
 ) -> Option<(usize, usize)> {
     if body.is_empty() {
         return None;
     }
-    let re = compile_regex(body, flags).ok()?;
+    let re = compile_regex_with_input_mode(body, flags, code_unit_input).ok()?;
     let mut last = None;
     for m in re.find_iter(input).ok()? {
         if m.start() >= full_match.start()
@@ -2593,6 +2650,7 @@ fn make_regexp_constructor_in_env(vm: &mut Vm, env: GcIdx) -> error::Result<(GcI
         vm.new_native_function_in_env("[Symbol.search]", regexp_symbol_search, 1, env)?;
     let replace_fn =
         vm.new_native_function_in_env("[Symbol.replace]", regexp_symbol_replace, 2, env)?;
+    let split_fn = vm.new_native_function_in_env("[Symbol.split]", regexp_symbol_split, 2, env)?;
     vm.heap.with_obj(regex_proto.0, |o| {
         if let HeapObj::Object(obj) = o {
             let mut props = obj.props.lock();
@@ -2655,6 +2713,10 @@ fn make_regexp_constructor_in_env(vm: &mut Vm, env: GcIdx) -> error::Result<(GcI
             props.insert(
                 PropertyKey::Symbol(vm.well_known_symbols.replace),
                 data_prop(Value::Object(replace_fn)),
+            );
+            props.insert(
+                PropertyKey::Symbol(vm.well_known_symbols.split),
+                data_prop(Value::Object(split_fn)),
             );
         }
     });
