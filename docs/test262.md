@@ -7491,12 +7491,12 @@ exactly **+42 pass / -42 fail**. The aggregate is **30344 pass / 6180 fail /
 11781 skip / 12 timeout / 0 error / 48317 total / 36524 pass-or-fail
 executed**, or **62.8%** of all files and **83.1%** of executed files.
 
-The remaining **95** RegExp failures group exactly into **42** direct/root
-legacy syntax and matcher files, **29** `prototype/Symbol.replace` files,
-**16** lookbehind files, **6** match-indices files, and **2**
-CharacterClassEscapes files. `Symbol.replace` is the next safest coherent
-method unit; the larger 42-file root bucket is heterogeneous and should not be
-treated as one patch.
+At this checkpoint, the remaining **95** RegExp failures grouped exactly into
+**42** direct/root legacy syntax and matcher files, **29**
+`prototype/Symbol.replace` files, **16** lookbehind files, **6** match-indices
+files, and **2** CharacterClassEscapes files. The following unit closes the 29
+`Symbol.replace` failures; the larger 42-file root bucket remains
+heterogeneous and must not be treated as one patch.
 
 ```text
 [Decision Log]
@@ -7506,6 +7506,78 @@ treated as one patch.
 - 선택한 방식: Register Realm-local Symbol.split, follow the specification algorithm with rooted observable state, use Realm-aware ArrayCreate, isolate sentinel-backed code-unit compilation to non-Unicode exec, retain scalar replacement mode, and give native match arrays a private GC-retrying allocator.
 - 다른 대안 대신 이 방식을 선택한 이유: A String-only shortcut cannot satisfy generic species and exec observability; a global backend conversion regresses direct replacement and changes unrelated allocation contracts; replacing the regex engine is a separate architectural project.
 - 장점, 단점 및 영향: All 42 executed Symbol.split failures become passes with no RegExp skip, timeout, language-subset, or matrix regression. Non-Unicode execution now preserves code units, but rebuilding the sentinel input on each native exec remains a bounded performance issue for future optimization.
+```
+
+## RegExp Symbol.replace and generic substitution
+
+`RegExp.prototype[Symbol.replace]` now implements the generic
+[ECMA-262 replacement algorithm](https://tc39.es/ecma262/multipage/text-processing.html#sec-regexp.prototype-@@replace).
+The method converts the input and replacement in the required order,
+recognizes callable Proxies, observes global and Unicode state, performs the
+strict initial `lastIndex = 0` write for global matching, and repeatedly calls
+the dynamic `RegExpExec` path. Empty global matches advance with
+`AdvanceStringIndex` rather than a Rust scalar offset.
+
+Matching and replacement are intentionally separate phases. The first phase
+retains each raw result object. The second reads result length, matched text,
+clamped index, captures, and named groups in order, then invokes the functional
+replacer or GetSubstitution. This preserves getters, custom `exec` results,
+side effects, and exceptions that the previous direct backend loop bypassed.
+
+GetSubstitution operates on UTF-16 code units and supports `$$`, `$&`,
+``$` ``, `$'`, `$n`, `$nn`, and `$<name>`. Numeric capture parsing now requires
+the leading `$`, so ordinary text such as `a1` or `foo1` is not consumed as a
+capture reference. Functional replacement materializes at most
+`MAX_MATERIALIZED_CALL_ARGUMENTS - 3` captures before the string, position,
+and input arguments; the final optional groups argument is checked against the
+same sandbox call cap.
+
+All retained results, getter values, captures, groups, replacer arguments, and
+partially assembled output remain rooted across re-entrant GC. Named-groups
+objects use the sandbox allocator, and match collection plus UTF-16 output
+assembly consume VM fuel. Exact-cap and forced-GC regressions cover both
+string and functional replacement. The Test262 host also installs `print` for
+both synchronous and asynchronous harnesses; the shim is covered by the
+tooling tests instead of changing engine semantics.
+
+On Test262 `020cb74075849d1e404bbcdb62feb7a02e6966db`, focused
+`built-ins/RegExp/prototype/Symbol.replace` is **60 pass / 0 fail / 10 skip**.
+The complete `built-ins/RegExp` subtree moves from **922 pass / 95 fail / 856
+skip / 6 timeout** to **951 / 66 / 856 / 6**, exactly **+29 pass / -29 fail**.
+The supported subset remains **12751 pass / 0 fail / 7687 skip / 20438 total**.
+
+Final local gates pass all targets/features, warnings-denied Clippy,
+formatting/diff, release, and wasm32. Python tooling is **102/102**, Rust
+lib/unit **124/124**, bugfixes **67/67**, builtins **468/468**, and Fuel
+**26/26**. GPT 5.6 reviewers Ampere and Nash returned `CLEAN` after fixes for
+ordinary trailing digits, the capture-materialization boundary, GC-rooted
+group allocation, and custom result ordering. Both were closed. No Umans
+provider route or coder model was used.
+
+Feature SHA `55c5943c8100a3dba12a429ea025a3d70dd3b30d` passed ordinary CI
+`29640862796` and full matrix `29640862819`. Of the 30 result files at
+`/tmp/ruja-artifacts-regexp-replace-feature.v6d1PN`, 29 are byte-identical to
+`/tmp/ruja-artifacts-regexp-split-feature.0TQyVs`. Only built-ins changed, from
+**14746 pass / 5363 fail / 3547 skip / 12 timeout** to **14775 / 5334 / 3547
+/ 12**, exactly **+29 pass / -29 fail**. The aggregate is **30373 pass / 6151
+fail / 11781 skip / 12 timeout / 0 error / 48317 total / 36524 pass-or-fail
+executed**, or **62.9%** of all files and **83.2%** of executed files.
+
+The remaining **66** RegExp failures group into **42** direct/root legacy
+syntax and matcher files, **16** lookbehind files, **6** match-indices files,
+and **2** CharacterClassEscapes files. The two CharacterClassEscapes files are
+the smallest next diagnostic unit; they must be baselined and classified
+before any feature admission. Match indices and lookbehind remain independent
+contracts.
+
+```text
+[Decision Log]
+- 목적과 의도: Implement the generic RegExp Symbol.replace and GetSubstitution contracts without weakening sandbox GC, argument, UTF-16, Realm, or fuel invariants.
+- 기존 구현 및 제약 조건: The old method iterated the native regex backend directly, bypassed dynamic RegExpExec and observable result objects, mixed matching with replacement conversion, used scalar offsets, and left result/group lifetimes and large replacer argument lists unsafe at sandbox boundaries.
+- 검토한 주요 대안: Patch the 29 tests individually, keep a fast native-only path for branded RegExp objects, delegate substitution to the Rust backend, or follow the two-phase specification algorithm for every receiver.
+- 선택한 방식: Use dynamic RegExpExec to collect rooted result objects, process their properties in specification order, implement UTF-16 GetSubstitution locally, meter native work, and enforce the existing call-argument and allocation limits explicitly.
+- 다른 대안 대신 이 방식을 선택한 이유: Native shortcuts cannot preserve custom exec, getters, Proxy callability, side-effect order, or ECMAScript replacement-token behavior. A single generic path keeps observable semantics consistent and leaves backend optimization as a later non-semantic unit.
+- 장점, 단점 및 영향: All 29 executed Symbol.replace failures become passes with no skip, timeout, supported-subset, or non-built-ins matrix regression. The generic path retains all matches before replacement and therefore uses bounded heap proportional to global match count; fuel and the heap cap remain the controlling sandbox limits.
 ```
 
 ## Why the full-suite rate is not higher

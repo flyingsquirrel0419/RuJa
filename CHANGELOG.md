@@ -4,6 +4,35 @@
 
 ### Fixed
 
+- `RegExp.prototype[Symbol.replace]` now follows the generic ECMA-262
+  algorithm instead of iterating the native regex backend directly. It
+  observes replacement callability, global state, strict `lastIndex` writes,
+  and dynamic `RegExpExec`; collects result objects before processing them;
+  and then reads match length, index, captures, and groups in specification
+  order. Callable Proxy replacers are supported, global empty matches advance
+  by UTF-16 index, and replacement output is assembled in code units.
+
+  The shared substitution path now implements `$$`, `$&`, ``$` ``, `$'`,
+  `$n`, `$nn`, and `$<name>` without confusing ordinary trailing digits for
+  capture tokens. Replacement arguments respect the sandbox argument cap,
+  observable results remain rooted across re-entrant GC, exact-cap allocation
+  is preserved, and match/output work consumes fuel. The Test262 host now also
+  provides the required `print` shim for synchronous and asynchronous tests.
+
+  Focused `built-ins/RegExp/prototype/Symbol.replace` closes at **60 pass / 0
+  fail / 10 skip**. The complete `built-ins/RegExp` subtree improves from
+  **922 pass / 95 fail / 856 skip / 6 timeout** to **951 / 66 / 856 / 6**,
+  exactly **+29 pass / -29 fail**. Final local gates include tooling
+  **102/102**, Rust lib/unit **124/124**, builtins **468/468**, bugfixes
+  **67/67**, Fuel **26/26**, release, wasm32, warnings-denied Clippy,
+  formatting, and the supported subset at **12751/12751**. GPT 5.6 reviewers
+  Ampere and Nash returned `CLEAN`; no coder or Umans route was used. Feature
+  commit `55c5943` passed CI `29640862796` and full matrix `29640862819`. Of
+  30 result files at `/tmp/ruja-artifacts-regexp-replace-feature.v6d1PN`, 29
+  are byte-identical to the preceding RegExp split artifacts; only built-ins
+  changed. The aggregate is **30373 pass / 6151 fail / 11781 skip / 12 timeout
+  / 0 error / 48317 total** (**62.9%** of all files, **83.2%** of executed
+  files).
 - `RegExp.prototype[Symbol.split]` now follows the generic specification
   algorithm instead of relying on `String.prototype.split`'s RegExp class-name
   shortcut. It performs ordered string conversion, species construction,
