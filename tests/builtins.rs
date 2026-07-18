@@ -14505,6 +14505,105 @@ fn regex_literal_test() {
 }
 
 #[test]
+fn regexp_character_class_escapes_use_ecmascript_sets() {
+    assert_eq!(
+        run(r#"
+            var flags = ["", "u", "v"];
+            var ok = true;
+            for (var i = 0; i < flags.length; i++) {
+              var flag = flags[i];
+              var digit = new RegExp("^\\d$", flag);
+              var nonDigit = new RegExp("^\\D$", flag);
+              var digitClass = new RegExp("^[\\d]$", flag);
+              var nonDigitClass = new RegExp("^[\\D]$", flag);
+              var whitespace = new RegExp("^\\s$", flag);
+              var nonWhitespace = new RegExp("^\\S$", flag);
+              var whitespaceClass = new RegExp("^[\\s]$", flag);
+              var nonWhitespaceClass = new RegExp("^[\\S]$", flag);
+              var word = new RegExp("^\\w$", flag);
+              var nonWord = new RegExp("^\\W$", flag);
+              var wordClass = new RegExp("^[\\w]$", flag);
+              var nonWordClass = new RegExp("^[\\W]$", flag);
+
+              ok = ok &&
+                digit.test("5") && !digit.test("\u0660") &&
+                !nonDigit.test("5") && nonDigit.test("\u0660") &&
+                digitClass.test("5") && !digitClass.test("\u0660") &&
+                !nonDigitClass.test("5") && nonDigitClass.test("\u0660") &&
+                whitespace.test("\uFEFF") && whitespace.test("\u2028") &&
+                !whitespace.test("\u0085") && !whitespace.test("\u180E") &&
+                !nonWhitespace.test("\uFEFF") && nonWhitespace.test("\u0085") &&
+                whitespaceClass.test("\uFEFF") && !whitespaceClass.test("\u0085") &&
+                !nonWhitespaceClass.test("\uFEFF") && nonWhitespaceClass.test("\u0085") &&
+                word.test("_") && !word.test("é") &&
+                !nonWord.test("_") && nonWord.test("é") &&
+                wordClass.test("_") && !wordClass.test("é") &&
+                !nonWordClass.test("_") && nonWordClass.test("é");
+            }
+            ok;
+            "#),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run(r#"/^([\d])\1$/.test("55") && !/^([\d])\1$/.test("\u0660\u0660");"#),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run(r#"
+            var flags = ["", "u", "v"];
+            var ok = true;
+            for (var i = 0; i < flags.length; i++) {
+              var repeatedDigit = new RegExp("^(\\d)\\1$", flags[i]);
+              var repeatedWhitespace = new RegExp("^(\\s)\\1$", flags[i]);
+              ok = ok &&
+                repeatedDigit.test("55") &&
+                !repeatedDigit.test("\u0660\u0660") &&
+                repeatedWhitespace.test("\uFEFF\uFEFF");
+            }
+            ok &&
+              /^[\d-a]$/.test("-") &&
+              /^[\d-a]$/.test("5") &&
+              /^[\s-a]$/.test("\uFEFF") &&
+              /^[a-\d]$/.test("-") &&
+              /^[a-\d]$/.test("5") &&
+              !/^[a-\d]$/.test("b") &&
+              /^[a-\s]$/.test("-") &&
+              /^[a-\s]$/.test("\uFEFF") &&
+              !/^[a-\s]$/.test("\u0085") &&
+              /^[\d-a-\s]$/.test("5") &&
+              /^[\d-a-\s]$/.test("-") &&
+              /^[\d-a-\s]$/.test("\uFEFF") &&
+              !/^[\d-a-\s]$/.test("b") &&
+              /^[\-\d]$/.test("-") &&
+              /^[\-\d]$/.test("5") &&
+              /^[^\d]$/.test("\u0660") &&
+              /^[^\S]$/.test("\uFEFF") &&
+              !/[^\S]/.test("\u0085");
+            "#),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run(r#"
+            /\\d/.test("\\d") &&
+              !/[\\d]/.test("5") &&
+              /[\\d]/.test("\\") &&
+              new RegExp("\\\\d").test("\\d") &&
+              !new RegExp("[\\\\d]").test("5");
+            "#),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run(r#"
+            /^\D{2}$/.test("😀") &&
+              !/^\D$/.test("😀") &&
+              /^\D$/u.test("😀") &&
+              /^\D$/v.test("😀");
+            "#),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn regex_literals_use_realm_intrinsics_not_mutable_bindings() {
     assert_eq!(
         run(r#"

@@ -429,6 +429,66 @@ fn regex_runtime_error(error: fancy_regex::Error) -> Arc<Error> {
     Error::syntax(format!("Invalid regex match: {error}"))
 }
 
+// Rust regex uses Unicode Nd/White_Space; ECMAScript uses ASCII digits and
+// its lexical WhiteSpace plus LineTerminator set (including FEFF, excluding 0085).
+const ECMASCRIPT_WHITESPACE_CLASS_BODY: &str = r"\x09-\x0d\x20\u{a0}\u{1680}\u{2000}-\u{200a}\u{2028}-\u{2029}\u{202f}\u{205f}\u{3000}\u{feff}";
+
+fn escape_annex_b_hyphen_before_class_set(out: &mut String) {
+    if !out.ends_with('-') {
+        return;
+    }
+    let preceding_backslashes = out[..out.len() - 1]
+        .chars()
+        .rev()
+        .take_while(|ch| *ch == '\\')
+        .count();
+    if preceding_backslashes % 2 == 0 {
+        out.pop();
+        out.push_str(r"\-");
+    }
+}
+
+fn push_ecmascript_class_escape_for_backend(
+    out: &mut String,
+    escape: char,
+    in_class: bool,
+    unicode_mode: bool,
+) {
+    out.pop();
+    if in_class {
+        // Annex B treats a range with either multi-character endpoint as the
+        // union of both endpoints and a literal hyphen in non-Unicode mode.
+        if !unicode_mode {
+            escape_annex_b_hyphen_before_class_set(out);
+        }
+        match escape {
+            'd' => out.push_str("[:digit:]"),
+            'D' => out.push_str("[:^digit:]"),
+            's' | 'S' => {
+                out.push('[');
+                if escape == 'S' {
+                    out.push('^');
+                }
+                out.push_str(ECMASCRIPT_WHITESPACE_CLASS_BODY);
+                out.push(']');
+            }
+            _ => unreachable!(),
+        }
+        return;
+    }
+
+    out.push('[');
+    if matches!(escape, 'D' | 'S') {
+        out.push('^');
+    }
+    match escape {
+        'd' | 'D' => out.push_str("0-9"),
+        's' | 'S' => out.push_str(ECMASCRIPT_WHITESPACE_CLASS_BODY),
+        _ => unreachable!(),
+    }
+    out.push(']');
+}
+
 fn normalize_regex_for_backend(
     source: &str,
     flags: &str,
@@ -470,6 +530,8 @@ fn normalize_regex_for_backend(
                     out.pop();
                     push_legacy_decimal_escape_for_backend(&mut out, &digits);
                 }
+            } else if matches!(ch, 'd' | 'D' | 's' | 'S') {
+                push_ecmascript_class_escape_for_backend(&mut out, ch, in_class, unicode_mode);
             } else if flags.contains('u')
                 && ch == 'P'
                 && !in_class

@@ -6,7 +6,13 @@ from collections import defaultdict
 
 # Reuse runner functions
 sys.path.insert(0, str(Path(__file__).parent))
-from test262_runner import build_source, should_skip, RUJA, TEST262
+from test262_runner import (
+    RUJA,
+    TEST262,
+    build_source,
+    should_skip,
+    test_timeout_seconds,
+)
 
 def run_test_capture(path):
     full, meta = build_source(path)
@@ -18,7 +24,12 @@ def run_test_capture(path):
             tf.write(full)
             tmpname = tf.name
         try:
-            r = subprocess.run([RUJA, tmpname], capture_output=True, text=True, timeout=8)
+            r = subprocess.run(
+                [RUJA, tmpname],
+                capture_output=True,
+                text=True,
+                timeout=test_timeout_seconds(path),
+            )
         finally:
             os.unlink(tmpname)
         out = (r.stderr + r.stdout).strip()

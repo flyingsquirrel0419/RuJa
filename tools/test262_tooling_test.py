@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 import test262_analyze
 import test262_runner
+import analyze_failures
 from test262_class_computed_field_admission import CLASS_COMPUTED_FIELD_FILES
 from test262_class_default_parameter_admission import CLASS_DEFAULT_PARAMETER_FILES
 from test262_class_destructuring_admission import CLASS_DESTRUCTURING_FILES
@@ -2519,6 +2520,105 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
                     self.assertEqual(tool.test_timeout_seconds(outside), 8)
                 finally:
                     tool.TEST262 = original_root
+
+    def test_character_class_escape_timeout_is_limited_to_generated_complements(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            relative_paths = {
+                "built-ins/RegExp/CharacterClassEscapes/character-class-digit-class-escape-negative-cases.js",
+                "built-ins/RegExp/CharacterClassEscapes/character-class-non-digit-class-escape-positive-cases.js",
+                "built-ins/RegExp/CharacterClassEscapes/character-class-non-whitespace-class-escape-positive-cases.js",
+                "built-ins/RegExp/CharacterClassEscapes/character-class-non-word-class-escape-positive-cases.js",
+                "built-ins/RegExp/CharacterClassEscapes/character-class-whitespace-class-escape-negative-cases.js",
+                "built-ins/RegExp/CharacterClassEscapes/character-class-word-class-escape-negative-cases.js",
+            }
+            ordinary = root / (
+                "test/built-ins/RegExp/CharacterClassEscapes/"
+                "character-class-digit-class-escape-positive-cases.js"
+            )
+            outside = root / (
+                "test/built-ins/RegExp/other/"
+                "character-class-digit-class-escape-negative-cases.js"
+            )
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    self.assertEqual(
+                        tool.REGEXP_CHARACTER_CLASS_ESCAPE_EXTENDED_TIMEOUT_FILES,
+                        relative_paths,
+                    )
+                    for relative_path in relative_paths:
+                        slow = root / "test" / relative_path
+                        self.assertTrue(
+                            tool.regexp_character_class_escape_extended_timeout_path(slow)
+                        )
+                        self.assertEqual(tool.test_timeout_seconds(slow), 30)
+                    self.assertFalse(
+                        tool.regexp_character_class_escape_extended_timeout_path(ordinary)
+                    )
+                    self.assertEqual(tool.test_timeout_seconds(ordinary), 8)
+                    self.assertFalse(
+                        tool.regexp_character_class_escape_extended_timeout_path(outside)
+                    )
+                    self.assertEqual(tool.test_timeout_seconds(outside), 8)
+                finally:
+                    tool.TEST262 = original_root
+
+    def test_character_class_escape_exhaustive_timeout_is_limited_to_one_file(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            exhaustive = root / (
+                "test/built-ins/RegExp/character-class-escape-non-whitespace.js"
+            )
+            ordinary = root / (
+                "test/built-ins/RegExp/character-class-escape-non-whitespace-u180e.js"
+            )
+            outside = root / (
+                "test/built-ins/String/character-class-escape-non-whitespace.js"
+            )
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    self.assertEqual(
+                        tool.REGEXP_CHARACTER_CLASS_ESCAPE_EXHAUSTIVE_TIMEOUT_FILES,
+                        {"built-ins/RegExp/character-class-escape-non-whitespace.js"},
+                    )
+                    self.assertTrue(
+                        tool.regexp_character_class_escape_exhaustive_timeout_path(
+                            exhaustive
+                        )
+                    )
+                    self.assertEqual(tool.test_timeout_seconds(exhaustive), 60)
+                    self.assertFalse(
+                        tool.regexp_character_class_escape_exhaustive_timeout_path(ordinary)
+                    )
+                    self.assertEqual(tool.test_timeout_seconds(ordinary), 8)
+                    self.assertFalse(
+                        tool.regexp_character_class_escape_exhaustive_timeout_path(outside)
+                    )
+                    self.assertEqual(tool.test_timeout_seconds(outside), 8)
+                finally:
+                    tool.TEST262 = original_root
+
+    def test_legacy_failure_analyzer_reuses_runner_timeout_policy(self):
+        path = Path("/tmp/test262/test/built-ins/RegExp/slow.js")
+        completed = subprocess.CompletedProcess(
+            [str(test262_runner.RUJA), "temporary.js"],
+            0,
+            stdout="",
+            stderr="",
+        )
+        with (
+            patch.object(analyze_failures, "build_source", return_value=("1;", {})),
+            patch.object(analyze_failures, "should_skip", return_value=False),
+            patch.object(analyze_failures, "test_timeout_seconds", return_value=60),
+            patch.object(analyze_failures.subprocess, "run", return_value=completed) as run,
+        ):
+            status, output = analyze_failures.run_test_capture(path)
+        self.assertEqual((status, output), ("pass", ""))
+        self.assertEqual(run.call_args.kwargs["timeout"], 60)
 
     def test_private_brand_realm_admission_is_exact(self):
         with tempfile.TemporaryDirectory() as temp_dir:

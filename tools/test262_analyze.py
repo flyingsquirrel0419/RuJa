@@ -676,6 +676,19 @@ REGEXP_LITERAL_EXTENDED_TIMEOUT_FILES = {
     "language/literals/regexp/S7.8.5_A2.4_T2.js",
 }
 
+REGEXP_CHARACTER_CLASS_ESCAPE_EXTENDED_TIMEOUT_FILES = {
+    "built-ins/RegExp/CharacterClassEscapes/character-class-digit-class-escape-negative-cases.js",
+    "built-ins/RegExp/CharacterClassEscapes/character-class-non-digit-class-escape-positive-cases.js",
+    "built-ins/RegExp/CharacterClassEscapes/character-class-non-whitespace-class-escape-positive-cases.js",
+    "built-ins/RegExp/CharacterClassEscapes/character-class-non-word-class-escape-positive-cases.js",
+    "built-ins/RegExp/CharacterClassEscapes/character-class-whitespace-class-escape-negative-cases.js",
+    "built-ins/RegExp/CharacterClassEscapes/character-class-word-class-escape-negative-cases.js",
+}
+
+REGEXP_CHARACTER_CLASS_ESCAPE_EXHAUSTIVE_TIMEOUT_FILES = {
+    "built-ins/RegExp/character-class-escape-non-whitespace.js",
+}
+
 TYPED_ARRAY_SLICE_PREFIXES = (
     "built-ins/TypedArray/prototype/slice/",
 )
@@ -1611,11 +1624,29 @@ def regexp_literal_extended_timeout_path(path):
         return False
     return rel.as_posix() in REGEXP_LITERAL_EXTENDED_TIMEOUT_FILES
 
+def regexp_character_class_escape_extended_timeout_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except ValueError:
+        return False
+    return rel.as_posix() in REGEXP_CHARACTER_CLASS_ESCAPE_EXTENDED_TIMEOUT_FILES
+
+def regexp_character_class_escape_exhaustive_timeout_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except ValueError:
+        return False
+    return rel.as_posix() in REGEXP_CHARACTER_CLASS_ESCAPE_EXHAUSTIVE_TIMEOUT_FILES
+
 def test_timeout_seconds(path):
     if typed_array_copy_within_extended_timeout_path(path):
         return 600
+    if regexp_character_class_escape_exhaustive_timeout_path(path):
+        return 60
     if regexp_literal_extended_timeout_path(path):
         return 20
+    if regexp_character_class_escape_extended_timeout_path(path):
+        return 30
     return 8
 
 def typed_array_slice_path(path):
