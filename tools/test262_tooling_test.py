@@ -2051,7 +2051,11 @@ class RegExpMatchIndicesAdmissionTests(unittest.TestCase):
         )
 
         test_root = Path(test262_runner.TEST262) / "test"
-        if test_root.is_dir():
+        try:
+            test_root_available = test_root.is_dir()
+        except OSError:
+            test_root_available = False
+        if test_root_available:
             for relative in REGEXP_MATCH_INDICES_FILES:
                 path = test_root / relative
                 self.assertTrue(path.is_file(), relative)
