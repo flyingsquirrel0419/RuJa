@@ -241,6 +241,26 @@ class ModuleStagingTests(unittest.TestCase):
 
 
 class HarnessAssemblyTests(unittest.TestCase):
+    def test_sync_tests_receive_the_host_print_binding_in_both_tools(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            harness = root / "harness"
+            harness.mkdir()
+            (harness / "sta.js").write_text("/* STA HARNESS */")
+            (harness / "assert.js").write_text("/* ASSERT HARNESS */")
+            test = root / "test.js"
+            test.write_text("/*---\n---*/\nArray.print = print;\n")
+
+            for tool in (test262_runner, test262_analyze):
+                original = tool.HARNESS
+                tool.HARNESS = harness
+                try:
+                    source, meta = tool.build_source(test)
+                finally:
+                    tool.HARNESS = original
+                self.assertNotIn("async", meta.get("flags", []))
+                self.assertIn(ASYNC_PRINT_SHIM, source)
+
     def test_strict_directive_precedes_async_harness_in_both_tools(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

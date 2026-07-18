@@ -1040,9 +1040,14 @@ fn regexp_match_internal(vm: &mut Vm, regexp: Value, s: &str) -> error::Result<V
                     .map(|m| crate::value::utf16_len(&s[..m.start()]))
                     .unwrap_or(0);
                 let groups = make_regexp_groups_object(vm, &caps, &capture_names)?;
-                let result = make_value_array(vm, items)?;
-                add_regexp_exec_result_props(vm, &result, match_start, s, groups)?;
-                Ok(result)
+                let groups_pin = vm.pin(&groups);
+                let completion = (|| {
+                    let result = make_value_array(vm, items)?;
+                    add_regexp_exec_result_props(vm, &result, match_start, s, groups)?;
+                    Ok(result)
+                })();
+                vm.unpin_many(groups_pin);
+                completion
             }
             None => Ok(Value::Null),
         }

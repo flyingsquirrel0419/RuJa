@@ -1,3 +1,4 @@
+use super::call_arguments::MAX_MATERIALIZED_CALL_ARGUMENTS;
 use super::*;
 use std::fmt::Write as _;
 
@@ -769,149 +770,297 @@ pub(crate) fn regexp_symbol_replace(
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    struct MatchRecord {
-        matched: String,
-        start_byte: usize,
-        end_byte: usize,
-        start_utf16: usize,
-        captures: Vec<Option<String>>,
-        groups: Value,
-    }
-
-    let rx = this.ok_or_else(|| Error::type_err("not a RegExp".to_string()))?;
-    let Value::Object(_) = rx else {
-        return Err(Error::type_err("not a RegExp".to_string()));
+    let Some(rx @ Value::Object(_)) = this else {
+        return Err(Error::type_err("RegExp method called on non-object"));
     };
-
-    let s = vm
-        .to_string(args.first().unwrap_or(&Value::Undefined))?
-        .to_string();
     let replace_value = args.get(1).cloned().unwrap_or(Value::Undefined);
-    let functional_replace = matches!(&replace_value, Value::Object(idx) if {
-        vm.heap.with_obj(idx.0, |o| o.is_function())
-    });
-    let replace_string = if functional_replace {
-        String::new()
-    } else {
-        vm.to_string(&replace_value)?.to_string()
-    };
-
-    let source = read_regexp_source(vm, &Some(rx.clone()))?;
-    let flags = read_regexp_flags(vm, &Some(rx.clone())).unwrap_or_default();
-    let global = flags.contains('g');
-    let sticky = flags.contains('y');
-    let full_unicode = flags.contains('u') || flags.contains('v');
-    let re = compile_regex(&source, &flags)
-        .map_err(|e| Error::syntax(format!("Invalid regex: {}", e)))?;
-    let capture_names = regex_capture_names(&source);
-
-    if global {
-        set_regexp_last_index(vm, &rx, 0.0)?;
-    }
-
-    let input_len = crate::value::utf16_len(&s);
-    let mut next_index = if global {
-        0
-    } else {
-        let last_index = vm.get_property(&rx, "lastIndex")?;
-        regexp_to_length(vm, &last_index)? as usize
-    };
-    let mut matches = Vec::new();
-
-    loop {
-        if next_index > input_len {
-            if global || sticky {
-                set_regexp_last_index(vm, &rx, 0.0)?;
-            }
-            break;
-        }
-        let Some(start_byte) = crate::value::utf16_index_to_byte(&s, next_index) else {
-            if global || sticky {
-                set_regexp_last_index(vm, &rx, 0.0)?;
-            }
-            break;
-        };
-        let caps = re
-            .captures_at_ecma(&s, start_byte, &source, &flags, false)?
-            .filter(|caps| {
-                !sticky
-                    || caps
-                        .get(0)
-                        .map(|matched| matched.start() == start_byte)
-                        .unwrap_or(false)
-            });
-        let Some(caps) = caps else {
-            if global || sticky {
-                set_regexp_last_index(vm, &rx, 0.0)?;
-            }
-            break;
-        };
-        let Some(matched) = caps.get(0) else {
-            break;
-        };
-        let match_start = crate::value::utf16_len(&s[..matched.start()]);
-        let match_end = crate::value::utf16_len(&s[..matched.end()]);
-        let groups = make_regexp_groups_object(vm, &caps, &capture_names)?;
-        let captures = (1..caps.len())
-            .map(|index| caps.get(index).map(|capture| capture.as_str().to_string()))
-            .collect();
-        matches.push(MatchRecord {
-            matched: matched.as_str().to_string(),
-            start_byte: matched.start(),
-            end_byte: matched.end(),
-            start_utf16: match_start,
-            captures,
-            groups,
-        });
-
-        if !global {
-            break;
-        }
-
-        next_index = if match_end == match_start {
-            advance_string_index(&s, match_end, full_unicode)
+    let mut persistent_pins = vm.pin(&rx) + vm.pin(&replace_value);
+    let result = (|| {
+        let string = regexp_rooted_to_string(vm, args.first().unwrap_or(&Value::Undefined))?;
+        let string_length = crate::value::utf16_len(&string);
+        let functional_replace = is_callable(&replace_value, &vm.heap);
+        let replacement_template = if functional_replace {
+            String::new()
         } else {
-            match_end
+            regexp_rooted_to_string(vm, &replace_value)?
         };
-        set_regexp_last_index(vm, &rx, next_index as f64)?;
-    }
 
-    let mut result = String::new();
-    let mut next_source_position = 0;
-    for record in matches {
-        result.push_str(&s[next_source_position..record.start_byte]);
-        if functional_replace {
-            let mut call_args = vec![Value::String(Arc::from(record.matched.as_str()))];
-            for capture in &record.captures {
-                match capture {
-                    Some(capture) => call_args.push(Value::String(Arc::from(capture.as_str()))),
-                    None => call_args.push(Value::Undefined),
+        let flags_value = vm.get_property(&rx, "flags")?;
+        let flags = regexp_rooted_to_string(vm, &flags_value)?;
+        let global = flags.contains('g');
+        if global {
+            set_regexp_last_index(vm, &rx, 0.0)?;
+        }
+
+        // The specification collects every result before invoking a replacer.
+        // Keep each object rooted because a later exec call may re-enter JS and GC.
+        let mut results = Vec::new();
+        loop {
+            vm.consume_fuel()?;
+            let match_result = regexp_exec_dispatch(vm, &rx, &string)?;
+            if match_result.is_null() {
+                break;
+            }
+            persistent_pins += vm.pin(&match_result);
+
+            if global {
+                let matched_value = vm.get_property(&match_result, "0")?;
+                let matched = regexp_rooted_to_string(vm, &matched_value)?;
+                if matched.is_empty() {
+                    let last_index_value = vm.get_property(&rx, "lastIndex")?;
+                    let last_index_pin = vm.pin(&last_index_value);
+                    let this_index = regexp_to_length(vm, &last_index_value);
+                    vm.unpin_many(last_index_pin);
+                    let this_index = this_index? as usize;
+                    let full_unicode = flags.contains('u') || flags.contains('v');
+                    let next_index = advance_string_index(&string, this_index, full_unicode);
+                    set_regexp_last_index(vm, &rx, next_index as f64)?;
                 }
             }
-            call_args.push(Value::Number(record.start_utf16 as f64));
-            call_args.push(Value::String(Arc::from(s.as_str())));
-            if !record.groups.is_undefined() {
-                call_args.push(record.groups.clone());
+
+            results.push(match_result);
+            if !global {
+                break;
             }
-            let replacement = vm.call_function(&replace_value, &call_args, None)?;
-            result.push_str(vm.to_string(&replacement)?.as_ref());
-        } else {
-            let captures: Vec<Option<&str>> =
-                record.captures.iter().map(|c| c.as_deref()).collect();
-            result.push_str(&crate::builtins::string::replace_substitution(
-                &replace_string,
-                &s,
-                record.start_byte,
-                record.end_byte,
-                &record.matched,
-                &captures,
-                &capture_names,
-            ));
         }
-        next_source_position = record.end_byte;
+
+        let max_captures = MAX_MATERIALIZED_CALL_ARGUMENTS.saturating_sub(3);
+        let mut accumulated_result = Vec::<u16>::new();
+        let mut next_source_position = 0usize;
+
+        for match_result in &results {
+            vm.consume_fuel()?;
+            let result_length_value = vm.get_property(match_result, "length")?;
+            let result_length_pin = vm.pin(&result_length_value);
+            let result_length = regexp_to_length(vm, &result_length_value);
+            vm.unpin_many(result_length_pin);
+            let result_length = result_length?;
+            let captures_count = (result_length - 1.0).max(0.0);
+            if captures_count > max_captures as f64 {
+                return Err(Error::range("RegExp replacement capture list is too large"));
+            }
+            let captures_count = captures_count as usize;
+
+            let matched_value = vm.get_property(match_result, "0")?;
+            let matched = regexp_rooted_to_string(vm, &matched_value)?;
+            let match_length = crate::value::utf16_len(&matched);
+
+            let index_value = vm.get_property(match_result, "index")?;
+            let index_pin = vm.pin(&index_value);
+            let raw_position = regexp_to_integer_or_infinity(vm, &index_value);
+            vm.unpin_many(index_pin);
+            let raw_position = raw_position?;
+            let position = if raw_position <= 0.0 {
+                0
+            } else if raw_position >= string_length as f64 {
+                string_length
+            } else {
+                raw_position as usize
+            };
+
+            let mut captures = Vec::with_capacity(captures_count);
+            for capture_number in 1..=captures_count {
+                vm.consume_fuel()?;
+                let capture_value =
+                    vm.get_property(match_result, capture_number.to_string().as_str())?;
+                if capture_value.is_undefined() {
+                    captures.push(None);
+                } else {
+                    captures.push(Some(regexp_rooted_to_string(vm, &capture_value)?));
+                }
+            }
+
+            let named_captures = vm.get_property(match_result, "groups")?;
+            let named_captures_pin = vm.pin(&named_captures);
+            let replacement = (|| {
+                if functional_replace {
+                    let mut replacer_args = Vec::with_capacity(captures_count + 4);
+                    replacer_args.push(Value::String(Arc::from(matched.as_str())));
+                    for capture in &captures {
+                        replacer_args.push(match capture {
+                            Some(capture) => Value::String(Arc::from(capture.as_str())),
+                            None => Value::Undefined,
+                        });
+                    }
+                    replacer_args.push(Value::Number(position as f64));
+                    replacer_args.push(Value::String(Arc::from(string.as_str())));
+                    if !named_captures.is_undefined() {
+                        replacer_args.push(named_captures.clone());
+                    }
+                    if replacer_args.len() > MAX_MATERIALIZED_CALL_ARGUMENTS {
+                        return Err(Error::range("argument list too large"));
+                    }
+                    let replacement = vm.call_function(&replace_value, &replacer_args, None)?;
+                    regexp_rooted_to_string(vm, &replacement)
+                } else {
+                    let named_captures_object = if named_captures.is_undefined() {
+                        None
+                    } else {
+                        if named_captures.is_null() {
+                            return Err(Error::type_err("RegExp match groups cannot be null"));
+                        }
+                        Some(vm.to_object(&named_captures)?)
+                    };
+                    let object_pin = named_captures_object
+                        .as_ref()
+                        .map_or(0, |object| vm.pin(object));
+                    let substitution = regexp_get_substitution(
+                        vm,
+                        &matched,
+                        &string,
+                        position,
+                        &captures,
+                        named_captures_object.as_ref(),
+                        &replacement_template,
+                    );
+                    vm.unpin_many(object_pin);
+                    substitution
+                }
+            })();
+            vm.unpin_many(named_captures_pin);
+            let replacement = replacement?;
+
+            if position >= next_source_position {
+                let preceding = crate::value::utf16_slice(&string, next_source_position, position);
+                regexp_append_utf16(vm, &mut accumulated_result, &preceding)?;
+                regexp_append_utf16(vm, &mut accumulated_result, &replacement)?;
+                next_source_position = position.saturating_add(match_length);
+            }
+        }
+
+        if next_source_position < string_length {
+            let tail = crate::value::utf16_slice(&string, next_source_position, string_length);
+            regexp_append_utf16(vm, &mut accumulated_result, &tail)?;
+        }
+        let output = crate::value::utf16_to_string(&accumulated_result);
+        Ok(Value::String(Arc::from(output.as_str())))
+    })();
+    vm.unpin_many(persistent_pins);
+    result
+}
+
+fn regexp_rooted_to_string(vm: &mut Vm, value: &Value) -> error::Result<String> {
+    let pin_count = vm.pin(value);
+    let result = vm.to_string(value).map(|string| string.to_string());
+    vm.unpin_many(pin_count);
+    result
+}
+
+fn regexp_to_integer_or_infinity(vm: &mut Vm, value: &Value) -> error::Result<f64> {
+    let number = vm.to_number(value)?;
+    if number.is_nan() {
+        return Ok(0.0);
     }
-    result.push_str(&s[next_source_position..]);
-    Ok(Value::String(Arc::from(result.as_str())))
+    if number == 0.0 || number.is_infinite() {
+        return Ok(number);
+    }
+    Ok(number.trunc())
+}
+
+fn regexp_append_utf16(vm: &mut Vm, output: &mut Vec<u16>, value: &str) -> error::Result<()> {
+    for ch in value.chars() {
+        if let Some(unit) = crate::value::utf16_single_unit_from_internal_char(ch) {
+            vm.consume_fuel()?;
+            output.push(unit);
+            continue;
+        }
+        let mut encoded = [0; 2];
+        for unit in ch.encode_utf16(&mut encoded) {
+            vm.consume_fuel()?;
+            output.push(*unit);
+        }
+    }
+    Ok(())
+}
+
+fn regexp_get_substitution(
+    vm: &mut Vm,
+    matched: &str,
+    string: &str,
+    position: usize,
+    captures: &[Option<String>],
+    named_captures: Option<&Value>,
+    replacement_template: &str,
+) -> error::Result<String> {
+    let string_length = crate::value::utf16_len(string);
+    let match_length = crate::value::utf16_len(matched);
+    let mut result = String::new();
+    let mut offset = 0usize;
+
+    while offset < replacement_template.len() {
+        vm.consume_fuel()?;
+        let remainder = &replacement_template[offset..];
+        if remainder.starts_with("$$") {
+            result.push('$');
+            offset += 2;
+        } else if remainder.starts_with("$`") {
+            result.push_str(&crate::value::utf16_slice(string, 0, position));
+            offset += 2;
+        } else if remainder.starts_with("$&") {
+            result.push_str(matched);
+            offset += 2;
+        } else if remainder.starts_with("$'") {
+            let tail_position = position.saturating_add(match_length).min(string_length);
+            result.push_str(&crate::value::utf16_slice(
+                string,
+                tail_position,
+                string_length,
+            ));
+            offset += 2;
+        } else if remainder.starts_with('$')
+            && remainder.as_bytes().get(1).is_some_and(u8::is_ascii_digit)
+        {
+            let bytes = remainder.as_bytes();
+            let first = (bytes[1] - b'0') as usize;
+            let mut digit_count = if bytes.get(2).is_some_and(u8::is_ascii_digit) {
+                2
+            } else {
+                1
+            };
+            let mut capture_index = if digit_count == 2 {
+                first * 10 + (bytes[2] - b'0') as usize
+            } else {
+                first
+            };
+            if capture_index > captures.len() && digit_count == 2 {
+                digit_count = 1;
+                capture_index = first;
+            }
+            let reference_length = 1 + digit_count;
+            if (1..=captures.len()).contains(&capture_index) {
+                if let Some(capture) = &captures[capture_index - 1] {
+                    result.push_str(capture);
+                }
+            } else {
+                result.push_str(&remainder[..reference_length]);
+            }
+            offset += reference_length;
+        } else if let Some(group_remainder) = remainder.strip_prefix("$<") {
+            if let (Some(named_captures), Some(close_offset)) =
+                (named_captures, group_remainder.find('>'))
+            {
+                let reference_length = 2 + close_offset + 1;
+                let group_name = &group_remainder[..close_offset];
+                let capture = vm.get_property(named_captures, group_name)?;
+                if !capture.is_undefined() {
+                    result.push_str(&regexp_rooted_to_string(vm, &capture)?);
+                }
+                offset += reference_length;
+            } else {
+                result.push_str("$<");
+                offset += 2;
+            }
+        } else {
+            let ch = remainder
+                .chars()
+                .next()
+                .expect("non-empty replacement remainder");
+            result.push(ch);
+            offset += ch.len_utf8();
+        }
+    }
+
+    Ok(result)
 }
 
 fn advance_string_index(input: &str, index: usize, unicode: bool) -> usize {
@@ -1161,9 +1310,14 @@ pub(crate) fn regexp_exec(
                 .map(|mch| crate::value::utf16_len(&backend_input[..mch.start()]))
                 .unwrap_or(start);
             let result = make_regexp_exec_array(vm, items)?;
-            let groups = make_regexp_groups_object(vm, &caps, &capture_names)?;
-            add_regexp_exec_result_props(vm, &result, match_start, &input, groups)?;
-            Ok(result)
+            let result_pin = vm.pin(&result);
+            let completion = (|| {
+                let groups = make_regexp_groups_object(vm, &caps, &capture_names)?;
+                add_regexp_exec_result_props(vm, &result, match_start, &input, groups)?;
+                Ok(result)
+            })();
+            vm.unpin_many(result_pin);
+            completion
         }
         None => {
             // No match: for global/sticky, reset lastIndex to 0.

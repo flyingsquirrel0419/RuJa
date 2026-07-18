@@ -812,6 +812,135 @@ fn regexp_symbol_split_reclaims_native_match_arrays_at_the_heap_cap() {
 }
 
 #[test]
+fn regexp_symbol_replace_roots_every_observable_intermediate() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("GC hook should register");
+    let baseline_pins = vm.gc_pins.len();
+
+    assert_eq!(
+        vm.run(
+            r#"
+            var calls = 0;
+            var observedLastIndex = -1;
+            var receiver = {
+              get flags() {
+                forceGc();
+                return { toString: function () { forceGc(); return "g"; } };
+              },
+              get lastIndex() { forceGc(); return observedLastIndex; },
+              set lastIndex(value) { observedLastIndex = value; forceGc(); },
+              get exec() {
+                forceGc();
+                return function () {
+                  forceGc();
+                  calls += 1;
+                  if (calls > 1) return null;
+                  return {
+                    get length() {
+                      forceGc();
+                      return { valueOf: function () { forceGc(); return 2; } };
+                    },
+                    get 0() {
+                      forceGc();
+                      return { toString: function () { forceGc(); return "a"; } };
+                    },
+                    get 1() {
+                      forceGc();
+                      return { toString: function () { forceGc(); return "capture"; } };
+                    },
+                    get index() {
+                      forceGc();
+                      return { valueOf: function () { forceGc(); return 1; } };
+                    },
+                    get groups() {
+                      forceGc();
+                      return {
+                        get name() {
+                          forceGc();
+                          return {
+                            toString: function () { forceGc(); return "named"; }
+                          };
+                        }
+                      };
+                    }
+                  };
+                };
+              }
+            };
+            var input = { toString: function () { forceGc(); return "xa"; } };
+            var replacement = {
+              toString: function () { forceGc(); return "[$1|$<name>]"; }
+            };
+            var output = RegExp.prototype[Symbol.replace].call(
+              receiver, input, replacement
+            );
+            [output, calls, observedLastIndex].join("|");
+            "#,
+        )
+        .expect("RegExp @@replace intermediates should survive observable GC"),
+        Value::String("x[capture|named]|2|0".into())
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    let error = vm
+        .run(
+            r#"
+            var abrupt = {
+              flags: "",
+              exec: function () {
+                return {
+                  length: 2,
+                  0: "",
+                  index: 0,
+                  get 1() { forceGc(); throw new Error("capture-abrupt"); }
+                };
+              }
+            };
+            RegExp.prototype[Symbol.replace].call(abrupt, "a", "x");
+            "#,
+        )
+        .expect_err("capture getter should remain abrupt");
+    assert!(error.to_string().contains("capture-abrupt"));
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+}
+
+#[test]
+fn regexp_symbol_replace_named_groups_obey_the_exact_heap_cap() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.run("globalThis.replaceRegexp = /(?<name>a)/; globalThis.replaceInput = 'a';")
+        .expect("RegExp replace fixtures should initialize");
+    vm.gc();
+    let baseline_live = vm.heap.live_count();
+
+    vm.set_max_heap_objects(Some(baseline_live + 1));
+    let error = vm
+        .run("replaceRegexp[Symbol.replace](replaceInput, '$<name>');")
+        .expect_err("the named-groups object must obey the heap cap");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert!(vm.heap.live_count() <= baseline_live + 1);
+
+    vm.set_max_heap_objects(None);
+    vm.gc();
+    let exact_limit = vm.heap.live_count() + 2;
+    vm.set_max_heap_objects(Some(exact_limit));
+    assert_eq!(
+        vm.run("replaceRegexp[Symbol.replace](replaceInput, '$<name>');")
+            .expect("one result array and one groups object should fit exactly"),
+        Value::String("a".into())
+    );
+    assert!(vm.heap.live_count() <= exact_limit);
+    vm.set_max_heap_objects(None);
+}
+
+#[test]
 fn regexp_constructor_roots_intermediates_across_observable_gc() {
     let mut vm = Vm::new().expect("VM should initialize");
     vm.register_fn(

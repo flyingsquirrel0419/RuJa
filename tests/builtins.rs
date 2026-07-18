@@ -15504,6 +15504,47 @@ fn string_replace_with_regex() {
 }
 
 #[test]
+fn regexp_symbol_replace_uses_generic_exec_results_and_utf16_positions() {
+    assert_eq!(
+        run(r#"var r = /./g;
+               var calls = 0;
+               r.exec = function () {
+                 calls += 1;
+                 if (calls === 1) return { index: 1, length: 1, 0: 0 };
+                 if (calls === 2) return { index: 3, length: 1, 0: 0 };
+                 return null;
+               };
+               r[Symbol.replace]("abcde", "X") + "|" + calls;"#),
+        Value::String(Arc::from("aXcXe|3"))
+    );
+    assert_eq!(
+        run(r#"var calls = 0;
+               var replacer = new Proxy(function (matched, position) {
+                 calls += 1;
+                 return matched + position;
+               }, {});
+               "ab".replace(/b/, replacer) + "|" + calls;"#),
+        Value::String(Arc::from("ab1|1"))
+    );
+    assert_eq!(
+        run(r#"String.fromCharCode(0xD83D, 0xDE00).replace(/./g, "X");"#),
+        Value::String(Arc::from("XX"))
+    );
+    assert_eq!(
+        run(r#"["b".replace(/(b)/, "a1"), "b".replace(/(b)/, "foo1")].join("|");"#),
+        Value::String(Arc::from("a1|foo1"))
+    );
+    assert!(run_err(
+        r#"var r = /./;
+               Object.defineProperty(r, "flags", {
+                 get: function () { throw new Error("flags-order"); }
+               });
+               r[Symbol.replace]("a", "x");"#
+    )
+    .contains("flags-order"));
+}
+
+#[test]
 fn division_not_regex() {
     // Ensure `/` after a value is division, not a regex.
     assert_eq!(run("10 / 4;"), Value::Number(2.5));

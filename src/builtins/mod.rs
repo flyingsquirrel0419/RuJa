@@ -848,7 +848,7 @@ fn make_regexp_groups_object(
     if names.is_empty() {
         return Ok(Value::Undefined);
     }
-    let obj_idx = vm.heap.allocate(HeapObj::Object(ObjectData {
+    let obj_idx = vm.alloc(HeapObj::Object(ObjectData {
         props: Mutex::new(IndexMap::new()),
         proto: Mutex::new(None),
         extensible: AtomicBool::new(true),
@@ -856,7 +856,7 @@ fn make_regexp_groups_object(
         private_fields: Mutex::new(std::collections::HashMap::new()),
         primitive: Mutex::new(None),
     }))?;
-    vm.heap.with_obj(obj_idx, |obj| {
+    vm.heap.with_obj(obj_idx.0, |obj| {
         let props = obj.props();
         let mut props = props.lock();
         for capture in names {
@@ -870,7 +870,7 @@ fn make_regexp_groups_object(
             );
         }
     });
-    Ok(Value::Object(GcIdx(obj_idx)))
+    Ok(Value::Object(obj_idx))
 }
 
 fn canonicalize_regexp_match_text(text: &str) -> Arc<str> {

@@ -13,10 +13,10 @@ ASYNC_PRINT_SHIM = "function print(message) { console.log(message); }"
 
 
 def append_async_harness(parts, harness, flags):
-    """Append test262's async host harness after any directive prologue."""
+    """Append the host print binding and, for async tests, completion harness."""
+    parts.append(ASYNC_PRINT_SHIM)
     if "async" not in flags:
         return
-    parts.append(ASYNC_PRINT_SHIM)
     done = harness / "doneprintHandle.js"
     if done.exists():
         parts.append(done.read_text())
