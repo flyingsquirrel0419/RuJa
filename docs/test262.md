@@ -61,8 +61,9 @@ Symbol.asyncDispose, Map/Set/WeakMap/WeakSet, BigInt, Proxy, Reflect,
 WeakRef, FinalizationRegistry, resizable ArrayBuffer and growable
 SharedArrayBuffer cores, Promise, Atomics operations including worker
 `wait`/`notify`, `waitAsync`, and `pause`, length-tracking TypedArray/DataView
-views, `TypedArray.prototype.at`, async/await, generators, for-of, optional
-chaining, nullish coalescing, logical assignment. TypedArray `fill`, `values`,
+views, `TypedArray.prototype.at`, the four Dynamic Function constructors,
+async/await, generators, for-of, optional chaining, nullish coalescing,
+logical assignment. TypedArray `fill`, `values`,
 `join`, `set`, `subarray`, and default iteration are also included.
 
 **Intentionally unsupported**: bare-specifier ES Module host resolution,
@@ -7277,6 +7278,79 @@ aggregate is **30181 pass / 6328 fail / 11796 skip / 12 timeout / 0 error /
 - 선택한 방식: Freeze five Date paths with per-file feature exceptions shared by runner and analyzer, and pair them with local call/apply/bound, abrupt-order, Realm, GC, and exact-cap regressions.
 - 다른 대안 대신 이 방식을 선택한 이유: Exact admission ties every matrix gain to audited behavior while local regressions cover observable order and hidden-slot properties not asserted by the pinned files.
 - 장점, 단점 및 영향: Five skips become passes with no new fail, timeout, or error, and four real runtime defects are removed. Dynamic Function-family and RegExp construction remain separate conformance units.
+```
+
+## Dynamic Function construction, Realm fallback, and allocation
+
+`Function`, `AsyncFunction`, `GeneratorFunction`, and
+`AsyncGeneratorFunction` now share one CreateDynamicFunction implementation.
+It preserves parameter-then-body `ToString` order, validates the two grammar
+parts independently before a combined early-error parse, and places newline
+boundaries around the synthetic parameter and body delimiters. Calls use the
+active constructor as the effective new target; construction uses the actual
+`NewTarget`. Generated closures and their fresh ordinary/generator prototype
+parents come from the active constructor's Realm. When
+`NewTarget.prototype` is not an object, the default function prototype comes
+from the actual new target's immutable Realm registry.
+
+The frozen native-construction manifest adds exactly seven audited files:
+
+- `built-ins/Function/is-a-constructor.js`
+- `built-ins/Function/proto-from-ctor-realm-prototype.js`
+- `built-ins/Function/proto-from-ctor-realm.js`
+- `built-ins/AsyncFunction/is-a-constructor.js`
+- `built-ins/AsyncFunction/proto-from-ctor-realm.js`
+- `built-ins/GeneratorFunction/is-a-constructor.js`
+- `built-ins/AsyncGeneratorFunction/is-a-constructor.js`
+
+All seven pass against Test262 `020cb74075849d1e404bbcdb62feb7a02e6966db`.
+The four complete constructor directories are **429 pass / 52 fail / 92 skip
+/ 573 total**. Applying the same new runner to the preceding Date binary gives
+**420 / 61 / 92 / 573**. The exact nine fail-to-pass transitions, with no
+regressions, are Function `S15.3.2.1_A3_T1`, `T3`, `T4`, `T5`, and `T8`, the
+two Function constructor-Realm files, Function prototype
+`S15.3.5.2_A1_T2`, and the AsyncFunction constructor-Realm file. The 24-file
+direct constructor/source/Realm audit and a separate 16-file forced
+constructor/order cohort both pass completely. The supported subset remains
+**12751 pass / 0 fail / 7687 skip / 20438 total**.
+
+Local regressions additionally cover abrupt conversion and prototype-getter
+order, comment and delimiter injection boundaries, contextual and
+destructuring BindingIdentifiers, late strictness, class-static-block arrow
+early errors, call/bind/construct behavior, main and foreign Realms, replaced
+globals, BoundFunction and Proxy new targets, fresh Proxy trap results across
+re-entrant GC, exact one- and two-cell allocation, saturated failure, pin and
+pending-context cleanup, and compilation-table rollback that preserves a
+successful re-entrant function. Final local gates pass all targets/features,
+warnings-denied Clippy, formatting/diff, release, and wasm32, with Python
+tooling **101/101**, Rust lib/unit **114/114**, builtins **461/461**, classes
+**105/105**, modules **31/31**, and Fuel **24/24**. GPT 5.6 reviewers Ptolemy
+and Copernicus returned `CLEAN` and were closed.
+
+Feature commit `a320d15` passed CI `29624418616` and full matrix
+`29624418655`. Of the 30 result files at
+`/tmp/ruja-artifacts-dynamic-function-feature.upHgF8`, 29 are byte-identical
+to `/tmp/ruja-artifacts-date-feature.ezDrIL`. Only built-ins changed, from
+**14583 pass / 5511 fail / 3562 skip / 12 timeout** to **14596 / 5505 / 3555
+/ 12**, exactly **+13 pass / -6 fail / -7 skip**. The aggregate is **30194
+pass / 6322 fail / 11789 skip / 12 timeout / 0 error / 48317 total / 36516
+pass-or-fail executed**, or **62.5%** of all files and **82.7%** of executed
+files.
+
+The constructor algorithm does not yet retain specification source text for
+`Function.prototype.toString`; the four constructor-specific source tests
+remain failures and are not admitted. RuJa's local-trust host policy also
+permits string compilation unconditionally, and its three parser passes are a
+synchronous host operation rather than fuel-metered bytecode.
+
+```text
+[Decision Log]
+- 목적과 의도: Admit only Dynamic Function behavior whose conversion order, separate grammar boundaries, Realm fallback, prototype graph, GC rooting, and exact-cap allocation are directly verified.
+- 기존 구현 및 제약 조건: Eager construction observed incomplete new-target rules, a combined-only wrapper parse could cross synthetic boundaries, generated functions reused main-Realm parents, and raw allocation plus early table publication could leave stale heap or compiler state.
+- 검토한 주요 대안: Admit complete constructor directories, remove cross-Realm and Reflect feature gates globally, keep eager generic allocation, or freeze a narrow exact manifest around one shared body-controlled implementation.
+- 선택한 방식: Move all four constructors to deferred native construction, parse parameter/body/combined sources with newline guards, use immutable constructor-Realm registries, publish nested definitions after observable lookup, and allocate through rooted sandbox paths with suffix rollback.
+- 다른 대안 대신 이 방식을 선택한 이유: Broad admission exposes unrelated source-text and async gaps, generic preallocation has the wrong observable order, and separate per-kind implementations would duplicate the same abstract operation and GC cleanup.
+- 장점, 단점 및 영향: Seven skips and six previously executed failures become passes with no new fail, timeout, or error. The exact manifest remains narrow; source-text preservation, a restrictive host compile hook, and native parse-time metering remain explicit follow-up work.
 ```
 
 ## Why the full-suite rate is not higher

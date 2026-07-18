@@ -4,6 +4,40 @@
 
 ### Fixed
 
+- The Dynamic Function family now follows the shared CreateDynamicFunction
+  protocol. `Function`, `AsyncFunction`, `GeneratorFunction`, and
+  `AsyncGeneratorFunction` convert parameter arguments left-to-right before
+  converting the body, apply the local-trust string-compilation policy after
+  conversion, validate parameter and body grammar independently with
+  delimiter-safe line boundaries, and perform the combined parse for strict
+  early errors. Calls use the active constructor as the effective new target;
+  construction uses the actual `NewTarget`. Generated closures and non-object
+  prototype fallbacks come from immutable intrinsics in that constructor's
+  Realm, including BoundFunction and transparent-Proxy new targets. Ordinary
+  and generator-family `.prototype` objects receive the correct Realm-local
+  parent. Compilation-table publication occurs only after observable
+  prototype lookup, allocations use the sandbox GC retry, and failed one- or
+  two-cell creation rolls back only the outer compiled-function suffix while
+  preserving successful re-entrant compilation. `Function.prototype.bind`
+  now copies the target's actual `[[Prototype]]`; fresh Proxy trap results are
+  rooted through invariant checks and bound allocation. Parser coverage now
+  treats lexer-promoted contextual names consistently as BindingIdentifiers,
+  revalidates late strictness, distinguishes direct `catch (let)` from
+  lexical/catch binding patterns, and enforces class-static-block arrow
+  parameter and lexical-`arguments` early errors. Registration is now **14
+  eager / 31 deferred** native constructors. Seven exact Test262 files are
+  newly admitted and pass; the four complete constructor directories improve
+  from **420 pass / 61 fail / 92 skip** with the preceding binary to **429 /
+  52 / 92** with the same runner, with nine fail-to-pass transitions and no
+  regressions. Final local gates include tooling **101/101**, Rust lib/unit
+  **114/114**, builtins **461/461**, classes **105/105**, modules **31/31**,
+  Fuel **24/24**, release, and wasm32. GPT 5.6 reviewers Ptolemy and Copernicus
+  returned `CLEAN`. Feature commit `a320d15` passed CI `29624418616` and full
+  matrix `29624418655`. Of the 30 artifacts at
+  `/tmp/ruja-artifacts-dynamic-function-feature.upHgF8`, 29 are byte-identical
+  to the Date baseline; built-ins changed by **+13 pass / -6 fail / -7 skip**.
+  The aggregate is **30194 pass / 6322 fail / 11789 skip / 12 timeout / 0
+  error / 48317 total** (**62.5%** of all files, **82.7%** of executed files).
 - Date calls and construction now follow separate native paths. Calling Date
   ignores the supplied `this`, does not coerce supplied argument values, and
   returns a date String;

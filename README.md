@@ -34,7 +34,8 @@ no `unsafe` code anywhere in the engine.
 ### Supported language subset
 
 ES5.1 + classes, async/await, generators, Promises with static combinators
-and `withResolvers`,
+and `withResolvers`, Realm-correct `Function`, `AsyncFunction`,
+`GeneratorFunction`, and `AsyncGeneratorFunction` constructors,
 destructuring,
 getters/setters, auto-accessors, audited public and private
 field/method/getter/setter/auto-accessor decorator context/access and
@@ -67,7 +68,7 @@ for intentionally-unsupported features.
 **Supported-subset pass rate: 100.0%** (12,751 tests in `language/statements`
 + `language/expressions` on current Test262, unsupported-feature tests
 skipped). The latest full matrix is 62.5% of all files and 82.7% of executed
-files (30,181 pass / 6,328 fail / 11,796 skip) — see
+files (30,194 pass / 6,322 fail / 11,789 skip) — see
 [test262 conformance](docs/test262.md)
 for why these numbers differ.
 

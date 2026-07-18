@@ -145,6 +145,51 @@ Realm-local emergency `RangeError` path.
 - 장점, 단점 및 영향: Direct/call/apply/bound use, subclasses, foreign new targets, abrupt order, forced GC, and exact-cap failure now share one tested path. The Realm registry inventory grows from 28 to 29 families and remains manually synchronized across storage, tracing, rollback, and tests.
 ```
 
+The four Dynamic Function constructors use `InternalDeferredPrototype` so
+CreateDynamicFunction owns every observable step, leaving the registration
+inventory at **14 eager / 31 deferred** native constructors. Parameter
+arguments are converted left-to-right before the body, after which RuJa's local-trust
+`HostEnsureCanCompileStrings` policy permits compilation. Parameters and body
+are parsed separately with line terminators at both synthetic boundaries; a
+third combined parse enforces cross-part early errors such as a strict body
+with non-simple parameters. This prevents comments or delimiter text in one
+part from consuming the other part while preserving the specification's
+conversion-before-parse order.
+
+A call treats the active native constructor as the effective new target, while
+`Reflect.construct` and `new` retain the supplied `NewTarget`. The active
+constructor's closure selects the generated function Realm. If
+`NewTarget.prototype` is not an object, the fallback comes from the immutable
+Realm function-prototype registries for `%Function%`, `%AsyncFunction%`,
+`%GeneratorFunction%`, or `%AsyncGeneratorFunction%`; mutable global bindings
+are not consulted. Ordinary generated functions create a prototype whose
+parent is that Realm's `%Object.prototype%`, while generator families use the
+corresponding generator prototype.
+
+Compilation remains side-effect free until the observable prototype lookup
+has completed. Nested compiled definitions are appended afterward, and a
+failed allocation truncates only that outer suffix so compilation performed
+re-entrantly by a prototype getter remains valid. Async functions allocate one
+function cell; the other three kinds allocate a function plus their own
+prototype through the GC-aware sandbox allocator. Every intermediate and
+getter-produced prototype is pinned across a collecting allocation.
+
+BoundFunctionCreate now obtains the target's real `[[Prototype]]`, including a
+Proxy `getPrototypeOf` trap, instead of hardcoding the main Realm
+`%Function.prototype%`. Proxy trap results are pinned before re-entrant
+non-extensible-target invariant checks, and the selected result stays pinned
+through bound-function allocation.
+
+```text
+[Decision Log]
+- 목적과 의도: Implement one specification-shaped CreateDynamicFunction path for all four dynamic constructors without weakening Realm identity or the exact heap cap.
+- 기존 구현 및 제약 조건: The old wrapper parse allowed synthetic-boundary ambiguity, prototype selection happened on incomplete rules, generated functions used main-Realm parents, raw allocation bypassed the sandbox retry, and compilation-table entries could leak after failure.
+- 검토한 주요 대안: Keep four mostly separate constructors, broaden generic native preallocation, parse only one combined wrapper, or centralize conversion, parsing, Realm fallback, publication, and allocation in the existing dynamic body.
+- 선택한 방식: Use deferred native construction, three grammar checks with newline boundaries, immutable constructor-Realm registries, post-lookup table publication, and rooted one- or two-cell allocation with suffix rollback.
+- 다른 대안 대신 이 방식을 선택한 이유: Generic preallocation observes `NewTarget.prototype` too early, a combined-only parse does not model separate parameter/body grammar, and per-kind copies would drift on ordering and GC cleanup. One kind-parameterized path keeps the shared abstract operation explicit.
+- 장점, 단점 및 영향: Call/construct order, all four Realm fallbacks, Bound/Proxy new targets, parser early errors, forced GC, and exact-cap failures now share tested invariants. String compilation remains synchronous and is governed by the local-trust host policy rather than opcode fuel; source-text preservation is a separate limitation.
+```
+
 `MakeClosure` follows the same rule for an ordinary function's fresh
 `.prototype`: the prototype is pinned before a named-function environment or
 the function object can allocate, then released only after the function owns

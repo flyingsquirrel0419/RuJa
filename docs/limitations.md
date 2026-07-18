@@ -47,6 +47,17 @@ process crashes, infinite loops, or OOM kills. For truly hard real-time
 guarantees, run RuJa in a separately killable process as well.
 
 - No `eval`/`with` process-level security sandbox (local-trust execution model)
+- Dynamic Function constructors (`Function`, `AsyncFunction`,
+  `GeneratorFunction`, and `AsyncGeneratorFunction`) follow the observable
+  CreateDynamicFunction conversion, grammar, Realm, and allocation protocol,
+  but the host policy currently permits string compilation unconditionally.
+  There is no embedder callback equivalent to a restrictive
+  `HostEnsureCanCompileStrings`. Parameter-only, body-only, and combined
+  parsing also run synchronously outside opcode fuel. Generated source text is
+  not retained, so the four constructor-specific
+  `Function.prototype.toString` source-preservation tests still fail. Hosts
+  that need a hard wall around attacker-controlled compilation must isolate
+  the VM in a separately killable process.
 - Execution fuel is **cooperative, not preemptive**: `Vm::set_fuel(Some(n))`
   bounds execution to ~n opcodes (exhaustion throws a `RangeError` that is
   *not* catchable by user `try/catch`, so untrusted code cannot swallow it).
@@ -107,8 +118,9 @@ guarantees, run RuJa in a separately killable process as well.
   scoped subset of ES5.1 + selected ES2015+ features (see
   [test262.md](test262.md#supported-subset) for the exact list). The full
   suite is run in CI (excluding `intl402`/`staging`) with a baseline pass
-  rate of 62.5% of all matrix files and 82.7% of executed files; within the
-  supported subset, tests currently run at 100%.
+  rate of 62.5% of all matrix files and 82.7% of executed files (**30,194
+  pass / 6,322 fail / 11,789 skip / 12 timeout**); within the supported subset,
+  tests currently run at 100%.
   Full ES conformance is not claimed. See
   [test262.md](test262.md) for current numbers and the failure breakdown.
 - Decorator support covers audited class and public/private
@@ -140,6 +152,11 @@ guarantees, run RuJa in a separately killable process as well.
   Realm-local. A non-object Date new-target prototype falls back to the
   immutable Date prototype from that new target's Realm, while constructed
   instances keep their Date value in a non-observable internal slot.
+  Dynamic Function-family calls and construction likewise select generated
+  closures and fresh ordinary/generator prototype parents from the active
+  constructor's Realm. A non-object new-target prototype falls back through
+  the actual new target's immutable Realm registry without consulting replaced
+  global bindings.
   `AsyncIterator.prototype[Symbol.asyncDispose]` is implemented with
   Realm-correct Promise and abrupt-completion behavior. `Array.fromAsync`
   consumes async, sync, and array-like sources through intrinsic Promise jobs,
