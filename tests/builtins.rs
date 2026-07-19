@@ -12366,6 +12366,114 @@ fn object_statics() {
 }
 
 #[test]
+fn reflect_omitted_property_keys_coerce_undefined() {
+    assert_eq!(
+        run(r#"
+            var getTarget = {};
+            Object.defineProperty(getTarget, "undefined", {
+              configurable: true,
+              get: function() { return this === getTarget ? 17 : -1; }
+            });
+            var setTarget = {};
+            [
+              Reflect.get(getTarget),
+              Reflect.get(getTarget, undefined),
+              Reflect.has(getTarget),
+              Reflect.has(getTarget, undefined),
+              Reflect.set(setTarget),
+              Object.prototype.hasOwnProperty.call(setTarget, "undefined"),
+              String(setTarget.undefined)
+            ].join("|");
+        "#),
+        Value::String(Arc::from("17|17|true|true|true|true|undefined"))
+    );
+    assert_eq!(
+        run(r#"
+            var calls = [];
+            var target = {};
+            var proxy;
+            proxy = new Proxy(target, {
+              get: function(actualTarget, key, receiver) {
+                calls.push("get:" + key + ":" + (receiver === proxy));
+                return 23;
+              },
+              has: function(actualTarget, key) {
+                calls.push("has:" + key);
+                return true;
+              },
+              set: function(actualTarget, key, value, receiver) {
+                calls.push(
+                  "set:" + key + ":" + String(value) + ":" +
+                  (receiver === proxy)
+                );
+                return Reflect.set(actualTarget, key, value, receiver);
+              }
+            });
+            [
+              Reflect.get(proxy),
+              Reflect.has(proxy),
+              Reflect.set(proxy),
+              calls.join(","),
+              Object.prototype.hasOwnProperty.call(target, "undefined")
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "23|true|true|get:undefined:true,has:undefined,set:undefined:undefined:true|true"
+        ))
+    );
+    assert_eq!(
+        run(r#"
+            var calls = 0;
+            var key = { toString: function() { calls += 1; return "x"; } };
+            for (var method of [Reflect.get, Reflect.set, Reflect.has]) {
+              try { method(null, key); } catch (error) {}
+            }
+            calls;
+        "#),
+        Value::Number(0.0)
+    );
+    assert_eq!(
+        run(r#"
+            var errors = [];
+            for (var method of ["get", "set", "has"]) {
+              var handler = {};
+              handler[method] = function() { throw new Error(method + " trap"); };
+              try { Reflect[method](new Proxy({}, handler)); }
+              catch (error) { errors.push(error.message); }
+
+              var revocable = Proxy.revocable({}, {});
+              revocable.revoke();
+              try { Reflect[method](revocable.proxy); }
+              catch (error) { errors.push(error.name); }
+            }
+            errors.join("|");
+        "#),
+        Value::String(Arc::from(
+            "get trap|TypeError|set trap|TypeError|has trap|TypeError"
+        ))
+    );
+    assert_eq!(
+        run(r#"
+            var target = { undefined: 9 };
+            Object.defineProperty(target, "receiver", {
+              get: function() { "use strict"; return this === undefined; }
+            });
+            var explicitReceiver = Reflect.get(target, "receiver", undefined);
+            var defaultReceiver = Reflect.get(target, "receiver");
+            var explicitSet = Reflect.set(target, "explicit", 1, undefined);
+            [
+              Reflect.getOwnPropertyDescriptor(target).value,
+              explicitReceiver,
+              defaultReceiver,
+              explicitSet,
+              Object.prototype.hasOwnProperty.call(target, "explicit")
+            ].join("|");
+        "#),
+        Value::String(Arc::from("9|true|false|false|false"))
+    );
+}
+
+#[test]
 fn prevent_extensions_blocks_array_arguments_function_and_proxy_edges() {
     assert_eq!(
         run("var a=[]; Object.preventExtensions(a); a[0]=1; a.x=2; Object.isExtensible(a)+':' + a.hasOwnProperty('0') + ':' + a.hasOwnProperty('x');"),

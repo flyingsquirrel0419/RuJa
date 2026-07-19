@@ -92,6 +92,10 @@ from test262_proxy_own_keys_admission import (
     PROXY_OWN_KEYS_FEATURES,
     PROXY_OWN_KEYS_FILES,
 )
+from test262_reflect_set_has_admission import (
+    REFLECT_SET_HAS_FEATURES,
+    REFLECT_SET_HAS_FILES,
+)
 from test262_reflect_call_admission import REFLECT_CALL_FEATURES, REFLECT_CALL_FILES
 from test262_function_apply_admission import (
     FUNCTION_APPLY_FEATURES,
@@ -2001,6 +2005,87 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                 self.assertEqual(
                     frozenset(metadata.get("features", [])), features, relative
                 )
+
+    def test_reflect_set_has_manifest_is_exact_live_and_shared(self):
+        self.assertEqual(len(REFLECT_SET_HAS_FILES), 28)
+        self.assertEqual(
+            frozenset(REFLECT_SET_HAS_FEATURES), REFLECT_SET_HAS_FILES
+        )
+        self.assertEqual(
+            sum("/set/" in relative for relative in REFLECT_SET_HAS_FILES), 18
+        )
+        self.assertEqual(
+            sum("/has/" in relative for relative in REFLECT_SET_HAS_FILES), 10
+        )
+        plain_set = "built-ins/Reflect/set/set.js"
+        constructor = "built-ins/Reflect/set/not-a-constructor.js"
+        proxy_has = "built-ins/Reflect/has/return-abrupt-from-result.js"
+        symbolic = "built-ins/Reflect/has/symbol-property.js"
+        self.assertEqual(REFLECT_SET_HAS_FEATURES[plain_set], {"Reflect"})
+        self.assertEqual(
+            REFLECT_SET_HAS_FEATURES[constructor],
+            {"Reflect", "Reflect.set", "Reflect.construct", "arrow-function"},
+        )
+        self.assertEqual(
+            REFLECT_SET_HAS_FEATURES[proxy_has], {"Reflect", "Proxy"}
+        )
+        self.assertEqual(
+            REFLECT_SET_HAS_FEATURES[symbolic], {"Reflect", "Symbol"}
+        )
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        try:
+            test_root_available = test_root.is_dir()
+        except OSError:
+            test_root_available = False
+        if test_root_available:
+            for relative, features in REFLECT_SET_HAS_FEATURES.items():
+                path = test_root / relative
+                self.assertTrue(path.is_file(), relative)
+                metadata = test262_runner.parse_meta(path.read_text())
+                self.assertEqual(
+                    frozenset(metadata.get("features", [])), features, relative
+                )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            future = root / "test/built-ins/Reflect/set/future.js"
+            outside = root / "test/built-ins/Reflect/get/future.js"
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for relative, features in REFLECT_SET_HAS_FEATURES.items():
+                        path = root / "test" / relative
+                        self.assertTrue(tool.reflect_set_has_path(path), relative)
+                        self.assertEqual(
+                            tool.reflect_set_has_features(path), features
+                        )
+                        self.assertFalse(
+                            tool.should_skip(
+                                {"features": sorted(features)}, path
+                            ),
+                            relative,
+                        )
+                        self.assertTrue(
+                            tool.should_skip(
+                                {
+                                    "features": sorted(features | {"decorators"})
+                                },
+                                path,
+                            ),
+                            relative,
+                        )
+                    self.assertFalse(tool.reflect_set_has_path(future))
+                    self.assertFalse(tool.reflect_set_has_path(outside))
+                    self.assertTrue(
+                        tool.should_skip({"features": ["Reflect"]}, future)
+                    )
+                    self.assertTrue(
+                        tool.should_skip({"features": ["Reflect"]}, outside)
+                    )
+                finally:
+                    tool.TEST262 = original_root
 
     def test_function_apply_manifest_is_exact_live_and_shared(self):
         self.assertEqual(len(FUNCTION_APPLY_FILES), 2)

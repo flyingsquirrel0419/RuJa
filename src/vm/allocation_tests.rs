@@ -1448,6 +1448,97 @@ fn proxy_define_property_trap_survives_descriptor_allocation_gc() {
 }
 
 #[test]
+fn reflect_omitted_property_keys_root_proxy_arguments_across_gc() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("GC hook should register");
+    let baseline_pins = vm.gc_pins.len();
+
+    let result = vm.run(
+        r#"
+        var calls = [];
+        function makeGetProxy() {
+          var proxy;
+          proxy = new Proxy({}, {
+            get: function(target, key, receiver) {
+              forceGc();
+              calls.push("get:" + key + ":" + (receiver === proxy));
+              return 41;
+            }
+          });
+          return proxy;
+        }
+        function makeHasProxy() {
+          return new Proxy({}, {
+            has: function(target, key) {
+              forceGc();
+              calls.push("has:" + key);
+              return true;
+            }
+          });
+        }
+        var setTarget = {};
+        function makeSetProxy() {
+          var proxy;
+          proxy = new Proxy(setTarget, {
+            set: function(target, key, value, receiver) {
+              forceGc();
+              calls.push(
+                "set:" + key + ":" + String(value) + ":" +
+                (receiver === proxy)
+              );
+              return Reflect.set(target, key, value, receiver);
+            }
+          });
+          return proxy;
+        }
+        [
+          Reflect.get(makeGetProxy()),
+          Reflect.has(makeHasProxy()),
+          Reflect.set(makeSetProxy()),
+          calls.join(","),
+          Object.prototype.hasOwnProperty.call(setTarget, "undefined")
+        ].join("|");
+        "#,
+    );
+    assert_eq!(
+        result.expect("omitted-key Reflect operations should survive trap GC"),
+        Value::String(
+            "41|true|true|get:undefined:true,has:undefined,set:undefined:undefined:true|true"
+                .into()
+        )
+    );
+
+    let abrupt = vm.run(
+        r#"
+        var errors = [];
+        for (var method of ["get", "set", "has"]) {
+          var handler = {};
+          handler[method] = function() {
+            forceGc();
+            throw new Error(method + " abrupt");
+          };
+          try { Reflect[method](new Proxy({}, handler)); }
+          catch (error) { errors.push(error.message); }
+        }
+        errors.join("|");
+        "#,
+    );
+    assert_eq!(
+        abrupt.expect("omitted-key trap errors should survive GC"),
+        Value::String("get abrupt|set abrupt|has abrupt".into())
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+}
+
+#[test]
 fn proxy_delete_property_roots_observable_intermediates_and_restores_pin_depth() {
     let mut vm = Vm::new().expect("VM should initialize");
     vm.register_fn(

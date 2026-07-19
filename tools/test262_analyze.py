@@ -69,6 +69,9 @@ try:
     from test262_proxy_own_keys_admission import (
         PROXY_OWN_KEYS_FEATURES, PROXY_OWN_KEYS_FILES,
     )
+    from test262_reflect_set_has_admission import (
+        REFLECT_SET_HAS_FEATURES, REFLECT_SET_HAS_FILES,
+    )
     from test262_reflect_call_admission import (
         REFLECT_CALL_FEATURES, REFLECT_CALL_FILES,
     )
@@ -149,6 +152,9 @@ except ModuleNotFoundError:
     )
     from tools.test262_proxy_own_keys_admission import (
         PROXY_OWN_KEYS_FEATURES, PROXY_OWN_KEYS_FILES,
+    )
+    from tools.test262_reflect_set_has_admission import (
+        REFLECT_SET_HAS_FEATURES, REFLECT_SET_HAS_FILES,
     )
     from tools.test262_reflect_call_admission import (
         REFLECT_CALL_FEATURES, REFLECT_CALL_FILES,
@@ -2219,6 +2225,24 @@ def proxy_own_keys_features(path):
         return frozenset()
     return PROXY_OWN_KEYS_FEATURES.get(rel.as_posix(), frozenset())
 
+def reflect_set_has_path(path):
+    if path is None:
+        return False
+    try:
+        rel = Path(path).resolve().relative_to(Path(TEST262).resolve() / "test")
+    except ValueError:
+        return False
+    return rel.as_posix() in REFLECT_SET_HAS_FILES
+
+def reflect_set_has_features(path):
+    if path is None:
+        return frozenset()
+    try:
+        rel = Path(path).resolve().relative_to(Path(TEST262).resolve() / "test")
+    except ValueError:
+        return frozenset()
+    return REFLECT_SET_HAS_FEATURES.get(rel.as_posix(), frozenset())
+
 def reflect_call_path(path):
     if path is None:
         return False
@@ -2523,6 +2547,8 @@ def should_skip(meta, path=None):
         feats.difference_update(proxy_delete_features(path))
     if path is not None and proxy_own_keys_path(path):
         feats.difference_update(proxy_own_keys_features(path))
+    if path is not None and reflect_set_has_path(path):
+        feats.difference_update(reflect_set_has_features(path))
     if path is not None and reflect_call_path(path):
         feats.difference_update(reflect_call_features(path))
     if path is not None and function_apply_path(path):

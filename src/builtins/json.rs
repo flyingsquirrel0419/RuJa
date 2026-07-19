@@ -1874,15 +1874,16 @@ pub(crate) fn date_utc(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> err
     Ok(Value::Number(date_time_clip(time)))
 }
 
+fn reflect_property_key(vm: &mut Vm, args: &[Value]) -> error::Result<Value> {
+    vm.to_property_key_value(args.get(1).unwrap_or(&Value::Undefined))
+}
+
 pub(crate) fn reflect_get(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     let target = args.first().cloned().unwrap_or(Value::Undefined);
     if !matches!(target, Value::Object(_)) {
         return Err(Error::type_err("Reflect.get target must be an object"));
     }
-    let key = match args.get(1) {
-        Some(v) => vm.to_property_key_value(v)?,
-        None => return Ok(Value::Undefined),
-    };
+    let key = reflect_property_key(vm, args)?;
     let receiver = args.get(2).cloned().unwrap_or_else(|| target.clone());
     match &key {
         Value::String(s) => vm.get_property_rx(&target, s, receiver, 0),
@@ -1900,10 +1901,7 @@ pub(crate) fn reflect_set(vm: &mut Vm, args: &[Value], _: Option<Value>) -> erro
     if !matches!(target, Value::Object(_)) {
         return Err(Error::type_err("Reflect.set target must be an object"));
     }
-    let key = match args.get(1) {
-        Some(v) => vm.to_property_key_value(v)?,
-        None => return Ok(Value::Bool(false)),
-    };
+    let key = reflect_property_key(vm, args)?;
     let value = args.get(2).cloned().unwrap_or(Value::Undefined);
     let receiver = args.get(3).cloned().unwrap_or_else(|| target.clone());
     let result = match &key {
@@ -1923,10 +1921,7 @@ pub(crate) fn reflect_has(vm: &mut Vm, args: &[Value], _: Option<Value>) -> erro
     if !matches!(target, Value::Object(_)) {
         return Err(Error::type_err("Reflect.has target must be an object"));
     }
-    let key = match args.get(1) {
-        Some(v) => vm.to_property_key_value(v)?,
-        None => return Ok(Value::Bool(false)),
-    };
+    let key = reflect_property_key(vm, args)?;
     let pkey = match key {
         Value::String(s) => PropertyKey::from(s.as_ref()),
         Value::Symbol(id) => PropertyKey::Symbol(id),
@@ -1946,7 +1941,7 @@ pub(crate) fn reflect_delete_property(
             "Reflect.deleteProperty target must be an object",
         ));
     }
-    let key = vm.to_property_key_value(args.get(1).unwrap_or(&Value::Undefined))?;
+    let key = reflect_property_key(vm, args)?;
     let pkey = match key {
         Value::String(s) => PropertyKey::from_rc(s),
         Value::Symbol(id) => PropertyKey::Symbol(id),
