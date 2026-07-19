@@ -975,28 +975,44 @@ pub(crate) fn norm_index(v: Value, len: f64, vm: &mut Vm) -> error::Result<usize
     }
 }
 
+fn validate_sort_compare_fn(vm: &Vm, cmp: &Option<Value>) -> error::Result<()> {
+    if let Some(compare_fn) = cmp {
+        if !compare_fn.is_undefined() && !is_callable(compare_fn, &vm.heap) {
+            return Err(Error::type_err("Array sort comparator is not callable"));
+        }
+    }
+    Ok(())
+}
+
+fn compare_array_sort_undefined(a: &Value, b: &Value) -> Option<std::cmp::Ordering> {
+    match (a.is_undefined(), b.is_undefined()) {
+        (true, true) => Some(std::cmp::Ordering::Equal),
+        (true, false) => Some(std::cmp::Ordering::Greater),
+        (false, true) => Some(std::cmp::Ordering::Less),
+        (false, false) => None,
+    }
+}
+
 /// Sort items with an optional comparator callback (default: string compare).
+/// Callers keep `items` and `cmp` rooted until the destination owns the values.
 pub(crate) fn sort_with_cb(
     vm: &mut Vm,
     items: &mut [Value],
     cmp: &Option<Value>,
 ) -> error::Result<()> {
     match cmp {
-        None | Some(Value::Undefined) | Some(Value::Null) => {
-            items.sort_by(|a, b| {
-                if a.is_undefined() && b.is_undefined() {
-                    return std::cmp::Ordering::Equal;
+        None | Some(Value::Undefined) => {
+            let mut compare = |vm: &mut Vm, a: &Value, b: &Value| {
+                if let Some(order) = compare_array_sort_undefined(a, b) {
+                    return Ok(order);
                 }
-                if a.is_undefined() {
-                    return std::cmp::Ordering::Greater;
-                }
-                if b.is_undefined() {
-                    return std::cmp::Ordering::Less;
-                }
-                let sa = vm.to_string(a).map(|s| s.to_string()).unwrap_or_default();
-                let sb = vm.to_string(b).map(|s| s.to_string()).unwrap_or_default();
-                sa.cmp(&sb)
-            });
+                let sa = vm.to_string(a)?;
+                let sb = vm.to_string(b)?;
+                let a_units = crate::value::utf16_from_str(&sa);
+                let b_units = crate::value::utf16_from_str(&sb);
+                Ok(a_units.cmp(&b_units))
+            };
+            merge_sort(vm, items, &mut compare)?;
         }
         Some(cmp_fn) => {
             // Stable O(n log n) merge sort. The previous O(n^2) bubble sort
@@ -1006,43 +1022,29 @@ pub(crate) fn sort_with_cb(
             // effects (mutating VM state during `call_function`), which
             // defeats pdqsort's purity assumptions and degrades it to O(n^2).
             // Merge sort compares each pair at most once per merge level and
-            // stays O(n log n) regardless. NaN / non-number results are
-            // treated as 0 (equal), matching ES SortCompare; the first thrown
-            // error is captured and propagated after sorting settles.
-            let err: std::cell::Cell<Option<Arc<crate::error::Error>>> = std::cell::Cell::new(None);
-            let mut compare = |vm: &mut Vm, a: &Value, b: &Value| -> std::cmp::Ordering {
-                // If a comparator call already threw, short-circuit: restore
-                // the captured error (Cell::take cleared it) and return Equal
-                // so the sort settles quickly without more VM calls.
-                if let Some(e) = err.take() {
-                    err.set(Some(e));
-                    return std::cmp::Ordering::Equal;
+            // stays O(n log n) regardless. The comparator result is rooted
+            // across observable ToNumber conversion, and the first abrupt
+            // completion stops comparison immediately.
+            let mut compare = |vm: &mut Vm, a: &Value, b: &Value| {
+                if let Some(order) = compare_array_sort_undefined(a, b) {
+                    return Ok(order);
                 }
-                match vm.call_function(cmp_fn, &[a.clone(), b.clone()], None) {
-                    Ok(r) => match vm.to_number(&r) {
-                        Ok(ord) => {
-                            if ord.is_nan() {
-                                std::cmp::Ordering::Equal
-                            } else if ord < 0.0 {
-                                std::cmp::Ordering::Less
-                            } else if ord > 0.0 {
-                                std::cmp::Ordering::Greater
-                            } else {
-                                std::cmp::Ordering::Equal
-                            }
-                        }
-                        Err(_) => std::cmp::Ordering::Equal,
-                    },
-                    Err(e) => {
-                        err.set(Some(e));
-                        std::cmp::Ordering::Equal
-                    }
-                }
+                let result = vm.call_function(cmp_fn, &[a.clone(), b.clone()], None)?;
+                let result_pin = vm.pin(&result);
+                let number = vm.to_number(&result);
+                vm.unpin_many(result_pin);
+                let ord = number?;
+                Ok(if ord.is_nan() {
+                    std::cmp::Ordering::Equal
+                } else if ord < 0.0 {
+                    std::cmp::Ordering::Less
+                } else if ord > 0.0 {
+                    std::cmp::Ordering::Greater
+                } else {
+                    std::cmp::Ordering::Equal
+                })
             };
             merge_sort(vm, items, &mut compare)?;
-            if let Some(e) = err.into_inner() {
-                return Err(e);
-            }
         }
     }
     Ok(())
@@ -1054,7 +1056,7 @@ pub(crate) fn sort_with_cb(
 /// compared at most once along a given merge path.
 fn merge_sort<F>(vm: &mut Vm, items: &mut [Value], compare: &mut F) -> error::Result<()>
 where
-    F: FnMut(&mut Vm, &Value, &Value) -> std::cmp::Ordering,
+    F: FnMut(&mut Vm, &Value, &Value) -> error::Result<std::cmp::Ordering>,
 {
     let n = items.len();
     if n < 2 {
@@ -1074,7 +1076,7 @@ where
             let mut b = mid;
             buf.clear();
             while a < mid && b < right {
-                if compare(vm, &items[a], &items[b]) == std::cmp::Ordering::Greater {
+                if compare(vm, &items[a], &items[b])? == std::cmp::Ordering::Greater {
                     buf.push(items[b].clone());
                     b += 1;
                 } else {
@@ -1168,7 +1170,10 @@ pub(crate) fn array_to_sorted(
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
+    let cb = args.first().cloned();
+    validate_sort_compare_fn(vm, &cb)?;
     if let Some(Value::Object(idx)) = this {
+        let receiver = Value::Object(idx);
         let mut items = vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
                 a.items.lock().clone()
@@ -1176,9 +1181,32 @@ pub(crate) fn array_to_sorted(
                 Vec::new()
             }
         });
-        let cb = args.first().cloned();
-        sort_with_cb(vm, &mut items, &cb)?;
-        return make_array(vm, items);
+        let mut pin_count = vm.pin_many(&items);
+        pin_count += vm.pin(&receiver);
+        if let Some(compare_fn) = &cb {
+            pin_count += vm.pin(compare_fn);
+        }
+        let completion = (|| {
+            // ArrayCreate precedes SortIndexedProperties. Keeping the fresh
+            // result rooted also makes allocation failure precede comparator
+            // side effects, as required by toSorted.
+            let result_idx = vm.heap.allocate(HeapObj::Array(ArrayData::new_holes(
+                items.len(),
+                Some(vm.array_proto.clone()),
+            )))?;
+            let result = Value::Object(GcIdx(result_idx));
+            pin_count += vm.pin(&result);
+            sort_with_cb(vm, &mut items, &cb)?;
+            vm.heap.with_obj(result_idx, |obj| {
+                if let HeapObj::Array(array) = obj {
+                    *array.items.lock() = items;
+                    array.present.lock().fill(true);
+                }
+            });
+            Ok(result)
+        })();
+        vm.unpin_many(pin_count);
+        return completion;
     }
     Ok(Value::Undefined)
 }
@@ -1535,48 +1563,53 @@ pub(crate) fn array_reverse(
 
 pub(crate) fn array_sort(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let cmp = args.first().cloned();
+    validate_sort_compare_fn(vm, &cmp)?;
     if let Some(Value::Object(idx)) = this {
-        // Collect items, sort via comparator (default: cast to string, UTF-16 code unit compare).
-        let mut items = vm.heap.with_obj(idx.0, |obj| {
+        let receiver = Value::Object(idx);
+        // `sort` skips holes while collecting, then deletes the unused tail.
+        // Keep the initial length separate because comparator code may mutate
+        // the live receiver before writeback begins.
+        let (mut items, initial_len) = vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
-                a.items.lock().clone()
+                let backing = a.items.lock();
+                let present = a.present.lock();
+                let items = backing
+                    .iter()
+                    .enumerate()
+                    .filter(|(index, _)| present.get(*index).copied().unwrap_or(false))
+                    .map(|(_, value)| value.clone())
+                    .collect();
+                (items, backing.len())
             } else {
-                Vec::new()
+                (Vec::new(), 0)
             }
         });
-        match cmp {
-            None | Some(Value::Undefined) | Some(Value::Null) => {
-                // default: compare by string representation; undefined sorts to end.
-                items.sort_by(|a, b| {
-                    if a.is_undefined() && b.is_undefined() {
-                        return std::cmp::Ordering::Equal;
-                    }
-                    if a.is_undefined() {
-                        return std::cmp::Ordering::Greater;
-                    }
-                    if b.is_undefined() {
-                        return std::cmp::Ordering::Less;
-                    }
-                    let sa = vm.to_string(a).map(|s| s.to_string()).unwrap_or_default();
-                    let sb = vm.to_string(b).map(|s| s.to_string()).unwrap_or_default();
-                    sa.cmp(&sb)
-                });
-            }
-            Some(cmp_fn) => {
-                // Delegate to the O(n log n) merge sort in `sort_with_cb`,
-                // which also handles NaN comparator results and thrown errors
-                // per ES SortCompare. (The previous inline O(n^2) insertion
-                // sort made `a.sort(cmp)` on 10k elements take ~30s.)
-                let cmp_arg = Some(cmp_fn);
-                sort_with_cb(vm, &mut items, &cmp_arg)?;
-            }
+        let mut pin_count = vm.pin_many(&items);
+        pin_count += vm.pin(&receiver);
+        if let Some(compare_fn) = &cmp {
+            pin_count += vm.pin(compare_fn);
         }
-        vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Array(a) = obj {
-                *a.items.lock() = items;
+        let completion = (|| {
+            sort_with_cb(vm, &mut items, &cmp)?;
+            let item_count = items.len();
+            // Comparator code may have changed the live array length. Route
+            // writeback through Array [[Set]] so presence and length metadata
+            // stay coherent and entries appended past the initial range remain.
+            for (index, item) in items.into_iter().enumerate() {
+                vm.set_property_strict(&receiver, &index.to_string(), item)?;
             }
-        });
-        return Ok(Value::Object(idx));
+            for index in item_count..initial_len {
+                if !vm.delete_property(&receiver, &index.to_string())? {
+                    return Err(Error::type_err(format!(
+                        "Cannot delete array index '{}' during sort",
+                        index
+                    )));
+                }
+            }
+            Ok(receiver)
+        })();
+        vm.unpin_many(pin_count);
+        return completion;
     }
     Ok(Value::Undefined)
 }

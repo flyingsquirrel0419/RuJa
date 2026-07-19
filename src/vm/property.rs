@@ -1252,6 +1252,22 @@ impl Vm {
                         }
                         self.heap.with_obj(idx.0, |o| {
                             if let HeapObj::Array(a) = o {
+                                // Indexed data descriptors and the dense array
+                                // store represent the same property. Keep both
+                                // views synchronized for native Array methods.
+                                if i < crate::value::MAX_DENSE_ARRAY_LEN {
+                                    let mut items = a.items.lock();
+                                    let mut present = a.present.lock();
+                                    while items.len() <= i {
+                                        items.push(Value::Undefined);
+                                        present.push(false);
+                                    }
+                                    items[i] = value.clone();
+                                    if present.len() <= i {
+                                        present.resize(i + 1, false);
+                                    }
+                                    present[i] = true;
+                                }
                                 if let Some(desc) = a.props.lock().get_mut(&pkey) {
                                     desc.value = value.clone();
                                 }

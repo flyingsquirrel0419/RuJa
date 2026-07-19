@@ -374,6 +374,87 @@ fn array_mapping_allocation_failures_restore_gc_pin_depth() {
 }
 
 #[test]
+fn array_sort_methods_restore_gc_pin_depth_after_abrupt_completion() {
+    for source in [
+        r#"
+        var error = {};
+        [{ value: 2 }, { value: 1 }].sort(function() {
+          forceGc();
+          throw error;
+        });
+        "#,
+        r#"
+        var error = {};
+        [{ value: 2 }, { value: 1 }].toSorted(function() {
+          forceGc();
+          throw error;
+        });
+        "#,
+        r#"
+        var error = {};
+        var value = { toString: function() { forceGc(); throw error; } };
+        [value, {}].sort();
+        "#,
+        r#"
+        var error = {};
+        var value = { toString: function() { forceGc(); throw error; } };
+        [value, {}].toSorted();
+        "#,
+    ] {
+        let mut vm = Vm::new().expect("VM should initialize");
+        vm.register_fn(
+            "forceGc",
+            |vm, _, _| {
+                vm.gc();
+                Ok(Value::Undefined)
+            },
+            0,
+        )
+        .expect("GC test hook should register");
+        let baseline = vm.gc_pins.len();
+
+        vm.run(source)
+            .expect_err("sorting should preserve the abrupt completion");
+        assert_eq!(vm.gc_pins.len(), baseline);
+    }
+}
+
+#[test]
+fn array_to_sorted_allocation_failure_precedes_comparator_and_restores_gc_pin_depth() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn("capHeap", |vm, _, _| cap_heap_at_current_live_count(vm), 0)
+        .expect("heap-cap hook should register");
+    let baseline = vm.gc_pins.len();
+
+    let error = vm
+        .run(
+            r#"
+            var calls = 0;
+            var source = [{ value: 2 }, { value: 1 }];
+            var compare = function(left, right) {
+              calls++;
+              return left.value - right.value;
+            };
+            capHeap();
+            source.toSorted(compare);
+            "#,
+        )
+        .expect_err("ArrayCreate should hit the heap limit before comparison");
+    vm.set_max_heap_objects(None);
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.gc_pins.len(), baseline);
+    assert_eq!(
+        vm.run("calls")
+            .expect("comparison count should remain observable"),
+        Value::Number(0.0)
+    );
+    assert_eq!(
+        vm.run("1 + 1").expect("VM should remain reusable"),
+        Value::Number(2.0)
+    );
+}
+
+#[test]
 fn internally_allocating_array_constructor_uses_one_heap_slot() {
     let mut vm = Vm::new().expect("VM should initialize");
     vm.gc();

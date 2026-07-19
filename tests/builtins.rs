@@ -3140,6 +3140,199 @@ fn array_sort_cmp() {
 }
 
 #[test]
+fn array_sort_methods_root_materialized_values_across_gc() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+
+    assert_eq!(
+        vm.run(
+            r#"
+            function sortValues(copy) {
+              var source = [{ value: 3 }, { value: 1 }, { value: 2 }];
+              var replacement;
+              var calls = 0;
+              var compare = function(left, right) {
+                if (calls++ === 0) {
+                  source.length = 0;
+                  forceGc();
+                  replacement = { value: 99 };
+                }
+                return left.value - right.value;
+              };
+              var result = copy ? source.toSorted(compare) : source.sort(compare);
+              return result.map(function(entry) { return entry.value; }).join(",");
+            }
+            sortValues(false) + "|" + sortValues(true);
+            "#,
+        )
+        .expect("sort materialized values should survive observable GC"),
+        Value::String(Arc::from("1,2,3|1,2,3"))
+    );
+}
+
+#[test]
+fn array_sort_writeback_tracks_live_array_after_comparator_mutation() {
+    assert_eq!(
+        run(r#"
+            var shrunk = [{ value: 3 }, { value: 1 }, { value: 2 }];
+            var shrinkCalls = 0;
+            shrunk.sort(function(left, right) {
+              if (shrinkCalls++ === 0) shrunk.length = 0;
+              return left.value - right.value;
+            });
+
+            var grown = [{ value: 3 }, { value: 1 }, { value: 2 }];
+            var growCalls = 0;
+            grown.sort(function(left, right) {
+              if (growCalls++ === 0) grown.push({ value: 99 });
+              return left.value - right.value;
+            });
+
+            [
+              shrunk.length,
+              0 in shrunk,
+              Object.keys(shrunk).join(","),
+              shrunk.map(function(entry) { return entry.value; }).join(","),
+              grown.length,
+              Object.keys(grown).join(","),
+              grown.map(function(entry) { return entry.value; }).join(",")
+            ].join("|");
+            "#,),
+        Value::String(Arc::from("3|true|0,1,2|1,2,3|4|0,1,2,3|1,2,3,99"))
+    );
+}
+
+#[test]
+fn array_sort_preserves_holes_and_sorts_only_present_values() {
+    assert_eq!(
+        run(r#"
+            var trailing = [1, ,];
+            trailing.sort();
+            var leading = [, 1];
+            leading.sort();
+            var empty = Array(2);
+            empty.sort();
+            var explicit = [undefined, ,];
+            explicit.sort();
+            [
+              trailing.length, Object.keys(trailing).join(","), 1 in trailing,
+              leading.length, Object.keys(leading).join(","), 1 in leading,
+              empty.length, Object.keys(empty).join(","), 0 in empty,
+              explicit.length, Object.keys(explicit).join(","),
+              explicit.hasOwnProperty(0), 1 in explicit
+            ].join("|");
+            "#,),
+        Value::String(Arc::from("2|0|false|2|0|false|2||false|2|0|true|false"))
+    );
+}
+
+#[test]
+fn array_sort_writeback_keeps_index_descriptors_and_dense_storage_in_sync() {
+    assert_eq!(
+        run(r#"
+            var values = [3, 2, 1];
+            var calls = 0;
+            values.sort(function(left, right) {
+              if (calls++ === 0) {
+                Object.defineProperty(values, "0", {
+                  value: 3,
+                  writable: true,
+                  enumerable: true,
+                  configurable: true
+                });
+              }
+              return left - right;
+            });
+            [
+              values[0],
+              values.join(","),
+              values.map(function(value) { return value; }).join(",")
+            ].join("|");
+            "#,),
+        Value::String(Arc::from("1|1,2,3|1,2,3"))
+    );
+}
+
+#[test]
+fn array_sort_methods_order_undefined_without_calling_comparator() {
+    assert_eq!(
+        run(r#"
+            function check(copy) {
+              var calls = 0;
+              var values = [undefined, 1];
+              var compare = function() { calls++; return -1; };
+              var result = copy ? values.toSorted(compare) : values.sort(compare);
+              return [result[0] === 1, result[1] === undefined, calls].join(",");
+            }
+            check(false) + "|" + check(true);
+            "#,),
+        Value::String(Arc::from("true,true,0|true,true,0"))
+    );
+}
+
+#[test]
+fn array_sort_methods_use_utf16_code_unit_order() {
+    assert_eq!(
+        run(r#"
+            var loneHigh = "\uD800";
+            var supplementary = "\uD800\uDC00";
+            var fullwidthZ = "\uFF3A";
+            function firstIs(copy, values, expected) {
+              var result = copy ? values.toSorted() : values.sort();
+              return result[0] === expected;
+            }
+            [
+              firstIs(false, [supplementary, fullwidthZ], supplementary),
+              firstIs(true, [supplementary, fullwidthZ], supplementary),
+              firstIs(false, [supplementary, loneHigh], loneHigh),
+              firstIs(true, [supplementary, loneHigh], loneHigh)
+            ].join("|");
+            "#,),
+        Value::String(Arc::from("true|true|true|true"))
+    );
+}
+
+#[test]
+fn array_sort_methods_propagate_comparator_conversion_errors() {
+    assert_eq!(
+        run(r#"
+            var marker = {};
+            function isTypeError(callback) {
+              try { callback(); return false; }
+              catch (error) { return error instanceof TypeError; }
+            }
+            function isMarker(callback) {
+              try { callback(); return false; }
+              catch (error) { return error === marker; }
+            }
+            function comparisonResult() {
+              return { valueOf: function() { throw marker; } };
+            }
+            function stringValue() {
+              return { toString: function() { throw marker; } };
+            }
+            [
+              isTypeError(function() { [2, 1].sort(null); }),
+              isTypeError(function() { [2, 1].toSorted(null); }),
+              isMarker(function() { [2, 1].sort(comparisonResult); }),
+              isMarker(function() { [2, 1].toSorted(comparisonResult); }),
+              isMarker(function() { [stringValue(), {}].sort(); }),
+              isMarker(function() { [stringValue(), {}].toSorted(); })
+            ].join("|");
+            "#,),
+        Value::String(Arc::from("true|true|true|true|true|true"))
+    );
+}
+
+#[test]
 fn array_fill_materializes_holes() {
     assert_eq!(
         run(r#"
