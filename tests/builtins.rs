@@ -15578,7 +15578,30 @@ fn regexp_modifiers_empty_remove_list_compiles() {
 
 #[test]
 fn regexp_quantifier_without_atom_reports_early_error() {
-    for source in ["/?/;", "/{2}/;", "/{2,}/;", "/{2,3}/;"] {
+    for source in [
+        "/?/;",
+        "/{2}/;",
+        "/{2,}/;",
+        "/{2,3}/;",
+        "/a**/;",
+        "/a***/;",
+        "/a++/;",
+        "/a+++/;",
+        "/a???/;",
+        "/a????/;",
+        "/x{1}{1,}/;",
+        "/x{1,2}{1}/;",
+        "/x{1,}{1}/;",
+        "/x{0,1}{1,}/;",
+        "/^*/;",
+        "/$?/;",
+        "/\\b?/;",
+        "/\\B+/;",
+        "/\\u{61}{2}/;",
+        "/\\x**/;",
+        "/\\c**/;",
+        "/\\k<a**>/;",
+    ] {
         assert!(
             run_err(source).contains("regular expression quantifier"),
             "expected early error for {source}"
@@ -15599,6 +15622,19 @@ fn regexp_quantifier_without_atom_reports_early_error() {
         "new RegExp('{2}');",
         "new RegExp('{2,}');",
         "new RegExp('{2,3}');",
+        "new RegExp('a**');",
+        "new RegExp('a+++');",
+        "new RegExp('a????');",
+        "new RegExp('x{1}{1,}');",
+        "new RegExp('x{1,2}{1}');",
+        "new RegExp('x{1,}{1}');",
+        "new RegExp('x{0,1}{1,}');",
+        "new RegExp('^*');",
+        "new RegExp('\\\\b?');",
+        "new RegExp('\\\\u{61}{2}');",
+        "new RegExp('\\\\x**');",
+        "new RegExp('\\\\c**');",
+        "new RegExp('\\\\k<a**>');",
     ] {
         assert!(
             run_err(source).contains("regular expression quantifier"),
@@ -15611,6 +15647,12 @@ fn regexp_quantifier_without_atom_reports_early_error() {
     assert_eq!(run("/\\?/.test('?');"), Value::Bool(true));
     assert_eq!(run("/[?{]/.test('{');"), Value::Bool(true));
     assert_eq!(run("/(?:a)?/.test('');"), Value::Bool(true));
+    assert_eq!(run("/a*?/.test('');"), Value::Bool(true));
+    assert_eq!(run("/a??/.test('');"), Value::Bool(true));
+    assert_eq!(run("/a{1,2}?/.test('aa');"), Value::Bool(true));
+    assert_eq!(run("/(?=a)??/.test('a');"), Value::Bool(true));
+    assert_eq!(run("/\\u{61}{2}/u.test('aa');"), Value::Bool(true));
+    assert_eq!(run("/\\u{61}{2}/v.test('aa');"), Value::Bool(true));
     assert_eq!(run("new RegExp('a{2}').test('aa');"), Value::Bool(true));
 }
 
@@ -15736,6 +15778,65 @@ fn regexp_unicode_mode_syntax_reports_early_error() {
     assert_eq!(run("/\\p{Alpha}/u.test('A');"), Value::Bool(true));
     assert_eq!(run("/\\p{sc=Grek}/u.test('Α');"), Value::Bool(true));
     assert_eq!(run("/\\p{scx=Greek}/u.test('Α');"), Value::Bool(true));
+}
+
+#[test]
+fn regexp_class_range_and_unicode_bracket_early_errors() {
+    for source in [
+        "/[a--z]/;",
+        "/[a--z]/u;",
+        "/[a-\\-]/u;",
+        "/[a-\\c!]/;",
+        "/[\\é-z]/;",
+        "/[\\💩-😀]/;",
+        "/[💩-😀]/;",
+        "/[z-a]/v;",
+        "/[\\d--]/v;",
+        "/[\\x41--]/v;",
+        "/[--\\x41]/v;",
+        "/[\\uD83D\\uDCA9-\\u{1F4A8}]/u;",
+        "/[[a]/v;",
+        "/\\x4/u;",
+        "/]/u;",
+        "/}/u;",
+        "new RegExp('[a--z]');",
+        "new RegExp('[a--z]', 'u');",
+        "new RegExp('[a-\\\\-]', 'u');",
+        "new RegExp('[\\\\d--]', 'v');",
+        "new RegExp('[\\\\x41--]', 'v');",
+        "new RegExp('[--\\\\x41]', 'v');",
+        "new RegExp(']', 'u');",
+        "new RegExp('}', 'u');",
+        "new RegExp(']', 'v');",
+        "new RegExp('}', 'v');",
+    ] {
+        assert!(
+            run_err(source).contains("regular expression"),
+            "expected RegExp grammar error for {source}"
+        );
+    }
+
+    assert_eq!(run("new RegExp(']').test(']');"), Value::Bool(true));
+    assert_eq!(run("new RegExp('}').test('}');"), Value::Bool(true));
+    assert_eq!(run("/\\]/u.test(']');"), Value::Bool(true));
+    assert_eq!(run("/\\}/v.test('}');"), Value::Bool(true));
+    assert_eq!(run("/[a\\-z]/u.test('-');"), Value::Bool(true));
+    assert_eq!(run("/[\\--a]/u.test(']');"), Value::Bool(true));
+    assert_eq!(run("/[A-\\141]/.test('a');"), Value::Bool(true));
+    assert_eq!(run("/[A-\\c!]/.test('!');"), Value::Bool(true));
+    assert_eq!(run("false ? /[A-\\é]/ : 1;"), Value::Number(1.0));
+    assert_eq!(run("false ? /[\\💩-\\uFFFF]/ : 1;"), Value::Number(1.0));
+    assert_eq!(run("false ? /[💩-\\uFFFF]/ : 1;"), Value::Number(1.0));
+    assert_eq!(run("/\\x41/u.test('A');"), Value::Bool(true));
+    assert_eq!(run("/\\x41/v.test('A');"), Value::Bool(true));
+    assert_eq!(run("false ? /[\\d--\\w]/v : 1;"), Value::Number(1.0));
+    assert_eq!(run("false ? /[a--[b]]/v : 1;"), Value::Number(1.0));
+    assert_eq!(run("/[\\d-a]/.test('a');"), Value::Bool(true));
+    assert_eq!(run("/[a-\\d]/.test('a');"), Value::Bool(true));
+    assert_eq!(
+        run("var r = /[a--z]/v; r.test('a') + ',' + r.test('z') + ',' + r.test('-');"),
+        Value::String(Arc::from("true,false,false"))
+    );
 }
 
 #[test]
