@@ -107,10 +107,11 @@ const FOREIGN_EAGER_NATIVE_CONSTRUCTOR_SOURCES: &[&str] = &[
     "AggregateError",
 ];
 
-fn realm_registry_counts(vm: &Vm) -> [usize; 31] {
+fn realm_registry_counts(vm: &Vm) -> [usize; 32] {
     [
         vm.realm_globals.len(),
         vm.realm_object_prototypes.len(),
+        vm.realm_object_prototype_ids.len(),
         vm.realm_array_prototypes.len(),
         vm.realm_promise_constructors.len(),
         vm.realm_promise_prototypes.len(),
@@ -180,7 +181,7 @@ fn assert_main_realm_range_error(vm: &Vm, error: &crate::error::Error) {
 fn assert_failed_realm_attempt(
     vm: &mut Vm,
     baseline_live: usize,
-    baseline_registries: [usize; 31],
+    baseline_registries: [usize; 32],
     baseline_pins: usize,
     extra_capacity: usize,
 ) {

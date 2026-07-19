@@ -20,7 +20,7 @@ use crate::value::{GcIdx, HeapObj, PropertyKey, Value};
 use indexmap::IndexMap;
 use num_traits::Zero;
 use parking_lot::Mutex;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, AtomicUsize, Ordering};
 use std::sync::Arc;
 
@@ -151,13 +151,17 @@ pub struct Vm {
     pub(crate) well_known_symbols: WellKnownSymbols,
     pub(crate) global_names: HashMap<Arc<str>, usize>,
     pub(crate) global_constants: Vec<Value>,
-    /// Every `realm_*` registry in this block is a direct GC root. A new
+    /// Every `realm_*` registry in this block that stores `Value`s is a direct
+    /// GC root. Identity-only indexes rely on those owning roots. Every
     /// registry must also be handled by `remove_realm_registry_entries` so
     /// failed provisional Realm construction remains transactional.
     /// Realm global environment index -> that Realm's global object.
     pub(crate) realm_globals: HashMap<usize, Value>,
     /// Realm global environment index -> original `%Object.prototype%`.
     pub(crate) realm_object_prototypes: HashMap<usize, Value>,
+    /// Reverse identity index for immutable-prototype checks. The owning map
+    /// remains the GC root and both collections are updated transactionally.
+    pub(crate) realm_object_prototype_ids: HashSet<GcIdx>,
     /// Realm global environment index -> original `%Array.prototype%`.
     pub(crate) realm_array_prototypes: HashMap<usize, Value>,
     /// Realm global environment -> `%Promise%` and `%Promise.prototype%`.
@@ -649,6 +653,7 @@ impl Vm {
             global_constants: Vec::new(),
             realm_globals: HashMap::new(),
             realm_object_prototypes: HashMap::new(),
+            realm_object_prototype_ids: HashSet::new(),
             realm_array_prototypes: HashMap::new(),
             realm_promise_constructors: HashMap::new(),
             realm_promise_prototypes: HashMap::new(),
@@ -2059,7 +2064,10 @@ impl Vm {
         let realm = realm.0;
         debug_assert_ne!(realm, self.global.0, "main Realm must never be rolled back");
         self.realm_globals.remove(&realm);
-        self.realm_object_prototypes.remove(&realm);
+        if let Some(Value::Object(prototype)) = self.realm_object_prototypes.remove(&realm) {
+            let removed = self.realm_object_prototype_ids.remove(&prototype);
+            debug_assert!(removed);
+        }
         self.realm_array_prototypes.remove(&realm);
         self.realm_promise_constructors.remove(&realm);
         self.realm_promise_prototypes.remove(&realm);
@@ -2094,6 +2102,16 @@ impl Vm {
         self.realm_array_buffer_prototypes.remove(&realm);
         self.realm_typed_array_constructors
             .retain(|(owner, _), _| *owner != realm);
+    }
+
+    pub(crate) fn register_realm_object_prototype(&mut self, realm: GcIdx, prototype: Value) {
+        let Value::Object(prototype_id) = prototype else {
+            unreachable!("%Object.prototype% must be an object")
+        };
+        debug_assert!(!self.realm_object_prototypes.contains_key(&realm.0));
+        debug_assert!(!self.realm_object_prototype_ids.contains(&prototype_id));
+        self.realm_object_prototypes.insert(realm.0, prototype);
+        self.realm_object_prototype_ids.insert(prototype_id);
     }
 
     /// Preserve JavaScript throws, materialize native errors in the operation

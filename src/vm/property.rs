@@ -2710,7 +2710,7 @@ impl Vm {
             return Ok(true);
         }
 
-        if matches!(self.object_proto, Value::Object(object_proto) if object_proto == *idx) {
+        if self.is_realm_object_prototype(*idx) {
             return Ok(false);
         }
 
@@ -2728,6 +2728,11 @@ impl Vm {
             *o.proto().lock() = proto;
         });
         Ok(true)
+    }
+
+    fn is_realm_object_prototype(&self, object: GcIdx) -> bool {
+        self.realm_object_prototype_ids.contains(&object)
+            || self.object_proto == Value::Object(object)
     }
 
     /// Strictness of the currently-executing frame, used by ordinary

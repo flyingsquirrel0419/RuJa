@@ -32,6 +32,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Build RuJa (release)
         run: cargo build --release
+      - name: Test release Realm registry rollback
+        run: >-
+          cargo test --release --lib
+          vm::allocation_tests::failed_realm_construction_rolls_back_every_heap_boundary
+          -- --exact
       - name: Checkout test262 (sparse)
         run: |
           git clone --depth 1 --filter=blob:none --sparse https://github.com/tc39/test262.git ~/test262

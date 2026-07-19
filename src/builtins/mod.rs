@@ -3939,8 +3939,7 @@ fn populate_test262_realm(vm: &mut Vm, realm_env: GcIdx) -> error::Result<Value>
     });
     install_object_proto_accessor_in_env(vm, realm_object_prototype_idx, realm_env)?;
     define_realm_global(vm, realm_env, &global, "Object", realm_object);
-    vm.realm_object_prototypes
-        .insert(realm_env.0, realm_object_prototype.clone());
+    vm.register_realm_object_prototype(realm_env, realm_object_prototype.clone());
     vm.heap.with_obj(global_idx, |object| {
         *object.proto().lock() = Some(realm_object_prototype.clone());
     });
@@ -10466,8 +10465,7 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
         vm.new_native_function("Function.prototype", function_proto_noop, 0)?;
     vm.function_proto = Value::Object(function_proto_idx);
     setup(vm)?;
-    vm.realm_object_prototypes
-        .insert(vm.global.0, vm.object_proto.clone());
+    vm.register_realm_object_prototype(vm.global, vm.object_proto.clone());
     // Per spec, Function.prototype's [[Prototype]] is Object.prototype.
     // (Function.prototype is itself a function, but it inherits Object.prototype
     // methods like isPrototypeOf, hasOwnProperty, toString, etc.)

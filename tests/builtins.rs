@@ -10916,6 +10916,191 @@ fn object_prototype_proto_accessor_and_mutation_status() {
 }
 
 #[test]
+fn created_realm_object_prototypes_have_immutable_prototypes() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+
+    assert_eq!(
+        vm.run(
+            r#"
+            var mainTypeError = TypeError;
+            function createGlobal() { return $262.createRealm().global; }
+
+            var sameGlobal = createGlobal();
+            var samePrototype = sameGlobal.Object.prototype;
+            var samePrototypeSucceeds =
+              Object.setPrototypeOf(samePrototype, null) === samePrototype &&
+              sameGlobal.Object.setPrototypeOf(samePrototype, null) === samePrototype &&
+              Reflect.setPrototypeOf(samePrototype, null) === true &&
+              sameGlobal.Reflect.setPrototypeOf(samePrototype, null) === true &&
+              Object.getPrototypeOf(samePrototype) === null &&
+              Object.isExtensible(samePrototype) === true;
+
+            function mainObjectRejects() {
+              var global = createGlobal();
+              var prototype = global.Object.prototype;
+              var error;
+              try { Object.setPrototypeOf(prototype, {}); }
+              catch (caught) { error = caught; }
+              return error instanceof mainTypeError &&
+                !(error instanceof global.TypeError) &&
+                Object.getPrototypeOf(prototype) === null;
+            }
+
+            function foreignObjectRejects() {
+              var global = createGlobal();
+              var prototype = global.Object.prototype;
+              var error;
+              try { global.Object.setPrototypeOf(prototype, {}); }
+              catch (caught) { error = caught; }
+              return error instanceof global.TypeError &&
+                !(error instanceof mainTypeError) &&
+                Object.getPrototypeOf(prototype) === null;
+            }
+
+            function mainSetterRejects() {
+              var global = createGlobal();
+              var prototype = global.Object.prototype;
+              var setter = Object.getOwnPropertyDescriptor(
+                Object.prototype,
+                "__proto__"
+              ).set;
+              var error;
+              try { setter.call(prototype, {}); }
+              catch (caught) { error = caught; }
+              return error instanceof mainTypeError &&
+                !(error instanceof global.TypeError) &&
+                Object.getPrototypeOf(prototype) === null;
+            }
+
+            function foreignSetterRejects() {
+              var global = createGlobal();
+              var prototype = global.Object.prototype;
+              var setter = global.Object.getOwnPropertyDescriptor(
+                prototype,
+                "__proto__"
+              ).set;
+              var error;
+              try { setter.call(prototype, {}); }
+              catch (caught) { error = caught; }
+              return error instanceof global.TypeError &&
+                !(error instanceof mainTypeError) &&
+                Object.getPrototypeOf(prototype) === null;
+            }
+
+            function foreignMethodsUseTheirOwnRealmForMainPrototypeErrors() {
+              var global = createGlobal();
+              var objectError;
+              var setterError;
+              try { global.Object.setPrototypeOf(Object.prototype, {}); }
+              catch (caught) { objectError = caught; }
+              var setter = global.Object.getOwnPropertyDescriptor(
+                global.Object.prototype,
+                "__proto__"
+              ).set;
+              try { setter.call(Object.prototype, {}); }
+              catch (caught) { setterError = caught; }
+              return objectError instanceof global.TypeError &&
+                !(objectError instanceof mainTypeError) &&
+                setterError instanceof global.TypeError &&
+                !(setterError instanceof mainTypeError) &&
+                Object.getPrototypeOf(Object.prototype) === null;
+            }
+
+            var mainReflectGlobal = createGlobal();
+            var mainReflectPrototype = mainReflectGlobal.Object.prototype;
+            var mainReflectRejects =
+              Reflect.setPrototypeOf(mainReflectPrototype, {}) === false &&
+              Object.getPrototypeOf(mainReflectPrototype) === null &&
+              Object.isExtensible(mainReflectPrototype) === true;
+
+            var foreignReflectGlobal = createGlobal();
+            var foreignReflectPrototype = foreignReflectGlobal.Object.prototype;
+            var foreignReflectRejects =
+              foreignReflectGlobal.Reflect.setPrototypeOf(
+                foreignReflectPrototype,
+                {}
+              ) === false &&
+              Object.getPrototypeOf(foreignReflectPrototype) === null;
+
+            var transparentGlobal = createGlobal();
+            var transparentPrototype = transparentGlobal.Object.prototype;
+            var transparentProxy = new Proxy(transparentPrototype, {});
+            var transparentObjectError;
+            try { Object.setPrototypeOf(transparentProxy, {}); }
+            catch (caught) { transparentObjectError = caught; }
+            var transparentProxyRejects =
+              Reflect.setPrototypeOf(transparentProxy, {}) === false &&
+              transparentObjectError instanceof mainTypeError &&
+              !(transparentObjectError instanceof transparentGlobal.TypeError) &&
+              Object.getPrototypeOf(transparentPrototype) === null;
+
+            var trappingGlobal = createGlobal();
+            var trappingPrototype = trappingGlobal.Object.prototype;
+            var trappingProxy = new Proxy(trappingPrototype, {
+              setPrototypeOf: function() { return true; }
+            });
+            var trappingProxyMayReportSuccess =
+              Reflect.setPrototypeOf(trappingProxy, {}) === true &&
+              Object.getPrototypeOf(trappingPrototype) === null;
+
+            var invariantGlobal = createGlobal();
+            var invariantPrototype = invariantGlobal.Object.prototype;
+            Object.preventExtensions(invariantPrototype);
+            var invariantProxy = new Proxy(invariantPrototype, {
+              setPrototypeOf: function() { return true; }
+            });
+            var invariantError;
+            try { Reflect.setPrototypeOf(invariantProxy, {}); }
+            catch (caught) { invariantError = caught; }
+            var trappingNonExtensibleRejects =
+              invariantError instanceof mainTypeError &&
+              !(invariantError instanceof invariantGlobal.TypeError) &&
+              Object.getPrototypeOf(invariantPrototype) === null &&
+              Object.isExtensible(invariantPrototype) === false;
+
+            var retainedGlobal = createGlobal();
+            var retainedPrototype = retainedGlobal.Object.prototype;
+            var retainedReflect = retainedGlobal.Reflect;
+            retainedGlobal.Object = null;
+            retainedGlobal.Reflect = null;
+            forceGc();
+            var retainedAfterGc =
+              retainedReflect.setPrototypeOf(retainedPrototype, {}) === false &&
+              Object.getPrototypeOf(retainedPrototype) === null;
+
+            [
+              samePrototypeSucceeds,
+              mainObjectRejects(),
+              foreignObjectRejects(),
+              mainSetterRejects(),
+              foreignSetterRejects(),
+              foreignMethodsUseTheirOwnRealmForMainPrototypeErrors(),
+              mainReflectRejects,
+              foreignReflectRejects,
+              transparentProxyRejects,
+              trappingProxyMayReportSuccess,
+              trappingNonExtensibleRejects,
+              retainedAfterGc
+            ].join("|");
+            "#,
+        )
+        .expect("created Realm Object.prototype immutability should execute"),
+        Value::String(Arc::from(
+            "true|true|true|true|true|true|true|true|true|true|true|true"
+        ))
+    );
+}
+
+#[test]
 fn proxy_prototype_internal_methods_follow_traps_and_invariants() {
     let src = r#"
         var target = {};
