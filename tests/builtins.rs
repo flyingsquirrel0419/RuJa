@@ -19178,7 +19178,9 @@ fn atomics_wait_async_resolves_notify_and_timeout_through_external_jobs() {
         var asyncResults = [];
         var notified = new Int32Array(new SharedArrayBuffer(4));
         var timed = new BigInt64Array(new SharedArrayBuffer(8));
-        var first = Atomics.waitAsync(notified, 0, 0, 1000);
+        // Debug CI runners can spend more than one second in the deliberate
+        // allocation pressure below before reaching Atomics.notify.
+        var first = Atomics.waitAsync(notified, 0, 0, 10000);
         var second = Atomics.waitAsync(timed, 0, 0n, 10);
         first.value.then(function(value) { asyncResults.push("first:" + value); });
         second.value.then(function(value) { asyncResults.push("second:" + value); });
