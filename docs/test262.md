@@ -4056,10 +4056,11 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   `true`. `Proxy.revocable()` now revokes through the native callee rather
   than the call receiver, so revoked proxy deletes throw. The test262
   `$262.createRealm()` host now also exposes the constructable `Proxy`
-  constructor on the created global. With `Proxy`, `Reflect`, and
-  `proxy-missing-checks` skips temporarily lifted, focused
-  `built-ins/Reflect/deleteProperty built-ins/Proxy/deleteProperty` runs at
-  **25 pass / 0 fail / 3 skip**.
+  constructor on the created global. At this earlier implementation
+  checkpoint, temporarily lifting the `Proxy`, `Reflect`, and
+  `proxy-missing-checks` gates produced **25 pass / 0 fail / 3 skip** for the
+  focused delete directories. The later iterative-delete admission below
+  closes and permanently admits all 28 files.
 - **Array search array-like access** —
   `Array.prototype.indexOf`, `lastIndexOf`, and `includes` now read
   `length` through `LengthOfArrayLike` and visit indices through
@@ -8236,6 +8237,55 @@ Twenty-nine files are byte-identical to direct-Array baseline `29673722819`;
 only `built-ins` changes from **14876 pass / 5261 fail** to **14899 / 5238**,
 exactly reproducing **+23 pass / -23 fail** without skip, timeout, error,
 total, or corpus drift. GitHub's Node 20 annotations were warnings only.
+
+## Iterative Proxy Delete and exact admission
+
+Transparent Proxy `[[Delete]]` forwarding now advances through target chains
+iteratively rather than recursively. Every layer preserves the required
+revocation, `GetMethod`, nullish delegation, trap call, boolean conversion,
+descriptor, configurability, and extensibility order. The original receiver,
+current target and handler, fresh trap, and invariant inputs remain rooted
+across observable calls. Forced collection at every transparent hop and at
+trap/descriptor/extensibility lookup and invocation restores the incoming pin
+depth on normal, thrown, TypeError, and host-fuel completions. A 100,000-layer
+chain exercises both successful deletion and a failed non-configurable delete.
+
+Fuel is charged per Proxy layer in `[[Delete]]` and in the shared iterative
+`[[Get]]`, `[[GetOwnProperty]]`, and `[[IsExtensible]]` loops. Deep Proxy
+handlers and deep invariant targets therefore cannot hide native work behind
+one outer delete charge. Exact budgets abort with zero fuel, release every pin,
+preserve target state, and permit a refilled retry on the same VM.
+`Reflect.deleteProperty(target)` now coerces its omitted key from `undefined`
+and can delete the `"undefined"` property. Symbol identity, nested revocation,
+non-callable traps, strict false results, and both target invariants have local
+regressions.
+
+`tools/test262_proxy_delete_admission.txt` freezes all current 28 files under
+`built-ins/Proxy/deleteProperty` and `built-ins/Reflect/deleteProperty` at
+Test262 `020cb74075849d1e404bbcdb62feb7a02e6966db`. Runner and analyzer remove
+only each exact member's recorded metadata features; future files and unrelated
+gates remain skipped. The exact run is **28 pass / 0 fail / 0 skip** and the
+supported subset remains **12751 pass / 0 fail / 7687 skip / 20438 total**.
+Local gates pass all targets/features, lib tests **135/135**, builtins
+**493/493**, operators **123/123**, bugfixes **68/68**, Fuel **28/28**,
+warnings-denied Clippy, rustfmt/diff, release, wasm32, and Python tooling
+**109/109**.
+
+GPT 5.6 reviewers Mill (`019f7924-1876-7653-81f1-29d05376a591`) and Peirce
+(`019f7924-16df-7d82-8ebf-ab3177b86ddf`) returned `CLEAN` after the nested
+fuel bypass and GC coverage weakness were fixed. All explorer and reviewer
+sessions are closed. Feature commit `c85a6b8` passed ordinary CI
+`29677977508` and all **33/33** jobs in full matrix `29677977505`.
+
+The 30 artifacts at
+`/tmp/ruja-proxy-delete-feature.29677977505.bAHxEI` aggregate to **30535 pass /
+6049 fail / 11877 skip / 6 timeout / 0 error / 48467 total / 36584
+pass-or-fail executed** (**63.0%** of all files, **83.5%** of executed files).
+Twenty-nine files are byte-identical to generic-sort baseline
+`/tmp/ruja-array-sort-generic.29675860634.cEBP0e`. Only `built-ins` changes,
+from **14899 pass / 5238 fail / 3525 skip** to **14927 / 5238 / 3497**,
+exactly **+28 pass / -28 skip** with no failure, timeout, error, total, or
+corpus drift.
 
 ## Why the full-suite rate is not higher
 

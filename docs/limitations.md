@@ -5,9 +5,12 @@
 RuJa is designed for running untrusted JavaScript safely inside a host process.
 The following resource limits are enforced:
 
-- **Execution fuel**: `Vm::set_fuel(Some(n))` bounds execution to ~n opcodes.
-  Exhaustion throws a `RangeError("fuel exhausted")` that is *not catchable*
-  by user `try/catch` (a host-level abort). `None` = unbounded (default).
+- **Execution fuel**: `Vm::set_fuel(Some(n))` bounds dispatched opcodes and
+  explicitly metered native-loop steps. Proxy `[[Delete]]`, `[[Get]]`,
+  `[[GetOwnProperty]]`, and `[[IsExtensible]]` consume one unit per traversed
+  Proxy layer, including nested handler and invariant walks. Exhaustion throws
+  a `RangeError("fuel exhausted")` that is *not catchable* by user `try/catch`
+  (a host-level abort). `None` = unbounded (default).
 - **Heap object limit**: `Vm::set_max_heap_objects(Some(n))` caps the number
   of live GC-managed heap objects. When exceeded, allocation throws a
   catchable `RangeError("heap limit exceeded")`. A GC cycle is attempted
@@ -27,12 +30,12 @@ The following resource limits are enforced:
 - **Call-stack depth**: JavaScript recursion is capped at 1000 frames.
   Exceeding this throws a catchable `RangeError("Maximum call stack size
   exceeded")`, not a native stack overflow (SIGSEGV/abort).
-- **Transparent Proxy deletion depth**: trapless `deleteProperty` forwarding
-  still delegates recursively through Proxy targets. An adversarially deep
-  transparent Proxy chain can therefore exhaust the Rust stack, including
-  during `Array.prototype.sort` tail deletion. Set, construct, and several
-  descriptor protocols already use bounded or iterative traversal; deletion
-  needs the same treatment as a separate VM-wide property-operation unit.
+- **Remaining Proxy traversal caps**: some `[[Set]]` and
+  `[[DefineOwnProperty]]` paths still use finite internal depth guards. Those
+  guards avoid native-stack failure but can reject otherwise valid, unusually
+  deep Proxy chains. Removing those arbitrary limits requires separate
+  iterative operation audits; deletion, get, descriptor lookup, and
+  extensibility traversal no longer depend on them.
 - **Regex execution bounds**: ordinary matching uses the RE2-style,
   linear-time Rust `regex` backend. Backreferences use the vendored
   `fancy-regex` backend; that path has a finite work limit and reports an

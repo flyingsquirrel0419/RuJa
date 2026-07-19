@@ -572,6 +572,38 @@ the specified invalid-Array-length error order remains observable.
 - 장점, 단점 및 영향: Generic objects, boxed primitives, inherited accessors, Proxy traps, getter mutation, partial writeback, forced GC, and fuel aborts now follow one tested order. The focused sort/toSorted Test262 set has no failures. The explicit 1,048,576 scan cap is intentionally stricter than ECMAScript for very large sparse receivers, temporary root and merge storage scale with the collected list, and default comparison still allocates UTF-16 vectors.
 ```
 
+## Iterative Proxy deletion and nested traversal fuel
+
+`Vm::delete_property_key` owns one root for its original receiver and advances
+an owned `current` value through transparent Proxy targets. Each iteration
+checks revocation, consumes one fuel unit, pins that layer's target and handler,
+and performs observable `GetMethod(handler, "deleteProperty")`. A nullish trap
+releases the per-layer pins and continues; a present trap is pinned through its
+call, then the target remains rooted through descriptor and extensibility
+invariants. One outer completion scope releases the original root on every
+normal, thrown, allocation, or host-fuel completion. Ordinary exotic deletion
+runs once after the loop reaches the final non-Proxy target.
+
+Valid finite Proxy target chains have no specification depth bound. Proxy
+targets are fixed at construction, so forwarding does not need a visited set or
+an arbitrary host limit. Hosts that need a work bound opt into fuel. That bound
+must include nested abstract operations: a shallow delete can read its trap
+through a deep Proxy handler and can validate a truthy result through deep
+`[[GetOwnProperty]]` and `[[IsExtensible]]` target chains. The shared iterative
+`[[Get]]`, descriptor, and extensibility loops therefore charge each Proxy
+layer as well. With no fuel budget they remain stack-safe and unbounded by
+design.
+
+```text
+[Decision Log]
+- 목적과 의도: Remove native-stack dependence from Proxy deletion while preserving exact trap order, GC lifetime, invariant validation, and an optional host work bound.
+- 기존 구현 및 제약 조건: Trapless delete forwarding recursively called delete_property_key; Rust Value locals are not GC roots; and nested Proxy handler Get, target descriptor, and extensibility loops could bypass a fuel charge placed only on the outer delete wrapper.
+- 검토한 주요 대안: Keep recursion, impose a fixed depth cap, track visited targets, accumulate every transparent layer, or advance one rooted current target iteratively while metering every nested Proxy operation.
+- 선택한 방식: Pin the original receiver, iterate one Proxy layer at a time with constant per-hop target/handler/trap pins, preserve the first real trap's descriptor and extensibility checks, and consume fuel in Delete plus shared Get, GetOwnProperty, and IsExtensible traversal.
+- 다른 대안 대신 이 방식을 선택한 이유: Recursion can abort the host, a cap rejects valid programs, target links are immutable and do not require cycle detection, and accumulated layers add unnecessary memory. A rooted current value directly models transparent forwarding while shared fuel closes nested-operation bypasses.
+- 장점, 단점 및 영향: A 100,000-layer delete is stack-safe, forced GC and every abrupt path restore pin depth, and hosts can stop deep handlers or invariant targets with fuel. Unbounded hosts can still spend linear time on arbitrarily deep legal chains, and separately capped Set and DefineOwnProperty paths remain future iterative audits.
+```
+
 Promise keyed combinators use a separate two-stage observable protocol. They
 first snapshot raw `[[OwnPropertyKeys]]`, including non-enumerable keys, and
 then perform Proxy-aware `[[GetOwnProperty]]` inside the per-key loop. An

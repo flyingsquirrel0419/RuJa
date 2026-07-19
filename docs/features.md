@@ -108,7 +108,11 @@
   `writable`, `get`/`set`); ordinary `[[Set]]` enforces `writable: false`
   (TypeError in strict mode, silent in sloppy) and invokes inherited setters
   through the prototype chain
-- `delete` respects `configurable` (false in sloppy, TypeError in strict)
+- `delete` respects `configurable` (false in sloppy, TypeError in strict).
+  Proxy `deleteProperty` lookup, calls, and target invariants preserve Symbol
+  keys and observable order; transparent chains are iterative, GC-rooted, and
+  charged to cooperative execution fuel together with nested Proxy handler and
+  invariant walks
 - Symbol-keyed properties: `[Symbol.iterator]` and arbitrary Symbol keys are
   stored/read on objects and skipped by `for...in`/`JSON.stringify`
 - Custom `Symbol.iterator`: objects with `[Symbol.iterator]()` are iterable via

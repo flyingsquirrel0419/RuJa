@@ -4,6 +4,45 @@
 
 ### Fixed
 
+- Proxy `[[Delete]]` now forwards through trapless targets with an iterative
+  worklist instead of recursive Rust calls. The original receiver remains a GC
+  root for the complete operation; each target, handler, and fresh trap owns a
+  bounded LIFO pin scope through observable lookup, invocation, descriptor
+  validation, and extensibility validation. Missing/null traps, falsy results,
+  Symbol keys, nested revocation, strict deletion, and the non-configurable and
+  non-extensible invariants retain their specified order at arbitrary finite
+  depth. A 100,000-layer regression completes without a host-stack dependency.
+
+  Every traversed Proxy layer now consumes cooperative execution fuel not only
+  in `[[Delete]]`, but also in nested handler `[[Get]]`, target
+  `[[GetOwnProperty]]`, and `[[IsExtensible]]` walks. This closes a bypass where
+  a shallow delete wrapped a deep handler or invariant target and completed
+  after fuel reached zero. Forced-GC, abrupt getter/trap/invariant, exact-fuel,
+  refill, pin-balance, target-state, and VM-reuse tests cover those paths.
+  `Reflect.deleteProperty(target)` also performs `ToPropertyKey(undefined)`
+  instead of returning `false` before deleting a property named `"undefined"`.
+
+  A frozen 28-file Proxy/Reflect delete admission runs **28 pass / 0 fail / 0
+  skip** on Test262 `020cb74075849d1e404bbcdb62feb7a02e6966db`; future files and
+  unrelated feature gates stay skipped. Supported Test262 remains **12751 pass
+  / 0 fail / 7687 skip / 20438 total**. Final local gates pass all Rust
+  targets/features, lib tests **135/135**, builtins **493/493**, operators
+  **123/123**, bugfixes **68/68**, Fuel **28/28**, warnings-denied Clippy,
+  rustfmt/diff, release, wasm32, and Python tooling **109/109**. GPT 5.6
+  reviewers Mill (`019f7924-1876-7653-81f1-29d05376a591`) and Peirce
+  (`019f7924-16df-7d82-8ebf-ab3177b86ddf`) returned `CLEAN` after the nested
+  fuel bypass and GC test weakness were corrected; all review sessions are
+  closed, and no coder or Umans route was used.
+
+  Feature commit `c85a6b8` passed ordinary CI `29677977508` and all **33/33**
+  jobs in full matrix `29677977505`. The 30 artifacts at
+  `/tmp/ruja-proxy-delete-feature.29677977505.bAHxEI` aggregate to **30535 pass
+  / 6049 fail / 11877 skip / 6 timeout / 0 error / 48467 total / 36584
+  pass-or-fail executed** (**63.0%** of all files, **83.5%** of executed
+  files). Twenty-nine files are byte-identical to generic-sort baseline
+  `29675860634`; only `built-ins` changes from **14899 pass / 5238 fail / 3525
+  skip** to **14927 / 5238 / 3497**, exactly **+28 pass / -28 skip**.
+
 - `Array.prototype.sort` and `toSorted` now execute one generic,
   mode-driven `SortIndexedProperties` algorithm after comparator validation,
   `ToObject`, and a single `LengthOfArrayLike`. `sort` performs live ascending
