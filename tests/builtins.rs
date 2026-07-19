@@ -37,6 +37,33 @@ fn array_prototype_has_the_intrinsic_length_property() {
 }
 
 #[test]
+fn array_slice_and_with_copy_inherited_values_through_holes() {
+    assert_eq!(
+        run(r#"
+            Array.prototype[1] = 1;
+            var source = [0];
+            source.length = 2;
+            var sliced = source.slice();
+            delete Array.prototype[1];
+            var preservedHole = [,].slice();
+
+            var holes = [0, , 2, , 4];
+            Array.prototype[3] = 3;
+            var replaced = holes.with(2, 6);
+            delete Array.prototype[3];
+
+            [
+              sliced[1], Object.hasOwn(sliced, "1"),
+              preservedHole.length, Object.hasOwn(preservedHole, "0"),
+              replaced[1] === undefined, Object.hasOwn(replaced, "1"),
+              replaced[2], replaced[3], Object.hasOwn(replaced, "3")
+            ].join(":");
+        "#),
+        Value::String(Arc::from("1:true:1:false:true:true:6:3:true"))
+    );
+}
+
+#[test]
 fn iterator_constructor_and_prototype_have_spec_shape() {
     assert_eq!(
         run(r#"

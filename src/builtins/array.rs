@@ -1312,20 +1312,43 @@ pub(crate) fn array_to_spliced(
 
 pub(crate) fn array_with(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     if let Some(Value::Object(idx)) = this {
-        let mut items = vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Array(a) = obj {
-                a.items.lock().clone()
-            } else {
-                Vec::new()
+        let object = Value::Object(idx);
+        let replacement = get_arg(args, 1);
+        let root_pins = vm.pin_many(&[object.clone(), replacement.clone()]);
+        let result = (|| {
+            let len = vm.heap.with_obj(idx.0, |obj| {
+                if let HeapObj::Array(a) = obj {
+                    a.items.lock().len()
+                } else {
+                    0
+                }
+            });
+            let index = norm_index(get_arg(args, 0), len as f64, vm)?;
+            if index >= len {
+                return Err(Error::range("Invalid array index"));
             }
-        });
-        let len = items.len() as f64;
-        let index = norm_index(get_arg(args, 0), len, vm)?;
-        if index >= items.len() {
-            return Err(Error::range("Invalid array index"));
-        }
-        items[index] = get_arg(args, 1);
-        return make_array(vm, items);
+
+            let result = array_create_in_current_realm(vm, len)?;
+            let result_pin = vm.pin(&result);
+            let completion = (|| {
+                let Value::Object(result_idx) = &result else {
+                    return Err(Error::internal("ArrayCreate returned a non-object"));
+                };
+                for i in 0..len {
+                    let value = if i == index {
+                        replacement.clone()
+                    } else {
+                        vm.get_property(&object, &i.to_string())?
+                    };
+                    vm.set_array_index(result_idx.0, i, value)?;
+                }
+                Ok(result.clone())
+            })();
+            vm.unpin(result_pin);
+            completion
+        })();
+        vm.unpin_many(root_pins);
+        return result;
     }
     Ok(Value::Undefined)
 }
@@ -1525,23 +1548,39 @@ pub(crate) fn array_slice(
     this: Option<Value>,
 ) -> error::Result<Value> {
     if let Some(Value::Object(idx)) = this {
-        let items = vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Array(a) = obj {
-                a.items.lock().clone()
-            } else {
-                Vec::new()
-            }
-        });
-        let len = items.len();
-        let s = array_slice_bound(vm, args.first(), len, 0)?;
-        let e = array_slice_bound(vm, args.get(1), len, len)?;
-        let sliced = if s < e {
-            items[s..e].to_vec()
-        } else {
-            Vec::new()
-        };
-        let arr = HeapObj::Array(ArrayData::new(sliced, Some(vm.array_proto.clone())));
-        return Ok(Value::Object(GcIdx(vm.heap.allocate(arr)?)));
+        let object = Value::Object(idx);
+        let root_pin = vm.pin(&object);
+        let result = (|| {
+            let len = vm.heap.with_obj(idx.0, |obj| {
+                if let HeapObj::Array(a) = obj {
+                    a.items.lock().len()
+                } else {
+                    0
+                }
+            });
+            let start = array_slice_bound(vm, args.first(), len, 0)?;
+            let end = array_slice_bound(vm, args.get(1), len, len)?;
+            let count = end.saturating_sub(start);
+            let result = array_create_in_current_realm(vm, count)?;
+            let result_pin = vm.pin(&result);
+            let completion = (|| {
+                let Value::Object(result_idx) = &result else {
+                    return Err(Error::internal("ArrayCreate returned a non-object"));
+                };
+                for (to, from) in (start..end).enumerate() {
+                    let key = from.to_string();
+                    if vm.has_property(&object, &key)? {
+                        let value = vm.get_property(&object, &key)?;
+                        vm.set_array_index(result_idx.0, to, value)?;
+                    }
+                }
+                Ok(result.clone())
+            })();
+            vm.unpin(result_pin);
+            completion
+        })();
+        vm.unpin(root_pin);
+        return result;
     }
     Ok(Value::Undefined)
 }

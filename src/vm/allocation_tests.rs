@@ -342,6 +342,98 @@ fn array_callback_builtins_restore_gc_pin_depth_after_abrupt_completion() {
 }
 
 #[test]
+fn array_slice_and_with_roots_survive_observable_gc() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("GC test hook should register");
+    let baseline = vm.gc_pins.len();
+
+    let result = vm.run(
+        r#"
+        function sourceWithCollectingPrototype(marker) {
+          var source = [0];
+          source.length = 2;
+          Object.setPrototypeOf(source, new Proxy(Array.prototype, {
+            has: function(target, key) {
+              if (key === "1") { forceGc(); return true; }
+              return Reflect.has(target, key);
+            },
+            get: function(target, key, receiver) {
+              if (key === "1") { forceGc(); return { marker: marker }; }
+              return Reflect.get(target, key, receiver);
+            }
+          }));
+          return source;
+        }
+
+        var sliced = sourceWithCollectingPrototype(41).slice();
+        var replacement = { marker: 52 };
+        var index = { valueOf: function() { forceGc(); return 0; } };
+        var copied = sourceWithCollectingPrototype(63).with(index, replacement);
+        [sliced[1].marker, copied[0].marker, copied[1].marker].join(":");
+        "#,
+    );
+
+    assert_eq!(
+        result.expect("copy results and values should survive observable GC"),
+        Value::String(Arc::from("41:52:63"))
+    );
+    assert_eq!(vm.gc_pins.len(), baseline);
+}
+
+#[test]
+fn array_slice_and_with_restore_gc_pin_depth_after_abrupt_gets() {
+    for expression in ["source.slice();", "source.with(0, replacement);"] {
+        let mut vm = Vm::new().expect("VM should initialize");
+        vm.register_fn(
+            "forceGc",
+            |vm, _, _| {
+                vm.gc();
+                Ok(Value::Undefined)
+            },
+            0,
+        )
+        .expect("GC test hook should register");
+        vm.run(
+            r#"
+            globalThis.error = {};
+            globalThis.replacement = {};
+            globalThis.source = [0];
+            source.length = 2;
+            Object.setPrototypeOf(source, new Proxy(Array.prototype, {
+              has: function(target, key) {
+                if (key === "1") { forceGc(); throw error; }
+                return Reflect.has(target, key);
+              },
+              get: function(target, key, receiver) {
+                if (key === "1") { forceGc(); throw error; }
+                return Reflect.get(target, key, receiver);
+              }
+            }));
+            "#,
+        )
+        .expect("abrupt-copy fixture should initialize");
+        let baseline = vm.gc_pins.len();
+
+        vm.run(expression)
+            .expect_err("the indexed lookup should complete abruptly");
+        assert_eq!(vm.gc_pins.len(), baseline, "pin leak after {expression}");
+        assert_eq!(
+            vm.run("source[0] === 0 && replacement === replacement")
+                .expect("VM should remain reusable"),
+            Value::Bool(true)
+        );
+    }
+}
+
+#[test]
 fn array_mapping_allocation_failures_restore_gc_pin_depth() {
     for source in [
         r#"
