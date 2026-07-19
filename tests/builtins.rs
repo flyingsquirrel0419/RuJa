@@ -6,6 +6,37 @@ use ruja::{Value, Vm};
 use std::sync::Arc;
 
 #[test]
+fn array_prototype_has_the_intrinsic_length_property() {
+    assert_eq!(
+        run(r#"
+            var descriptor = Object.getOwnPropertyDescriptor(Array.prototype, "length");
+            var other = $262.createRealm().global;
+            var realmDescriptor = Object.getOwnPropertyDescriptor(
+              other.Array.prototype,
+              "length"
+            );
+            var proxy = new Proxy(Array.prototype, {});
+            var before = [
+              descriptor.value,
+              descriptor.writable,
+              descriptor.enumerable,
+              descriptor.configurable,
+              "length" in proxy,
+              realmDescriptor.value,
+              realmDescriptor.writable,
+              realmDescriptor.enumerable,
+              realmDescriptor.configurable
+            ].join(":");
+            Array.prototype.length = 2;
+            var written = Array.prototype.length;
+            Array.prototype.length = 0;
+            before + ":" + written;
+            "#),
+        Value::String(Arc::from("0:true:false:false:true:0:true:false:false:2"))
+    );
+}
+
+#[test]
 fn iterator_constructor_and_prototype_have_spec_shape() {
     assert_eq!(
         run(r#"

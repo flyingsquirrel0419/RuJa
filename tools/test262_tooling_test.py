@@ -84,6 +84,7 @@ from test262_regexp_duplicate_named_groups_admission import (
     REGEXP_DUPLICATE_NAMED_GROUPS_FILES,
 )
 from test262_proxy_get_admission import PROXY_GET_FEATURES, PROXY_GET_FILES
+from test262_proxy_has_admission import PROXY_HAS_FEATURES, PROXY_HAS_FILES
 from test262_proxy_delete_admission import (
     PROXY_DELETE_FEATURES,
     PROXY_DELETE_FILES,
@@ -2330,6 +2331,114 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                     self.assertTrue(
                         tool.should_skip({"features": ["Proxy"]}, outside)
                     )
+                finally:
+                    tool.TEST262 = original_root
+
+    def test_proxy_has_manifest_is_exact_live_disjoint_and_shared(self):
+        self.assertEqual(len(PROXY_HAS_FILES), 26)
+        self.assertEqual(frozenset(PROXY_HAS_FEATURES), PROXY_HAS_FILES)
+        feature_counts = {}
+        for features in PROXY_HAS_FEATURES.values():
+            feature_counts[features] = feature_counts.get(features, 0) + 1
+        self.assertEqual(
+            feature_counts,
+            {
+                frozenset({"Proxy"}): 22,
+                frozenset({"Proxy", "Reflect", "Symbol.replace"}): 1,
+                frozenset({"Proxy", "cross-realm"}): 1,
+                frozenset(
+                    {"Proxy", "Array.prototype.includes", "Reflect", "Symbol"}
+                ): 1,
+                frozenset({"Proxy", "Reflect"}): 1,
+            },
+        )
+
+        admission_dir = Path(__file__).resolve().parent
+        for manifest in admission_dir.glob("test262_*_admission.txt"):
+            if manifest.name == "test262_proxy_has_admission.txt":
+                continue
+            existing = {
+                line
+                for raw_line in manifest.read_text().splitlines()
+                if (line := raw_line.strip()) and not line.startswith("#")
+            }
+            self.assertFalse(PROXY_HAS_FILES & existing, manifest.name)
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        try:
+            test_root_available = test_root.is_dir()
+        except OSError:
+            test_root_available = False
+        if test_root_available:
+            live_directory = {
+                path.relative_to(test_root).as_posix()
+                for path in (test_root / "built-ins/Proxy/has").glob("*.js")
+            }
+            self.assertEqual(PROXY_HAS_FILES, live_directory)
+            proxy_traps_helper_files = {
+                "built-ins/Proxy/has/call-in-prototype-index.js",
+                "built-ins/Proxy/has/call-in-prototype.js",
+            }
+            no_strict_files = {
+                "built-ins/Proxy/has/call-with.js",
+                "built-ins/Proxy/has/null-handler-using-with.js",
+                "built-ins/Proxy/has/return-false-target-not-extensible-using-with.js",
+                "built-ins/Proxy/has/return-false-target-prop-exists-using-with.js",
+                "built-ins/Proxy/has/return-false-targetdesc-not-configurable-using-with.js",
+                "built-ins/Proxy/has/return-is-abrupt-with.js",
+                "built-ins/Proxy/has/return-true-target-prop-exists-using-with.js",
+                "built-ins/Proxy/has/trap-is-not-callable-using-with.js",
+                "built-ins/Proxy/has/trap-is-undefined-using-with.js",
+            }
+            self.assertEqual(len(no_strict_files), 9)
+            for relative, features in PROXY_HAS_FEATURES.items():
+                path = test_root / relative
+                self.assertTrue(path.is_file(), relative)
+                metadata = test262_runner.parse_meta(path.read_text())
+                self.assertEqual(
+                    frozenset(metadata.get("features", [])), features, relative
+                )
+                self.assertEqual(
+                    metadata.get("includes", []),
+                    ["proxyTrapsHelper.js"]
+                    if relative in proxy_traps_helper_files
+                    else [],
+                    relative,
+                )
+                self.assertEqual(
+                    metadata.get("flags", []),
+                    ["noStrict"] if relative in no_strict_files else [],
+                    relative,
+                )
+                self.assertNotIn("negative", metadata, relative)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            future = root / "test/built-ins/Proxy/has/future.js"
+            outside = root / "test/built-ins/Object/has/future.js"
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for relative, features in PROXY_HAS_FEATURES.items():
+                        path = root / "test" / relative
+                        self.assertTrue(tool.proxy_has_path(path), relative)
+                        self.assertEqual(tool.proxy_has_features(path), features)
+                        self.assertFalse(
+                            tool.should_skip({"features": sorted(features)}, path),
+                            relative,
+                        )
+                        self.assertTrue(
+                            tool.should_skip(
+                                {"features": sorted(features | {"decorators"})},
+                                path,
+                            ),
+                            relative,
+                        )
+                    self.assertFalse(tool.proxy_has_path(future))
+                    self.assertFalse(tool.proxy_has_path(outside))
+                    self.assertTrue(tool.should_skip({"features": ["Proxy"]}, future))
+                    self.assertTrue(tool.should_skip({"features": ["Proxy"]}, outside))
                 finally:
                     tool.TEST262 = original_root
 

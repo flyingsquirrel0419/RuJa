@@ -63,6 +63,7 @@ try:
         REGEXP_DUPLICATE_NAMED_GROUPS_FILES,
     )
     from test262_proxy_get_admission import PROXY_GET_FEATURES, PROXY_GET_FILES
+    from test262_proxy_has_admission import PROXY_HAS_FEATURES, PROXY_HAS_FILES
     from test262_proxy_delete_admission import (
         PROXY_DELETE_FEATURES, PROXY_DELETE_FILES,
     )
@@ -164,6 +165,7 @@ except ModuleNotFoundError:
         REGEXP_DUPLICATE_NAMED_GROUPS_FILES,
     )
     from tools.test262_proxy_get_admission import PROXY_GET_FEATURES, PROXY_GET_FILES
+    from tools.test262_proxy_has_admission import PROXY_HAS_FEATURES, PROXY_HAS_FILES
     from tools.test262_proxy_delete_admission import (
         PROXY_DELETE_FEATURES, PROXY_DELETE_FILES,
     )
@@ -2223,6 +2225,24 @@ def proxy_get_features(path):
         return frozenset()
     return PROXY_GET_FEATURES.get(rel.as_posix(), frozenset())
 
+def proxy_has_path(path):
+    if path is None:
+        return False
+    try:
+        rel = Path(path).resolve().relative_to(Path(TEST262).resolve() / "test")
+    except ValueError:
+        return False
+    return rel.as_posix() in PROXY_HAS_FILES
+
+def proxy_has_features(path):
+    if path is None:
+        return frozenset()
+    try:
+        rel = Path(path).resolve().relative_to(Path(TEST262).resolve() / "test")
+    except ValueError:
+        return frozenset()
+    return PROXY_HAS_FEATURES.get(rel.as_posix(), frozenset())
+
 def proxy_delete_path(path):
     if path is None:
         return False
@@ -2676,6 +2696,8 @@ def should_skip(meta, path=None):
         feats.discard("Symbol")
     if path is not None and proxy_get_path(path):
         feats.difference_update(proxy_get_features(path))
+    if path is not None and proxy_has_path(path):
+        feats.difference_update(proxy_has_features(path))
     if path is not None and proxy_delete_path(path):
         feats.difference_update(proxy_delete_features(path))
     if path is not None and extensibility_path(path):

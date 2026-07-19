@@ -1224,7 +1224,7 @@ impl Vm {
             let (target, handler) = proxy_call?;
             self.consume_fuel()?;
             let proxy_pins = self.pin_many(&[target.clone(), handler.clone()]);
-            let trap = match self.get_property(&handler, "apply") {
+            let trap = match self.get_proxy_method(&handler, "apply") {
                 Ok(trap) => trap,
                 Err(error) => {
                     self.unpin_many(proxy_pins);
@@ -1769,7 +1769,7 @@ impl Vm {
 
             if let Some(proxy_construct) = self.proxy_construct_info(idx) {
                 let (target, handler) = proxy_construct?;
-                let trap = self.get_property(&handler, "construct")?;
+                let trap = self.get_proxy_method(&handler, "construct")?;
                 if trap.is_undefined() || trap.is_null() {
                     active_constructor = target;
                     continue;

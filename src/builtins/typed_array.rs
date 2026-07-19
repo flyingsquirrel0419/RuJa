@@ -4599,7 +4599,7 @@ pub(crate) fn typed_array_to_locale_string(
                         Error::type_err(format!("Missing {intrinsic_name} intrinsic"))
                     })?;
                 let prototype = vm.get_property(&constructor, "prototype")?;
-                let method = vm.get_property_rx(&prototype, "toLocaleString", value.clone(), 0)?;
+                let method = vm.get_property_rx(&prototype, "toLocaleString", value.clone())?;
                 if !is_callable(&method, &vm.heap) {
                     return Err(Error::type_err("toLocaleString is not callable"));
                 }

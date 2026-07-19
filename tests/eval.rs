@@ -422,7 +422,7 @@ fn proxy_prototype_cycles_do_not_overflow_the_rust_stack_on_set() {
             object.value = 1;
         "#,
     );
-    assert!(error.contains("Prototype chain cycle"));
+    assert!(error.contains("Maximum cyclic property traversal depth exceeded"));
 
     assert_eq!(
         run(r#"

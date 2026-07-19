@@ -2860,7 +2860,7 @@ impl Vm {
                                         "Cannot read property from null super base",
                                     ));
                                 }
-                                self.get_property_key_rx(base, name, *receiver.clone(), 0)
+                                self.get_property_key_rx(base, name, *receiver.clone())
                             } else {
                                 self.get_property_reference_value(base, name)
                             }
@@ -2876,7 +2876,7 @@ impl Vm {
                             self.unpin_many(pin_count);
                             let name = name_result?;
                             if let Some(receiver) = &r.this_value {
-                                self.get_property_key_rx(base, &name, *receiver.clone(), 0)
+                                self.get_property_key_rx(base, &name, *receiver.clone())
                             } else {
                                 self.get_property_reference_value(base, &name)
                             }

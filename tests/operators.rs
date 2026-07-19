@@ -229,6 +229,217 @@ fn proxy_get_without_trap_preserves_receiver() {
 }
 
 #[test]
+fn ordinary_property_walks_and_inherited_proxy_traps_have_no_depth_cutoff() {
+    assert_eq!(
+        run(r#"
+            var symbol = Symbol("ordinary-deep-set");
+            var readSymbol = Symbol("ordinary-deep-read");
+            var ordinaryRoot = { marker: 17 };
+            ordinaryRoot[readSymbol] = 13;
+            Object.defineProperty(ordinaryRoot, "sink", {
+              set: function(value) { this.received = value; }
+            });
+            Object.defineProperty(ordinaryRoot, symbol, {
+              set: function(value) { this.symbolReceived = value; }
+            });
+            Object.defineProperty(ordinaryRoot, "receiverValue", {
+              get: function() { return this.receiverMarker; }
+            });
+            var ordinaryLeaf = ordinaryRoot;
+            for (var i = 0; i < 5000; i += 1) {
+              ordinaryLeaf = Object.create(ordinaryLeaf);
+            }
+            ordinaryLeaf.receiverMarker = 31;
+            ordinaryLeaf.sink = 23;
+            ordinaryLeaf[symbol] = 29;
+
+            var getCalls = 0;
+            var hasCalls = 0;
+            var setCalls = 0;
+            var defineCalls = 0;
+            var handlerRoot = {
+              get: function(target, key, receiver) {
+                getCalls += 1;
+                return receiver === deepGetProxy ? 37 : -1;
+              },
+              has: function(target, key) {
+                hasCalls += 1;
+                return key === "present";
+              },
+              set: function(target, key, value, receiver) {
+                setCalls += 1;
+                target[key] = value;
+                return receiver === deepSetProxy;
+              },
+              defineProperty: function(target, key, descriptor) {
+                defineCalls += 1;
+                return Reflect.defineProperty(target, key, descriptor);
+              }
+            };
+            var deepHandler = handlerRoot;
+            for (var j = 0; j < 5000; j += 1) {
+              deepHandler = Object.create(deepHandler);
+            }
+
+            var deepGetProxy = new Proxy({}, deepHandler);
+            var deepHasProxy = new Proxy({}, deepHandler);
+            var deepSetTarget = {};
+            var deepSetProxy = new Proxy(deepSetTarget, deepHandler);
+            var deepDefineTarget = {};
+            var deepDefineProxy = new Proxy(deepDefineTarget, deepHandler);
+            deepSetProxy.value = 41;
+            Object.defineProperty(deepDefineProxy, "defined", { value: 53 });
+
+            var proxySymbol = Symbol("proxy-symbol-set");
+            var symbolSetCalls = 0;
+            var symbolTarget = {};
+            var symbolProxy = new Proxy(symbolTarget, {
+              set: function(target, key, value, receiver) {
+                symbolSetCalls += 1;
+                target[key] = value;
+                return receiver === symbolProxy;
+              }
+            });
+            symbolProxy[proxySymbol] = 61;
+
+            var cycle = {};
+            var cycleProxy = new Proxy(cycle, {});
+            Reflect.setPrototypeOf(cycle, cycleProxy);
+            var cycleGetThrew = false;
+            var cycleHasThrew = false;
+            var cycleSetThrew = false;
+            try { cycle.missing; } catch (error) { cycleGetThrew = true; }
+            try { "missing" in cycle; } catch (error) { cycleHasThrew = true; }
+            try { Reflect.set(cycle, "missing", 1); } catch (error) { cycleSetThrew = true; }
+
+            [
+              ordinaryLeaf.marker,
+              "marker" in ordinaryLeaf,
+              ordinaryLeaf.received,
+              ordinaryLeaf.symbolReceived,
+              ordinaryLeaf[readSymbol],
+              readSymbol in ordinaryLeaf,
+              ordinaryLeaf.receiverValue,
+              deepGetProxy.value,
+              getCalls,
+              "present" in deepHasProxy,
+              hasCalls,
+              deepSetTarget.value,
+              setCalls,
+              deepDefineTarget.defined,
+              defineCalls,
+              symbolTarget[proxySymbol],
+              symbolSetCalls,
+              cycleGetThrew,
+              cycleHasThrew,
+              cycleSetThrew
+            ].join(":");
+            "#),
+        Value::String(Arc::from(
+            "17:true:23:29:13:true:31:37:1:true:1:41:1:53:1:61:1:true:true:true"
+        ))
+    );
+}
+
+#[test]
+fn transparent_proxy_cycles_recheck_targets_after_observable_trap_lookup() {
+    assert_eq!(
+        run(r#"
+            function makeCycle(trapName, mutate) {
+              var target = {};
+              var handlerPrototype = {};
+              Object.defineProperty(handlerPrototype, trapName, {
+                get: function() {
+                  mutate(target);
+                  return undefined;
+                }
+              });
+              var proxy = new Proxy(target, Object.create(handlerPrototype));
+              Reflect.setPrototypeOf(target, proxy);
+              return target;
+            }
+
+            var getTarget = makeCycle("get", function(target) {
+              Object.defineProperty(target, "value", {
+                value: 42,
+                writable: true,
+                configurable: true
+              });
+            });
+            var getResult = getTarget.value;
+
+            var hasTarget = makeCycle("has", function(target) {
+              Object.defineProperty(target, "present", {
+                value: true,
+                configurable: true
+              });
+            });
+            var hasResult = "present" in hasTarget;
+
+            var setTarget = makeCycle("set", function(target) {
+              Object.defineProperty(target, "written", {
+                value: 0,
+                writable: true,
+                configurable: true
+              });
+            });
+            var setResult = Reflect.set(setTarget, "written", 9);
+
+            [getResult, hasResult, setResult, setTarget.written].join(":");
+            "#),
+        Value::String(Arc::from("42:true:true:9"))
+    );
+}
+
+#[test]
+fn transparent_proxy_cycles_preserve_repeated_observable_trap_lookups() {
+    assert_eq!(
+        run(r#"
+            function makeDelayedCycle(trapName, key, initialValue) {
+              var count = 0;
+              var target = {};
+              var handlerPrototype = {};
+              Object.defineProperty(handlerPrototype, trapName, {
+                get: function() {
+                  count += 1;
+                  if (count === 2) {
+                    Object.defineProperty(target, key, {
+                      value: initialValue,
+                      writable: true,
+                      configurable: true
+                    });
+                  }
+                  return undefined;
+                }
+              });
+              var proxy = new Proxy(target, Object.create(handlerPrototype));
+              Reflect.setPrototypeOf(target, proxy);
+              return { target: target, count: function() { return count; } };
+            }
+
+            var getCycle = makeDelayedCycle("get", "value", 42);
+            var getResult = getCycle.target.value;
+            var getCount = getCycle.count();
+
+            var hasCycle = makeDelayedCycle("has", "present", 42);
+            var hasResult = "present" in hasCycle.target;
+            var hasCount = hasCycle.count();
+
+            var setCycle = makeDelayedCycle("set", "written", 0);
+            var setResult = Reflect.set(setCycle.target, "written", 9);
+            var setCount = setCycle.count();
+
+            [
+              getResult, getCount, getCycle.target.value,
+              hasResult, hasCount, hasCycle.target.present,
+              setResult, setCount, setCycle.target.written
+            ].join(":");
+            "#),
+        Value::String(Arc::from("42:2:42:true:2:42:true:2:9"))
+    );
+}
+
+#[test]
 fn proxy_get_validates_nested_and_string_exotic_invariants() {
     assert_eq!(
         run(r#"

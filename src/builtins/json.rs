@@ -1886,13 +1886,10 @@ pub(crate) fn reflect_get(vm: &mut Vm, args: &[Value], _: Option<Value>) -> erro
     let key = reflect_property_key(vm, args)?;
     let receiver = args.get(2).cloned().unwrap_or_else(|| target.clone());
     match &key {
-        Value::String(s) => vm.get_property_rx(&target, s, receiver, 0),
-        Value::Symbol(id) => vm.get_property_key_rx(
-            &target,
-            &crate::value::PropertyKey::Symbol(*id),
-            receiver,
-            0,
-        ),
+        Value::String(s) => vm.get_property_rx(&target, s, receiver),
+        Value::Symbol(id) => {
+            vm.get_property_key_rx(&target, &crate::value::PropertyKey::Symbol(*id), receiver)
+        }
         _ => unreachable!("ToPropertyKey returns only String or Symbol"),
     }
 }

@@ -238,6 +238,10 @@ fn module_graph_exposes_live_namespace_exotic_objects() {
         var desc = Object.getOwnPropertyDescriptor(direct, 'zebra');
         var setFailed = false;
         try { direct.zebra = 9; } catch (error) { setFailed = error instanceof TypeError; }
+        var receiver = {};
+        var reflectedExportSet = Reflect.set(direct, 'zebra', 9, receiver);
+        var reflectedMissingSet = Reflect.set(direct, 'missing', 9, receiver);
+        var reflectedSymbolSet = Reflect.set(direct, Symbol('namespace'), 9, receiver);
         [
           before,
           direct.zebra,
@@ -252,6 +256,10 @@ fn module_graph_exposes_live_namespace_exotic_objects() {
           Object.keys(direct)[4] === '\uFF21',
           Reflect.deleteProperty(direct, 'zebra'),
           setFailed,
+          reflectedExportSet,
+          reflectedMissingSet,
+          reflectedSymbolSet,
+          Reflect.ownKeys(receiver).length,
           bridge.nested === direct,
           bridge.default
         ].join('|');
@@ -264,7 +272,7 @@ fn module_graph_exposes_live_namespace_exotic_objects() {
         vm.run_module_file(dir.join("entry.js"))
             .expect("namespace graph should evaluate"),
         Value::String(Arc::from(
-            "1|4|4|true|true|false|true|false|alpha,default,zebra,\u{10400},Ａ|true|true|false|true|true|"
+            "1|4|4|true|true|false|true|false|alpha,default,zebra,\u{10400},Ａ|true|true|false|true|false|false|false|0|true|"
         ))
     );
     fs::remove_dir_all(dir).expect("module fixtures should be removed");

@@ -595,7 +595,7 @@ fn iterator_zip_keyed_padding_collection_consumes_fuel() {
         "#,
     )
     .expect("failed to create keyed padding inputs");
-    vm.set_fuel(Some(300));
+    vm.set_fuel(Some(500));
     let error = vm
         .run(
             r#"

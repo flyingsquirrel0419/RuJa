@@ -3370,6 +3370,13 @@ fn install_array_intrinsic_in_env(
         .unwrap_or_else(|| vm.object_proto.clone());
     vm.heap.with_obj(prototype.0, |object| {
         *object.proto().lock() = Some(object_prototype);
+        let mut length = PropertyDescriptor::data(Value::Number(0.0));
+        length.enumerable = false;
+        length.configurable = false;
+        object
+            .props()
+            .lock()
+            .insert(PropertyKey::from("length"), length);
     });
 
     let values = vm.get_property(&prototype_value, "values")?;
@@ -6229,7 +6236,7 @@ pub(crate) fn own_property_keys_or_throw(
             }
         }) {
             let (target, handler) = proxy_result?;
-            let trap = vm.get_property(&handler, "ownKeys")?;
+            let trap = vm.get_proxy_method(&handler, "ownKeys")?;
             if trap.is_nullish() {
                 return own_property_keys_or_throw(
                     vm,
@@ -6628,7 +6635,7 @@ fn normalize_property_descriptor_object(vm: &mut Vm, desc: &Value) -> error::Res
             "set",
         ] {
             let key = PropertyKey::from(name);
-            if !vm.has_property_key(desc, &key)? {
+            if !vm.has_property_with_free_ordinary_edge(desc, name)? {
                 continue;
             }
             let mut value = vm.get_property_by_key(desc, &key)?;
@@ -6882,22 +6889,22 @@ fn property_descriptor_from_object(vm: &mut Vm, desc: &Value) -> error::Result<P
         let mut has_get = false;
         let mut has_set = false;
 
-        if vm.has_property(desc, "enumerable")? {
+        if vm.has_property_with_free_ordinary_edge(desc, "enumerable")? {
             enumerable = vm.get_property(desc, "enumerable")?.is_truthy();
         }
-        if vm.has_property(desc, "configurable")? {
+        if vm.has_property_with_free_ordinary_edge(desc, "configurable")? {
             configurable = vm.get_property(desc, "configurable")?.is_truthy();
         }
-        if vm.has_property(desc, "value")? {
+        if vm.has_property_with_free_ordinary_edge(desc, "value")? {
             value = vm.get_property(desc, "value")?;
             pin_count += vm.pin(&value);
             has_value = true;
         }
-        if vm.has_property(desc, "writable")? {
+        if vm.has_property_with_free_ordinary_edge(desc, "writable")? {
             writable = vm.get_property(desc, "writable")?.is_truthy();
             has_writable = true;
         }
-        if vm.has_property(desc, "get")? {
+        if vm.has_property_with_free_ordinary_edge(desc, "get")? {
             let getter = vm.get_property(desc, "get")?;
             pin_count += vm.pin(&getter);
             if !getter.is_undefined() && !is_callable(&getter, &vm.heap) {
@@ -6910,7 +6917,7 @@ fn property_descriptor_from_object(vm: &mut Vm, desc: &Value) -> error::Result<P
             };
             has_get = true;
         }
-        if vm.has_property(desc, "set")? {
+        if vm.has_property_with_free_ordinary_edge(desc, "set")? {
             let setter = vm.get_property(desc, "set")?;
             pin_count += vm.pin(&setter);
             if !setter.is_undefined() && !is_callable(&setter, &vm.heap) {
@@ -7015,7 +7022,7 @@ pub(crate) fn own_property_descriptor_for_key_or_throw(
             let (target, handler) = proxy_result?;
             vm.consume_fuel()?;
             let proxy_pins = vm.pin_many(&[target.clone(), handler.clone()]);
-            let trap = match vm.get_property(&handler, "getOwnPropertyDescriptor") {
+            let trap = match vm.get_proxy_method(&handler, "getOwnPropertyDescriptor") {
                 Ok(trap) => trap,
                 Err(error) => {
                     vm.unpin_many(proxy_pins);

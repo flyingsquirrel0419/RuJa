@@ -2,6 +2,7 @@ use super::Vm;
 use crate::value::{HeapObj, NativeConstructMode, PromiseStatus};
 use crate::Value;
 use std::fs;
+use std::sync::Arc;
 
 fn cap_heap_at_current_live_count(vm: &mut Vm) -> crate::error::Result<Value> {
     vm.gc();
@@ -3127,6 +3128,456 @@ fn proxy_set_and_receiver_define_walks_consume_exact_fuel() {
         vm.run("deepSetBase.value")
             .expect("partial receiver definition should update the base"),
         Value::Number(73.0)
+    );
+}
+
+#[test]
+fn ordinary_property_walks_consume_exact_fuel_and_restore_pin_depth() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.run(
+        r#"
+        var ordinaryFuelSymbol = Symbol("ordinary-fuel");
+        var ordinaryFuelRoot = { marker: 17, sink: 0 };
+        ordinaryFuelRoot[ordinaryFuelSymbol] = 23;
+        var ordinaryFuelLeaf = ordinaryFuelRoot;
+        for (var i = 0; i < 5000; i += 1) {
+          ordinaryFuelLeaf = Object.create(ordinaryFuelLeaf);
+        }
+        "#,
+    )
+    .expect("deep ordinary property fixtures should initialize");
+    let leaf = vm.get_global("ordinaryFuelLeaf");
+    let key = crate::value::PropertyKey::from("marker");
+    let symbol_key = match vm.get_global("ordinaryFuelSymbol") {
+        Value::Symbol(id) => crate::value::PropertyKey::Symbol(id),
+        value => panic!("expected Symbol fixture, got {value:?}"),
+    };
+    let baseline = vm.gc_pins.len();
+
+    vm.set_fuel(Some(4_999));
+    let error = vm
+        .get_property(&leaf, "marker")
+        .expect_err("N-1 fuel must abort an N-edge ordinary Get walk");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    vm.set_fuel(Some(4_999));
+    let error = vm
+        .get_property_by_key(&leaf, &symbol_key)
+        .expect_err("N-1 fuel must abort an N-edge ordinary Symbol Get walk");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    vm.set_fuel(Some(5_000));
+    assert_eq!(
+        vm.get_property_by_key(&leaf, &symbol_key)
+            .expect("exactly N fuel should complete ordinary Symbol Get"),
+        Value::Number(23.0)
+    );
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    vm.set_fuel(Some(5_000));
+    assert_eq!(
+        vm.get_property(&leaf, "marker")
+            .expect("exactly N fuel should complete ordinary Get"),
+        Value::Number(17.0)
+    );
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    vm.set_fuel(Some(4_999));
+    let error = vm
+        .has_property_key(&leaf, &symbol_key)
+        .expect_err("N-1 fuel must abort an N-edge ordinary Symbol HasProperty walk");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    vm.set_fuel(Some(5_000));
+    assert!(vm
+        .has_property_key(&leaf, &symbol_key)
+        .expect("exactly N fuel should complete ordinary Symbol HasProperty"));
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    vm.set_fuel(Some(4_999));
+    let error = vm
+        .has_property_key(&leaf, &key)
+        .expect_err("N-1 fuel must abort an N-edge ordinary HasProperty walk");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    vm.set_fuel(Some(4_999));
+    let error = vm
+        .try_set_property_key_with_receiver(&leaf, &symbol_key, Value::Number(47.0), &leaf)
+        .expect_err("N-1 fuel must abort an N-edge ordinary Symbol Set walk");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    vm.set_fuel(Some(5_000));
+    assert!(vm
+        .try_set_property_key_with_receiver(&leaf, &symbol_key, Value::Number(47.0), &leaf,)
+        .expect("exactly N fuel should complete ordinary Symbol Set"));
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    vm.set_fuel(Some(5_000));
+    assert!(vm
+        .has_property_key(&leaf, &key)
+        .expect("exactly N fuel should complete ordinary HasProperty"));
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    vm.set_fuel(Some(4_999));
+    let error = vm
+        .try_set_property_with_receiver(&leaf, "sink", Value::Number(31.0), &leaf)
+        .expect_err("N-1 fuel must abort an N-edge ordinary Set walk");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    vm.set_fuel(Some(5_000));
+    assert!(vm
+        .try_set_property_with_receiver(&leaf, "sink", Value::Number(31.0), &leaf)
+        .expect("exactly N fuel should complete ordinary Set"));
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    vm.set_fuel(None);
+    assert_eq!(
+        vm.get_property(&leaf, "sink")
+            .expect("the deep inherited writable property should receive the write"),
+        Value::Number(31.0)
+    );
+    assert_eq!(
+        vm.get_property_by_key(&leaf, &symbol_key)
+            .expect("the deep inherited Symbol property should receive the write"),
+        Value::Number(47.0)
+    );
+    assert_eq!(vm.gc_pins.len(), baseline);
+}
+
+#[test]
+fn inherited_proxy_trap_lookups_consume_exact_edge_fuel() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn("propertyGetTrap", |_, _, _| Ok(Value::Number(37.0)), 3)
+        .expect("native get trap should register");
+    vm.register_fn("propertyTrueTrap", |_, _, _| Ok(Value::Bool(true)), 4)
+        .expect("native truthy trap should register");
+    vm.run(
+        r#"
+        function deepenPropertyHandler(root) {
+          var handler = root;
+          for (var i = 0; i < 100; i += 1) {
+            handler = Object.create(handler);
+          }
+          return handler;
+        }
+        var propertyFuelSymbol = Symbol("property-fuel");
+        var inheritedGetProxy = new Proxy(
+          {},
+          deepenPropertyHandler({ get: propertyGetTrap })
+        );
+        var inheritedHasProxy = new Proxy(
+          {},
+          deepenPropertyHandler({ has: propertyTrueTrap })
+        );
+        var inheritedSetProxy = new Proxy(
+          {},
+          deepenPropertyHandler({ set: propertyTrueTrap })
+        );
+        "#,
+    )
+    .expect("inherited Proxy trap fixtures should initialize");
+    let get_proxy = vm.get_global("inheritedGetProxy");
+    let has_proxy = vm.get_global("inheritedHasProxy");
+    let set_proxy = vm.get_global("inheritedSetProxy");
+    let symbol_key = match vm.get_global("propertyFuelSymbol") {
+        Value::Symbol(id) => crate::value::PropertyKey::Symbol(id),
+        value => panic!("expected Symbol fixture, got {value:?}"),
+    };
+    let baseline = vm.gc_pins.len();
+
+    vm.set_fuel(Some(99));
+    let error = vm
+        .get_property_by_key(&get_proxy, &symbol_key)
+        .expect_err("outer Proxy plus M-1 handler edges require M fuel");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    vm.set_fuel(Some(100));
+    assert_eq!(
+        vm.get_property_by_key(&get_proxy, &symbol_key)
+            .expect("exact inherited get-trap fuel should complete"),
+        Value::Number(37.0)
+    );
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    vm.set_fuel(Some(99));
+    let error = vm
+        .has_property_key(&has_proxy, &symbol_key)
+        .expect_err("outer Proxy plus M-1 inherited has-trap edges require M fuel");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    vm.set_fuel(Some(100));
+    assert!(vm
+        .has_property_key(&has_proxy, &symbol_key)
+        .expect("exact inherited has-trap fuel should complete"));
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    vm.set_fuel(Some(99));
+    let error = vm
+        .try_set_property_key_with_receiver(&set_proxy, &symbol_key, Value::Number(1.0), &set_proxy)
+        .expect_err("outer Proxy plus M-1 inherited set-trap edges require M fuel");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    vm.set_fuel(Some(100));
+    assert!(
+        vm.try_set_property_key_with_receiver(
+            &set_proxy,
+            &symbol_key,
+            Value::Number(1.0),
+            &set_proxy,
+        )
+        .expect("exact inherited set-trap fuel should complete")
+    );
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+}
+
+#[test]
+fn iterative_property_walks_root_values_across_gc_and_reject_ordinary_cycles() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.clear_kept_objects();
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("GC hook should register");
+
+    let ordinary = vm
+        .run(
+            r#"
+            (function () {
+              var root = {
+                get value() {
+                  forceGc();
+                  return this.marker;
+                }
+              };
+              var leaf = root;
+              for (var i = 0; i < 5000; i += 1) {
+                leaf = Object.create(leaf);
+              }
+              leaf.marker = 73;
+              return leaf;
+            })()
+            "#,
+        )
+        .expect("unrooted ordinary fixture should initialize");
+    let baseline = vm.gc_pins.len();
+    assert_eq!(
+        vm.get_property(&ordinary, "value")
+            .expect("the receiver must survive GC in a deep inherited getter"),
+        Value::Number(73.0)
+    );
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    let proxy = vm
+        .run(
+            r#"
+            (function () {
+              var handlerRoot = {};
+              Object.defineProperty(handlerRoot, "get", {
+                get: function () {
+                  forceGc();
+                  return function (target, key) {
+                    forceGc();
+                    return target.marker;
+                  };
+                }
+              });
+              var handler = handlerRoot;
+              for (var i = 0; i < 5000; i += 1) {
+                handler = Object.create(handler);
+              }
+              return new Proxy({ marker: 89 }, handler);
+            })()
+            "#,
+        )
+        .expect("unrooted Proxy fixture should initialize");
+    assert_eq!(
+        vm.get_property(&proxy, "value")
+            .expect("the Proxy target, handler, trap, and receiver must survive GC"),
+        Value::Number(89.0)
+    );
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    assert_eq!(
+        vm.run(
+            r#"
+            var severedTraversalBase = {};
+            var severedTraversalWeak;
+            var severedTraversalAlive = false;
+            var severedHandlerPrototype = {};
+            Object.defineProperty(severedHandlerPrototype, "get", {
+              get: function () {
+                Reflect.setPrototypeOf(severedTraversalBase, null);
+                forceGc();
+                severedTraversalAlive = severedTraversalWeak.deref() !== undefined;
+                Object.defineProperty(severedTraversalBase, "value", {
+                  value: 97,
+                  configurable: true
+                });
+                return undefined;
+              }
+            });
+            (function () {
+              var proxy = new Proxy(
+                severedTraversalBase,
+                Object.create(severedHandlerPrototype)
+              );
+              severedTraversalWeak = new WeakRef(proxy);
+              Reflect.setPrototypeOf(severedTraversalBase, proxy);
+            })();
+            [severedTraversalBase.value, severedTraversalAlive].join(":");
+            "#,
+        )
+        .expect("followed Proxy nodes must remain rooted after observable edge removal"),
+        Value::String(Arc::from("97:true"))
+    );
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    let first = vm.new_object().expect("first cycle object should allocate");
+    let first_value = Value::Object(first);
+    let first_pin = vm.pin(&first_value);
+    let second = vm
+        .new_object()
+        .expect("second cycle object should allocate");
+    vm.heap.with_obj(first.0, |object| {
+        *object.proto().lock() = Some(Value::Object(second));
+    });
+    vm.heap.with_obj(second.0, |object| {
+        *object.proto().lock() = Some(first_value.clone());
+    });
+    vm.unpin(first_pin);
+
+    let error = vm
+        .get_property(&first_value, "missing")
+        .expect_err("an all-ordinary malformed cycle must not loop forever in Get");
+    assert_eq!(error.kind, crate::error::ErrorKind::Type);
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    let error = vm
+        .has_property_key(&first_value, &crate::value::PropertyKey::from("missing"))
+        .expect_err("an all-ordinary malformed cycle must not loop forever in HasProperty");
+    assert_eq!(error.kind, crate::error::ErrorKind::Type);
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    let error = vm
+        .try_set_property_with_receiver(&first_value, "missing", Value::Number(1.0), &first_value)
+        .expect_err("an all-ordinary malformed cycle must not loop forever in Set");
+    assert_eq!(error.kind, crate::error::ErrorKind::Type);
+    assert_eq!(vm.gc_pins.len(), baseline);
+}
+
+#[test]
+fn revoked_property_proxies_fail_before_zero_fuel_and_restore_pin_depth() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.run(
+        r#"
+        var revokedGetState = Proxy.revocable({}, {});
+        var revokedGetProxy = revokedGetState.proxy;
+        revokedGetState.revoke();
+        var revokedHasState = Proxy.revocable({}, {});
+        var revokedHasProxy = revokedHasState.proxy;
+        revokedHasState.revoke();
+        var revokedSetState = Proxy.revocable({}, {});
+        var revokedSetProxy = revokedSetState.proxy;
+        revokedSetState.revoke();
+        "#,
+    )
+    .expect("revoked Proxy fixtures should initialize");
+    let baseline = vm.gc_pins.len();
+
+    vm.set_fuel(Some(0));
+    let get_proxy = vm.get_global("revokedGetProxy");
+    let error = vm
+        .get_property(&get_proxy, "x")
+        .expect_err("revocation must precede Get fuel accounting");
+    assert_eq!(error.kind, crate::error::ErrorKind::Type);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    let has_proxy = vm.get_global("revokedHasProxy");
+    let error = vm
+        .has_property_key(&has_proxy, &crate::value::PropertyKey::from("x"))
+        .expect_err("revocation must precede HasProperty fuel accounting");
+    assert_eq!(error.kind, crate::error::ErrorKind::Type);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    let set_proxy = vm.get_global("revokedSetProxy");
+    let error = vm
+        .try_set_property_with_receiver(&set_proxy, "x", Value::Number(1.0), &set_proxy)
+        .expect_err("revocation must precede Set fuel accounting");
+    assert_eq!(error.kind, crate::error::ErrorKind::Type);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+}
+
+#[test]
+fn value_key_apis_preserve_symbols_returned_by_to_primitive() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.run(
+        r#"
+        var coercedSymbol = Symbol("coerced-key");
+        var keyCoercions = 0;
+        var coercibleKey = {
+          [Symbol.toPrimitive]: function() {
+            keyCoercions += 1;
+            return coercedSymbol;
+          }
+        };
+        var coercedKeyTarget = {};
+        coercedKeyTarget[coercedSymbol] = 17;
+        "#,
+    )
+    .expect("coercible Symbol-key fixtures should initialize");
+    let target = vm.get_global("coercedKeyTarget");
+    let key = vm.get_global("coercibleKey");
+
+    assert_eq!(
+        vm.get_property_key(&target, &key)
+            .expect("Get must preserve a Symbol returned by ToPropertyKey"),
+        Value::Number(17.0)
+    );
+    assert_eq!(vm.get_global("keyCoercions"), Value::Number(1.0));
+
+    vm.set_property_key(&target, &key, Value::Number(29.0))
+        .expect("Set must preserve a Symbol returned by ToPropertyKey");
+    assert_eq!(vm.get_global("keyCoercions"), Value::Number(2.0));
+    let symbol = vm.get_global("coercedSymbol");
+    assert_eq!(
+        vm.get_property_key(&target, &symbol)
+            .expect("the coerced Symbol property should receive the write"),
+        Value::Number(29.0)
     );
 }
 

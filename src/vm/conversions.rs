@@ -346,29 +346,24 @@ impl Vm {
             }
             _ => {}
         }
-        match key {
-            Value::Symbol(id) => {
-                let pkey = crate::value::PropertyKey::Symbol(*id);
-                match obj {
-                    Value::String(_)
-                    | Value::Number(_)
-                    | Value::BigInt(_)
-                    | Value::Bool(_)
-                    | Value::Symbol(_) => {
-                        let proto = self.current_realm_primitive_prototype(obj);
-                        if proto.is_undefined() {
-                            Ok(Value::Undefined)
-                        } else {
-                            self.get_property_key_rx(&proto, &pkey, obj.clone(), 0)
-                        }
-                    }
-                    _ => self.get_property_by_key(obj, &pkey),
+        let property_key = self.coerce_property_key_record(key)?;
+        if let Some(name) = property_key.as_str() {
+            return self.get_property(obj, name);
+        }
+        match obj {
+            Value::String(_)
+            | Value::Number(_)
+            | Value::BigInt(_)
+            | Value::Bool(_)
+            | Value::Symbol(_) => {
+                let proto = self.current_realm_primitive_prototype(obj);
+                if proto.is_undefined() {
+                    Ok(Value::Undefined)
+                } else {
+                    self.get_property_key_rx(&proto, &property_key, obj.clone())
                 }
             }
-            other => {
-                let s = self.to_property_key(other)?;
-                self.get_property(obj, &s)
-            }
+            _ => self.get_property_by_key(obj, &property_key),
         }
     }
 
@@ -382,101 +377,25 @@ impl Vm {
         if matches!(obj, Value::Null | Value::Undefined) {
             return Err(Error::type_err("Cannot set property of primitive"));
         }
-        match key {
-            Value::Symbol(id) => {
-                if let Value::Object(idx) = obj {
-                    let pkey = crate::value::PropertyKey::Symbol(*id);
-                    let own_desc = self
-                        .heap
-                        .with_obj(idx.0, |o| o.props().lock().get(&pkey).cloned());
-                    if let Some(desc) = own_desc {
-                        if desc.is_accessor {
-                            if let Some(setter) = desc.set {
-                                self.call_function(
-                                    &setter,
-                                    std::slice::from_ref(&value),
-                                    Some(obj.clone()),
-                                )?;
-                                return Ok(());
-                            }
-                            if self.current_strict() {
-                                return Err(Error::type_err(
-                                    "Cannot set Symbol property which has only a getter",
-                                ));
-                            }
-                            return Ok(());
-                        }
-                        if !desc.writable {
-                            if self.current_strict() {
-                                return Err(Error::type_err(
-                                    "Cannot assign to read only Symbol property",
-                                ));
-                            }
-                            return Ok(());
-                        }
-                        self.heap.with_obj(idx.0, |o| {
-                            if let Some(existing) = o.props().lock().get_mut(&pkey) {
-                                existing.value = value.clone();
-                            }
-                        });
-                        return Ok(());
-                    }
-                    match self.find_setter(*idx, &pkey) {
-                        Some(Some(setter)) => {
-                            self.call_function(
-                                &setter,
-                                std::slice::from_ref(&value),
-                                Some(obj.clone()),
-                            )?;
-                            return Ok(());
-                        }
-                        Some(None) => {
-                            if self.current_strict() {
-                                return Err(Error::type_err(
-                                    "Cannot set Symbol property which has only a getter",
-                                ));
-                            }
-                            return Ok(());
-                        }
-                        None => {}
-                    }
-                    if self.has_non_writable_data_property_in_proto(*idx, &pkey) {
-                        if self.current_strict() {
-                            return Err(Error::type_err(
-                                "Cannot assign to read only Symbol property",
-                            ));
-                        }
-                        return Ok(());
-                    }
-                    let is_extensible = self.heap.with_obj(idx.0, |o| o.is_extensible());
-                    if !is_extensible {
-                        if self.current_strict() {
-                            return Err(Error::type_err(
-                                "Cannot add Symbol property, object is not extensible",
-                            ));
-                        }
-                        return Ok(());
-                    }
-                    self.heap.with_obj(idx.0, |o| {
-                        o.props()
-                            .lock()
-                            .insert(pkey, crate::value::PropertyDescriptor::data(value.clone()));
-                    });
-                    Ok(())
-                } else {
-                    if obj.is_nullish() || self.current_strict() {
-                        Err(Error::type_err(
-                            "Cannot set property of primitive".to_string(),
-                        ))
-                    } else {
-                        Ok(())
-                    }
-                }
+        let property_key = self.coerce_property_key_record(key)?;
+        if let Some(name) = property_key.as_str() {
+            return self.set_property(obj, name, value);
+        }
+        if matches!(obj, Value::Object(_)) {
+            let success =
+                self.try_set_property_key_with_receiver(obj, &property_key, value, obj)?;
+            if !success && self.current_strict() {
+                return Err(Error::type_err(
+                    "Cannot assign to read only Symbol property",
+                ));
             }
-            other => {
-                let s = self.to_property_key(other)?;
-                self.set_property(obj, &s, value)
-            }
+            Ok(())
+        } else if self.current_strict() {
+            Err(Error::type_err(
+                "Cannot set property of primitive".to_string(),
+            ))
+        } else {
+            Ok(())
         }
     }
 
@@ -488,141 +407,25 @@ impl Vm {
         obj: &Value,
         key: &crate::value::PropertyKey,
     ) -> error::Result<Value> {
-        if let Value::Object(idx) = obj {
-            let proxy_info = self.heap.with_obj(idx.0, |o| {
-                if let crate::value::HeapObj::Proxy(p) = o {
-                    if *p.revoked.lock() {
-                        return Some(Err(crate::error::Error::type_err(
-                            "Cannot perform 'get' on a proxy that has been revoked".to_string(),
-                        )));
-                    }
-                    Some(Ok((p.target.clone(), p.handler.clone())))
-                } else {
-                    None
-                }
-            });
-            if let Some(result) = proxy_info {
-                let (target, handler) = result?;
-                return self.proxy_get(target, handler, key, obj.clone(), 0);
-            }
+        if let Some(name) = key.as_str() {
+            return self.get_property(obj, name);
         }
-
-        let mut cur = match obj {
-            Value::Object(_) => obj.clone(),
-            _ if key.as_str().is_some() => {
-                return self.get_property(obj, key.as_str().unwrap_or_default())
-            }
+        match obj {
+            Value::Object(_) => self.get_property_key_rx(obj, key, obj.clone()),
             Value::String(_)
             | Value::Number(_)
             | Value::BigInt(_)
             | Value::Bool(_)
-            | Value::Symbol(_) => self.current_realm_primitive_prototype(obj),
-            _ => Value::Undefined,
-        };
-        let mut depth = 0;
-        while let Value::Object(idx) = &cur {
-            if depth > 1024 {
-                break;
-            }
-            depth += 1;
-            let namespace_binding = self.heap.with_obj(idx.0, |o| {
-                if let HeapObj::ModuleNamespace(namespace) = o {
-                    return key
-                        .as_str()
-                        .and_then(|name| namespace.exports.lock().get(name).cloned());
+            | Value::Symbol(_) => {
+                let prototype = self.current_realm_primitive_prototype(obj);
+                if prototype.is_undefined() {
+                    Ok(Value::Undefined)
+                } else {
+                    self.get_property_key_rx(&prototype, key, obj.clone())
                 }
-                None
-            });
-            if let Some((env, name)) = namespace_binding {
-                return match crate::environment::get_checked(&self.heap, env, &name) {
-                    Ok(Some(value)) => Ok(value),
-                    Ok(None) | Err(false) => Ok(Value::Undefined),
-                    Err(true) => Err(Error::reference(format!(
-                        "Cannot access '{}' before initialization",
-                        name
-                    ))),
-                };
             }
-            if let Some(desc) = self.typed_array_integer_index_own_property_descriptor(&cur, key) {
-                return Ok(desc.map_or(Value::Undefined, |desc| desc.value));
-            }
-            let (found, getter, proto) = self.heap.with_obj(idx.0, |o| {
-                let props = o.props();
-                let desc = props.lock().get(key).cloned();
-                let proto = o.proto().lock().clone();
-                match desc {
-                    Some(desc) if desc.is_accessor => (None, desc.get, proto),
-                    Some(desc) => (Some(desc.value), None, proto),
-                    None => {
-                        if let HeapObj::Array(a) = o {
-                            if key.as_str() == Some("length")
-                                && !a.is_arguments.load(std::sync::atomic::Ordering::Relaxed)
-                            {
-                                return (
-                                    Some(Value::Number(a.items.lock().len() as f64)),
-                                    None,
-                                    proto,
-                                );
-                            }
-                            if let Some(index) =
-                                key.as_str().and_then(crate::value::parse_array_index)
-                            {
-                                if a.is_dense_present(index) {
-                                    return (
-                                        Some(
-                                            a.items
-                                                .lock()
-                                                .get(index)
-                                                .cloned()
-                                                .unwrap_or(Value::Undefined),
-                                        ),
-                                        None,
-                                        proto,
-                                    );
-                                }
-                            }
-                        }
-                        if let HeapObj::Object(od) = o {
-                            if let Some(Value::String(s)) = od.primitive.lock().clone() {
-                                if key.as_str() == Some("length") {
-                                    return (
-                                        Some(Value::Number(crate::value::utf16_len(&s) as f64)),
-                                        None,
-                                        proto,
-                                    );
-                                }
-                                if let Some(index) = crate::builtins::canonical_string_index(key) {
-                                    if let Some(unit) = crate::value::utf16_get(&s, index) {
-                                        return (
-                                            Some(Value::String(Arc::from(
-                                                crate::value::utf16_to_string(&[unit]).as_str(),
-                                            ))),
-                                            None,
-                                            proto,
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                        (None, None, proto)
-                    }
-                }
-            });
-            if let Some(v) = found {
-                return Ok(v);
-            }
-            if let Some(getter) = getter {
-                if !getter.is_undefined() {
-                    return self.call_function(&getter, &[], Some(obj.clone()));
-                }
-                return Ok(Value::Undefined);
-            }
-            cur = proto.unwrap_or(Value::Undefined);
-            if cur.is_undefined() {
-                break;
-            }
+            _ => Ok(Value::Undefined),
         }
-        Ok(Value::Undefined)
     }
 
     pub(crate) fn property_key_to_value(key: &crate::value::PropertyKey) -> Value {
@@ -763,31 +566,6 @@ impl Vm {
         self.array_index_own_property_descriptor(idx.0, index, key)
     }
 
-    fn has_property_key_ordinary(
-        &mut self,
-        obj: &Value,
-        key: &crate::value::PropertyKey,
-        depth: usize,
-    ) -> error::Result<bool> {
-        if depth > 1024 {
-            return Ok(false);
-        }
-        let Value::Object(idx) = obj else {
-            return Ok(false);
-        };
-        if self.has_own_property_key_raw(obj, key) {
-            return Ok(true);
-        }
-        let proto = self.heap.with_obj(idx.0, |o| o.proto().lock().clone());
-        let Some(proto) = proto else {
-            return Ok(false);
-        };
-        if proto.is_undefined() {
-            return Ok(false);
-        }
-        self.has_property_key_inner(&proto, key, depth + 1)
-    }
-
     /// Does `obj` (or its prototype chain) have an own/inherited property for
     /// the given `PropertyKey`? This is RuJa's internal `[[HasProperty]]`
     /// operation, including Proxy `has` traps.
@@ -796,75 +574,118 @@ impl Vm {
         obj: &Value,
         key: &crate::value::PropertyKey,
     ) -> error::Result<bool> {
-        self.has_property_key_inner(obj, key, 0)
+        self.has_property_key_with_mode(obj, key, 0)
     }
 
-    fn has_property_key_inner(
+    pub(crate) fn has_property_with_free_ordinary_edge(
+        &mut self,
+        obj: &Value,
+        name: &str,
+    ) -> error::Result<bool> {
+        self.has_property_key_with_mode(obj, &crate::value::PropertyKey::from(name), 1)
+    }
+
+    fn has_property_key_with_mode(
         &mut self,
         obj: &Value,
         key: &crate::value::PropertyKey,
-        depth: usize,
+        ordinary_edge_credit: usize,
     ) -> error::Result<bool> {
-        if depth > 1024 {
-            return Ok(false);
-        }
-        if let Value::Object(idx) = obj {
-            let proxy_info = self.heap.with_obj(idx.0, |o| {
-                if let crate::value::HeapObj::Proxy(p) = o {
-                    if *p.revoked.lock() {
-                        return Some(Err(crate::error::Error::type_err(
-                            "Cannot perform 'has' on a proxy that has been revoked".to_string(),
+        let root_pin = self.pin(obj);
+        let mut traversal = super::property::PropertyTraversal::new(
+            std::slice::from_ref(obj),
+            ordinary_edge_credit,
+        );
+        let result = (|| {
+            let mut current = obj.clone();
+            loop {
+                let Value::Object(idx) = &current else {
+                    return Ok(false);
+                };
+                let idx = *idx;
+                let proxy_info = self.heap.with_obj(idx.0, |object| {
+                    let HeapObj::Proxy(proxy) = object else {
+                        return None;
+                    };
+                    if *proxy.revoked.lock() {
+                        return Some(Err(Error::type_err(
+                            "Cannot perform 'has' on a proxy that has been revoked",
                         )));
                     }
-                    Some(Ok((p.target.clone(), p.handler.clone())))
-                } else {
-                    None
-                }
-            });
-            if let Some(result) = proxy_info {
-                let (target, handler) = result?;
-                let proxy_pins = self.pin_many(&[target.clone(), handler.clone()]);
-                let result = (|| {
-                    let trap = self.get_property(&handler, "has")?;
-                    if trap.is_nullish() {
-                        return self.has_property_key_inner(&target, key, depth + 1);
-                    }
-                    let trap_pin = self.pin(&trap);
-                    let trap_result = self.call_function(
-                        &trap,
-                        &[target.clone(), Self::property_key_to_value(key)],
-                        Some(handler.clone()),
-                    );
-                    self.unpin(trap_pin);
-                    let boolean_trap_result = self.to_boolean(&trap_result?);
-                    if !boolean_trap_result {
-                        let target_desc =
-                            crate::builtins::own_property_descriptor_for_key_or_throw(
-                                self, &target, key,
-                            )?;
-                        if let Some(target_desc) = target_desc {
-                            if !target_desc.configurable {
-                                return Err(Error::type_err(
-                                    "Proxy has trap cannot hide non-configurable property",
-                                ));
-                            }
-                            if !self.is_extensible(&target)? {
-                                return Err(Error::type_err(
-                                    "Proxy has trap cannot hide non-extensible target property",
-                                ));
+                    Some(Ok((proxy.target.clone(), proxy.handler.clone())))
+                });
+                if let Some(proxy_info) = proxy_info {
+                    let (target, handler) = proxy_info?;
+                    traversal.note_proxy();
+                    self.consume_fuel()?;
+                    let proxy_pins = self.pin_many(&[target.clone(), handler.clone()]);
+                    let proxy_result = (|| {
+                        let trap = self.get_proxy_method(&handler, "has")?;
+                        if trap.is_nullish() {
+                            return Ok(None);
+                        }
+                        if !crate::builtins::is_callable(&trap, &self.heap) {
+                            return Err(Error::type_err("Proxy has trap is not callable"));
+                        }
+                        let trap_result = self.call_function(
+                            &trap,
+                            &[target.clone(), Self::property_key_to_value(key)],
+                            Some(handler.clone()),
+                        )?;
+                        let boolean_trap_result = self.to_boolean(&trap_result);
+                        if !boolean_trap_result {
+                            let target_descriptor =
+                                crate::builtins::own_property_descriptor_for_key_or_throw(
+                                    self, &target, key,
+                                )?;
+                            if let Some(target_descriptor) = target_descriptor {
+                                if !target_descriptor.configurable {
+                                    return Err(Error::type_err(
+                                        "Proxy has trap cannot hide non-configurable property",
+                                    ));
+                                }
+                                if !self.is_extensible(&target)? {
+                                    return Err(Error::type_err(
+                                        "Proxy has trap cannot hide non-extensible target property",
+                                    ));
+                                }
                             }
                         }
+                        Ok(Some(boolean_trap_result))
+                    })();
+                    self.unpin_many(proxy_pins);
+                    match proxy_result? {
+                        Some(value) => return Ok(value),
+                        None => {
+                            self.advance_property_edge(&mut traversal, idx, &target, false)?;
+                            current = target;
+                            continue;
+                        }
                     }
-                    Ok(boolean_trap_result)
-                })();
-                self.unpin_many(proxy_pins);
-                return result;
+                }
+
+                if let Some(has_index) = self.typed_array_integer_index_has_property(&current, key)
+                {
+                    return Ok(has_index);
+                }
+                if self.has_own_property_key_raw(&current, key) {
+                    return Ok(true);
+                }
+                let prototype = self.heap.with_obj(idx.0, |object| {
+                    object.proto().lock().clone().unwrap_or(Value::Undefined)
+                });
+                let Value::Object(prototype_idx) = &prototype else {
+                    return Ok(false);
+                };
+                let prototype_is_proxy = self.heap.with_obj(prototype_idx.0, |object| {
+                    matches!(object, HeapObj::Proxy(_))
+                });
+                self.advance_property_edge(&mut traversal, idx, &prototype, !prototype_is_proxy)?;
+                current = prototype;
             }
-            if let Some(has_index) = self.typed_array_integer_index_has_property(obj, key) {
-                return Ok(has_index);
-            }
-        }
-        self.has_property_key_ordinary(obj, key, depth)
+        })();
+        self.unpin_many(root_pin + traversal.pin_count());
+        result
     }
 
     /// Does `obj` have an **own** property (not inherited)?
@@ -1101,332 +922,11 @@ impl Vm {
                 obj.type_of(),
                 key
             ))),
-            Value::Object(idx) => {
-                let ta_info = self.heap.with_obj(idx.0, |o| {
-                    if let crate::value::HeapObj::TypedArray(t) = o {
-                        Some((
-                            t.kind,
-                            t.viewed_array_buffer.clone(),
-                            t.byte_offset,
-                            t.byte_length,
-                            t.length_tracking,
-                            t.buffer.lock().len(),
-                        ))
-                    } else {
-                        None
-                    }
-                });
-                if let Some((
-                    kind,
-                    viewed_array_buffer,
-                    byte_offset,
-                    byte_length,
-                    length_tracking,
-                    owned_len,
-                )) = ta_info
-                {
-                    let effective = crate::builtins::effective_view_byte_length(
-                        self,
-                        viewed_array_buffer.as_ref(),
-                        byte_offset,
-                        if viewed_array_buffer.is_some() {
-                            byte_length
-                        } else {
-                            owned_len
-                        },
-                        length_tracking,
-                        kind.element_size(),
-                    );
-                    let buf_len = effective.unwrap_or(0);
-                    if key == "length" {
-                        return Ok(Value::Number(crate::builtins::typed_array_element_count(
-                            kind, buf_len,
-                        ) as f64));
-                    }
-                    if key == "byteLength" {
-                        return Ok(Value::Number(buf_len as f64));
-                    }
-                    if key == "byteOffset" {
-                        return Ok(Value::Number(
-                            if effective.is_some() { byte_offset } else { 0 } as f64,
-                        ));
-                    }
-                    if key == "buffer" {
-                        return Ok(viewed_array_buffer.unwrap_or(Value::Undefined));
-                    }
-                    let pkey = crate::value::PropertyKey::from(key);
-                    if let Some(desc) =
-                        self.typed_array_integer_index_own_property_descriptor(obj, &pkey)
-                    {
-                        return Ok(desc.map_or(Value::Undefined, |desc| desc.value));
-                    }
-                    // Non-canonical numeric-looking keys fall through to ordinary lookup.
-                }
-                let array_buffer_len = self.heap.with_obj(idx.0, |o| {
-                    if let crate::value::HeapObj::ArrayBuffer(buffer) = o {
-                        if buffer.detached.load(std::sync::atomic::Ordering::Relaxed) {
-                            Some(0)
-                        } else {
-                            Some(buffer.bytes.lock().len())
-                        }
-                    } else {
-                        None
-                    }
-                });
-                if let Some(len) = array_buffer_len {
-                    if key == "byteLength" {
-                        return Ok(Value::Number(len as f64));
-                    }
-                }
-                let data_view_info = self.heap.with_obj(idx.0, |o| {
-                    if let crate::value::HeapObj::DataView(view) = o {
-                        Some((
-                            view.buffer.clone(),
-                            view.byte_offset,
-                            view.byte_length,
-                            view.length_tracking,
-                        ))
-                    } else {
-                        None
-                    }
-                });
-                if let Some((buffer, byte_offset, byte_length, length_tracking)) = data_view_info {
-                    match key {
-                        "buffer" => return Ok(buffer),
-                        "byteOffset" | "byteLength" => {
-                            let Some(effective) = crate::builtins::effective_view_byte_length(
-                                self,
-                                Some(&buffer),
-                                byte_offset,
-                                byte_length,
-                                length_tracking,
-                                1,
-                            ) else {
-                                return Err(Error::type_err(
-                                    "DataView getter on detached or out-of-bounds buffer"
-                                        .to_string(),
-                                ));
-                            };
-                            if key == "byteOffset" {
-                                return Ok(Value::Number(byte_offset as f64));
-                            }
-                            return Ok(Value::Number(effective as f64));
-                        }
-                        _ => {}
-                    }
-                }
-                // Proxy trap: if this object is a Proxy, call handler.get.
-                let proxy_info = self.heap.with_obj(idx.0, |o| {
-                    if let crate::value::HeapObj::Proxy(p) = o {
-                        if *p.revoked.lock() {
-                            return Some(Err(crate::error::Error::type_err(
-                                "Cannot perform 'get' on a proxy that has been revoked".to_string(),
-                            )));
-                        }
-                        Some(Ok((p.target.clone(), p.handler.clone())))
-                    } else {
-                        None
-                    }
-                });
-                if let Some(result) = proxy_info {
-                    match result {
-                        Err(e) => return Err(e),
-                        Ok((target, handler)) => {
-                            let property_key = crate::value::PropertyKey::from(key);
-                            return self.proxy_get(target, handler, &property_key, obj.clone(), 0);
-                        }
-                    }
-                }
-                let namespace_binding = self.heap.with_obj(idx.0, |o| {
-                    if let crate::value::HeapObj::ModuleNamespace(namespace) = o {
-                        return namespace.exports.lock().get(key).cloned();
-                    }
-                    None
-                });
-                if let Some((env, name)) = namespace_binding {
-                    return match crate::environment::get_checked(&self.heap, env, &name) {
-                        Ok(Some(value)) => Ok(value),
-                        Ok(None) | Err(false) => Ok(Value::Undefined),
-                        Err(true) => Err(Error::reference(format!(
-                            "Cannot access '{}' before initialization",
-                            name
-                        ))),
-                    };
-                }
-                // Honor an accessor getter on this object (own property).
-                // Inherited accessors are handled by the recursive proto-chain
-                // walk below, since `get_property` is called again on the
-                // prototype. The getter must be invoked outside the
-                // `with_obj` borrow, so we look it up first.
-                let pkey = crate::value::PropertyKey::from(key);
-                if let Some(getter) = self.heap.with_obj(idx.0, |o| {
-                    o.props().lock().get(&pkey).and_then(|d| {
-                        if d.is_accessor {
-                            Some(d.get.clone())
-                        } else {
-                            None
-                        }
-                    })
-                }) {
-                    if let Some(getter) = getter {
-                        if !getter.is_undefined() {
-                            return self.call_function(&getter, &[], Some(obj.clone()));
-                        }
-                    }
-                    return Ok(Value::Undefined);
-                }
-                if let Some(i) = crate::value::parse_array_index(key) {
-                    if let Some((env, name)) = self.arguments_mapped_binding_for_index(idx.0, i) {
-                        if let Some(v) = crate::environment::get(&self.heap, env, &name) {
-                            return Ok(v);
-                        }
-                    }
-                }
-                if let Some(value) = self.heap.with_obj(idx.0, |o| {
-                    o.props().lock().get(&pkey).and_then(|d| {
-                        if d.is_accessor {
-                            None
-                        } else {
-                            Some(d.value.clone())
-                        }
-                    })
-                }) {
-                    return Ok(value);
-                }
-                let restricted_function_special = self.heap.with_obj(idx.0, |o| {
-                    if let HeapObj::Function(f) = o {
-                        if matches!(key, "caller" | "arguments") {
-                            if let crate::value::FunctionKind::Interpreted { func } = &f.kind {
-                                if !func.is_arrow
-                                    && !func.is_async
-                                    && !func.is_generator
-                                    && !func.chunk.is_strict
-                                {
-                                    return Some(key == "caller");
-                                }
-                            }
-                        }
-                    }
-                    None
-                });
-                if let Some(is_caller) = restricted_function_special {
-                    if is_caller {
-                        return self.function_caller_value(*idx);
-                    }
-                    return Ok(Value::Undefined);
-                }
-                // globalThis routes property reads to the global environment.
-                let is_global_this = self.heap.with_obj(idx.0, |o| {
-                    matches!(o, HeapObj::Object(od) if od.class_name.as_deref() == Some("global"))
-                });
-                if is_global_this {
-                    if let Some(v) = crate::environment::get(&self.heap, self.global, key) {
-                        return Ok(v);
-                    }
-                }
-                // array
-                let proto = self.heap.with_obj(idx.0, |o| {
-                    if let HeapObj::Array(a) = o {
-                        if key == "length"
-                            && !a.is_arguments.load(std::sync::atomic::Ordering::Relaxed)
-                        {
-                            let len = a.items.lock().len();
-                            let sparse = a.sparse_max.lock().unwrap_or(0);
-                            return Ok::<Value, Error>(Value::Number(len.max(sparse) as f64));
-                        }
-                        if let Some(i) = crate::value::parse_array_index(key) {
-                            if let Some(mapped) = a.arguments_map.lock().as_ref().and_then(|m| {
-                                m.names
-                                    .get(i)
-                                    .and_then(|n| n.as_ref())
-                                    .map(|n| (m.env, n.clone()))
-                            }) {
-                                if let Some(v) =
-                                    crate::environment::get(&self.heap, mapped.0, &mapped.1)
-                                {
-                                    return Ok(v);
-                                }
-                            }
-                            if let Some(d) = a.props.lock().get(&pkey) {
-                                if !d.is_accessor {
-                                    return Ok(d.value.clone());
-                                }
-                            }
-                            // Indices beyond the dense cap are stored as named
-                            // properties (sparse array); read them from there.
-                            if i >= crate::value::MAX_DENSE_ARRAY_LEN {
-                                let pkey = crate::value::PropertyKey::from_string(key.to_string());
-                                if let Some(d) = a.props.lock().get(&pkey) {
-                                    return Ok(d.value.clone());
-                                }
-                                return Ok(Value::Undefined);
-                            }
-                            if a.is_dense_present(i) {
-                                let items = a.items.lock();
-                                return Ok(items.get(i).cloned().unwrap_or(Value::Undefined));
-                            }
-                            return Ok(Value::Undefined);
-                        }
-                    }
-                    // Boxed String: `new String("abc").length` returns the
-                    // string length, and integer indices return characters.
-                    if let HeapObj::Object(od) = o {
-                        if let Some(Value::String(s)) = od.primitive.lock().clone() {
-                            if key == "length" {
-                                return Ok(Value::Number(crate::value::utf16_len(&s) as f64));
-                            }
-                            if let Some(i) = crate::builtins::canonical_string_index_name(key) {
-                                if let Some(unit) = crate::value::utf16_get(&s, i) {
-                                    return Ok(Value::String(Arc::from(
-                                        crate::value::utf16_to_string(&[unit]).as_str(),
-                                    )));
-                                }
-                                return Ok(Value::Undefined);
-                            }
-                        }
-                    }
-                    let props = o.props();
-                    if let Some(desc) = props.lock().get(&pkey) {
-                        return Ok(desc.value.clone());
-                    }
-                    // function-specific: .prototype lives in a dedicated field
-                    if let HeapObj::Function(f) = o {
-                        if key == "prototype" {
-                            if let Some(p) = f.prototype.lock().as_ref() {
-                                return Ok(p.clone());
-                            }
-                        }
-                        if key == "name" {
-                            if let Some(n) = &f.name {
-                                return Ok(Value::String(n.clone()));
-                            }
-                            return Ok(Value::String(Arc::from("")));
-                        }
-                        if key == "length" {
-                            if let crate::value::FunctionKind::Native { length, .. } = &f.kind {
-                                return Ok(Value::Number(*length as f64));
-                            }
-                            if let crate::value::FunctionKind::Interpreted { func } = &f.kind {
-                                return Ok(Value::Number(func.length as f64));
-                            }
-                        }
-                    }
-                    Ok(Value::Undefined)
-                });
-                let val = proto?;
-                if !val.is_undefined() {
-                    return Ok(val);
-                }
-                // walk proto chain, preserving the original receiver so that
-                // getters inherited from a prototype bind `this` to the receiver.
-                let p = self.heap.with_obj(idx.0, |o| o.proto().lock().clone());
-                if let Some(proto) = p {
-                    if !proto.is_undefined() {
-                        return self.get_property_rx(&proto, key, obj.clone(), 0);
-                    }
-                }
-                Ok(Value::Undefined)
-            }
+            Value::Object(_) => self.get_property_key_direct(
+                obj,
+                &crate::value::PropertyKey::from(key),
+                obj.clone(),
+            ),
             #[allow(unreachable_patterns)]
             _ => Ok(Value::Undefined),
         }
