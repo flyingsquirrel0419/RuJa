@@ -4,6 +4,51 @@
 
 ### Fixed
 
+- ECMAScript RegExp lookahead and lookbehind now execute as directional
+  subpatterns in the vendored matcher. Lookahead runs forward; lookbehind runs
+  backward with reversed concatenation, backward literals, wildcards,
+  newlines, delegates, captures, ordinary backreferences, and duplicate-name
+  capture sets. Positive assertions are atomic, restore the outer cursor, and
+  retain successful captures; negative assertions roll matcher state back.
+  Unmatched ECMAScript backreferences continue to match the empty string.
+
+  Legacy non-`u`/`v` quantified lookahead now follows the Annex B
+  `RepeatMatcher` exception. Finite and nullable repeats preserve required
+  captures and reject an empty iteration at the matcher boundary so child
+  alternatives can backtrack correctly. Non-Unicode ignore-case normalization
+  materializes the ECMAScript legacy canonicalization closure for literals,
+  escapes, and classes, preserving non-ASCII case pairs without admitting the
+  Unicode-only long-s and Kelvin folds. Scoped flags survive trailing
+  lookahead because the unsafe assertion optimizer is disabled only in
+  ECMAScript mode.
+
+  ECMAScript matcher work is explicitly bounded even on successful paths:
+  branch creation, repeat dispatch, and repeated-capture clearing share one
+  finite work budget, and the branch stack is capped at **100,000** entries.
+  Mode-off `fancy-regex` behavior retains upstream failed-backtrack accounting
+  and its existing stack limit. Stress probes for a 100-million zero-width
+  repeat and the former million-branch path now terminate at the work and stack
+  limits respectively; catastrophic failed matching remains bounded.
+
+  On Test262 `020cb74075849d1e404bbcdb62feb7a02e6966db`, complete lookbehind is
+  **17/17** and full `built-ins/RegExp` moves from **991 pass / 52 fail / 836
+  skip / 0 timeout** to **1024 / 19 / 836 / 0**, exactly **+33 pass / -33
+  fail**. The remaining 19 are 11 grammar early errors, five empty-class
+  matcher files, one quantifier integer-limit file, one nullable-quantifier
+  hybrid mismatch, and one Unicode restricted-bracket early error. Rust
+  all-target tests, vendored tests **447/447**, release, wasm32, formatting,
+  diff checks, and warnings-denied Clippy pass. Two independent GPT 5.6 reviews
+  returned `CLEAN` after closing legacy case-fold, nested assertion,
+  local-flag optimizer, successful-work accounting, and stack-growth defects.
+  No coder model or Umans provider route was used. Feature commit `f1e48f1`
+  passed ordinary CI `29666307842` and all 33 jobs in full matrix
+  `29666307826`. Twenty-eight of 30 downloaded result files are byte-identical
+  to the duplicate-name baseline. `built-ins` moves **+33 pass / -33 fail**;
+  Annex B moves **+2 / -2** in exactly its positive and negative
+  quantified-assertion files. The artifact aggregate is **30458 pass / 6098
+  fail / 11905 skip / 6 timeout / 0 error / 48467 total / 36556 pass-or-fail
+  executed** (**62.8%** of all files, **83.3%** of executed files).
+
 - RegExp named captures may now reuse a name when every pair is separated by
   a disjunction alternative, matching ECMAScript `MightBothParticipate` early
   errors. `exec`, `match`, `matchAll`, `replace`, `replaceAll`, `search`,

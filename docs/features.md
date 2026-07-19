@@ -148,7 +148,8 @@
 - **Date**: `now()`, constructor with timestamp, `getTime()`
 - **JSON**: `parse` (with reviver) and `stringify` (with replacer/space)
 - **RegExp**: literals `/pattern/flags` with `test`, `exec`, `match`, `source`,
-  `flags`, `d`-flag match indices, Unicode named captures/backreferences,
+  `flags`, `d`-flag match indices, forward lookahead, backward lookbehind,
+  legacy quantified lookahead, Unicode named captures/backreferences,
   duplicate names across structurally disjoint alternatives with
   participating-capture selection, and the String-symbol
   match/search/split/replace/matchAll operations

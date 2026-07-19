@@ -303,7 +303,65 @@ upstreamed or published separately.
 - 검토한 주요 대안: Expand every alias into nested conditionals, guess the last iteration after matching, route every repeated-capture pattern entirely through a backtracking VM, hand-roll a new RegExp engine, or add isolated matcher-state primitives to a vendored backend.
 - 선택한 방식: Share a structural early-error scanner, retain ordered occurrences plus one index table per name, lower references to ID-based BackrefSet instructions, clear captures transactionally in the VM, prefilter ordinary matches linearly, and gate the fork behind explicit ECMAScript options and a finite work budget.
 - 다른 대안 대신 이 방식을 선택한 이유: Conditional expansion and repeated name scans are quadratic, post-processing is observably wrong, broad backtracking routing regresses hostile no-match patterns, and a replacement engine is too broad for this conformance unit. Backend state is the only point that can clear captures with correct backtracking restoration.
-- 장점, 단점 및 영향: Exact duplicate-name syntax, groups, indices, replacement, backreference, Unicode case-fold, and quantified-state semantics are directly tested with linear source/table growth and bounded runtime work. The tradeoffs are a maintained backend fork, disabled crates.io publication until that fork has a registry path, and a remaining hard variable-lookbehind case for duplicate-name backreferences.
+- 장점, 단점 및 영향: Exact duplicate-name syntax, groups, indices, replacement, backreference, Unicode case-fold, and quantified-state semantics are directly tested with linear source/table growth and bounded runtime work. The tradeoffs are a maintained backend fork and disabled crates.io publication until that fork has a registry path. The once-remaining hard variable-lookbehind case is closed by the directional matcher below.
+```
+
+### RegExp directional lookaround
+
+`compile_regex_with_input_mode` detects assertions outside escaped text and
+character classes and routes those patterns through the vendored ECMAScript
+backend. Normalization still owns JavaScript-specific UTF-16 and case-fold
+semantics. In particular, non-Unicode ignore-case literals and classes are
+materialized from the legacy `Canonicalize` equivalence relation under a
+scoped backend case disable; this admits `U+00E9` case pairs without also
+admitting Unicode-only long-s or Kelvin folds.
+
+The backend compiler carries an explicit forward or backward direction.
+Lookahead compiles its subpattern forward; lookbehind compiles backward.
+Backward concatenation visits terms in reverse execution order while leaving
+alternatives and greediness unchanged. Capture groups save their end before
+their start, and dedicated backward instructions consume literals, scalar
+wildcards, general newlines, delegates, ordinary backreferences, and duplicate
+name capture sets from the cursor toward the start of the input.
+
+```text
+RegExp source + flags
+  -> source validation and JavaScript normalization
+  -> lookaround detection
+  -> ECMAScript fancy-regex parser
+  -> forward lookahead / backward lookbehind compiler
+  -> atomic assertion VM with one shared work budget
+  -> capture byte ranges
+  -> RuJa UTF-16 result materialization
+```
+
+Positive assertions save the outer cursor, enter an atomic region, run the
+subpattern, leave the region, and restore only the cursor. Captures produced by
+the successful assertion therefore remain observable, but later matching
+cannot backtrack into the assertion. Negative assertions use a transactional
+branch whose successful negative path discards subpattern state.
+
+Annex B permits quantified lookahead only in legacy non-`u`/`v` patterns. The
+parser exposes that exception only when both ECMAScript and legacy modes are
+active. Finite and unbounded nullable repeats carry an explicit upper bound and
+an ECMAScript empty-iteration failure mode, allowing child alternatives to
+backtrack while preserving the required capture from completed iterations.
+
+Resource accounting is also mode-specific. Every ECMAScript branch push,
+repeat dispatch, and repeated-capture clear consumes the same finite work
+budget, including paths that succeed without failed backtracking. The
+ECMAScript branch stack is capped at 100,000 entries. Mode-off callers retain
+upstream's one-million-entry stack and failed-backtrack counter, so the fork
+does not silently tighten the public crate's ordinary semantics.
+
+```text
+[Decision Log]
+- 목적과 의도: Implement ECMAScript lookahead, lookbehind, backward captures and backreferences, and Annex B quantified-lookahead semantics without an unbounded backtracking path.
+- 기존 구현 및 제약 조건: Rust regex cannot express variable-length lookbehind or assertion capture semantics, upstream fancy-regex searched lookbehind prefixes forward, successful zero-width repetitions could bypass the failed-backtrack counter, and broad backend routing would weaken RuJa's resource boundary.
+- 검토한 주요 대안: Continue translating assertions to Rust regex, enumerate candidate lookbehind starts, post-process captures, replace the complete matcher, or add directional instructions and explicit ECMAScript accounting to the maintained backend.
+- 선택한 방식: Detect assertions at the RuJa boundary, normalize JavaScript case and UTF-16 semantics first, compile lookbehind backward with atomic cursor restoration, implement the legacy RepeatMatcher exception in the parser/VM, and charge every ECMAScript branch, repeat, and capture-clear operation to one bounded budget with a 100,000-entry stack cap.
+- 다른 대안 대신 이 방식을 선택한 이유: Translation cannot preserve assertion capture/backreference order, prefix enumeration changes greediness and scales with input length, post-processing cannot reconstruct transactional matcher state, and a new engine is too broad for this unit. Directional compilation follows the specification directly while reusing the audited VM state model.
+- 장점, 단점 및 영향: The complete Test262 lookbehind subtree passes, hard duplicate-name lookbehind works, positive assertions remain atomic, and hostile successful zero-width or branch-growth patterns terminate under explicit limits. The cost is a larger maintained backend fork; unrelated RegExp grammar, empty-class, sentinel, nested-v, and linear-boundary work remains separate.
 ```
 
 `MakeClosure` follows the same rule for an ordinary function's fresh

@@ -58,8 +58,8 @@ indexing, `at`/`copyWithin`/`entries`/`fill`/`filter`/`find`/`findIndex`/
 `lastIndexOf`/`map`/`reverse`/`set`/`slice`/
 `sort`/`subarray`/`toLocaleString`/`toReversed`/`toSorted`/`reduce`/
 `reduceRight`/`some`/`every`/`values`/`with`, BigInt, Date, RegExp `d` match
-indices, Unicode named groups, duplicate names across disjoint alternatives,
-and more.
+indices, directional lookahead/lookbehind, Unicode named groups, duplicate
+names across disjoint alternatives, and more.
 RuJa does
 not claim
 full ES conformance — conformance is scoped to this subset. See

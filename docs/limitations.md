@@ -74,19 +74,33 @@ guarantees are required.
 - RegExp construction, `IsRegExp`, Realm fallback, the String-symbol methods,
   character-class escapes, active-ignoreCase `\w`/`\W` lowering, and `d`-flag
   match indices are implemented and audited, but full RegExp conformance is
-  not complete. The current `built-ins/RegExp` diagnostic has **52 failures**:
-  **37** direct/root syntax and matcher files and **15** lookbehind files; the
-  match-indices subtree is **14/14**. Named groups support Unicode identifiers,
-  escaped names, structurally disjoint duplicate names, participating-capture
-  selection, and Unicode/legacy ignore-case backreferences. A valid duplicate
-  named backreference inside a hard variable-length lookbehind can still be
-  rejected by the backend. Unicode `iu`/`iv` `\b`/`\B` on linear-backend
-  patterns inherits Rust's broader Unicode word boundary instead of the
-  ECMAScript WordCharacters set. Valid scalars in `U+F0000..U+F07FF` collide
-  with the internal UTF-16 sentinel representation, and nested `v` set
+  not complete. The current `built-ins/RegExp` diagnostic is **1024 pass / 19
+  fail / 836 skip / 0 timeout**. The remaining failures are **11** legacy
+  grammar early-error files, **5** empty-class matcher files, **1** quantifier
+  integer-limit file, **1** nullable-quantifier hybrid-boundary mismatch, and
+  **1** Unicode restricted-bracket early error. The complete lookbehind subtree
+  is **17/17**.
+
+  Lookahead and lookbehind execute in the vendored directional VM: lookbehind
+  reverses concatenation and consumes atoms, captures, delegates, and
+  backreferences backward while retaining source-order alternatives and
+  greediness. Positive assertions are atomic and preserve their captures while
+  restoring the outer cursor; negative assertions restore transactional state.
+  Legacy quantified lookahead is enabled only outside `u`/`v`. ECMAScript mode
+  charges branch creation, repeat dispatch, and capture clearing to one finite
+  work budget and caps the branch stack at **100,000** entries. Ordinary
+  mode-off `fancy-regex` callers retain upstream failed-backtrack accounting.
+
+  Named groups support Unicode identifiers, escaped names, structurally
+  disjoint duplicate names, participating-capture selection, and
+  Unicode/legacy ignore-case backreferences, including hard variable-length
+  lookbehind. Unicode `iu`/`iv` `\b`/`\B` on linear-backend patterns still
+  inherits Rust's broader Unicode word boundary instead of the ECMAScript
+  WordCharacters set. Valid scalars in `U+F0000..U+F07FF` collide with the
+  internal UTF-16 sentinel representation, and nested `v` set
   subtraction/intersection remains incomplete. Moving every boundary onto the
-  backtracking backend was rejected because nested quantified patterns can hit
-  its finite work limit; the general fix needs a linear boundary operation.
+  backtracking backend remains rejected; the general boundary fix needs a
+  linear operation.
 - Execution fuel is **cooperative, not preemptive**: `Vm::set_fuel(Some(n))`
   bounds execution to ~n opcodes (exhaustion throws a `RangeError` that is
   *not* catchable by user `try/catch`, so untrusted code cannot swallow it).

@@ -7959,9 +7959,10 @@ Raman (`019f76fa-b61e-78a0-94eb-5f366d67a1b3`) and Sartre
 (`019f76fa-b484-7c71-8df8-acd15ca18dae`) found the post-match, Unicode byte
 length, mode isolation, quadratic resource, lookbehind, and packaging issues.
 All correctness/resource findings are closed, every agent is closed, and no
-coder or Umans route was used. Duplicate-name backreferences inside hard
-variable-length lookbehind remain an explicit backend limitation. Crates.io
-publication is disabled until the fork is upstreamed or published separately.
+coder or Umans route was used. The previous hard variable-length lookbehind
+limitation for duplicate-name backreferences is closed by the directional
+matching unit below. Crates.io publication is disabled until the fork is
+upstreamed or published separately.
 
 ```text
 [Decision Log]
@@ -7970,7 +7971,90 @@ publication is disabled until the fork is upstreamed or published separately.
 - 검토한 주요 대안: Broaden the feature gate, expand every reference into conditional source, retain post-match cleanup, route all repeated captures through a backtracking matcher, build a new RegExp engine, or add narrowly gated state operations to the existing backend.
 - 선택한 방식: Freeze 19 exact paths, share a structural MightBothParticipate scanner, store ordered occurrences plus ID-based capture sets, clear repeated captures inside the VM, use a linear match prefilter, implement ECMAScript case relations, and account all clearing work under the backend limit.
 - 다른 대안 대신 이 방식을 선택한 이유: Broad admission hides unrelated failures, conditional/source and lookup expansion is quadratic, post-processing is incorrect, broad VM routing regresses hostile no-match input, and replacing the matcher is disproportionate to this finite conformance cluster.
-- 장점, 단점 및 영향: Thirteen skips become passes with no failure increase; result identity/order and matcher state are observable and tested; large alias patterns scale linearly; mode-off upstream behavior is preserved. The maintained fork blocks crates.io publication until it has a registry path, and hard variable-lookbehind duplicate references remain separate work.
+- 장점, 단점 및 영향: Thirteen skips become passes with no failure increase; result identity/order and matcher state are observable and tested; large alias patterns scale linearly; mode-off upstream behavior is preserved. The maintained fork blocks crates.io publication until it has a registry path. Hard variable-lookbehind duplicate references are completed by the following directional unit.
+```
+
+## RegExp lookaround and directional matching
+
+RuJa now implements the ECMA-262
+[`CompileAssertion`](https://tc39.es/ecma262/multipage/text-processing.html#sec-compileassertion)
+and backward `CompileSubpattern` model directly in the vendored matcher.
+Lookahead compiles forward and lookbehind compiles backward. Backward
+concatenation reverses term execution while preserving alternative order and
+greediness; captures save end then start; literals, wildcards, general
+newlines, delegates, ordinary backreferences, and duplicate-name capture sets
+all have backward execution paths.
+
+Positive assertions run inside an atomic region, restore the outer input
+cursor, and retain captures from the successful assertion. Negative
+assertions use a transactional failure branch, so failed probes do not leak
+captures or repeat state. This closes variable-length lookbehind, backward
+capture greediness, both source orders of lookbehind backreferences, nested
+lookahead/backreference behavior, and the hard duplicate-name lookbehind case
+left by the preceding unit. Unmatched references match the empty string only
+under ECMAScript mode; ordinary `fancy-regex` semantics are unchanged.
+
+Annex B quantified lookahead is accepted only when ECMAScript mode is active
+without `u` or `v`. The repeat instructions carry finite upper bounds and an
+empty-iteration failure mode that implements the legacy `RepeatMatcher`
+behavior without losing required captures. The ECMAScript path also skips the
+trailing positive-lookahead optimizer because removing the assertion can lose
+locally normalized case flags.
+
+The backend limit is a work limit rather than only a failed-backtrack count.
+Every ECMAScript branch push, repeat dispatch, and capture clear shares that
+budget, and the branch stack has a 100,000-entry hard cap. A 100-million
+successful zero-width-repeat probe terminates at the work limit in about
+**0.26 s / 14 MB** in reviewer verification. A path that formerly grew toward
+one million branch entries terminates at the stack limit in about **0.18 s /
+27 MB**. Catastrophic failed matching remains work-bounded, exact limit edges
+were exercised, and mode-off low-limit behavior remains upstream-compatible.
+
+On the pinned local Test262 checkout
+`020cb74075849d1e404bbcdb62feb7a02e6966db`, `built-ins/RegExp/lookBehind` is
+**17 pass / 0 fail / 0 skip / 0 timeout**. Full `built-ins/RegExp` moves from
+**991/52/836/0** to **1024/19/836/0**, exactly **+33 pass / -33 fail** with no
+skip or timeout movement. A fresh analyzer independently reproduces all 19
+remaining failures: **11** legacy grammar early errors, **5** valid empty-class
+matcher files rejected by the backend, **1** quantifier integer-limit file,
+**1** nullable-quantifier capture-prefilter disagreement, and **1** Unicode
+restricted-bracket early error.
+
+Final local gates pass all Rust targets/features, warnings-denied Clippy,
+rustfmt/diff, release, wasm32, vendored `fancy-regex` tests and doc-tests
+**447/447**, builtins **476/476**, the complete lookbehind subtree, and full
+RegExp. A 33-case Node/RuJa differential matrix is identical. GPT 5.6
+reviewers Kant (`019f777e-5ea9-7ee0-9e68-fe0bfd004d6a`) and Carver
+(`019f777e-8420-78d2-b752-492fdde16609`) independently returned `CLEAN` after
+closing legacy non-ASCII case-folding, Unicode over-folding, nested assertion
+backreferences, scoped trailing-lookahead flags, successful zero-width work
+accounting, and branch-stack growth. Both sessions are closed; no duplicate
+agent, coder model, or Umans provider route remains. Feature commit `f1e48f1`
+passed ordinary CI `29666307842` and all **33/33** jobs in full matrix
+`29666307826`.
+
+The 30 downloaded matrix result files at
+`/tmp/ruja-regexp-lookaround-feature.29666307826.EgEfvX` aggregate to **30458
+pass / 6098 fail / 11905 skip / 6 timeout / 0 error / 48467 total / 36556
+pass-or-fail executed**, or **62.8%** of all files and **83.3%** of executed
+files. Twenty-eight files are byte-identical to duplicate-name baseline
+`29662790652` at
+`/tmp/ruja-regexp-duplicate-feature.29662790652.Uoyktr`. `built-ins` changes
+by exactly **+33 pass / -33 fail**. Annex B changes by **+2 / -2**; an isolated
+old/new binary comparison on the same Test262 checkout
+`9e61c12835c5e4a3bdba93850427e6742c4f64c4` identifies exactly
+`quantifiable-assertion-followed-by.js` and
+`quantifiable-assertion-not-followed-by.js`. The extra matrix delta is
+therefore the expected Annex B implementation, not unpinned-checkout drift.
+
+```text
+[Decision Log]
+- 목적과 의도: Close ECMAScript lookaround and legacy quantified-lookahead semantics with specification-directed captures, backreferences, atomicity, and finite resources.
+- 기존 구현 및 제약 조건: Rust regex lacks variable-length lookbehind and assertion capture semantics, upstream lookbehind searches prefixes forward, failed-backtrack counting misses successful zero-width work, and RuJa must preserve the linear backend for patterns that do not need assertions.
+- 검토한 주요 대안: Enumerate lookbehind start positions, rewrite lookbehind into lookahead, repair captures after matching, route every RegExp through a backtracking engine, replace the matcher, or add explicit direction and accounting to the maintained fork.
+- 선택한 방식: Route only assertion patterns to ECMAScript mode, compile lookbehind terms backward, make successful assertions atomic with cursor restoration, model Annex B RepeatMatcher in parser/compiler/VM state, and charge all ECMAScript branches, repeats, and capture clears under one work budget plus a 100,000-entry stack cap.
+- 다른 대안 대신 이 방식을 선택한 이유: Start enumeration changes greediness and scales with input length, rewrites and post-processing cannot reproduce transactional capture state, broad routing weakens linear execution, and a replacement engine is disproportionate to this finite unit. Directional compilation maps directly onto the specification while retaining existing VM rollback machinery.
+- 장점, 단점 및 영향: Thirty-three failures become passes, lookbehind reaches 17/17, hard duplicate-name lookbehind closes, and successful hostile paths are bounded. The maintained fork grows, while 19 unrelated grammar, class, quantifier, and hybrid-boundary failures remain explicit next units.
 ```
 
 ## Why the full-suite rate is not higher
