@@ -4,6 +4,64 @@
 
 ### Fixed
 
+- Proxy `[[DefineOwnProperty]]` now uses one iterative, fuel-metered,
+  GC-rooted state machine for internal complete descriptors and public
+  `Object.defineProperty`, `Object.defineProperties`, and
+  `Reflect.defineProperty` calls. Partial descriptor presence is retained;
+  revocation, `GetMethod`, trap invocation, false results, target descriptor,
+  extensibility, compatibility, configurable, and writable-tightening checks
+  remain in specification order. Missing traps no longer recurse through Rust,
+  and non-callable traps fail before descriptor-object allocation.
+
+  The callable Proxy traps required by that path are stack-safe as well.
+  Proxy creation stores immutable callability and constructability metadata,
+  and `[[Call]]` tail-transforms transparent targets and Proxy-valued `apply`
+  traps while charging one fuel unit per layer. Argument arrays use the current
+  execution Realm, observable values remain rooted by the outer call cleanup
+  scope, and every normal, thrown, allocation, or host-fuel return restores the
+  incoming pin depth.
+
+  Regressions cover 100,000 transparent define-property layers, 64 nested
+  invariant layers, 25,000 transparent callable traps, 4,096 nested Proxy
+  `apply` traps, exact N-1/N fuel boundaries, forced collection, unique thrown
+  marker objects, method-Realm errors, exact heap caps, and cleanup after every
+  exit. Mutation checks prove the DefineOwnProperty and Proxy Call fuel charges,
+  descriptor-value root, non-callable GetMethod ordering, and current-Realm
+  argument-array allocation are necessary.
+
+  `tools/test262_proxy_define_property_admission.txt` freezes exactly 21 of
+  the 24 direct `built-ins/Proxy/defineProperty` files with manifest checksum
+  `ccccef0672a93f9c70ce5ee42cfe11b7d1401e18b916776031e484b1f803cdfa`.
+  The three assignment-driven files remain excluded because they enter the
+  separate 128-layer receiver-definition path. The direct directory is
+  **21 pass / 0 fail / 3 skip / 24 total**; the combined Object/Reflect/Proxy
+  define-property cohort is **1770/13/16/1799**, the Proxy-call cohort is
+  **58/0/13/71**, and the construct cohort is **11/0/28/39**. The supported
+  subset remains **12751/0/7687/20438**.
+
+  Feature commit `96ea1384519e5f1ef2c1bc4f7abd360976a5c0bd` passes all local
+  Rust targets/features with lib **147/147**, builtins **501/501**,
+  warnings-denied Clippy, rustfmt/diff, debug and release builds, wasm32, and
+  Python tooling **114/114**.
+
+  Ordinary CI `29695748045` and all **33/33** jobs in full matrix
+  `29695748050` pass. The 30 result files at
+  `/tmp/ruja-define-property-results.29695748050.FS0S7x` aggregate to
+  **30724 pass / 6049 fail / 11688 skip / 6 timeout / 0 error / 48467 total /
+  36773 pass-or-fail executed**. Twenty-nine result files are byte-identical
+  to prototype-internal baseline `29691533326`; only `built-ins` changes from
+  **15095/5238/3329** to **15116/5238/3308**, exactly **+21 pass / -21 skip**.
+
+  GPT reviewers Boyle (`019f7afc-66a3-7612-8c5d-f1804ea89e45`) and Huygens
+  (`019f7afc-67e0-7431-a5ec-56dfb7a57a61`) found the callable-Proxy recursion,
+  non-callable allocation-order boundary, separate receiver path, and exact
+  21-file corpus. Kepler (`019f7b22-ed89-7870-99a2-1aa61088da66`) found the
+  foreign-Realm argument-array bug and confirmed its mutation-backed fix.
+  Euclid (`019f7b22-ef54-7212-bc02-48dd5c6fa0b9`) found the anonymous-object
+  abrupt-test false positive; unique marker assertions replaced it. All four
+  sessions are closed, and neither the coder model nor an Umans provider route
+  was used.
+
 - Proxy `[[GetPrototypeOf]]` and `[[SetPrototypeOf]]` forwarding now walks
   transparently through arbitrary legal depth without Rust recursion. Each
   Proxy layer is rooted and consumes one fuel unit while preserving

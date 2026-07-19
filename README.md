@@ -25,7 +25,7 @@ no `unsafe` code anywhere in the engine.
   exhaustion throws a non-catchable `RangeError`
 - **Heap limit**: `vm.set_max_heap_objects(Some(10_000))` caps live objects;
   exceeding throws a catchable `RangeError`
-- **Call-stack cap**: 1000 frames max; deep recursion throws `RangeError`,
+- **Call-stack cap**: 512 VM frames max; deep recursion throws `RangeError`,
   not a native crash
 - **ReDoS-safe regex**: RE2-style linear-time matching (no backtracking)
 - **Panic-free**: 0 `unwrap()` in VM hot path; cargo-fuzz verified (96k+
@@ -70,8 +70,8 @@ for intentionally-unsupported features.
 
 **Supported-subset pass rate: 100.0%** (12,751 tests in `language/statements`
 + `language/expressions` on current Test262, unsupported-feature tests
-skipped). The latest full matrix is 63.3% of all files and 83.5% of executed
-files (30,703 pass / 6,049 fail / 11,709 skip / 6 timeout) — see
+skipped). The latest full matrix is 63.4% of all files and 83.6% of executed
+files (30,724 pass / 6,049 fail / 11,688 skip / 6 timeout) — see
 [test262 conformance](docs/test262.md)
 for why these numbers differ.
 

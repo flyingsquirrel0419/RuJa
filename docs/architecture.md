@@ -635,7 +635,7 @@ design.
 - 검토한 주요 대안: Keep recursion, impose a fixed depth cap, track visited targets, accumulate every transparent layer, or advance one rooted current target iteratively while metering every nested Proxy operation.
 - 선택한 방식: Pin the original receiver, iterate one Proxy layer at a time with constant per-hop target/handler/trap pins, preserve the first real trap's descriptor and extensibility checks, and consume fuel in Delete plus shared Get, GetOwnProperty, and IsExtensible traversal.
 - 다른 대안 대신 이 방식을 선택한 이유: Recursion can abort the host, a cap rejects valid programs, target links are immutable and do not require cycle detection, and accumulated layers add unnecessary memory. A rooted current value directly models transparent forwarding while shared fuel closes nested-operation bypasses.
-- 장점, 단점 및 영향: A 100,000-layer delete is stack-safe, forced GC and every abrupt path restore pin depth, and hosts can stop deep handlers or invariant targets with fuel. Unbounded hosts can still spend linear time on arbitrarily deep legal chains, and separately capped Set and DefineOwnProperty paths remain future iterative audits.
+- 장점, 단점 및 영향: A 100,000-layer delete is stack-safe, forced GC and every abrupt path restore pin depth, and hosts can stop deep handlers or invariant targets with fuel. Unbounded hosts can still spend linear time on arbitrarily deep legal chains, and separately capped Set and receiver-side DefineOwnProperty paths remain future iterative audits.
 ```
 
 ## Reflect omitted property-key normalization
@@ -822,7 +822,7 @@ directly.
 - 검토한 주요 대안: Store one extensibility flag on every GC cell, keep a side table keyed by GcIdx, add flags only to the initially reported variants, raise a Proxy depth limit, or give each public variant explicit state and reuse the complete integrity/internal-method paths.
 - 선택한 방식: Keep per-variant atomic state behind exhaustive HeapObj helpers, walk Proxy targets iteratively with constant per-layer roots and fuel, validate truthy results through full IsExtensible, and route non-specialized exotics through rooted GC-retrying SetIntegrityLevel and TestIntegrityLevel.
 - 다른 대안 대신 이 방식을 선택한 이유: Cell-wide metadata would also describe internal Environment and Iterator records and complicate slot reuse; a side table risks stale GcIdx identity; a partial variant list recreates the bug when new exotics appear; and fixed depth limits reject valid programs. Existing complete internal-method helpers preserve observable order and typed-array or module-namespace behavior.
-- 장점, 단점 및 영향: Deep transparent chains are stack-safe and host-bounded, nested traps and Realm errors remain observable in order, every current exotic blocks new properties after prevention, and integrity operations process real descriptors under heap caps. The cost is one atomic field per stateful variant plus duplicated constructor initialization, while DefineOwnProperty and the remaining ordinary property traversals still require separate iterative audits.
+- 장점, 단점 및 영향: Deep transparent chains are stack-safe and host-bounded, nested traps and Realm errors remain observable in order, every current exotic blocks new properties after prevention, and integrity operations process real descriptors under heap caps. The cost is one atomic field per stateful variant plus duplicated constructor initialization, while receiver-side DefineOwnProperty and the remaining ordinary property traversals still require separate iterative audits.
 ```
 
 ## Iterative prototype internal methods
@@ -879,6 +879,55 @@ public methods, and a WeakRef mutation test proving deferred roots are real.
 - 선택한 방식: Pin operation inputs once, consume one fuel unit and root observable values per Proxy layer, defer non-extensible getPrototypeOf expectations for reverse validation, iterate missing setPrototypeOf traps, and scan ordinary prototype slots with fuel and Brent cycle detection until null or a non-ordinary GetPrototypeOf method.
 - 다른 대안 대신 이 방식을 선택한 이유: A larger cap still rejects valid programs and accepts cycles beyond its boundary; Rust recursion remains stack-dependent; a HashSet adds infallible native growth and stores reusable heap identities; and calling Proxy GetPrototypeOf during OrdinarySetPrototypeOf violates the specification's non-ordinary-method stop rule. The chosen state machines preserve exact call order and make every unbounded walk host-metered.
 - 장점, 단점 및 영향: Legal transparent chains are stack-safe at arbitrary depth, ordinary cycles are rejected without a fixed limit, trap results and proposed prototypes survive observable GC, and fuel aborts leave the VM reusable with its pin depth restored. Fully trapped non-extensible chains retain specification-driven quadratic work and linear deferred storage; the VM-wide fallible native-temporary policy remains a separate architecture task.
+```
+
+## Iterative Proxy defineProperty and call dispatch
+
+Proxy `[[DefineOwnProperty]]` now enters one shared VM state machine from both
+the internal complete-descriptor path and the public `Object.defineProperty`,
+`Object.defineProperties`, and `Reflect.defineProperty` paths. A dedicated
+descriptor record retains every `has_*` bit, so a partial public descriptor is
+not accidentally completed before Proxy compatibility checks. Ordinary
+targets still use the existing partial-descriptor application path.
+
+The state machine pins the original receiver and descriptor values for the
+whole operation. At each Proxy layer it checks revocation, consumes one fuel
+unit, roots the target, handler, trap, and materialized descriptor object, and
+advances through a missing trap without Rust recursion. A present non-callable
+trap fails before descriptor-object allocation. A false result short-circuits;
+a truthy result then performs the target's complete `[[GetOwnProperty]]` and
+`[[IsExtensible]]` operations before compatibility, configurable, and
+writable-tightening invariants are checked. Target descriptor fields remain
+rooted across every observable nested operation.
+
+Making deep callable `defineProperty` traps stack-safe required fixing Proxy
+`[[Call]]` at the same boundary. Proxy creation now stores immutable callable
+and constructable metadata instead of discovering those internal methods by
+recursively walking targets. The call dispatcher consumes one fuel unit per
+Proxy layer and tail-transforms its current function, `this`, and arguments
+for transparent targets or Proxy-valued `apply` traps. Added roots belong to
+the outer call cleanup scope, so normal, thrown, allocation, and host-fuel
+returns restore the incoming pin depth. `apply` argument arrays allocate in
+the current execution Realm, and non-callable traps are rejected before that
+allocation.
+
+Transparent paths are linear and stack-safe at arbitrary legal depth when
+fuel is unbounded; configured fuel gives hosts an exact per-layer work bound.
+Specification-required nested invariant checks can still perform superlinear
+work, and Proxy-valued `apply` traps can retain per-layer argument arrays until
+the call resolves. Receiver-side property definition reached through ordinary
+`[[Set]]` still has a separate 128-layer guard. Revoked Proxy heap cells also
+retain their target and handler strongly even though observable operations
+reject them; both limitations remain explicit follow-up work.
+
+```text
+[Decision Log]
+- 목적과 의도: Make direct Proxy DefineOwnProperty and the callable traps it invokes stack-safe, fuel-bounded, GC-safe, and Realm-correct without changing observable ECMAScript order.
+- 기존 구현 및 제약 조건: Transparent defineProperty forwarding and callable Proxy traps recursively re-entered Rust; public descriptors could lose partial-field presence at the wrong boundary; deep work bypassed fuel; and temporary descriptor values, trap arguments, and foreign-Realm arrays were not owned by one cleanup protocol.
+- 검토한 주요 대안: Raise recursion guards, admit only shallow Test262 cases, duplicate public and internal algorithms, complete every descriptor eagerly, or use shared iterative state machines plus immutable Proxy call/construct metadata.
+- 선택한 방식: Preserve partial descriptors in an explicit record, route both entry points through one rooted per-layer DefineOwnProperty state machine, store callability and constructability at Proxy creation, and tail-transform Proxy Call state while charging fuel and allocating argument arrays in the current Realm.
+- 다른 대안 대신 이 방식을 선택한 이유: Larger guards still reject valid programs and remain stack-dependent; shallow admission would hide the sandbox failure; duplicated algorithms drift in trap and invariant order; eager completion changes compatibility semantics; and immutable metadata directly represents whether ProxyCreate installed the Call and Construct internal methods.
+- 장점, 단점 및 영향: One implementation now covers 100,000 transparent defineProperty layers and 25,000 callable trap layers with exact fuel and pin cleanup, partial descriptors and Realm errors remain observable in order, and mutation tests prove the critical roots and allocation ordering. Receiver-side Set delegation, revoked-slot retention, and VM-wide fallible native temporary storage remain separate bounded units.
 ```
 
 ---

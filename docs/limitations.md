@@ -6,16 +6,15 @@ RuJa is designed for running untrusted JavaScript safely inside a host process.
 The following resource limits are enforced:
 
 - **Execution fuel**: `Vm::set_fuel(Some(n))` bounds dispatched opcodes and
-  explicitly metered native-loop steps. Proxy `[[Delete]]`, `[[Get]]`,
-  `[[GetOwnProperty]]`, `[[IsExtensible]]`, `[[PreventExtensions]]`,
-  `[[GetPrototypeOf]]`, and `[[SetPrototypeOf]]` consume one unit per
-  traversed Proxy layer, including nested handler and invariant walks.
+  explicitly metered native-loop steps. Proxy `[[Call]]`, `[[Delete]]`,
+  `[[Get]]`, `[[GetOwnProperty]]`, `[[DefineOwnProperty]]`,
+  `[[IsExtensible]]`, `[[PreventExtensions]]`, `[[GetPrototypeOf]]`, and
+  `[[SetPrototypeOf]]` consume one unit per traversed Proxy layer, including
+  nested handler and invariant walks.
   Ordinary `[[SetPrototypeOf]]` cycle detection also consumes one unit per
   visited candidate object. Exhaustion throws a `RangeError("fuel exhausted")`
   that is *not catchable* by user `try/catch` (a host-level abort). `None` =
-  unbounded (default). Transparent Proxy forwarding in
-  `[[DefineOwnProperty]]` is still unmetered and can perform linear work
-  without reducing an active fuel budget.
+  unbounded (default).
 - **Heap object limit**: `Vm::set_max_heap_objects(Some(n))` caps the number
   of live GC-managed heap objects. When exceeded, allocation throws a
   catchable `RangeError("heap limit exceeded")`. A GC cycle is attempted
@@ -39,20 +38,20 @@ The following resource limits are enforced:
   reject at an intermediate raw allocation even when a collection could
   reclaim enough garbage. They require the same per-builder rooting audit
   before the generic path can safely change.
-- **Call-stack depth**: JavaScript recursion is capped at 1000 frames.
+- **Call-stack depth**: JavaScript execution is capped at 512 VM frames.
   Exceeding this throws a catchable `RangeError("Maximum call stack size
   exceeded")`, not a native stack overflow (SIGSEGV/abort).
 - **Remaining property traversal caps**: ordinary prototype `[[Get]]` returns
   `undefined` beyond 4096 recursive hops, while `[[HasProperty]]` returns
   `false` beyond 1024 ordinary or Proxy hops. `[[Set]]` uses a 1024-hop
-  ordinary guard and a separate 128-layer Proxy guard, and receiver
+  ordinary guard and a separate 128-layer Proxy guard. Receiver-side
   `[[DefineOwnProperty]]` delegation shares that 128-layer limit. These guards
   avoid native-stack failure but produce non-conforming results for otherwise
-  valid deep chains. Transparent Proxy deletion, Proxy get forwarding,
-  descriptor lookup, and extensibility traversal are iterative and
-  fuel-metered, but their ordinary prototype segments are not all free of
-  arbitrary limits yet. Prototype get/set internal methods and ordinary cycle
-  detection are iterative and uncapped. Removing the remaining property caps
+  valid deep chains. Transparent Proxy calls, deletion, direct
+  `[[DefineOwnProperty]]`, descriptor lookup, extensibility traversal, and
+  prototype get/set internal methods are iterative and fuel-metered. Proxy get
+  forwarding is also iterative, but its ordinary prototype segments are not
+  all free of arbitrary limits yet. Removing the remaining property caps
   requires one coordinated traversal audit rather than isolated limit
   increases.
 - **Transparent Proxy enumeration gap**: `for...in` can omit keys forwarded
@@ -160,6 +159,13 @@ guarantees are required.
   held values strongly, and schedules cleanup callbacks at VM job checkpoints
   after collection. As required by ECMAScript, callback timing is
   nondeterministic and embedders must not depend on cleanup running promptly.
+- Revoked Proxy cells currently mark themselves revoked but retain strong
+  target and handler references in their heap storage. Calls and internal
+  methods reject the revoked Proxy correctly, but a target or handler that is
+  otherwise unreachable can remain visible to `WeakRef` and delay
+  `FinalizationRegistry` cleanup while the revoked Proxy itself is live.
+  Clearing those slots without losing immutable call/construct internal-method
+  metadata remains a separate storage audit.
 - `SharedArrayBuffer` instances share backing bytes with TypedArray and DataView
   views, support species-aware `slice()`, and can opt into monotonic growth with
   `maxByteLength`. Atomics operations serialize through the backing-buffer

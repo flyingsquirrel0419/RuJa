@@ -30,7 +30,7 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 63.3% of all matrix files; 83.5% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 63.4% of all matrix files; 83.6% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (12751 pass / 0 fail / 7687 skip / 20438 total on the current pinned checkout) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
@@ -8381,10 +8381,11 @@ byte-identical. Only `built-ins` changes, from **14955/5238/3469** to
 **15026/5238/3398**, exactly **+71 pass / -71 skip**.
 
 This closes the finite direct Test262 surface, not every internal method that
-Reflect exposes. The later Realm Object-prototype, exotic-extensibility, and
-iterative-prototype sections record subsequent closures. Transparent Proxy
-`[[DefineOwnProperty]]` and the remaining ordinary property-traversal caps are
-tracked in [Known limitations](limitations.md) as separate correctness units.
+Reflect exposes. The later Realm Object-prototype, exotic-extensibility,
+iterative-prototype, and iterative-define-property sections record subsequent
+closures. Receiver-side `[[DefineOwnProperty]]` delegation and the remaining
+ordinary property-traversal caps are tracked in
+[Known limitations](limitations.md) as separate correctness units.
 
 ## Realm Object prototype immutability
 
@@ -8506,6 +8507,74 @@ aggregate to **30703 pass / 6049 fail / 11709 skip / 6 timeout / 0 error /
 **83.5%** of executed files. Against the extensibility baseline, 29 result
 files are byte-identical. Only `built-ins` changes from **15055/5238/3369** to
 **15095/5238/3329**, exactly **+40 pass / -40 skip** with no failure, timeout,
+error, corpus, or total drift.
+
+## Iterative Proxy defineProperty and exact admission
+
+Proxy `[[DefineOwnProperty]]` now uses one iterative state machine for the
+VM's complete-descriptor path and the partial descriptors accepted by
+`Object.defineProperty`, `Object.defineProperties`, and
+`Reflect.defineProperty`. Descriptor presence bits remain intact through the
+Proxy compatibility checks. Each Proxy layer checks revocation, consumes one
+fuel unit, and roots its target, handler, trap, descriptor values, and
+materialized descriptor object. Missing traps advance without Rust recursion.
+Present traps preserve `GetMethod`, call, boolean conversion, target
+`[[GetOwnProperty]]`, `[[IsExtensible]]`, compatibility, configurable, and
+writable-tightening order; non-callable traps fail before descriptor-object
+allocation.
+
+Deep callable traps exposed the same recursion and fuel bypass in Proxy
+`[[Call]]`. Proxy cells now retain immutable callable and constructable
+internal-method metadata fixed at creation. Transparent targets and
+Proxy-valued `apply` traps tail-transform the active call state, consume one
+fuel unit per Proxy layer, and add transformed values to the outer cleanup
+scope. Argument arrays allocate in the current execution Realm. Rust
+regressions cover 100,000 transparent define-property layers, 64 nested
+invariant layers, 25,000 transparent callable traps, 4,096 nested Proxy
+`apply` traps, exact fuel boundaries, forced GC, unique abrupt marker objects,
+method-Realm errors, exact heap caps, and pin restoration. Mutation runs prove
+the two fuel charges, descriptor-value root, non-callable allocation order,
+and current-Realm argument-array path.
+
+`tools/test262_proxy_define_property_admission.txt` freezes exactly 21 of the
+24 direct `built-ins/Proxy/defineProperty` files. Its metadata combinations
+are ten `Proxy`, five `Proxy` plus `cross-realm`, five `Proxy` plus `Reflect`,
+and one `Proxy` plus `Reflect` and `proxy-missing-checks`. The live manifest
+checksum is
+`ccccef0672a93f9c70ce5ee42cfe11b7d1401e18b916776031e484b1f803cdfa`.
+Runner and analyzer treatment is symmetric, every manifest remains disjoint,
+and future siblings or files with extra unsupported features remain skipped.
+
+The three excluded files are `desc-realm.js`, `null-handler-realm.js`, and
+`targetdesc-undefined-target-is-not-extensible-realm.js`. Their assignment
+expressions enter the separately capped receiver-side
+`[[DefineOwnProperty]]` path rather than this direct internal-method path, so
+admitting them here would overstate the completed boundary.
+
+On pinned Test262 `020cb74075849d1e404bbcdb62feb7a02e6966db`, the direct Proxy
+directory is **21 pass / 0 fail / 3 skip / 24 total**. The combined
+`Object.defineProperty`, `Object.defineProperties`,
+`Reflect.defineProperty`, and `Proxy/defineProperty` cohort is **1770 pass /
+13 fail / 16 skip / 1799 total**, exactly **+21 pass / -21 skip** from its
+preceding baseline with unchanged failures. The Proxy-call cohort across
+`Reflect.apply`, `Function.prototype.apply`, and `Proxy/apply` is
+**58/0/13/71**; the `Reflect.construct` plus `Proxy/construct` cohort is
+**11/0/28/39**. The supported subset remains **12751 pass / 0 fail / 7687
+skip / 20438 total**.
+
+Feature commit `96ea1384519e5f1ef2c1bc4f7abd360976a5c0bd` passes all local
+Rust targets/features with lib **147/147**, builtins **501/501**,
+warnings-denied Clippy, rustfmt/diff, debug and release builds, wasm32, and
+Python tooling **114/114**.
+
+Ordinary CI `29695748045` passed both jobs, and full matrix `29695748050`
+passed all **33/33** jobs. The 30 downloaded result files at
+`/tmp/ruja-define-property-results.29695748050.FS0S7x` aggregate to **30724
+pass / 6049 fail / 11688 skip / 6 timeout / 0 error / 48467 total / 36773
+pass-or-fail executed**, or **63.4%** of all files and **83.6%** of executed
+files. Against prototype-internal baseline `29691533326`, 29 result files are
+byte-identical. Only `built-ins` changes from **15095/5238/3329** to
+**15116/5238/3308**, exactly **+21 pass / -21 skip** with no failure, timeout,
 error, corpus, or total drift.
 
 ## Why the full-suite rate is not higher

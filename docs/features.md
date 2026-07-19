@@ -108,6 +108,12 @@
   `writable`, `get`/`set`); ordinary `[[Set]]` enforces `writable: false`
   (TypeError in strict mode, silent in sloppy) and invokes inherited setters
   through the prototype chain
+- Proxy `[[DefineOwnProperty]]` preserves partial descriptor presence,
+  revocation, `GetMethod`, trap-call, false-result, target-descriptor,
+  extensibility, compatibility, configurable, and writable-tightening order.
+  Transparent forwarding and nested invariant walks share one iterative,
+  GC-rooted, fuel-metered VM state machine across internal and public
+  `Object`/`Reflect` entry points
 - `delete` respects `configurable` (false in sloppy, TypeError in strict).
   Proxy `deleteProperty` lookup, calls, and target invariants preserve Symbol
   keys and observable order; transparent chains are iterative, GC-rooted, and
@@ -153,6 +159,11 @@
 - **Math**: full set of methods and constants (incl. `imul`, `clz32`,
   `fround`); each Realm owns an independent Math object with the standard
   `Symbol.toStringTag` and Realm-local method identities
+- **Proxy**: callability and constructability are fixed from the target when a
+  Proxy is created and remain stable after revocation. Transparent `[[Call]]`
+  forwarding and Proxy-valued `apply` traps use an iterative, GC-rooted,
+  fuel-metered dispatcher. Non-callable traps fail before argument-array
+  allocation, and observable argument arrays use the current execution Realm
 - **Reflect**: all 13 standard methods: `apply`, `construct`, `defineProperty`,
   `deleteProperty`, `get`, `getOwnPropertyDescriptor`, `getPrototypeOf`, `has`,
   `isExtensible`, `ownKeys`, `preventExtensions`, `set`, and `setPrototypeOf`.
