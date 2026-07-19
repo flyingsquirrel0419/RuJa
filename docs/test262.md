@@ -8139,6 +8139,52 @@ pass-or-fail executed** (**62.9%** of all files, **83.4%** of executed files).
 Every artifact is byte-identical to RegExp grammar baseline `29669380082`, so
 the root-lifetime fix changes no Test262 status in any shard.
 
+## Array sort ownership and completion
+
+Native `Array.prototype.sort` and `toSorted` previously retained unrooted
+`Vec<Value>` snapshots across comparator and conversion calls. They also
+accepted `null` as a default comparator, swallowed comparator-result
+`ToNumber` and default-item `ToString` errors, compared internal Rust strings
+without decoding lone-surrogate sentinels, and allocated the `toSorted` result
+after comparator side effects. `sort` replaced only `ArrayData.items`, which
+could disagree with presence bits and descriptors after comparator mutation.
+
+The shared stable merge sort now returns abrupt completions immediately, keeps
+every native-owned value rooted, orders `undefined` without calling a custom
+comparator, and compares decoded UTF-16 code units. `sort` collects only
+present dense values, writes them through strict indexed property operations,
+deletes the remaining initial range, and preserves additions beyond that
+range. `toSorted` allocates and pins its hole-backed destination before
+comparison and materializes all result indices after success. Deterministic
+tests cover forced collection, pin cleanup, exact-cap allocation order,
+shrinking and growing receivers, holes versus explicit `undefined`, indexed
+descriptor synchronization, lone surrogates, and the comparator-call bound.
+
+On pinned Test262 `020cb74075849d1e404bbcdb62feb7a02e6966db`, the 75 files
+under `built-ins/Array/prototype/sort` and `toSorted` move from **30 pass / 37
+fail / 8 skip** to **44 pass / 23 fail / 8 skip**, exactly **+14 pass / -14
+fail**. The remaining failures are direct evidence for the documented generic
+array-like, inherited-index, prototype-accessor, and live property-collection
+boundary. Supported Test262 remains **12751 pass / 0 fail / 7687 skip / 20438
+total**. Local gates pass all Rust targets/features, builtins **487/487**, lib
+tests **131/131**, operators **122/122**, warnings-denied Clippy, rustfmt/diff,
+release, wasm32, and Python tooling **108/108**.
+
+GPT 5.6 reviewers Aristotle (`019f788b-c307-7732-95d7-4585c01a2793`) and
+Darwin (`019f788b-c4a8-7130-b752-020cccd02403`) independently found the live
+writeback, `undefined`, UTF-16, allocation-order, hole, and descriptor issues.
+After iterative fixes one returned `CLEAN` and the other reported no remaining
+code defect; both sessions were closed. Feature commit `584c17b` passed
+ordinary CI `29673722811` and all **33/33** jobs in full matrix `29673722819`.
+
+The 30 downloaded artifacts at
+`/tmp/ruja-array-sort-feature.29673722819.g4q1CX` aggregate to **30484 pass /
+6072 fail / 11905 skip / 6 timeout / 0 error / 48467 total / 36556
+pass-or-fail executed** (**62.9%** of all files, **83.4%** of executed files).
+Twenty-nine files are byte-identical to Array callback baseline `29671480315`;
+only `built-ins` changes from **14862 pass / 5275 fail** to **14876 / 5261**,
+exactly reproducing the focused **+14/-14** delta without corpus drift.
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is

@@ -518,6 +518,43 @@ failures restore the incoming pin depth.
 - 장점, 단점 및 영향: Forced GC can no longer turn prior map/flatMap results or a custom Array.of result into another HeapObj; abrupt and exact-cap failures leave no pin leak. Root storage grows with live object-valued inputs/results for the duration of the operation, while snapshot-based methods with broader observable-semantics issues remain separate follow-up work.
 ```
 
+## Native Array sort ownership and writeback
+
+`Array.prototype.sort` and `toSorted` use a shared stable merge sort whose
+comparison closure returns a VM completion. This is necessary because both
+custom comparator calls and default `ToString` conversion can execute
+JavaScript. Materialized values, the receiver, and the comparator remain
+explicit temporary roots for the complete operation; a custom comparator
+result is additionally pinned across `ToNumber`. The first abrupt completion
+stops merging immediately and the outer completion scope releases the entire
+LIFO root suffix.
+
+The common comparison path orders `undefined` after every defined value
+without invoking a custom comparator. Default comparison converts each value
+and compares RuJa's decoded UTF-16 code units rather than Rust scalar or UTF-8
+order, preserving lone-surrogate sentinels. `sort` collects only own dense
+elements whose presence bit is set, writes the sorted list through strict
+indexed `[[Set]]`, and deletes the unused part of the captured initial range.
+This keeps `items`, `present`, `length`, and writable indexed descriptors
+coherent while preserving comparator additions beyond the initial length.
+
+`toSorted` has different ownership and hole behavior. It creates and pins its
+fresh hole-backed Array before comparison, as required by `ArrayCreate`, and
+reads dense holes as `undefined`. After successful sorting it installs every
+value and marks every result index present. Allocation failure therefore occurs
+before comparator side effects, and comparator failure leaves the unreachable
+destination available for later collection without leaking a pin.
+
+```text
+[Decision Log]
+- 목적과 의도: Make native Array sorting preserve GC safety, abrupt completions, UTF-16 ordering, holes, and live writeback invariants without losing the existing stable O(n log n) resource bound.
+- 기존 구현 및 제약 조건: Rust Vec<Value> snapshots were not roots; comparator ToNumber and default ToString errors were swallowed; direct replacement of ArrayData.items ignored present bits, descriptors, length mutations, and appended values; toSorted allocated after comparison. RuJa still has a direct-Array fast path rather than a complete generic SortIndexedProperties implementation.
+- 검토한 주요 대안: Disable GC while sorting, pin only the receiver, keep host sort_by and defer errors, replace the backing vector wholesale, or implement generic array-like/prototype/accessor collection in the same patch.
+- 선택한 방식: Root every native-owned value at each observable boundary, use a completion-returning stable merge sort, separate sort skip-holes writeback from toSorted read-through-holes allocation, and route sort writes/deletes through VM property operations while synchronizing dense indexed descriptors.
+- 다른 대안 대신 이 방식을 선택한 이유: Receiver-only roots do not trace detached snapshot values, deferred errors permit extra comparator effects, direct backing replacement corrupts Array metadata, and disabling GC weakens the sandbox. Full generic collection changes a much larger observable surface and remains independently testable work.
+- 장점, 단점 및 영향: Direct Arrays now survive forced GC, preserve first-error ordering and holes, and remain O(n log n); exact-cap failures restore pin depth and leave the VM reusable. Temporary roots scale with the materialized list and default comparison currently allocates UTF-16 vectors per comparison. Generic receivers, inherited indexed properties, accessor-driven collection, and sparse indices beyond the dense cap remain follow-up boundaries.
+```
+
 Promise keyed combinators use a separate two-stage observable protocol. They
 first snapshot raw `[[OwnPropertyKeys]]`, including non-enumerable keys, and
 then perform Proxy-aware `[[GetOwnProperty]]` inside the per-key loop. An

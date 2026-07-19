@@ -4,6 +4,45 @@
 
 ### Fixed
 
+- `Array.prototype.sort` and `toSorted` now retain every materialized value,
+  receiver, comparator, comparator result, and fresh destination that must
+  survive observable JavaScript re-entry. Comparator and default-string
+  conversion errors propagate immediately through the stable `O(n log n)`
+  merge sort, non-callable comparators are rejected before receiver access,
+  and custom comparators are not called for `undefined`. Default comparison
+  uses RuJa's sentinel-aware UTF-16 code units, including lone surrogates.
+
+  `sort` now distinguishes holes from explicit `undefined`, writes the sorted
+  present values through strict indexed `[[Set]]`, deletes the remaining
+  initial range, preserves values appended beyond that range by comparator
+  code, and keeps writable indexed descriptors synchronized with dense Array
+  storage. `toSorted` creates and pins its destination before comparison, so a
+  catchable allocation failure precedes comparator side effects, then
+  materializes its sorted copy only after successful comparison. Forced-GC,
+  abrupt-completion, exact-cap allocation, shrink/grow, holes, descriptor,
+  UTF-16, and comparator-bound regressions cover both methods.
+
+  On pinned Test262 `020cb74075849d1e404bbcdb62feb7a02e6966db`, focused
+  `sort`/`toSorted` moves from **30 pass / 37 fail / 8 skip** to **44 / 23 /
+  8**, exactly **+14 pass / -14 fail**. Supported Test262 remains **12751 pass
+  / 0 fail / 7687 skip / 20438 total**. Final local gates pass all Rust
+  targets/features, builtins **487/487**, lib tests **131/131**, operators
+  **122/122**, warnings-denied Clippy, rustfmt/diff, release, wasm32, and Python
+  tooling **108/108**. GPT 5.6 reviewers Aristotle
+  (`019f788b-c307-7732-95d7-4585c01a2793`) and Darwin
+  (`019f788b-c4a8-7130-b752-020cccd02403`) found and rechecked writeback,
+  `undefined`, UTF-16, allocation-order, hole, and descriptor defects; both
+  were closed with no remaining code finding. No coder model or Umans route
+  was used.
+
+  Feature commit `584c17b` passed ordinary CI `29673722811` and all **33/33**
+  jobs in full matrix `29673722819`. The 30 artifacts at
+  `/tmp/ruja-array-sort-feature.29673722819.g4q1CX` aggregate to **30484 pass /
+  6072 fail / 11905 skip / 6 timeout / 0 error / 48467 total / 36556
+  pass-or-fail executed** (**62.9%** of all files, **83.4%** of executed
+  files). Twenty-nine files are byte-identical to Array callback baseline
+  `29671480315`; only `built-ins` changes, by exactly **+14 pass / -14 fail**.
+
 - Native Array materializers now preserve every heap value they retain across
   JavaScript re-entry. `Array.prototype.map` and `flatMap` pin their source
   snapshots and each callback result until the destination Array owns the

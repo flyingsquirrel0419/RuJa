@@ -261,15 +261,20 @@ guarantees are required.
 - GC runs at safe points only (after a run settles, and throttled at frame
   boundaries). Incremental marking is supported via `collect_incremental(roots, budget)`,
   but there is no generational collector yet
-- Native callback rooting is complete for `Array.prototype.map`, `flatMap`,
-  and `Array.of`. Several older snapshot-based methods still need a separate
-  observable-semantics and rooting pass: `join`, `filter`, `reduce`,
-  `reduceRight`, `forEach`, `sort`, `toSorted`, `slice`, `toSpliced`, and
-  `with`. A callback or coercion can remove the original source edge and force
-  host GC while a future value exists only in a Rust snapshot. Some of these
-  methods require live `HasProperty`/`Get` behavior rather than merely pinning
-  the current snapshot, so they are intentionally not folded into the narrow
-  result-lifetime fix.
+- Native snapshot rooting is complete for `Array.prototype.map`, `flatMap`,
+  `Array.of`, `sort`, and `toSorted`. Direct-Array `sort` also distinguishes
+  dense holes from explicit `undefined` and performs observable writeback;
+  `toSorted` materializes dense holes as `undefined` in its preallocated copy.
+  Their collection path is not yet generic: array-like receivers, inherited
+  indexed values, accessors, and live `HasProperty`/`Get` side effects remain
+  unsupported, and sparse indices beyond the dense cap were not exhaustively
+  exercised.
+- Older snapshot-based methods still need separate observable-semantics and
+  rooting passes: `join`, `filter`, `reduce`, `reduceRight`, `forEach`, `slice`,
+  `toSpliced`, and `with`. A callback or coercion can remove the original
+  source edge and force host GC while a future value exists only in a Rust
+  snapshot. Several also require live property access rather than merely
+  pinning the current snapshot, so they remain independent algorithm units.
 - Private methods are stored per-instance as private fields (each instance
   gets its own closure copy); behavior is spec-correct, but this is more
   memory-heavy than a shared per-class method table would be
