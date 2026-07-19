@@ -142,8 +142,9 @@ fn compile_regex_with_input_mode(
         capture_count,
         !capture_indices.is_empty(),
     );
+    let uses_lookaround = regex_uses_lookaround(&rewritten_source);
     let needs_capture_correction = regex_contains_quantified_capture_group(&rewritten_source);
-    if uses_backreference {
+    if uses_backreference || uses_lookaround {
         let normalized = normalize_regex_for_backend(
             &rewritten_source,
             flags,
@@ -542,8 +543,11 @@ fn internal_char_for_code_unit(unit: u16) -> char {
     }
 }
 
-fn legacy_case_fold_groups() -> &'static [Box<[u16]>] {
-    static GROUPS: OnceLock<Box<[Box<[u16]>]>> = OnceLock::new();
+type LegacyCaseFoldGroup = (u16, Box<[u16]>);
+type LegacyCaseFoldGroups = Box<[LegacyCaseFoldGroup]>;
+
+fn legacy_case_fold_groups() -> &'static [LegacyCaseFoldGroup] {
+    static GROUPS: OnceLock<LegacyCaseFoldGroups> = OnceLock::new();
     GROUPS.get_or_init(|| {
         let mut pairs = (0..=u16::MAX)
             .map(|unit| (legacy_regex_canonical_code_units()[unit as usize], unit))
@@ -557,13 +561,14 @@ fn legacy_case_fold_groups() -> &'static [Box<[u16]>] {
                 end += 1;
             }
             if end - start > 1 {
-                groups.push(
+                groups.push((
+                    pairs[start].0,
                     pairs[start..end]
                         .iter()
                         .map(|(_, unit)| *unit)
                         .collect::<Vec<_>>()
                         .into_boxed_slice(),
-                );
+                ));
             }
             start = end;
         }
@@ -588,7 +593,7 @@ fn class_contains_char(class: &ClassUnicode, ch: char) -> bool {
 
 fn legacy_case_fold_class(class: &ClassUnicode) -> ClassUnicode {
     let mut additions = Vec::new();
-    for group in legacy_case_fold_groups() {
+    for (_, group) in legacy_case_fold_groups() {
         if group
             .iter()
             .any(|unit| class_contains_char(class, internal_char_for_code_unit(*unit)))
@@ -602,6 +607,25 @@ fn legacy_case_fold_class(class: &ClassUnicode) -> ClassUnicode {
     let mut folded = class.clone();
     folded.union(&ClassUnicode::new(additions));
     folded
+}
+
+fn push_legacy_case_fold_atom_for_backend(out: &mut String, unit: u16) {
+    let canonical = legacy_regex_canonical_code_units()[unit as usize];
+    let group = legacy_case_fold_groups()
+        .binary_search_by_key(&canonical, |(key, _)| *key)
+        .ok()
+        .map(|index| legacy_case_fold_groups()[index].1.as_ref());
+    let ranges = group
+        .unwrap_or(core::slice::from_ref(&unit))
+        .iter()
+        .map(|member| {
+            let ch = internal_char_for_code_unit(*member);
+            ClassUnicodeRange::new(ch, ch)
+        });
+    let class = Hir::class(Class::Unicode(ClassUnicode::new(ranges))).to_string();
+    out.push_str("(?-i:");
+    out.push_str(&class);
+    out.push(')');
 }
 
 fn unicode_sets_class_needs_native_fallback<I>(chars: &std::iter::Peekable<I>) -> bool
@@ -668,7 +692,18 @@ fn materialize_active_word_class(
         .map_err(|error| error.to_string())?;
     let mut class = match hir.into_kind() {
         HirKind::Class(Class::Unicode(class)) => class,
-        _ => return Err("word escape did not normalize to a Unicode class".to_string()),
+        HirKind::Literal(literal) => {
+            let text = std::str::from_utf8(&literal.0).map_err(|error| error.to_string())?;
+            let mut chars = text.chars();
+            let Some(ch) = chars.next() else {
+                return Err("ignore-case class normalized to an empty literal".to_string());
+            };
+            if chars.next().is_some() {
+                return Err("ignore-case class normalized to multiple literals".to_string());
+            }
+            ClassUnicode::new([ClassUnicodeRange::new(ch, ch)])
+        }
+        _ => return Err("ignore-case class did not normalize to a Unicode class".to_string()),
     };
 
     // CharacterSetMatcher compares Canonicalize results. Materializing that
@@ -816,7 +851,6 @@ fn normalize_regex_for_backend(
     let mut in_class = false;
     let mut unicode_sets_class_depth = 0usize;
     let mut escaped = false;
-    let protect_non_unicode_case = flags.contains('i') && !unicode_mode;
     let mut class_output_start = None;
     let mut class_has_active_word_escape = false;
     let mut materialize_current_word_class = true;
@@ -1020,11 +1054,13 @@ fn normalize_regex_for_backend(
                     } else {
                         push_surrogate_code_unit_escape_for_backend(&mut out, lead, in_class);
                     }
-                } else if protect_non_unicode_case && !in_class && lead > 0x7f {
+                } else if !in_class
+                    && !unicode_mode
+                    && modifier_stack.last().is_some_and(|state| state.ignore_case)
+                    && (lead > 0x7f || (lead as u8 as char).is_ascii_alphabetic())
+                {
                     out.pop();
-                    out.push_str("(?-i:\\u");
-                    out.push_str(&lead_hex);
-                    out.push(')');
+                    push_legacy_case_fold_atom_for_backend(&mut out, lead as u16);
                 } else {
                     out.push('u');
                     out.push_str(&lead_hex);
@@ -1044,7 +1080,11 @@ fn normalize_regex_for_backend(
             {
                 out.pop();
                 push_regex_literal_for_backend(&mut out, ch);
-            } else if protect_non_unicode_case && !in_class && ch == 'x' {
+            } else if !in_class
+                && !unicode_mode
+                && modifier_stack.last().is_some_and(|state| state.ignore_case)
+                && ch == 'x'
+            {
                 let mut hex = String::new();
                 for _ in 0..2 {
                     match chars.peek().copied() {
@@ -1056,11 +1096,9 @@ fn normalize_regex_for_backend(
                 }
                 if hex.len() == 2 {
                     let code = u32::from_str_radix(&hex, 16).unwrap_or(0);
-                    if code > 0x7f {
+                    if code > 0x7f || (code as u8 as char).is_ascii_alphabetic() {
                         out.pop();
-                        out.push_str("(?-i:\\x");
-                        out.push_str(&hex);
-                        out.push(')');
+                        push_legacy_case_fold_atom_for_backend(&mut out, code as u16);
                     } else {
                         out.push('x');
                         out.push_str(&hex);
@@ -1071,7 +1109,19 @@ fn normalize_regex_for_backend(
                 }
             } else if !flags.contains('u') && !regex_backend_escape_passthrough(ch, chars.peek()) {
                 out.pop();
-                push_regex_literal_for_backend(&mut out, ch);
+                if !in_class
+                    && !unicode_mode
+                    && modifier_stack.last().is_some_and(|state| state.ignore_case)
+                    && (ch.is_ascii_alphabetic() || !ch.is_ascii())
+                {
+                    if let Ok(unit) = u16::try_from(ch as u32) {
+                        push_legacy_case_fold_atom_for_backend(&mut out, unit);
+                    } else {
+                        push_regex_literal_for_backend(&mut out, ch);
+                    }
+                } else {
+                    push_regex_literal_for_backend(&mut out, ch);
+                }
             } else {
                 out.push(ch);
             }
@@ -1109,7 +1159,9 @@ fn normalize_regex_for_backend(
             in_class = false;
             unicode_sets_class_depth = 0;
             out.push(ch);
-            if class_has_active_word_escape {
+            let legacy_ignore_case =
+                !unicode_mode && modifier_stack.last().is_some_and(|state| state.ignore_case);
+            if class_has_active_word_escape || legacy_ignore_case {
                 let start = class_output_start
                     .take()
                     .expect("active word class must have an output start");
@@ -1234,10 +1286,18 @@ fn normalize_regex_for_backend(
             continue;
         }
 
-        if protect_non_unicode_case && !in_class && !ch.is_ascii() {
-            out.push_str("(?-i:");
-            out.push(ch);
-            out.push(')');
+        if !in_class
+            && !unicode_mode
+            && modifier_stack.last().is_some_and(|state| state.ignore_case)
+            && (ch.is_ascii_alphabetic() || !ch.is_ascii())
+        {
+            if let Ok(unit) = u16::try_from(ch as u32) {
+                push_legacy_case_fold_atom_for_backend(&mut out, unit);
+            } else {
+                out.push_str("(?-i:");
+                out.push(ch);
+                out.push(')');
+            }
         } else {
             out.push(ch);
         }
@@ -1557,6 +1617,37 @@ fn regex_uses_backreference(source: &str, capture_count: usize, has_named_captur
             ']' if in_class => in_class = false,
             _ => {}
         }
+    }
+    false
+}
+
+fn regex_uses_lookaround(source: &str) -> bool {
+    let chars: Vec<char> = source.chars().collect();
+    let mut in_class = false;
+    let mut escaped = false;
+    let mut index = 0usize;
+    while index < chars.len() {
+        let ch = chars[index];
+        if escaped {
+            escaped = false;
+            index += 1;
+            continue;
+        }
+        match ch {
+            '\\' => escaped = true,
+            '[' if !in_class => in_class = true,
+            ']' if in_class => in_class = false,
+            '(' if !in_class && chars.get(index + 1) == Some(&'?') => {
+                if matches!(chars.get(index + 2), Some('=' | '!'))
+                    || (chars.get(index + 2) == Some(&'<')
+                        && matches!(chars.get(index + 3), Some('=' | '!')))
+                {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+        index += 1;
     }
     false
 }

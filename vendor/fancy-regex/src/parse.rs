@@ -249,7 +249,10 @@ impl<'a> Parser<'a> {
 
     fn is_repeatable(&self, child: &Expr) -> bool {
         match child {
-            Expr::LookAround(_, _) => false,
+            Expr::LookAround(_, LookAhead | LookAheadNeg) => {
+                self.flag(FLAG_ECMASCRIPT_MODE) && !self.flag(FLAG_ECMASCRIPT_UNICODE_MODE)
+            }
+            Expr::LookAround(_, LookBehind | LookBehindNeg) => false,
             Expr::Empty => false,
             // In Oniguruma mode, repetition after assertions is not allowed
             Expr::Assertion(_) => !self.flag(FLAG_ONIGURUMA_MODE),
@@ -1822,6 +1825,13 @@ mod tests {
         Expr::parse_tree_with_flags(s, options.compute_flags()).map(|tree| tree.expr)
     }
 
+    fn parse_ecmascript(s: &str, unicode: bool) -> crate::Result<Expr> {
+        let mut options = RegexOptions::default();
+        options.ecmascript_mode = true;
+        options.ecmascript_unicode_mode = unicode;
+        Expr::parse_tree_with_flags(s, options.compute_flags()).map(|tree| tree.expr)
+    }
+
     #[cfg_attr(feature = "track_caller", track_caller)]
     fn fail(s: &str) {
         assert!(
@@ -2975,6 +2985,16 @@ mod tests {
             "(a|b|?)",
             "Parsing error at position 5: Target of repeat operator is invalid",
         );
+    }
+
+    #[test]
+    fn ecmascript_legacy_mode_allows_quantified_lookahead_only() {
+        assert!(parse_ecmascript(r"(?=a)?", false).is_ok());
+        assert!(parse_ecmascript(r"(?!a){0,1}", false).is_ok());
+
+        assert!(parse_ecmascript(r"(?=a)?", true).is_err());
+        assert!(parse_ecmascript(r"(?<=a)?", false).is_err());
+        assert!(parse_ecmascript(r"(?<!a)?", false).is_err());
     }
 
     #[test]

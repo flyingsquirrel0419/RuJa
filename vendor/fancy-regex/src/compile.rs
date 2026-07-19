@@ -59,6 +59,7 @@ struct VMBuilder {
     n_saves: usize,
     ecmascript_backref_sets: Vec<Vec<usize>>,
     unicode_casei: bool,
+    ecmascript_mode: bool,
 }
 
 impl VMBuilder {
@@ -66,12 +67,14 @@ impl VMBuilder {
         max_group: usize,
         ecmascript_backref_sets: Vec<Vec<usize>>,
         unicode_casei: bool,
+        ecmascript_mode: bool,
     ) -> VMBuilder {
         VMBuilder {
             prog: Vec::new(),
             n_saves: max_group * 2,
             ecmascript_backref_sets,
             unicode_casei,
+            ecmascript_mode,
         }
     }
 
@@ -81,6 +84,7 @@ impl VMBuilder {
             self.n_saves,
             self.ecmascript_backref_sets,
             self.unicode_casei,
+            self.ecmascript_mode,
         )
     }
 
@@ -136,6 +140,13 @@ struct Compiler<'a> {
     /// Root Info node for handling group 0 subroutine calls
     root_info: Option<&'a Info<'a>>,
     ecmascript_mode: bool,
+    direction: MatchDirection,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MatchDirection {
+    Forward,
+    Backward,
 }
 
 impl<'a> Compiler<'a> {
@@ -146,50 +157,76 @@ impl<'a> Compiler<'a> {
         unicode_casei: bool,
     ) -> Compiler<'a> {
         Compiler {
-            b: VMBuilder::new(max_group, ecmascript_backref_sets, unicode_casei),
+            b: VMBuilder::new(
+                max_group,
+                ecmascript_backref_sets,
+                unicode_casei,
+                ecmascript_mode,
+            ),
             options: Default::default(),
             inside_alternation: false,
             group_info_map: Map::new(),
             subroutine_recursion_stack: Vec::new(),
             root_info: None,
             ecmascript_mode,
+            direction: MatchDirection::Forward,
         }
     }
 
     fn visit(&mut self, info: &Info<'_>, hard: bool) -> Result<()> {
-        if !hard && !info.hard {
+        if self.direction == MatchDirection::Forward && !hard && !info.hard {
             // easy case, delegate entire subexpr
             return self.compile_delegate(info);
         }
         match *info.expr {
             Expr::Empty => (),
-            Expr::Literal { ref val, casei } => {
-                if !casei {
-                    self.b.add(Insn::Lit(val.clone()));
-                } else {
-                    self.compile_delegate(info)?;
+            Expr::Literal { ref val, casei } => match (self.direction, casei) {
+                (MatchDirection::Forward, false) => self.b.add(Insn::Lit(val.clone())),
+                (MatchDirection::Forward, true) => self.compile_delegate(info)?,
+                (MatchDirection::Backward, false) => self.b.add(Insn::LitBackwards(val.clone())),
+                (MatchDirection::Backward, true) => {
+                    self.b.add(Insn::LitCaseiBackwards(val.clone()))
                 }
-            }
+            },
             Expr::Any { newline: true, .. } => {
-                self.b.add(Insn::Any);
+                self.b.add(match self.direction {
+                    MatchDirection::Forward => Insn::Any,
+                    MatchDirection::Backward => Insn::AnyBackwards,
+                });
             }
             Expr::Any {
                 newline: false,
                 crlf: true,
             } => {
-                self.b.add(Insn::AnyNoCRLF);
+                self.b.add(match self.direction {
+                    MatchDirection::Forward => Insn::AnyNoCRLF,
+                    MatchDirection::Backward => Insn::AnyNoCRLFBackwards,
+                });
             }
             Expr::Any {
                 newline: false,
                 crlf: false,
             } => {
-                self.b.add(Insn::AnyNoNL);
+                self.b.add(match self.direction {
+                    MatchDirection::Forward => Insn::AnyNoNL,
+                    MatchDirection::Backward => Insn::AnyNoNLBackwards,
+                });
             }
             Expr::GeneralNewline { unicode } => {
-                self.compile_general_newline(unicode)?;
+                if self.direction == MatchDirection::Forward {
+                    self.compile_general_newline(unicode)?;
+                } else {
+                    self.b.add(Insn::GeneralNewlineBackwards { unicode });
+                }
             }
             Expr::Concat(_) => {
-                self.compile_concat(info, hard)?;
+                if self.direction == MatchDirection::Forward {
+                    self.compile_concat(info, hard)?;
+                } else {
+                    for child in info.children.iter().rev() {
+                        self.visit(child, true)?;
+                    }
+                }
             }
             Expr::Alt(_) => {
                 let count = info.children.len();
@@ -200,9 +237,15 @@ impl<'a> Compiler<'a> {
             }
             Expr::Group(_) => {
                 let group = info.start_group();
-                self.b.add(Insn::SaveCaptureGroupStart(group));
-                self.visit(&info.children[0], hard)?;
-                self.b.add(Insn::Save(group * 2 + 1));
+                if self.direction == MatchDirection::Forward {
+                    self.b.add(Insn::SaveCaptureGroupStart(group));
+                    self.visit(&info.children[0], hard)?;
+                    self.b.add(Insn::Save(group * 2 + 1));
+                } else {
+                    self.b.add(Insn::Save(group * 2 + 1));
+                    self.visit(&info.children[0], hard)?;
+                    self.b.add(Insn::Save(group * 2));
+                }
             }
             Expr::Repeat { lo, hi, greedy, .. } => {
                 self.compile_repeat(info, lo, hi, greedy, hard)?;
@@ -211,13 +254,22 @@ impl<'a> Compiler<'a> {
                 self.compile_lookaround(info, la)?;
             }
             Expr::Backref { group, casei } => {
-                self.b.add(Insn::Backref {
-                    slot: group * 2,
-                    casei,
+                self.b.add(match self.direction {
+                    MatchDirection::Forward => Insn::Backref {
+                        slot: group * 2,
+                        casei,
+                    },
+                    MatchDirection::Backward => Insn::BackrefBackwards {
+                        slot: group * 2,
+                        casei,
+                    },
                 });
             }
             Expr::BackrefSet { set_id, casei } => {
-                self.b.add(Insn::BackrefSet { set_id, casei });
+                self.b.add(match self.direction {
+                    MatchDirection::Forward => Insn::BackrefSet { set_id, casei },
+                    MatchDirection::Backward => Insn::BackrefSetBackwards { set_id, casei },
+                });
             }
             Expr::BackrefExistsCondition {
                 group,
@@ -253,8 +305,11 @@ impl<'a> Compiler<'a> {
                 self.b.add(Insn::EndAtomic);
             }
             Expr::Delegate { .. } => {
-                // TODO: might want to have more specialized impls
-                self.compile_delegate(info)?;
+                if self.direction == MatchDirection::Forward {
+                    self.compile_delegate(info)?;
+                } else {
+                    self.compile_delegate_backwards(info)?;
+                }
             }
             Expr::Assertion(assertion) => {
                 self.b.add(Insn::Assertion(assertion));
@@ -478,9 +533,11 @@ impl<'a> Compiler<'a> {
         let loop_pc = self.b.pc();
         self.b.add(Insn::RepeatEpsilonGr {
             lo: 0,
+            hi: usize::MAX,
             next: usize::MAX,
             repeat,
             check,
+            fail_on_empty: false,
         });
 
         // Compile the body as: (?((?!inner))\O|)
@@ -564,6 +621,36 @@ impl<'a> Compiler<'a> {
             // execute the child expression or its capture groups
             return Ok(());
         }
+        if child.min_size == 0 && (self.ecmascript_mode || hi == usize::MAX) {
+            let repeat = self.b.newsave();
+            let check = self.b.newsave();
+            self.b.add(Insn::Save0(repeat));
+            let pc = self.b.pc();
+            if greedy {
+                self.b.add(Insn::RepeatEpsilonGr {
+                    lo,
+                    hi,
+                    next: usize::MAX,
+                    repeat,
+                    check,
+                    fail_on_empty: self.ecmascript_mode,
+                });
+            } else {
+                self.b.add(Insn::RepeatEpsilonNg {
+                    lo,
+                    hi,
+                    next: usize::MAX,
+                    repeat,
+                    check,
+                    fail_on_empty: self.ecmascript_mode,
+                });
+            }
+            self.compile_repeat_iteration(child, hard | info.hard)?;
+            self.b.add(Insn::Jmp(pc));
+            let next_pc = self.b.pc();
+            self.b.set_repeat_target(pc, next_pc);
+            return Ok(());
+        }
         if lo == 0 && hi == 1 {
             // e?
             let pc = self.b.pc();
@@ -577,32 +664,7 @@ impl<'a> Compiler<'a> {
             return Ok(());
         }
         let hard = hard | info.hard;
-        if hi == usize::MAX && child.min_size == 0 {
-            // Use RepeatEpsilon instructions to prevent empty repeat
-            let repeat = self.b.newsave();
-            let check = self.b.newsave();
-            self.b.add(Insn::Save0(repeat));
-            let pc = self.b.pc();
-            if greedy {
-                self.b.add(Insn::RepeatEpsilonGr {
-                    lo,
-                    next: usize::MAX,
-                    repeat,
-                    check,
-                });
-            } else {
-                self.b.add(Insn::RepeatEpsilonNg {
-                    lo,
-                    next: usize::MAX,
-                    repeat,
-                    check,
-                });
-            }
-            self.compile_repeat_iteration(child, hard)?;
-            self.b.add(Insn::Jmp(pc));
-            let next_pc = self.b.pc();
-            self.b.set_repeat_target(pc, next_pc);
-        } else if lo == 0 && hi == usize::MAX {
+        if lo == 0 && hi == usize::MAX {
             // e*
             let pc = self.b.pc();
             self.b.add(Insn::Split(pc + 1, pc + 1));
@@ -646,6 +708,9 @@ impl<'a> Compiler<'a> {
 
     fn compile_lookaround(&mut self, info: &Info<'_>, la: LookAround) -> Result<()> {
         let inner = &info.children[0];
+        if self.ecmascript_mode {
+            return self.compile_ecmascript_lookaround(inner, la);
+        }
         match la {
             LookBehind => {
                 if let &Info {
@@ -684,6 +749,42 @@ impl<'a> Compiler<'a> {
             LookAhead => self.compile_positive_lookaround(inner, la),
             LookAheadNeg => self.compile_negative_lookaround(inner, la),
         }
+    }
+
+    fn compile_ecmascript_lookaround(&mut self, inner: &Info<'_>, la: LookAround) -> Result<()> {
+        let direction = match la {
+            LookAhead | LookAheadNeg => MatchDirection::Forward,
+            LookBehind | LookBehindNeg => MatchDirection::Backward,
+        };
+        if matches!(la, LookAhead | LookBehind) {
+            let save = self.b.newsave();
+            self.b.add(Insn::Save(save));
+            self.b.add(Insn::BeginAtomic);
+            self.with_direction(direction, |compiler| compiler.visit(inner, true))?;
+            self.b.add(Insn::EndAtomic);
+            self.b.add(Insn::Restore(save));
+            return Ok(());
+        }
+
+        let split_pc = self.b.pc();
+        self.b.add(Insn::Split(split_pc + 1, usize::MAX));
+        self.with_direction(direction, |compiler| compiler.visit(inner, true))?;
+        self.b.add(Insn::FailNegativeLookAround);
+        let next_pc = self.b.pc();
+        self.b.set_split_target(split_pc, next_pc, true);
+        Ok(())
+    }
+
+    fn with_direction<T>(
+        &mut self,
+        direction: MatchDirection,
+        compile: impl FnOnce(&mut Self) -> Result<T>,
+    ) -> Result<T> {
+        let previous = self.direction;
+        self.direction = direction;
+        let result = compile(self);
+        self.direction = previous;
+        result
     }
 
     fn compile_positive_lookaround(&mut self, inner: &Info<'_>, la: LookAround) -> Result<()> {
@@ -893,6 +994,15 @@ impl<'a> Compiler<'a> {
                 self.b.add(builder.build(&self.options)?);
             }
         }
+        Ok(())
+    }
+
+    fn compile_delegate_backwards(&mut self, info: &Info) -> Result<()> {
+        let mut builder = DelegateBuilder::new();
+        builder.push(info);
+        self.b.add(Insn::DelegateBackwards(
+            builder.build_delegate(&self.options)?,
+        ));
         Ok(())
     }
 
@@ -1606,9 +1716,11 @@ mod tests {
             prog[8],
             RepeatEpsilonGr {
                 lo: 0,
+                hi: usize::MAX,
                 next: 18,
                 repeat: 4,
-                check: 5
+                check: 5,
+                fail_on_empty: false
             }
         );
         assert_matches!(prog[9], BeginAtomic);

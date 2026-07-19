@@ -44,6 +44,18 @@ fn ecmascript_capture_mode_does_not_change_default_delegation() {
 }
 
 #[test]
+fn ecmascript_mode_preserves_local_flags_in_trailing_lookahead() {
+    let regex = RegexBuilder::new(r"(?=(?-i:[Ss]))")
+        .case_insensitive(true)
+        .ecmascript_mode(true)
+        .build()
+        .unwrap();
+
+    assert!(regex.is_match("S").unwrap());
+    assert!(!regex.is_match("ſ").unwrap());
+}
+
+#[test]
 fn check_multi_line_option() {
     let test_text = r"test
 hugo

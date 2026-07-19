@@ -18,3 +18,5 @@ pub const FLAG_CRLF: u32 = 1 << 7;
 pub const FLAG_IGNORE_NUMBERED_GROUPS_WHEN_NAMED_GROUPS_EXIST: u32 = 1 << 8;
 /// Flag bit for RuJa's ECMAScript backend extensions.
 pub const FLAG_ECMASCRIPT_MODE: u32 = 1 << 9;
+/// Flag bit for ECMAScript `u`/`v` parsing restrictions.
+pub const FLAG_ECMASCRIPT_UNICODE_MODE: u32 = 1 << 10;

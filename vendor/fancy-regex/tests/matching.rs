@@ -125,6 +125,37 @@ fn backtrack_limit() {
 }
 
 #[test]
+fn ecmascript_repeat_work_is_bounded_without_failed_backtracking() {
+    let successful_zero_width = RegexBuilder::new(r"(?=(?=a){1000})")
+        .ecmascript_mode(true)
+        .backtrack_limit(16)
+        .build()
+        .unwrap();
+    assert!(matches!(
+        successful_zero_width.is_match("a"),
+        Err(Error::RuntimeError(RuntimeError::BacktrackLimitExceeded))
+    ));
+
+    let successful_branch_growth = RegexBuilder::new(r"(?=(?:(?=a)a){0,1000}b)")
+        .ecmascript_mode(true)
+        .backtrack_limit(32)
+        .build()
+        .unwrap();
+    let input = format!("{}b", "a".repeat(1000));
+    assert!(matches!(
+        successful_branch_growth.is_match(&input),
+        Err(Error::RuntimeError(RuntimeError::BacktrackLimitExceeded))
+    ));
+
+    let legacy_backtracking_count = RegexBuilder::new(r"(?:a?){0,100}(?>b)")
+        .backtrack_limit(1)
+        .build()
+        .unwrap();
+    let input = format!("{}b", "a".repeat(100));
+    assert!(legacy_backtracking_count.is_match(&input).unwrap());
+}
+
+#[test]
 fn end_of_hard_expression_cannot_be_delegated() {
     assert_match(r"(?!x)(?:a|ab)c", "abc");
     // If `(?:a|ab)` is delegated, there's no backtracking and `a` matches and `ab` is never tried.

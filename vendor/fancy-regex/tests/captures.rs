@@ -489,6 +489,97 @@ fn captures_from_pos_looking_left() {
 }
 
 #[test]
+fn ecmascript_lookbehind_uses_backward_capture_order() {
+    let regex = RegexBuilder::new(r"(?<=([ab]+)([bc]+))$")
+        .ecmascript_mode(true)
+        .build()
+        .unwrap();
+    let captures = regex.captures("abc").unwrap().expect("matched");
+
+    assert_match(captures.get(0), "", 3, 3);
+    assert_match(captures.get(1), "a", 0, 1);
+    assert_match(captures.get(2), "bc", 1, 3);
+}
+
+#[test]
+fn ecmascript_lookbehind_matches_backreferences_backwards() {
+    let preceding_reference = RegexBuilder::new(r"(?<=\1(\w+))c")
+        .ecmascript_mode(true)
+        .build()
+        .unwrap();
+    let captures = preceding_reference
+        .captures("ababc")
+        .unwrap()
+        .expect("backreference matched before its capture in source order");
+    assert_match(captures.get(0), "c", 4, 5);
+    assert_match(captures.get(1), "ab", 2, 4);
+
+    let following_reference = RegexBuilder::new(r"(?<=(\w+)\1)c")
+        .ecmascript_mode(true)
+        .build()
+        .unwrap();
+    let captures = following_reference
+        .captures("ababc")
+        .unwrap()
+        .expect("forward reference was empty during backward evaluation");
+    assert_match(captures.get(0), "c", 4, 5);
+    assert_match(captures.get(1), "abab", 0, 4);
+
+    let nested_lookahead = RegexBuilder::new(r"(?<=(a)(?=\1))b")
+        .ecmascript_mode(true)
+        .build()
+        .unwrap();
+    let captures = nested_lookahead
+        .captures("ab")
+        .unwrap()
+        .expect("unset forward backreference matched empty");
+    assert_match(captures.get(0), "b", 1, 2);
+    assert_match(captures.get(1), "a", 0, 1);
+
+    let nested_negative = RegexBuilder::new(r"(?<=(a)(?!\1))b")
+        .ecmascript_mode(true)
+        .build()
+        .unwrap();
+    assert!(nested_negative.captures("ab").unwrap().is_none());
+}
+
+#[test]
+fn ecmascript_nullable_repeats_preserve_required_iteration_captures() {
+    for pattern in [
+        r"(?:(?=(a)))+a",
+        r"(?:(?=(a))){2}a",
+        r"(?:(?=(a))){2,3}a",
+        r"(?:(?=(a))){2,3}?a",
+    ] {
+        let regex = RegexBuilder::new(pattern)
+            .ecmascript_mode(true)
+            .build()
+            .unwrap();
+        let captures = regex.captures("a").unwrap().expect(pattern);
+        assert_match(captures.get(1), "a", 0, 1);
+    }
+
+    for pattern in [r"(?:(?=(a)))*a", r"(?:(?=(a)))*?a"] {
+        let regex = RegexBuilder::new(pattern)
+            .ecmascript_mode(true)
+            .build()
+            .unwrap();
+        let captures = regex.captures("a").unwrap().expect(pattern);
+        assert!(captures.get(1).is_none(), "{}", pattern);
+    }
+}
+
+#[test]
+fn ecmascript_positive_lookbehind_does_not_backtrack_after_success() {
+    let regex = RegexBuilder::new(r"(?<=([abc]+)).\1")
+        .ecmascript_mode(true)
+        .build()
+        .unwrap();
+
+    assert!(regex.captures("abcdbc").unwrap().is_none());
+}
+
+#[test]
 fn captures_iter_collect_when_backtrack_limit_hit() {
     use fancy_regex::RegexBuilder;
     let r = RegexBuilder::new("(x+x+)+(?>y)")

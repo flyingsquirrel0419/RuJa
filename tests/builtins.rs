@@ -15241,12 +15241,13 @@ fn regexp_duplicate_named_groups_select_the_participating_capture() {
               /^(?:(?<u>ſ)|(?<u>t))\k<u>$/iu.test("ſs"),
               /^(?:(?<u>Ωa)|(?<u>z))\k<u>$/iu.test("Ωaωaa"),
               /^(?:(?<u>ſ)|(?<u>t))\k<u>$/i.test("ſs"),
+              /(?<=(?:(?<h>a)|(?<h>b))\k<h>)c/.exec("aac").groups.h,
               "ba".replace(/(?<v>a)|(?<v>b)/g, "[$<v>][$1][$2]"),
               split.map(String).join("|")
             ].join(";");
         "#),
         Value::String(Arc::from(
-            "true;b;b;true;0,1;x;b;a;c;x,y,z;true;true;true;false;true;false;true;true;true;true;a;true;a;true;true;false;false;[b][][b][a][a][];x|a|undefined||undefined|b|"
+            "true;b;b;true;0,1;x;b;a;c;x,y,z;true;true;true;false;true;false;true;true;true;true;a;true;a;true;true;false;false;a;[b][][b][a][a][];x|a|undefined||undefined|b|"
         ))
     );
 
@@ -15255,6 +15256,57 @@ fn regexp_duplicate_named_groups_select_the_participating_capture() {
         Value::String(Arc::from("(?<x>a)|(?<x>b)"))
     );
     assert!(run_err(r#"new RegExp("(?<x>a)(?:b|c)(?<x>d)");"#).contains("SyntaxError"));
+}
+
+#[test]
+fn regexp_lookaround_uses_ecmascript_backend() {
+    assert_eq!(
+        run(r#"
+            var ahead = /(?=(a+))/.exec("baa");
+            var negative = /Java(?!Script)([A-Z]\w*)/.exec("JavaBeans");
+            var fixed = /(?<=a)b/.exec("ab");
+            var greedy = /(?<=(b+))c/.exec("abbbc");
+            var backward = /(?<=([ab]+)([bc]+))$/.exec("abc");
+            var nestedPositive = /(?<=(a)(?=\1))b/.exec("ab");
+            var nestedNamed = /(?<=(?<x>a)(?=\k<x>))b/.exec("ab");
+            [
+              ahead[0], ahead.index, ahead[1],
+              negative[0], negative[1],
+              fixed[0], fixed.index,
+              greedy[0], greedy[1],
+              backward[0], backward[1], backward[2],
+              /(?<=é)x/i.test("Éx"),
+              /(?<=\u00e9)x/i.test("Éx"),
+              /(?<=\xe9)x/i.test("Éx"),
+              !/(?=s)/i.test("ſ"),
+              !/(?=\u0073)/i.test("ſ"),
+              !/(?=\x73)/i.test("ſ"),
+              nestedPositive[1], nestedNamed.groups.x,
+              /(?<=(a)(?!\1))b/.exec("ab") === null
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "|1|aa|JavaBeans|Beans|b|1|c|bbb||a|bc|true|true|true|true|true|true|a|a|true"
+        ))
+    );
+}
+
+#[test]
+fn regexp_legacy_quantified_lookahead_updates_captures() {
+    assert_eq!(
+        run(r#"
+            var optional = /(?:(?=(abc)))?a/.exec("abc");
+            var exact = /(?:(?=(abc))){1,1}a/.exec("abc");
+            var optionalRange = /(?:(?=(abc))){0,1}a/.exec("abc");
+            [
+              optional[1] === undefined,
+              exact[1],
+              optionalRange[1] === undefined
+            ].join("|");
+        "#),
+        Value::String(Arc::from("true|abc|true"))
+    );
+    assert!(run_err(r#"new RegExp("(?=a)?", "u");"#).contains("SyntaxError"));
 }
 
 #[test]
@@ -15730,6 +15782,18 @@ fn regexp_sticky_start_assertion_uses_full_input() {
 
 #[test]
 fn regexp_non_unicode_ignore_case_does_not_apply_unicode_folding() {
+    assert_eq!(run("/é/i.test('É');"), Value::Bool(true));
+    assert_eq!(run("/\\u00e9/i.test('É');"), Value::Bool(true));
+    assert_eq!(run("/\\xe9/i.test('É');"), Value::Bool(true));
+    assert_eq!(run("/é/i.test('e');"), Value::Bool(false));
+    assert_eq!(run("/s/i.test('ſ');"), Value::Bool(false));
+    assert_eq!(run("/\\u0073/i.test('ſ');"), Value::Bool(false));
+    assert_eq!(run("/\\x73/i.test('ſ');"), Value::Bool(false));
+    assert_eq!(run("/[s]/i.test('ſ');"), Value::Bool(false));
+    assert_eq!(run("/[a-z]/i.test('ſ');"), Value::Bool(false));
+    assert_eq!(run("/k/i.test('K');"), Value::Bool(false));
+    assert_eq!(run("/[é]/i.test('É');"), Value::Bool(true));
+    assert_eq!(run("/(?i:s)/.test('ſ');"), Value::Bool(false));
     assert_eq!(run("/\\u212a/i.test('k');"), Value::Bool(false));
     assert_eq!(run("/\\u212a/i.test('K');"), Value::Bool(false));
     assert_eq!(run("/\\u212a/u.test('k');"), Value::Bool(false));

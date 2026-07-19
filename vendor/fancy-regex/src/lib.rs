@@ -439,6 +439,8 @@ impl RegexOptions {
             FLAG_IGNORE_NUMBERED_GROUPS_WHEN_NAMED_GROUPS_EXIST,
         );
         let ecmascript_mode = Self::get_flag_value(self.ecmascript_mode, FLAG_ECMASCRIPT_MODE);
+        let ecmascript_unicode_mode =
+            Self::get_flag_value(self.ecmascript_unicode_mode, FLAG_ECMASCRIPT_UNICODE_MODE);
 
         insensitive
             | multiline
@@ -449,6 +451,7 @@ impl RegexOptions {
             | crlf
             | named_groups_only
             | ecmascript_mode
+            | ecmascript_unicode_mode
     }
 }
 
@@ -557,10 +560,10 @@ impl RegexOptionsBuilder {
         self.set_config(|x| x.unicode(yes))
     }
 
-    /// Limit for how many times backtracking should be attempted for fancy regexes (where
-    /// backtracking is used). If this limit is exceeded, execution returns an error with
+    /// Limit for failed backtracking in ordinary fancy regexes. In ECMAScript
+    /// mode, branch creation, repeat progress, and capture clearing also
+    /// consume this shared VM work budget. If the limit is exceeded, execution returns
     /// [`Error::BacktrackLimitExceeded`](enum.Error.html#variant.BacktrackLimitExceeded).
-    /// This is for preventing a regex with catastrophic backtracking to run for too long.
     ///
     /// Default is `1_000_000` (1 million).
     pub fn backtrack_limit(&mut self, limit: usize) -> &mut Self {
@@ -843,11 +846,10 @@ impl Regex {
 
         let find_not_empty = options.hard_regex_runtime_options.find_not_empty;
 
-        let requires_capture_group_fixup = if find_not_empty {
-            // if the find_not_empty flag is set, we skip optimizations
-            // partially because we have to go though the VM anyway
-            // partially because having the last instruction of the expression not have
-            // ix be at the end of capture group 0 ruins our empty match checking logic.
+        let requires_capture_group_fixup = if find_not_empty || options.ecmascript_mode {
+            // `find_not_empty` requires the VM's original group-0 endpoint.
+            // ECMAScript assertions must also retain their atomic boundary and
+            // locally normalized case mode instead of being rewritten as consuming text.
             false
         } else {
             // try to optimize the expression tree so that a hard pattern could become easy

@@ -116,8 +116,8 @@ pub(crate) const OPTION_SKIPPED_EMPTY_MATCH: u32 = 1 << 1;
 /// consumed characters and then \K was used afterwards.
 pub(crate) const OPTION_FIND_NOT_EMPTY: u32 = 1 << 2;
 
-// TODO: make configurable
 const MAX_STACK: usize = 1_000_000;
+const ECMASCRIPT_MAX_STACK: usize = 100_000;
 
 /// Represents a range of capture groups by storing the first and last group numbers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -227,14 +227,29 @@ pub enum Insn {
     End,
     /// Match any character (including newline)
     Any,
+    /// Match the character immediately before the current index
+    AnyBackwards,
     /// Match any character except for the line feed character (`\n`)
     AnyNoNL,
+    /// Match the character immediately before the current index unless it is `\n`
+    AnyNoNLBackwards,
     /// Match any character except for a carriage return or line feed character (`\r` or `\n`)
     AnyNoCRLF,
+    /// Match the character immediately before the current index unless it is `\r` or `\n`
+    AnyNoCRLFBackwards,
+    /// Match an ECMAScript general newline immediately before the current index
+    GeneralNewlineBackwards {
+        /// Whether Unicode-only newline characters are recognized
+        unicode: bool,
+    },
     /// Assertions
     Assertion(Assertion),
     /// Match the literal string at the current index
     Lit(String), // should be cow?
+    /// Match the literal string immediately before the current index
+    LitBackwards(String),
+    /// Match a case-insensitive literal immediately before the current index
+    LitCaseiBackwards(String),
     /// Split execution into two threads. The two fields are positions of instructions. Execution
     /// first tries the first thread. If that fails, the second position is tried.
     Split(usize, usize),
@@ -287,23 +302,31 @@ pub enum Insn {
     RepeatEpsilonGr {
         /// Minimum number of matches
         lo: usize,
+        /// Maximum number of matches
+        hi: usize,
         /// The instruction after the repeat
         next: usize,
         /// The slot for keeping track of the number of repetitions
         repeat: usize,
         /// The slot for saving the previous IX to check if we had an empty match
         check: usize,
+        /// Whether an empty optional iteration fails instead of ending the repeat
+        fail_on_empty: bool,
     },
     /// Repeat non-greedily and prevent infinite loops from empty matches
     RepeatEpsilonNg {
         /// Minimum number of matches
         lo: usize,
+        /// Maximum number of matches
+        hi: usize,
         /// The instruction after the repeat
         next: usize,
         /// The slot for keeping track of the number of repetitions
         repeat: usize,
         /// The slot for saving the previous IX to check if we had an empty match
         check: usize,
+        /// Whether an empty optional iteration fails instead of ending the repeat
+        fail_on_empty: bool,
     },
     /// Negative look-around failed
     FailNegativeLookAround,
@@ -311,6 +334,13 @@ pub enum Insn {
     GoBack(usize),
     /// Back reference to a group number to check
     Backref {
+        /// The save slot representing the start of the capture group
+        slot: usize,
+        /// Whether the backref should be matched case insensitively
+        casei: bool,
+    },
+    /// Back reference matched immediately before the current index
+    BackrefBackwards {
         /// The save slot representing the start of the capture group
         slot: usize,
         /// Whether the backref should be matched case insensitively
@@ -324,12 +354,21 @@ pub enum Insn {
         /// Whether the captured text is matched case-insensitively.
         casei: bool,
     },
+    /// ECMAScript duplicate-name back reference matched before the current index
+    BackrefSetBackwards {
+        /// Index into the program's ECMAScript backreference-set table.
+        set_id: usize,
+        /// Whether the captured text is matched case-insensitively.
+        casei: bool,
+    },
     /// Begin of atomic group
     BeginAtomic,
     /// End of atomic group
     EndAtomic,
     /// Delegate matching to the regex crate
     Delegate(Delegate),
+    /// Match one delegated character expression immediately before the current index
+    DelegateBackwards(Delegate),
     /// Anchor to match at the position where the previous match ended
     ContinueFromPreviousMatchEnd {
         /// Whether this is at the start of the pattern (allowing early exit on failure)
@@ -355,6 +394,7 @@ pub struct Prog {
     n_saves: usize,
     ecmascript_backref_sets: Vec<Vec<usize>>,
     unicode_casei: bool,
+    ecmascript_mode: bool,
 }
 
 impl Prog {
@@ -363,12 +403,14 @@ impl Prog {
         n_saves: usize,
         ecmascript_backref_sets: Vec<Vec<usize>>,
         unicode_casei: bool,
+        ecmascript_mode: bool,
     ) -> Prog {
         Prog {
             body,
             n_saves,
             ecmascript_backref_sets,
             unicode_casei,
+            ecmascript_mode,
         }
     }
 
@@ -578,6 +620,29 @@ impl State {
     }
 }
 
+fn charge_work(work_count: &mut usize, amount: usize, limit: usize) -> Result<()> {
+    *work_count = work_count.saturating_add(amount);
+    if *work_count > limit {
+        Err(Error::RuntimeError(RuntimeError::BacktrackLimitExceeded))
+    } else {
+        Ok(())
+    }
+}
+
+fn push_branch(
+    state: &mut State,
+    pc: usize,
+    ix: usize,
+    work_count: &mut usize,
+    work_limit: usize,
+    charge: bool,
+) -> Result<()> {
+    if charge {
+        charge_work(work_count, 1, work_limit)?;
+    }
+    state.push(pc, ix)
+}
+
 fn codepoint_len_at(s: &str, ix: usize) -> usize {
     codepoint_len(s.as_bytes()[ix])
 }
@@ -618,22 +683,65 @@ fn unicode_simple_case_eq(left: char, right: char) -> bool {
         .any(|range| range.start() <= right && right <= range.end())
 }
 
+fn chars_equal_case_insensitive(left: char, right: char, unicode_casei: bool) -> bool {
+    if unicode_casei {
+        unicode_simple_case_eq(left, right)
+    } else {
+        legacy_canonicalize(left) == legacy_canonicalize(right)
+    }
+}
+
 fn matches_literal_casei(s: &str, ix: usize, literal: &str, unicode_casei: bool) -> Option<usize> {
     let mut end = ix;
     let mut actual = s.get(ix..)?.chars();
     for expected in literal.chars() {
         let candidate = actual.next()?;
-        let equal = if unicode_casei {
-            unicode_simple_case_eq(expected, candidate)
-        } else {
-            legacy_canonicalize(expected) == legacy_canonicalize(candidate)
-        };
-        if !equal {
+        if !chars_equal_case_insensitive(expected, candidate, unicode_casei) {
             return None;
         }
         end += candidate.len_utf8();
     }
     Some(end)
+}
+
+fn previous_char(s: &str, ix: usize) -> Option<(usize, char)> {
+    if ix == 0 || ix > s.len() || !s.is_char_boundary(ix) {
+        return None;
+    }
+    let start = prev_codepoint_ix(s, ix);
+    Some((start, s.get(start..ix)?.chars().next()?))
+}
+
+fn matches_literal_backwards(s: &str, ix: usize, literal: &str) -> Option<usize> {
+    let start = ix.checked_sub(literal.len())?;
+    matches_literal(s, start, ix, literal).then_some(start)
+}
+
+fn matches_literal_casei_backwards(
+    s: &str,
+    ix: usize,
+    literal: &str,
+    unicode_casei: bool,
+) -> Option<usize> {
+    let mut start = ix;
+    for expected in literal.chars().rev() {
+        let (candidate_start, candidate) = previous_char(s, start)?;
+        if !chars_equal_case_insensitive(expected, candidate, unicode_casei) {
+            return None;
+        }
+        start = candidate_start;
+    }
+    Some(start)
+}
+
+fn matches_general_newline_backwards(s: &str, ix: usize, unicode: bool) -> Option<usize> {
+    if ix >= 2 && s.as_bytes().get(ix - 2..ix) == Some(b"\r\n") {
+        return Some(ix - 2);
+    }
+    let (start, ch) = previous_char(s, ix)?;
+    let is_newline = matches!(ch, '\n' | '\u{000B}' | '\u{000C}' | '\r')
+        || (unicode && matches!(ch, '\u{0085}' | '\u{2028}' | '\u{2029}'));
+    is_newline.then_some(start)
 }
 
 /// Helper function to store capture group positions from inner_slots into state.
@@ -692,14 +800,19 @@ pub(crate) fn run(
     option_flags: u32,
     options: &HardRegexRuntimeOptions,
 ) -> Result<Option<Vec<usize>>> {
-    let mut state = State::new(prog.n_saves, MAX_STACK, option_flags);
+    let max_stack = if prog.ecmascript_mode {
+        ECMASCRIPT_MAX_STACK.min(options.backtrack_limit.saturating_add(1))
+    } else {
+        MAX_STACK
+    };
+    let mut state = State::new(prog.n_saves, max_stack, option_flags);
     let mut inner_slots: Vec<Option<NonMaxUsize>> = Vec::new();
     let look_matcher = LookMatcher::new();
     #[cfg(feature = "std")]
     if option_flags & OPTION_TRACE != 0 {
         println!("pos\tinstruction");
     }
-    let mut backtrack_count = 0usize;
+    let mut work_count = 0usize;
     let mut pc = 0;
     let mut ix = pos;
     let mut match_attempt_start = pos;
@@ -743,12 +856,27 @@ pub(crate) fn run(
                         break 'fail;
                     }
                 }
+                Insn::AnyBackwards => {
+                    let Some((start, _)) = previous_char(s, ix) else {
+                        break 'fail;
+                    };
+                    ix = start;
+                }
                 Insn::AnyNoNL => {
                     if ix < s.len() && s.as_bytes()[ix] != b'\n' {
                         ix += codepoint_len_at(s, ix);
                     } else {
                         break 'fail;
                     }
+                }
+                Insn::AnyNoNLBackwards => {
+                    let Some((start, ch)) = previous_char(s, ix) else {
+                        break 'fail;
+                    };
+                    if ch == '\n' {
+                        break 'fail;
+                    }
+                    ix = start;
                 }
                 Insn::AnyNoCRLF => {
                     if ix < s.len() && s.as_bytes()[ix] != b'\r' && s.as_bytes()[ix] != b'\n' {
@@ -757,12 +885,41 @@ pub(crate) fn run(
                         break 'fail;
                     }
                 }
+                Insn::AnyNoCRLFBackwards => {
+                    let Some((start, ch)) = previous_char(s, ix) else {
+                        break 'fail;
+                    };
+                    if matches!(ch, '\r' | '\n') {
+                        break 'fail;
+                    }
+                    ix = start;
+                }
+                Insn::GeneralNewlineBackwards { unicode } => {
+                    let Some(start) = matches_general_newline_backwards(s, ix, unicode) else {
+                        break 'fail;
+                    };
+                    ix = start;
+                }
                 Insn::Lit(ref val) => {
                     let ix_end = ix + val.len();
                     if !matches_literal(s, ix, ix_end, val) {
                         break 'fail;
                     }
                     ix = ix_end
+                }
+                Insn::LitBackwards(ref val) => {
+                    let Some(start) = matches_literal_backwards(s, ix, val) else {
+                        break 'fail;
+                    };
+                    ix = start;
+                }
+                Insn::LitCaseiBackwards(ref val) => {
+                    let Some(start) =
+                        matches_literal_casei_backwards(s, ix, val, prog.unicode_casei)
+                    else {
+                        break 'fail;
+                    };
+                    ix = start;
                 }
                 Insn::Assertion(assertion) => {
                     if !match assertion {
@@ -816,13 +973,27 @@ pub(crate) fn run(
                     }
                 }
                 Insn::Split(x, y) => {
-                    state.push(y, ix)?;
+                    push_branch(
+                        &mut state,
+                        y,
+                        ix,
+                        &mut work_count,
+                        options.backtrack_limit,
+                        prog.ecmascript_mode,
+                    )?;
                     pc = x;
                     continue;
                 }
                 Insn::SplitUnanchored(x, y) => {
                     match_attempt_start = ix;
-                    state.push(y, ix)?;
+                    push_branch(
+                        &mut state,
+                        y,
+                        ix,
+                        &mut work_count,
+                        options.backtrack_limit,
+                        prog.ecmascript_mode,
+                    )?;
                     pc = x;
                     continue;
                 }
@@ -847,10 +1018,7 @@ pub(crate) fn run(
                     end_group,
                 } => {
                     let clear_work = end_group.saturating_sub(start_group).saturating_mul(2);
-                    backtrack_count = backtrack_count.saturating_add(clear_work);
-                    if backtrack_count > options.backtrack_limit {
-                        return Err(Error::RuntimeError(RuntimeError::BacktrackLimitExceeded));
-                    }
+                    charge_work(&mut work_count, clear_work, options.backtrack_limit)?;
                     for group in start_group..end_group {
                         state.save(group * 2, usize::MAX);
                         state.save(group * 2 + 1, usize::MAX);
@@ -863,6 +1031,9 @@ pub(crate) fn run(
                     next,
                     repeat,
                 } => {
+                    if prog.ecmascript_mode {
+                        charge_work(&mut work_count, 1, options.backtrack_limit)?;
+                    }
                     let repcount = state.get(repeat);
                     if repcount == hi {
                         pc = next;
@@ -870,7 +1041,14 @@ pub(crate) fn run(
                     }
                     state.save(repeat, repcount + 1);
                     if repcount >= lo {
-                        state.push(next, ix)?;
+                        push_branch(
+                            &mut state,
+                            next,
+                            ix,
+                            &mut work_count,
+                            options.backtrack_limit,
+                            prog.ecmascript_mode,
+                        )?;
                     }
                 }
                 Insn::RepeatNg {
@@ -879,6 +1057,9 @@ pub(crate) fn run(
                     next,
                     repeat,
                 } => {
+                    if prog.ecmascript_mode {
+                        charge_work(&mut work_count, 1, options.backtrack_limit)?;
+                    }
                     let repcount = state.get(repeat);
                     if repcount == hi {
                         pc = next;
@@ -886,45 +1067,88 @@ pub(crate) fn run(
                     }
                     state.save(repeat, repcount + 1);
                     if repcount >= lo {
-                        state.push(pc + 1, ix)?;
+                        push_branch(
+                            &mut state,
+                            pc + 1,
+                            ix,
+                            &mut work_count,
+                            options.backtrack_limit,
+                            prog.ecmascript_mode,
+                        )?;
                         pc = next;
                         continue;
                     }
                 }
                 Insn::RepeatEpsilonGr {
                     lo,
+                    hi,
                     next,
                     repeat,
                     check,
+                    fail_on_empty,
                 } => {
+                    if prog.ecmascript_mode {
+                        charge_work(&mut work_count, 1, options.backtrack_limit)?;
+                    }
                     let repcount = state.get(repeat);
                     if repcount > 0 && state.get(check) == ix {
-                        // zero-length match on repeat, then move to next instruction
+                        if fail_on_empty {
+                            break 'fail;
+                        }
+                        pc = next;
+                        continue;
+                    }
+                    if repcount == hi {
                         pc = next;
                         continue;
                     }
                     state.save(repeat, repcount + 1);
                     if repcount >= lo {
                         state.save(check, ix);
-                        state.push(next, ix)?;
+                        push_branch(
+                            &mut state,
+                            next,
+                            ix,
+                            &mut work_count,
+                            options.backtrack_limit,
+                            prog.ecmascript_mode,
+                        )?;
                     }
                 }
                 Insn::RepeatEpsilonNg {
                     lo,
+                    hi,
                     next,
                     repeat,
                     check,
+                    fail_on_empty,
                 } => {
+                    if prog.ecmascript_mode {
+                        charge_work(&mut work_count, 1, options.backtrack_limit)?;
+                    }
                     let repcount = state.get(repeat);
                     if repcount > 0 && state.get(check) == ix {
-                        // zero-length match on repeat, then move to next instruction
+                        if fail_on_empty {
+                            break 'fail;
+                        }
+                        pc = next;
+                        continue;
+                    }
+                    if repcount == hi {
                         pc = next;
                         continue;
                     }
                     state.save(repeat, repcount + 1);
                     if repcount >= lo {
                         state.save(check, ix);
-                        state.push(pc + 1, ix)?;
+                        push_branch(
+                            &mut state,
+                            pc + 1,
+                            ix,
+                            &mut work_count,
+                            options.backtrack_limit,
+                            prog.ecmascript_mode,
+                        )?;
                         pc = next;
                         continue;
                     }
@@ -958,12 +1182,18 @@ pub(crate) fn run(
                 Insn::Backref { slot, casei } => {
                     let lo = state.get(slot);
                     if lo == usize::MAX {
-                        // Referenced group hasn't matched, so the backref doesn't match either
+                        if prog.ecmascript_mode {
+                            pc += 1;
+                            continue;
+                        }
                         break 'fail;
                     }
                     let hi = state.get(slot + 1);
                     if hi == usize::MAX {
-                        // Referenced group hasn't matched, so the backref doesn't match either
+                        if prog.ecmascript_mode {
+                            pc += 1;
+                            continue;
+                        }
                         break 'fail;
                     }
                     let ref_text = &s[lo..hi];
@@ -980,6 +1210,22 @@ pub(crate) fn run(
                             break 'fail;
                         }
                         ix = ix_end;
+                    }
+                }
+                Insn::BackrefBackwards { slot, casei } => {
+                    let lo = state.get(slot);
+                    let hi = state.get(slot + 1);
+                    if lo != usize::MAX && hi != usize::MAX {
+                        let ref_text = &s[lo..hi];
+                        let start = if casei {
+                            matches_literal_casei_backwards(s, ix, ref_text, prog.unicode_casei)
+                        } else {
+                            matches_literal_backwards(s, ix, ref_text)
+                        };
+                        let Some(start) = start else {
+                            break 'fail;
+                        };
+                        ix = start;
                     }
                 }
                 Insn::BackrefSet { set_id, casei } => {
@@ -1016,6 +1262,34 @@ pub(crate) fn run(
                             }
                             ix = ix_end;
                         }
+                    }
+                }
+                Insn::BackrefSetBackwards { set_id, casei } => {
+                    let Some(groups) = prog.ecmascript_backref_sets.get(set_id) else {
+                        break 'fail;
+                    };
+                    let mut selected = None;
+                    for group in groups {
+                        let lo = state.get(group * 2);
+                        let hi = state.get(group * 2 + 1);
+                        if lo != usize::MAX
+                            && hi != usize::MAX
+                            && selected.replace((lo, hi)).is_some()
+                        {
+                            break 'fail;
+                        }
+                    }
+                    if let Some((lo, hi)) = selected {
+                        let ref_text = &s[lo..hi];
+                        let start = if casei {
+                            matches_literal_casei_backwards(s, ix, ref_text, prog.unicode_casei)
+                        } else {
+                            matches_literal_backwards(s, ix, ref_text)
+                        };
+                        let Some(start) = start else {
+                            break 'fail;
+                        };
+                        ix = start;
                     }
                 }
                 Insn::BackrefExistsCondition(group) => {
@@ -1106,6 +1380,28 @@ pub(crate) fn run(
                         }
                     }
                 }
+                Insn::DelegateBackwards(Delegate {
+                    ref inner,
+                    pattern: _,
+                    capture_groups,
+                }) => {
+                    let Some((start, _)) = previous_char(s, ix) else {
+                        break 'fail;
+                    };
+                    let input = Input::new(s).span(start..ix).anchored(Anchored::Yes);
+                    if let Some(range) = capture_groups {
+                        inner_slots.resize((range.end() - range.start() + 1) * 2, None);
+                        if inner.search_slots(&input, &mut inner_slots).is_none()
+                            || inner_slots[1].map(NonMaxUsize::get) != Some(ix)
+                        {
+                            break 'fail;
+                        }
+                        store_capture_groups(&mut state, &inner_slots, range, false);
+                    } else if inner.search_half(&input).map(|m| m.offset()) != Some(ix) {
+                        break 'fail;
+                    }
+                    ix = start;
+                }
                 Insn::AbsentRepeater(ref delegate) => {
                     // The absent operator matches the shortest string not containing the delegate pattern
                     // We advance one character at a time, checking if delegate matches at each position
@@ -1123,7 +1419,14 @@ pub(crate) fn run(
                         // Fall through via pc += 1 below
                     } else if ix < s.len() {
                         // Try advancing one character and checking again
-                        state.push(pc + 1, ix)?;
+                        push_branch(
+                            &mut state,
+                            pc + 1,
+                            ix,
+                            &mut work_count,
+                            options.backtrack_limit,
+                            prog.ecmascript_mode,
+                        )?;
                         ix += codepoint_len_at(s, ix);
                         // Stay at same pc to check delegate match at new position
                         continue;
@@ -1157,11 +1460,9 @@ pub(crate) fn run(
             return Ok(None);
         }
 
-        backtrack_count += 1;
-        if backtrack_count > options.backtrack_limit {
-            return Err(Error::RuntimeError(RuntimeError::BacktrackLimitExceeded));
+        if !prog.ecmascript_mode {
+            charge_work(&mut work_count, 1, options.backtrack_limit)?;
         }
-
         let (newpc, newix) = state.pop();
         pc = newpc;
         ix = newix;
