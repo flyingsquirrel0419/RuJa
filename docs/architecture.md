@@ -490,6 +490,34 @@ the shared object-only operation. The materialized list and its pin count move
 together into the final call so a later getter or target re-entry cannot make
 an earlier argument collectible.
 
+## Native Array callback result ownership
+
+`Array.prototype.map` and `flatMap` keep source snapshots in Rust vectors and
+invoke JavaScript once per element. The VM therefore pins every heap value in
+the snapshot before the first callback and pins each callback result before the
+next callback can collect. `flatMap` retains the mapped container roots while
+copying their elements, so tracing the container also preserves nested values.
+The roots remain owned by the native operation until the final Array has taken
+ownership.
+
+`Array.of` follows the same rule across a different observable boundary. Its
+arguments and constructor remain rooted through construction, and the returned
+object is pinned before the first `defineProperty` trap. The result stays live
+through every element definition and the final `length` set. All three methods
+run their fallible body inside a completion scope and release one LIFO pin
+suffix afterward, so callback throws, Proxy trap errors, and result-allocation
+failures restore the incoming pin depth.
+
+```text
+[Decision Log]
+- 목적과 의도: Prevent native Array methods from exposing collected-and-reused heap slots when JavaScript re-enters the VM during callback or property-definition work.
+- 기존 구현 및 제약 조건: GcIdx is a generation-free cell index, the collector sees only VM roots, and map/flatMap callback results plus the Array.of result lived only in Rust locals across observable calls. A Rust Vec<Value> does not participate in tracing.
+- 검토한 주요 대안: Make all Rust Value locals implicit roots, add generations to every GcIdx, disable collection during native built-ins, pin only the final value, or explicitly own temporary roots at each observable boundary.
+- 선택한 방식: Pin source/argument values before re-entry, pin each fresh callback or constructed result immediately, retain those roots until the destination owns the values, and release them from one success/error cleanup scope.
+- 다른 대안 대신 이 방식을 선택한 이유: Global implicit rooting or generation handles require a VM-wide representation change, disabling GC weakens the sandbox, and late pinning occurs after a slot may already be reused. Explicit lexical ownership matches the existing gc_pins contract and keeps this correction bounded.
+- 장점, 단점 및 영향: Forced GC can no longer turn prior map/flatMap results or a custom Array.of result into another HeapObj; abrupt and exact-cap failures leave no pin leak. Root storage grows with live object-valued inputs/results for the duration of the operation, while snapshot-based methods with broader observable-semantics issues remain separate follow-up work.
+```
+
 Promise keyed combinators use a separate two-stage observable protocol. They
 first snapshot raw `[[OwnPropertyKeys]]`, including non-enumerable keys, and
 then perform Proxy-aware `[[GetOwnProperty]]` inside the per-key loop. An

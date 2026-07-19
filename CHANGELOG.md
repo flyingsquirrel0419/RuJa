@@ -4,6 +4,42 @@
 
 ### Fixed
 
+- Native Array materializers now preserve every heap value they retain across
+  JavaScript re-entry. `Array.prototype.map` and `flatMap` pin their source
+  snapshots and each callback result until the destination Array owns the
+  values. `Array.of` pins its arguments, constructor, and constructed result
+  through every observable property definition and the final `length` set.
+  Callback throws, Proxy trap errors, and exact-cap result allocation failures
+  share one cleanup path and restore the incoming temporary-root depth.
+
+  Previously, a callback result stored only in a Rust `Vec<Value>` could be
+  collected by the next callback and its generation-free `GcIdx` cell reused.
+  Deterministic regressions observed `map`/`flatMap` changing `"1,2"` into
+  `"2,2"`, while a 5,652-case accumulating RegExp harness reached
+  `src/value.rs` with `env has no props`. A custom `Array.of` Proxy similarly
+  lost its first element after its wrapper slot was reused. All three now
+  survive forced collection, and abrupt/final-allocation tests verify pin
+  balance plus subsequent VM reuse.
+
+  Final local gates pass all Rust targets/features, builtins **480/480**, lib
+  tests **129/129**, warnings-denied Clippy, rustfmt/diff, release, wasm32,
+  Python tooling **108/108**, and supported Test262
+  **12751 pass / 0 fail / 7687 skip / 20438 total** on
+  `020cb74075849d1e404bbcdb62feb7a02e6966db`. The original accumulating
+  differential is **5652/5652** with no Node mismatch. The 256 focused
+  `Array.of`/`map`/`flatMap` files have zero per-file status changes from the
+  preceding grammar binary. GPT 5.6 reviewers Curie
+  (`019f783f-f39c-78f2-952b-f514cbbbcef7`) and Hooke
+  (`019f783f-f4da-7cd1-b3ee-f752f7aeff89`) returned `CLEAN`; both sessions
+  are closed and no coder or Umans route was used. Feature commit `6f822ce`
+  passed ordinary CI `29671480301` and all **33/33** jobs in full matrix
+  `29671480315`. The 30 artifacts at
+  `/tmp/ruja-array-gc-feature.29671480315.01KzGH` aggregate to **30470 pass /
+  6086 fail / 11905 skip / 6 timeout / 0 error / 48467 total / 36556
+  pass-or-fail executed** (**62.9%** of all files, **83.4%** of executed
+  files). Every result is byte-identical to grammar baseline `29669380082`,
+  confirming no Test262 status movement.
+
 - RegExp source validation now enforces the ECMAScript quantifier grammar
   before backend compilation. A quantifier consumes exactly one atom and may
   have only one optional lazy `?`; repeated `*`, `+`, `?`, or braced prefixes,

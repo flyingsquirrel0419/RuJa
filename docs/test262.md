@@ -8099,6 +8099,46 @@ Twenty-nine artifacts are byte-identical to lookaround baseline
 The matrix therefore reproduces the pinned local delta without corpus drift or
 movement in skip, timeout, total, or executed counts.
 
+## Array callback GC rooting
+
+Native `Array.prototype.map` and `flatMap` keep source values and callback
+results in Rust collections while invoking later callbacks. Those collections
+are not part of the VM root set. RuJa now pins the source snapshot before the
+first callback, pins every fresh result before the next callback can collect,
+and releases the complete root suffix only after the destination Array owns
+the values. `Array.of` similarly roots its arguments, constructor, and returned
+object across custom `defineProperty` traps and the final observable `length`
+write.
+
+Forced-GC regressions make heap-cell reuse deterministic. Before the fix,
+`map` and `flatMap` both changed the expected `"1,2"` result to `"2,2"`, and a
+custom `Array.of` Proxy lost the first property after the wrapper cell was
+reused. The original 5,652-case accumulating RegExp differential instead
+reused one stale result as an Environment and panicked with `env has no props`.
+Callback-throw and final-allocation-failure tests now also assert exact
+`gc_pins` restoration and successful VM reuse.
+
+On pinned Test262 `020cb74075849d1e404bbcdb62feb7a02e6966db`, the supported
+subset remains **12751 pass / 0 fail / 7687 skip / 20438 total**. The 256 files
+under `built-ins/Array/of`, `built-ins/Array/prototype/map`, and
+`built-ins/Array/prototype/flatMap` remain **117 pass / 118 fail / 20 skip / 1
+timeout**, with zero per-file status changes against the preceding grammar
+binary. The unchanged failures are broader Array conformance work, not a
+root-lifetime regression. Local gates pass all Rust targets/features,
+builtins **480/480**, lib tests **129/129**, warnings-denied Clippy,
+rustfmt/diff, release, wasm32, and Python tooling **108/108**. GPT 5.6
+reviewers Curie (`019f783f-f39c-78f2-952b-f514cbbbcef7`) and Hooke
+(`019f783f-f4da-7cd1-b3ee-f752f7aeff89`) returned `CLEAN` and were closed.
+Feature commit `6f822ce` passed ordinary CI `29671480301` and all **33/33**
+jobs in full matrix `29671480315`.
+
+The 30 downloaded matrix artifacts at
+`/tmp/ruja-array-gc-feature.29671480315.01KzGH` aggregate to **30470 pass /
+6086 fail / 11905 skip / 6 timeout / 0 error / 48467 total / 36556
+pass-or-fail executed** (**62.9%** of all files, **83.4%** of executed files).
+Every artifact is byte-identical to RegExp grammar baseline `29669380082`, so
+the root-lifetime fix changes no Test262 status in any shard.
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is

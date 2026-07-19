@@ -261,6 +261,15 @@ guarantees are required.
 - GC runs at safe points only (after a run settles, and throttled at frame
   boundaries). Incremental marking is supported via `collect_incremental(roots, budget)`,
   but there is no generational collector yet
+- Native callback rooting is complete for `Array.prototype.map`, `flatMap`,
+  and `Array.of`. Several older snapshot-based methods still need a separate
+  observable-semantics and rooting pass: `join`, `filter`, `reduce`,
+  `reduceRight`, `forEach`, `sort`, `toSorted`, `slice`, `toSpliced`, and
+  `with`. A callback or coercion can remove the original source edge and force
+  host GC while a future value exists only in a Rust snapshot. Some of these
+  methods require live `HasProperty`/`Get` behavior rather than merely pinning
+  the current snapshot, so they are intentionally not folded into the narrow
+  result-lifetime fix.
 - Private methods are stored per-instance as private fields (each instance
   gets its own closure copy); behavior is spec-correct, but this is more
   memory-heavy than a shared per-class method table would be
