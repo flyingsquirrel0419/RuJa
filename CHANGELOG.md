@@ -4,6 +4,61 @@
 
 ### Fixed
 
+- Proxy `[[Set]]` and receiver-side `[[DefineOwnProperty]]` forwarding now use
+  iterative, fuel-metered, GC-rooted state machines instead of recursive
+  helpers with a 128-layer limit. Ordinary prototype traversal hands a Proxy
+  continuation back to the shared Set driver; missing traps tail-forward,
+  false traps short-circuit target descriptor lookup, and truthy traps retain
+  target invariants, revocation, callable validation, cycle detection, and
+  abrupt-completion order.
+
+  Receiver creation preserves the complete CreateDataProperty descriptor,
+  while an existing writable receiver property delegates only `{value}`.
+  Presence-aware descriptor objects allocate in the current execution Realm,
+  and reaching an ordinary target preserves TypedArray, Array,
+  mapped-arguments, namespace, and extensibility behavior. Regressions cover
+  100,000 Proxy layers, exact 3N/2N and nested fuel, forced GC, unique abrupt
+  markers, revoked inner targets, false-result suppression, descriptor
+  mutation, exact heap caps, Realm identity, cycles, and pin cleanup. Mutation
+  checks prove the Set fuel charge, operation-wide value root, and partial
+  descriptor presence are necessary.
+
+  The Proxy defineProperty manifest now admits the complete **24/24** direct
+  directory with checksum
+  `a002341a5009bf858ed9c0ca44bfdb3d15e3fcb36fabe50cc12e1b298e671db5`.
+  A separate Proxy Set manifest admits all **27/27** direct files with checksum
+  `544af6a5bdcc955a21df6775bade2f624694931c46831d07485cfe4207938396`.
+  Direct Proxy define/set plus Reflect.set is **69/69**; the combined
+  define-property cohort is **1773/13/13/1799**, Proxy get/isExtensible remains
+  **31/31**, and the supported subset remains **12751/0/7687/20438**.
+
+  Feature commit `cd6a65313103bcaf8de900df6046f2a8f600f5ff` passes all local
+  Rust targets/features with lib **150/150**, builtins **503/503**,
+  warnings-denied Clippy, rustfmt/diff, debug and release builds, wasm32, the
+  release Realm rollback sweep, and Python tooling **115/115**. Mutation-backed
+  GPT review found no code or admission defect; the stale documentation it
+  identified is corrected in the same bounded unit. The ordinary Set 1024-hop
+  guard and handler trap lookup through ordinary Get's 4096-hop boundary remain
+  explicit next work. The coder model and Umans provider were not used.
+
+  Ordinary CI `29698474332` passes both jobs, and full matrix `29698474309`
+  passes all **33/33** jobs. The 30 downloaded result files at
+  `/tmp/ruja-proxy-set-results.29698474309.MKYKPL` aggregate to **30754 pass /
+  6049 fail / 11658 skip / 6 timeout / 0 error / 48467 total / 36803
+  pass-or-fail executed**, or **63.5%** of all files and **83.6%** of executed
+  files. Against the preceding defineProperty baseline, 29 files are
+  byte-identical. Only `built-ins` changes from **15116/5238/3308** to
+  **15146/5238/3278**, exactly **+30 pass / -30 skip** with no failure,
+  timeout, error, corpus, or total drift.
+
+  GPT 5.6 reviewers Linnaeus (`019f7b70-4012-70d1-9eef-c5d82af25b09`) and
+  Laplace (`019f7b70-6471-7713-8c97-0b2a4ec61743`) audited the implementation
+  boundary and exact admissions before finalization. Meitner
+  (`019f7b8d-5fea-7860-ac5b-69eb09208b2d`) found no code issue at any severity,
+  and Parfit (`019f7b8d-614b-7a23-a956-4e00becef175`) found no admission or
+  tooling issue; its sole stale-documentation finding is resolved here. All
+  sessions are closed with no duplicate agent left running.
+
 - Proxy `[[DefineOwnProperty]]` now uses one iterative, fuel-metered,
   GC-rooted state machine for internal complete descriptors and public
   `Object.defineProperty`, `Object.defineProperties`, and
@@ -29,12 +84,14 @@
   descriptor-value root, non-callable GetMethod ordering, and current-Realm
   argument-array allocation are necessary.
 
-  `tools/test262_proxy_define_property_admission.txt` freezes exactly 21 of
-  the 24 direct `built-ins/Proxy/defineProperty` files with manifest checksum
+  At feature commit `96ea1384519e5f1ef2c1bc4f7abd360976a5c0bd`,
+  `tools/test262_proxy_define_property_admission.txt` froze exactly 21 of the
+  24 direct `built-ins/Proxy/defineProperty` files with manifest checksum
   `ccccef0672a93f9c70ce5ee42cfe11b7d1401e18b916776031e484b1f803cdfa`.
-  The three assignment-driven files remain excluded because they enter the
-  separate 128-layer receiver-definition path. The direct directory is
-  **21 pass / 0 fail / 3 skip / 24 total**; the combined Object/Reflect/Proxy
+  The three assignment-driven files were then excluded because they entered
+  the separate 128-layer receiver-definition path. At that commit the direct
+  directory was **21 pass / 0 fail / 3 skip / 24 total**; the combined
+  Object/Reflect/Proxy
   define-property cohort is **1770/13/16/1799**, the Proxy-call cohort is
   **58/0/13/71**, and the construct cohort is **11/0/28/39**. The supported
   subset remains **12751/0/7687/20438**.

@@ -7,7 +7,7 @@ The following resource limits are enforced:
 
 - **Execution fuel**: `Vm::set_fuel(Some(n))` bounds dispatched opcodes and
   explicitly metered native-loop steps. Proxy `[[Call]]`, `[[Delete]]`,
-  `[[Get]]`, `[[GetOwnProperty]]`, `[[DefineOwnProperty]]`,
+  `[[Get]]`, `[[Set]]`, `[[GetOwnProperty]]`, `[[DefineOwnProperty]]`,
   `[[IsExtensible]]`, `[[PreventExtensions]]`, `[[GetPrototypeOf]]`, and
   `[[SetPrototypeOf]]` consume one unit per traversed Proxy layer, including
   nested handler and invariant walks.
@@ -43,16 +43,17 @@ The following resource limits are enforced:
   exceeded")`, not a native stack overflow (SIGSEGV/abort).
 - **Remaining property traversal caps**: ordinary prototype `[[Get]]` returns
   `undefined` beyond 4096 recursive hops, while `[[HasProperty]]` returns
-  `false` beyond 1024 ordinary or Proxy hops. `[[Set]]` uses a 1024-hop
-  ordinary guard and a separate 128-layer Proxy guard. Receiver-side
-  `[[DefineOwnProperty]]` delegation shares that 128-layer limit. These guards
-  avoid native-stack failure but produce non-conforming results for otherwise
-  valid deep chains. Transparent Proxy calls, deletion, direct
+  `false` beyond 1024 ordinary or Proxy hops and ordinary `[[Set]]` rejects
+  beyond 1024 hops. Because Proxy `set` and `defineProperty` trap lookup uses
+  the same ordinary `[[Get]]`, an inherited trap beyond 4096 handler-prototype
+  hops can still be treated as missing. These guards avoid native-stack failure
+  but produce non-conforming results for otherwise valid deep chains.
+  Transparent Proxy calls, deletion, `[[Set]]`, receiver-side and direct
   `[[DefineOwnProperty]]`, descriptor lookup, extensibility traversal, and
   prototype get/set internal methods are iterative and fuel-metered. Proxy get
   forwarding is also iterative, but its ordinary prototype segments are not
-  all free of arbitrary limits yet. Removing the remaining property caps
-  requires one coordinated traversal audit rather than isolated limit
+  all free of arbitrary limits yet. Removing the remaining ordinary property
+  caps requires one coordinated traversal audit rather than isolated limit
   increases.
 - **Transparent Proxy enumeration gap**: `for...in` can omit keys forwarded
   from a transparent Proxy target. The underlying
@@ -209,8 +210,8 @@ guarantees are required.
   scoped subset of ES5.1 + selected ES2015+ features (see
   [test262.md](test262.md#supported-subset) for the exact list). The full
   suite is run in CI (excluding `intl402`/`staging`) with a baseline pass
-  rate of 63.3% of all matrix files and 83.5% of executed files (**30,703
-  pass / 6,049 fail / 11,709 skip / 6 timeout / 0 error**); within the
+  rate of 63.5% of all matrix files and 83.6% of executed files (**30,754
+  pass / 6,049 fail / 11,658 skip / 6 timeout / 0 error**); within the
   supported subset, tests currently run at 100%.
   Full ES conformance is not claimed. See
   [test262.md](test262.md) for current numbers and the failure breakdown.

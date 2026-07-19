@@ -30,7 +30,7 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 63.4% of all matrix files; 83.6% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 63.5% of all matrix files; 83.6% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (12751 pass / 0 fail / 7687 skip / 20438 total on the current pinned checkout) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
@@ -8536,8 +8536,9 @@ method-Realm errors, exact heap caps, and pin restoration. Mutation runs prove
 the two fuel charges, descriptor-value root, non-callable allocation order,
 and current-Realm argument-array path.
 
-`tools/test262_proxy_define_property_admission.txt` freezes exactly 21 of the
-24 direct `built-ins/Proxy/defineProperty` files. Its metadata combinations
+At feature commit `96ea1384519e5f1ef2c1bc4f7abd360976a5c0bd`,
+`tools/test262_proxy_define_property_admission.txt` froze exactly 21 of the 24
+direct `built-ins/Proxy/defineProperty` files. Its metadata combinations
 are ten `Proxy`, five `Proxy` plus `cross-realm`, five `Proxy` plus `Reflect`,
 and one `Proxy` plus `Reflect` and `proxy-missing-checks`. The live manifest
 checksum is
@@ -8545,11 +8546,12 @@ checksum is
 Runner and analyzer treatment is symmetric, every manifest remains disjoint,
 and future siblings or files with extra unsupported features remain skipped.
 
-The three excluded files are `desc-realm.js`, `null-handler-realm.js`, and
+The three files excluded at that stage were `desc-realm.js`,
+`null-handler-realm.js`, and
 `targetdesc-undefined-target-is-not-extensible-realm.js`. Their assignment
-expressions enter the separately capped receiver-side
-`[[DefineOwnProperty]]` path rather than this direct internal-method path, so
-admitting them here would overstate the completed boundary.
+expressions entered the then-separately-capped receiver-side
+`[[DefineOwnProperty]]` path rather than the direct internal-method path. The
+following Set/receiver unit closes that boundary and admits them.
 
 On pinned Test262 `020cb74075849d1e404bbcdb62feb7a02e6966db`, the direct Proxy
 directory is **21 pass / 0 fail / 3 skip / 24 total**. The combined
@@ -8576,6 +8578,77 @@ files. Against prototype-internal baseline `29691533326`, 29 result files are
 byte-identical. Only `built-ins` changes from **15095/5238/3329** to
 **15116/5238/3308**, exactly **+21 pass / -21 skip** with no failure, timeout,
 error, corpus, or total drift.
+
+## Iterative Proxy Set and complete receiver admission
+
+Proxy `[[Set]]` and the receiver-side `[[DefineOwnProperty]]` operations
+reached through `OrdinarySetWithOwnDescriptor` now share iterative,
+fuel-metered, GC-rooted state machines. Transparent Set traps tail-forward
+without Rust recursion; ordinary prototype traversal returns control to the
+same driver when it reaches a Proxy. False traps suppress target descriptor
+lookup, truthy traps preserve the target invariant checks, and revocation,
+non-callable traps, abrupt completions, and cycle errors keep their observable
+order.
+
+Receiver creation retains the complete CreateDataProperty descriptor, while
+an existing writable receiver property delegates only `{value}`. Descriptor
+objects contain exactly the present fields and use the current execution
+Realm. Reaching an ordinary target preserves the existing TypedArray, Array,
+mapped-arguments, namespace, and extensibility behavior. The old 128-layer Set
+and receiver-definition guards are gone; the ordinary Set 1024-hop guard and
+handler trap lookup through ordinary Get's 4096-hop boundary remain separate
+follow-ups.
+
+`tools/test262_proxy_define_property_admission.txt` now freezes the complete
+**24/24** direct Proxy defineProperty directory. Its normalized path-list
+checksum is
+`a002341a5009bf858ed9c0ca44bfdb3d15e3fcb36fabe50cc12e1b298e671db5`.
+`tools/test262_proxy_set_admission.txt` independently freezes all **27** direct
+Proxy Set files with checksum
+`544af6a5bdcc955a21df6775bade2f624694931c46831d07485cfe4207938396`.
+The Set metadata map contains 11 `Proxy`, nine `Proxy` plus `Reflect` and
+`Reflect.set`, five `Proxy` plus `Reflect`, one `Proxy` plus `__proto__`, and
+one `Proxy` plus `cross-realm` file. Tooling verifies exact live directories,
+features, includes, empty flags, absence of negative metadata, disjointness,
+runner/analyzer symmetry, and closed future-sibling and extra-feature gates.
+
+On pinned Test262 `020cb74075849d1e404bbcdb62feb7a02e6966db`, direct
+`Proxy/defineProperty`, `Proxy/set`, and `Reflect/set` are **69/69**. The four
+Object/Reflect/Proxy define-property directories are **1773 pass / 13 fail /
+13 skip / 1799 total**, exactly **+3 pass / -3 skip** from the preceding unit.
+`Proxy/get` plus `Proxy/isExtensible` remain **31/31**, and the supported subset
+remains **12751 pass / 0 fail / 7687 skip / 20438 total**.
+
+Local gates pass Rust all-target/all-feature tests with lib **150/150** and
+builtins **503/503**, warnings-denied Clippy, rustfmt/diff, debug and release
+builds, wasm32, the release-only Realm rollback sweep, and Python tooling
+**115/115**. Mutation checks fail when the Proxy Set fuel charge or
+operation-wide value root is removed, or when a value-only receiver descriptor
+is incorrectly completed with `writable`; each passes after restoration.
+Feature commit `cd6a65313103bcaf8de900df6046f2a8f600f5ff` is pushed to
+`main`. Independent GPT reviews found no code, metadata, admission, or tooling
+defect; their only documentation-staleness finding is resolved by this
+section.
+
+Ordinary CI `29698474332` passes both jobs, and full matrix `29698474309`
+passes all **33/33** jobs. The 30 downloaded result files at
+`/tmp/ruja-proxy-set-results.29698474309.MKYKPL` aggregate to **30754 pass /
+6049 fail / 11658 skip / 6 timeout / 0 error / 48467 total / 36803
+pass-or-fail executed**, or **63.5%** of all files and **83.6%** of executed
+files. Against
+`/tmp/ruja-define-property-results.29695748050.FS0S7x`, 29 result files are
+byte-identical. Only `test262_built-ins_result.txt` changes from
+**15116/5238/3308** to **15146/5238/3278**, exactly **+30 pass / -30 skip**
+with no failure, timeout, error, corpus, or total drift.
+
+GPT 5.6 reviewers Linnaeus (`019f7b70-4012-70d1-9eef-c5d82af25b09`) and
+Laplace (`019f7b70-6471-7713-8c97-0b2a4ec61743`) audited the implementation and
+admission boundary. Final reviewers Meitner
+(`019f7b8d-5fea-7860-ac5b-69eb09208b2d`) and Parfit
+(`019f7b8d-614b-7a23-a956-4e00becef175`) found no code, metadata, admission, or
+tooling defect. Parfit's only finding was the pre-update documentation state
+resolved by this section. All sessions are closed; no coder model or Umans
+provider route was used.
 
 ## Why the full-suite rate is not higher
 

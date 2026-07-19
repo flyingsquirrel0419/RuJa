@@ -635,7 +635,7 @@ design.
 - 검토한 주요 대안: Keep recursion, impose a fixed depth cap, track visited targets, accumulate every transparent layer, or advance one rooted current target iteratively while metering every nested Proxy operation.
 - 선택한 방식: Pin the original receiver, iterate one Proxy layer at a time with constant per-hop target/handler/trap pins, preserve the first real trap's descriptor and extensibility checks, and consume fuel in Delete plus shared Get, GetOwnProperty, and IsExtensible traversal.
 - 다른 대안 대신 이 방식을 선택한 이유: Recursion can abort the host, a cap rejects valid programs, target links are immutable and do not require cycle detection, and accumulated layers add unnecessary memory. A rooted current value directly models transparent forwarding while shared fuel closes nested-operation bypasses.
-- 장점, 단점 및 영향: A 100,000-layer delete is stack-safe, forced GC and every abrupt path restore pin depth, and hosts can stop deep handlers or invariant targets with fuel. Unbounded hosts can still spend linear time on arbitrarily deep legal chains, and separately capped Set and receiver-side DefineOwnProperty paths remain future iterative audits.
+- 장점, 단점 및 영향: A 100,000-layer delete is stack-safe, forced GC and every abrupt path restore pin depth, and hosts can stop deep handlers or invariant targets with fuel. Unbounded hosts can still spend linear time on arbitrarily deep legal chains. Set and receiver-side DefineOwnProperty now use the later iterative state machine; ordinary Get, HasProperty, and Set traversal caps remain separate audits.
 ```
 
 ## Reflect omitted property-key normalization
@@ -822,7 +822,7 @@ directly.
 - 검토한 주요 대안: Store one extensibility flag on every GC cell, keep a side table keyed by GcIdx, add flags only to the initially reported variants, raise a Proxy depth limit, or give each public variant explicit state and reuse the complete integrity/internal-method paths.
 - 선택한 방식: Keep per-variant atomic state behind exhaustive HeapObj helpers, walk Proxy targets iteratively with constant per-layer roots and fuel, validate truthy results through full IsExtensible, and route non-specialized exotics through rooted GC-retrying SetIntegrityLevel and TestIntegrityLevel.
 - 다른 대안 대신 이 방식을 선택한 이유: Cell-wide metadata would also describe internal Environment and Iterator records and complicate slot reuse; a side table risks stale GcIdx identity; a partial variant list recreates the bug when new exotics appear; and fixed depth limits reject valid programs. Existing complete internal-method helpers preserve observable order and typed-array or module-namespace behavior.
-- 장점, 단점 및 영향: Deep transparent chains are stack-safe and host-bounded, nested traps and Realm errors remain observable in order, every current exotic blocks new properties after prevention, and integrity operations process real descriptors under heap caps. The cost is one atomic field per stateful variant plus duplicated constructor initialization, while receiver-side DefineOwnProperty and the remaining ordinary property traversals still require separate iterative audits.
+- 장점, 단점 및 영향: Deep transparent chains are stack-safe and host-bounded, nested traps and Realm errors remain observable in order, every current exotic blocks new properties after prevention, and integrity operations process real descriptors under heap caps. The cost is one atomic field per stateful variant plus duplicated constructor initialization. Receiver-side DefineOwnProperty was completed by the later Set state machine; the remaining ordinary property traversals still require separate iterative audits.
 ```
 
 ## Iterative prototype internal methods
@@ -916,9 +916,9 @@ fuel is unbounded; configured fuel gives hosts an exact per-layer work bound.
 Specification-required nested invariant checks can still perform superlinear
 work, and Proxy-valued `apply` traps can retain per-layer argument arrays until
 the call resolves. Receiver-side property definition reached through ordinary
-`[[Set]]` still has a separate 128-layer guard. Revoked Proxy heap cells also
-retain their target and handler strongly even though observable operations
-reject them; both limitations remain explicit follow-up work.
+`[[Set]]` is completed by the state machine below. Revoked Proxy heap cells
+still retain their target and handler strongly even though observable
+operations reject them; that storage issue remains explicit follow-up work.
 
 ```text
 [Decision Log]
@@ -927,7 +927,52 @@ reject them; both limitations remain explicit follow-up work.
 - 검토한 주요 대안: Raise recursion guards, admit only shallow Test262 cases, duplicate public and internal algorithms, complete every descriptor eagerly, or use shared iterative state machines plus immutable Proxy call/construct metadata.
 - 선택한 방식: Preserve partial descriptors in an explicit record, route both entry points through one rooted per-layer DefineOwnProperty state machine, store callability and constructability at Proxy creation, and tail-transform Proxy Call state while charging fuel and allocating argument arrays in the current Realm.
 - 다른 대안 대신 이 방식을 선택한 이유: Larger guards still reject valid programs and remain stack-dependent; shallow admission would hide the sandbox failure; duplicated algorithms drift in trap and invariant order; eager completion changes compatibility semantics; and immutable metadata directly represents whether ProxyCreate installed the Call and Construct internal methods.
-- 장점, 단점 및 영향: One implementation now covers 100,000 transparent defineProperty layers and 25,000 callable trap layers with exact fuel and pin cleanup, partial descriptors and Realm errors remain observable in order, and mutation tests prove the critical roots and allocation ordering. Receiver-side Set delegation, revoked-slot retention, and VM-wide fallible native temporary storage remain separate bounded units.
+- 장점, 단점 및 영향: One implementation now covers 100,000 transparent defineProperty layers and 25,000 callable trap layers with exact fuel and pin cleanup, partial descriptors and Realm errors remain observable in order, and mutation tests prove the critical roots and allocation ordering. Receiver-side Set delegation is completed by the following state machine; revoked-slot retention and VM-wide fallible native temporary storage remain separate bounded units.
+```
+
+## Iterative Proxy Set and receiver definition
+
+`Vm::try_set_property_key_with_receiver_tracked` owns one iterative driver for
+Proxy `[[Set]]` and ordinary prototype traversal that reaches a Proxy. The
+original base, value, and receiver remain pinned for the whole operation. Each
+Proxy layer checks revocation, consumes one fuel unit, records the object for
+cycle detection, and roots its target and handler across observable `set` trap
+lookup. A missing trap advances directly to the target. A present trap is
+validated before invocation, receives the original receiver, and
+short-circuits on a false result before the target descriptor invariant walk.
+
+Ordinary `[[Set]]` still owns its specialized TypedArray, Array, mapped
+arguments, accessor, and data-property behavior. When its prototype is a
+Proxy, it returns a forwarding outcome to the outer driver instead of
+recursively calling back into Proxy Set. This removes the native recursion and
+the separate 128-layer Proxy guard while retaining the existing 1024-object
+ordinary prototype guard as an explicit later audit.
+
+`OrdinarySetWithOwnDescriptor` distinguishes two receiver definitions. A
+missing receiver property uses the complete CreateDataProperty descriptor
+`{value, writable: true, enumerable: true, configurable: true}`. An existing
+writable data property uses only `{value}` so its attributes are preserved.
+Both forms now retain descriptor presence bits and delegate through the shared
+iterative Proxy `[[DefineOwnProperty]]` state machine. The trap descriptor
+object is created in the current execution Realm and materializes only present
+fields in FromPropertyDescriptor order. Reaching an ordinary target returns to
+the existing TypedArray, Array length/index, mapped-arguments, namespace, and
+extensibility paths.
+
+Deep regressions cover 100,000 transparent Set/receiver layers, exact 3N and
+2N fuel boundaries, nested target descriptor and callable-Proxy fuel, forced
+collection, unique abrupt values, revoked inner targets, false-result
+short-circuiting, descriptor mutation between lookup and trap call, Realm
+identity, exact heap caps, cycle rejection, and pin-depth restoration.
+
+```text
+[Decision Log]
+- 목적과 의도: Remove the 128-layer Proxy Set and receiver DefineOwnProperty correctness limits without losing ECMAScript trap order, descriptor presence, Realm identity, GC lifetime, cycle rejection, or host work bounds.
+- 기존 구현 및 제약 조건: Missing Set and receiver defineProperty traps recursively re-entered Rust, both paths stopped at a fixed Proxy depth, complete and value-only receiver descriptors used duplicated validators and materializers, and ordinary prototype traversal recursively handed control to Proxy Set.
+- 검토한 주요 대안: Raise the depth constant, retain separate recursive receiver helpers, build independent iterative Set and receiver-definition stacks, or let one rooted Set driver tail-forward while reusing the existing presence-aware iterative DefineOwnProperty state machine.
+- 선택한 방식: Pin operation inputs once, iterate Proxy Set targets with one fuel charge per layer, return an explicit forwarding outcome at ordinary-to-Proxy boundaries, represent receiver descriptors with presence bits, and route both complete and value-only definitions through the shared Proxy DefineOwnProperty driver before specialized ordinary fallback.
+- 다른 대안 대신 이 방식을 선택한 이유: A larger cap remains non-conforming and stack-dependent; duplicated iterative algorithms would drift in GetMethod, invariant, and cleanup order; an explicit continuation stack is unnecessary for transparent tail forwarding; and the existing DefineOwnProperty driver already owns the required roots, Realm allocation, and compatibility rules when descriptor presence is preserved.
+- 장점, 단점 및 영향: Deep legal Proxy Set and receiver-definition chains are stack-safe and exactly fuel-bounded, one cleanup scope restores roots on every Result exit, and complete versus value-only descriptors remain observable. The shared visited set grows with traversed objects, while ordinary Get, HasProperty, Set, and handler-prototype lookup retain their separate 4096/1024 limits for the next coordinated property-traversal audit.
 ```
 
 ---

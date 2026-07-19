@@ -114,6 +114,13 @@
   Transparent forwarding and nested invariant walks share one iterative,
   GC-rooted, fuel-metered VM state machine across internal and public
   `Object`/`Reflect` entry points
+- Proxy `[[Set]]` preserves revocation, `GetMethod`, trap-call, false-result,
+  and target descriptor invariant order while iterating transparent targets
+  without a Proxy depth cap. Ordinary prototype traversal can hand control to
+  the same state machine without Rust recursion. Receiver-side property
+  creation and value-only updates retain their distinct descriptor fields and
+  delegate through the shared iterative Proxy `[[DefineOwnProperty]]` path;
+  descriptor objects use the current execution Realm
 - `delete` respects `configurable` (false in sloppy, TypeError in strict).
   Proxy `deleteProperty` lookup, calls, and target invariants preserve Symbol
   keys and observable order; transparent chains are iterative, GC-rooted, and
@@ -163,7 +170,10 @@
   Proxy is created and remain stable after revocation. Transparent `[[Call]]`
   forwarding and Proxy-valued `apply` traps use an iterative, GC-rooted,
   fuel-metered dispatcher. Non-callable traps fail before argument-array
-  allocation, and observable argument arrays use the current execution Realm
+  allocation, and observable argument arrays use the current execution Realm.
+  `[[Set]]` forwarding and receiver-side `[[DefineOwnProperty]]` delegation are
+  likewise iterative, rooted, and fuel-metered while preserving complete
+  versus value-only descriptor presence
 - **Reflect**: all 13 standard methods: `apply`, `construct`, `defineProperty`,
   `deleteProperty`, `get`, `getOwnPropertyDescriptor`, `getPrototypeOf`, `has`,
   `isExtensible`, `ownKeys`, `preventExtensions`, `set`, and `setPrototypeOf`.
