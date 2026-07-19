@@ -141,9 +141,11 @@
   Realm and survive callback/coercion GC. `preventExtensions`, integrity-level
   tests, sealing, and freezing cover every observable exotic object; Proxy
   forwarding is iterative, fuel-metered, GC-rooted, and validates truthy traps
-  through the target's complete nested `[[IsExtensible]]`. Every Realm's original
-  `%Object.prototype%` implements immutable-prototype semantics while
-  remaining extensible
+  through the target's complete nested `[[IsExtensible]]`. Prototype get/set
+  forwarding is also iterative, rooted, and fuel-metered; ordinary prototype
+  cycle detection has no fixed depth cap. Every Realm's original
+  `%Object.prototype%` implements immutable-prototype semantics while remaining
+  extensible
 - **Number**: `parseInt`/`parseFloat`, `isNaN`, `isFinite`; `Number` statics
   (`isInteger`, `isFinite`, `isNaN`, `isSafeInteger`, constants) and
   `toString(radix)`/`toFixed`/`toPrecision`/`toExponential`

@@ -8381,10 +8381,10 @@ byte-identical. Only `built-ins` changes, from **14955/5238/3469** to
 **15026/5238/3398**, exactly **+71 pass / -71 skip**.
 
 This closes the finite direct Test262 surface, not every internal method that
-Reflect exposes. The later Realm Object-prototype and exotic-extensibility
-sections record subsequent closures. Long prototype-cycle acceptance and the
-remaining unmetered transparent-Proxy traversals are tracked in
-[Known limitations](limitations.md) as separate correctness units.
+Reflect exposes. The later Realm Object-prototype, exotic-extensibility, and
+iterative-prototype sections record subsequent closures. Transparent Proxy
+`[[DefineOwnProperty]]` and the remaining ordinary property-traversal caps are
+tracked in [Known limitations](limitations.md) as separate correctness units.
 
 ## Realm Object prototype immutability
 
@@ -8462,6 +8462,51 @@ files. Against the Object-prototype baseline, 29 artifacts are byte-identical.
 Only `built-ins` changes, from **15026/5238/3398** to **15055/5238/3369**,
 exactly **+29 pass / -29 skip** with no failure, timeout, error, corpus, or
 total drift.
+
+## Iterative prototype internal methods and exact admission
+
+Proxy `[[GetPrototypeOf]]` and `[[SetPrototypeOf]]` now use iterative,
+fuel-metered state machines instead of recursive transparent forwarding. Each
+layer preserves revocation, `GetMethod`, trap invocation, result conversion,
+and invariant order while rooting the receiver, target, handler, trap result,
+and proposed prototype across observable GC. Non-extensible
+`getPrototypeOf` expectations remain pinned and are checked from the
+innermost Proxy outward. Forced-GC and mutation regressions prove those roots
+are functional rather than incidental.
+
+Ordinary `[[SetPrototypeOf]]` cycle detection no longer stops after 4096
+links. The replacement follows only ordinary prototype slots, charges one fuel
+unit per candidate, stops at a non-ordinary `[[GetPrototypeOf]]` method, and
+uses constant-memory Brent checkpoints to reject an impossible pre-existing
+ordinary cycle. Tests cover 100,000 transparent Proxy layers, exact N-1/N
+fuel boundaries, a 5000-link cycle, nested invariant fuel, abrupt completion,
+Realm-sensitive public methods, and cleanup after every exit.
+
+`tools/test262_prototype_internal_admission.txt` freezes exactly 40 files:
+four `Object/setPrototypeOf`, all 19 `Proxy/getPrototypeOf`, and all 17
+`Proxy/setPrototypeOf` cases selected by the audited metadata map. Tooling
+verifies live `features`, `includes`, empty `flags`, absence of `negative`,
+disjointness from every other manifest, runner/analyzer symmetry, and that a
+future sibling or additional unsupported feature remains skipped.
+
+On pinned Test262 `020cb74075849d1e404bbcdb62feb7a02e6966db`, the three exact
+directories are **48 pass / 0 fail / 0 skip**. Adding direct
+`Reflect.getPrototypeOf` and `Reflect.setPrototypeOf` gives **72/72**; adding
+`Object/getPrototypeOf` produces **110 pass / 0 fail / 1 skip / 111 total**.
+The supported subset remains **12751 pass / 0 fail / 7687 skip / 20438
+total**. Python tooling is **113/113**; Rust all-target/all-feature tests pass
+with **143/143** lib tests and **500/500** builtins, together with
+warnings-denied Clippy, rustfmt/diff, release, and wasm32 checks.
+
+Feature commit `c226b655c21ad140e7bd1e941333d6eca64b1fce` passed ordinary CI
+`29691533311` and all **33/33** jobs in full matrix `29691533326`. The 30
+downloaded result files at `/tmp/ruja-prototype-results.29691533326.0v6mCe`
+aggregate to **30703 pass / 6049 fail / 11709 skip / 6 timeout / 0 error /
+48467 total / 36752 pass-or-fail executed**, or **63.3%** of all files and
+**83.5%** of executed files. Against the extensibility baseline, 29 result
+files are byte-identical. Only `built-ins` changes from **15055/5238/3369** to
+**15095/5238/3329**, exactly **+40 pass / -40 skip** with no failure, timeout,
+error, corpus, or total drift.
 
 ## Why the full-suite rate is not higher
 

@@ -822,7 +822,63 @@ directly.
 - 검토한 주요 대안: Store one extensibility flag on every GC cell, keep a side table keyed by GcIdx, add flags only to the initially reported variants, raise a Proxy depth limit, or give each public variant explicit state and reuse the complete integrity/internal-method paths.
 - 선택한 방식: Keep per-variant atomic state behind exhaustive HeapObj helpers, walk Proxy targets iteratively with constant per-layer roots and fuel, validate truthy results through full IsExtensible, and route non-specialized exotics through rooted GC-retrying SetIntegrityLevel and TestIntegrityLevel.
 - 다른 대안 대신 이 방식을 선택한 이유: Cell-wide metadata would also describe internal Environment and Iterator records and complicate slot reuse; a side table risks stale GcIdx identity; a partial variant list recreates the bug when new exotics appear; and fixed depth limits reject valid programs. Existing complete internal-method helpers preserve observable order and typed-array or module-namespace behavior.
-- 장점, 단점 및 영향: Deep transparent chains are stack-safe and host-bounded, nested traps and Realm errors remain observable in order, every current exotic blocks new properties after prevention, and integrity operations process real descriptors under heap caps. The cost is one atomic field per stateful variant plus duplicated constructor initialization, while DefineOwnProperty and prototype traversals still require separate iterative audits.
+- 장점, 단점 및 영향: Deep transparent chains are stack-safe and host-bounded, nested traps and Realm errors remain observable in order, every current exotic blocks new properties after prevention, and integrity operations process real descriptors under heap caps. The cost is one atomic field per stateful variant plus duplicated constructor initialization, while DefineOwnProperty and the remaining ordinary property traversals still require separate iterative audits.
+```
+
+## Iterative prototype internal methods
+
+`Vm::get_prototype_of` implements the Proxy `[[GetPrototypeOf]]` algorithm as
+an iterative state machine. The original receiver remains pinned for the whole
+operation. Each Proxy layer is checked for revocation before consuming one fuel
+unit, and its target and handler are pinned across observable trap lookup and
+invocation. A missing trap advances to the target without native recursion. A
+present trap must return an object or `null`; that result remains rooted while
+the target's complete nested `[[IsExtensible]]` operation runs.
+
+When a trapped target is non-extensible, the state machine records and pins
+the expected prototype, then continues into the target. Once an ordinary
+prototype or an extensible trapped result is reached, deferred expectations
+are checked from the innermost Proxy outward. This is the iterative equivalent
+of returning through nested internal-method calls: an inner mismatch or abrupt
+completion prevents any outer validation from completing. A single cleanup
+boundary releases every deferred root and restores the incoming pin depth on
+normal, TypeError, user-throw, GC, and host-fuel exits.
+
+`Vm::set_prototype_of` uses the same forwarding discipline. Both the original
+receiver and proposed prototype are pinned before any handler lookup can run
+GC. False trap results return immediately; truthy results inspect the target's
+full nested `[[IsExtensible]]` and, when required, `[[GetPrototypeOf]]` before
+enforcing the invariant. Missing traps advance iteratively until the ordinary
+target or another observable trap decides the result. This preserves the
+specified revocation, `GetMethod`, call, boolean conversion, and invariant
+order from the ECMAScript Proxy algorithms.
+
+Ordinary `[[SetPrototypeOf]]` no longer stops cycle detection after 4096
+objects. `prototype_chain_blocks_set` follows raw ordinary prototype slots,
+charges one fuel unit per visited candidate, and stops when it reaches `null`
+or an object such as Proxy whose `[[GetPrototypeOf]]` method is non-ordinary.
+That stop is required by `OrdinarySetPrototypeOf`; invoking a Proxy trap here
+would incorrectly reject the specified Proxy-shadowed cycle exception. Brent
+checkpoints detect an impossible pre-existing all-ordinary cycle with constant
+native memory, avoiding both an infinite default-fuel walk and a growing set of
+reusable `GcIdx` identities.
+
+Transparent chains are O(n) time and constant state beyond active roots.
+Fully trapped non-extensible nesting performs the specification-required
+nested extensibility and prototype checks, so its worst case is O(n^2) work
+with O(n) deferred expected prototypes; fuel bounds that work. Regressions use
+100,000 transparent layers, exact N-1/N fuel boundaries, a 5000-link ordinary
+cycle, nested invariant fuel, forced GC, abrupt completion, Realm-sensitive
+public methods, and a WeakRef mutation test proving deferred roots are real.
+
+```text
+[Decision Log]
+- 목적과 의도: Remove the native-recursion and 4096-link correctness limits from prototype internal methods while preserving every observable Proxy step, invariant, Realm error, GC root, and host resource bound.
+- 기존 구현 및 제약 조건: Transparent Proxy get/setPrototypeOf forwarding recursively called the same Rust method without fuel; trapped getPrototypeOf invariants recursively re-entered the target; proposed prototypes and several observable intermediates were not owned by one cleanup scope; and ordinary cycle detection silently returned false after scanning only 4096 candidates, allowing a longer cycle.
+- 검토한 주요 대안: Raise the depth cap, retain recursion behind a separate recursion guard, track ordinary candidates in a HashSet, invoke full GetPrototypeOf while checking ordinary cycles, or use iterative Proxy state machines plus constant-memory Brent checkpoints for the ordinary-only scan.
+- 선택한 방식: Pin operation inputs once, consume one fuel unit and root observable values per Proxy layer, defer non-extensible getPrototypeOf expectations for reverse validation, iterate missing setPrototypeOf traps, and scan ordinary prototype slots with fuel and Brent cycle detection until null or a non-ordinary GetPrototypeOf method.
+- 다른 대안 대신 이 방식을 선택한 이유: A larger cap still rejects valid programs and accepts cycles beyond its boundary; Rust recursion remains stack-dependent; a HashSet adds infallible native growth and stores reusable heap identities; and calling Proxy GetPrototypeOf during OrdinarySetPrototypeOf violates the specification's non-ordinary-method stop rule. The chosen state machines preserve exact call order and make every unbounded walk host-metered.
+- 장점, 단점 및 영향: Legal transparent chains are stack-safe at arbitrary depth, ordinary cycles are rejected without a fixed limit, trap results and proposed prototypes survive observable GC, and fuel aborts leave the VM reusable with its pin depth restored. Fully trapped non-extensible chains retain specification-driven quadratic work and linear deferred storage; the VM-wide fallible native-temporary policy remains a separate architecture task.
 ```
 
 ---

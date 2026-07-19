@@ -4,6 +4,50 @@
 
 ### Fixed
 
+- Proxy `[[GetPrototypeOf]]` and `[[SetPrototypeOf]]` forwarding now walks
+  transparently through arbitrary legal depth without Rust recursion. Each
+  Proxy layer is rooted and consumes one fuel unit while preserving
+  revocation, trap lookup and call order, false results, abrupt completions,
+  nested invariants, and method-Realm errors. Deferred non-extensible
+  `getPrototypeOf` expectations are pinned and validated from the innermost
+  Proxy outward, while the proposed prototype remains pinned throughout
+  `setPrototypeOf`.
+
+  Ordinary `[[SetPrototypeOf]]` cycle detection no longer accepts cycles past
+  a 4096-link cutoff. It scans raw ordinary prototype slots with one fuel unit
+  per candidate and uses constant-memory Brent checkpoints, stopping at a
+  non-ordinary `[[GetPrototypeOf]]` method as required. Regressions cover
+  100,000 transparent Proxy layers, exact fuel boundaries, a 5000-link cycle,
+  nested trapped invariants, forced GC, abrupt completion, Realm-sensitive
+  public methods, and pin restoration. A reviewer-identified WeakRef
+  same-job-retention false positive was removed; mutation testing then proved
+  the deferred expected-prototype root is necessary.
+
+  `tools/test262_prototype_internal_admission.txt` freezes exactly 40 files,
+  split **4/19/17** across `Object/setPrototypeOf`, `Proxy/getPrototypeOf`, and
+  `Proxy/setPrototypeOf`. The three exact directories are **48/48**, adding
+  direct Reflect get/set gives **72/72**, and the six-directory prototype
+  probe is **110 pass / 0 fail / 1 skip / 111 total**. The supported subset
+  remains **12751/0/7687/20438**. Local gates pass all Rust targets/features
+  with lib **143/143**, builtins **500/500**, warnings-denied Clippy,
+  rustfmt/diff, release, wasm32, and Python tooling **113/113**.
+
+  Feature commit `c226b655c21ad140e7bd1e941333d6eca64b1fce` passed ordinary
+  CI `29691533311` and all **33/33** jobs in full matrix `29691533326`. The
+  30 result files at `/tmp/ruja-prototype-results.29691533326.0v6mCe`
+  aggregate to **30703 pass / 6049 fail / 11709 skip / 6 timeout / 0 error /
+  48467 total / 36752 pass-or-fail executed**. Twenty-nine result files are
+  byte-identical to the extensibility baseline; only `built-ins` changes from
+  **15055/5238/3369** to **15095/5238/3329**, exactly **+40 pass / -40 skip**
+  with no failure, timeout, error, corpus, or total drift.
+
+  GPT reviewers Pauli (`019f7aa5-8618-7130-a54e-7ac58c47e431`) audited the
+  exact corpus, Erdos (`019f7ac0-f6f1-70f2-b853-e5a33fd749de`) returned
+  `CLEAN`, and Newton (`019f7ac0-f84b-79d1-9fcf-ddf6db33321c`) found the
+  WeakRef test flaw and confirmed its correction. Gibbs
+  (`019f7aa5-850a-7761-a747-f4148810accc`) was stopped without a usable
+  result. All sessions are closed; no coder or Umans route was used.
+
 - `Object.preventExtensions` and `Reflect.preventExtensions` now persist state
   for every observable exotic object, including collections and their
   iterators, RegExp String iterators, weak collections/references,

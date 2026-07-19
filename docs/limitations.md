@@ -7,14 +7,15 @@ The following resource limits are enforced:
 
 - **Execution fuel**: `Vm::set_fuel(Some(n))` bounds dispatched opcodes and
   explicitly metered native-loop steps. Proxy `[[Delete]]`, `[[Get]]`,
-  `[[GetOwnProperty]]`, and `[[IsExtensible]]` consume one unit per traversed
-  Proxy layer, including nested handler and invariant walks. Exhaustion throws
-  a `RangeError("fuel exhausted")` that is *not catchable* by user `try/catch`
-  (a host-level abort). `None` = unbounded (default). Transparent Proxy
-  forwarding in `[[DefineOwnProperty]]`, `[[GetPrototypeOf]]`, and
-  `[[SetPrototypeOf]]` is still unmetered, so those three native paths can
-  perform linear work without reducing an active fuel
-  budget.
+  `[[GetOwnProperty]]`, `[[IsExtensible]]`, `[[PreventExtensions]]`,
+  `[[GetPrototypeOf]]`, and `[[SetPrototypeOf]]` consume one unit per
+  traversed Proxy layer, including nested handler and invariant walks.
+  Ordinary `[[SetPrototypeOf]]` cycle detection also consumes one unit per
+  visited candidate object. Exhaustion throws a `RangeError("fuel exhausted")`
+  that is *not catchable* by user `try/catch` (a host-level abort). `None` =
+  unbounded (default). Transparent Proxy forwarding in
+  `[[DefineOwnProperty]]` is still unmetered and can perform linear work
+  without reducing an active fuel budget.
 - **Heap object limit**: `Vm::set_max_heap_objects(Some(n))` caps the number
   of live GC-managed heap objects. When exceeded, allocation throws a
   catchable `RangeError("heap limit exceeded")`. A GC cycle is attempted
@@ -50,13 +51,10 @@ The following resource limits are enforced:
   valid deep chains. Transparent Proxy deletion, Proxy get forwarding,
   descriptor lookup, and extensibility traversal are iterative and
   fuel-metered, but their ordinary prototype segments are not all free of
-  arbitrary limits yet. Removing the remaining caps requires one coordinated
-  property-traversal audit rather than isolated limit increases.
-- **Prototype mutation traversal gaps**: cycle detection in
-  `[[SetPrototypeOf]]` stops after 4096 links and can accept a longer cycle.
-  Transparent Proxy `[[GetPrototypeOf]]` and `[[SetPrototypeOf]]` forwarding
-  is also recursive and unmetered. These behaviors are non-conforming and
-  require an iterative, fuel-metered traversal rather than a larger cap.
+  arbitrary limits yet. Prototype get/set internal methods and ordinary cycle
+  detection are iterative and uncapped. Removing the remaining property caps
+  requires one coordinated traversal audit rather than isolated limit
+  increases.
 - **Transparent Proxy enumeration gap**: `for...in` can omit keys forwarded
   from a transparent Proxy target. The underlying
   `[[GetOwnPropertyDescriptor]]` results are correct, but Proxy-focused harness
@@ -205,8 +203,8 @@ guarantees are required.
   scoped subset of ES5.1 + selected ES2015+ features (see
   [test262.md](test262.md#supported-subset) for the exact list). The full
   suite is run in CI (excluding `intl402`/`staging`) with a baseline pass
-  rate of 63.3% of all matrix files and 83.5% of executed files (**30,663
-  pass / 6,049 fail / 11,749 skip / 6 timeout / 0 error**); within the
+  rate of 63.3% of all matrix files and 83.5% of executed files (**30,703
+  pass / 6,049 fail / 11,709 skip / 6 timeout / 0 error**); within the
   supported subset, tests currently run at 100%.
   Full ES conformance is not claimed. See
   [test262.md](test262.md) for current numbers and the failure breakdown.
