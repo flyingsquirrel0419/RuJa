@@ -9710,6 +9710,198 @@ fn proxy_define_property_preserves_iterative_order_false_results_and_realms() {
 }
 
 #[test]
+fn ordinary_set_receiver_define_preserves_descriptor_presence_and_realm() {
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var fullKeys;
+            var partialKeys;
+            var fullRealm = false;
+            var partialRealm = false;
+
+            var fullTarget = {};
+            var fullReceiver = new Proxy(fullTarget, {
+              defineProperty: function (target, key, descriptor) {
+                fullKeys = Object.keys(descriptor).join(",");
+                fullRealm =
+                  Object.getPrototypeOf(descriptor) === other.Object.prototype;
+                return Reflect.defineProperty(target, key, descriptor);
+              }
+            });
+            var fullSource = Object.create(null);
+            var fullResult = other.Reflect.set(
+              fullSource,
+              "created",
+              11,
+              fullReceiver
+            );
+
+            var partialTarget = { existing: 2 };
+            var partialReceiver = new Proxy(partialTarget, {
+              defineProperty: function (target, key, descriptor) {
+                partialKeys = Object.keys(descriptor).join(",");
+                partialRealm =
+                  Object.getPrototypeOf(descriptor) === other.Object.prototype;
+                return Reflect.defineProperty(target, key, descriptor);
+              }
+            });
+            var partialSource = { existing: 1 };
+            var partialResult = other.Reflect.set(
+              partialSource,
+              "existing",
+              9,
+              partialReceiver
+            );
+
+            var fullDescriptor = Object.getOwnPropertyDescriptor(
+              fullTarget,
+              "created"
+            );
+            var partialDescriptor = Object.getOwnPropertyDescriptor(
+              partialTarget,
+              "existing"
+            );
+            [
+              fullResult,
+              fullKeys,
+              fullRealm,
+              fullDescriptor.value,
+              fullDescriptor.writable,
+              fullDescriptor.enumerable,
+              fullDescriptor.configurable,
+              partialResult,
+              partialKeys,
+              partialRealm,
+              partialDescriptor.value,
+              partialDescriptor.writable,
+              partialDescriptor.enumerable,
+              partialDescriptor.configurable
+            ].join("|");
+            "#),
+        Value::String(Arc::from(
+            "true|value,writable,enumerable,configurable|true|11|true|true|true|true|value|true|9|true|true|true"
+        ))
+    );
+}
+
+#[test]
+fn proxy_set_preserves_nested_order_short_circuits_and_descriptor_invariants() {
+    assert_eq!(
+        run(r#"
+            var order = [];
+            var orderedBase = Object.create(null);
+            var innerHandler = {};
+            Object.defineProperty(innerHandler, "set", {
+              get: function () { order.push("set inner"); return undefined; }
+            });
+            Object.defineProperty(innerHandler, "getOwnPropertyDescriptor", {
+              get: function () { order.push("gopd inner"); return undefined; }
+            });
+            Object.defineProperty(innerHandler, "defineProperty", {
+              get: function () {
+                order.push("define inner");
+                return function (target, key, descriptor) {
+                  order.push("trap");
+                  return Reflect.defineProperty(target, key, descriptor);
+                };
+              }
+            });
+            var inner = new Proxy(orderedBase, innerHandler);
+            var outerHandler = {};
+            Object.defineProperty(outerHandler, "set", {
+              get: function () { order.push("set outer"); return undefined; }
+            });
+            Object.defineProperty(outerHandler, "getOwnPropertyDescriptor", {
+              get: function () { order.push("gopd outer"); return undefined; }
+            });
+            Object.defineProperty(outerHandler, "defineProperty", {
+              get: function () { order.push("define outer"); return undefined; }
+            });
+            var outer = new Proxy(inner, outerHandler);
+            var orderedResult = Reflect.set(outer, "value", 17, outer);
+
+            var falseTarget = new Proxy({}, {
+              getOwnPropertyDescriptor: function () {
+                throw new Error("must not run");
+              }
+            });
+            var falseProxy = new Proxy(falseTarget, {
+              set: function () { return false; }
+            });
+            var falseSuppressed = Reflect.set(falseProxy, "x", 1) === false;
+
+            var revoked = Proxy.revocable({}, {});
+            revoked.revoke();
+            var revokedLog = [];
+            var revokedOuterHandler = {};
+            Object.defineProperty(revokedOuterHandler, "set", {
+              get: function () {
+                revokedLog.push("outer");
+                return undefined;
+              }
+            });
+            var revokedOuter = new Proxy(revoked.proxy, revokedOuterHandler);
+            var revokedError = false;
+            try { Reflect.set(revokedOuter, "x", 1); }
+            catch (error) { revokedError = error instanceof TypeError; }
+
+            var completeTarget = {};
+            var completeHandler = {};
+            Object.defineProperty(completeHandler, "defineProperty", {
+              get: function () {
+                Object.defineProperty(completeTarget, "x", {
+                  value: 0,
+                  writable: true,
+                  enumerable: true,
+                  configurable: false
+                });
+                return function () { return true; };
+              }
+            });
+            var completeReceiver = new Proxy(completeTarget, completeHandler);
+            var completeError = false;
+            try {
+              Reflect.set(Object.create(null), "x", 2, completeReceiver);
+            } catch (error) {
+              completeError = error instanceof TypeError;
+            }
+
+            var partialTarget = { x: 1 };
+            var partialHandler = {};
+            Object.defineProperty(partialHandler, "defineProperty", {
+              get: function () {
+                Object.defineProperty(partialTarget, "x", {
+                  configurable: false
+                });
+                return function () { return true; };
+              }
+            });
+            var partialReceiver = new Proxy(partialTarget, partialHandler);
+            var partialAccepted = Reflect.set(
+              { x: 0 },
+              "x",
+              2,
+              partialReceiver
+            );
+
+            [
+              orderedResult,
+              orderedBase.value,
+              order.join(","),
+              falseSuppressed,
+              revokedLog.join(","),
+              revokedError,
+              completeError,
+              partialAccepted
+            ].join("|");
+            "#),
+        Value::String(Arc::from(
+            "true|17|set outer,set inner,gopd outer,gopd inner,define outer,define inner,trap|true|outer|true|true|true"
+        ))
+    );
+}
+
+#[test]
 fn object_define_property_roots_ephemeral_native_arguments_across_gc() {
     let mut vm = Vm::new().expect("failed to initialize VM");
     vm.register_fn(

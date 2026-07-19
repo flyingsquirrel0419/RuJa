@@ -2936,6 +2936,269 @@ fn proxy_define_own_property_callable_proxy_traps_are_iterative_and_ordered() {
 }
 
 #[test]
+fn proxy_set_and_receiver_define_root_values_and_restore_pin_depth() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.clear_kept_objects();
+            vm.gc();
+            vm.new_object().map(Value::Object)
+        },
+        0,
+    )
+    .expect("GC test hook should register");
+    vm.run(
+        r#"
+        var rootedSetTarget = {};
+        var rootedSetHandler = {};
+        Object.defineProperty(rootedSetHandler, "set", {
+          get: function () {
+            forceGc();
+            return function (target, key, value, receiver) {
+              forceGc();
+              return Reflect.set(target, key, value, receiver);
+            };
+          }
+        });
+        var rootedSetProxy = new Proxy(rootedSetTarget, rootedSetHandler);
+
+        var abruptSetGetterHandler = {};
+        Object.defineProperty(abruptSetGetterHandler, "set", {
+          get: function () { forceGc(); throw { marker: 201 }; }
+        });
+        var abruptSetGetterProxy = new Proxy({}, abruptSetGetterHandler);
+        var abruptSetTrapProxy = new Proxy({}, {
+          set: function () { forceGc(); throw { marker: 202 }; }
+        });
+        var abruptSetInvariantTarget = new Proxy({}, {
+          getOwnPropertyDescriptor: function () {
+            forceGc();
+            throw { marker: 203 };
+          }
+        });
+        var abruptSetInvariantProxy = new Proxy(abruptSetInvariantTarget, {
+          set: function () { return true; }
+        });
+
+        var abruptReceiverSource = Object.create(null);
+        var abruptReceiverGetProxy = new Proxy({}, {
+          getOwnPropertyDescriptor: function () {
+            forceGc();
+            throw { marker: 204 };
+          }
+        });
+        var abruptReceiverDefineProxy = new Proxy({}, {
+          defineProperty: function () {
+            forceGc();
+            throw { marker: 205 };
+          }
+        });
+        var nonCallableReceiverTarget = { value: 0 };
+        var nonCallableReceiver = new Proxy(nonCallableReceiverTarget, {
+          defineProperty: {}
+        });
+        var nonCallableReceiverSource = { value: 1 };
+        "#,
+    )
+    .expect("collecting Proxy set fixtures should initialize");
+
+    vm.gc();
+    let value_idx = vm
+        .new_object()
+        .expect("unrooted receiver value should allocate");
+    vm.heap.with_obj(value_idx.0, |object| {
+        object.props().lock().insert(
+            crate::value::PropertyKey::from("marker"),
+            crate::value::PropertyDescriptor::data(Value::Number(73.0)),
+        );
+    });
+    let value = Value::Object(value_idx);
+    let proxy = vm.get_global("rootedSetProxy");
+    let baseline = vm.gc_pins.len();
+    assert!(vm
+        .try_set_property_with_receiver(&proxy, "rooted", value, &proxy)
+        .expect("set value should survive trap lookup and call GC"));
+    assert_eq!(vm.gc_pins.len(), baseline);
+    assert_eq!(
+        vm.run("rootedSetTarget.rooted.marker")
+            .expect("stored receiver value should remain live"),
+        Value::Number(73.0)
+    );
+
+    for (base_name, receiver_name, expected_marker) in [
+        ("abruptSetGetterProxy", "abruptSetGetterProxy", 201.0),
+        ("abruptSetTrapProxy", "abruptSetTrapProxy", 202.0),
+        ("abruptSetInvariantProxy", "abruptSetInvariantProxy", 203.0),
+        ("abruptReceiverSource", "abruptReceiverGetProxy", 204.0),
+        ("abruptReceiverSource", "abruptReceiverDefineProxy", 205.0),
+    ] {
+        let base = vm.get_global(base_name);
+        let receiver = vm.get_global(receiver_name);
+        let baseline = vm.gc_pins.len();
+        let error = vm
+            .try_set_property_with_receiver(&base, "abrupt", Value::Number(1.0), &receiver)
+            .expect_err("Proxy set/receiver define should preserve abrupt completion");
+        assert_eq!(error.kind, crate::error::ErrorKind::User);
+        assert_eq!(vm.gc_pins.len(), baseline);
+        let thrown = error
+            .thrown_value
+            .clone()
+            .expect("abrupt completion should retain its marker object");
+        let thrown_pin = vm.pin(&thrown);
+        assert_eq!(
+            vm.get_property(&thrown, "marker")
+                .expect("thrown marker should remain readable"),
+            Value::Number(expected_marker)
+        );
+        vm.unpin(thrown_pin);
+        assert_eq!(vm.gc_pins.len(), baseline);
+    }
+
+    vm.gc();
+    vm.set_max_heap_objects(Some(vm.heap.live_count()));
+    let source = vm.get_global("nonCallableReceiverSource");
+    let receiver = vm.get_global("nonCallableReceiver");
+    let baseline = vm.gc_pins.len();
+    let error = vm
+        .try_set_property_with_receiver(&source, "value", Value::Number(2.0), &receiver)
+        .expect_err("GetMethod must reject before partial descriptor allocation");
+    vm.set_max_heap_objects(None);
+    assert_eq!(error.kind, crate::error::ErrorKind::Type);
+    assert_eq!(vm.gc_pins.len(), baseline);
+}
+
+#[test]
+fn proxy_set_and_receiver_define_walks_consume_exact_fuel() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.run(
+        r#"
+        var deepSetBase = {};
+        var deepSetProxy = deepSetBase;
+        var transparentSetHandler = {};
+        for (var i = 0; i < 100000; i += 1) {
+          deepSetProxy = new Proxy(deepSetProxy, transparentSetHandler);
+        }
+        var receiverValueSource = { value: 0 };
+        "#,
+    )
+    .expect("deep Proxy set fixtures should initialize");
+    let proxy = vm.get_global("deepSetProxy");
+    let source = vm.get_global("receiverValueSource");
+    let baseline = vm.gc_pins.len();
+
+    vm.set_fuel(Some(299_999));
+    let error = vm
+        .try_set_property_with_receiver(&proxy, "value", Value::Number(41.0), &proxy)
+        .expect_err("N Proxy Set, GetOwnProperty, and DefineOwnProperty walks need 3N fuel");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    vm.set_fuel(Some(300_000));
+    assert!(vm
+        .try_set_property_with_receiver(&proxy, "value", Value::Number(41.0), &proxy)
+        .expect("exactly 3N fuel should complete transparent assignment"));
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+    vm.set_fuel(None);
+    assert_eq!(
+        vm.run("deepSetBase.value")
+            .expect("transparent assignment should reach the base"),
+        Value::Number(41.0)
+    );
+
+    vm.set_fuel(Some(199_999));
+    let error = vm
+        .try_set_property_with_receiver(&source, "value", Value::Number(73.0), &proxy)
+        .expect_err("receiver GetOwnProperty plus partial DefineOwnProperty need 2N fuel");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    vm.set_fuel(Some(200_000));
+    assert!(vm
+        .try_set_property_with_receiver(&source, "value", Value::Number(73.0), &proxy)
+        .expect("exactly 2N fuel should complete receiver value definition"));
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+    vm.set_fuel(None);
+    assert_eq!(
+        vm.run("deepSetBase.value")
+            .expect("partial receiver definition should update the base"),
+        Value::Number(73.0)
+    );
+}
+
+#[test]
+fn proxy_set_invariant_walks_consume_nested_fuel() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn("truthySetTrap", |_, _, _| Ok(Value::Bool(true)), 4)
+        .expect("native set trap should register");
+    vm.run(
+        r#"
+        var invariantSetBase = {};
+        var invariantSetTarget = invariantSetBase;
+        for (var i = 0; i < 64; i += 1) {
+          invariantSetTarget = new Proxy(invariantSetTarget, {});
+        }
+        var invariantSetProxy = new Proxy(invariantSetTarget, {
+          set: truthySetTrap
+        });
+        var callableSetTrap = truthySetTrap;
+        for (var j = 0; j < 25000; j += 1) {
+          callableSetTrap = new Proxy(callableSetTrap, {});
+        }
+        var callableSetProxy = new Proxy({}, { set: callableSetTrap });
+        "#,
+    )
+    .expect("nested Proxy set invariant fixture should initialize");
+    let proxy = vm.get_global("invariantSetProxy");
+    let baseline = vm.gc_pins.len();
+
+    vm.set_fuel(Some(64));
+    let error = vm
+        .try_set_property_with_receiver(&proxy, "x", Value::Number(1.0), &proxy)
+        .expect_err("outer Set plus N-layer target descriptor walk require N+1 fuel");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    vm.set_fuel(Some(65));
+    assert!(vm
+        .try_set_property_with_receiver(&proxy, "x", Value::Number(1.0), &proxy)
+        .expect("exact nested Proxy set invariant fuel should complete"));
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    let callable_proxy = vm.get_global("callableSetProxy");
+    vm.set_fuel(Some(25_000));
+    let error = vm
+        .try_set_property_with_receiver(
+            &callable_proxy,
+            "callable",
+            Value::Number(1.0),
+            &callable_proxy,
+        )
+        .expect_err("outer Set plus N callable Proxy layers require N+1 fuel");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    vm.set_fuel(Some(25_001));
+    assert!(vm
+        .try_set_property_with_receiver(
+            &callable_proxy,
+            "callable",
+            Value::Number(1.0),
+            &callable_proxy,
+        )
+        .expect("exact callable Proxy set-trap fuel should complete"));
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+}
+
+#[test]
 fn proxy_descriptor_conversion_roots_get_results_across_gc() {
     let mut vm = Vm::new().expect("VM should initialize");
     vm.register_fn(

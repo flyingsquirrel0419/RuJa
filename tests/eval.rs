@@ -424,14 +424,14 @@ fn proxy_prototype_cycles_do_not_overflow_the_rust_stack_on_set() {
     );
     assert!(error.contains("Prototype chain cycle"));
 
-    let error = run_err(
-        r#"
+    assert_eq!(
+        run(r#"
             var target = {};
             for (var i = 0; i < 10000; i++) target = new Proxy(target, {});
             Reflect.set(target, "value", 1);
-        "#,
+        "#),
+        Value::Bool(true)
     );
-    assert!(error.contains("Prototype chain too deep"));
 }
 
 #[test]

@@ -11,6 +11,8 @@ PROXY_DEFINE_PROPERTY_FILES = frozenset(
 )
 
 _EXTRA_FEATURES = {
+    "built-ins/Proxy/defineProperty/desc-realm.js": {"cross-realm"},
+    "built-ins/Proxy/defineProperty/null-handler-realm.js": {"cross-realm"},
     "built-ins/Proxy/defineProperty/return-boolean-and-define-target.js": {
         "Reflect"
     },
@@ -28,6 +30,9 @@ _EXTRA_FEATURES = {
         "proxy-missing-checks",
     },
     "built-ins/Proxy/defineProperty/targetdesc-undefined-not-configurable-descriptor-realm.js": {
+        "cross-realm"
+    },
+    "built-ins/Proxy/defineProperty/targetdesc-undefined-target-is-not-extensible-realm.js": {
         "cross-realm"
     },
     "built-ins/Proxy/defineProperty/trap-is-missing-target-is-proxy.js": {

@@ -79,6 +79,7 @@ try:
         PROXY_DEFINE_PROPERTY_FEATURES,
         PROXY_DEFINE_PROPERTY_FILES,
     )
+    from test262_proxy_set_admission import PROXY_SET_FEATURES, PROXY_SET_FILES
     from test262_proxy_own_keys_admission import (
         PROXY_OWN_KEYS_FEATURES, PROXY_OWN_KEYS_FILES,
     )
@@ -179,6 +180,7 @@ except ModuleNotFoundError:
         PROXY_DEFINE_PROPERTY_FEATURES,
         PROXY_DEFINE_PROPERTY_FILES,
     )
+    from tools.test262_proxy_set_admission import PROXY_SET_FEATURES, PROXY_SET_FILES
     from tools.test262_proxy_own_keys_admission import (
         PROXY_OWN_KEYS_FEATURES, PROXY_OWN_KEYS_FILES,
     )
@@ -2302,6 +2304,24 @@ def proxy_define_property_features(path):
         return frozenset()
     return PROXY_DEFINE_PROPERTY_FEATURES.get(rel.as_posix(), frozenset())
 
+def proxy_set_path(path):
+    if path is None:
+        return False
+    try:
+        rel = Path(path).resolve().relative_to(Path(TEST262).resolve() / "test")
+    except ValueError:
+        return False
+    return rel.as_posix() in PROXY_SET_FILES
+
+def proxy_set_features(path):
+    if path is None:
+        return frozenset()
+    try:
+        rel = Path(path).resolve().relative_to(Path(TEST262).resolve() / "test")
+    except ValueError:
+        return frozenset()
+    return PROXY_SET_FEATURES.get(rel.as_posix(), frozenset())
+
 def proxy_own_keys_path(path):
     if path is None:
         return False
@@ -2664,6 +2684,8 @@ def should_skip(meta, path=None):
         feats.difference_update(prototype_internal_features(path))
     if path is not None and proxy_define_property_path(path):
         feats.difference_update(proxy_define_property_features(path))
+    if path is not None and proxy_set_path(path):
+        feats.difference_update(proxy_set_features(path))
     if path is not None and proxy_own_keys_path(path):
         feats.difference_update(proxy_own_keys_features(path))
     if path is not None and reflect_set_has_path(path):

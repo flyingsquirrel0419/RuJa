@@ -1,5 +1,7 @@
-# Exact Proxy [[DefineOwnProperty]] admission; assignment-driven cases remain gated.
+# Complete direct Proxy [[DefineOwnProperty]] admission.
 built-ins/Proxy/defineProperty/call-parameters.js
+built-ins/Proxy/defineProperty/desc-realm.js
+built-ins/Proxy/defineProperty/null-handler-realm.js
 built-ins/Proxy/defineProperty/null-handler.js
 built-ins/Proxy/defineProperty/return-boolean-and-define-target.js
 built-ins/Proxy/defineProperty/return-is-abrupt.js
@@ -12,6 +14,7 @@ built-ins/Proxy/defineProperty/targetdesc-not-compatible-descriptor.js
 built-ins/Proxy/defineProperty/targetdesc-not-configurable-writable-desc-not-writable.js
 built-ins/Proxy/defineProperty/targetdesc-undefined-not-configurable-descriptor-realm.js
 built-ins/Proxy/defineProperty/targetdesc-undefined-not-configurable-descriptor.js
+built-ins/Proxy/defineProperty/targetdesc-undefined-target-is-not-extensible-realm.js
 built-ins/Proxy/defineProperty/targetdesc-undefined-target-is-not-extensible.js
 built-ins/Proxy/defineProperty/trap-is-missing-target-is-proxy.js
 built-ins/Proxy/defineProperty/trap-is-not-callable-realm.js
