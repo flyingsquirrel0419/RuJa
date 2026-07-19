@@ -30,7 +30,7 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 63.2% of all matrix files; 83.5% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 63.3% of all matrix files; 83.5% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (12751 pass / 0 fail / 7687 skip / 20438 total on the current pinned checkout) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
@@ -8381,9 +8381,9 @@ byte-identical. Only `built-ins` changes, from **14955/5238/3469** to
 **15026/5238/3398**, exactly **+71 pass / -71 skip**.
 
 This closes the finite direct Test262 surface, not every internal method that
-Reflect exposes. Long prototype-cycle acceptance, incomplete exotic
-`preventExtensions`, nested-Proxy extensibility validation, and unmetered
-transparent-Proxy traversals are tracked in
+Reflect exposes. The later Realm Object-prototype and exotic-extensibility
+sections record subsequent closures. Long prototype-cycle acceptance and the
+remaining unmetered transparent-Proxy traversals are tracked in
 [Known limitations](limitations.md) as separate correctness units.
 
 ## Realm Object prototype immutability
@@ -8421,6 +8421,47 @@ files at `/tmp/ruja-object-proto-results.29684489558.8OEqey` aggregate to
 36683 pass-or-fail executed**. Every file is byte-identical to
 `/tmp/ruja-reflect-complete-results.29682312645.qE94cM`, confirming that this
 cross-Realm semantic correction has no Test262 admission or result drift.
+
+## Exotic extensibility and complete preventExtensions admission
+
+Every observable exotic object now retains a real extensibility state, and
+transparent Proxy `[[PreventExtensions]]` forwarding is iterative,
+fuel-metered, and GC-rooted. A truthy outer trap validates a nested Proxy
+target through its complete `[[IsExtensible]]`, preserving nested traps,
+revocation, abrupt completions, method-Realm errors, and invariants. The same
+audit routes non-specialized exotics through complete integrity-level
+descriptor processing, so `seal`, `freeze`, `isSealed`, and `isFrozen` do not
+infer descriptor state from non-extensibility alone. Non-empty Map entries
+remain collection data and are not exposed as object own keys.
+
+`tools/test262_extensibility_admission.txt` freezes exactly 29 previously
+skipped files: one `Object/isExtensible`, four `Object/preventExtensions`, all
+12 `Proxy/isExtensible`, and all 12 `Proxy/preventExtensions` files. Its live
+metadata map removes only the audited feature tags. Exactly one file,
+`Proxy/preventExtensions/trap-is-undefined-target-is-proxy.js`, is admitted as
+a module. Tooling verifies exact `features`, `includes`, `flags`, absence of
+`negative`, disjointness from the other 38 manifests, runner/analyzer
+symmetry, and that future paths or additional unsupported features remain
+skipped.
+
+On pinned Test262 `020cb74075849d1e404bbcdb62feb7a02e6966db`, the combined
+six-directory boundary moves from **91 pass / 0 fail / 29 skip** to **120 pass
+/ 0 fail / 0 skip**. Direct Reflect remains **153/153**, Object seal/freeze is
+**131 pass / 0 fail / 16 skip / 147 total**, and the supported subset remains
+**12751 pass / 0 fail / 7687 skip / 20438 total**. Python tooling is
+**112/112**; Rust all-target/all-feature tests pass with **140/140** lib tests
+and **499/499** builtins, together with warnings-denied Clippy, rustfmt/diff,
+release, and wasm32 checks.
+
+Feature commit `57961ef` passed ordinary CI `29688399116` and all **33/33**
+jobs in full matrix `29688399107`. The 30 downloaded result files at
+`/tmp/ruja-extensibility-results.29688399107.lqESmN` aggregate to **30663 pass
+/ 6049 fail / 11749 skip / 6 timeout / 0 error / 48467 total / 36712
+pass-or-fail executed**, or **63.3%** of all files and **83.5%** of executed
+files. Against the Object-prototype baseline, 29 artifacts are byte-identical.
+Only `built-ins` changes, from **15026/5238/3398** to **15055/5238/3369**,
+exactly **+29 pass / -29 skip** with no failure, timeout, error, corpus, or
+total drift.
 
 ## Why the full-suite rate is not higher
 

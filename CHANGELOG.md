@@ -4,6 +4,54 @@
 
 ### Fixed
 
+- `Object.preventExtensions` and `Reflect.preventExtensions` now persist state
+  for every observable exotic object, including collections and their
+  iterators, RegExp String iterators, weak collections/references,
+  FinalizationRegistry, Promises, sync and async generators, TypedArrays,
+  ordinary and shared ArrayBuffers, and DataViews. New string or Symbol
+  properties and prototype replacement are rejected afterward while existing
+  configurable properties retain their specified write/delete behavior.
+
+  Proxy `[[PreventExtensions]]` forwarding now walks transparently through
+  arbitrary legal depth without Rust recursion. Every Proxy layer is rooted
+  and charged one fuel unit; trap lookup/call order, revocation, false results,
+  and abrupt completions are preserved. Truthy traps validate the target with
+  its complete nested `[[IsExtensible]]` internal method rather than raw heap
+  storage. Forced-GC and 100,000-layer exact-fuel regressions verify stack
+  safety, pin restoration, and VM reuse.
+
+  The audit also fixed integrity-level behavior exposed by the new state.
+  Non-specialized exotics now process real own descriptors for `seal`,
+  `freeze`, `isSealed`, and `isFrozen`; temporary descriptors use GC-retrying
+  allocation while the operation target remains pinned. Exact-cap tests reuse
+  the two required temporary cells across multiple properties and verify the
+  saturated failure boundary. Map entries are no longer misreported as object
+  own keys, and non-empty Maps seal without losing collection data. Non-empty
+  TypedArrays correctly reject sealing and freezing.
+
+  Exact Test262 admission adds 29 files, split **1/4/12/12** across
+  `Object/isExtensible`, `Object/preventExtensions`, `Proxy/isExtensible`, and
+  `Proxy/preventExtensions`. The combined six-directory boundary is
+  **120/120**, direct Reflect remains **153/153**, and the supported subset
+  remains **12751/0/7687/20438**. Local gates pass all Rust targets/features
+  with lib **140/140**, builtins **499/499**, warnings-denied Clippy,
+  rustfmt/diff, release, wasm32, and Python tooling **112/112**.
+
+  Feature commit `57961ef` passed ordinary CI `29688399116` and all **33/33**
+  jobs in full matrix `29688399107`. The 30 result files at
+  `/tmp/ruja-extensibility-results.29688399107.lqESmN` aggregate to **30663
+  pass / 6049 fail / 11749 skip / 6 timeout / 0 error / 48467 total / 36712
+  pass-or-fail executed**. Twenty-nine artifacts are byte-identical to the
+  prior baseline; only `built-ins` changes by exactly **+29 pass / -29 skip**.
+
+  GPT 5.6 explorers Singer (`019f7a2e-85cb-7970-84c4-109b9c29a4c4`) and
+  Faraday (`019f7a2e-87b4-7c32-94e6-ab61189934f7`) audited variant coverage,
+  Proxy order, and the exact corpus. Final reviewers Descartes
+  (`019f7a4d-1ac7-7022-8026-cd6a4b88b72e`) and Beauvoir
+  (`019f7a4d-1cae-7251-9176-a57f7fe05fbd`) found the integrity shortcut, Map
+  own-key leak, and raw allocation path; all were corrected before landing.
+  All sessions are closed, and no coder or Umans route was used.
+
 - Every created Realm's original `%Object.prototype%` now implements the
   Immutable Prototype Exotic Object `[[SetPrototypeOf]]` behavior instead of
   accepting a replacement prototype. Requests for the existing `null`

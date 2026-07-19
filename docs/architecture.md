@@ -781,6 +781,50 @@ context depth on all normal and `Result`-based abrupt paths; unwinding and then
 reusing a VM after a caught Rust panic remains outside the engine's supported
 recovery contract.
 
+## Exotic extensibility and Proxy preventExtensions
+
+Every observable stateful `HeapObj` variant owns an atomic extensibility bit.
+This includes collection objects, collection and RegExp String iterators,
+WeakRef and FinalizationRegistry objects, Promises, sync and async generators,
+TypedArrays, ArrayBuffers (shared or ordinary), and DataViews. Module namespace
+objects remain intrinsically non-extensible. `HeapObj::is_extensible` and
+`HeapObj::prevent_extensions` are the exhaustive storage boundary, so adding a
+new public object kind requires an explicit extensibility decision instead of
+silently inheriting `true`.
+
+`Vm::prevent_extensions` is an iterative Proxy internal-method state machine.
+It pins the original receiver for the complete operation, then checks
+revocation, consumes one fuel unit, and pins each target, handler, and present
+trap across observable lookup and call. A missing trap advances to the target
+without recursion. A false trap result returns false. A truthy result invokes
+the target's complete `[[IsExtensible]]`, including nested Proxy traps and
+their errors, before enforcing the invariant. Reaching a non-Proxy target
+updates that variant's atomic state. One cleanup boundary restores the incoming
+pin depth after normal, thrown, allocation, or host-fuel completion.
+
+Changing exotic extensibility exposed a pre-existing integrity-level shortcut:
+`Object.seal`, `freeze`, `isSealed`, and `isFrozen` had treated unknown exotic
+variants as if non-extensibility alone proved their descriptors immutable.
+Non-specialized exotics now use the shared `SetIntegrityLevel` and
+`TestIntegrityLevel` paths. Operation targets stay pinned, temporary descriptor
+objects allocate through GC-retrying `Vm::alloc`, and exact-cap tests prove two
+temporary cells can be reclaimed and reused across every own key. Map
+collection entries are internal collection data, not object own keys; removing
+them from ordinary own-key enumeration is required for sealing a non-empty Map.
+The existing specialized ordinary-object, Array, Function, and Iterator Helper
+paths remain because they materialize or mutate their descriptor storage
+directly.
+
+```text
+[Decision Log]
+- 목적과 의도: Make every observable object obey persistent extensibility, preserve Proxy preventExtensions ordering and invariants at arbitrary legal depth, and prevent seal/freeze from reporting integrity that descriptors do not have.
+- 기존 구현 및 제약 조건: Several exotic variants had no extensibility state; transparent Proxy forwarding recursed without fuel or explicit roots; truthy traps inspected nested Proxy storage directly; and integrity predicates treated unrecognized non-extensible exotics as sealed or frozen.
+- 검토한 주요 대안: Store one extensibility flag on every GC cell, keep a side table keyed by GcIdx, add flags only to the initially reported variants, raise a Proxy depth limit, or give each public variant explicit state and reuse the complete integrity/internal-method paths.
+- 선택한 방식: Keep per-variant atomic state behind exhaustive HeapObj helpers, walk Proxy targets iteratively with constant per-layer roots and fuel, validate truthy results through full IsExtensible, and route non-specialized exotics through rooted GC-retrying SetIntegrityLevel and TestIntegrityLevel.
+- 다른 대안 대신 이 방식을 선택한 이유: Cell-wide metadata would also describe internal Environment and Iterator records and complicate slot reuse; a side table risks stale GcIdx identity; a partial variant list recreates the bug when new exotics appear; and fixed depth limits reject valid programs. Existing complete internal-method helpers preserve observable order and typed-array or module-namespace behavior.
+- 장점, 단점 및 영향: Deep transparent chains are stack-safe and host-bounded, nested traps and Realm errors remain observable in order, every current exotic blocks new properties after prevention, and integrity operations process real descriptors under heap caps. The cost is one atomic field per stateful variant plus duplicated constructor initialization, while DefineOwnProperty and prototype traversals still require separate iterative audits.
+```
+
 ---
 
 **Next:** [Features](features.md) · [Known limitations](limitations.md) · [Back to README](../README.md)

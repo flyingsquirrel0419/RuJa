@@ -11,9 +11,9 @@ The following resource limits are enforced:
   Proxy layer, including nested handler and invariant walks. Exhaustion throws
   a `RangeError("fuel exhausted")` that is *not catchable* by user `try/catch`
   (a host-level abort). `None` = unbounded (default). Transparent Proxy
-  forwarding in `[[DefineOwnProperty]]`, `[[PreventExtensions]]`,
-  `[[GetPrototypeOf]]`, and `[[SetPrototypeOf]]` is still unmetered, so those
-  four native paths can perform linear work without reducing an active fuel
+  forwarding in `[[DefineOwnProperty]]`, `[[GetPrototypeOf]]`, and
+  `[[SetPrototypeOf]]` is still unmetered, so those three native paths can
+  perform linear work without reducing an active fuel
   budget.
 - **Heap object limit**: `Vm::set_max_heap_objects(Some(n))` caps the number
   of live GC-managed heap objects. When exceeded, allocation throws a
@@ -57,13 +57,6 @@ The following resource limits are enforced:
   Transparent Proxy `[[GetPrototypeOf]]` and `[[SetPrototypeOf]]` forwarding
   is also recursive and unmetered. These behaviors are non-conforming and
   require an iterative, fuel-metered traversal rather than a larger cap.
-- **Extensibility gaps**: `[[PreventExtensions]]` reports success without
-  changing the extensibility state of several exotic objects, including Map,
-  Set, WeakMap, WeakSet, ArrayBuffer, DataView, and Promise instances. A
-  truthy Proxy `preventExtensions` trap also validates a nested Proxy target's
-  raw storage instead of invoking its full `[[IsExtensible]]` internal method,
-  which can reject a valid nested-Proxy result. These are implementation bugs,
-  not intentional sandbox policy.
 - **Transparent Proxy enumeration gap**: `for...in` can omit keys forwarded
   from a transparent Proxy target. The underlying
   `[[GetOwnPropertyDescriptor]]` results are correct, but Proxy-focused harness
@@ -212,8 +205,8 @@ guarantees are required.
   scoped subset of ES5.1 + selected ES2015+ features (see
   [test262.md](test262.md#supported-subset) for the exact list). The full
   suite is run in CI (excluding `intl402`/`staging`) with a baseline pass
-  rate of 63.2% of all matrix files and 83.5% of executed files (**30,634
-  pass / 6,049 fail / 11,778 skip / 6 timeout / 0 error**); within the
+  rate of 63.3% of all matrix files and 83.5% of executed files (**30,663
+  pass / 6,049 fail / 11,749 skip / 6 timeout / 0 error**); within the
   supported subset, tests currently run at 100%.
   Full ES conformance is not claimed. See
   [test262.md](test262.md) for current numbers and the failure breakdown.
