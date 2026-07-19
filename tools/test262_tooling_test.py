@@ -84,6 +84,10 @@ from test262_regexp_duplicate_named_groups_admission import (
     REGEXP_DUPLICATE_NAMED_GROUPS_FILES,
 )
 from test262_proxy_get_admission import PROXY_GET_FEATURES, PROXY_GET_FILES
+from test262_proxy_delete_admission import (
+    PROXY_DELETE_FEATURES,
+    PROXY_DELETE_FILES,
+)
 from test262_proxy_own_keys_admission import (
     PROXY_OWN_KEYS_FEATURES,
     PROXY_OWN_KEYS_FILES,
@@ -1850,6 +1854,75 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                     ))
                     self.assertTrue(tool.proxy_get_path(admitted_path))
                     self.assertTrue(tool.proxy_get_path(reflected_path))
+                finally:
+                    tool.TEST262 = original_root
+
+    def test_proxy_delete_manifest_is_exact_live_and_shared(self):
+        self.assertEqual(len(PROXY_DELETE_FILES), 28)
+        self.assertEqual(frozenset(PROXY_DELETE_FEATURES), PROXY_DELETE_FILES)
+        proxy = (
+            "built-ins/Proxy/deleteProperty/"
+            "targetdesc-is-configurable-target-is-not-extensible.js"
+        )
+        realm = "built-ins/Proxy/deleteProperty/trap-is-not-callable-realm.js"
+        reflected = "built-ins/Reflect/deleteProperty/not-a-constructor.js"
+        outside = "built-ins/Proxy/deleteProperty/future.js"
+        self.assertEqual(
+            PROXY_DELETE_FEATURES[proxy],
+            {"Proxy", "Reflect", "proxy-missing-checks"},
+        )
+        self.assertEqual(
+            PROXY_DELETE_FEATURES[realm], {"Proxy", "cross-realm"}
+        )
+        self.assertEqual(
+            PROXY_DELETE_FEATURES[reflected],
+            {"Reflect", "Reflect.construct", "arrow-function"},
+        )
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        try:
+            test_root_available = test_root.is_dir()
+        except OSError:
+            test_root_available = False
+        if test_root_available:
+            for relative in PROXY_DELETE_FILES:
+                path = test_root / relative
+                self.assertTrue(path.is_file(), relative)
+                features = set(
+                    test262_runner.parse_meta(path.read_text()).get("features", [])
+                )
+                self.assertEqual(
+                    features, set(PROXY_DELETE_FEATURES[relative]), relative
+                )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for relative in PROXY_DELETE_FILES:
+                        path = root / "test" / relative
+                        features = set(PROXY_DELETE_FEATURES[relative])
+                        self.assertTrue(tool.proxy_delete_path(path), relative)
+                        self.assertFalse(
+                            tool.should_skip(
+                                {"features": sorted(features)}, path
+                            ),
+                            relative,
+                        )
+                        self.assertTrue(
+                            tool.should_skip(
+                                {"features": sorted(features | {"decorators"})},
+                                path,
+                            ),
+                            relative,
+                        )
+                    outside_path = root / "test" / outside
+                    self.assertFalse(tool.proxy_delete_path(outside_path))
+                    self.assertTrue(
+                        tool.should_skip({"features": ["Proxy"]}, outside_path)
+                    )
                 finally:
                     tool.TEST262 = original_root
 

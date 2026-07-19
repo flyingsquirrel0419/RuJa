@@ -1448,6 +1448,320 @@ fn proxy_define_property_trap_survives_descriptor_allocation_gc() {
 }
 
 #[test]
+fn proxy_delete_property_roots_observable_intermediates_and_restores_pin_depth() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("GC test hook should register");
+
+    let transparent_proxy = vm
+        .run(
+            r#"
+            var transparentDeleteGets = 0;
+            var collectingTransparentHandler = {};
+            Object.defineProperty(collectingTransparentHandler, "deleteProperty", {
+              get: function() {
+                transparentDeleteGets += 1;
+                forceGc();
+                return null;
+              }
+            });
+            (function() {
+              var proxy = { value: 1 };
+              for (var i = 0; i < 4; i += 1) {
+                proxy = new Proxy(proxy, collectingTransparentHandler);
+              }
+              return proxy;
+            })();
+            "#,
+        )
+        .expect("collecting transparent Proxy fixture should initialize");
+    let baseline = vm.gc_pins.len();
+    assert!(vm
+        .delete_property(&transparent_proxy, "value")
+        .expect("transparent deletion should survive collection at every hop"));
+    assert_eq!(vm.gc_pins.len(), baseline);
+    assert_eq!(vm.get_global("transparentDeleteGets"), Value::Number(4.0));
+    assert_eq!(
+        vm.get_property(&transparent_proxy, "value")
+            .expect("the transparent chain should remain usable"),
+        Value::Undefined
+    );
+
+    let proxy = vm
+        .run(
+            r#"
+            var deleteLog = [];
+            function deleteTrap() {
+              deleteLog.push("delete-call");
+              forceGc();
+              return true;
+            }
+            function descriptorTrap(target, key) {
+              deleteLog.push("descriptor-call");
+              forceGc();
+              return Reflect.getOwnPropertyDescriptor(target, key);
+            }
+            function extensibleTrap(target) {
+              deleteLog.push("extensible-call");
+              forceGc();
+              return Reflect.isExtensible(target);
+            }
+            var deleteHandler = {};
+            Object.defineProperty(deleteHandler, "deleteProperty", {
+              get: function() {
+                deleteLog.push("delete-get");
+                forceGc();
+                return deleteTrap;
+              }
+            });
+            var invariantHandler = {};
+            Object.defineProperty(invariantHandler, "getOwnPropertyDescriptor", {
+              get: function() {
+                deleteLog.push("descriptor-get");
+                forceGc();
+                return descriptorTrap;
+              }
+            });
+            Object.defineProperty(invariantHandler, "isExtensible", {
+              get: function() {
+                deleteLog.push("extensible-get");
+                forceGc();
+                return extensibleTrap;
+              }
+            });
+            (function() {
+              var base = {};
+              Object.defineProperty(base, "fixed", {
+                value: 1,
+                configurable: true
+              });
+              Object.preventExtensions(base);
+              var invariantTarget = new Proxy(base, invariantHandler);
+              return new Proxy(invariantTarget, deleteHandler);
+            })();
+            "#,
+        )
+        .expect("Proxy fixture should initialize");
+    let baseline = vm.gc_pins.len();
+    let error = vm
+        .delete_property(&proxy, "fixed")
+        .expect_err("the non-extensible target invariant should throw");
+    assert_eq!(error.kind, crate::error::ErrorKind::Type);
+    assert_eq!(vm.gc_pins.len(), baseline);
+    assert_eq!(
+        vm.run("deleteLog.join('|')")
+            .expect("every invariant hook should remain observable"),
+        Value::String(
+            "delete-get|delete-call|descriptor-get|descriptor-call|extensible-get|extensible-call"
+                .into()
+        )
+    );
+    assert_eq!(
+        vm.get_property(&proxy, "fixed")
+            .expect("the rejected deletion must preserve the target property"),
+        Value::Number(1.0)
+    );
+
+    for source in [
+        r#"
+        (function() {
+          var marker = {};
+          var handler = {};
+          Object.defineProperty(handler, "deleteProperty", {
+            get: function() { forceGc(); throw marker; }
+          });
+          return new Proxy({ value: 1 }, handler);
+        })();
+        "#,
+        r#"
+        (function() {
+          var marker = {};
+          return new Proxy({ value: 1 }, {
+            get deleteProperty() {
+              forceGc();
+              return function() { forceGc(); throw marker; };
+            }
+          });
+        })();
+        "#,
+        r#"
+        (function() {
+          return new Proxy({ value: 1 }, { deleteProperty: 1 });
+        })();
+        "#,
+        r#"
+        (function() {
+          var revocable = Proxy.revocable({ value: 1 }, {});
+          var outer = new Proxy(revocable.proxy, { deleteProperty: null });
+          revocable.revoke();
+          return outer;
+        })();
+        "#,
+        r#"
+        (function() {
+          var target = new Proxy({ value: 1 }, {
+            getOwnPropertyDescriptor: function() { forceGc(); throw {}; }
+          });
+          return new Proxy(target, {
+            deleteProperty: function() { return true; }
+          });
+        })();
+        "#,
+        r#"
+        (function() {
+          var target = new Proxy({ value: 1 }, {
+            getOwnPropertyDescriptor: function(actualTarget, key) {
+              return Reflect.getOwnPropertyDescriptor(actualTarget, key);
+            },
+            isExtensible: function() { forceGc(); throw {}; }
+          });
+          return new Proxy(target, {
+            deleteProperty: function() { return true; }
+          });
+        })();
+        "#,
+    ] {
+        let proxy = vm
+            .run(source)
+            .expect("abrupt Proxy fixture should initialize");
+        let baseline = vm.gc_pins.len();
+        vm.delete_property(&proxy, "value")
+            .expect_err("Proxy deletion should preserve the abrupt completion");
+        assert_eq!(vm.gc_pins.len(), baseline);
+    }
+}
+
+#[test]
+fn proxy_delete_property_transparent_chain_consumes_fuel_and_restores_pin_depth() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.run(
+        r#"
+        var deleteTarget = { value: 1 };
+        var deleteProxy = deleteTarget;
+        var transparentHandler = {};
+        for (var i = 0; i < 100; i += 1) {
+          deleteProxy = new Proxy(deleteProxy, transparentHandler);
+        }
+        "#,
+    )
+    .expect("transparent Proxy fixture should initialize");
+    let proxy = vm.get_global("deleteProxy");
+    let baseline = vm.gc_pins.len();
+
+    vm.set_fuel(Some(20));
+    let error = vm
+        .delete_property(&proxy, "value")
+        .expect_err("transparent Proxy traversal should exhaust fuel");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    vm.set_fuel(Some(200));
+    assert!(vm
+        .delete_property(&proxy, "value")
+        .expect("refilled fuel should complete the same deletion"));
+    assert_eq!(vm.gc_pins.len(), baseline);
+    vm.set_fuel(None);
+    assert_eq!(
+        vm.run("Object.prototype.hasOwnProperty.call(deleteTarget, 'value')")
+            .expect("the refilled VM should delete the target property"),
+        Value::Bool(false)
+    );
+}
+
+#[test]
+fn proxy_delete_property_nested_proxy_walks_consume_fuel_and_restore_pin_depth() {
+    let mut handler_vm = Vm::new().expect("handler VM should initialize");
+    handler_vm
+        .run(
+            r#"
+            var nestedHandlerTarget = { value: 1 };
+            var nestedDeleteHandler = {};
+            for (var i = 0; i < 100; i += 1) {
+              nestedDeleteHandler = new Proxy(nestedDeleteHandler, {});
+            }
+            var nestedHandlerProxy = new Proxy(
+              nestedHandlerTarget, nestedDeleteHandler
+            );
+            "#,
+        )
+        .expect("deep handler fixture should initialize");
+    let proxy = handler_vm.get_global("nestedHandlerProxy");
+    let baseline = handler_vm.gc_pins.len();
+
+    handler_vm.set_fuel(Some(20));
+    let error = handler_vm
+        .delete_property(&proxy, "value")
+        .expect_err("deep Proxy handler lookup should exhaust fuel");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(handler_vm.fuel_remaining(), Some(0));
+    assert_eq!(handler_vm.gc_pins.len(), baseline);
+    handler_vm.set_fuel(Some(200));
+    assert!(handler_vm
+        .delete_property(&proxy, "value")
+        .expect("refilled handler traversal should complete"));
+    assert_eq!(handler_vm.gc_pins.len(), baseline);
+    handler_vm.set_fuel(None);
+    assert_eq!(
+        handler_vm
+            .run("Object.prototype.hasOwnProperty.call(nestedHandlerTarget, 'value')")
+            .expect("handler VM should remain reusable"),
+        Value::Bool(false)
+    );
+
+    let mut invariant_vm = Vm::new().expect("invariant VM should initialize");
+    invariant_vm
+        .register_fn("truthyDelete", |_, _, _| Ok(Value::Bool(true)), 2)
+        .expect("native delete trap should register");
+    invariant_vm
+        .run(
+            r#"
+            var nestedInvariantBase = { value: 1 };
+            var nestedInvariantTarget = nestedInvariantBase;
+            var invariantHandler = {};
+            for (var i = 0; i < 100; i += 1) {
+              nestedInvariantTarget = new Proxy(
+                nestedInvariantTarget, invariantHandler
+              );
+            }
+            var nestedInvariantProxy = new Proxy(nestedInvariantTarget, {
+              deleteProperty: truthyDelete
+            });
+            "#,
+        )
+        .expect("deep invariant fixture should initialize");
+    let proxy = invariant_vm.get_global("nestedInvariantProxy");
+    let baseline = invariant_vm.gc_pins.len();
+
+    invariant_vm.set_fuel(Some(101));
+    let error = invariant_vm
+        .delete_property(&proxy, "value")
+        .expect_err("descriptor plus extensibility traversal should exhaust fuel");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(invariant_vm.fuel_remaining(), Some(0));
+    assert_eq!(invariant_vm.gc_pins.len(), baseline);
+    invariant_vm.set_fuel(Some(300));
+    assert!(invariant_vm
+        .delete_property(&proxy, "value")
+        .expect("refilled invariant traversal should complete"));
+    assert_eq!(invariant_vm.gc_pins.len(), baseline);
+    invariant_vm.set_fuel(None);
+    assert_eq!(
+        invariant_vm
+            .run("nestedInvariantBase.value")
+            .expect("invariant VM should remain reusable"),
+        Value::Number(1.0)
+    );
+}
+
+#[test]
 fn proxy_descriptor_conversion_roots_get_results_across_gc() {
     let mut vm = Vm::new().expect("VM should initialize");
     vm.register_fn(

@@ -12233,6 +12233,42 @@ fn object_statics() {
         run_err("Reflect.deleteProperty(1, 'x');").contains("TypeError"),
         "Reflect.deleteProperty must reject primitive targets"
     );
+    assert_eq!(
+        run(r#"
+            var target = { undefined: 1 };
+            var result = Reflect.deleteProperty(target);
+            [result, "undefined" in target].join(",");
+        "#),
+        Value::String(Arc::from("true,false"))
+    );
+    assert_eq!(
+        run(r#"
+            var key = Symbol("delete key");
+            var seen;
+            var target = {};
+            target[key] = 1;
+            var proxy = new Proxy(target, {
+              deleteProperty: function(actualTarget, actualKey) {
+                seen = actualKey;
+                return Reflect.deleteProperty(actualTarget, actualKey);
+              }
+            });
+            [Reflect.deleteProperty(proxy, key), seen === key, key in target].join(",");
+        "#),
+        Value::String(Arc::from("true,true,false"))
+    );
+    assert!(
+        run_err(
+            r#"
+            var revocable = Proxy.revocable({ value: 1 }, {});
+            var outer = new Proxy(revocable.proxy, { deleteProperty: null });
+            revocable.revoke();
+            Reflect.deleteProperty(outer, "value");
+            "#
+        )
+        .contains("TypeError"),
+        "transparent deletion must observe a revoked nested Proxy target"
+    );
     assert!(
         run_err("Object.keys(null);").contains("TypeError"),
         "Object.keys(null) should throw"

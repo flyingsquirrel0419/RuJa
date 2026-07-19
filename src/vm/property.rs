@@ -443,6 +443,7 @@ impl Vm {
             let mut target = target;
             let mut handler = handler;
             loop {
+                self.consume_fuel()?;
                 let trap = self.get_property(&handler, "get")?;
                 if !trap.is_nullish() {
                     let key_value = Self::property_key_to_value(key);
@@ -541,48 +542,71 @@ impl Vm {
         obj: &Value,
         key: &crate::value::PropertyKey,
     ) -> error::Result<bool> {
-        if let Value::Object(idx) = obj {
-            if let Some(proxy_result) = self.heap.with_obj(idx.0, |o| {
-                if let HeapObj::Proxy(proxy) = o {
-                    if *proxy.revoked.lock() {
-                        return Some(Err(Error::type_err(
-                            "Cannot perform 'deleteProperty' on a proxy that has been revoked",
-                        )));
+        let root_pin = self.pin(obj);
+        let result = (|| {
+            let mut current = obj.clone();
+            let idx = loop {
+                let Value::Object(idx) = &current else {
+                    return Ok(true);
+                };
+                let proxy_result = self.heap.with_obj(idx.0, |o| {
+                    if let HeapObj::Proxy(proxy) = o {
+                        if *proxy.revoked.lock() {
+                            return Some(Err(Error::type_err(
+                                "Cannot perform 'deleteProperty' on a proxy that has been revoked",
+                            )));
+                        }
+                        Some(Ok((proxy.target.clone(), proxy.handler.clone())))
+                    } else {
+                        None
                     }
-                    Some(Ok((proxy.target.clone(), proxy.handler.clone())))
-                } else {
-                    None
-                }
-            }) {
+                });
+                let Some(proxy_result) = proxy_result else {
+                    break *idx;
+                };
+
                 let (target, handler) = proxy_result?;
-                let trap = self.get_property(&handler, "deleteProperty")?;
-                if trap.is_undefined() || trap.is_null() {
-                    return self.delete_property_key(&target, key);
-                }
-                let key_value = Self::property_key_to_value(key);
-                let trap_result =
-                    self.call_function(&trap, &[target.clone(), key_value], Some(handler))?;
-                let boolean_trap_result = self.to_boolean(&trap_result);
-                if !boolean_trap_result {
-                    return Ok(false);
-                }
-                if let Some(desc) =
-                    crate::builtins::own_property_descriptor_for_key_or_throw(self, &target, key)?
-                {
-                    if !desc.configurable {
-                        return Err(Error::type_err(
-                            "Proxy deleteProperty trap cannot delete non-configurable property",
-                        ));
+                self.consume_fuel()?;
+                let proxy_pins = self.pin_many(&[target.clone(), handler.clone()]);
+                let proxy_result = (|| {
+                    let trap = self.get_property(&handler, "deleteProperty")?;
+                    if trap.is_nullish() {
+                        return Ok(None);
                     }
-                    let target_extensible = self.is_extensible(&target)?;
-                    if !target_extensible {
-                        return Err(Error::type_err(
-                            "Proxy deleteProperty trap cannot delete non-extensible target property",
-                        ));
+                    let trap_pin = self.pin(&trap);
+                    let trap_result = self.call_function(
+                        &trap,
+                        &[target.clone(), Self::property_key_to_value(key)],
+                        Some(handler.clone()),
+                    );
+                    self.unpin(trap_pin);
+                    let trap_result = trap_result?;
+                    if !self.to_boolean(&trap_result) {
+                        return Ok(Some(false));
                     }
+                    if let Some(desc) = crate::builtins::own_property_descriptor_for_key_or_throw(
+                        self, &target, key,
+                    )? {
+                        if !desc.configurable {
+                            return Err(Error::type_err(
+                                "Proxy deleteProperty trap cannot delete non-configurable property",
+                            ));
+                        }
+                        if !self.is_extensible(&target)? {
+                            return Err(Error::type_err(
+                                "Proxy deleteProperty trap cannot delete non-extensible target property",
+                            ));
+                        }
+                    }
+                    Ok(Some(true))
+                })();
+                self.unpin_many(proxy_pins);
+
+                match proxy_result? {
+                    Some(result) => return Ok(result),
+                    None => current = target,
                 }
-                return Ok(true);
-            }
+            };
 
             if let Some(name) = key.as_str() {
                 let namespace_export = self.heap.with_obj(idx.0, |o| {
@@ -591,7 +615,7 @@ impl Vm {
                 if namespace_export {
                     return Ok(false);
                 }
-                if let Some(slots) = self.typed_array_numeric_slots(*idx, name) {
+                if let Some(slots) = self.typed_array_numeric_slots(idx, name) {
                     return Ok(!self.is_valid_typed_array_numeric_index(&slots));
                 }
             }
@@ -681,7 +705,7 @@ impl Vm {
             if let Some(name) = key.as_str() {
                 self.ic_invalidate(idx.0, name);
                 let realm_env = self.realm_globals.iter().find_map(|(env, global)| {
-                    matches!(global, Value::Object(global_idx) if global_idx == idx)
+                    matches!(global, Value::Object(global_idx) if global_idx == &idx)
                         .then_some(GcIdx(*env))
                 });
                 if let Some(realm_env) = realm_env {
@@ -690,8 +714,10 @@ impl Vm {
                     );
                 }
             }
-        }
-        Ok(true)
+            Ok(true)
+        })();
+        self.unpin(root_pin);
+        result
     }
 
     pub fn set_property(&mut self, obj: &Value, key: &str, value: Value) -> error::Result<()> {
@@ -1066,6 +1092,7 @@ impl Vm {
                 return Ok(target_result);
             };
             let (target, handler) = proxy_info?;
+            self.consume_fuel()?;
             let proxy_pins = self.pin_many(&[target.clone(), handler.clone()]);
             let trap = match self.get_property(&handler, "isExtensible") {
                 Ok(trap) => trap,

@@ -1946,10 +1946,7 @@ pub(crate) fn reflect_delete_property(
             "Reflect.deleteProperty target must be an object",
         ));
     }
-    let key = match args.get(1) {
-        Some(v) => vm.to_property_key_value(v)?,
-        None => return Ok(Value::Bool(false)),
-    };
+    let key = vm.to_property_key_value(args.get(1).unwrap_or(&Value::Undefined))?;
     let pkey = match key {
         Value::String(s) => PropertyKey::from_rc(s),
         Value::Symbol(id) => PropertyKey::Symbol(id),

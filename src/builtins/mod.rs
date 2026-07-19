@@ -7004,6 +7004,7 @@ pub(crate) fn own_property_descriptor_for_key_or_throw(
                 break own_property_descriptor_for_key(vm, &current, key);
             };
             let (target, handler) = proxy_result?;
+            vm.consume_fuel()?;
             let proxy_pins = vm.pin_many(&[target.clone(), handler.clone()]);
             let trap = match vm.get_property(&handler, "getOwnPropertyDescriptor") {
                 Ok(trap) => trap,

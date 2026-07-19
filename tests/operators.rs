@@ -969,6 +969,44 @@ fn delete_proxy_enforces_nested_target_invariants() {
 }
 
 #[test]
+fn delete_proxy_follows_deep_transparent_chains_iteratively() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            var target = { removable: 1 };
+            Object.defineProperty(target, "fixed", {
+              value: 2,
+              configurable: false
+            });
+            var transparent = { deleteProperty: null };
+            var proxy = target;
+            for (var i = 0; i < 100000; i += 1) {
+              proxy = new Proxy(proxy, transparent);
+            }
+            var outerHandler = {};
+            Object.defineProperty(outerHandler, "deleteProperty", {
+              get: function() {
+                log.push("get");
+                return undefined;
+              }
+            });
+            proxy = new Proxy(proxy, outerHandler);
+
+            var removed = Reflect.deleteProperty(proxy, "removable");
+            var fixed = Reflect.deleteProperty(proxy, "fixed");
+            [
+              removed,
+              !Object.prototype.hasOwnProperty.call(target, "removable"),
+              fixed,
+              Object.prototype.hasOwnProperty.call(target, "fixed"),
+              log.join("|")
+            ].join(",");
+            "#),
+        Value::String(Arc::from("true,true,false,true,get|get"))
+    );
+}
+
+#[test]
 fn update_identifier_preserves_with_reference_after_getter_delete() {
     assert_eq!(
         run(r#"
