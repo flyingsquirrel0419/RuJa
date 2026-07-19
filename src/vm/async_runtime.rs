@@ -827,6 +827,19 @@ impl Vm {
         self.new_native_function_with_construct_mode_in_env(name, func, length, closure, None)
     }
 
+    /// Runtime intrinsic installers can use this after pinning every earlier
+    /// provisional function in the same allocation batch.
+    pub(crate) fn new_native_function_in_env_with_gc_retry(
+        &mut self,
+        name: &str,
+        func: NativeFn,
+        length: usize,
+        closure: GcIdx,
+    ) -> error::Result<GcIdx> {
+        let function = self.native_function_object(name, func, length, closure, None);
+        self.alloc(function)
+    }
+
     pub(crate) fn new_native_constructor(
         &mut self,
         name: &str,
@@ -862,6 +875,18 @@ impl Vm {
         closure: GcIdx,
         construct_mode: Option<NativeConstructMode>,
     ) -> error::Result<GcIdx> {
+        let function = self.native_function_object(name, func, length, closure, construct_mode);
+        Ok(GcIdx(self.heap.allocate(function)?))
+    }
+
+    fn native_function_object(
+        &self,
+        name: &str,
+        func: NativeFn,
+        length: usize,
+        closure: GcIdx,
+        construct_mode: Option<NativeConstructMode>,
+    ) -> HeapObj {
         let realm = crate::environment::global_env_root(&self.heap, closure);
         let function_proto = self
             .realm_function_prototypes
@@ -904,7 +929,7 @@ impl Vm {
             extensible: std::sync::atomic::AtomicBool::new(true),
             private_fields: Mutex::new(std::collections::HashMap::new()),
         };
-        Ok(GcIdx(self.heap.allocate(HeapObj::Function(fdef))?))
+        HeapObj::Function(fdef)
     }
 
     pub(crate) fn native_callee_closure(&self) -> Option<GcIdx> {

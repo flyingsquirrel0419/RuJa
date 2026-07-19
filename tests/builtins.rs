@@ -12474,6 +12474,79 @@ fn reflect_omitted_property_keys_coerce_undefined() {
 }
 
 #[test]
+fn reflect_to_string_tag_is_a_realm_local_spec_property() {
+    assert_eq!(
+        run(r#"
+            var descriptor = Object.getOwnPropertyDescriptor(
+              Reflect,
+              Symbol.toStringTag
+            );
+            [
+              descriptor.value,
+              descriptor.writable,
+              descriptor.enumerable,
+              descriptor.configurable,
+              Object.prototype.toString.call(Reflect),
+              Object.prototype.hasOwnProperty.call(Reflect, Symbol.toStringTag)
+            ].join("|");
+        "#),
+        Value::String(Arc::from("Reflect|false|false|true|[object Reflect]|true"))
+    );
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var descriptor = Object.getOwnPropertyDescriptor(
+              other.Reflect,
+              Symbol.toStringTag
+            );
+            var distinct = other.Reflect !== Reflect;
+            var ownPrototype =
+              other.Object.getPrototypeOf(other.Reflect) === other.Object.prototype;
+            var methods = [
+              "apply", "construct", "defineProperty", "deleteProperty",
+              "get", "getOwnPropertyDescriptor", "getPrototypeOf", "has",
+              "isExtensible", "ownKeys", "preventExtensions", "set",
+              "setPrototypeOf"
+            ];
+            var localMethods = methods.every(function(name) {
+              return other.Reflect[name] !== Reflect[name] &&
+                other.Object.getPrototypeOf(other.Reflect[name]) ===
+                  other.Function.prototype;
+            });
+            var realmError = false;
+            try { other.Reflect.get(1, "x"); }
+            catch (error) {
+              realmError = error instanceof other.TypeError &&
+                !(error instanceof TypeError);
+            }
+            var globalDescriptor = other.Object.getOwnPropertyDescriptor(
+              other,
+              "Reflect"
+            );
+            delete Reflect[Symbol.toStringTag];
+            [
+              distinct,
+              ownPrototype,
+              localMethods,
+              realmError,
+              globalDescriptor.writable,
+              globalDescriptor.enumerable,
+              globalDescriptor.configurable,
+              descriptor.value,
+              descriptor.writable,
+              descriptor.enumerable,
+              descriptor.configurable,
+              other.Object.prototype.toString.call(other.Reflect),
+              other.Reflect[Symbol.toStringTag]
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "true|true|true|true|true|false|true|Reflect|false|false|true|[object Reflect]|Reflect"
+        ))
+    );
+}
+
+#[test]
 fn prevent_extensions_blocks_array_arguments_function_and_proxy_edges() {
     assert_eq!(
         run("var a=[]; Object.preventExtensions(a); a[0]=1; a.x=2; Object.isExtensible(a)+':' + a.hasOwnProperty('0') + ':' + a.hasOwnProperty('x');"),

@@ -2050,43 +2050,68 @@ fn reflect_construct(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Re
 }
 
 pub(crate) fn build_reflect(vm: &mut Vm) -> error::Result<Value> {
-    let mut props: IndexMap<PropertyKey, PropertyDescriptor> = IndexMap::new();
-    let entries: &[(&str, NativeFn, usize)] = &[
-        ("get", reflect_get as NativeFn, 2),
-        ("set", reflect_set as NativeFn, 3),
-        ("has", reflect_has as NativeFn, 2),
-        ("deleteProperty", reflect_delete_property as NativeFn, 2),
-        ("defineProperty", reflect_define_property as NativeFn, 3),
-        (
-            "getOwnPropertyDescriptor",
-            reflect_get_own_property_descriptor as NativeFn,
-            2,
-        ),
-        ("ownKeys", reflect_own_keys as NativeFn, 1),
-        ("getPrototypeOf", reflect_get_prototype_of as NativeFn, 1),
-        ("setPrototypeOf", reflect_set_prototype_of as NativeFn, 2),
-        ("isExtensible", reflect_is_extensible as NativeFn, 1),
-        (
-            "preventExtensions",
-            reflect_prevent_extensions as NativeFn,
-            1,
-        ),
-        ("apply", reflect_apply as NativeFn, 3),
-        ("construct", reflect_construct as NativeFn, 2),
-    ];
-    for (name, f, len) in entries {
-        let idx = vm.new_native_function(name, *f, *len)?;
-        props.insert(PropertyKey::from(*name), data_prop(Value::Object(idx)));
-    }
-    let obj = HeapObj::Object(ObjectData {
-        props: Mutex::new(props),
-        proto: Mutex::new(Some(vm.object_proto.clone())),
-        extensible: AtomicBool::new(true),
-        class_name: Some(Arc::from("Reflect")),
-        private_fields: Mutex::new(std::collections::HashMap::new()),
-        primitive: Mutex::new(None),
-    });
-    Ok(Value::Object(GcIdx(vm.heap.allocate(obj)?)))
+    let env = vm.global;
+    let object_proto = vm.object_proto.clone();
+    build_reflect_in_env(vm, env, object_proto)
+}
+
+pub(crate) fn build_reflect_in_env(
+    vm: &mut Vm,
+    env: GcIdx,
+    object_proto: Value,
+) -> error::Result<Value> {
+    let mut method_pins = 0;
+    let result = (|| {
+        let mut props: IndexMap<PropertyKey, PropertyDescriptor> = IndexMap::new();
+        let entries: &[(&str, NativeFn, usize)] = &[
+            ("get", reflect_get as NativeFn, 2),
+            ("set", reflect_set as NativeFn, 3),
+            ("has", reflect_has as NativeFn, 2),
+            ("deleteProperty", reflect_delete_property as NativeFn, 2),
+            ("defineProperty", reflect_define_property as NativeFn, 3),
+            (
+                "getOwnPropertyDescriptor",
+                reflect_get_own_property_descriptor as NativeFn,
+                2,
+            ),
+            ("ownKeys", reflect_own_keys as NativeFn, 1),
+            ("getPrototypeOf", reflect_get_prototype_of as NativeFn, 1),
+            ("setPrototypeOf", reflect_set_prototype_of as NativeFn, 2),
+            ("isExtensible", reflect_is_extensible as NativeFn, 1),
+            (
+                "preventExtensions",
+                reflect_prevent_extensions as NativeFn,
+                1,
+            ),
+            ("apply", reflect_apply as NativeFn, 3),
+            ("construct", reflect_construct as NativeFn, 2),
+        ];
+        for (name, f, len) in entries {
+            let idx = vm.new_native_function_in_env_with_gc_retry(name, *f, *len, env)?;
+            let method = Value::Object(idx);
+            method_pins += vm.pin(&method);
+            props.insert(PropertyKey::from(*name), data_prop(method));
+        }
+        let mut tag = data_prop(Value::String(Arc::from("Reflect")));
+        tag.writable = false;
+        tag.enumerable = false;
+        tag.configurable = true;
+        props.insert(
+            PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
+            tag,
+        );
+        let obj = HeapObj::Object(ObjectData {
+            props: Mutex::new(props),
+            proto: Mutex::new(Some(object_proto)),
+            extensible: AtomicBool::new(true),
+            class_name: Some(Arc::from("Reflect")),
+            private_fields: Mutex::new(std::collections::HashMap::new()),
+            primitive: Mutex::new(None),
+        });
+        Ok(Value::Object(vm.alloc(obj)?))
+    })();
+    vm.unpin_many(method_pins);
+    result
 }
 
 pub(crate) fn build_json(vm: &mut Vm) -> error::Result<Value> {
@@ -2124,6 +2149,88 @@ pub(crate) fn build_json(vm: &mut Vm) -> error::Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reflect_builder_roots_methods_across_cap_triggered_gc() {
+        const METHOD_NAMES: [&str; 13] = [
+            "get",
+            "set",
+            "has",
+            "deleteProperty",
+            "ownKeys",
+            "getPrototypeOf",
+            "setPrototypeOf",
+            "isExtensible",
+            "preventExtensions",
+            "getOwnPropertyDescriptor",
+            "defineProperty",
+            "apply",
+            "construct",
+        ];
+
+        let mut failed_vm = Vm::new().expect("failed to initialize capped VM");
+        failed_vm.gc();
+        let failed_baseline_live = failed_vm.heap.live_count();
+        let failed_baseline_pins = failed_vm.gc_pins.len();
+        failed_vm.set_max_heap_objects(Some(failed_baseline_live + METHOD_NAMES.len()));
+        let failed_env = failed_vm.global;
+        let failed_object_proto = failed_vm.object_proto.clone();
+        assert!(
+            build_reflect_in_env(&mut failed_vm, failed_env, failed_object_proto).is_err(),
+            "Reflect object should not exceed an exact methods-only cap"
+        );
+        assert_eq!(failed_vm.gc_pins.len(), failed_baseline_pins);
+        failed_vm.set_max_heap_objects(None);
+        failed_vm.gc();
+        assert_eq!(failed_vm.heap.live_count(), failed_baseline_live);
+
+        for garbage_count in [14, 7, 1] {
+            let mut vm = Vm::new().expect("failed to initialize VM");
+            vm.gc();
+            let baseline_live = vm.heap.live_count();
+            let baseline_pins = vm.gc_pins.len();
+
+            for _ in 0..garbage_count {
+                vm.new_object()
+                    .expect("unreachable garbage fixture should allocate");
+            }
+            vm.set_max_heap_objects(Some(baseline_live + METHOD_NAMES.len() + 1));
+            let env = vm.global;
+            let object_proto = vm.object_proto.clone();
+            let reflect = build_reflect_in_env(&mut vm, env, object_proto)
+                .expect("Reflect should fit after collecting the garbage fixture");
+            vm.set_max_heap_objects(None);
+
+            let reflect_pin = vm.pin(&reflect);
+            vm.gc();
+            let mut method_indices = std::collections::HashSet::new();
+            for name in METHOD_NAMES {
+                let method = vm
+                    .get_property(&reflect, name)
+                    .unwrap_or_else(|_| panic!("Reflect.{name} should remain readable"));
+                let Value::Object(method_idx) = method else {
+                    panic!("Reflect.{name} should remain an object");
+                };
+                vm.heap.with_obj(method_idx.0, |object| {
+                    assert!(
+                        matches!(object, HeapObj::Function(_)),
+                        "Reflect.{name} should remain callable"
+                    );
+                });
+                assert!(
+                    method_indices.insert(method_idx.0),
+                    "Reflect.{name} should retain a distinct function"
+                );
+                assert_eq!(
+                    vm.get_property(&Value::Object(method_idx), "name")
+                        .unwrap_or_else(|_| panic!("Reflect.{name}.name should remain readable")),
+                    Value::String(Arc::from(name))
+                );
+            }
+            vm.unpin_many(reflect_pin);
+            assert_eq!(vm.gc_pins.len(), baseline_pins);
+        }
+    }
 
     #[test]
     fn reflect_argument_list_pins_balance_on_success_and_errors() {

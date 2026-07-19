@@ -30,9 +30,10 @@ pub(crate) use global::{
     global_parse_float, global_parse_int,
 };
 pub(crate) use json::{
-    build_json, build_reflect, date_constructor, date_get_component, date_get_time,
-    date_get_timezone_offset, date_now, date_parse, date_set_component, date_to_iso_string,
-    date_to_json, date_to_primitive, date_to_string, date_to_temporal_instant, date_utc,
+    build_json, build_reflect, build_reflect_in_env, date_constructor, date_get_component,
+    date_get_time, date_get_timezone_offset, date_now, date_parse, date_set_component,
+    date_to_iso_string, date_to_json, date_to_primitive, date_to_string, date_to_temporal_instant,
+    date_utc,
 };
 pub(crate) use math::{build_console, build_math_in_env};
 pub(crate) use proxy::*;
@@ -3947,6 +3948,9 @@ fn populate_test262_realm(vm: &mut Vm, realm_env: GcIdx) -> error::Result<Value>
         *object.proto().lock() = Some(realm_object_prototype.clone());
     });
     vm.unpin_many(object_pins);
+
+    let realm_reflect = build_reflect_in_env(vm, realm_env, realm_object_prototype.clone())?;
+    define_realm_global(vm, realm_env, &global, "Reflect", realm_reflect);
 
     let realm_math = build_math_in_env(vm, realm_env, realm_object_prototype.clone())?;
     define_realm_global(vm, realm_env, &global, "Math", realm_math);

@@ -96,6 +96,10 @@ from test262_reflect_set_has_admission import (
     REFLECT_SET_HAS_FEATURES,
     REFLECT_SET_HAS_FILES,
 )
+from test262_reflect_remaining_admission import (
+    REFLECT_REMAINING_FEATURES,
+    REFLECT_REMAINING_FILES,
+)
 from test262_reflect_call_admission import REFLECT_CALL_FEATURES, REFLECT_CALL_FILES
 from test262_function_apply_admission import (
     FUNCTION_APPLY_FEATURES,
@@ -2078,6 +2082,168 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                         )
                     self.assertFalse(tool.reflect_set_has_path(future))
                     self.assertFalse(tool.reflect_set_has_path(outside))
+                    self.assertTrue(
+                        tool.should_skip({"features": ["Reflect"]}, future)
+                    )
+                    self.assertTrue(
+                        tool.should_skip({"features": ["Reflect"]}, outside)
+                    )
+                finally:
+                    tool.TEST262 = original_root
+
+    def test_reflect_remaining_manifest_is_exact_live_disjoint_and_shared(self):
+        self.assertEqual(len(REFLECT_REMAINING_FILES), 71)
+        self.assertEqual(
+            frozenset(REFLECT_REMAINING_FEATURES), REFLECT_REMAINING_FILES
+        )
+        counts = {
+            family: sum(
+                f"/{family}/" in relative
+                for relative in REFLECT_REMAINING_FILES
+            )
+            for family in (
+                "defineProperty",
+                "getOwnPropertyDescriptor",
+                "getPrototypeOf",
+                "isExtensible",
+                "preventExtensions",
+                "setPrototypeOf",
+            )
+        }
+        self.assertEqual(
+            counts,
+            {
+                "defineProperty": 12,
+                "getOwnPropertyDescriptor": 13,
+                "getPrototypeOf": 10,
+                "isExtensible": 8,
+                "preventExtensions": 10,
+                "setPrototypeOf": 14,
+            },
+        )
+        admission_dir = Path(__file__).resolve().parent
+        for manifest in admission_dir.glob("test262_*_admission.txt"):
+            if manifest.name == "test262_reflect_remaining_admission.txt":
+                continue
+            existing = {
+                line
+                for raw_line in manifest.read_text().splitlines()
+                if (line := raw_line.strip()) and not line.startswith("#")
+            }
+            self.assertFalse(
+                REFLECT_REMAINING_FILES & existing,
+                manifest.name,
+            )
+
+        tag = "built-ins/Reflect/Symbol.toStringTag.js"
+        constructor = "built-ins/Reflect/getPrototypeOf/not-a-constructor.js"
+        proxy = "built-ins/Reflect/preventExtensions/return-abrupt-from-result.js"
+        set_proto = "built-ins/Reflect/setPrototypeOf/length.js"
+        plain_set_proto = "built-ins/Reflect/setPrototypeOf/setPrototypeOf.js"
+        self.assertEqual(
+            REFLECT_REMAINING_FEATURES[tag], {"Reflect", "Symbol.toStringTag"}
+        )
+        self.assertEqual(
+            REFLECT_REMAINING_FEATURES[constructor],
+            {"Reflect", "Reflect.construct", "arrow-function"},
+        )
+        self.assertEqual(
+            REFLECT_REMAINING_FEATURES[proxy], {"Reflect", "Proxy"}
+        )
+        self.assertEqual(
+            REFLECT_REMAINING_FEATURES[set_proto],
+            {"Reflect", "Reflect.setPrototypeOf"},
+        )
+        self.assertEqual(
+            REFLECT_REMAINING_FEATURES[plain_set_proto], {"Reflect"}
+        )
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        try:
+            test_root_available = test_root.is_dir()
+        except OSError:
+            test_root_available = False
+        if test_root_available:
+            property_helper_files = {
+                "built-ins/Reflect/Symbol.toStringTag.js",
+                "built-ins/Reflect/defineProperty/define-properties.js",
+                "built-ins/Reflect/defineProperty/defineProperty.js",
+                "built-ins/Reflect/defineProperty/length.js",
+                "built-ins/Reflect/defineProperty/name.js",
+                "built-ins/Reflect/getOwnPropertyDescriptor/getOwnPropertyDescriptor.js",
+                "built-ins/Reflect/getOwnPropertyDescriptor/length.js",
+                "built-ins/Reflect/getOwnPropertyDescriptor/name.js",
+                "built-ins/Reflect/getPrototypeOf/getPrototypeOf.js",
+                "built-ins/Reflect/getPrototypeOf/length.js",
+                "built-ins/Reflect/getPrototypeOf/name.js",
+                "built-ins/Reflect/isExtensible/isExtensible.js",
+                "built-ins/Reflect/isExtensible/length.js",
+                "built-ins/Reflect/isExtensible/name.js",
+                "built-ins/Reflect/preventExtensions/length.js",
+                "built-ins/Reflect/preventExtensions/name.js",
+                "built-ins/Reflect/preventExtensions/preventExtensions.js",
+                "built-ins/Reflect/prop-desc.js",
+                "built-ins/Reflect/setPrototypeOf/length.js",
+                "built-ins/Reflect/setPrototypeOf/name.js",
+                "built-ins/Reflect/setPrototypeOf/setPrototypeOf.js",
+            }
+            compare_array_files = {
+                "built-ins/Reflect/getOwnPropertyDescriptor/return-from-accessor-descriptor.js",
+                "built-ins/Reflect/getOwnPropertyDescriptor/return-from-data-descriptor.js",
+                "built-ins/Reflect/getOwnPropertyDescriptor/symbol-property.js",
+            }
+            for relative, features in REFLECT_REMAINING_FEATURES.items():
+                path = test_root / relative
+                self.assertTrue(path.is_file(), relative)
+                metadata = test262_runner.parse_meta(path.read_text())
+                self.assertEqual(
+                    frozenset(metadata.get("features", [])), features, relative
+                )
+                if relative in property_helper_files:
+                    expected_includes = ["propertyHelper.js"]
+                elif relative in compare_array_files:
+                    expected_includes = ["compareArray.js"]
+                elif relative.endswith("/not-a-constructor.js"):
+                    expected_includes = ["isConstructor.js"]
+                else:
+                    expected_includes = []
+                self.assertEqual(
+                    metadata.get("includes", []), expected_includes, relative
+                )
+                self.assertEqual(metadata.get("flags", []), [], relative)
+                self.assertNotIn("negative", metadata, relative)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            future = root / "test/built-ins/Reflect/defineProperty/future.js"
+            outside = root / "test/built-ins/Reflect/get/future.js"
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for relative, features in REFLECT_REMAINING_FEATURES.items():
+                        path = root / "test" / relative
+                        self.assertTrue(tool.reflect_remaining_path(path), relative)
+                        self.assertEqual(
+                            tool.reflect_remaining_features(path), features
+                        )
+                        self.assertFalse(
+                            tool.should_skip(
+                                {"features": sorted(features)}, path
+                            ),
+                            relative,
+                        )
+                        self.assertTrue(
+                            tool.should_skip(
+                                {
+                                    "features": sorted(features | {"decorators"})
+                                },
+                                path,
+                            ),
+                            relative,
+                        )
+                    self.assertFalse(tool.reflect_remaining_path(future))
+                    self.assertFalse(tool.reflect_remaining_path(outside))
                     self.assertTrue(
                         tool.should_skip({"features": ["Reflect"]}, future)
                     )
