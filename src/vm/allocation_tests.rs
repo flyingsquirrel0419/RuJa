@@ -400,6 +400,52 @@ fn array_sort_methods_restore_gc_pin_depth_after_abrupt_completion() {
         var value = { toString: function() { forceGc(); throw error; } };
         [value, {}].toSorted();
         "#,
+        r#"
+        var error = {};
+        var source = {
+          length: 3,
+          0: { value: 2 },
+          get 1() { forceGc(); throw error; },
+          2: { value: 1 }
+        };
+        Array.prototype.sort.call(source, function(left, right) {
+          return left.value - right.value;
+        });
+        "#,
+        r#"
+        var error = {};
+        var source = {
+          length: 3,
+          0: { value: 2 },
+          get 1() { forceGc(); throw error; },
+          2: { value: 1 }
+        };
+        Array.prototype.toSorted.call(source, function(left, right) {
+          return left.value - right.value;
+        });
+        "#,
+        r#"
+        var error = {};
+        var first = { value: 2 };
+        var source = { length: 2, 1: { value: 1 } };
+        Object.defineProperty(source, "0", {
+          get: function() { return first; },
+          set: function() { forceGc(); throw error; },
+          configurable: true
+        });
+        Array.prototype.sort.call(source, function(left, right) {
+          return left.value - right.value;
+        });
+        "#,
+        r#"
+        var source = new Proxy({ length: 2, 0: { value: 1 } }, {
+          has: function(target, key) { return key !== "1" && key in target; },
+          deleteProperty: function() { forceGc(); return false; }
+        });
+        Array.prototype.sort.call(source, function(left, right) {
+          return left.value - right.value;
+        });
+        "#,
     ] {
         let mut vm = Vm::new().expect("VM should initialize");
         vm.register_fn(
@@ -416,6 +462,33 @@ fn array_sort_methods_restore_gc_pin_depth_after_abrupt_completion() {
         vm.run(source)
             .expect_err("sorting should preserve the abrupt completion");
         assert_eq!(vm.gc_pins.len(), baseline);
+    }
+}
+
+#[test]
+fn array_sort_methods_restore_gc_pin_depth_after_fuel_abort() {
+    for expression in [
+        "Array.prototype.sort.call(source);",
+        "Array.prototype.toSorted.call(source);",
+    ] {
+        let mut vm = Vm::new().expect("VM should initialize");
+        vm.run("globalThis.source = { length: 1000, 0: { value: 1 } };")
+            .expect("fuel fixture should initialize");
+        let baseline = vm.gc_pins.len();
+
+        vm.set_fuel(Some(50));
+        let error = vm
+            .run(expression)
+            .expect_err("the native indexed-property scan should exhaust fuel");
+        assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+        assert_eq!(vm.gc_pins.len(), baseline, "pin leak after {expression}");
+
+        vm.set_fuel(None);
+        assert_eq!(
+            vm.run("source[0].value")
+                .expect("VM should remain reusable after a fuel abort"),
+            Value::Number(1.0)
+        );
     }
 }
 

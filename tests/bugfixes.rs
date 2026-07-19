@@ -769,6 +769,25 @@ fn array_missing_index_assignment_uses_prototype_setter() {
 }
 
 #[test]
+fn array_missing_index_assignment_observes_proxy_prototype_set_trap() {
+    let v = run(r#"
+        var calls = [];
+        var arr = [];
+        var proto = new Proxy({}, {
+          set: function(target, key, value, receiver) {
+            calls.push(key + ':' + value + ':' + (receiver === arr));
+            return true;
+          }
+        });
+        Object.setPrototypeOf(arr, proto);
+        Object.defineProperty(arr, 'length', { writable: false });
+        (function() { 'use strict'; arr[0] = 42; })();
+        calls.join(',') + ':' + arr.hasOwnProperty('0') + ':' + arr.length;
+        "#);
+    assert_eq!(v, Value::String(Arc::from("0:42:true:false:0")));
+}
+
+#[test]
 fn define_property_rejects_accessor_plus_value_mix() {
     let msg = run_err(
         r#"var o = {};

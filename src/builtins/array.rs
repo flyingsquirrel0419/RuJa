@@ -984,6 +984,76 @@ fn validate_sort_compare_fn(vm: &Vm, cmp: &Option<Value>) -> error::Result<()> {
     Ok(())
 }
 
+const MAX_MATERIALIZED_ARRAY_SORT_LENGTH: usize = crate::value::MAX_DENSE_ARRAY_LEN;
+
+#[derive(Clone, Copy)]
+enum SortIndexedPropertiesMode {
+    SkipHoles,
+    ReadThroughHoles,
+}
+
+fn array_sort_object_and_length(
+    vm: &mut Vm,
+    this: Option<Value>,
+    compare_fn: &Option<Value>,
+    pin_count: &mut usize,
+) -> error::Result<(Value, usize)> {
+    if let Some(compare_fn) = compare_fn {
+        *pin_count += vm.pin(compare_fn);
+    }
+
+    let receiver = this.unwrap_or(Value::Undefined);
+    if receiver.is_nullish() {
+        return Err(Error::type_err(
+            "Cannot convert undefined or null to object",
+        ));
+    }
+    let object = vm.to_object(&receiver)?;
+    *pin_count += vm.pin(&object);
+    let len = length_of_array_like(vm, &object)?;
+    Ok((object, len))
+}
+
+fn ensure_array_sort_materialization_limit(len: usize) -> error::Result<()> {
+    if len > MAX_MATERIALIZED_ARRAY_SORT_LENGTH {
+        return Err(Error::range("Array sort input too large"));
+    }
+    Ok(())
+}
+
+fn collect_sort_indexed_properties(
+    vm: &mut Vm,
+    object: &Value,
+    len: usize,
+    mode: SortIndexedPropertiesMode,
+) -> error::Result<(Vec<Value>, usize)> {
+    let mut items = Vec::new();
+    let mut pin_count = 0;
+    let completion = (|| {
+        for index in 0..len {
+            vm.consume_fuel()?;
+            let key = index.to_string();
+            let read = match mode {
+                SortIndexedPropertiesMode::SkipHoles => vm.has_property(object, &key)?,
+                SortIndexedPropertiesMode::ReadThroughHoles => true,
+            };
+            if !read {
+                continue;
+            }
+            let value = vm.get_property(object, &key)?;
+            // A later HasProperty/Get can remove the source edge and collect.
+            pin_count += vm.pin(&value);
+            items.push(value);
+        }
+        Ok(())
+    })();
+    if let Err(error) = completion {
+        vm.unpin_many(pin_count);
+        return Err(error);
+    }
+    Ok((items, pin_count))
+}
+
 fn compare_array_sort_undefined(a: &Value, b: &Value) -> Option<std::cmp::Ordering> {
     match (a.is_undefined(), b.is_undefined()) {
         (true, true) => Some(std::cmp::Ordering::Equal),
@@ -1076,6 +1146,7 @@ where
             let mut b = mid;
             buf.clear();
             while a < mid && b < right {
+                vm.consume_fuel()?;
                 if compare(vm, &items[a], &items[b])? == std::cmp::Ordering::Greater {
                     buf.push(items[b].clone());
                     b += 1;
@@ -1172,43 +1243,38 @@ pub(crate) fn array_to_sorted(
 ) -> error::Result<Value> {
     let cb = args.first().cloned();
     validate_sort_compare_fn(vm, &cb)?;
-    if let Some(Value::Object(idx)) = this {
-        let receiver = Value::Object(idx);
-        let mut items = vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Array(a) = obj {
-                a.items.lock().clone()
-            } else {
-                Vec::new()
+    let mut pin_count = 0;
+    let completion = (|| {
+        let (object, len) = array_sort_object_and_length(vm, this, &cb, &mut pin_count)?;
+
+        // ArrayCreate precedes SortIndexedProperties, including its indexed
+        // Gets. Pin the fresh result before applying the sandbox list cap.
+        let result = array_create_in_current_realm(vm, len)?;
+        pin_count += vm.pin(&result);
+        ensure_array_sort_materialization_limit(len)?;
+
+        let (mut items, item_pins) = collect_sort_indexed_properties(
+            vm,
+            &object,
+            len,
+            SortIndexedPropertiesMode::ReadThroughHoles,
+        )?;
+        pin_count += item_pins;
+        sort_with_cb(vm, &mut items, &cb)?;
+
+        let Value::Object(result_idx) = result else {
+            return Err(Error::internal("ArrayCreate returned a non-object"));
+        };
+        vm.heap.with_obj(result_idx.0, |obj| {
+            if let HeapObj::Array(array) = obj {
+                *array.items.lock() = items;
+                array.present.lock().fill(true);
             }
         });
-        let mut pin_count = vm.pin_many(&items);
-        pin_count += vm.pin(&receiver);
-        if let Some(compare_fn) = &cb {
-            pin_count += vm.pin(compare_fn);
-        }
-        let completion = (|| {
-            // ArrayCreate precedes SortIndexedProperties. Keeping the fresh
-            // result rooted also makes allocation failure precede comparator
-            // side effects, as required by toSorted.
-            let result_idx = vm.heap.allocate(HeapObj::Array(ArrayData::new_holes(
-                items.len(),
-                Some(vm.array_proto.clone()),
-            )))?;
-            let result = Value::Object(GcIdx(result_idx));
-            pin_count += vm.pin(&result);
-            sort_with_cb(vm, &mut items, &cb)?;
-            vm.heap.with_obj(result_idx, |obj| {
-                if let HeapObj::Array(array) = obj {
-                    *array.items.lock() = items;
-                    array.present.lock().fill(true);
-                }
-            });
-            Ok(result)
-        })();
-        vm.unpin_many(pin_count);
-        return completion;
-    }
-    Ok(Value::Undefined)
+        Ok(Value::Object(result_idx))
+    })();
+    vm.unpin_many(pin_count);
+    completion
 }
 
 pub(crate) fn array_to_spliced(
@@ -1336,7 +1402,10 @@ fn to_length(vm: &mut Vm, value: &Value) -> error::Result<usize> {
 
 fn length_of_array_like(vm: &mut Vm, value: &Value) -> error::Result<usize> {
     let len = vm.get_property(value, "length")?;
-    to_length(vm, &len)
+    let pin_count = vm.pin(&len);
+    let completion = to_length(vm, &len);
+    vm.unpin_many(pin_count);
+    completion
 }
 
 fn array_find_object_and_callback(
@@ -1564,54 +1633,37 @@ pub(crate) fn array_reverse(
 pub(crate) fn array_sort(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let cmp = args.first().cloned();
     validate_sort_compare_fn(vm, &cmp)?;
-    if let Some(Value::Object(idx)) = this {
-        let receiver = Value::Object(idx);
-        // `sort` skips holes while collecting, then deletes the unused tail.
-        // Keep the initial length separate because comparator code may mutate
-        // the live receiver before writeback begins.
-        let (mut items, initial_len) = vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Array(a) = obj {
-                let backing = a.items.lock();
-                let present = a.present.lock();
-                let items = backing
-                    .iter()
-                    .enumerate()
-                    .filter(|(index, _)| present.get(*index).copied().unwrap_or(false))
-                    .map(|(_, value)| value.clone())
-                    .collect();
-                (items, backing.len())
-            } else {
-                (Vec::new(), 0)
-            }
-        });
-        let mut pin_count = vm.pin_many(&items);
-        pin_count += vm.pin(&receiver);
-        if let Some(compare_fn) = &cmp {
-            pin_count += vm.pin(compare_fn);
+    let mut pin_count = 0;
+    let completion = (|| {
+        let (object, len) = array_sort_object_and_length(vm, this, &cmp, &mut pin_count)?;
+        ensure_array_sort_materialization_limit(len)?;
+        let (mut items, item_pins) = collect_sort_indexed_properties(
+            vm,
+            &object,
+            len,
+            SortIndexedPropertiesMode::SkipHoles,
+        )?;
+        pin_count += item_pins;
+
+        sort_with_cb(vm, &mut items, &cmp)?;
+        let item_count = items.len();
+        for (index, item) in items.into_iter().enumerate() {
+            vm.consume_fuel()?;
+            vm.set_property_strict(&object, &index.to_string(), item)?;
         }
-        let completion = (|| {
-            sort_with_cb(vm, &mut items, &cmp)?;
-            let item_count = items.len();
-            // Comparator code may have changed the live array length. Route
-            // writeback through Array [[Set]] so presence and length metadata
-            // stay coherent and entries appended past the initial range remain.
-            for (index, item) in items.into_iter().enumerate() {
-                vm.set_property_strict(&receiver, &index.to_string(), item)?;
+        for index in item_count..len {
+            vm.consume_fuel()?;
+            if !vm.delete_property(&object, &index.to_string())? {
+                return Err(Error::type_err(format!(
+                    "Cannot delete array index '{}' during sort",
+                    index
+                )));
             }
-            for index in item_count..initial_len {
-                if !vm.delete_property(&receiver, &index.to_string())? {
-                    return Err(Error::type_err(format!(
-                        "Cannot delete array index '{}' during sort",
-                        index
-                    )));
-                }
-            }
-            Ok(receiver)
-        })();
-        vm.unpin_many(pin_count);
-        return completion;
-    }
-    Ok(Value::Undefined)
+        }
+        Ok(object)
+    })();
+    vm.unpin_many(pin_count);
+    completion
 }
 
 pub(crate) fn array_shift(

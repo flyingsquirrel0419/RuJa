@@ -1204,14 +1204,6 @@ impl Vm {
                     }
                 });
                 if let Some(i) = array_index {
-                    if self.array_index_blocked_by_non_writable_length(idx.0, i) {
-                        if strict {
-                            return Err(Error::type_err(
-                                "Cannot define Array index with non-writable length",
-                            ));
-                        }
-                        return Ok(());
-                    }
                     let pkey = crate::value::PropertyKey::from(key);
                     let own_desc = self.heap.with_obj(idx.0, |o| {
                         if let HeapObj::Array(a) = o {
@@ -1283,50 +1275,23 @@ impl Vm {
                         }
                     });
                     if !dense_own_index {
-                        match self.find_setter(*idx, &pkey) {
-                            Some(Some(setter)) => {
-                                self.call_function(
-                                    &setter,
-                                    std::slice::from_ref(&value),
-                                    Some(obj.clone()),
-                                )?;
-                                return Ok(());
-                            }
-                            Some(None) => {
-                                if strict {
-                                    return Err(Error::type_err(format!(
-                                        "Cannot set property '{}' which has only a getter",
-                                        key
-                                    )));
-                                }
-                                return Ok(());
-                            }
-                            None => {}
+                        // A missing Array element still uses ordinary [[Set]]
+                        // prototype traversal. In particular, a Proxy in the
+                        // chain must observe its `set` trap before Array length
+                        // or extensibility can constrain creation on receiver.
+                        let success =
+                            self.try_set_property_key_with_receiver(obj, &pkey, value, obj)?;
+                        if !success && strict {
+                            return Err(Error::type_err(format!(
+                                "Cannot assign to read only property '{}' of object",
+                                key
+                            )));
                         }
-                        if self.has_non_writable_data_property_in_proto(*idx, &pkey) {
-                            if strict {
-                                return Err(Error::type_err(format!(
-                                    "Cannot assign to read only property '{}' of object",
-                                    key
-                                )));
-                            }
-                            return Ok(());
-                        }
-                        let is_extensible = self.heap.with_obj(idx.0, |o| o.is_extensible());
-                        if !is_extensible {
-                            if strict {
-                                return Err(Error::type_err(format!(
-                                    "Cannot add property '{}', object is not extensible",
-                                    key
-                                )));
-                            }
-                            return Ok(());
-                        }
-                    } else {
-                        // Dense array elements are own writable data properties,
-                        // so prototype setters/non-writable data properties do
-                        // not participate in this write.
+                        return Ok(());
                     }
+                    // Dense array elements are own writable data properties,
+                    // so prototype setters/non-writable data properties do
+                    // not participate in this write.
                     let mapped = self.heap.with_obj(idx.0, |o| {
                         if let HeapObj::Array(a) = o {
                             a.arguments_map.lock().as_ref().and_then(|m| {

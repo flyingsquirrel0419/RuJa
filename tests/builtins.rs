@@ -3333,6 +3333,276 @@ fn array_sort_methods_propagate_comparator_conversion_errors() {
 }
 
 #[test]
+fn array_sort_methods_use_generic_sort_indexed_properties() {
+    assert_eq!(
+        run(r#"
+            var proto = { 1: 2 };
+            var sortable = Object.create(proto);
+            sortable[0] = 3;
+            sortable[2] = 1;
+            var lengthCalls = 0;
+            sortable.length = {
+              valueOf: function() { lengthCalls++; return 3; }
+            };
+            var returned = Array.prototype.sort.call(
+              sortable,
+              function(left, right) { return left - right; }
+            );
+
+            var source = Object.create(proto);
+            source[0] = 3;
+            source[2] = 1;
+            source.length = "3";
+            var copy = Array.prototype.toSorted.call(
+              source,
+              function(left, right) { return left - right; }
+            );
+
+            [
+              returned === sortable,
+              lengthCalls,
+              sortable[0], sortable[1], sortable[2],
+              sortable.hasOwnProperty(1),
+              copy.join(","), copy.length, copy.hasOwnProperty(0),
+              source[0], source.hasOwnProperty(1), source[2]
+            ].join("|");
+            "#,),
+        Value::String(Arc::from("true|1|1|2|3|true|1,2,3|3|true|3|false|1"))
+    );
+}
+
+#[test]
+fn array_sort_methods_observe_generic_property_operation_order() {
+    assert_eq!(
+        run(r#"
+            var sortLog = [];
+            var sortTarget = { length: 3, 0: 3, 2: 1 };
+            var sortable = new Proxy(sortTarget, {
+              has: function(target, key) {
+                if (key === "0" || key === "1" || key === "2") {
+                  sortLog.push("has:" + key);
+                }
+                return key in target;
+              },
+              get: function(target, key) {
+                if (key === "0" || key === "1" || key === "2") {
+                  sortLog.push("get:" + key);
+                }
+                return target[key];
+              },
+              set: function(target, key, value) {
+                sortLog.push("set:" + key);
+                target[key] = value;
+                return true;
+              },
+              deleteProperty: function(target, key) {
+                sortLog.push("delete:" + key);
+                delete target[key];
+                return true;
+              }
+            });
+            Array.prototype.sort.call(sortable, function(left, right) {
+              sortLog.push("compare");
+              return left - right;
+            });
+
+            var copyLog = [];
+            var copyTarget = { length: 3, 0: 3, 2: 1 };
+            var copySource = new Proxy(copyTarget, {
+              has: function() {
+                copyLog.push("has");
+                return true;
+              },
+              get: function(target, key) {
+                if (key === "0" || key === "1" || key === "2") {
+                  copyLog.push("get:" + key);
+                }
+                return target[key];
+              }
+            });
+            var copy = Array.prototype.toSorted.call(copySource, function(left, right) {
+              copyLog.push("compare");
+              return left - right;
+            });
+
+            [
+              sortLog.join(","),
+              copyLog.join(","),
+              copy[0], copy[1], copy[2] === undefined,
+              copy.hasOwnProperty(2)
+            ].join("|");
+            "#,),
+        Value::String(Arc::from(
+            "has:0,get:0,has:1,has:2,get:2,compare,set:0,set:1,delete:2|\
+             get:0,get:1,get:2,compare|1|3|true|true"
+        ))
+    );
+}
+
+#[test]
+fn array_sort_writeback_observes_proxy_prototype_set_trap() {
+    assert_eq!(
+        run(r#"
+            var marker = {};
+            var calls = [];
+            var receiver = [, 1];
+            Object.setPrototypeOf(receiver, new Proxy({}, {
+              set: function(target, key, value, actualReceiver) {
+                calls.push(key + ':' + value + ':' + (actualReceiver === receiver));
+                throw marker;
+              }
+            }));
+            var caught = false;
+            try { Array.prototype.sort.call(receiver); }
+            catch (error) { caught = error === marker; }
+
+            [
+              caught,
+              calls.join(','),
+              receiver.hasOwnProperty('0'),
+              receiver.hasOwnProperty('1'),
+              receiver[1]
+            ].join('|');
+            "#,),
+        Value::String(Arc::from("true|0:1:true|false|true|1"))
+    );
+}
+
+#[test]
+fn array_sort_methods_box_receivers_and_enforce_array_create_limits() {
+    assert_eq!(
+        run(r#"
+            function isTypeError(callback) {
+              try { callback(); return false; }
+              catch (error) { return error instanceof TypeError; }
+            }
+            var frozenCopy = Object.freeze([2, 0, 1]).toSorted();
+
+            Boolean.prototype.length = 3;
+            var boxedCopy = Array.prototype.toSorted.call(true);
+            delete Boolean.prototype.length;
+
+            var gets = 0;
+            var huge = {
+              length: 2 ** 32,
+              get 0() { gets++; throw new Error("must not read"); }
+            };
+            var rangeError = false;
+            try { Array.prototype.toSorted.call(huge); }
+            catch (error) { rangeError = error instanceof RangeError; }
+
+            [
+              isTypeError(function() { Array.prototype.sort.call(null); }),
+              isTypeError(function() { Array.prototype.toSorted.call(undefined); }),
+              frozenCopy.join(","),
+              boxedCopy.length,
+              boxedCopy[0] === undefined,
+              boxedCopy[1] === undefined,
+              boxedCopy[2] === undefined,
+              boxedCopy.hasOwnProperty(0),
+              rangeError,
+              gets
+            ].join("|");
+            "#,),
+        Value::String(Arc::from("true|true|0,1,2|3|true|true|true|true|true|0"))
+    );
+}
+
+#[test]
+fn array_sort_methods_enforce_scan_limit_before_index_access() {
+    assert_eq!(
+        run(r#"
+            var indexedOperations = 0;
+            function makeHugeSource() {
+              return new Proxy({ length: 1048577 }, {
+                has: function(target, key) {
+                  if (key === "0") indexedOperations++;
+                  return key in target;
+                },
+                get: function(target, key) {
+                  if (key === "0") indexedOperations++;
+                  return target[key];
+                }
+              });
+            }
+            function rejectsBeforeIndexAccess(callback) {
+              var before = indexedOperations;
+              try { callback(); return false; }
+              catch (error) {
+                return error instanceof RangeError && indexedOperations === before;
+              }
+            }
+
+            [
+              rejectsBeforeIndexAccess(function() {
+                Array.prototype.sort.call(makeHugeSource());
+              }),
+              rejectsBeforeIndexAccess(function() {
+                Array.prototype.toSorted.call(makeHugeSource());
+              }),
+              indexedOperations
+            ].join("|");
+            "#,),
+        Value::String(Arc::from("true|true|0"))
+    );
+}
+
+#[test]
+fn array_sort_methods_root_generic_collection_values_across_gc() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+
+    assert_eq!(
+        vm.run(
+            r#"
+            function collect(copy) {
+              var target = {
+                length: 3,
+                0: { value: 3 },
+                1: { value: 1 },
+                2: { value: 2 }
+              };
+              var replacement;
+              var source = new Proxy(target, {
+                get: function(object, key) {
+                  var value = object[key];
+                  if (key === "1") {
+                    object[0] = null;
+                    forceGc();
+                    replacement = { value: 99 };
+                  } else if (key === "2") {
+                    object[1] = null;
+                    forceGc();
+                    replacement = { value: 98 };
+                  }
+                  return value;
+                }
+              });
+              var compare = function(left, right) {
+                return left.value - right.value;
+              };
+              var result = copy
+                ? Array.prototype.toSorted.call(source, compare)
+                : Array.prototype.sort.call(source, compare);
+              return [result[0].value, result[1].value, result[2].value].join(",");
+            }
+            collect(false) + "|" + collect(true);
+            "#,
+        )
+        .expect("generic collection values should survive observable GC"),
+        Value::String(Arc::from("1,2,3|1,2,3"))
+    );
+}
+
+#[test]
 fn array_fill_materializes_holes() {
     assert_eq!(
         run(r#"
