@@ -146,10 +146,15 @@
 - **Math**: full set of methods and constants (incl. `imul`, `clz32`,
   `fround`); each Realm owns an independent Math object with the standard
   `Symbol.toStringTag` and Realm-local method identities
-- **Reflect**: `get`/`set`/`has`/`deleteProperty`/`ownKeys`/`getPrototypeOf`/
-  `setPrototypeOf`/`isExtensible`/`preventExtensions`/`apply`/`construct`;
-  omitted property-key arguments are converted from `undefined` after target
-  validation, including Proxy trap, receiver, and abrupt-completion behavior
+- **Reflect**: all 13 standard methods: `apply`, `construct`, `defineProperty`,
+  `deleteProperty`, `get`, `getOwnPropertyDescriptor`, `getPrototypeOf`, `has`,
+  `isExtensible`, `ownKeys`, `preventExtensions`, `set`, and `setPrototypeOf`.
+  Each Realm owns a distinct namespace and method set with the standard
+  `Symbol.toStringTag`; omitted property-key arguments are converted from
+  `undefined` after target validation, including Proxy trap, receiver, and
+  abrupt-completion behavior. The complete direct Test262 Reflect directory is
+  admitted at **153/153**; deeper internal-method limitations remain documented
+  separately.
 - **WeakMap**/`WeakSet`: object-keyed collections (get/set/has/delete)
 - **Date**: `now()`, constructor with timestamp, `getTime()`
 - **JSON**: `parse` (with reviver) and `stringify` (with replacer/space)

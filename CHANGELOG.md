@@ -4,6 +4,55 @@
 
 ### Fixed
 
+- Every main and Test262-created Realm now owns a distinct `Reflect` namespace
+  object and 13 distinct native methods. The namespace inherits from that
+  Realm's `%Object.prototype%`, its methods inherit from the matching
+  `%Function.prototype%`, generated errors use the method Realm, and the
+  global binding retains the standard writable, non-enumerable, configurable
+  descriptor. `Reflect[Symbol.toStringTag]` is now the non-writable,
+  non-enumerable, configurable string `"Reflect"`, so the observable brand is
+  `[object Reflect]` without hard-coding an internal tag fallback.
+
+  Runtime construction uses a narrowly scoped GC-retrying native-function
+  allocator. Each provisional method is pinned before the next allocation and
+  the namespace object is allocated while the complete method set remains
+  rooted; success and exact-cap failure both restore the incoming pin depth.
+  Deterministic regressions force collection before the first method, midway
+  through the method batch, and at the final object allocation, then verify
+  all method identities and names. A methods-only hard cap also proves complete
+  cleanup on failure. This closes a review-found bug where Realm construction
+  could reject despite reclaimable garbage.
+
+  `tools/test262_reflect_remaining_admission.txt` freezes exactly the 71
+  residual direct Reflect files after the existing 82-file admissions. Live
+  `features`, `includes`, `flags`, and `negative` metadata are checked, overlap
+  is rejected against every other admission manifest, and future paths or
+  added unsupported features remain skipped. Pinned Test262
+  `020cb74075849d1e404bbcdb62feb7a02e6966db` now runs the complete direct
+  `built-ins/Reflect` directory at **153 pass / 0 fail / 0 skip**; the new
+  residual set is **71/71** and the supported subset remains
+  **12751/0/7687/20438**. Local gates pass all Rust targets/features, lib tests
+  **137/137**, builtins **495/495**, warnings-denied Clippy, rustfmt/diff,
+  release, wasm32, and Python tooling **111/111**.
+
+  Feature commit `09306d8` passed ordinary CI `29682312654` and all **33/33**
+  jobs in full matrix `29682312645`. The 30 result artifacts at
+  `/tmp/ruja-reflect-complete-results.29682312645.qE94cM` aggregate to
+  **30634 pass / 6049 fail / 11778 skip / 6 timeout / 0 error / 48467 total /
+  36683 pass-or-fail executed** (**63.2%** of all files, **83.5%** of executed
+  files). Against the Reflect-key baseline, 29 artifacts are byte-identical;
+  only `built-ins` changes from **14955/5238/3469** to
+  **15026/5238/3398**, exactly **+71 pass / -71 skip**.
+
+  GPT 5.6 reviewers Turing (`019f79b3-ef56-7ac2-8877-ffda879e8353`) and Bohr
+  (`019f79b3-f1a7-7f61-8c0b-2f3b5f745b2c`) returned `CLEAN` after the
+  heap-cap and metadata gaps were corrected. Explorers Rawls
+  (`019f79a0-661f-7b61-a838-bb3b10288063`) and Hubble
+  (`019f79a0-6736-7052-b3f7-1d971ac17e2f`) verified the Realm/admission
+  boundary and identified separate prototype, extensibility, and fuel defects
+  now recorded as limitations. All sessions are closed; no coder or Umans
+  route was used.
+
 - `Reflect.get`, `Reflect.set`, and `Reflect.has` now apply
   `ToPropertyKey(undefined)` when the property-key argument is omitted. They
   no longer return `undefined` or `false` before reading a property named

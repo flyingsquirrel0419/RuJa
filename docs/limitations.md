@@ -10,7 +10,11 @@ The following resource limits are enforced:
   `[[GetOwnProperty]]`, and `[[IsExtensible]]` consume one unit per traversed
   Proxy layer, including nested handler and invariant walks. Exhaustion throws
   a `RangeError("fuel exhausted")` that is *not catchable* by user `try/catch`
-  (a host-level abort). `None` = unbounded (default).
+  (a host-level abort). `None` = unbounded (default). Transparent Proxy
+  forwarding in `[[DefineOwnProperty]]`, `[[PreventExtensions]]`,
+  `[[GetPrototypeOf]]`, and `[[SetPrototypeOf]]` is still unmetered, so those
+  four native paths can perform linear work without reducing an active fuel
+  budget.
 - **Heap object limit**: `Vm::set_max_heap_objects(Some(n))` caps the number
   of live GC-managed heap objects. When exceeded, allocation throws a
   catchable `RangeError("heap limit exceeded")`. A GC cycle is attempted
@@ -26,7 +30,14 @@ The following resource limits are enforced:
   JavaScript object available to settle. Test262 Realm construction is
   transactional: a failed intrinsic or wrapper allocation restores temporary
   pin depth and removes every provisional per-Realm registry root before the
-  caller Realm's error is materialized.
+  caller Realm's error is materialized. Realm-local Reflect construction now
+  uses rooted GC-retrying allocations for its complete 14-object batch. The
+  general native-function bootstrap helper is still non-collecting because
+  older batch installers do not consistently pin provisional functions;
+  runtime Realm installers that still use that helper, including Math, can
+  reject at an intermediate raw allocation even when a collection could
+  reclaim enough garbage. They require the same per-builder rooting audit
+  before the generic path can safely change.
 - **Call-stack depth**: JavaScript recursion is capped at 1000 frames.
   Exceeding this throws a catchable `RangeError("Maximum call stack size
   exceeded")`, not a native stack overflow (SIGSEGV/abort).
@@ -41,6 +52,24 @@ The following resource limits are enforced:
   fuel-metered, but their ordinary prototype segments are not all free of
   arbitrary limits yet. Removing the remaining caps requires one coordinated
   property-traversal audit rather than isolated limit increases.
+- **Prototype mutation gaps**: cycle detection in `[[SetPrototypeOf]]` stops
+  after 4096 links and can accept a longer cycle. The immutable-prototype
+  special case also recognizes only the main Realm's `%Object.prototype%`;
+  a Test262-created Realm's `%Object.prototype%` currently accepts a
+  replacement prototype. Both behaviors are non-conforming and are not
+  covered by the direct Reflect admission.
+- **Extensibility gaps**: `[[PreventExtensions]]` reports success without
+  changing the extensibility state of several exotic objects, including Map,
+  Set, WeakMap, WeakSet, ArrayBuffer, DataView, and Promise instances. A
+  truthy Proxy `preventExtensions` trap also validates a nested Proxy target's
+  raw storage instead of invoking its full `[[IsExtensible]]` internal method,
+  which can reject a valid nested-Proxy result. These are implementation bugs,
+  not intentional sandbox policy.
+- **Transparent Proxy enumeration gap**: `for...in` can omit keys forwarded
+  from a transparent Proxy target. The underlying
+  `[[GetOwnPropertyDescriptor]]` results are correct, but Proxy-focused harness
+  cases that enumerate those keys still fail. This is separate from the direct
+  Reflect descriptor files admitted in the current 153-file surface.
 - **Regex execution bounds**: ordinary matching uses the RE2-style,
   linear-time Rust `regex` backend. Backreferences use the vendored
   `fancy-regex` backend; that path has a finite work limit and reports an
@@ -184,9 +213,9 @@ guarantees are required.
   scoped subset of ES5.1 + selected ES2015+ features (see
   [test262.md](test262.md#supported-subset) for the exact list). The full
   suite is run in CI (excluding `intl402`/`staging`) with a baseline pass
-  rate of 62.7% of all matrix files and 83.2% of executed files (**30,404
-  pass / 6,133 fail / 11,924 skip / 6 timeout**); within the supported subset,
-  tests currently run at 100%.
+  rate of 63.2% of all matrix files and 83.5% of executed files (**30,634
+  pass / 6,049 fail / 11,778 skip / 6 timeout / 0 error**); within the
+  supported subset, tests currently run at 100%.
   Full ES conformance is not claimed. See
   [test262.md](test262.md) for current numbers and the failure breakdown.
 - Decorator support covers audited class and public/private
@@ -212,8 +241,10 @@ guarantees are required.
   Test262 Realms also install rooted Realm-local Promise, synchronous
   GeneratorFunction/Generator, and asynchronous
   AsyncGeneratorFunction/AsyncGenerator/AsyncIterator intrinsic graphs, plus
-  an independent Math object whose methods inherit that Realm's
-  `%Function.prototype%`.
+  independent Math and Reflect namespace objects whose methods inherit that
+  Realm's `%Function.prototype%`. Reflect also owns the standard observable
+  `Symbol.toStringTag`; the created-Realm `%Object.prototype%` mutation gap is
+  listed above rather than hidden by this namespace coverage.
   Date constructors, prototypes, methods, and static functions are also
   Realm-local. A non-object Date new-target prototype falls back to the
   immutable Date prototype from that new target's Realm, while constructed

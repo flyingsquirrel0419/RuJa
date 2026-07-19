@@ -30,8 +30,8 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 62.9% of all matrix files; 83.4% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (12751 pass / 0 fail on current Test262; 12752 / 0 on the pinned checkout) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 63.2% of all matrix files; 83.5% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (12751 pass / 0 fail / 7687 skip / 20438 total on the current pinned checkout) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
@@ -8313,9 +8313,9 @@ Reflect-call manifests. Future files and members with an additional
 unsupported feature remain skipped. The new exact result is **28 pass / 0
 fail / 0 skip**, and the combined `get`/`set`/`has` result is **39/0/0**.
 Supported Test262 remains **12751 pass / 0 fail / 7687 skip / 20438 total**.
-A diagnostic run with every Reflect feature gate lifted is **152 pass / 1
-fail**; the sole remaining direct failure is the separate missing
-`Reflect[Symbol.toStringTag]` property.
+At feature commit `04ce30c`, a diagnostic run with every Reflect feature gate
+lifted was **152 pass / 1 fail**; its remaining direct failure was the then
+missing `Reflect[Symbol.toStringTag]` property closed by the next section.
 
 Local gates pass all targets/features, lib tests **136/136**, builtins
 **494/494**, operators **123/123**, bugfixes **68/68**, Fuel **28/28**,
@@ -8335,6 +8335,56 @@ files are byte-identical to Proxy-delete baseline `29677977505`; only
 `built-ins` changes from **14927/5238/3497** to **14955/5238/3469**, exactly
 **+28 pass / -28 skip** without failure, timeout, error, corpus, or total
 drift.
+
+## Realm-local Reflect namespace and complete direct admission
+
+The main Realm and every `$262.createRealm()` Realm now receive distinct
+Reflect namespace objects and distinct sets of all 13 native methods. Each
+namespace inherits from its own `%Object.prototype%`; every method inherits
+from the matching `%Function.prototype%` and creates errors in that Realm. The
+global descriptor is writable, non-enumerable, and configurable. The own
+`Symbol.toStringTag` property is exactly `"Reflect"` with attributes
+non-writable, non-enumerable, and configurable, so deleting one Realm's tag
+does not affect another Realm.
+
+Realm construction can execute under the heap-object cap. Reflect's runtime
+installer allocates native functions through a GC-retrying path and pins each
+provisional method before another allocation. The final namespace allocation
+therefore cannot collect method handles held only by Rust locals. A local
+regression forces collection before method 1, method 8, and the final object,
+then verifies every method remains distinct and callable; a 13-slot cap proves
+pin and heap cleanup on failure. This test was added after an independent GPT
+review reproduced a false heap-limit failure with reclaimable garbage.
+
+`tools/test262_reflect_remaining_admission.txt` is the exact set difference
+between all 153 direct `built-ins/Reflect` files and the 82 files owned by
+earlier Proxy/Reflect admissions. It contains 71 files and overlaps none of
+the other 38 admission manifests. Tooling freezes each file's live
+`features`, `includes`, `flags`, and absence of `negative` metadata, keeps the
+runner and analyzer symmetric, and leaves synthetic future paths or files
+with an extra unsupported feature skipped.
+
+On Test262 `020cb74075849d1e404bbcdb62feb7a02e6966db`, the residual set is
+**71 pass / 0 fail / 0 skip** and the complete direct Reflect directory is
+**153/0/0**. Supported Test262 remains **12751/0/7687/20438** and Python
+tooling is **111/111**. Rust all-target/all-feature tests, warnings-denied
+Clippy, rustfmt/diff, release, and wasm32 checks pass; lib tests are
+**137/137** and builtins are **495/495**.
+
+Feature commit `09306d8` passed ordinary CI `29682312654` and all **33/33**
+jobs in full matrix `29682312645`. The 30 downloaded result files at
+`/tmp/ruja-reflect-complete-results.29682312645.qE94cM` aggregate to **30634
+pass / 6049 fail / 11778 skip / 6 timeout / 0 error / 48467 total / 36683
+pass-or-fail executed**, or **63.2%** of all files and **83.5%** of executed
+files. Compared with the previous Reflect-key baseline, 29 artifacts are
+byte-identical. Only `built-ins` changes, from **14955/5238/3469** to
+**15026/5238/3398**, exactly **+71 pass / -71 skip**.
+
+This closes the finite direct Test262 surface, not every internal method that
+Reflect exposes. Long prototype-cycle acceptance, mutable created-Realm
+`%Object.prototype%`, incomplete exotic `preventExtensions`, nested-Proxy
+extensibility validation, and four unmetered transparent-Proxy traversals are
+tracked in [Known limitations](limitations.md) as separate correctness units.
 
 ## Why the full-suite rate is not higher
 

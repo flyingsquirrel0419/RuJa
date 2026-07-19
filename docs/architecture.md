@@ -633,6 +633,43 @@ also hold for omitted keys.
 - 장점, 단점 및 영향: Omitted and explicit undefined keys now agree through ordinary and Proxy paths, local GC and abrupt regressions provide coverage missing from Test262, and the change adds no allocation or fuel policy. Existing deep get, has, set, and receiver-define traversal caps remain separate architecture work.
 ```
 
+## Realm-local Reflect intrinsic allocation
+
+`build_reflect_in_env` receives an explicit global environment and
+`%Object.prototype%`. The main-Realm wrapper supplies the VM globals, while
+Test262 Realm population calls it only after that Realm's `%Function.prototype%`,
+`%Object.prototype%`, global object, and registry roots exist. The resulting
+namespace and all 13 methods are therefore distinct per Realm, and native calls
+derive their function prototype and error Realm from the supplied environment.
+The namespace owns the observable `Symbol.toStringTag` descriptor instead of
+depending on its internal diagnostic class name.
+
+Realm creation may run under a hard heap-object cap. The ordinary native
+function registration helper intentionally remains a non-collecting bootstrap
+allocator because older batch installers do not all root provisional values.
+Reflect uses a separate GC-retrying entry point: after each method allocation,
+the method is pushed onto `gc_pins` before another allocation can collect. The
+final namespace object is allocated through the sandbox allocator while all
+methods remain pinned, and one cleanup path removes the complete pin suffix on
+success or failure. Once allocation succeeds, the namespace owns the methods
+before those temporary pins are released and the caller publishes it globally.
+
+The allocation regression gives the batch exactly 14 slots and varies
+unreachable garbage so collection occurs before method 1, method 8, or the
+final namespace allocation. It then collects again and verifies all methods
+remain distinct callable functions with their exact names. A 13-slot failure
+case verifies that no provisional method or pin survives rollback.
+
+```text
+[Decision Log]
+- 목적과 의도: Install a specification-shaped Reflect namespace in every Realm without allowing heap-cap collection to reclaim provisional methods or reject while reclaimable capacity exists.
+- 기존 구현 및 제약 조건: Reflect existed only in the main Realm, lacked @@toStringTag, and accumulated method handles in an untraced Rust map through raw non-retrying allocations. Globally changing native registration to collect would expose unpinned provisional values in older intrinsic builders.
+- 검토한 주요 대안: Share the main Reflect object, install only the missing tag, force one unconditional GC before the batch, change every native-function allocation globally, or add one rooted GC-retrying runtime-installer path.
+- 선택한 방식: Parameterize Reflect by Realm, allocate each method through the dedicated retrying path, pin it before the next allocation, allocate the namespace through Vm::alloc, and release all temporary pins through one result boundary.
+- 다른 대안 대신 이 방식을 선택한 이유: Shared or main-only objects violate Realm identity; a pre-batch collection cannot protect future collecting allocations; and changing the global bootstrap helper without auditing every caller can publish stale GcIdx values. The narrow helper makes the new runtime path correct without silently widening GC behavior elsewhere.
+- 장점, 단점 및 영향: Main and created Realms now have correct object/function/error provenance and exact-cap behavior, and direct Reflect Test262 closes at 153/153. The VM retains two native-function allocation paths until older intrinsic batches receive the same rooting audit, and separate Reflect internal-method defects remain explicit follow-up work.
+```
+
 Promise keyed combinators use a separate two-stage observable protocol. They
 first snapshot raw `[[OwnPropertyKeys]]`, including non-enumerable keys, and
 then perform Proxy-aware `[[GetOwnProperty]]` inside the per-key loop. An
