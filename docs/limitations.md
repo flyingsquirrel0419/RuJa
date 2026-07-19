@@ -27,6 +27,12 @@ The following resource limits are enforced:
 - **Call-stack depth**: JavaScript recursion is capped at 1000 frames.
   Exceeding this throws a catchable `RangeError("Maximum call stack size
   exceeded")`, not a native stack overflow (SIGSEGV/abort).
+- **Transparent Proxy deletion depth**: trapless `deleteProperty` forwarding
+  still delegates recursively through Proxy targets. An adversarially deep
+  transparent Proxy chain can therefore exhaust the Rust stack, including
+  during `Array.prototype.sort` tail deletion. Set, construct, and several
+  descriptor protocols already use bounded or iterative traversal; deletion
+  needs the same treatment as a separate VM-wide property-operation unit.
 - **Regex execution bounds**: ordinary matching uses the RE2-style,
   linear-time Rust `regex` backend. Backreferences use the vendored
   `fancy-regex` backend; that path has a finite work limit and reports an
@@ -262,13 +268,15 @@ guarantees are required.
   boundaries). Incremental marking is supported via `collect_incremental(roots, budget)`,
   but there is no generational collector yet
 - Native snapshot rooting is complete for `Array.prototype.map`, `flatMap`,
-  `Array.of`, `sort`, and `toSorted`. Direct-Array `sort` also distinguishes
-  dense holes from explicit `undefined` and performs observable writeback;
-  `toSorted` materializes dense holes as `undefined` in its preallocated copy.
-  Their collection path is not yet generic: array-like receivers, inherited
-  indexed values, accessors, and live `HasProperty`/`Get` side effects remain
-  unsupported, and sparse indices beyond the dense cap were not exhaustively
-  exercised.
+  `Array.of`, `sort`, and `toSorted`. The sorting methods implement generic
+  `ToObject`/`LengthOfArrayLike`, inherited and accessor-backed indices, live
+  Proxy-aware `HasProperty`/`Get`, strict `Set`/`Delete`, and the distinct
+  skip-holes versus read-through-holes modes. Sorting rejects a captured
+  length above 1,048,576 with `RangeError` before any indexed scan. For
+  `toSorted`, `ArrayCreate` still precedes this sandbox check. This bound is
+  intentionally stricter than ECMAScript for very large sparse receivers;
+  native temporary-root, collected-list, and merge-buffer storage is bounded
+  by the same limit but still uses infallible Rust vector allocation.
 - Older snapshot-based methods still need separate observable-semantics and
   rooting passes: `join`, `filter`, `reduce`, `reduceRight`, `forEach`, `slice`,
   `toSpliced`, and `with`. A callback or coercion can remove the original

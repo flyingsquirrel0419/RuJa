@@ -4,6 +4,49 @@
 
 ### Fixed
 
+- `Array.prototype.sort` and `toSorted` now execute one generic,
+  mode-driven `SortIndexedProperties` algorithm after comparator validation,
+  `ToObject`, and a single `LengthOfArrayLike`. `sort` performs live ascending
+  `HasProperty`/`Get` collection, then strict ascending `Set` and
+  `DeletePropertyOrThrow` behavior on the original receiver. `toSorted`
+  performs `ArrayCreate` before indexed access, reads every captured index
+  without `HasProperty`, and creates a dense own-property result without
+  mutating the source. Generic objects, boxed primitives, inherited values,
+  accessors, Proxy traps, and getter-driven length/index mutation now follow
+  the specified observable order.
+
+  Collected values are rooted immediately across later re-entry, `length`
+  coercion is rooted, and collection, comparison, writeback, and deletion
+  consume execution fuel with pin-depth restoration on every error or host
+  abort. Lengths above 1,048,576 are rejected before indexed scanning as an
+  explicit sandbox policy; `toSorted` retains the required `ArrayCreate`
+  ordering. Missing Array elements now use receiver-aware generic `[[Set]]`,
+  so a Proxy prototype's `set` trap runs before receiver length/extensibility
+  checks and a trap throw stops sort writeback immediately.
+
+  On pinned Test262 `020cb74075849d1e404bbcdb62feb7a02e6966db`, focused
+  `sort`/`toSorted` improves from **44 pass / 23 fail / 8 skip** to **67 / 0 /
+  8**, exactly **+23 pass / -23 fail**. Supported Test262 remains **12751 pass
+  / 0 fail / 7687 skip / 20438 total**. Final local gates pass all Rust
+  targets/features, builtins **493/493**, lib tests **132/132**, bugfixes
+  **68/68**, Fuel **28/28**, operators **122/122**, warnings-denied Clippy,
+  rustfmt/diff, release, wasm32, and Python tooling **108/108**. GPT 5.6
+  reviewers Leibniz (`019f78e7-b4d4-7892-9ebe-4e39a212b6f6`) and
+  Chandrasekhar (`019f78e7-b612-73d1-b18b-d285329283fb`) independently
+  reviewed the final implementation. Leibniz found the Proxy-prototype setter
+  bypass; after the receiver-aware fix both reviewers returned `CLEAN` and
+  were closed. No coder model or Umans provider route was used.
+
+  Feature commit `d142220` passed ordinary CI `29675860658` and all **33/33**
+  jobs in automatic full matrix `29675860634`. The 30 artifacts at
+  `/tmp/ruja-array-sort-generic.29675860634.cEBP0e` aggregate to **30507 pass /
+  6049 fail / 11905 skip / 6 timeout / 0 error / 48467 total / 36556
+  pass-or-fail executed** (**62.9%** of all files, **83.5%** of executed
+  files). Twenty-nine result files are byte-identical to direct-Array baseline
+  `29673722819`; only `built-ins` changes from **14876 pass / 5261 fail** to
+  **14899 / 5238**, exactly reproducing **+23 pass / -23 fail** without corpus
+  drift. GitHub's Node 20 deprecation annotations were warnings only.
+
 - `Array.prototype.sort` and `toSorted` now retain every materialized value,
   receiver, comparator, comparator result, and fresh destination that must
   survive observable JavaScript re-entry. Comparator and default-string

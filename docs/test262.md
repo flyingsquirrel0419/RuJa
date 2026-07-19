@@ -8185,6 +8185,58 @@ Twenty-nine files are byte-identical to Array callback baseline `29671480315`;
 only `built-ins` changes from **14862 pass / 5275 fail** to **14876 / 5261**,
 exactly reproducing the focused **+14/-14** delta without corpus drift.
 
+## Generic Array SortIndexedProperties
+
+The direct-Array sorting path is replaced by one generic, mode-driven
+collection algorithm. Both methods validate the comparator, apply `ToObject`,
+and observe `LengthOfArrayLike` once. `sort` issues live ascending
+`HasProperty` and conditional `Get` operations, while `toSorted` issues an
+unconditional `Get` for every captured index after creating its result Array.
+This distinguishes skip-holes from read-through-holes without snapshotting
+own keys or bypassing inherited descriptors and Proxy traps.
+
+Collection completes before comparison. `sort` then performs ascending strict
+`Set` followed by ascending deletion over the captured range; `toSorted`
+installs every sorted entry as an own result property and never writes the
+source. Getter mutation, inherited accessors, Proxy order, partial writeback,
+boxed receivers, frozen sources, and invalid Array length ordering are covered
+by both Test262 and deterministic Rust regressions. Missing Array elements now
+use generic receiver-aware setter traversal, closing the separately reproduced
+case where a Proxy prototype's throwing `set` trap was skipped.
+
+Every retained value is pinned immediately before the next observable
+operation. Length conversion, getter/setter/delete errors, comparator errors,
+forced GC, exact-cap allocation, and fuel exhaustion restore the incoming pin
+depth. Native collection, merge comparisons, writeback, and deletion consume
+fuel. Captured lengths above 1,048,576 throw `RangeError` before indexed
+scanning as a documented sandbox policy; `toSorted` performs `ArrayCreate`
+before that policy check.
+
+On pinned Test262 `020cb74075849d1e404bbcdb62feb7a02e6966db`, the 75 focused
+files under `built-ins/Array/prototype/sort` and `toSorted` move from **44 pass
+/ 23 fail / 8 skip** to **67 pass / 0 fail / 8 skip**, exactly **+23 pass /
+-23 fail**. Supported Test262 remains **12751 pass / 0 fail / 7687 skip /
+20438 total**. Local gates pass all targets/features, builtins **493/493**, lib
+tests **132/132**, bugfixes **68/68**, Fuel **28/28**, operators **122/122**,
+warnings-denied Clippy, rustfmt/diff, release, wasm32, and Python tooling
+**108/108**.
+
+GPT 5.6 reviewers Leibniz (`019f78e7-b4d4-7892-9ebe-4e39a212b6f6`) and
+Chandrasekhar (`019f78e7-b612-73d1-b18b-d285329283fb`) audited observable
+order and VM safety. Leibniz found the Array fast-path Proxy setter bypass;
+after the shared receiver-aware correction both returned `CLEAN`. Both agents
+were closed, and no coder or Umans route was used.
+
+Feature commit `d142220` passed ordinary CI `29675860658` and all **33/33**
+jobs in automatic full matrix `29675860634`. The 30 downloaded artifacts at
+`/tmp/ruja-array-sort-generic.29675860634.cEBP0e` aggregate to **30507 pass /
+6049 fail / 11905 skip / 6 timeout / 0 error / 48467 total / 36556
+pass-or-fail executed** (**62.9%** of all files, **83.5%** of executed files).
+Twenty-nine files are byte-identical to direct-Array baseline `29673722819`;
+only `built-ins` changes from **14876 pass / 5261 fail** to **14899 / 5238**,
+exactly reproducing **+23 pass / -23 fail** without skip, timeout, error,
+total, or corpus drift. GitHub's Node 20 annotations were warnings only.
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is

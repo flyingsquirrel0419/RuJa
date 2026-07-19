@@ -518,7 +518,7 @@ failures restore the incoming pin depth.
 - 장점, 단점 및 영향: Forced GC can no longer turn prior map/flatMap results or a custom Array.of result into another HeapObj; abrupt and exact-cap failures leave no pin leak. Root storage grows with live object-valued inputs/results for the duration of the operation, while snapshot-based methods with broader observable-semantics issues remain separate follow-up work.
 ```
 
-## Native Array sort ownership and writeback
+## Native Array SortIndexedProperties and writeback
 
 `Array.prototype.sort` and `toSorted` use a shared stable merge sort whose
 comparison closure returns a VM completion. This is necessary because both
@@ -529,30 +529,47 @@ result is additionally pinned across `ToNumber`. The first abrupt completion
 stops merging immediately and the outer completion scope releases the entire
 LIFO root suffix.
 
+Both methods validate the comparator, apply `ToObject`, and cache
+`LengthOfArrayLike` once. A shared `SortIndexedProperties` collector then
+performs ascending, live VM property operations. `sort` uses the skip-holes
+mode, issuing `HasProperty` and then `Get` only for present own or inherited
+indices. `toSorted` uses the read-through-holes mode and issues `Get` for every
+captured index, so holes and missing properties become explicit `undefined`
+entries. Collection finishes before comparison starts, and getter, Proxy,
+conversion, comparator, setter, or deletion errors stop the algorithm at the
+first observable failure.
+
 The common comparison path orders `undefined` after every defined value
 without invoking a custom comparator. Default comparison converts each value
 and compares RuJa's decoded UTF-16 code units rather than Rust scalar or UTF-8
-order, preserving lone-surrogate sentinels. `sort` collects only own dense
-elements whose presence bit is set, writes the sorted list through strict
-indexed `[[Set]]`, and deletes the unused part of the captured initial range.
-This keeps `items`, `present`, `length`, and writable indexed descriptors
-coherent while preserving comparator additions beyond the initial length.
+order, preserving lone-surrogate sentinels. After sorting, `sort` writes the
+materialized list through ascending strict indexed `[[Set]]` and deletes the
+unused captured range in ascending order. Missing Array elements use the
+generic receiver-aware setter path, so inherited ordinary descriptors and
+Proxy `set` traps run before receiver length or extensibility is considered.
+Existing own dense elements retain their metadata-synchronizing fast path.
 
 `toSorted` has different ownership and hole behavior. It creates and pins its
-fresh hole-backed Array before comparison, as required by `ArrayCreate`, and
-reads dense holes as `undefined`. After successful sorting it installs every
-value and marks every result index present. Allocation failure therefore occurs
-before comparator side effects, and comparator failure leaves the unreachable
-destination available for later collection without leaking a pin.
+fresh Array before the first indexed read, as required by `ArrayCreate`.
+After successful sorting it installs every value as an own, present result
+index without consulting inherited setters. Allocation failure therefore
+occurs before source access or comparator side effects, and comparator failure
+leaves the unreachable destination available for later collection without
+leaking a pin.
+
+Collection, merge comparisons, writeback, and deletion consume execution fuel.
+The sandbox rejects captured lengths above `MAX_DENSE_ARRAY_LEN` before any
+indexed scan. For `toSorted`, this policy check occurs after `ArrayCreate` so
+the specified invalid-Array-length error order remains observable.
 
 ```text
 [Decision Log]
-- 목적과 의도: Make native Array sorting preserve GC safety, abrupt completions, UTF-16 ordering, holes, and live writeback invariants without losing the existing stable O(n log n) resource bound.
-- 기존 구현 및 제약 조건: Rust Vec<Value> snapshots were not roots; comparator ToNumber and default ToString errors were swallowed; direct replacement of ArrayData.items ignored present bits, descriptors, length mutations, and appended values; toSorted allocated after comparison. RuJa still has a direct-Array fast path rather than a complete generic SortIndexedProperties implementation.
-- 검토한 주요 대안: Disable GC while sorting, pin only the receiver, keep host sort_by and defer errors, replace the backing vector wholesale, or implement generic array-like/prototype/accessor collection in the same patch.
-- 선택한 방식: Root every native-owned value at each observable boundary, use a completion-returning stable merge sort, separate sort skip-holes writeback from toSorted read-through-holes allocation, and route sort writes/deletes through VM property operations while synchronizing dense indexed descriptors.
-- 다른 대안 대신 이 방식을 선택한 이유: Receiver-only roots do not trace detached snapshot values, deferred errors permit extra comparator effects, direct backing replacement corrupts Array metadata, and disabling GC weakens the sandbox. Full generic collection changes a much larger observable surface and remains independently testable work.
-- 장점, 단점 및 영향: Direct Arrays now survive forced GC, preserve first-error ordering and holes, and remain O(n log n); exact-cap failures restore pin depth and leave the VM reusable. Temporary roots scale with the materialized list and default comparison currently allocates UTF-16 vectors per comparison. Generic receivers, inherited indexed properties, accessor-driven collection, and sparse indices beyond the dense cap remain follow-up boundaries.
+- 목적과 의도: Implement the complete observable SortIndexedProperties boundary for Array sort and toSorted while preserving GC ownership, stable comparison, Array metadata, and sandbox resource limits.
+- 기존 구현 및 제약 조건: The first hardening pass was correct only for direct dense Arrays. It bypassed ToObject and LengthOfArrayLike, inherited indices, accessors, Proxy Has/Get, and generic receiver writeback. Array's missing-index fast path also skipped Proxy prototypes, and Rust-owned Values remain invisible to the collector unless explicitly pinned.
+- 검토한 주요 대안: Keep separate dense and generic algorithms, snapshot own keys before sorting, route every Array index write through the generic setter, remove the hard length cap and rely only on optional fuel, or share one mode-driven collector plus targeted fast paths.
+- 선택한 방식: Cache the receiver and length once, collect with live ascending VM property operations under explicit skip-holes/read-through-holes modes, root every retained value immediately, preserve the shared completion-returning merge sort, use generic strict Set/Delete for sort, and keep direct destination installation for fresh toSorted Arrays.
+- 다른 대안 대신 이 방식을 선택한 이유: Separate algorithms would drift in comparison and cleanup order, own-key snapshots miss live HasProperty/Get effects, routing existing dense writes through the generic path would discard their metadata optimization, and optional fuel alone does not bound an unmetered host. One collector exposes the specification distinction while retaining narrow exotic-object ownership points.
+- 장점, 단점 및 영향: Generic objects, boxed primitives, inherited accessors, Proxy traps, getter mutation, partial writeback, forced GC, and fuel aborts now follow one tested order. The focused sort/toSorted Test262 set has no failures. The explicit 1,048,576 scan cap is intentionally stricter than ECMAScript for very large sparse receivers, temporary root and merge storage scale with the collected list, and default comparison still allocates UTF-16 vectors.
 ```
 
 Promise keyed combinators use a separate two-stage observable protocol. They
