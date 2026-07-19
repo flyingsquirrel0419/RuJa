@@ -291,6 +291,89 @@ fn function_creation_failures_restore_gc_pin_depth() {
 }
 
 #[test]
+fn array_callback_builtins_restore_gc_pin_depth_after_abrupt_completion() {
+    for source in [
+        r#"
+        var error = {};
+        [1, 2].map(function(value) {
+          if (value === 2) { forceGc(); throw error; }
+          return { value: value };
+        });
+        "#,
+        r#"
+        var error = {};
+        [1, 2].flatMap(function(value) {
+          if (value === 2) { forceGc(); throw error; }
+          return [{ value: value }];
+        });
+        "#,
+        r#"
+        var error = {};
+        function C() {
+          return new Proxy({}, {
+            defineProperty: function(target, key, descriptor) {
+              forceGc();
+              if (key === "1") throw error;
+              return Reflect.defineProperty(target, key, descriptor);
+            }
+          });
+        }
+        Array.of.call(C, {}, {});
+        "#,
+    ] {
+        let mut vm = Vm::new().expect("VM should initialize");
+        vm.register_fn(
+            "forceGc",
+            |vm, _, _| {
+                vm.gc();
+                Ok(Value::Undefined)
+            },
+            0,
+        )
+        .expect("GC test hook should register");
+        let baseline = vm.gc_pins.len();
+
+        vm.run(source)
+            .expect_err("the callback should complete abruptly");
+        assert_eq!(vm.gc_pins.len(), baseline);
+    }
+}
+
+#[test]
+fn array_mapping_allocation_failures_restore_gc_pin_depth() {
+    for source in [
+        r#"
+        [1, 2].map(function(value) {
+          if (value === 2) { capHeap(); return value; }
+          return { value: value };
+        });
+        "#,
+        r#"
+        [1, 2].flatMap(function(value) {
+          if (value === 2) { capHeap(); return value; }
+          return [{ value: value }];
+        });
+        "#,
+    ] {
+        let mut vm = Vm::new().expect("VM should initialize");
+        vm.register_fn("capHeap", |vm, _, _| cap_heap_at_current_live_count(vm), 0)
+            .expect("heap-cap hook should register");
+        let baseline = vm.gc_pins.len();
+
+        let error = vm
+            .run(source)
+            .expect_err("the result Array allocation should hit the heap limit");
+        vm.set_max_heap_objects(None);
+        assert_eq!(error.kind, crate::error::ErrorKind::Range);
+        assert_eq!(vm.gc_pins.len(), baseline);
+        assert_eq!(
+            vm.run("1 + 1").expect("VM should remain reusable"),
+            Value::Number(2.0)
+        );
+    }
+}
+
+#[test]
 fn internally_allocating_array_constructor_uses_one_heap_slot() {
     let mut vm = Vm::new().expect("VM should initialize");
     vm.gc();

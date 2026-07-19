@@ -724,21 +724,29 @@ pub(crate) fn array_from(vm: &mut Vm, args: &[Value], this: Option<Value>) -> er
 pub(crate) fn array_of(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let len = args.len();
     let constructor = this.unwrap_or(Value::Undefined);
-    let result = if vm.is_constructor_value(&constructor) {
-        vm.construct(&constructor, &[Value::Number(len as f64)])?
-    } else {
-        make_value_array(vm, Vec::new())?
-    };
+    let mut pin_count = vm.pin_many(args);
+    pin_count += vm.pin(&constructor);
 
-    for (i, item) in args.iter().enumerate() {
-        vm.define_own_property_or_throw(
-            &result,
-            PropertyKey::from(i.to_string()),
-            PropertyDescriptor::data(item.clone()),
-        )?;
-    }
-    vm.set_property_strict(&result, "length", Value::Number(len as f64))?;
-    Ok(result)
+    let completion = (|| {
+        let result = if vm.is_constructor_value(&constructor) {
+            vm.construct(&constructor, &[Value::Number(len as f64)])?
+        } else {
+            make_value_array(vm, Vec::new())?
+        };
+        pin_count += vm.pin(&result);
+
+        for (i, item) in args.iter().enumerate() {
+            vm.define_own_property_or_throw(
+                &result,
+                PropertyKey::from(i.to_string()),
+                PropertyDescriptor::data(item.clone()),
+            )?;
+        }
+        vm.set_property_strict(&result, "length", Value::Number(len as f64))?;
+        Ok(result)
+    })();
+    vm.unpin_many(pin_count);
+    completion
 }
 
 pub(crate) fn array_is_array(
@@ -840,20 +848,35 @@ pub(crate) fn array_map(vm: &mut Vm, args: &[Value], this: Option<Value>) -> err
                 Vec::new()
             }
         });
-        let mut result = Vec::new();
-        for (i, item) in items.iter().enumerate() {
-            result.push(vm.call_function(
-                &cb,
-                &[
-                    item.clone(),
-                    Value::Number(i as f64),
-                    this.clone().unwrap_or(Value::Undefined),
-                ],
-                args.get(1).cloned(),
-            )?);
+        let mut pin_count = vm.pin_many(&items);
+        pin_count += vm.pin(&cb);
+        if let Some(receiver) = &this {
+            pin_count += vm.pin(receiver);
         }
-        let arr = HeapObj::Array(ArrayData::new(result, Some(vm.array_proto.clone())));
-        return Ok(Value::Object(GcIdx(vm.heap.allocate(arr)?)));
+        if let Some(this_arg) = args.get(1) {
+            pin_count += vm.pin(this_arg);
+        }
+
+        let completion = (|| {
+            let mut result = Vec::new();
+            for (i, item) in items.iter().enumerate() {
+                let mapped = vm.call_function(
+                    &cb,
+                    &[
+                        item.clone(),
+                        Value::Number(i as f64),
+                        this.clone().unwrap_or(Value::Undefined),
+                    ],
+                    args.get(1).cloned(),
+                )?;
+                pin_count += vm.pin(&mapped);
+                result.push(mapped);
+            }
+            let arr = HeapObj::Array(ArrayData::new(result, Some(vm.array_proto.clone())));
+            Ok(Value::Object(GcIdx(vm.heap.allocate(arr)?)))
+        })();
+        vm.unpin_many(pin_count);
+        return completion;
     }
     Ok(Value::Undefined)
 }
@@ -1797,45 +1820,58 @@ pub(crate) fn array_flat_map(
         Vec::new()
     };
     let fn_val = args.first().cloned().unwrap_or(Value::Undefined);
-    let mut mapped: Vec<Value> = Vec::new();
-    for (i, v) in items.iter().enumerate() {
-        let result = vm.call_function(
-            &fn_val,
-            &[
-                v.clone(),
-                Value::Number(i as f64),
-                this.clone().unwrap_or(Value::Undefined),
-            ],
-            None,
-        )?;
-        mapped.push(result);
+    let mut pin_count = vm.pin_many(&items);
+    pin_count += vm.pin(&fn_val);
+    if let Some(receiver) = &this {
+        pin_count += vm.pin(receiver);
     }
-    let mut out = Vec::new();
-    for v in &mapped {
-        let is_arr = match v {
-            Value::Object(idx) => vm.heap.with_obj(idx.0, |o| matches!(o, HeapObj::Array(_))),
-            _ => false,
-        };
-        if is_arr {
-            let sub = vm.heap.with_obj(
-                match v {
-                    Value::Object(i) => i.0,
-                    _ => 0,
-                },
-                |o| {
-                    if let HeapObj::Array(a) = o {
-                        a.items.lock().clone()
-                    } else {
-                        Vec::new()
-                    }
-                },
-            );
-            out.extend(sub);
-        } else {
-            out.push(v.clone());
+
+    // Callback execution may collect values held only in Rust locals. Keep
+    // every accumulated result alive until the output Array owns the values.
+    let result = (|| {
+        let mut mapped: Vec<Value> = Vec::new();
+        for (i, v) in items.iter().enumerate() {
+            let result = vm.call_function(
+                &fn_val,
+                &[
+                    v.clone(),
+                    Value::Number(i as f64),
+                    this.clone().unwrap_or(Value::Undefined),
+                ],
+                None,
+            )?;
+            pin_count += vm.pin(&result);
+            mapped.push(result);
         }
-    }
-    make_value_array(vm, out)
+        let mut out = Vec::new();
+        for v in &mapped {
+            let is_arr = match v {
+                Value::Object(idx) => vm.heap.with_obj(idx.0, |o| matches!(o, HeapObj::Array(_))),
+                _ => false,
+            };
+            if is_arr {
+                let sub = vm.heap.with_obj(
+                    match v {
+                        Value::Object(i) => i.0,
+                        _ => 0,
+                    },
+                    |o| {
+                        if let HeapObj::Array(a) = o {
+                            a.items.lock().clone()
+                        } else {
+                            Vec::new()
+                        }
+                    },
+                );
+                out.extend(sub);
+            } else {
+                out.push(v.clone());
+            }
+        }
+        make_value_array(vm, out)
+    })();
+    vm.unpin_many(pin_count);
+    result
 }
 pub(crate) fn array_copy_within(
     vm: &mut Vm,

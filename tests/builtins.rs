@@ -10709,6 +10709,62 @@ fn array_flat_flatmap() {
 }
 
 #[test]
+fn array_flat_map_roots_prior_callback_results_across_gc() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+
+    assert_eq!(
+        vm.run(
+            r#"
+            var calls = 0;
+            [1, 2].flatMap(function(value) {
+              if (calls++ === 1) forceGc();
+              return [{ value: value }];
+            }).map(function(entry) { return entry.value; }).join(",");
+            "#,
+        )
+        .expect("flatMap callback results should survive observable GC"),
+        Value::String(Arc::from("1,2"))
+    );
+}
+
+#[test]
+fn array_map_roots_prior_callback_results_across_gc() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+
+    assert_eq!(
+        vm.run(
+            r#"
+            var calls = 0;
+            [1, 2].map(function(value) {
+              if (calls++ === 1) forceGc();
+              return { value: value };
+            }).map(function(entry) { return entry.value; }).join(",");
+            "#,
+        )
+        .expect("map callback results should survive observable GC"),
+        Value::String(Arc::from("1,2"))
+    );
+}
+
+#[test]
 fn array_at_shift_unshift_splice() {
     assert_eq!(run("[1,2,3].at(-1);"), Value::Number(3.0));
     assert_eq!(run("[1,2,3].at(0);"), Value::Number(1.0));
@@ -16573,6 +16629,43 @@ fn array_of_uses_constructor_and_create_data_property() {
            Array.of.call(C, "x");"#
     )
     .contains("not extensible"));
+}
+
+#[test]
+fn array_of_roots_constructed_result_across_observable_gc() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+
+    assert_eq!(
+        vm.run(
+            r#"
+            var replacement;
+            function C() {
+              return new Proxy({}, {
+                defineProperty: function(target, key, descriptor) {
+                  forceGc();
+                  replacement = { key: key };
+                  return Reflect.defineProperty(target, key, descriptor);
+                }
+              });
+            }
+            var first = { value: 1 };
+            var second = { value: 2 };
+            var result = Array.of.call(C, first, second);
+            [result[0] === first, result[1] === second, result.length].join("|");
+            "#,
+        )
+        .expect("Array.of result should survive observable property definition"),
+        Value::String(Arc::from("true|true|2"))
+    );
 }
 
 #[test]
