@@ -101,6 +101,7 @@ pub(crate) fn array_buffer_constructor(
             max_byte_length,
             props: Mutex::new(IndexMap::new()),
             proto: Mutex::new(Some(proto)),
+            extensible: AtomicBool::new(true),
         }))?;
     Ok(Value::Object(GcIdx(idx)))
 }
@@ -155,6 +156,7 @@ pub(crate) fn shared_array_buffer_constructor(
             max_byte_length,
             props: Mutex::new(IndexMap::new()),
             proto: Mutex::new(Some(proto)),
+            extensible: AtomicBool::new(true),
         }))?;
     Ok(Value::Object(GcIdx(idx)))
 }
@@ -182,6 +184,7 @@ pub(crate) fn shared_array_buffer_from_agent_broadcast(
             max_byte_length: broadcast.max_byte_length,
             props: Mutex::new(IndexMap::new()),
             proto: Mutex::new(Some(proto)),
+            extensible: AtomicBool::new(true),
         }))?;
     Ok(Value::Object(GcIdx(idx)))
 }
@@ -1538,6 +1541,7 @@ pub(crate) fn data_view_constructor(
             length_tracking,
             props: Mutex::new(IndexMap::new()),
             proto: Mutex::new(Some(proto)),
+            extensible: AtomicBool::new(true),
         }))?;
     Ok(Value::Object(GcIdx(idx)))
 }
@@ -5139,6 +5143,7 @@ fn allocate_array_buffer_with_bytes_options(
             max_byte_length,
             props: Mutex::new(IndexMap::new()),
             proto: Mutex::new(Some(proto)),
+            extensible: AtomicBool::new(true),
         }))?;
     Ok(Value::Object(GcIdx(idx)))
 }

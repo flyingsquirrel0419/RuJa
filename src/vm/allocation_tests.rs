@@ -1449,6 +1449,85 @@ fn proxy_define_property_trap_survives_descriptor_allocation_gc() {
 }
 
 #[test]
+fn exotic_integrity_descriptors_retry_gc_at_exact_cap_and_restore_pin_depth() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.run(
+        r#"
+        globalThis.pendingSealTarget = new Map([["entry", 1]]);
+        pendingSealTarget.first = 1;
+        pendingSealTarget.second = 2;
+        globalThis.pendingFreezeTarget = Promise.resolve(1);
+        pendingFreezeTarget.first = 1;
+        pendingFreezeTarget.second = 2;
+        function takeSealTarget() {
+          var target = pendingSealTarget;
+          pendingSealTarget = null;
+          return target;
+        }
+        function takeFreezeTarget() {
+          var target = pendingFreezeTarget;
+          pendingFreezeTarget = null;
+          return target;
+        }
+        "#,
+    )
+    .expect("integrity fixtures should initialize");
+    vm.gc();
+    let exact_live = vm.heap.live_count();
+    let baseline_pins = vm.gc_pins.len();
+    vm.set_max_heap_objects(Some(exact_live + 2));
+
+    vm.run("globalThis.sealedResult = Object.seal(takeSealTarget());")
+        .expect("two reusable descriptor cells should complete exotic sealing");
+    assert!(vm.heap.live_count() <= exact_live + 2);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    vm.set_max_heap_objects(None);
+    vm.gc();
+    let freeze_live = vm.heap.live_count();
+    vm.set_max_heap_objects(Some(freeze_live + 2));
+    vm.run("globalThis.frozenResult = Object.freeze(takeFreezeTarget());")
+        .expect("two reusable descriptor cells should complete exotic freezing");
+    assert!(vm.heap.live_count() <= freeze_live + 2);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    vm.set_max_heap_objects(None);
+    assert_eq!(
+        vm.run(
+            r#"
+            Object.isSealed(sealedResult) &&
+              !Object.isFrozen(sealedResult) &&
+              sealedResult.get("entry") === 1 &&
+              !Object.prototype.hasOwnProperty.call(sealedResult, "entry") &&
+              Object.isFrozen(frozenResult) &&
+              sealedResult.first === 1 && frozenResult.first === 1
+            "#,
+        )
+        .expect("integrity results should remain live after cap-triggered GC"),
+        Value::Bool(true)
+    );
+
+    vm.run("globalThis.failureTarget = new Map(); failureTarget.first = 1;")
+        .expect("failure fixture should initialize");
+    vm.gc();
+    let saturated_live = vm.heap.live_count();
+    vm.set_max_heap_objects(Some(saturated_live));
+    let error = vm
+        .run("Object.freeze(failureTarget);")
+        .expect_err("a saturated heap must reject the integrity descriptor allocation");
+    vm.set_max_heap_objects(None);
+
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_main_realm_range_error(&vm, error.as_ref());
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(
+        vm.run("Object.isExtensible(failureTarget);")
+            .expect("the partially completed target should remain usable"),
+        Value::Bool(false)
+    );
+}
+
+#[test]
 fn reflect_omitted_property_keys_root_proxy_arguments_across_gc() {
     let mut vm = Vm::new().expect("VM should initialize");
     vm.register_fn(
@@ -1851,6 +1930,252 @@ fn proxy_delete_property_nested_proxy_walks_consume_fuel_and_restore_pin_depth()
             .expect("invariant VM should remain reusable"),
         Value::Number(1.0)
     );
+}
+
+#[test]
+fn proxy_prevent_extensions_roots_observable_intermediates_and_restores_pin_depth() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("GC test hook should register");
+
+    let transparent = vm
+        .run(
+            r#"
+            var transparentPreventGets = 0;
+            var collectingPreventHandler = {};
+            Object.defineProperty(collectingPreventHandler, "preventExtensions", {
+              get: function () {
+                transparentPreventGets += 1;
+                forceGc();
+                return null;
+              }
+            });
+            var transparentPreventBase = {};
+            var transparentPreventProxy = transparentPreventBase;
+            for (var i = 0; i < 4; i += 1) {
+              transparentPreventProxy = new Proxy(
+                transparentPreventProxy,
+                collectingPreventHandler
+              );
+            }
+            transparentPreventProxy;
+            "#,
+        )
+        .expect("collecting transparent Proxy fixture should initialize");
+    let baseline = vm.gc_pins.len();
+    assert!(vm
+        .prevent_extensions(&transparent)
+        .expect("transparent preventExtensions should survive collection"));
+    assert_eq!(vm.gc_pins.len(), baseline);
+    assert_eq!(
+        vm.run("transparentPreventGets + ':' + Object.isExtensible(transparentPreventBase)")
+            .expect("transparent target should remain observable"),
+        Value::String("4:false".into())
+    );
+
+    let invariant = vm
+        .run(
+            r#"
+            var preventLog = [];
+            function collectingPreventTrap() {
+              preventLog.push("prevent-call");
+              forceGc();
+              return true;
+            }
+            function collectingExtensibleTrap(target) {
+              preventLog.push("extensible-call");
+              forceGc();
+              return Reflect.isExtensible(target);
+            }
+            var collectingOuterHandler = {};
+            Object.defineProperty(
+              collectingOuterHandler,
+              "preventExtensions",
+              {
+                get: function () {
+                  preventLog.push("prevent-get");
+                  forceGc();
+                  return collectingPreventTrap;
+                }
+              }
+            );
+            var collectingInvariantHandler = {};
+            Object.defineProperty(
+              collectingInvariantHandler,
+              "isExtensible",
+              {
+                get: function () {
+                  preventLog.push("extensible-get");
+                  forceGc();
+                  return collectingExtensibleTrap;
+                }
+              }
+            );
+            var collectingPreventBase = Object.preventExtensions({});
+            var collectingPreventTarget = new Proxy(
+              collectingPreventBase,
+              collectingInvariantHandler
+            );
+            new Proxy(collectingPreventTarget, collectingOuterHandler);
+            "#,
+        )
+        .expect("collecting invariant fixture should initialize");
+    let baseline = vm.gc_pins.len();
+    assert!(vm
+        .prevent_extensions(&invariant)
+        .expect("nested invariant should survive collection"));
+    assert_eq!(vm.gc_pins.len(), baseline);
+    assert_eq!(
+        vm.run("preventLog.join('|')")
+            .expect("every observable hook should remain callable"),
+        Value::String("prevent-get|prevent-call|extensible-get|extensible-call".into())
+    );
+
+    for source in [
+        r#"
+        (function () {
+          var marker = {};
+          var handler = {};
+          Object.defineProperty(handler, "preventExtensions", {
+            get: function () { forceGc(); throw marker; }
+          });
+          return new Proxy({}, handler);
+        })();
+        "#,
+        r#"
+        (function () {
+          var marker = {};
+          return new Proxy({}, {
+            get preventExtensions() {
+              forceGc();
+              return function () { forceGc(); throw marker; };
+            }
+          });
+        })();
+        "#,
+        r#"
+        (function () {
+          return new Proxy({}, { preventExtensions: 1 });
+        })();
+        "#,
+        r#"
+        (function () {
+          var revocable = Proxy.revocable({}, {});
+          var outer = new Proxy(revocable.proxy, { preventExtensions: null });
+          revocable.revoke();
+          return outer;
+        })();
+        "#,
+        r#"
+        (function () {
+          var target = new Proxy(Object.preventExtensions({}), {
+            isExtensible: function () { forceGc(); throw {}; }
+          });
+          return new Proxy(target, {
+            preventExtensions: function () { forceGc(); return true; }
+          });
+        })();
+        "#,
+    ] {
+        let proxy = vm
+            .run(source)
+            .expect("abrupt Proxy fixture should initialize");
+        let baseline = vm.gc_pins.len();
+        vm.prevent_extensions(&proxy)
+            .expect_err("preventExtensions should preserve abrupt completion");
+        assert_eq!(vm.gc_pins.len(), baseline);
+    }
+}
+
+#[test]
+fn proxy_prevent_extensions_walks_consume_fuel_and_restore_pin_depth() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.run(
+        r#"
+        var deepPreventBase = {};
+        var deepPreventProxy = deepPreventBase;
+        var transparentHandler = {};
+        for (var i = 0; i < 100000; i += 1) {
+          deepPreventProxy = new Proxy(deepPreventProxy, transparentHandler);
+        }
+        "#,
+    )
+    .expect("transparent preventExtensions fixture should initialize");
+    let proxy = vm.get_global("deepPreventProxy");
+    let base = vm.get_global("deepPreventBase");
+    let baseline = vm.gc_pins.len();
+
+    vm.set_fuel(Some(99_999));
+    let error = vm
+        .prevent_extensions(&proxy)
+        .expect_err("N-1 fuel must abort before the transparent target");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+    vm.set_fuel(None);
+    assert!(vm
+        .is_extensible(&base)
+        .expect("the aborted traversal must not change the target"));
+
+    vm.set_fuel(Some(100_000));
+    assert!(vm
+        .prevent_extensions(&proxy)
+        .expect("exactly N fuel should complete preventExtensions"));
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+    vm.set_fuel(None);
+    assert_eq!(
+        vm.run("Object.isExtensible(deepPreventBase)")
+            .expect("refilled VM should expose the target state"),
+        Value::Bool(false)
+    );
+
+    let mut invariant_vm = Vm::new().expect("invariant VM should initialize");
+    invariant_vm
+        .register_fn("truthyPrevent", |_, _, _| Ok(Value::Bool(true)), 1)
+        .expect("native preventExtensions trap should register");
+    invariant_vm
+        .run(
+            r#"
+            var deepPreventInvariantBase = Object.preventExtensions({});
+            var deepPreventInvariantTarget = deepPreventInvariantBase;
+            for (var i = 0; i < 100; i += 1) {
+              deepPreventInvariantTarget = new Proxy(
+                deepPreventInvariantTarget,
+                {}
+              );
+            }
+            var deepPreventInvariantProxy = new Proxy(
+              deepPreventInvariantTarget,
+              { preventExtensions: truthyPrevent }
+            );
+            "#,
+        )
+        .expect("nested preventExtensions invariant fixture should initialize");
+    let proxy = invariant_vm.get_global("deepPreventInvariantProxy");
+    let baseline = invariant_vm.gc_pins.len();
+
+    invariant_vm.set_fuel(Some(100));
+    let error = invariant_vm
+        .prevent_extensions(&proxy)
+        .expect_err("outer plus N-1 invariant fuel should abort");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(invariant_vm.fuel_remaining(), Some(0));
+    assert_eq!(invariant_vm.gc_pins.len(), baseline);
+
+    invariant_vm.set_fuel(Some(101));
+    assert!(invariant_vm
+        .prevent_extensions(&proxy)
+        .expect("outer plus N invariant fuel should complete"));
+    assert_eq!(invariant_vm.fuel_remaining(), Some(0));
+    assert_eq!(invariant_vm.gc_pins.len(), baseline);
 }
 
 #[test]

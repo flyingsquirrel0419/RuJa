@@ -499,6 +499,7 @@ fn new_empty_set(vm: &mut Vm) -> error::Result<Value> {
         items: Mutex::new(IndexSet::new()),
         props: Mutex::new(IndexMap::new()),
         proto: Mutex::new(Some(vm.set_proto.clone())),
+        extensible: AtomicBool::new(true),
     }))?;
     Ok(Value::Object(GcIdx(obj_idx)))
 }
@@ -835,6 +836,7 @@ pub(crate) fn map_group_by(
         entries: Mutex::new(IndexMap::new()),
         props: Mutex::new(IndexMap::new()),
         proto: Mutex::new(Some(vm.map_proto.clone())),
+        extensible: AtomicBool::new(true),
     }))?;
     for (key, values) in groups {
         let array = make_value_array(vm, values)?;
@@ -911,6 +913,7 @@ pub(crate) fn weakmap_constructor(
             entries: Mutex::new(Vec::new()),
             props: Mutex::new(IndexMap::new()),
             proto: Mutex::new(Some(proto)),
+            extensible: AtomicBool::new(true),
         }));
     vm.unpin_many(pin_count);
     Ok(Value::Object(GcIdx(allocation?)))
@@ -1038,6 +1041,7 @@ pub(crate) fn weakset_constructor(
             items: Mutex::new(Vec::new()),
             props: Mutex::new(IndexMap::new()),
             proto: Mutex::new(Some(proto)),
+            extensible: AtomicBool::new(true),
         }));
     vm.unpin_many(pin_count);
     Ok(Value::Object(GcIdx(allocation?)))
@@ -1471,6 +1475,7 @@ pub(crate) fn map_constructor(
         entries: Mutex::new(IndexMap::new()),
         props: Mutex::new(IndexMap::new()),
         proto: Mutex::new(Some(proto)),
+        extensible: AtomicBool::new(true),
     }))?;
     let map = Value::Object(GcIdx(obj_idx));
     // Initialize from an optional iterable of [key, value] pairs.
@@ -1924,6 +1929,7 @@ pub(crate) fn set_constructor(
         items: Mutex::new(IndexSet::new()),
         props: Mutex::new(IndexMap::new()),
         proto: Mutex::new(Some(proto)),
+        extensible: AtomicBool::new(true),
     }))?;
     let set = Value::Object(GcIdx(obj_idx));
     // Initialize from an optional iterable.
@@ -2092,6 +2098,7 @@ pub(crate) fn promise_constructor(
         handlers: Mutex::new(Vec::new()),
         props: Mutex::new(IndexMap::new()),
         proto: Mutex::new(Some(proto)),
+        extensible: AtomicBool::new(true),
     }));
     vm.unpin(proto_pin);
     let p_val = Value::Object(p_idx?);
@@ -2530,6 +2537,7 @@ fn make_pending_promise(vm: &mut Vm) -> error::Result<Value> {
             handlers: Mutex::new(Vec::new()),
             props: Mutex::new(IndexMap::new()),
             proto: Mutex::new(Some(prototype)),
+            extensible: AtomicBool::new(true),
         }))?;
     Ok(Value::Object(GcIdx(p_idx)))
 }
@@ -2544,6 +2552,7 @@ fn make_fulfilled_promise(vm: &mut Vm, value: Value) -> error::Result<Value> {
             handlers: Mutex::new(Vec::new()),
             props: Mutex::new(IndexMap::new()),
             proto: Mutex::new(Some(prototype)),
+            extensible: AtomicBool::new(true),
         }))?;
     Ok(Value::Object(GcIdx(p_idx)))
 }
@@ -2558,6 +2567,7 @@ fn make_rejected_promise(vm: &mut Vm, reason: Value) -> error::Result<Value> {
             handlers: Mutex::new(Vec::new()),
             props: Mutex::new(IndexMap::new()),
             proto: Mutex::new(Some(prototype)),
+            extensible: AtomicBool::new(true),
         }))?;
     Ok(Value::Object(GcIdx(p_idx)))
 }

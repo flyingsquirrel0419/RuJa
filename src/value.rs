@@ -474,6 +474,7 @@ pub struct ArrayBufferData {
     pub max_byte_length: Option<usize>,
     pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
     pub proto: Mutex<Option<Value>>,
+    pub extensible: AtomicBool,
 }
 
 pub struct AtomicsWaiter {
@@ -488,6 +489,7 @@ pub struct DataViewData {
     pub length_tracking: bool,
     pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
     pub proto: Mutex<Option<Value>>,
+    pub extensible: AtomicBool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -744,12 +746,14 @@ pub struct MapData {
     pub entries: Mutex<IndexMap<MapKey, Value>>,
     pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
     pub proto: Mutex<Option<Value>>,
+    pub extensible: AtomicBool,
 }
 
 pub struct SetData {
     pub items: Mutex<IndexSet<MapKey>>,
     pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
     pub proto: Mutex<Option<Value>>,
+    pub extensible: AtomicBool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -838,6 +842,7 @@ pub struct RegExpStringIteratorData {
     pub done: AtomicBool,
     pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
     pub proto: Mutex<Option<Value>>,
+    pub extensible: AtomicBool,
 }
 
 /// A WeakMap holds (object-key -> value) pairs where the key is held
@@ -850,6 +855,7 @@ pub struct WeakMapData {
     pub entries: Mutex<Vec<(usize, Value)>>,
     pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
     pub proto: Mutex<Option<Value>>,
+    pub extensible: AtomicBool,
 }
 
 /// A WeakSet holds object members weakly: an unreachable member is dropped
@@ -858,6 +864,7 @@ pub struct WeakSetData {
     pub items: Mutex<Vec<usize>>,
     pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
     pub proto: Mutex<Option<Value>>,
+    pub extensible: AtomicBool,
 }
 
 /// A WeakRef target is deliberately omitted from normal GC tracing. Object
@@ -891,6 +898,7 @@ pub struct PromiseData {
     pub handlers: Mutex<Vec<PromiseHandler>>,
     pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
     pub proto: Mutex<Option<Value>>,
+    pub extensible: AtomicBool,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -1012,6 +1020,7 @@ pub struct GeneratorData {
     pub done: AtomicBool,
     pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
     pub proto: Mutex<Option<Value>>,
+    pub extensible: AtomicBool,
 }
 
 /// A lazy (pull-based) generator: its function body is executed incrementally
@@ -1068,6 +1077,7 @@ pub struct LazyGeneratorData {
     pub async_delegate_await_kind: AtomicU8,
     pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
     pub proto: Mutex<Option<Value>>,
+    pub extensible: AtomicBool,
 }
 
 /// Internal iterator state used by `for...of` / `for...in` and the spread operator.
@@ -1281,14 +1291,49 @@ impl HeapObj {
             HeapObj::Object(o) => o.extensible.load(Ordering::Relaxed),
             HeapObj::Array(a) => a.extensible.load(Ordering::Relaxed),
             HeapObj::Function(f) => f.extensible.load(Ordering::Relaxed),
+            HeapObj::Map(m) => m.extensible.load(Ordering::Relaxed),
+            HeapObj::Set(s) => s.extensible.load(Ordering::Relaxed),
             HeapObj::TypedArray(t) => t.extensible.load(Ordering::Relaxed),
             HeapObj::CollectionIterator(iterator) => iterator.extensible.load(Ordering::Relaxed),
             HeapObj::IteratorHelper(iterator) => iterator.extensible.load(Ordering::Relaxed),
+            HeapObj::RegExpStringIterator(iterator) => iterator.extensible.load(Ordering::Relaxed),
+            HeapObj::WeakMap(map) => map.extensible.load(Ordering::Relaxed),
+            HeapObj::WeakSet(set) => set.extensible.load(Ordering::Relaxed),
             HeapObj::WeakRef(wr) => wr.extensible.load(Ordering::Relaxed),
             HeapObj::FinalizationRegistry(registry) => registry.extensible.load(Ordering::Relaxed),
+            HeapObj::Promise(promise) => promise.extensible.load(Ordering::Relaxed),
+            HeapObj::Generator(generator) => generator.extensible.load(Ordering::Relaxed),
+            HeapObj::LazyGenerator(generator) => generator.extensible.load(Ordering::Relaxed),
+            HeapObj::ArrayBuffer(buffer) => buffer.extensible.load(Ordering::Relaxed),
+            HeapObj::DataView(view) => view.extensible.load(Ordering::Relaxed),
             HeapObj::ModuleNamespace(_) => false,
             _ => true,
         }
+    }
+
+    pub fn prevent_extensions(&self) {
+        let extensible = match self {
+            HeapObj::Object(object) => &object.extensible,
+            HeapObj::Array(array) => &array.extensible,
+            HeapObj::Function(function) => &function.extensible,
+            HeapObj::Map(map) => &map.extensible,
+            HeapObj::Set(set) => &set.extensible,
+            HeapObj::CollectionIterator(iterator) => &iterator.extensible,
+            HeapObj::IteratorHelper(iterator) => &iterator.extensible,
+            HeapObj::RegExpStringIterator(iterator) => &iterator.extensible,
+            HeapObj::WeakMap(map) => &map.extensible,
+            HeapObj::WeakSet(set) => &set.extensible,
+            HeapObj::WeakRef(weak_ref) => &weak_ref.extensible,
+            HeapObj::FinalizationRegistry(registry) => &registry.extensible,
+            HeapObj::Promise(promise) => &promise.extensible,
+            HeapObj::Generator(generator) => &generator.extensible,
+            HeapObj::LazyGenerator(generator) => &generator.extensible,
+            HeapObj::TypedArray(array) => &array.extensible,
+            HeapObj::ArrayBuffer(buffer) => &buffer.extensible,
+            HeapObj::DataView(view) => &view.extensible,
+            _ => return,
+        };
+        extensible.store(false, Ordering::Relaxed);
     }
 }
 

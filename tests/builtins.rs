@@ -5022,9 +5022,10 @@ fn typed_array_constructors_cover_numeric_and_bigint_variants() {
         Value::String(Arc::from("1,8,-1"))
     );
     assert_eq!(
-        run("var a=new Float32Array(1); a[0]=1.5; Object.seal(a); [Object.isSealed(a), Object.isExtensible(a), a[0]].join(',');"),
-        Value::String(Arc::from("true,false,1.5"))
+        run("var a=new Float32Array(0); Object.seal(a); [Object.isSealed(a), Object.isFrozen(a), Object.isExtensible(a)].join(',');"),
+        Value::String(Arc::from("true,true,false"))
     );
+    assert!(run_err("Object.seal(new Float32Array(1));").contains("TypeError"));
 }
 
 #[test]
@@ -12756,6 +12757,321 @@ fn prevent_extensions_blocks_array_arguments_function_and_proxy_edges() {
     assert_eq!(
         run("Reflect.preventExtensions(new Proxy({}, { preventExtensions(){ return false; } }));"),
         Value::Bool(false)
+    );
+}
+
+#[test]
+fn prevent_extensions_updates_every_exotic_and_nested_proxy_target() {
+    assert_eq!(
+        run(
+            r#"
+            var weakTarget = {};
+            var samples = [
+              ["Map", new Map()],
+              ["Set", new Set()],
+              ["WeakMap", new WeakMap()],
+              ["WeakSet", new WeakSet()],
+              ["ArrayBuffer", new ArrayBuffer(8)],
+              ["SharedArrayBuffer", new SharedArrayBuffer(8)],
+              ["DataView", new DataView(new ArrayBuffer(8))],
+              ["Promise", Promise.resolve(1)],
+              ["Generator", (function* () {})()],
+              ["AsyncGenerator", (async function* () {})()],
+              ["RegExpStringIterator", "a".matchAll(/a/g)],
+              ["MapIterator", new Map().keys()],
+              ["IteratorHelper", Iterator.from([1]).map(function (x) { return x; })],
+              ["WeakRef", new WeakRef(weakTarget)],
+              ["FinalizationRegistry", new FinalizationRegistry(function () {})],
+              ["TypedArray", new Uint8Array(1)]
+            ];
+            var exoticResults = samples.map(function (entry) {
+              var name = entry[0];
+              var sample = entry[1];
+              var symbol = Symbol(name);
+              var before =
+                Object.isExtensible(sample) && Reflect.isExtensible(sample);
+              var prepared = Reflect.defineProperty(sample, "existing", {
+                value: 1,
+                writable: true,
+                configurable: true
+              });
+              var reflected = Reflect.preventExtensions(sample);
+              var returned = Object.preventExtensions(sample) === sample;
+              var after =
+                !Object.isExtensible(sample) && !Reflect.isExtensible(sample);
+              var wroteExisting =
+                Reflect.set(sample, "existing", 2) && sample.existing === 2;
+              var deletedExisting = Reflect.deleteProperty(sample, "existing");
+              var definedString =
+                Reflect.defineProperty(sample, "extra", { value: 1 });
+              var definedSymbol =
+                Reflect.defineProperty(sample, symbol, { value: 1 });
+              var prototype = Reflect.getPrototypeOf(sample);
+              var samePrototype = Reflect.setPrototypeOf(sample, prototype);
+              var differentPrototype = Reflect.setPrototypeOf(sample, {});
+              return name + ":" + (
+                before && prepared && reflected && returned && after &&
+                wroteExisting && deletedExisting &&
+                !Object.prototype.hasOwnProperty.call(sample, "existing") &&
+                !definedString && !definedSymbol &&
+                !Object.prototype.hasOwnProperty.call(sample, "extra") &&
+                !Object.prototype.hasOwnProperty.call(sample, symbol) &&
+                samePrototype && !differentPrototype
+              );
+            }).join(",");
+
+            var nestedCalls = 0;
+            var nestedBase = Object.preventExtensions({});
+            var nestedTarget = new Proxy(nestedBase, {
+              isExtensible: function (target) {
+                nestedCalls += 1;
+                return Reflect.isExtensible(target);
+              }
+            });
+            var nestedOuter = new Proxy(nestedTarget, {
+              preventExtensions: function () { return true; }
+            });
+            var nestedInvariant =
+              Reflect.preventExtensions(nestedOuter) === true && nestedCalls === 1;
+
+            var marker = {};
+            var abruptCalls = 0;
+            var abruptTarget = new Proxy(Object.preventExtensions({}), {
+              isExtensible: function () {
+                abruptCalls += 1;
+                throw marker;
+              }
+            });
+            var abruptOuter = new Proxy(abruptTarget, {
+              preventExtensions: function () { return true; }
+            });
+            var abruptInvariant = false;
+            try { Reflect.preventExtensions(abruptOuter); }
+            catch (error) {
+              abruptInvariant = error === marker && abruptCalls === 1;
+            }
+
+            var transparentBase = {};
+            var transparent = new Proxy(new Proxy(transparentBase, {}), {});
+            var transparentDelegates =
+              Reflect.preventExtensions(transparent) === true &&
+              Object.isExtensible(transparentBase) === false &&
+              Object.isExtensible(transparent) === false;
+
+            [
+              exoticResults,
+              nestedInvariant,
+              abruptInvariant,
+              transparentDelegates
+            ].join("|");
+            "#,
+        ),
+        Value::String(Arc::from(
+            "Map:true,Set:true,WeakMap:true,WeakSet:true,ArrayBuffer:true,SharedArrayBuffer:true,DataView:true,Promise:true,Generator:true,AsyncGenerator:true,RegExpStringIterator:true,MapIterator:true,IteratorHelper:true,WeakRef:true,FinalizationRegistry:true,TypedArray:true|true|true|true"
+        ))
+    );
+}
+
+#[test]
+fn seal_and_freeze_process_every_exotic_own_descriptor() {
+    assert_eq!(
+        run(r#"
+            var weakTarget = {};
+            var factories = [
+              ["Map", function () { return new Map([["entry", 1]]); }],
+              ["Set", function () { return new Set(); }],
+              ["WeakMap", function () { return new WeakMap(); }],
+              ["WeakSet", function () { return new WeakSet(); }],
+              ["ArrayBuffer", function () { return new ArrayBuffer(8); }],
+              ["SharedArrayBuffer", function () { return new SharedArrayBuffer(8); }],
+              ["DataView", function () { return new DataView(new ArrayBuffer(8)); }],
+              ["Promise", function () { return Promise.resolve(1); }],
+              ["Generator", function () { return (function* () {})(); }],
+              ["AsyncGenerator", function () { return (async function* () {})(); }],
+              ["RegExpStringIterator", function () { return "a".matchAll(/a/g); }],
+              ["MapIterator", function () { return new Map().keys(); }],
+              ["IteratorHelper", function () {
+                return Iterator.from([1]).map(function (x) { return x; });
+              }],
+              ["WeakRef", function () { return new WeakRef(weakTarget); }],
+              ["FinalizationRegistry", function () {
+                return new FinalizationRegistry(function () {});
+              }],
+              ["TypedArray", function () { return new Uint8Array(0); }]
+            ];
+
+            var results = factories.map(function (entry) {
+              var name = entry[0];
+              var factory = entry[1];
+
+              var sealed = factory();
+              Object.defineProperty(sealed, "x", {
+                value: 1,
+                writable: true,
+                configurable: true
+              });
+              Object.seal(sealed);
+              var sealedDesc = Object.getOwnPropertyDescriptor(sealed, "x");
+              var sealedOk =
+                Object.isSealed(sealed) && !Object.isFrozen(sealed) &&
+                !Object.isExtensible(sealed) && !sealedDesc.configurable &&
+                sealedDesc.writable && Reflect.set(sealed, "x", 2) &&
+                sealed.x === 2 && !Reflect.deleteProperty(sealed, "x");
+
+              var frozen = factory();
+              Object.defineProperty(frozen, "x", {
+                value: 1,
+                writable: true,
+                configurable: true
+              });
+              Object.freeze(frozen);
+              var frozenDesc = Object.getOwnPropertyDescriptor(frozen, "x");
+              var frozenOk =
+                Object.isFrozen(frozen) && Object.isSealed(frozen) &&
+                !Object.isExtensible(frozen) && !frozenDesc.configurable &&
+                !frozenDesc.writable && !Reflect.set(frozen, "x", 2) &&
+                frozen.x === 1 && !Reflect.deleteProperty(frozen, "x");
+
+              var accessor = factory();
+              var setterValue = 0;
+              Object.defineProperty(accessor, "accessor", {
+                get: function () { return setterValue; },
+                set: function (value) { setterValue = value; },
+                configurable: true
+              });
+              Object.freeze(accessor);
+              var accessorDesc =
+                Object.getOwnPropertyDescriptor(accessor, "accessor");
+              var accessorOk =
+                Object.isFrozen(accessor) && !accessorDesc.configurable &&
+                accessorDesc.writable === undefined &&
+                Reflect.set(accessor, "accessor", 3) && setterValue === 3;
+
+              var collectionOk = name !== "Map" || (
+                sealed.get("entry") === 1 && frozen.get("entry") === 1 &&
+                accessor.get("entry") === 1 &&
+                !Object.prototype.hasOwnProperty.call(sealed, "entry") &&
+                Reflect.ownKeys(sealed).indexOf("entry") === -1
+              );
+
+              return name + ":" + (
+                sealedOk && frozenOk && accessorOk && collectionOk
+              );
+            }).join(",");
+
+            var typedArraySealError = false;
+            var typedArrayFreezeError = false;
+            try { Object.seal(new Uint8Array(1)); }
+            catch (error) { typedArraySealError = error instanceof TypeError; }
+            try { Object.freeze(new Uint8Array(1)); }
+            catch (error) { typedArrayFreezeError = error instanceof TypeError; }
+
+            results + "|" + typedArraySealError + "|" + typedArrayFreezeError;
+        "#),
+        Value::String(Arc::from(
+            "Map:true,Set:true,WeakMap:true,WeakSet:true,ArrayBuffer:true,SharedArrayBuffer:true,DataView:true,Promise:true,Generator:true,AsyncGenerator:true,RegExpStringIterator:true,MapIterator:true,IteratorHelper:true,WeakRef:true,FinalizationRegistry:true,TypedArray:true|true|true"
+        ))
+    );
+}
+
+#[test]
+fn prevent_extensions_uses_the_method_realm_across_foreign_targets() {
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var mainTypeError = TypeError;
+
+            var foreignBuffer = new other.ArrayBuffer(8);
+            var mainReflectForeignTarget =
+              Reflect.preventExtensions(foreignBuffer) === true &&
+              other.Object.isExtensible(foreignBuffer) === false &&
+              other.Reflect.defineProperty(
+                foreignBuffer,
+                "extra",
+                { value: 1 }
+              ) === false;
+
+            var mainPromise = Promise.resolve(1);
+            var foreignReflectMainTarget =
+              other.Reflect.preventExtensions(mainPromise) === true &&
+              Object.isExtensible(mainPromise) === false &&
+              Reflect.defineProperty(mainPromise, "extra", { value: 1 }) === false;
+
+            function throwsMainTypeError(callback) {
+              var error;
+              try { callback(); }
+              catch (caught) { error = caught; }
+              return error instanceof mainTypeError &&
+                !(error instanceof other.TypeError);
+            }
+
+            function throwsForeignTypeError(callback) {
+              var error;
+              try { callback(); }
+              catch (caught) { error = caught; }
+              return error instanceof other.TypeError &&
+                !(error instanceof mainTypeError);
+            }
+
+            var foreignNonCallable = new other.Proxy(
+              {},
+              { preventExtensions: 1 }
+            );
+            var mainReflectError = throwsMainTypeError(function () {
+              Reflect.preventExtensions(foreignNonCallable);
+            });
+
+            var mainNonCallable = new Proxy({}, { preventExtensions: 1 });
+            var foreignReflectError = throwsForeignTypeError(function () {
+              other.Reflect.preventExtensions(mainNonCallable);
+            });
+
+            var mainFalse = new Proxy({}, {
+              preventExtensions: function () { return false; }
+            });
+            var foreignObjectError = throwsForeignTypeError(function () {
+              other.Object.preventExtensions(mainFalse);
+            });
+
+            var foreignTruthy = new other.Proxy({}, {
+              preventExtensions: function () { return true; }
+            });
+            var foreignInvariantError = throwsForeignTypeError(function () {
+              other.Reflect.preventExtensions(foreignTruthy);
+            });
+
+            var foreignRevocable = other.Proxy.revocable({}, {});
+            foreignRevocable.revoke();
+            var mainRevokedError = throwsMainTypeError(function () {
+              Reflect.preventExtensions(foreignRevocable.proxy);
+            });
+
+            var nestedCalls = 0;
+            var foreignBase = other.Object.preventExtensions({});
+            var foreignNested = new other.Proxy(foreignBase, {
+              isExtensible: function (target) {
+                nestedCalls += 1;
+                return other.Reflect.isExtensible(target);
+              }
+            });
+            var mainOuter = new Proxy(foreignNested, {
+              preventExtensions: function () { return true; }
+            });
+            var crossRealmNestedInvariant =
+              Reflect.preventExtensions(mainOuter) === true && nestedCalls === 1;
+
+            [
+              mainReflectForeignTarget,
+              foreignReflectMainTarget,
+              mainReflectError,
+              foreignReflectError,
+              foreignObjectError,
+              foreignInvariantError,
+              mainRevokedError,
+              crossRealmNestedInvariant
+            ].join("|");
+            "#,),
+        Value::String(Arc::from("true|true|true|true|true|true|true|true"))
     );
 }
 

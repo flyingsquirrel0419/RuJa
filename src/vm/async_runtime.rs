@@ -1544,6 +1544,7 @@ impl Vm {
                                 async_delegate_await_kind: AtomicU8::new(0),
                                 props: Mutex::new(IndexMap::new()),
                                 proto: Mutex::new(Some(generator_instance_proto)),
+                                extensible: AtomicBool::new(true),
                             },
                         ))?;
                         Ok(Value::Object(GcIdx(g_idx)))

@@ -990,74 +990,61 @@ impl Vm {
     }
 
     pub(crate) fn prevent_extensions(&mut self, obj: &Value) -> error::Result<bool> {
-        let Value::Object(idx) = obj else {
-            return Ok(true);
-        };
-        let proxy_info = self.heap.with_obj(idx.0, |o| {
-            if let HeapObj::Proxy(proxy) = o {
-                if *proxy.revoked.lock() {
-                    return Some(Err(Error::type_err(
-                        "Cannot perform 'preventExtensions' on a proxy that has been revoked",
-                    )));
-                }
-                Some(Ok((proxy.target.clone(), proxy.handler.clone())))
-            } else {
-                None
-            }
-        });
-        if let Some(result) = proxy_info {
-            let (target, handler) = result?;
-            let trap = self.get_property(&handler, "preventExtensions")?;
-            if trap.is_undefined() || trap.is_null() {
-                return self.prevent_extensions(&target);
-            }
-            let trap_result =
-                self.call_function(&trap, std::slice::from_ref(&target), Some(handler))?;
-            let boolean_trap_result = self.to_boolean(&trap_result);
-            if !boolean_trap_result {
-                return Ok(false);
-            }
-            let target_extensible = match &target {
-                Value::Object(target_idx) => {
-                    self.heap.with_obj(target_idx.0, |o| o.is_extensible())
-                }
-                _ => true,
+        let root_pin = self.pin(obj);
+        let mut current = obj.clone();
+        let result = (|| loop {
+            let Value::Object(idx) = &current else {
+                return Ok(true);
             };
-            if target_extensible {
-                return Err(Error::type_err(
-                    "Proxy preventExtensions trap cannot report success for extensible target",
-                ));
+            let proxy_info = self.heap.with_obj(idx.0, |object| {
+                if let HeapObj::Proxy(proxy) = object {
+                    if *proxy.revoked.lock() {
+                        return Some(Err(Error::type_err(
+                            "Cannot perform 'preventExtensions' on a proxy that has been revoked",
+                        )));
+                    }
+                    Some(Ok((proxy.target.clone(), proxy.handler.clone())))
+                } else {
+                    None
+                }
+            });
+            let Some(proxy_info) = proxy_info else {
+                self.heap.with_obj(idx.0, HeapObj::prevent_extensions);
+                return Ok(true);
+            };
+
+            let (target, handler) = proxy_info?;
+            self.consume_fuel()?;
+            let proxy_pins = self.pin_many(&[target.clone(), handler.clone()]);
+            let proxy_result = (|| {
+                let trap = self.get_property(&handler, "preventExtensions")?;
+                if trap.is_nullish() {
+                    return Ok(None);
+                }
+                let trap_pin = self.pin(&trap);
+                let trap_result =
+                    self.call_function(&trap, std::slice::from_ref(&target), Some(handler.clone()));
+                self.unpin(trap_pin);
+                let trap_result = trap_result?;
+                if !self.to_boolean(&trap_result) {
+                    return Ok(Some(false));
+                }
+                if self.is_extensible(&target)? {
+                    return Err(Error::type_err(
+                        "Proxy preventExtensions trap cannot report success for extensible target",
+                    ));
+                }
+                Ok(Some(true))
+            })();
+            self.unpin_many(proxy_pins);
+
+            match proxy_result? {
+                Some(result) => return Ok(result),
+                None => current = target,
             }
-            return Ok(true);
-        }
-        self.heap.with_obj(idx.0, |o| match o {
-            HeapObj::Object(od) => od
-                .extensible
-                .store(false, std::sync::atomic::Ordering::Relaxed),
-            HeapObj::Array(a) => a
-                .extensible
-                .store(false, std::sync::atomic::Ordering::Relaxed),
-            HeapObj::Function(f) => f
-                .extensible
-                .store(false, std::sync::atomic::Ordering::Relaxed),
-            HeapObj::TypedArray(t) => t
-                .extensible
-                .store(false, std::sync::atomic::Ordering::Relaxed),
-            HeapObj::CollectionIterator(iterator) => iterator
-                .extensible
-                .store(false, std::sync::atomic::Ordering::Relaxed),
-            HeapObj::IteratorHelper(iterator) => iterator
-                .extensible
-                .store(false, std::sync::atomic::Ordering::Relaxed),
-            HeapObj::WeakRef(wr) => wr
-                .extensible
-                .store(false, std::sync::atomic::Ordering::Relaxed),
-            HeapObj::FinalizationRegistry(registry) => registry
-                .extensible
-                .store(false, std::sync::atomic::Ordering::Relaxed),
-            _ => {}
-        });
-        Ok(true)
+        })();
+        self.unpin(root_pin);
+        result
     }
 
     pub(crate) fn is_extensible(&mut self, obj: &Value) -> error::Result<bool> {

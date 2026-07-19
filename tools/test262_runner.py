@@ -70,6 +70,11 @@ try:
     from test262_proxy_delete_admission import (
         PROXY_DELETE_FEATURES, PROXY_DELETE_FILES,
     )
+    from test262_extensibility_admission import (
+        EXTENSIBILITY_FEATURES,
+        EXTENSIBILITY_FILES,
+        EXTENSIBILITY_MODULE_FILES,
+    )
     from test262_proxy_own_keys_admission import (
         PROXY_OWN_KEYS_FEATURES, PROXY_OWN_KEYS_FILES,
     )
@@ -156,6 +161,11 @@ except ModuleNotFoundError:
     from tools.test262_proxy_get_admission import PROXY_GET_FEATURES, PROXY_GET_FILES
     from tools.test262_proxy_delete_admission import (
         PROXY_DELETE_FEATURES, PROXY_DELETE_FILES,
+    )
+    from tools.test262_extensibility_admission import (
+        EXTENSIBILITY_FEATURES,
+        EXTENSIBILITY_FILES,
+        EXTENSIBILITY_MODULE_FILES,
     )
     from tools.test262_proxy_own_keys_admission import (
         PROXY_OWN_KEYS_FEATURES, PROXY_OWN_KEYS_FILES,
@@ -2221,6 +2231,33 @@ def proxy_delete_features(path):
         return frozenset()
     return PROXY_DELETE_FEATURES.get(rel.as_posix(), frozenset())
 
+def extensibility_path(path):
+    if path is None:
+        return False
+    try:
+        rel = Path(path).resolve().relative_to(Path(TEST262).resolve() / "test")
+    except ValueError:
+        return False
+    return rel.as_posix() in EXTENSIBILITY_FILES
+
+def extensibility_features(path):
+    if path is None:
+        return frozenset()
+    try:
+        rel = Path(path).resolve().relative_to(Path(TEST262).resolve() / "test")
+    except ValueError:
+        return frozenset()
+    return EXTENSIBILITY_FEATURES.get(rel.as_posix(), frozenset())
+
+def extensibility_module_path(path):
+    if path is None:
+        return False
+    try:
+        rel = Path(path).resolve().relative_to(Path(TEST262).resolve() / "test")
+    except ValueError:
+        return False
+    return rel.as_posix() in EXTENSIBILITY_MODULE_FILES
+
 def proxy_own_keys_path(path):
     if path is None:
         return False
@@ -2577,6 +2614,8 @@ def should_skip(meta, path=None):
         feats.difference_update(proxy_get_features(path))
     if path is not None and proxy_delete_path(path):
         feats.difference_update(proxy_delete_features(path))
+    if path is not None and extensibility_path(path):
+        feats.difference_update(extensibility_features(path))
     if path is not None and proxy_own_keys_path(path):
         feats.difference_update(proxy_own_keys_features(path))
     if path is not None and reflect_set_has_path(path):
@@ -2806,7 +2845,10 @@ def should_skip(meta, path=None):
         or import_meta_path(path)
     )
     module_admitted = path is not None and (
-        module_core_path(path) or dynamic_import_path(path) or import_meta_path(path)
+        module_core_path(path)
+        or dynamic_import_path(path)
+        or import_meta_path(path)
+        or extensibility_module_path(path)
     )
     if ('module' in flags and not module_admitted) or (
         'async' in flags and not (RUN_ASYNC_TESTS or async_admitted)

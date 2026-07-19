@@ -564,6 +564,7 @@ fn new_regexp_string_iterator(
             done: AtomicBool::new(false),
             props: Mutex::new(IndexMap::new()),
             proto: Mutex::new(Some(prototype)),
+            extensible: AtomicBool::new(true),
         }))
         .map(Value::Object);
     vm.unpin_many(pin_count);
@@ -2694,6 +2695,7 @@ fn wrap_generator_result_in_env(
             handlers: Mutex::new(Vec::new()),
             props: Mutex::new(IndexMap::new()),
             proto: Mutex::new(Some(prototype)),
+            extensible: AtomicBool::new(true),
         }))?;
     Ok(Value::Object(GcIdx(p_idx)))
 }
@@ -2718,6 +2720,7 @@ fn wrap_generator_error(
             handlers: Mutex::new(Vec::new()),
             props: Mutex::new(IndexMap::new()),
             proto: Mutex::new(Some(prototype)),
+            extensible: AtomicBool::new(true),
         }));
     vm.unpin(reason_pin);
     let promise = promise?;

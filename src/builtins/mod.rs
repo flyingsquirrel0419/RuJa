@@ -5468,16 +5468,6 @@ fn ordinary_own_property_keys(
                 }
             }
 
-            if let HeapObj::Map(m) = o {
-                if include_strings {
-                    for (k, _) in m.entries.lock().iter().map(|(k, v)| (&k.0, v)) {
-                        if let Value::String(s) = k {
-                            string_keys.push(PropertyKey::from(s.clone()));
-                        }
-                    }
-                }
-            }
-
             if let HeapObj::ModuleNamespace(namespace) = o {
                 if include_strings {
                     for name in namespace.exports.lock().keys() {
@@ -6168,6 +6158,20 @@ fn is_proxy_value(vm: &Vm, obj: &Value) -> bool {
     matches!(obj, Value::Object(idx) if vm.heap.with_obj(idx.0, |o| matches!(o, HeapObj::Proxy(_))))
 }
 
+fn uses_specialized_integrity_path(vm: &Vm, obj: &Value) -> bool {
+    matches!(
+        obj,
+        Value::Object(idx)
+            if vm.heap.with_obj(idx.0, |object| matches!(
+                object,
+                HeapObj::Object(_)
+                    | HeapObj::Array(_)
+                    | HeapObj::Function(_)
+                    | HeapObj::IteratorHelper(_)
+            ))
+    )
+}
+
 fn proxy_own_keys_from_array_like(
     vm: &mut Vm,
     key_list: &Value,
@@ -6352,7 +6356,7 @@ fn integrity_descriptor_for_key(
 }
 
 fn integrity_define_descriptor(vm: &mut Vm, writable: Option<bool>) -> error::Result<Value> {
-    let desc_obj = vm.heap.allocate(HeapObj::Object(ObjectData {
+    let desc_obj = vm.alloc(HeapObj::Object(ObjectData {
         props: Mutex::new(IndexMap::new()),
         proto: Mutex::new(Some(vm.object_proto.clone())),
         extensible: AtomicBool::new(true),
@@ -6371,54 +6375,64 @@ fn integrity_define_descriptor(vm: &mut Vm, writable: Option<bool>) -> error::Re
             PropertyDescriptor::data(Value::Bool(writable)),
         );
     }
-    vm.heap.with_obj(desc_obj, |o| {
+    vm.heap.with_obj(desc_obj.0, |o| {
         if let HeapObj::Object(od) = o {
             *od.props.lock() = props;
         }
     });
-    Ok(Value::Object(GcIdx(desc_obj)))
+    Ok(Value::Object(desc_obj))
 }
 
 fn set_integrity_level(vm: &mut Vm, obj: &Value, frozen: bool) -> error::Result<bool> {
-    if !vm.prevent_extensions(obj)? {
-        return Ok(false);
-    }
-    let keys = own_property_keys_or_throw(vm, obj, false, true, true)?;
-    for key in keys {
-        let writable = if frozen {
-            let Some(desc) = integrity_descriptor_for_key(vm, obj, &key)? else {
-                continue;
-            };
-            desc.writable.map(|_| false)
-        } else {
-            None
-        };
-        let desc_obj = integrity_define_descriptor(vm, writable)?;
-        let key_value = property_key_to_value(&key);
-        if !object_define_property_result(vm, &[obj.clone(), key_value, desc_obj], false)? {
+    let operation_pin = vm.pin(obj);
+    let result = (|| {
+        if !vm.prevent_extensions(obj)? {
             return Ok(false);
         }
-    }
-    Ok(true)
+        let keys = own_property_keys_or_throw(vm, obj, false, true, true)?;
+        for key in keys {
+            let writable = if frozen {
+                let Some(desc) = integrity_descriptor_for_key(vm, obj, &key)? else {
+                    continue;
+                };
+                desc.writable.map(|_| false)
+            } else {
+                None
+            };
+            let desc_obj = integrity_define_descriptor(vm, writable)?;
+            let key_value = property_key_to_value(&key);
+            if !object_define_property_result(vm, &[obj.clone(), key_value, desc_obj], false)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    })();
+    vm.unpin_many(operation_pin);
+    result
 }
 
 fn test_integrity_level(vm: &mut Vm, obj: &Value, frozen: bool) -> error::Result<bool> {
-    if vm.is_extensible(obj)? {
-        return Ok(false);
-    }
-    let keys = own_property_keys_or_throw(vm, obj, false, true, true)?;
-    for key in keys {
-        let Some(desc) = integrity_descriptor_for_key(vm, obj, &key)? else {
-            continue;
-        };
-        if desc.configurable {
+    let operation_pin = vm.pin(obj);
+    let result = (|| {
+        if vm.is_extensible(obj)? {
             return Ok(false);
         }
-        if frozen && desc.writable.unwrap_or(false) {
-            return Ok(false);
+        let keys = own_property_keys_or_throw(vm, obj, false, true, true)?;
+        for key in keys {
+            let Some(desc) = integrity_descriptor_for_key(vm, obj, &key)? else {
+                continue;
+            };
+            if desc.configurable {
+                return Ok(false);
+            }
+            if frozen && desc.writable.unwrap_or(false) {
+                return Ok(false);
+            }
         }
-    }
-    Ok(true)
+        Ok(true)
+    })();
+    vm.unpin_many(operation_pin);
+    result
 }
 
 fn object_is_extensible(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
@@ -6428,7 +6442,7 @@ fn object_is_extensible(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error:
 
 fn object_seal(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     let obj = args.first().cloned().unwrap_or(Value::Undefined);
-    if is_proxy_value(vm, &obj) {
+    if matches!(obj, Value::Object(_)) && !uses_specialized_integrity_path(vm, &obj) {
         if !set_integrity_level(vm, &obj, false)? {
             return Err(Error::type_err("Object.seal failed to seal object"));
         }
@@ -6468,7 +6482,7 @@ fn object_seal(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<V
 
 fn object_is_sealed(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     let obj = args.first().cloned().unwrap_or(Value::Undefined);
-    if is_proxy_value(vm, &obj) {
+    if matches!(obj, Value::Object(_)) && !uses_specialized_integrity_path(vm, &obj) {
         return test_integrity_level(vm, &obj, false).map(Value::Bool);
     }
     if let Value::Object(idx) = &obj {
@@ -6495,7 +6509,7 @@ fn object_is_sealed(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Res
 
 fn object_is_frozen(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     let obj = args.first().cloned().unwrap_or(Value::Undefined);
-    if is_proxy_value(vm, &obj) {
+    if matches!(obj, Value::Object(_)) && !uses_specialized_integrity_path(vm, &obj) {
         return test_integrity_level(vm, &obj, true).map(Value::Bool);
     }
     if let Value::Object(idx) = &obj {
@@ -7193,7 +7207,7 @@ fn object_get_own_property_descriptor(
 
 fn object_freeze(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
     let target = args.first().cloned().unwrap_or(Value::Undefined);
-    if is_proxy_value(vm, &target) {
+    if matches!(target, Value::Object(_)) && !uses_specialized_integrity_path(vm, &target) {
         if !set_integrity_level(vm, &target, true)? {
             return Err(Error::type_err("Object.freeze failed to freeze object"));
         }

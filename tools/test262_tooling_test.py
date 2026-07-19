@@ -88,6 +88,11 @@ from test262_proxy_delete_admission import (
     PROXY_DELETE_FEATURES,
     PROXY_DELETE_FILES,
 )
+from test262_extensibility_admission import (
+    EXTENSIBILITY_FEATURES,
+    EXTENSIBILITY_FILES,
+    EXTENSIBILITY_MODULE_FILES,
+)
 from test262_proxy_own_keys_admission import (
     PROXY_OWN_KEYS_FEATURES,
     PROXY_OWN_KEYS_FILES,
@@ -1930,6 +1935,143 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                     self.assertFalse(tool.proxy_delete_path(outside_path))
                     self.assertTrue(
                         tool.should_skip({"features": ["Proxy"]}, outside_path)
+                    )
+                finally:
+                    tool.TEST262 = original_root
+
+    def test_extensibility_manifest_is_exact_live_disjoint_and_shared(self):
+        self.assertEqual(len(EXTENSIBILITY_FILES), 29)
+        self.assertEqual(frozenset(EXTENSIBILITY_FEATURES), EXTENSIBILITY_FILES)
+        self.assertEqual(
+            EXTENSIBILITY_MODULE_FILES,
+            {
+                "built-ins/Proxy/preventExtensions/"
+                "trap-is-undefined-target-is-proxy.js"
+            },
+        )
+        self.assertEqual(
+            {
+                family: sum(family in relative for relative in EXTENSIBILITY_FILES)
+                for family in (
+                    "Object/isExtensible/",
+                    "Object/preventExtensions/",
+                    "Proxy/isExtensible/",
+                    "Proxy/preventExtensions/",
+                )
+            },
+            {
+                "Object/isExtensible/": 1,
+                "Object/preventExtensions/": 4,
+                "Proxy/isExtensible/": 12,
+                "Proxy/preventExtensions/": 12,
+            },
+        )
+
+        admission_dir = Path(__file__).resolve().parent
+        for manifest in admission_dir.glob("test262_*_admission.txt"):
+            if manifest.name == "test262_extensibility_admission.txt":
+                continue
+            existing = {
+                line
+                for raw_line in manifest.read_text().splitlines()
+                if (line := raw_line.strip()) and not line.startswith("#")
+            }
+            self.assertFalse(EXTENSIBILITY_FILES & existing, manifest.name)
+
+        constructor = "built-ins/Object/isExtensible/not-a-constructor.js"
+        symbol = (
+            "built-ins/Object/preventExtensions/"
+            "symbol-object-contains-symbol-properties-strict.js"
+        )
+        realm = "built-ins/Proxy/isExtensible/trap-is-not-callable-realm.js"
+        reflected = "built-ins/Proxy/preventExtensions/return-false.js"
+        self.assertEqual(
+            EXTENSIBILITY_FEATURES[constructor],
+            {"Reflect.construct", "arrow-function"},
+        )
+        self.assertEqual(EXTENSIBILITY_FEATURES[symbol], {"Symbol"})
+        self.assertEqual(EXTENSIBILITY_FEATURES[realm], {"Proxy", "cross-realm"})
+        self.assertEqual(EXTENSIBILITY_FEATURES[reflected], {"Proxy", "Reflect"})
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        try:
+            test_root_available = test_root.is_dir()
+        except OSError:
+            test_root_available = False
+        if test_root_available:
+            for relative, features in EXTENSIBILITY_FEATURES.items():
+                path = test_root / relative
+                self.assertTrue(path.is_file(), relative)
+                metadata = test262_runner.parse_meta(path.read_text())
+                self.assertEqual(
+                    frozenset(metadata.get("features", [])), features, relative
+                )
+                expected_includes = (
+                    ["isConstructor.js"]
+                    if relative.endswith("/not-a-constructor.js")
+                    else []
+                )
+                self.assertEqual(
+                    metadata.get("includes", []), expected_includes, relative
+                )
+                if relative.endswith("symbol-object-contains-symbol-properties-strict.js"):
+                    expected_flags = ["onlyStrict"]
+                elif relative.endswith(
+                    "symbol-object-contains-symbol-properties-non-strict.js"
+                ):
+                    expected_flags = ["noStrict"]
+                elif relative in EXTENSIBILITY_MODULE_FILES:
+                    expected_flags = ["module"]
+                else:
+                    expected_flags = []
+                self.assertEqual(metadata.get("flags", []), expected_flags, relative)
+                self.assertNotIn("negative", metadata, relative)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            future = root / "test/built-ins/Proxy/preventExtensions/future.js"
+            outside = root / "test/built-ins/Proxy/defineProperty/future.js"
+            non_module = (
+                root / "test/built-ins/Proxy/preventExtensions/call-parameters.js"
+            )
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for relative, features in EXTENSIBILITY_FEATURES.items():
+                        path = root / "test" / relative
+                        flags = ["module"] if relative in EXTENSIBILITY_MODULE_FILES else []
+                        self.assertTrue(tool.extensibility_path(path), relative)
+                        self.assertEqual(tool.extensibility_features(path), features)
+                        self.assertEqual(
+                            tool.extensibility_module_path(path),
+                            relative in EXTENSIBILITY_MODULE_FILES,
+                        )
+                        self.assertFalse(
+                            tool.should_skip(
+                                {"features": sorted(features), "flags": flags}, path
+                            ),
+                            relative,
+                        )
+                        self.assertTrue(
+                            tool.should_skip(
+                                {
+                                    "features": sorted(features | {"decorators"}),
+                                    "flags": flags,
+                                },
+                                path,
+                            ),
+                            relative,
+                        )
+                    self.assertFalse(tool.extensibility_path(future))
+                    self.assertFalse(tool.extensibility_path(outside))
+                    self.assertTrue(tool.should_skip({"features": ["Proxy"]}, future))
+                    self.assertTrue(tool.should_skip({"features": ["Proxy"]}, outside))
+                    self.assertTrue(
+                        tool.should_skip(
+                            {"features": ["Proxy"], "flags": ["module"]},
+                            non_module,
+                        )
                     )
                 finally:
                     tool.TEST262 = original_root
