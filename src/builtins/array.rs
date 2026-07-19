@@ -128,6 +128,24 @@ pub(crate) fn array_create_in_current_realm(vm: &mut Vm, length: usize) -> error
     array_create_in_realm(vm, length, realm)
 }
 
+fn array_create_holes_in_current_realm(vm: &mut Vm, length: usize) -> error::Result<Value> {
+    if length > u32::MAX as usize {
+        return Err(Error::range("Invalid array length"));
+    }
+    // Copy results must remain dense until legacy mutators honor sparse_max.
+    if length > crate::value::MAX_DENSE_ARRAY_LEN {
+        return Err(Error::range("Array copy result too large"));
+    }
+    let prototype = vm.array_prototype_for_env(vm.current_realm_global_env());
+    // Keep length derived from ArrayData until an explicit length definition.
+    // Several legacy dense mutators still update backing storage directly.
+    vm.alloc(HeapObj::Array(ArrayData::new_holes(
+        length,
+        Some(prototype),
+    )))
+    .map(Value::Object)
+}
+
 fn pin_array_from_async_frame(
     vm: &mut Vm,
     frame: &crate::value::ArrayFromAsyncContinuation,
@@ -1318,7 +1336,7 @@ pub(crate) fn array_with(vm: &mut Vm, args: &[Value], this: Option<Value>) -> er
         let result = (|| {
             let len = vm.heap.with_obj(idx.0, |obj| {
                 if let HeapObj::Array(a) = obj {
-                    a.items.lock().len()
+                    a.items.lock().len().max(a.sparse_max.lock().unwrap_or(0))
                 } else {
                     0
                 }
@@ -1327,8 +1345,11 @@ pub(crate) fn array_with(vm: &mut Vm, args: &[Value], this: Option<Value>) -> er
             if index >= len {
                 return Err(Error::range("Invalid array index"));
             }
+            if len > crate::value::MAX_DENSE_ARRAY_LEN {
+                return Err(Error::range("Array.with result too large"));
+            }
 
-            let result = array_create_in_current_realm(vm, len)?;
+            let result = array_create_holes_in_current_realm(vm, len)?;
             let result_pin = vm.pin(&result);
             let completion = (|| {
                 let Value::Object(result_idx) = &result else {
@@ -1553,7 +1574,7 @@ pub(crate) fn array_slice(
         let result = (|| {
             let len = vm.heap.with_obj(idx.0, |obj| {
                 if let HeapObj::Array(a) = obj {
-                    a.items.lock().len()
+                    a.items.lock().len().max(a.sparse_max.lock().unwrap_or(0))
                 } else {
                     0
                 }
@@ -1561,7 +1582,7 @@ pub(crate) fn array_slice(
             let start = array_slice_bound(vm, args.first(), len, 0)?;
             let end = array_slice_bound(vm, args.get(1), len, len)?;
             let count = end.saturating_sub(start);
-            let result = array_create_in_current_realm(vm, count)?;
+            let result = array_create_holes_in_current_realm(vm, count)?;
             let result_pin = vm.pin(&result);
             let completion = (|| {
                 let Value::Object(result_idx) = &result else {

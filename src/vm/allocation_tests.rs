@@ -434,6 +434,70 @@ fn array_slice_and_with_restore_gc_pin_depth_after_abrupt_gets() {
 }
 
 #[test]
+fn array_copy_hole_allocation_respects_the_dense_cap() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    let length = crate::value::MAX_DENSE_ARRAY_LEN + 1;
+    let source = crate::builtins::array::array_create_in_current_realm(&mut vm, length)
+        .expect("a sparse source should allocate without dense backing");
+    let source_pin = vm.pin(&source);
+
+    let Value::Object(source_idx) = source.clone() else {
+        panic!("Array creation should return an object");
+    };
+    vm.heap.with_obj(source_idx.0, |object| {
+        let HeapObj::Array(array) = object else {
+            panic!("Array creation should allocate ArrayData");
+        };
+        assert!(array.items.lock().is_empty());
+        assert!(array.present.lock().is_empty());
+        assert_eq!(*array.sparse_max.lock(), Some(length));
+        assert!(array
+            .props
+            .lock()
+            .contains_key(&crate::value::PropertyKey::from("length")));
+    });
+    assert_eq!(
+        vm.get_property(&source, "length")
+            .expect("sparse source length should be readable"),
+        Value::Number(length as f64)
+    );
+
+    let tail = crate::builtins::array::array_slice(
+        &mut vm,
+        &[
+            Value::Number((length - 1) as f64),
+            Value::Number(length as f64),
+        ],
+        Some(source.clone()),
+    )
+    .expect("slicing a bounded sparse tail should succeed");
+    assert_eq!(
+        vm.get_property(&tail, "length")
+            .expect("sparse tail length should be readable"),
+        Value::Number(1.0)
+    );
+    assert!(!vm.has_own_property(&tail, "0"));
+
+    let baseline_pins = vm.gc_pins.len();
+    let error = crate::builtins::array::array_slice(&mut vm, &[], Some(source.clone()))
+        .expect_err("Slice must reject a result above the dense cap");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(error.message, "Array copy result too large");
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    let error = crate::builtins::array::array_with(
+        &mut vm,
+        &[Value::Number(0.0), Value::Number(1.0)],
+        Some(source.clone()),
+    )
+    .expect_err("With must reject materialization above the dense cap");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(error.message, "Array.with result too large");
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    vm.unpin(source_pin);
+}
+
+#[test]
 fn array_mapping_allocation_failures_restore_gc_pin_depth() {
     for source in [
         r#"

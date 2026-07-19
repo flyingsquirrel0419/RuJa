@@ -52,14 +52,21 @@ fn array_slice_and_with_copy_inherited_values_through_holes() {
             var replaced = holes.with(2, 6);
             delete Array.prototype[3];
 
+            var spliced = [1, 2, 3].slice();
+            spliced.splice(1, 1);
+            var pushed = [1, 2].with(0, 3);
+            pushed.push(4);
+
             [
               sliced[1], Object.hasOwn(sliced, "1"),
               preservedHole.length, Object.hasOwn(preservedHole, "0"),
               replaced[1] === undefined, Object.hasOwn(replaced, "1"),
-              replaced[2], replaced[3], Object.hasOwn(replaced, "3")
+              replaced[2], replaced[3], Object.hasOwn(replaced, "3"),
+              spliced.length, spliced.join(","),
+              pushed.length, pushed.join(",")
             ].join(":");
         "#),
-        Value::String(Arc::from("1:true:1:false:true:true:6:3:true"))
+        Value::String(Arc::from("1:true:1:false:true:true:6:3:true:2:1,3:3:3,2,4"))
     );
 }
 
