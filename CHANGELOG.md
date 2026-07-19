@@ -4,6 +4,47 @@
 
 ### Fixed
 
+- Every created Realm's original `%Object.prototype%` now implements the
+  Immutable Prototype Exotic Object `[[SetPrototypeOf]]` behavior instead of
+  accepting a replacement prototype. Requests for the existing `null`
+  prototype still succeed and the object remains extensible. Different
+  prototypes return `false` through `Reflect.setPrototypeOf`; borrowed
+  `Object.setPrototypeOf` and `__proto__` setters throw a TypeError from their
+  own method Realm. Transparent Proxy delegation, truthy traps over extensible
+  targets, and non-extensible target invariants retain their specified order.
+
+  The rooted environment-to-prototype registry now owns a non-rooting reverse
+  identity `HashSet`, keeping ordinary prototype mutation at expected O(1)
+  cost instead of scanning every retained Realm. Registration and failed-Realm
+  rollback update both collections together. A GPT review found that the
+  first rollback used `debug_assert!(set.remove(...))`, which erased the
+  removal in release builds and could leave a reusable heap index marked
+  immutable. Removal is now unconditional, and ordinary CI runs the complete
+  heap-boundary rollback sweep in release mode.
+
+  Pinned Test262 has no created-Realm Object-prototype mutation case, so this
+  correctness fix intentionally changes no admission manifest. The related
+  cohort is **37 pass / 0 fail / 21 skip / 58 total**, direct Reflect remains
+  **153/153**, and the supported subset remains **12751/0/7687/20438**. Local
+  gates pass all Rust targets/features, lib tests **137/137**, builtins
+  **496/496**, warnings-denied Clippy, rustfmt/diff, release, wasm32, Python
+  tooling **111/111**, and the release rollback sweep. Feature commit
+  `9d38dc1` passed ordinary CI `29684489555`, including the new release gate.
+
+  Full matrix `29684489558` passes all **33/33** jobs. Its 30 result files at
+  `/tmp/ruja-object-proto-results.29684489558.8OEqey` aggregate to **30634
+  pass / 6049 fail / 11778 skip / 6 timeout / 0 error / 48467 total / 36683
+  pass-or-fail executed**. All 30 files are byte-identical to the prior
+  Reflect-complete baseline, confirming the expected zero Test262 delta.
+
+  GPT 5.6 reviewers Ramanujan (`019f79ec-7765-7640-8a4e-6cde989edf28`),
+  Halley (`019f79ec-7891-7822-9a56-198aafe967e4`), Fermat
+  (`019f79f9-d555-76d1-a954-3b123be85ed9`), and Pascal
+  (`019f79f9-d750-7b61-b9ca-1fbb4255cd19`) audited semantics, Test262,
+  performance, Realm rollback, and release behavior. Their O(Realms) and
+  release-only stale-index findings were corrected before landing. All four
+  sessions are closed; no coder or Umans route was used.
+
 - Every main and Test262-created Realm now owns a distinct `Reflect` namespace
   object and 13 distinct native methods. The namespace inherits from that
   Realm's `%Object.prototype%`, its methods inherit from the matching

@@ -138,7 +138,9 @@
   `getOwnPropertyDescriptor`/`getOwnPropertyDescriptors`,
   `getOwnPropertyNames`; static methods, their Array/Object results, Proxy
   descriptor objects, primitive wrappers, and generated errors use the method
-  Realm and survive callback/coercion GC
+  Realm and survive callback/coercion GC. Every Realm's original
+  `%Object.prototype%` implements immutable-prototype semantics while
+  remaining extensible
 - **Number**: `parseInt`/`parseFloat`, `isNaN`, `isFinite`; `Number` statics
   (`isInteger`, `isFinite`, `isNaN`, `isSafeInteger`, constants) and
   `toString(radix)`/`toFixed`/`toPrecision`/`toExponential`

@@ -451,7 +451,8 @@ allocation through final wrapper attachment. It records the incoming
 the intrinsic graph, allocates the host wrapper, and attaches the Realm global.
 A successful commit releases only the transaction's pins. Any error first
 truncates the complete transaction-owned pin suffix and then removes that
-environment's entries from all 31 per-Realm registry families. Native error
+environment's entries from all 31 rooted per-Realm registry families and the
+non-rooting `%Object.prototype%` reverse identity index. Native error
 materialization runs afterward in the calling Realm, so its collecting retry
 can reclaim the abandoned graph.
 
@@ -470,7 +471,40 @@ logical rollback surface.
 - 검토한 주요 대안: Publish nothing until setup completes; clean only the last inserted map; make every installer independently error-safe; or own all provisional roots and pins in one outer transaction.
 - 선택한 방식: Keep provisional registry publication, pin the fresh environment, capture the incoming pin depth, include wrapper attachment in the transaction, truncate the owned pin suffix on every result, and remove every Realm registry entry on error.
 - 다른 대안 대신 이 방식을 선택한 이유: Later installers require earlier intrinsic identities, map-specific cleanup misses other roots, and duplicating rollback in every installer creates drift. One lexical owner matches the actual observability boundary.
-- 장점, 단점 및 영향: Every hard-cap failure point is reusable and collectible before caller-Realm error materialization. The registry inventory remains manually synchronized across the VM fields, root tracer, rollback helper, and regression counter, so new Realm registries must update all four sites.
+- 장점, 단점 및 영향: Every hard-cap failure point is reusable and collectible before caller-Realm error materialization. The registry inventory remains manually synchronized across the VM fields, root tracer, rollback helper, identity indexes, and regression counter, so new Realm registries must update every applicable site.
+```
+
+## Realm Object prototype identity
+
+Every Realm's original `%Object.prototype%` uses the Immutable Prototype
+Exotic Object `[[SetPrototypeOf]]` behavior. A request for its current `null`
+prototype succeeds, while a different prototype returns `false` without
+changing the object. Public `Object.setPrototypeOf` and the legacy
+`__proto__` setter convert that status into a TypeError from the invoked
+method's Realm; `Reflect.setPrototypeOf` returns the boolean. Proxy dispatch
+still occurs before target handling, so transparent Proxies delegate and a
+truthy trap over an extensible target may report success without mutating the
+target. The ordinary same-prototype check remains before the immutable check.
+
+`realm_object_prototypes` is the authoritative environment-to-intrinsic map
+and GC root. `realm_object_prototype_ids` is a non-rooting reverse `HashSet`
+used only for expected O(1) identity checks. Main and created Realms publish
+both entries through one registration helper. Failed Realm construction
+removes the owning map entry and then unconditionally removes the reverse
+identity before the heap slot can be reused. The removal result is stored
+before `debug_assert!`; placing the mutation inside the assertion would erase
+it from release builds. The registry rollback counter includes both
+collections, and CI executes the full heap-boundary rollback sweep in release
+mode to preserve that guarantee.
+
+```text
+[Decision Log]
+- 목적과 의도: Apply immutable-prototype semantics to the original Object prototype of every Realm without slowing unrelated prototype mutations or retaining stale heap identities.
+- 기존 구현 및 제약 조건: SetPrototypeOf recognized only the main VM Object prototype. The environment-keyed Realm map already owned every intrinsic as a GC root, but scanning it would make each ordinary mutation O(number of Realms), and GcIdx slots can be reused after failed Realm construction.
+- 검토한 주요 대안: Keep the main-only special case; scan all Realm map values; add a flag to every generic object allocation; or maintain a non-rooting reverse identity set beside the authoritative map.
+- 선택한 방식: Register each intrinsic in the rooted map and an O(1) reverse HashSet through one helper, consult that set after same-prototype equality, and remove its entry unconditionally during transactional Realm rollback.
+- 다른 대안 대신 이 방식을 선택한 이유: Main-only behavior violates Realm semantics, a linear scan creates attacker-controlled work, and an object-layout flag would widen dozens of unrelated allocation paths. The reverse index reuses the existing lifecycle boundary with a small, auditable surface.
+- 장점, 단점 및 영향: All Realms now preserve the required null prototype through direct, borrowed, Proxy, and post-GC calls with constant expected lookup cost. The map and reverse index must remain synchronized; release rollback CI and the 32-collection counter guard against stale identities after slot reuse.
 ```
 
 Observable materializers follow the same ownership rule. When an abstract

@@ -8381,10 +8381,46 @@ byte-identical. Only `built-ins` changes, from **14955/5238/3469** to
 **15026/5238/3398**, exactly **+71 pass / -71 skip**.
 
 This closes the finite direct Test262 surface, not every internal method that
-Reflect exposes. Long prototype-cycle acceptance, mutable created-Realm
-`%Object.prototype%`, incomplete exotic `preventExtensions`, nested-Proxy
-extensibility validation, and four unmetered transparent-Proxy traversals are
-tracked in [Known limitations](limitations.md) as separate correctness units.
+Reflect exposes. Long prototype-cycle acceptance, incomplete exotic
+`preventExtensions`, nested-Proxy extensibility validation, and unmetered
+transparent-Proxy traversals are tracked in
+[Known limitations](limitations.md) as separate correctness units.
+
+## Realm Object prototype immutability
+
+The original `%Object.prototype%` in the main Realm and every
+`$262.createRealm()` Realm now keeps its `null` prototype through the
+Immutable Prototype Exotic Object internal method. Local regressions exercise
+same-prototype success, rejected different prototypes through main and foreign
+`Object.setPrototypeOf`, `Reflect.setPrototypeOf`, and borrowed `__proto__`
+setters, method-Realm TypeError identity in both directions, transparent and
+trapping Proxies, non-extensible target invariants, retained extensibility,
+and GC after replacing the foreign global bindings. Failed Realm construction
+is swept at every heap boundary in debug and release modes so a reclaimed
+`GcIdx` cannot inherit stale immutable identity.
+
+Pinned Test262 `020cb74075849d1e404bbcdb62feb7a02e6966db`
+contains 186 files that create a Realm and 13 that also mention
+`Object.prototype`, but none combines those operations with `setPrototypeOf`
+or `__proto__` mutation. The semantic fix therefore has no honest admission
+delta. The related default-runner cohort is **37 pass / 0 fail / 21 skip / 58
+total**, direct Reflect remains **153/153**, and the supported subset remains
+**12751 pass / 0 fail / 7687 skip / 20438 total**. The skipped direct Proxy
+and Object files that pass under forced execution are separate runner-policy
+debt and are not attributed to this correction.
+
+Local gates pass all targets/features, warnings-denied Clippy, rustfmt/diff,
+release, wasm32, Python tooling **111/111**, and the release-only Realm
+rollback sweep. Rust lib tests remain **137/137** and builtins rise to
+**496/496**. Feature commit `9d38dc1` passed ordinary CI `29684489555`,
+including the new release rollback gate.
+
+Full matrix `29684489558` passes all **33/33** jobs. The 30 downloaded result
+files at `/tmp/ruja-object-proto-results.29684489558.8OEqey` aggregate to
+**30634 pass / 6049 fail / 11778 skip / 6 timeout / 0 error / 48467 total /
+36683 pass-or-fail executed**. Every file is byte-identical to
+`/tmp/ruja-reflect-complete-results.29682312645.qE94cM`, confirming that this
+cross-Realm semantic correction has no Test262 admission or result drift.
 
 ## Why the full-suite rate is not higher
 

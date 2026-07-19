@@ -52,12 +52,11 @@ The following resource limits are enforced:
   fuel-metered, but their ordinary prototype segments are not all free of
   arbitrary limits yet. Removing the remaining caps requires one coordinated
   property-traversal audit rather than isolated limit increases.
-- **Prototype mutation gaps**: cycle detection in `[[SetPrototypeOf]]` stops
-  after 4096 links and can accept a longer cycle. The immutable-prototype
-  special case also recognizes only the main Realm's `%Object.prototype%`;
-  a Test262-created Realm's `%Object.prototype%` currently accepts a
-  replacement prototype. Both behaviors are non-conforming and are not
-  covered by the direct Reflect admission.
+- **Prototype mutation traversal gaps**: cycle detection in
+  `[[SetPrototypeOf]]` stops after 4096 links and can accept a longer cycle.
+  Transparent Proxy `[[GetPrototypeOf]]` and `[[SetPrototypeOf]]` forwarding
+  is also recursive and unmetered. These behaviors are non-conforming and
+  require an iterative, fuel-metered traversal rather than a larger cap.
 - **Extensibility gaps**: `[[PreventExtensions]]` reports success without
   changing the extensibility state of several exotic objects, including Map,
   Set, WeakMap, WeakSet, ArrayBuffer, DataView, and Promise instances. A
@@ -243,8 +242,10 @@ guarantees are required.
   AsyncGeneratorFunction/AsyncGenerator/AsyncIterator intrinsic graphs, plus
   independent Math and Reflect namespace objects whose methods inherit that
   Realm's `%Function.prototype%`. Reflect also owns the standard observable
-  `Symbol.toStringTag`; the created-Realm `%Object.prototype%` mutation gap is
-  listed above rather than hidden by this namespace coverage.
+  `Symbol.toStringTag`. Every Realm's original `%Object.prototype%` keeps its
+  null prototype through the immutable-prototype internal method while
+  remaining extensible; the calling method still determines generated Error
+  identity.
   Date constructors, prototypes, methods, and static functions are also
   Realm-local. A non-object Date new-target prototype falls back to the
   immutable Date prototype from that new target's Realm, while constructed
