@@ -30,12 +30,17 @@ The following resource limits are enforced:
 - **Call-stack depth**: JavaScript recursion is capped at 1000 frames.
   Exceeding this throws a catchable `RangeError("Maximum call stack size
   exceeded")`, not a native stack overflow (SIGSEGV/abort).
-- **Remaining Proxy traversal caps**: some `[[Set]]` and
-  `[[DefineOwnProperty]]` paths still use finite internal depth guards. Those
-  guards avoid native-stack failure but can reject otherwise valid, unusually
-  deep Proxy chains. Removing those arbitrary limits requires separate
-  iterative operation audits; deletion, get, descriptor lookup, and
-  extensibility traversal no longer depend on them.
+- **Remaining property traversal caps**: ordinary prototype `[[Get]]` returns
+  `undefined` beyond 4096 recursive hops, while `[[HasProperty]]` returns
+  `false` beyond 1024 ordinary or Proxy hops. `[[Set]]` uses a 1024-hop
+  ordinary guard and a separate 128-layer Proxy guard, and receiver
+  `[[DefineOwnProperty]]` delegation shares that 128-layer limit. These guards
+  avoid native-stack failure but produce non-conforming results for otherwise
+  valid deep chains. Transparent Proxy deletion, Proxy get forwarding,
+  descriptor lookup, and extensibility traversal are iterative and
+  fuel-metered, but their ordinary prototype segments are not all free of
+  arbitrary limits yet. Removing the remaining caps requires one coordinated
+  property-traversal audit rather than isolated limit increases.
 - **Regex execution bounds**: ordinary matching uses the RE2-style,
   linear-time Rust `regex` backend. Backreferences use the vendored
   `fancy-regex` backend; that path has a finite work limit and reports an

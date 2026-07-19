@@ -147,7 +147,9 @@
   `fround`); each Realm owns an independent Math object with the standard
   `Symbol.toStringTag` and Realm-local method identities
 - **Reflect**: `get`/`set`/`has`/`deleteProperty`/`ownKeys`/`getPrototypeOf`/
-  `setPrototypeOf`/`isExtensible`/`preventExtensions`/`apply`/`construct`
+  `setPrototypeOf`/`isExtensible`/`preventExtensions`/`apply`/`construct`;
+  omitted property-key arguments are converted from `undefined` after target
+  validation, including Proxy trap, receiver, and abrupt-completion behavior
 - **WeakMap**/`WeakSet`: object-keyed collections (get/set/has/delete)
 - **Date**: `now()`, constructor with timestamp, `getTime()`
 - **JSON**: `parse` (with reviver) and `stringify` (with replacer/space)

@@ -4,6 +4,53 @@
 
 ### Fixed
 
+- `Reflect.get`, `Reflect.set`, and `Reflect.has` now apply
+  `ToPropertyKey(undefined)` when the property-key argument is omitted. They
+  no longer return `undefined` or `false` before reading a property named
+  `"undefined"`, creating that property with an `undefined` value, or invoking
+  a Proxy trap. Target validation still precedes key conversion;
+  `Reflect.get` and `Reflect.set` retain their target receiver defaults, and
+  `Reflect.set` retains its `undefined` value default. A shared conversion
+  helper also keeps `Reflect.deleteProperty` on the same path.
+
+  Ordinary, explicit-`undefined`, accessor, Proxy, revoked-Proxy, abrupt-trap,
+  target-before-key, receiver-distinction, and forced-GC regressions cover the
+  correction. Temporary Proxy arguments remain rooted while traps collect or
+  throw, and every completion restores the incoming pin depth. Pinned
+  Test262 has no test that distinguishes an omitted key from an explicit
+  `undefined` key for these methods, so these deterministic local regressions
+  are the behavioral proof rather than the admission delta.
+
+  `tools/test262_reflect_set_has_admission.txt` freezes all 18 direct
+  `Reflect.set` and all 10 direct `Reflect.has` files with exact live metadata.
+  The new set/has admission is **28 pass / 0 fail / 0 skip**; together with the
+  existing `Reflect.get` admission the focused result is **39/0/0**. Future
+  paths and unrelated feature gates remain skipped. Supported Test262 remains
+  **12751 pass / 0 fail / 7687 skip / 20438 total** on
+  `020cb74075849d1e404bbcdb62feb7a02e6966db`. Final local gates pass all Rust
+  targets/features, lib tests **136/136**, builtins **494/494**, operators
+  **123/123**, bugfixes **68/68**, Fuel **28/28**, warnings-denied Clippy,
+  rustfmt/diff, release, wasm32, and Python tooling **110/110**.
+
+  GPT 5.6 reviewers Hypatia (`019f7972-ac1d-77f2-a2d0-aa1137c03189`) and
+  Banach (`019f7972-addb-7950-b8f9-926eb1639cd8`) returned `CLEAN`; explorers
+  Harvey (`019f7960-b499-7b90-a40d-ce5918fcf44d`) and Socrates
+  (`019f7960-b5a8-7d70-bb7e-9ddbffeb6e5a`) independently found the third
+  `Reflect.get` bug, the lack of an upstream omission discriminator, and the
+  remaining deep property-traversal caps. All sessions are closed, and no
+  coder or Umans route was used.
+
+  Feature commit `04ce30c` passed ordinary CI `29679935417` after rerunning
+  one unrelated Atomics timing flake, and all **33/33** jobs in full matrix
+  `29679935409`. The 30 result artifacts at
+  `/tmp/ruja-reflect-keys-results.29679935409.2y3wRm` aggregate to **30563 pass
+  / 6049 fail / 11849 skip / 6 timeout / 0 error / 48467 total / 36612
+  pass-or-fail executed** (**63.1%** of all files, **83.5%** of executed
+  files). Twenty-nine files are byte-identical to Proxy-delete baseline
+  `29677977505`; only `built-ins` changes from **14927/5238/3497** to
+  **14955/5238/3469**, exactly **+28 pass / -28 skip** without failure,
+  timeout, error, corpus, or total drift.
+
 - Proxy `[[Delete]]` now forwards through trapless targets with an iterative
   worklist instead of recursive Rust calls. The original receiver remains a GC
   root for the complete operation; each target, handler, and fresh trap owns a

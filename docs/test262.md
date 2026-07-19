@@ -8287,6 +8287,55 @@ from **14899 pass / 5238 fail / 3525 skip** to **14927 / 5238 / 3497**,
 exactly **+28 pass / -28 skip** with no failure, timeout, error, total, or
 corpus drift.
 
+## Reflect omitted property keys and exact set/has admission
+
+`Reflect.get`, `Reflect.set`, and `Reflect.has` previously treated a missing
+property-key argument as an instruction to return `undefined` or `false`.
+They now validate the target and perform `ToPropertyKey(undefined)`, so a
+property named `"undefined"` is read, queried, or created and Proxy traps see
+that exact key. `get` and `set` preserve the original target as the omitted
+receiver, while `set` passes `undefined` as its omitted value. Revoked Proxies,
+throwing traps, target-before-key order, explicit receiver distinctions,
+forced GC, and pin restoration have deterministic Rust regressions.
+
+Pinned Test262 `020cb74075849d1e404bbcdb62feb7a02e6966db` contains no direct
+test that distinguishes an omitted key from an explicit `undefined` key for
+these three methods. The semantic correction is therefore proved by the local
+regressions and a Node differential, not by claiming that the admission delta
+caused the code fix. The independently audited direct method surface already
+passed when feature gates were temporarily lifted.
+
+`tools/test262_reflect_set_has_admission.txt` freezes all 18 direct
+`built-ins/Reflect/set` files and all 10 direct `built-ins/Reflect/has` files.
+Runner and analyzer subtract each exact member's live metadata only; the list
+does not overlap the existing Proxy-get, Proxy-delete, Proxy-ownKeys, or
+Reflect-call manifests. Future files and members with an additional
+unsupported feature remain skipped. The new exact result is **28 pass / 0
+fail / 0 skip**, and the combined `get`/`set`/`has` result is **39/0/0**.
+Supported Test262 remains **12751 pass / 0 fail / 7687 skip / 20438 total**.
+A diagnostic run with every Reflect feature gate lifted is **152 pass / 1
+fail**; the sole remaining direct failure is the separate missing
+`Reflect[Symbol.toStringTag]` property.
+
+Local gates pass all targets/features, lib tests **136/136**, builtins
+**494/494**, operators **123/123**, bugfixes **68/68**, Fuel **28/28**,
+warnings-denied Clippy, rustfmt/diff, release, wasm32, and Python tooling
+**110/110**. GPT 5.6 reviewers Hypatia
+(`019f7972-ac1d-77f2-a2d0-aa1137c03189`) and Banach
+(`019f7972-addb-7950-b8f9-926eb1639cd8`) returned `CLEAN`; all four explorer
+and reviewer sessions are closed.
+
+Feature commit `04ce30c` passed ordinary CI `29679935417` after one unrelated
+Atomics timing-flake rerun and all **33/33** jobs in full matrix
+`29679935409`. The 30 result artifacts at
+`/tmp/ruja-reflect-keys-results.29679935409.2y3wRm` aggregate to **30563 pass /
+6049 fail / 11849 skip / 6 timeout / 0 error / 48467 total / 36612
+pass-or-fail executed** (**63.1%** all-file, **83.5%** executed). Twenty-nine
+files are byte-identical to Proxy-delete baseline `29677977505`; only
+`built-ins` changes from **14927/5238/3497** to **14955/5238/3469**, exactly
+**+28 pass / -28 skip** without failure, timeout, error, corpus, or total
+drift.
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is

@@ -604,6 +604,35 @@ design.
 - 장점, 단점 및 영향: A 100,000-layer delete is stack-safe, forced GC and every abrupt path restore pin depth, and hosts can stop deep handlers or invariant targets with fuel. Unbounded hosts can still spend linear time on arbitrarily deep legal chains, and separately capped Set and DefineOwnProperty paths remain future iterative audits.
 ```
 
+## Reflect omitted property-key normalization
+
+Every property-key-taking Reflect entry point validates its target before key
+conversion. `Reflect.get`, `Reflect.set`, `Reflect.has`, and
+`Reflect.deleteProperty` then call one shared helper that reads argument slot
+one with `undefined` as its default and performs `ToPropertyKey`. An absent
+slot is therefore semantically identical to an explicitly supplied
+`undefined`; it is not a signal to return early. Receiver and value defaults
+remain method-specific and are applied only after key conversion.
+
+The native call boundary pins its callee, argument list, and receiver for the
+complete call. Once conversion reaches an internal property operation, the
+Proxy get, set, and has paths own their target, handler, trap, receiver, and
+value roots across observable re-entry. The common key helper adds no new GC
+or fuel ownership: it removes three early exits and routes omitted arguments
+through the already-audited explicit-`undefined` paths. Forced collection in
+normal and throwing traps verifies that those existing ownership boundaries
+also hold for omitted keys.
+
+```text
+[Decision Log]
+- 목적과 의도: Make omitted Reflect property keys obey the same ECMAScript conversion, receiver, Proxy, and abrupt-completion semantics as explicit undefined keys.
+- 기존 구현 및 제약 조건: Reflect.get, Reflect.set, and Reflect.has each had a private missing-slot early return, while deleteProperty already performed ToPropertyKey(undefined); upstream Test262 does not distinguish these cases.
+- 검토한 주요 대안: Keep per-method branches and patch three return values, duplicate the correct deleteProperty expression, or centralize only the argument-slot default and conversion while retaining each method's internal operation.
+- 선택한 방식: Validate each target first, call one shared slot-one ToPropertyKey helper, and then apply each method's existing receiver, value, and internal-method behavior.
+- 다른 대안 대신 이 방식을 선택한 이유: No return value can emulate an accessor, property creation, Proxy trap, revocation, or thrown completion. Sharing only conversion prevents future omission drift without merging semantically different get, set, has, and delete operations.
+- 장점, 단점 및 영향: Omitted and explicit undefined keys now agree through ordinary and Proxy paths, local GC and abrupt regressions provide coverage missing from Test262, and the change adds no allocation or fuel policy. Existing deep get, has, set, and receiver-define traversal caps remain separate architecture work.
+```
+
 Promise keyed combinators use a separate two-stage observable protocol. They
 first snapshot raw `[[OwnPropertyKeys]]`, including non-enumerable keys, and
 then perform Proxy-aware `[[GetOwnProperty]]` inside the per-key loop. An
