@@ -364,6 +364,46 @@ does not silently tighten the public crate's ordinary semantics.
 - 장점, 단점 및 영향: The complete Test262 lookbehind subtree passes, hard duplicate-name lookbehind works, positive assertions remain atomic, and hostile successful zero-width or branch-growth patterns terminate under explicit limits. The cost is a larger maintained backend fork; unrelated RegExp grammar, empty-class, sentinel, nested-v, and linear-boundary work remains separate.
 ```
 
+### RegExp grammar validation
+
+`validate_regex_literal` validates ECMAScript source grammar before any
+backend-specific normalization or compilation. Quantifier validation uses an
+explicit `NoAtom` / `Atom` / `Prefix` state machine: an atom admits one
+quantifier prefix, `Prefix` admits only one lazy `?`, and assertions reset the
+state. Escape scanning consumes a complete atom only when its syntax is valid,
+so malformed legacy `\x`, `\c`, or identity `\k` cannot hide a repeated
+quantifier. Named-backreference skipping is enabled only after the shared
+named-capture scan proves that the pattern has named captures.
+
+Class range validation has two representations. Legacy mode tokenizes class
+contents into UTF-16 code units because raw supplementary characters and
+identity escapes may contribute two range atoms. It decodes Annex B octal and
+control forms and preserves the incomplete-`\c` fallback as separate `\` and
+`c` atoms. Unicode modes keep scalar endpoints, combine a fixed lead/trail
+surrogate escape pair, reject character-set range endpoints, and distinguish a
+single range `-` from the `v` subtraction operator. The Unicode syntax pass
+owns nested `v` class depth and restricted brackets.
+
+```text
+RegExp source + flags
+  -> flags and named-group validation
+  -> Unicode escape/bracket/class-depth validation
+  -> legacy UTF-16 or Unicode-scalar class-range validation
+  -> atom/prefix/lazy quantifier state validation
+  -> assertion/modifier validation
+  -> JavaScript normalization and bounded backend compilation
+```
+
+```text
+[Decision Log]
+- 목적과 의도: Enforce ECMAScript RegExp early errors independently of backend parser quirks while preserving legacy UTF-16 and Annex B behavior.
+- 기존 구현 및 제약 조건: The validator tracked only whether any atom had appeared, skipped malformed escapes too broadly, compared only Unicode character-set endpoints, and delegated range order and restricted brackets to backends whose grammars differ from ECMAScript.
+- 검토한 주요 대안: Continue relying on backend errors, patch the 12 Test262 files by spelling, parse every RegExp into a new full AST, or add bounded source validators for the finite grammar surfaces.
+- 선택한 방식: Use a small quantifier state machine, syntax-aware escape boundaries, a UTF-16 legacy class tokenizer, scalar Unicode endpoints with surrogate-pair composition, and explicit nested-v/subtraction checks before compilation.
+- 다른 대안 대신 이 방식을 선택한 이유: Backend acceptance is observably wrong even for unexecuted literals, path-specific patches hide equivalent constructors, and a replacement parser is too broad for this unit. Mode-specific validators map directly to the relevant grammar invariants and can be differential-tested against Node.
+- 장점, 단점 및 영향: Twelve failures become passes with no matrix movement outside built-ins; malformed quantifiers and ranges fail consistently for literals and constructors, and 1,219 class differentials show no regression. Full v set algebra, Annex B backend lowering, empty-class execution, large-count policy, and hybrid nullable matching remain explicit separate units.
+```
+
 `MakeClosure` follows the same rule for an ordinary function's fresh
 `.prototype`: the prototype is pinned before a named-function environment or
 the function object can allocate, then released only after the function owns

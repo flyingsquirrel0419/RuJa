@@ -30,7 +30,7 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 62.7% of all matrix files; 83.2% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 62.9% of all matrix files; 83.4% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (12751 pass / 0 fail on current Test262; 12752 / 0 on the pinned checkout) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
@@ -8056,6 +8056,48 @@ therefore the expected Annex B implementation, not unpinned-checkout drift.
 - 다른 대안 대신 이 방식을 선택한 이유: Start enumeration changes greediness and scales with input length, rewrites and post-processing cannot reproduce transactional capture state, broad routing weakens linear execution, and a replacement engine is disproportionate to this finite unit. Directional compilation maps directly onto the specification while retaining existing VM rollback machinery.
 - 장점, 단점 및 영향: Thirty-three failures become passes, lookbehind reaches 17/17, hard duplicate-name lookbehind closes, and successful hostile paths are bounded. The maintained fork grows, while 19 unrelated grammar, class, quantifier, and hybrid-boundary failures remain explicit next units.
 ```
+
+## RegExp grammar early errors
+
+RuJa now validates the ECMA-262
+[`Quantifier`](https://tc39.es/ecma262/multipage/text-processing.html#prod-Quantifier)
+shape as one prefix plus one optional lazy marker. Repeated simple or braced
+quantifiers, quantifiers after assertions, and malformed escapes that hide a
+following prefix are rejected before backend compilation. The
+[Annex B pattern extensions](https://tc39.es/ecma262/multipage/additional-ecmascript-features-for-web-browsers.html#sec-regular-expressions-patterns)
+remain active only in legacy mode, including quantifiable lookahead and
+character-set range endpoints.
+
+Range validation follows the active pattern mode. Legacy classes are flattened
+to UTF-16 code units and decode Annex B octal/control forms, incomplete `\c`,
+raw supplementary characters, and non-ASCII identity escapes. Unicode classes
+compare scalar endpoints and combine adjacent surrogate escapes; `v` classes
+also require subtraction operands and balanced nested classes. Unicode modes
+reject malformed `\xHH`, standalone unescaped `]`/`}`, and character-set range
+endpoints.
+
+On pinned Test262 `020cb74075849d1e404bbcdb62feb7a02e6966db`, full
+`built-ins/RegExp` moves from **1024 pass / 19 fail / 836 skip / 0 timeout** to
+**1036 / 7 / 836 / 0**, exactly **+12 pass / -12 fail**. The remaining seven
+are five empty-class backend failures, `quantifier-integer-limit.js`, and
+`nullable-quantifier.js`. Local gates pass all Rust targets/features,
+warnings-denied Clippy, rustfmt/diff, release, wasm32, builtins **477/477**, and
+the full RegExp diagnostic. Differential checks cover **1,219** legacy class
+combinations with **569** prior mismatches fixed and no remaining mismatch,
+plus **858** quantifier/escape combinations with no regression. Two independent
+GPT 5.6 reviews returned `CLEAN` after their UTF-16, octal/control,
+malformed-escape, surrogate, and `v` subtraction findings were fixed; every
+agent was closed and no coder model or Umans route was used.
+
+Feature commit `8578ea2` passed ordinary CI `29669380090` and all **33/33**
+jobs in full matrix `29669380082`. The 30 downloaded result artifacts at
+`/tmp/ruja-regexp-grammar-feature.29669380082.uQLPyV` aggregate to **30470 pass
+/ 6086 fail / 11905 skip / 6 timeout / 0 error / 48467 total / 36556
+pass-or-fail executed** (**62.9%** of all files, **83.4%** of executed files).
+Twenty-nine artifacts are byte-identical to lookaround baseline
+`29666307826`; only `built-ins` changes, by exactly **+12 pass / -12 fail**.
+The matrix therefore reproduces the pinned local delta without corpus drift or
+movement in skip, timeout, total, or executed counts.
 
 ## Why the full-suite rate is not higher
 

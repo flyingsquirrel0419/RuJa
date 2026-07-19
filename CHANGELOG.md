@@ -4,6 +4,38 @@
 
 ### Fixed
 
+- RegExp source validation now enforces the ECMAScript quantifier grammar
+  before backend compilation. A quantifier consumes exactly one atom and may
+  have only one optional lazy `?`; repeated `*`, `+`, `?`, or braced prefixes,
+  assertion quantifiers, and malformed legacy escapes that previously hid a
+  following quantifier are syntax errors. Legacy quantified lookahead remains
+  available only outside `u`/`v` as required by Annex B.
+
+  Character-class range validation is mode-aware. Legacy patterns are
+  flattened to UTF-16 code units and preserve Annex B octal, control,
+  incomplete-`\c`, character-set-endpoint, raw astral, and non-ASCII identity
+  escape behavior. `u`/`v` ranges compare scalar endpoints, combine adjacent
+  surrogate escapes, reject descending ranges and character-set range
+  endpoints, and validate `v` subtraction operands. Unicode modes also reject
+  unescaped standalone `]`/`}`, malformed `\xHH`, and unterminated nested `v`
+  classes while retaining valid subtraction and escaped punctuation.
+
+  On Test262 `020cb74075849d1e404bbcdb62feb7a02e6966db`, full
+  `built-ins/RegExp` moves from **1024 pass / 19 fail / 836 skip / 0 timeout**
+  to **1036 / 7 / 836 / 0**, exactly **+12 pass / -12 fail**. The remaining
+  seven files are five valid empty-class backend failures, one oversized
+  quantifier-integer backend limit, and one nullable-quantifier hybrid-boundary
+  mismatch. Node 24 differentials cover 1,219 legacy class combinations and
+  858 quantifier/escape combinations without a regression. Two independent
+  GPT 5.6 reviews returned `CLEAN` after closing UTF-16 endpoint, octal/control,
+  malformed-escape, surrogate-pair, and `v` subtraction defects; no coder
+  model or Umans route was used. Feature commit `8578ea2` passed ordinary CI
+  `29669380090` and all 33 jobs in full matrix `29669380082`. Twenty-nine of
+  30 result artifacts are byte-identical to the lookaround baseline;
+  `built-ins` is exactly **+12/-12**. The aggregate is **30470 pass / 6086 fail
+  / 11905 skip / 6 timeout / 0 error / 48467 total / 36556 pass-or-fail
+  executed** (**62.9%** of all files, **83.4%** of executed files).
+
 - ECMAScript RegExp lookahead and lookbehind now execute as directional
   subpatterns in the vendored matcher. Lookahead runs forward; lookbehind runs
   backward with reversed concatenation, backward literals, wildcards,

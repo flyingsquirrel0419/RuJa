@@ -74,12 +74,18 @@ guarantees are required.
 - RegExp construction, `IsRegExp`, Realm fallback, the String-symbol methods,
   character-class escapes, active-ignoreCase `\w`/`\W` lowering, and `d`-flag
   match indices are implemented and audited, but full RegExp conformance is
-  not complete. The current `built-ins/RegExp` diagnostic is **1024 pass / 19
-  fail / 836 skip / 0 timeout**. The remaining failures are **11** legacy
-  grammar early-error files, **5** empty-class matcher files, **1** quantifier
-  integer-limit file, **1** nullable-quantifier hybrid-boundary mismatch, and
-  **1** Unicode restricted-bracket early error. The complete lookbehind subtree
+  not complete. The current `built-ins/RegExp` diagnostic is **1036 pass / 7
+  fail / 836 skip / 0 timeout**. The remaining failures are **5** valid
+  empty-class matcher files, **1** quantifier integer-limit file, and **1**
+  nullable-quantifier hybrid-boundary mismatch. The complete lookbehind subtree
   is **17/17**.
+
+  Source validation now models one quantifier plus an optional lazy marker,
+  legacy UTF-16 class ranges and Annex B escapes, Unicode scalar ranges,
+  adjacent surrogate endpoints, standalone restricted brackets, and basic
+  `v` subtraction operand structure before backend compilation. This closes
+  the finite Test262 grammar cluster without relying on backend-specific parse
+  errors.
 
   Lookahead and lookbehind execute in the vendored directional VM: lookbehind
   reverses concatenation and consumes atoms, captures, delegates, and
@@ -98,9 +104,12 @@ guarantees are required.
   inherits Rust's broader Unicode word boundary instead of the ECMAScript
   WordCharacters set. Valid scalars in `U+F0000..U+F07FF` collide with the
   internal UTF-16 sentinel representation, and nested `v` set
-  subtraction/intersection remains incomplete. Moving every boundary onto the
-  backtracking backend remains rejected; the general boundary fix needs a
-  linear operation.
+  subtraction/intersection and string properties remain incomplete. The
+  backend also rejects some grammar-valid legacy forms, including empty
+  classes, invalid-brace Annex B literals, and non-BMP code-unit ranges such as
+  `[💩-\uFFFF]`; statement-list RegExp fallback still mishandles nearby lazy
+  quantifiers. Moving every boundary onto the backtracking backend remains
+  rejected; the general boundary fix needs a linear operation.
 - Execution fuel is **cooperative, not preemptive**: `Vm::set_fuel(Some(n))`
   bounds execution to ~n opcodes (exhaustion throws a `RangeError` that is
   *not* catchable by user `try/catch`, so untrusted code cannot swallow it).
