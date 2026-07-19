@@ -37,6 +37,45 @@ pub(crate) struct TypedArrayDefineDescriptor<'a> {
     pub(crate) writable: bool,
 }
 
+#[derive(Clone)]
+pub(crate) struct ProxyDefinePropertyDescriptor {
+    pub(crate) descriptor: crate::value::PropertyDescriptor,
+    pub(crate) has_value: bool,
+    pub(crate) has_writable: bool,
+    pub(crate) has_enumerable: bool,
+    pub(crate) has_configurable: bool,
+    pub(crate) has_get: bool,
+    pub(crate) has_set: bool,
+}
+
+impl ProxyDefinePropertyDescriptor {
+    fn complete(descriptor: crate::value::PropertyDescriptor) -> Self {
+        let is_accessor = descriptor.is_accessor;
+        Self {
+            descriptor,
+            has_value: !is_accessor,
+            has_writable: !is_accessor,
+            has_enumerable: true,
+            has_configurable: true,
+            has_get: is_accessor,
+            has_set: is_accessor,
+        }
+    }
+
+    fn is_accessor(&self) -> bool {
+        self.has_get || self.has_set
+    }
+
+    fn is_data(&self) -> bool {
+        self.has_value || self.has_writable
+    }
+}
+
+pub(crate) enum ProxyDefinePropertyOutcome {
+    Ordinary(Value),
+    Complete(bool),
+}
+
 fn descriptor_same_value(left: &Value, right: &Value) -> bool {
     match (left, right) {
         (Value::Number(left), Value::Number(right)) => {
@@ -68,6 +107,36 @@ fn compatible_complete_descriptor(
     } else {
         current.writable || (!desc.writable && descriptor_same_value(&desc.value, &current.value))
     }
+}
+
+fn compatible_proxy_define_descriptor(
+    current: Option<&crate::value::PropertyDescriptor>,
+    desc: &ProxyDefinePropertyDescriptor,
+    extensible: bool,
+) -> bool {
+    let Some(current) = current else {
+        return extensible;
+    };
+    if current.configurable {
+        return true;
+    }
+
+    let descriptor = &desc.descriptor;
+    if (desc.has_configurable && descriptor.configurable)
+        || (desc.has_enumerable && descriptor.enumerable != current.enumerable)
+        || ((desc.is_accessor() || desc.is_data()) && desc.is_accessor() != current.is_accessor)
+    {
+        return false;
+    }
+    if current.is_accessor {
+        return (!desc.has_get || descriptor.get == current.get)
+            && (!desc.has_set || descriptor.set == current.set);
+    }
+    if desc.is_data() && !current.writable {
+        return (!desc.has_writable || !descriptor.writable)
+            && (!desc.has_value || descriptor_same_value(&descriptor.value, &current.value));
+    }
+    true
 }
 
 impl Vm {
@@ -781,86 +850,15 @@ impl Vm {
         key: crate::value::PropertyKey,
         desc: crate::value::PropertyDescriptor,
     ) -> error::Result<bool> {
+        let proxy_descriptor = ProxyDefinePropertyDescriptor::complete(desc.clone());
+        let object = match self.proxy_define_own_property(obj, &key, &proxy_descriptor, None)? {
+            ProxyDefinePropertyOutcome::Ordinary(object) => object,
+            ProxyDefinePropertyOutcome::Complete(result) => return Ok(result),
+        };
+        let obj = &object;
         if let Value::Object(idx) = obj {
             if let Some(name) = key.as_str() {
                 self.ic_invalidate(idx.0, name);
-            }
-            let proxy_info = self.heap.with_obj(idx.0, |o| {
-                if let HeapObj::Proxy(proxy) = o {
-                    if *proxy.revoked.lock() {
-                        return Some(Err(Error::type_err(
-                            "Cannot perform 'defineProperty' on a proxy that has been revoked",
-                        )));
-                    }
-                    Some(Ok((proxy.target.clone(), proxy.handler.clone())))
-                } else {
-                    None
-                }
-            });
-            if let Some(result) = proxy_info {
-                let (target, handler) = result?;
-                let mut roots = vec![target.clone(), handler.clone(), desc.value.clone()];
-                roots.extend(desc.get.iter().cloned());
-                roots.extend(desc.set.iter().cloned());
-                let pin_count = self.pin_many(&roots);
-                let result = (|| {
-                    let trap = self.get_property(&handler, "defineProperty")?;
-                    if trap.is_undefined() || trap.is_null() {
-                        return self.define_own_property(&target, key.clone(), desc.clone());
-                    }
-                    let trap_pin = self.pin(&trap);
-                    let result = (|| {
-                        let key_value = match &key {
-                            crate::value::PropertyKey::Str(s) => Value::String(s.clone()),
-                            crate::value::PropertyKey::Symbol(id) => Value::Symbol(*id),
-                        };
-                        let desc_obj = self.property_descriptor_object(&desc)?;
-                        let trap_result = self.call_function(
-                            &trap,
-                            &[target.clone(), key_value, desc_obj],
-                            Some(handler.clone()),
-                        )?;
-                        if !self.to_boolean(&trap_result) {
-                            return Ok(false);
-                        }
-                        let target_desc =
-                            crate::builtins::own_property_descriptor_for_key_or_throw(
-                                self, &target, &key,
-                            )?;
-                        let mut target_desc_roots = Vec::new();
-                        if let Some(target_desc) = target_desc.as_ref() {
-                            target_desc_roots.push(target_desc.value.clone());
-                            target_desc_roots.extend(target_desc.get.iter().cloned());
-                            target_desc_roots.extend(target_desc.set.iter().cloned());
-                        }
-                        let target_desc_pins = self.pin_many(&target_desc_roots);
-                        let validation = (|| {
-                            let extensible = self.is_extensible(&target)?;
-                            if !compatible_complete_descriptor(
-                                target_desc.as_ref(),
-                                &desc,
-                                extensible,
-                            ) || target_desc.as_ref().is_some_and(|target_desc| {
-                                (!desc.configurable && target_desc.configurable)
-                                    || (!target_desc.configurable
-                                        && !target_desc.is_accessor
-                                        && target_desc.writable
-                                        && !desc.writable)
-                            }) {
-                                return Err(Error::type_err(
-                                    "Proxy defineProperty trap violated the target invariant",
-                                ));
-                            }
-                            Ok(true)
-                        })();
-                        self.unpin_many(target_desc_pins);
-                        validation
-                    })();
-                    self.unpin(trap_pin);
-                    result
-                })();
-                self.unpin_many(pin_count);
-                return result;
             }
             let is_array_length = key.as_str() == Some("length")
                 && self.heap.with_obj(idx.0, |object| {
@@ -987,6 +985,135 @@ impl Vm {
             );
         });
         Ok(desc_obj)
+    }
+
+    /// Run Proxy [[DefineOwnProperty]] until a trap completes or an ordinary
+    /// target is reached, retaining descriptor presence, roots, and fuel.
+    pub(crate) fn proxy_define_own_property(
+        &mut self,
+        object: &Value,
+        key: &crate::value::PropertyKey,
+        desc: &ProxyDefinePropertyDescriptor,
+        descriptor_object: Option<&Value>,
+    ) -> error::Result<ProxyDefinePropertyOutcome> {
+        let mut roots = vec![object.clone(), desc.descriptor.value.clone()];
+        roots.extend(desc.descriptor.get.iter().cloned());
+        roots.extend(desc.descriptor.set.iter().cloned());
+        roots.extend(descriptor_object.iter().cloned().cloned());
+        let root_pins = self.pin_many(&roots);
+        let mut current = object.clone();
+        let result = (|| loop {
+            let Value::Object(idx) = &current else {
+                return Ok(ProxyDefinePropertyOutcome::Ordinary(current));
+            };
+            let proxy_info = self.heap.with_obj(idx.0, |heap_object| {
+                let HeapObj::Proxy(proxy) = heap_object else {
+                    return None;
+                };
+                if *proxy.revoked.lock() {
+                    return Some(Err(Error::type_err(
+                        "Cannot perform 'defineProperty' on a proxy that has been revoked",
+                    )));
+                }
+                Some(Ok((proxy.target.clone(), proxy.handler.clone())))
+            });
+            let Some(proxy_info) = proxy_info else {
+                return Ok(ProxyDefinePropertyOutcome::Ordinary(current));
+            };
+
+            let (target, handler) = proxy_info?;
+            self.consume_fuel()?;
+            let proxy_pins = self.pin_many(&[target.clone(), handler.clone()]);
+            let proxy_result = (|| {
+                let trap = self.get_property(&handler, "defineProperty")?;
+                if trap.is_nullish() {
+                    return Ok(None);
+                }
+                if !crate::builtins::is_callable(&trap, &self.heap) {
+                    return Err(Error::type_err("Proxy defineProperty trap is not callable"));
+                }
+                let trap_pin = self.pin(&trap);
+                let descriptor_object = match descriptor_object {
+                    Some(descriptor_object) => Ok(descriptor_object.clone()),
+                    None => self.property_descriptor_object(&desc.descriptor),
+                };
+                let descriptor_object = match descriptor_object {
+                    Ok(descriptor_object) => descriptor_object,
+                    Err(error) => {
+                        self.unpin(trap_pin);
+                        return Err(error);
+                    }
+                };
+                let descriptor_pin = self.pin(&descriptor_object);
+                let trap_result = self.call_function(
+                    &trap,
+                    &[
+                        target.clone(),
+                        Self::property_key_to_value(key),
+                        descriptor_object,
+                    ],
+                    Some(handler.clone()),
+                );
+                self.unpin(descriptor_pin);
+                self.unpin(trap_pin);
+                let trap_result = trap_result?;
+                if !self.to_boolean(&trap_result) {
+                    return Ok(Some(false));
+                }
+
+                self.validate_proxy_define_own_property_result(&target, key, desc)?;
+                Ok(Some(true))
+            })();
+            self.unpin_many(proxy_pins);
+
+            match proxy_result? {
+                Some(result) => return Ok(ProxyDefinePropertyOutcome::Complete(result)),
+                None => current = target,
+            }
+        })();
+        self.unpin_many(root_pins);
+        result
+    }
+
+    fn validate_proxy_define_own_property_result(
+        &mut self,
+        target: &Value,
+        key: &crate::value::PropertyKey,
+        desc: &ProxyDefinePropertyDescriptor,
+    ) -> error::Result<()> {
+        let target_desc =
+            crate::builtins::own_property_descriptor_for_key_or_throw(self, target, key)?;
+        let mut target_desc_roots = Vec::new();
+        if let Some(target_desc) = target_desc.as_ref() {
+            target_desc_roots.push(target_desc.value.clone());
+            target_desc_roots.extend(target_desc.get.iter().cloned());
+            target_desc_roots.extend(target_desc.set.iter().cloned());
+        }
+        let target_desc_pins = self.pin_many(&target_desc_roots);
+        let validation = (|| {
+            let extensible = self.is_extensible(target)?;
+            let setting_configurable_false = desc.has_configurable && !desc.descriptor.configurable;
+            let violates_invariant = match target_desc.as_ref() {
+                None => !extensible || setting_configurable_false,
+                Some(target_desc) => {
+                    !compatible_proxy_define_descriptor(Some(target_desc), desc, extensible)
+                        || (setting_configurable_false && target_desc.configurable)
+                        || (!target_desc.configurable
+                            && !target_desc.is_accessor
+                            && target_desc.writable
+                            && desc.has_writable
+                            && !desc.descriptor.writable)
+                }
+            };
+            if violates_invariant {
+                return Err(Error::type_err(
+                    "Proxy defineProperty trap violated the target invariant",
+                ));
+            }
+            Ok(())
+        })();
+        self.unpin_many(target_desc_pins);
+        validation
     }
 
     pub(crate) fn prevent_extensions(&mut self, obj: &Value) -> error::Result<bool> {

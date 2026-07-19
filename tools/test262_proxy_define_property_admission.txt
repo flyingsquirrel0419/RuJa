@@ -1,0 +1,22 @@
+# Exact Proxy [[DefineOwnProperty]] admission; assignment-driven cases remain gated.
+built-ins/Proxy/defineProperty/call-parameters.js
+built-ins/Proxy/defineProperty/null-handler.js
+built-ins/Proxy/defineProperty/return-boolean-and-define-target.js
+built-ins/Proxy/defineProperty/return-is-abrupt.js
+built-ins/Proxy/defineProperty/targetdesc-configurable-desc-not-configurable-realm.js
+built-ins/Proxy/defineProperty/targetdesc-configurable-desc-not-configurable.js
+built-ins/Proxy/defineProperty/targetdesc-not-compatible-descriptor-not-configurable-target-realm.js
+built-ins/Proxy/defineProperty/targetdesc-not-compatible-descriptor-not-configurable-target.js
+built-ins/Proxy/defineProperty/targetdesc-not-compatible-descriptor-realm.js
+built-ins/Proxy/defineProperty/targetdesc-not-compatible-descriptor.js
+built-ins/Proxy/defineProperty/targetdesc-not-configurable-writable-desc-not-writable.js
+built-ins/Proxy/defineProperty/targetdesc-undefined-not-configurable-descriptor-realm.js
+built-ins/Proxy/defineProperty/targetdesc-undefined-not-configurable-descriptor.js
+built-ins/Proxy/defineProperty/targetdesc-undefined-target-is-not-extensible.js
+built-ins/Proxy/defineProperty/trap-is-missing-target-is-proxy.js
+built-ins/Proxy/defineProperty/trap-is-not-callable-realm.js
+built-ins/Proxy/defineProperty/trap-is-not-callable.js
+built-ins/Proxy/defineProperty/trap-is-null-target-is-proxy.js
+built-ins/Proxy/defineProperty/trap-is-undefined-target-is-proxy.js
+built-ins/Proxy/defineProperty/trap-is-undefined.js
+built-ins/Proxy/defineProperty/trap-return-is-false.js

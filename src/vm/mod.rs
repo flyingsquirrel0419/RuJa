@@ -10,7 +10,9 @@ pub(crate) mod ops;
 mod property;
 
 pub(crate) use conversions::{to_int32, to_uint32};
-pub(crate) use property::TypedArrayDefineDescriptor;
+pub(crate) use property::{
+    ProxyDefinePropertyDescriptor, ProxyDefinePropertyOutcome, TypedArrayDefineDescriptor,
+};
 
 use crate::bytecode::{Chunk, Op};
 use crate::environment as env;

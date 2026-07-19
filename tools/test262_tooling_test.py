@@ -97,6 +97,10 @@ from test262_prototype_internal_admission import (
     PROTOTYPE_INTERNAL_FEATURES,
     PROTOTYPE_INTERNAL_FILES,
 )
+from test262_proxy_define_property_admission import (
+    PROXY_DEFINE_PROPERTY_FEATURES,
+    PROXY_DEFINE_PROPERTY_FILES,
+)
 from test262_proxy_own_keys_admission import (
     PROXY_OWN_KEYS_FEATURES,
     PROXY_OWN_KEYS_FILES,
@@ -2215,6 +2219,123 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                         )
                     self.assertFalse(tool.prototype_internal_path(future))
                     self.assertFalse(tool.prototype_internal_path(outside))
+                    self.assertTrue(
+                        tool.should_skip({"features": ["Proxy"]}, future)
+                    )
+                    self.assertTrue(
+                        tool.should_skip({"features": ["Proxy"]}, outside)
+                    )
+                finally:
+                    tool.TEST262 = original_root
+
+    def test_proxy_define_property_manifest_is_exact_live_disjoint_and_shared(self):
+        self.assertEqual(len(PROXY_DEFINE_PROPERTY_FILES), 21)
+        self.assertEqual(
+            frozenset(PROXY_DEFINE_PROPERTY_FEATURES),
+            PROXY_DEFINE_PROPERTY_FILES,
+        )
+        feature_counts = {}
+        for features in PROXY_DEFINE_PROPERTY_FEATURES.values():
+            feature_counts[features] = feature_counts.get(features, 0) + 1
+        self.assertEqual(
+            feature_counts,
+            {
+                frozenset({"Proxy"}): 10,
+                frozenset({"Proxy", "cross-realm"}): 5,
+                frozenset({"Proxy", "Reflect"}): 5,
+                frozenset({"Proxy", "Reflect", "proxy-missing-checks"}): 1,
+            },
+        )
+
+        excluded = {
+            "built-ins/Proxy/defineProperty/desc-realm.js",
+            "built-ins/Proxy/defineProperty/null-handler-realm.js",
+            "built-ins/Proxy/defineProperty/targetdesc-undefined-target-is-not-extensible-realm.js",
+        }
+        self.assertFalse(PROXY_DEFINE_PROPERTY_FILES & excluded)
+        admission_dir = Path(__file__).resolve().parent
+        for manifest in admission_dir.glob("test262_*_admission.txt"):
+            if manifest.name == "test262_proxy_define_property_admission.txt":
+                continue
+            existing = {
+                line
+                for raw_line in manifest.read_text().splitlines()
+                if (line := raw_line.strip()) and not line.startswith("#")
+            }
+            self.assertFalse(PROXY_DEFINE_PROPERTY_FILES & existing, manifest.name)
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        try:
+            test_root_available = test_root.is_dir()
+        except OSError:
+            test_root_available = False
+        if test_root_available:
+            live_directory = {
+                path.relative_to(test_root).as_posix()
+                for path in (test_root / "built-ins/Proxy/defineProperty").glob("*.js")
+            }
+            self.assertEqual(PROXY_DEFINE_PROPERTY_FILES, live_directory - excluded)
+            property_helper_files = {
+                "built-ins/Proxy/defineProperty/return-boolean-and-define-target.js",
+                "built-ins/Proxy/defineProperty/trap-is-null-target-is-proxy.js",
+                "built-ins/Proxy/defineProperty/trap-is-undefined.js",
+            }
+            compare_array = (
+                "built-ins/Proxy/defineProperty/trap-is-undefined-target-is-proxy.js"
+            )
+            for relative, features in PROXY_DEFINE_PROPERTY_FEATURES.items():
+                path = test_root / relative
+                self.assertTrue(path.is_file(), relative)
+                metadata = test262_runner.parse_meta(path.read_text())
+                self.assertEqual(
+                    frozenset(metadata.get("features", [])), features, relative
+                )
+                if relative in property_helper_files:
+                    expected_includes = ["propertyHelper.js"]
+                elif relative == compare_array:
+                    expected_includes = ["compareArray.js"]
+                else:
+                    expected_includes = []
+                self.assertEqual(
+                    metadata.get("includes", []), expected_includes, relative
+                )
+                self.assertEqual(metadata.get("flags", []), [], relative)
+                self.assertNotIn("negative", metadata, relative)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            future = root / "test/built-ins/Proxy/defineProperty/future.js"
+            outside = root / "test/built-ins/Object/defineProperty/future.js"
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for relative, features in PROXY_DEFINE_PROPERTY_FEATURES.items():
+                        path = root / "test" / relative
+                        self.assertTrue(tool.proxy_define_property_path(path), relative)
+                        self.assertEqual(
+                            tool.proxy_define_property_features(path), features
+                        )
+                        self.assertFalse(
+                            tool.should_skip({"features": sorted(features)}, path),
+                            relative,
+                        )
+                        self.assertTrue(
+                            tool.should_skip(
+                                {"features": sorted(features | {"decorators"})},
+                                path,
+                            ),
+                            relative,
+                        )
+                    for relative in excluded:
+                        path = root / "test" / relative
+                        self.assertFalse(tool.proxy_define_property_path(path), relative)
+                        self.assertTrue(
+                            tool.should_skip({"features": ["Proxy"]}, path),
+                            relative,
+                        )
+                    self.assertFalse(tool.proxy_define_property_path(future))
+                    self.assertFalse(tool.proxy_define_property_path(outside))
                     self.assertTrue(
                         tool.should_skip({"features": ["Proxy"]}, future)
                     )

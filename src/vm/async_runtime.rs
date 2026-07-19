@@ -9,6 +9,7 @@ use crate::value::{
 use crate::value::{FunctionKind, HeapObj, NativeConstructMode, PropertyKey};
 use indexmap::IndexMap;
 use parking_lot::Mutex;
+use std::borrow::Cow;
 use std::sync::Arc;
 
 #[derive(Clone, Copy)]
@@ -1080,10 +1081,7 @@ impl Vm {
                     }
                     crate::value::FunctionKind::Bound { target, .. } => Ok(*target),
                 },
-                HeapObj::Proxy(proxy) => match &proxy.target {
-                    Value::Object(target) => Ok(*target),
-                    _ => Err(false),
-                },
+                HeapObj::Proxy(proxy) => Err(proxy.constructable),
                 _ => Err(false),
             });
             match next {
@@ -1158,7 +1156,7 @@ impl Vm {
         // reading the function kind and building the call frame involve heap
         // allocations that can trigger a GC, which would otherwise collect
         // values held only in the caller's Rust locals / args slice.
-        let pin_count = {
+        let mut pin_count = {
             let mut n = self.pin(func);
             for a in args {
                 n += self.pin(a);
@@ -1168,7 +1166,7 @@ impl Vm {
             }
             n
         };
-        let result = self.call_function_inner(func, args, this);
+        let result = self.call_function_inner(func, args, this, &mut pin_count);
         self.unpin_many(pin_count);
         result
     }
@@ -1178,6 +1176,7 @@ impl Vm {
         func: &Value,
         args: &[Value],
         this: Option<Value>,
+        pin_count: &mut usize,
     ) -> error::Result<Value> {
         // Cap the call-stack depth before pushing another frame. Without this
         // an unbounded JS recursion would overflow the Rust stack (each JS
@@ -1190,43 +1189,80 @@ impl Vm {
         if self.frames.len() >= MAX_CALL_STACK_DEPTH {
             return Err(Error::range("Maximum call stack size exceeded"));
         }
-        let idx = match func {
-            Value::Object(idx) => *idx,
-            _ => {
-                return Err(Error::type_err(format!(
-                    "{} is not a function",
-                    func.type_of()
-                )))
-            }
-        };
-        let proxy_call = self.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Proxy(proxy) = obj {
+        if !crate::builtins::is_callable(func, &self.heap) {
+            return Err(Error::type_err(format!(
+                "{} is not a function",
+                func.type_of()
+            )));
+        }
+
+        // Both transparent forwarding and calling a Proxy-valued apply trap
+        // are tail operations, so one rooted state machine avoids native recursion.
+        let mut active_func = func.clone();
+        let mut active_args = Cow::Borrowed(args);
+        let mut active_this = this;
+        let idx = loop {
+            let Value::Object(idx) = &active_func else {
+                unreachable!("callable metadata must resolve to an object")
+            };
+            let idx = *idx;
+            let proxy_call = self.heap.with_obj(idx.0, |object| {
+                let HeapObj::Proxy(proxy) = object else {
+                    return None;
+                };
                 if *proxy.revoked.lock() {
                     return Some(Err(Error::type_err(
                         "Cannot perform 'apply' on a proxy that has been revoked",
                     )));
                 }
                 Some(Ok((proxy.target.clone(), proxy.handler.clone())))
-            } else {
-                None
-            }
-        });
-        if let Some(result) = proxy_call {
-            let (target, handler) = result?;
-            if !crate::builtins::is_callable(&target, &self.heap) {
-                return Err(Error::type_err("not a function".to_string()));
-            }
-            let trap = self.get_property(&handler, "apply")?;
-            if trap.is_undefined() || trap.is_null() {
-                return self.call_function(&target, args, this);
+            });
+            let Some(proxy_call) = proxy_call else {
+                break idx;
+            };
+
+            let (target, handler) = proxy_call?;
+            self.consume_fuel()?;
+            let proxy_pins = self.pin_many(&[target.clone(), handler.clone()]);
+            let trap = match self.get_property(&handler, "apply") {
+                Ok(trap) => trap,
+                Err(error) => {
+                    self.unpin_many(proxy_pins);
+                    return Err(error);
+                }
+            };
+            if trap.is_nullish() {
+                self.unpin_many(proxy_pins);
+                active_func = target;
+                continue;
             }
             if !crate::builtins::is_callable(&trap, &self.heap) {
+                self.unpin_many(proxy_pins);
                 return Err(Error::type_err("Proxy apply trap is not callable"));
             }
-            let this_arg = this.unwrap_or(Value::Undefined);
-            let arg_array = crate::builtins::make_value_array(self, args.to_vec())?;
-            return self.call_function(&trap, &[target, this_arg, arg_array], Some(handler));
-        }
+
+            let trap_pin = self.pin(&trap);
+            let arg_array = match crate::builtins::make_value_array_in_current_realm(
+                self,
+                active_args.as_ref().to_vec(),
+            ) {
+                Ok(arg_array) => arg_array,
+                Err(error) => {
+                    self.unpin(trap_pin);
+                    self.unpin_many(proxy_pins);
+                    return Err(error);
+                }
+            };
+            let arg_array_pin = self.pin(&arg_array);
+            *pin_count += proxy_pins + trap_pin + arg_array_pin;
+            let this_arg = active_this.take().unwrap_or(Value::Undefined);
+            active_func = trap;
+            active_args = Cow::Owned(vec![target, this_arg, arg_array]);
+            active_this = Some(handler);
+        };
+        let args = active_args.as_ref();
+        let this = active_this;
+
         // read function kind without holding borrow
         let kind_info = self.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Function(f) = obj {

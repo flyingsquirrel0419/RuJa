@@ -2522,6 +2522,420 @@ fn proxy_prototype_invariant_walks_consume_nested_fuel() {
 }
 
 #[test]
+fn proxy_define_own_property_roots_intermediates_and_restores_pin_depth() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.clear_kept_objects();
+            vm.gc();
+            vm.new_object().map(Value::Object)
+        },
+        0,
+    )
+    .expect("GC test hook should register");
+    vm.run(
+        r#"
+        var internalDefineBase = {};
+        var internalDefineHandler = {};
+        Object.defineProperty(internalDefineHandler, "defineProperty", {
+          get: function () {
+            forceGc();
+            return function (target, key, descriptor) {
+              forceGc();
+              return Reflect.defineProperty(target, key, descriptor);
+            };
+          }
+        });
+        var internalDefineProxy = new Proxy(
+          internalDefineBase,
+          internalDefineHandler
+        );
+
+        var publicDefineBase = {};
+        var publicDefineHandler = {};
+        Object.defineProperty(publicDefineHandler, "defineProperty", {
+          get: function () {
+            forceGc();
+            return function (target, key, descriptor) {
+              forceGc();
+              return Reflect.defineProperty(target, key, descriptor);
+            };
+          }
+        });
+        var publicDefineProxy = new Proxy(publicDefineBase, publicDefineHandler);
+        "#,
+    )
+    .expect("collecting defineProperty fixtures should initialize");
+
+    let internal_proxy = vm.get_global("internalDefineProxy");
+    vm.gc();
+    let internal_value_idx = vm
+        .new_object()
+        .expect("internal descriptor value should allocate");
+    vm.heap.with_obj(internal_value_idx.0, |object| {
+        object.props().lock().insert(
+            crate::value::PropertyKey::from("marker"),
+            crate::value::PropertyDescriptor::data(Value::Number(73.0)),
+        );
+    });
+    let internal_value = Value::Object(internal_value_idx);
+    let baseline = vm.gc_pins.len();
+    assert!(vm
+        .define_own_property(
+            &internal_proxy,
+            crate::value::PropertyKey::from("x"),
+            crate::value::PropertyDescriptor::data(internal_value),
+        )
+        .expect("complete descriptor should survive trap lookup and call GC"));
+    assert_eq!(vm.gc_pins.len(), baseline);
+    assert_eq!(
+        vm.run("internalDefineBase.x.marker")
+            .expect("stored internal descriptor value should remain live"),
+        Value::Number(73.0)
+    );
+
+    let public_proxy = vm.get_global("publicDefineProxy");
+    let public_descriptor = vm
+        .run(
+            r#"({
+              value: { marker: 91 },
+              writable: true,
+              enumerable: true,
+              configurable: true
+            })"#,
+        )
+        .expect("public descriptor should allocate");
+    let baseline = vm.gc_pins.len();
+    assert!(crate::builtins::object_define_property_result(
+        &mut vm,
+        &[public_proxy, Value::String("y".into()), public_descriptor,],
+        false,
+    )
+    .expect("partial descriptor should survive trap lookup and call GC"));
+    assert_eq!(vm.gc_pins.len(), baseline);
+    assert_eq!(
+        vm.run("publicDefineBase.y.marker")
+            .expect("stored public descriptor value should remain live"),
+        Value::Number(91.0)
+    );
+
+    for (source, expected_marker) in [
+        (
+            r#"
+        (function () {
+          var handler = {};
+          Object.defineProperty(handler, "defineProperty", {
+            get: function () { forceGc(); throw { marker: 101 }; }
+          });
+          return new Proxy({}, handler);
+        })();
+        "#,
+            101.0,
+        ),
+        (
+            r#"
+        (function () {
+          return new Proxy({}, {
+            defineProperty: function () { forceGc(); throw { marker: 102 }; }
+          });
+        })();
+        "#,
+            102.0,
+        ),
+        (
+            r#"
+        (function () {
+          var target = new Proxy({}, {
+            getOwnPropertyDescriptor: function () {
+              forceGc();
+              throw { marker: 103 };
+            }
+          });
+          return new Proxy(target, {
+            defineProperty: function () { return true; }
+          });
+        })();
+        "#,
+            103.0,
+        ),
+        (
+            r#"
+        (function () {
+          var target = new Proxy({}, {
+            getOwnPropertyDescriptor: function () { return undefined; },
+            isExtensible: function () { forceGc(); throw { marker: 104 }; }
+          });
+          return new Proxy(target, {
+            defineProperty: function () { return true; }
+          });
+        })();
+        "#,
+            104.0,
+        ),
+    ] {
+        let proxy = vm
+            .run(source)
+            .expect("abrupt defineProperty fixture should initialize");
+        let baseline = vm.gc_pins.len();
+        let error = vm
+            .define_own_property(
+                &proxy,
+                crate::value::PropertyKey::from("abrupt"),
+                crate::value::PropertyDescriptor::data(Value::Number(1.0)),
+            )
+            .expect_err("defineProperty should preserve abrupt completion");
+        assert_eq!(vm.gc_pins.len(), baseline);
+        assert_eq!(error.kind, crate::error::ErrorKind::User);
+        let thrown = error
+            .thrown_value
+            .clone()
+            .expect("abrupt completion should retain its thrown object");
+        let thrown_pin = vm.pin(&thrown);
+        assert_eq!(
+            vm.get_property(&thrown, "marker")
+                .expect("thrown marker should remain readable"),
+            Value::Number(expected_marker)
+        );
+        vm.unpin(thrown_pin);
+        assert_eq!(vm.gc_pins.len(), baseline);
+    }
+}
+
+#[test]
+fn proxy_define_own_property_walks_consume_exact_fuel() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.run(
+        r#"
+        var deepDefineBase = {};
+        var deepDefineProxy = deepDefineBase;
+        var transparentDefineHandler = {};
+        for (var i = 0; i < 100000; i += 1) {
+          deepDefineProxy = new Proxy(deepDefineProxy, transparentDefineHandler);
+        }
+        var deepPublicDescriptor = {
+          value: 41,
+          writable: true,
+          enumerable: true,
+          configurable: true
+        };
+        "#,
+    )
+    .expect("deep defineProperty fixtures should initialize");
+    let proxy = vm.get_global("deepDefineProxy");
+    let public_descriptor = vm.get_global("deepPublicDescriptor");
+    let baseline = vm.gc_pins.len();
+
+    vm.set_fuel(Some(99_999));
+    let error = crate::builtins::object_define_property_result(
+        &mut vm,
+        &[
+            proxy.clone(),
+            Value::String("publicValue".into()),
+            public_descriptor.clone(),
+        ],
+        false,
+    )
+    .expect_err("N-1 fuel must abort public transparent DefineOwnProperty");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    vm.set_fuel(Some(100_000));
+    assert!(crate::builtins::object_define_property_result(
+        &mut vm,
+        &[
+            proxy.clone(),
+            Value::String("publicValue".into()),
+            public_descriptor,
+        ],
+        false,
+    )
+    .expect("exactly N fuel should complete public DefineOwnProperty"));
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+    vm.set_fuel(None);
+    assert_eq!(
+        vm.run("deepDefineBase.publicValue")
+            .expect("public transparent definition should reach the base"),
+        Value::Number(41.0)
+    );
+
+    vm.set_fuel(Some(99_999));
+    let error = vm
+        .define_own_property(
+            &proxy,
+            crate::value::PropertyKey::from("internalValue"),
+            crate::value::PropertyDescriptor::data(Value::Number(73.0)),
+        )
+        .expect_err("N-1 fuel must abort internal transparent DefineOwnProperty");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    vm.set_fuel(Some(100_000));
+    assert!(vm
+        .define_own_property(
+            &proxy,
+            crate::value::PropertyKey::from("internalValue"),
+            crate::value::PropertyDescriptor::data(Value::Number(73.0)),
+        )
+        .expect("exactly N fuel should complete internal DefineOwnProperty"));
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+    vm.set_fuel(None);
+    assert_eq!(
+        vm.run("deepDefineBase.internalValue")
+            .expect("internal transparent definition should reach the base"),
+        Value::Number(73.0)
+    );
+}
+
+#[test]
+fn proxy_define_own_property_invariant_walks_consume_nested_fuel() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn("truthyDefineTrap", |_, _, _| Ok(Value::Bool(true)), 3)
+        .expect("native defineProperty trap should register");
+    vm.run(
+        r#"
+        var invariantDefineBase = {};
+        var invariantDefineTarget = invariantDefineBase;
+        for (var i = 0; i < 64; i += 1) {
+          invariantDefineTarget = new Proxy(invariantDefineTarget, {});
+        }
+        var invariantDefineProxy = new Proxy(
+          invariantDefineTarget,
+          { defineProperty: truthyDefineTrap }
+        );
+        "#,
+    )
+    .expect("nested defineProperty invariant fixtures should initialize");
+    let proxy = vm.get_global("invariantDefineProxy");
+    let baseline = vm.gc_pins.len();
+
+    vm.set_fuel(Some(128));
+    let error = vm
+        .define_own_property(
+            &proxy,
+            crate::value::PropertyKey::from("x"),
+            crate::value::PropertyDescriptor::data(Value::Number(1.0)),
+        )
+        .expect_err("outer plus two N-layer invariant walks require 129 fuel");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    vm.set_fuel(Some(129));
+    assert!(vm
+        .define_own_property(
+            &proxy,
+            crate::value::PropertyKey::from("x"),
+            crate::value::PropertyDescriptor::data(Value::Number(1.0)),
+        )
+        .expect("exact nested invariant fuel should complete"));
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+}
+
+#[test]
+fn proxy_define_own_property_callable_proxy_traps_are_iterative_and_ordered() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn("terminalDefineTrap", |_, _, _| Ok(Value::Bool(true)), 3)
+        .expect("terminal defineProperty trap should register");
+    vm.run(
+        r#"
+        var callableDefineTrap = terminalDefineTrap;
+        for (var i = 0; i < 25000; i += 1) {
+          callableDefineTrap = new Proxy(callableDefineTrap, {});
+        }
+        var callableDefineProxy = new Proxy(
+          {},
+          { defineProperty: callableDefineTrap }
+        );
+        var trappedCallableDefineTrap = terminalDefineTrap;
+        for (var j = 0; j < 4096; j += 1) {
+          trappedCallableDefineTrap = new Proxy(function () {}, {
+            apply: trappedCallableDefineTrap
+          });
+        }
+        var trappedCallableDefineProxy = new Proxy(
+          {},
+          { defineProperty: trappedCallableDefineTrap }
+        );
+        var nonCallableDefineProxy = new Proxy(
+          {},
+          { defineProperty: {} }
+        );
+        "#,
+    )
+    .expect("callable Proxy trap fixtures should initialize");
+    let callable_proxy = vm.get_global("callableDefineProxy");
+    let baseline = vm.gc_pins.len();
+
+    vm.set_fuel(Some(25_000));
+    let error = vm
+        .define_own_property(
+            &callable_proxy,
+            crate::value::PropertyKey::from("x"),
+            crate::value::PropertyDescriptor::data(Value::Number(1.0)),
+        )
+        .expect_err("outer define plus N callable Proxy layers require N+1 fuel");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    vm.set_fuel(Some(25_001));
+    assert!(vm
+        .define_own_property(
+            &callable_proxy,
+            crate::value::PropertyKey::from("x"),
+            crate::value::PropertyDescriptor::data(Value::Number(1.0)),
+        )
+        .expect("exact callable Proxy trap fuel should complete"));
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    let trapped_callable_proxy = vm.get_global("trappedCallableDefineProxy");
+    vm.set_fuel(Some(4_096));
+    let error = vm
+        .define_own_property(
+            &trapped_callable_proxy,
+            crate::value::PropertyKey::from("x"),
+            crate::value::PropertyDescriptor::data(Value::Number(1.0)),
+        )
+        .expect_err("outer define plus N trapped Proxy calls require N+1 fuel");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    vm.set_fuel(Some(4_097));
+    assert!(vm
+        .define_own_property(
+            &trapped_callable_proxy,
+            crate::value::PropertyKey::from("x"),
+            crate::value::PropertyDescriptor::data(Value::Number(1.0)),
+        )
+        .expect("exact trapped callable Proxy fuel should complete"));
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    vm.set_fuel(None);
+    vm.gc();
+    vm.set_max_heap_objects(Some(vm.heap.live_count()));
+    let non_callable_proxy = vm.get_global("nonCallableDefineProxy");
+    let error = vm
+        .define_own_property(
+            &non_callable_proxy,
+            crate::value::PropertyKey::from("x"),
+            crate::value::PropertyDescriptor::data(Value::Number(1.0)),
+        )
+        .expect_err("GetMethod must reject a non-callable trap before allocation");
+    vm.set_max_heap_objects(None);
+    assert_eq!(error.kind, crate::error::ErrorKind::Type);
+    assert_eq!(vm.gc_pins.len(), baseline);
+}
+
+#[test]
 fn proxy_descriptor_conversion_roots_get_results_across_gc() {
     let mut vm = Vm::new().expect("VM should initialize");
     vm.register_fn(

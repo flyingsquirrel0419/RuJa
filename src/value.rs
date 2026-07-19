@@ -539,6 +539,9 @@ impl TypedArrayKind {
 pub struct ProxyData {
     pub target: Value,
     pub handler: Value,
+    // [[Call]] and [[Construct]] presence is fixed by ProxyCreate and survives revocation.
+    pub callable: bool,
+    pub constructable: bool,
     pub revoked: parking_lot::Mutex<bool>,
     pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
     pub proto: Mutex<Option<Value>>,

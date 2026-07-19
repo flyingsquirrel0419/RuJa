@@ -2028,22 +2028,14 @@ pub(crate) fn is_array_or_throw(vm: &Vm, value: &Value) -> error::Result<bool> {
 }
 
 pub(crate) fn is_callable(value: &Value, heap: &Heap) -> bool {
-    let mut current = value.clone();
-    loop {
-        let Value::Object(idx) = &current else {
-            return false;
-        };
-        let target = heap.with_obj(idx.0, |obj| match obj {
-            HeapObj::Function(_) => Ok(None),
-            HeapObj::Proxy(proxy) => Ok(Some(proxy.target.clone())),
-            _ => Err(()),
-        });
-        match target {
-            Ok(None) => return true,
-            Ok(Some(target)) => current = target,
-            Err(()) => return false,
-        }
-    }
+    let Value::Object(idx) = value else {
+        return false;
+    };
+    heap.with_obj(idx.0, |obj| match obj {
+        HeapObj::Function(_) => true,
+        HeapObj::Proxy(proxy) => proxy.callable,
+        _ => false,
+    })
 }
 
 pub(crate) fn object_to_string(
@@ -7361,92 +7353,44 @@ pub(crate) fn object_define_property_result(
                 "Invalid property descriptor. Cannot both specify accessors and a value or writable attribute",
             ));
                 }
-                if let Some(proxy_result) = vm.heap.with_obj(idx.0, |obj| {
-                    if let HeapObj::Proxy(proxy) = obj {
-                        if *proxy.revoked.lock() {
-                            return Some(Err(Error::type_err(
-                                "Cannot perform 'defineProperty' on a proxy that has been revoked",
-                            )));
-                        }
-                        Some(Ok((proxy.target.clone(), proxy.handler.clone())))
-                    } else {
-                        None
-                    }
-                }) {
-                    let (proxy_target, proxy_handler) = proxy_result?;
-                    let trap = vm.get_property(&proxy_handler, "defineProperty")?;
-                    let key_value = property_key_to_value(&key);
-                    if trap.is_nullish() {
-                        return object_define_property_result(
-                            vm,
-                            &[proxy_target, key_value, desc.clone()],
-                            throw_on_failure,
-                        );
-                    }
-
-                    let trap_pin = vm.pin(&trap);
-                    let trap_result = vm.call_function(
-                        &trap,
-                        &[proxy_target.clone(), key_value, desc.clone()],
-                        Some(proxy_handler),
-                    );
-                    vm.unpin_many(trap_pin);
-                    let trap_result = trap_result?;
-                    if !trap_result.is_truthy() {
-                        if throw_on_failure {
+                let proxy_descriptor = crate::vm::ProxyDefinePropertyDescriptor {
+                    descriptor: PropertyDescriptor {
+                        value: value.clone(),
+                        writable,
+                        enumerable,
+                        configurable,
+                        get: get.clone(),
+                        set: set.clone(),
+                        is_accessor,
+                    },
+                    has_value,
+                    has_writable,
+                    has_enumerable,
+                    has_configurable,
+                    has_get,
+                    has_set,
+                };
+                let ordinary_target = match vm.proxy_define_own_property(
+                    &target,
+                    &key,
+                    &proxy_descriptor,
+                    Some(&desc),
+                )? {
+                    crate::vm::ProxyDefinePropertyOutcome::Ordinary(target) => target,
+                    crate::vm::ProxyDefinePropertyOutcome::Complete(result) => {
+                        if !result && throw_on_failure {
                             return Err(Error::type_err(
                                 "Proxy defineProperty trap returned false",
                             ));
                         }
-                        return Ok(false);
+                        return Ok(result);
                     }
-
-                    let target_desc =
-                        own_property_descriptor_for_key_or_throw(vm, &proxy_target, &key)?;
-                    let extensible = vm.is_extensible(&proxy_target)?;
-                    let setting_configurable_false = has_configurable && !configurable;
-                    match target_desc {
-                        None => {
-                            if !extensible || setting_configurable_false {
-                                return Err(Error::type_err(
-                                    "Proxy defineProperty trap violated the target invariant",
-                                ));
-                            }
-                        }
-                        Some(current) => {
-                            let incompatible_non_configurable = !current.configurable
-                                && ((has_configurable && configurable)
-                                    || (has_enumerable && enumerable != current.enumerable)
-                                    || ((is_accessor || is_data)
-                                        && is_accessor != current.is_accessor)
-                                    || (current.is_accessor
-                                        && ((has_get && get != current.get)
-                                            || (has_set && set != current.set)))
-                                    || (!current.is_accessor
-                                        && is_data
-                                        && !current.writable
-                                        && ((has_writable && writable)
-                                            || (has_value
-                                                && !descriptor_same_value(
-                                                    &value,
-                                                    &current.value,
-                                                )))));
-                            let forbidden_tightening = setting_configurable_false
-                                && current.configurable
-                                || (!current.configurable
-                                    && !current.is_accessor
-                                    && current.writable
-                                    && has_writable
-                                    && !writable);
-                            if incompatible_non_configurable || forbidden_tightening {
-                                return Err(Error::type_err(
-                                    "Proxy defineProperty trap violated the target invariant",
-                                ));
-                            }
-                        }
-                    }
-                    return Ok(true);
-                }
+                };
+                let idx = match ordinary_target.clone() {
+                    Value::Object(idx) => idx,
+                    _ => unreachable!("DefineOwnProperty target remains an object"),
+                };
+                let target = ordinary_target;
                 let is_array_length = key.as_str() == Some("length")
                     && vm.heap.with_obj(idx.0, |object| {
                         matches!(object, HeapObj::Array(array) if !array.is_arguments.load(Ordering::Relaxed))

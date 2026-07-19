@@ -27,6 +27,8 @@ fn proxy_create(vm: &mut Vm, args: &[Value]) -> error::Result<Value> {
         ));
     }
 
+    let callable = is_callable(&target, &vm.heap);
+    let constructable = vm.is_constructor_value(&target);
     let proto = vm.heap.with_obj(
         match &target {
             Value::Object(idx) => idx.0,
@@ -40,6 +42,8 @@ fn proxy_create(vm: &mut Vm, args: &[Value]) -> error::Result<Value> {
         .alloc(HeapObj::Proxy(crate::value::ProxyData {
             target,
             handler,
+            callable,
+            constructable,
             revoked: Mutex::new(false),
             props: Mutex::new(IndexMap::new()),
             proto: Mutex::new(proto),

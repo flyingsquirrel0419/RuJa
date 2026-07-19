@@ -9623,6 +9623,93 @@ fn object_define_property_normalizes_proxy_descriptors_and_null_traps() {
 }
 
 #[test]
+fn proxy_define_property_preserves_iterative_order_false_results_and_realms() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            var base = {};
+            var innerHandler = {};
+            Object.defineProperty(innerHandler, "defineProperty", {
+              get: function () {
+                log.push("inner");
+                return function (target, key, descriptor) {
+                  log.push("trap");
+                  return Reflect.defineProperty(target, key, descriptor);
+                };
+              }
+            });
+            var inner = new Proxy(base, innerHandler);
+            var outerHandler = {};
+            Object.defineProperty(outerHandler, "defineProperty", {
+              get: function () {
+                log.push("outer");
+                return undefined;
+              }
+            });
+            var outer = new Proxy(inner, outerHandler);
+            var defined = Reflect.defineProperty(outer, "x", {
+              value: 5,
+              configurable: true
+            });
+
+            var falseCalls = 0;
+            var falseProxy = new Proxy({}, {
+              defineProperty: function () {
+                falseCalls += 1;
+                return false;
+              }
+            });
+            var reflectedFalse = Reflect.defineProperty(falseProxy, "x", {});
+            var objectThrew = false;
+            try { Object.defineProperty(falseProxy, "x", {}); }
+            catch (error) { objectThrew = error instanceof TypeError; }
+
+            var other = $262.createRealm().global;
+            var applyArgumentRealm = false;
+            var callableProxy = new Proxy(function () {}, {
+              apply: function (target, thisArg, argumentsList) {
+                applyArgumentRealm =
+                  Object.getPrototypeOf(argumentsList) === other.Array.prototype;
+                return true;
+              }
+            });
+            other.Reflect.apply(callableProxy, null, []);
+            var blocked = Object.preventExtensions({});
+            var invariantProxy = new Proxy(blocked, {
+              defineProperty: function () { return true; }
+            });
+            var objectRealmError = false;
+            var reflectRealmError = false;
+            try { other.Object.defineProperty(invariantProxy, "x", {}); }
+            catch (error) {
+              objectRealmError = error instanceof other.TypeError &&
+                !(error instanceof TypeError);
+            }
+            try { other.Reflect.defineProperty(invariantProxy, "x", {}); }
+            catch (error) {
+              reflectRealmError = error instanceof other.TypeError &&
+                !(error instanceof TypeError);
+            }
+
+            [
+              defined,
+              base.x,
+              log.join(","),
+              reflectedFalse,
+              objectThrew,
+              falseCalls,
+              applyArgumentRealm,
+              objectRealmError,
+              reflectRealmError
+            ].join("|");
+            "#,),
+        Value::String(Arc::from(
+            "true|5|outer,inner,trap|false|true|2|true|true|true"
+        ))
+    );
+}
+
+#[test]
 fn object_define_property_roots_ephemeral_native_arguments_across_gc() {
     let mut vm = Vm::new().expect("failed to initialize VM");
     vm.register_fn(
