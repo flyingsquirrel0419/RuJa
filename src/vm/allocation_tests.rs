@@ -2179,6 +2179,349 @@ fn proxy_prevent_extensions_walks_consume_fuel_and_restore_pin_depth() {
 }
 
 #[test]
+fn proxy_prototype_internal_methods_root_intermediates_and_restore_pin_depth() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            // Model a new host job so WeakRef's same-job keep cannot mask
+            // temporary roots owned by the internal method under test.
+            vm.clear_kept_objects();
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("GC test hook should register");
+
+    vm.run(
+        r#"
+        var collectingGetBase = {};
+        var collectingGetTarget = new Proxy(collectingGetBase, {
+          get isExtensible() {
+            forceGc();
+            return function (target) {
+              forceGc();
+              return Reflect.isExtensible(target);
+            };
+          }
+        });
+        var collectingGetHandler = {};
+        Object.defineProperty(collectingGetHandler, "getPrototypeOf", {
+          get: function () {
+            forceGc();
+            return function () {
+              forceGc();
+              return { marker: 73 };
+            };
+          }
+        });
+        var collectingGetProxy = new Proxy(
+          collectingGetTarget,
+          collectingGetHandler
+        );
+
+        var deferredExpectedWeakRef;
+        var deferredGetBase = Object.preventExtensions({});
+        var deferredGetTarget = new Proxy(deferredGetBase, {
+          getPrototypeOf: function (target) {
+            forceGc();
+            return Reflect.getPrototypeOf(target);
+          }
+        });
+        var deferredGetProxy = new Proxy(deferredGetTarget, {
+          getPrototypeOf: function () {
+            var expected = { marker: 137 };
+            deferredExpectedWeakRef = new WeakRef(expected);
+            return expected;
+          }
+        });
+
+        var collectingSetBase = {};
+        var collectingSetHandler = {};
+        Object.defineProperty(collectingSetHandler, "setPrototypeOf", {
+          get: function () {
+            forceGc();
+            return function (target, prototype) {
+              forceGc();
+              return Reflect.setPrototypeOf(target, prototype);
+            };
+          }
+        });
+        var collectingSetProxy = new Proxy(
+          collectingSetBase,
+          collectingSetHandler
+        );
+        "#,
+    )
+    .expect("collecting prototype fixtures should initialize");
+
+    let get_proxy = vm.get_global("collectingGetProxy");
+    let baseline = vm.gc_pins.len();
+    let result = vm
+        .get_prototype_of(&get_proxy)
+        .expect("getPrototypeOf result should survive nested observable GC")
+        .expect("trap should return an object");
+    assert_eq!(vm.gc_pins.len(), baseline);
+    assert_eq!(
+        vm.get_property(&result, "marker")
+            .expect("fresh prototype should remain readable"),
+        Value::Number(73.0)
+    );
+
+    let deferred_get_proxy = vm.get_global("deferredGetProxy");
+    let baseline = vm.gc_pins.len();
+    let error = vm
+        .get_prototype_of(&deferred_get_proxy)
+        .expect_err("outer deferred prototype should mismatch after nested GC");
+    assert_eq!(error.kind, crate::error::ErrorKind::Type);
+    assert_eq!(vm.gc_pins.len(), baseline);
+    assert_eq!(
+        vm.run("deferredExpectedWeakRef.deref().marker")
+            .expect("deferred expected prototype should survive nested collection"),
+        Value::Number(137.0)
+    );
+
+    let proposed = vm
+        .run("({ marker: 91 })")
+        .expect("unpublished proposed prototype should allocate");
+    let set_proxy = vm.get_global("collectingSetProxy");
+    let set_base = vm.get_global("collectingSetBase");
+    let baseline = vm.gc_pins.len();
+    assert!(vm
+        .set_prototype_of(&set_proxy, Some(proposed.clone()))
+        .expect("setPrototypeOf argument should survive trap lookup GC"));
+    assert_eq!(vm.gc_pins.len(), baseline);
+    assert_eq!(
+        vm.get_prototype_of(&set_base)
+            .expect("updated target prototype should remain readable"),
+        Some(proposed)
+    );
+
+    for source in [
+        r#"
+        (function () {
+          var handler = {};
+          Object.defineProperty(handler, "getPrototypeOf", {
+            get: function () { forceGc(); throw {}; }
+          });
+          return new Proxy({}, handler);
+        })();
+        "#,
+        r#"
+        (function () {
+          return new Proxy({}, {
+            getPrototypeOf: function () { forceGc(); throw {}; }
+          });
+        })();
+        "#,
+    ] {
+        let proxy = vm
+            .run(source)
+            .expect("abrupt get fixture should initialize");
+        let baseline = vm.gc_pins.len();
+        vm.get_prototype_of(&proxy)
+            .expect_err("getPrototypeOf should preserve abrupt completion");
+        assert_eq!(vm.gc_pins.len(), baseline);
+    }
+
+    for source in [
+        r#"
+        (function () {
+          var handler = {};
+          Object.defineProperty(handler, "setPrototypeOf", {
+            get: function () { forceGc(); throw {}; }
+          });
+          return new Proxy({}, handler);
+        })();
+        "#,
+        r#"
+        (function () {
+          return new Proxy({}, {
+            setPrototypeOf: function () { forceGc(); throw {}; }
+          });
+        })();
+        "#,
+    ] {
+        let proxy = vm
+            .run(source)
+            .expect("abrupt set fixture should initialize");
+        let proposed = vm
+            .run("({})")
+            .expect("abrupt proposed prototype should initialize");
+        let baseline = vm.gc_pins.len();
+        vm.set_prototype_of(&proxy, Some(proposed))
+            .expect_err("setPrototypeOf should preserve abrupt completion");
+        assert_eq!(vm.gc_pins.len(), baseline);
+    }
+}
+
+#[test]
+fn proxy_prototype_walks_consume_exact_fuel_and_reject_deep_cycles() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.run(
+        r#"
+        var deepPrototypeBase = {};
+        var deepPrototypeProxy = deepPrototypeBase;
+        var transparentPrototypeHandler = {};
+        for (var i = 0; i < 100000; i += 1) {
+          deepPrototypeProxy = new Proxy(
+            deepPrototypeProxy,
+            transparentPrototypeHandler
+          );
+        }
+
+        var cycleRoot = {};
+        var cycleLeaf = cycleRoot;
+        for (var j = 0; j < 5000; j += 1) {
+          cycleLeaf = Object.create(cycleLeaf);
+        }
+        "#,
+    )
+    .expect("deep prototype fixtures should initialize");
+
+    let proxy = vm.get_global("deepPrototypeProxy");
+    let base = vm.get_global("deepPrototypeBase");
+    let expected = vm
+        .get_prototype_of(&base)
+        .expect("ordinary base prototype should be readable");
+    let baseline = vm.gc_pins.len();
+
+    vm.set_fuel(Some(99_999));
+    let error = vm
+        .get_prototype_of(&proxy)
+        .expect_err("N-1 fuel must abort transparent getPrototypeOf");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    vm.set_fuel(Some(100_000));
+    assert_eq!(
+        vm.get_prototype_of(&proxy)
+            .expect("exactly N fuel should complete getPrototypeOf"),
+        expected
+    );
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    vm.set_fuel(Some(99_999));
+    let error = vm
+        .set_prototype_of(&proxy, None)
+        .expect_err("N-1 fuel must abort transparent setPrototypeOf");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+    vm.set_fuel(None);
+    assert_eq!(
+        vm.get_prototype_of(&base)
+            .expect("aborted set must preserve the base prototype"),
+        expected
+    );
+
+    vm.set_fuel(Some(100_000));
+    assert!(vm
+        .set_prototype_of(&proxy, None)
+        .expect("exactly N fuel should complete setPrototypeOf"));
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+    vm.set_fuel(None);
+    assert_eq!(
+        vm.get_prototype_of(&base)
+            .expect("successful transparent set should remain readable"),
+        None
+    );
+
+    let root = vm.get_global("cycleRoot");
+    let leaf = vm.get_global("cycleLeaf");
+    let original = vm
+        .get_prototype_of(&root)
+        .expect("cycle root prototype should be readable");
+    vm.set_fuel(Some(5_000));
+    let error = vm
+        .set_prototype_of(&root, Some(leaf.clone()))
+        .expect_err("fuel must cover every visited cycle candidate");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    vm.set_fuel(Some(5_001));
+    assert!(!vm
+        .set_prototype_of(&root, Some(leaf))
+        .expect("deep cycle should be rejected without a depth cap"));
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+    vm.set_fuel(None);
+    assert_eq!(
+        vm.get_prototype_of(&root)
+            .expect("rejected cycle must preserve the root prototype"),
+        original
+    );
+}
+
+#[test]
+fn proxy_prototype_invariant_walks_consume_nested_fuel() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn("prototypeTrap", |vm, _, _| Ok(vm.object_proto.clone()), 1)
+        .expect("native getPrototypeOf trap should register");
+    vm.register_fn("truthyPrototypeTrap", |_, _, _| Ok(Value::Bool(true)), 2)
+        .expect("native setPrototypeOf trap should register");
+    vm.run(
+        r#"
+        var invariantPrototypeBase = Object.preventExtensions({});
+        var invariantPrototypeTarget = invariantPrototypeBase;
+        for (var i = 0; i < 64; i += 1) {
+          invariantPrototypeTarget = new Proxy(invariantPrototypeTarget, {});
+        }
+        var invariantGetPrototypeProxy = new Proxy(
+          invariantPrototypeTarget,
+          { getPrototypeOf: prototypeTrap }
+        );
+        var invariantSetPrototypeProxy = new Proxy(
+          invariantPrototypeTarget,
+          { setPrototypeOf: truthyPrototypeTrap }
+        );
+        "#,
+    )
+    .expect("nested prototype invariant fixtures should initialize");
+    let get_proxy = vm.get_global("invariantGetPrototypeProxy");
+    let set_proxy = vm.get_global("invariantSetPrototypeProxy");
+    let proposed = vm.object_proto.clone();
+    let baseline = vm.gc_pins.len();
+
+    vm.set_fuel(Some(128));
+    let error = vm
+        .get_prototype_of(&get_proxy)
+        .expect_err("outer plus two N-layer invariant walks require 129 fuel");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    vm.set_fuel(Some(129));
+    assert_eq!(
+        vm.get_prototype_of(&get_proxy)
+            .expect("exact invariant fuel should complete"),
+        Some(proposed.clone())
+    );
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    vm.set_fuel(Some(128));
+    let error = vm
+        .set_prototype_of(&set_proxy, Some(proposed.clone()))
+        .expect_err("set invariant must charge both nested internal methods");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    vm.set_fuel(Some(129));
+    assert!(vm
+        .set_prototype_of(&set_proxy, Some(proposed))
+        .expect("exact set invariant fuel should complete"));
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+}
+
+#[test]
 fn proxy_descriptor_conversion_roots_get_results_across_gc() {
     let mut vm = Vm::new().expect("VM should initialize");
     vm.register_fn(

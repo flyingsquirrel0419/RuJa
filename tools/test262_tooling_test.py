@@ -93,6 +93,10 @@ from test262_extensibility_admission import (
     EXTENSIBILITY_FILES,
     EXTENSIBILITY_MODULE_FILES,
 )
+from test262_prototype_internal_admission import (
+    PROTOTYPE_INTERNAL_FEATURES,
+    PROTOTYPE_INTERNAL_FILES,
+)
 from test262_proxy_own_keys_admission import (
     PROXY_OWN_KEYS_FEATURES,
     PROXY_OWN_KEYS_FILES,
@@ -2072,6 +2076,150 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                             {"features": ["Proxy"], "flags": ["module"]},
                             non_module,
                         )
+                    )
+                finally:
+                    tool.TEST262 = original_root
+
+    def test_prototype_internal_manifest_is_exact_live_disjoint_and_shared(self):
+        self.assertEqual(len(PROTOTYPE_INTERNAL_FILES), 40)
+        self.assertEqual(
+            frozenset(PROTOTYPE_INTERNAL_FEATURES), PROTOTYPE_INTERNAL_FILES
+        )
+        self.assertEqual(
+            {
+                family: sum(family in relative for relative in PROTOTYPE_INTERNAL_FILES)
+                for family in (
+                    "Object/setPrototypeOf/",
+                    "Proxy/getPrototypeOf/",
+                    "Proxy/setPrototypeOf/",
+                )
+            },
+            {
+                "Object/setPrototypeOf/": 4,
+                "Proxy/getPrototypeOf/": 19,
+                "Proxy/setPrototypeOf/": 17,
+            },
+        )
+        feature_counts = {}
+        for features in PROTOTYPE_INTERNAL_FEATURES.values():
+            feature_counts[features] = feature_counts.get(features, 0) + 1
+        self.assertEqual(
+            feature_counts,
+            {
+                frozenset({"Proxy"}): 28,
+                frozenset({"Proxy", "cross-realm"}): 2,
+                frozenset({"Proxy", "Symbol"}): 1,
+                frozenset({"Proxy", "Reflect", "Reflect.setPrototypeOf"}): 5,
+                frozenset(
+                    {
+                        "Proxy",
+                        "Reflect",
+                        "Reflect.setPrototypeOf",
+                        "Symbol",
+                    }
+                ): 1,
+                frozenset({"Reflect.construct", "arrow-function"}): 1,
+                frozenset({"Symbol"}): 2,
+            },
+        )
+
+        admission_dir = Path(__file__).resolve().parent
+        for manifest in admission_dir.glob("test262_*_admission.txt"):
+            if manifest.name == "test262_prototype_internal_admission.txt":
+                continue
+            existing = {
+                line
+                for raw_line in manifest.read_text().splitlines()
+                if (line := raw_line.strip()) and not line.startswith("#")
+            }
+            self.assertFalse(PROTOTYPE_INTERNAL_FILES & existing, manifest.name)
+
+        constructor = "built-ins/Object/setPrototypeOf/not-a-constructor.js"
+        object_proxy = "built-ins/Object/setPrototypeOf/set-error.js"
+        realm = "built-ins/Proxy/getPrototypeOf/trap-is-not-callable-realm.js"
+        symbol = (
+            "built-ins/Proxy/getPrototypeOf/"
+            "trap-result-neither-object-nor-null-throws-symbol.js"
+        )
+        reflected = "built-ins/Proxy/setPrototypeOf/internals-call-order.js"
+        reflected_symbol = (
+            "built-ins/Proxy/setPrototypeOf/"
+            "toboolean-trap-result-true-target-is-extensible.js"
+        )
+        self.assertEqual(
+            PROTOTYPE_INTERNAL_FEATURES[constructor],
+            {"Reflect.construct", "arrow-function"},
+        )
+        self.assertEqual(PROTOTYPE_INTERNAL_FEATURES[object_proxy], {"Proxy"})
+        self.assertEqual(
+            PROTOTYPE_INTERNAL_FEATURES[realm], {"Proxy", "cross-realm"}
+        )
+        self.assertEqual(
+            PROTOTYPE_INTERNAL_FEATURES[symbol], {"Proxy", "Symbol"}
+        )
+        self.assertEqual(
+            PROTOTYPE_INTERNAL_FEATURES[reflected],
+            {"Proxy", "Reflect", "Reflect.setPrototypeOf"},
+        )
+        self.assertEqual(
+            PROTOTYPE_INTERNAL_FEATURES[reflected_symbol],
+            {"Proxy", "Reflect", "Reflect.setPrototypeOf", "Symbol"},
+        )
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        try:
+            test_root_available = test_root.is_dir()
+        except OSError:
+            test_root_available = False
+        if test_root_available:
+            for relative, features in PROTOTYPE_INTERNAL_FEATURES.items():
+                path = test_root / relative
+                self.assertTrue(path.is_file(), relative)
+                metadata = test262_runner.parse_meta(path.read_text())
+                self.assertEqual(
+                    frozenset(metadata.get("features", [])), features, relative
+                )
+                expected_includes = (
+                    ["isConstructor.js"] if relative == constructor else []
+                )
+                self.assertEqual(
+                    metadata.get("includes", []), expected_includes, relative
+                )
+                self.assertEqual(metadata.get("flags", []), [], relative)
+                self.assertNotIn("negative", metadata, relative)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            future = root / "test/built-ins/Proxy/setPrototypeOf/future.js"
+            outside = root / "test/built-ins/Proxy/defineProperty/future.js"
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for relative, features in PROTOTYPE_INTERNAL_FEATURES.items():
+                        path = root / "test" / relative
+                        self.assertTrue(tool.prototype_internal_path(path), relative)
+                        self.assertEqual(
+                            tool.prototype_internal_features(path), features
+                        )
+                        self.assertFalse(
+                            tool.should_skip({"features": sorted(features)}, path),
+                            relative,
+                        )
+                        self.assertTrue(
+                            tool.should_skip(
+                                {"features": sorted(features | {"decorators"})},
+                                path,
+                            ),
+                            relative,
+                        )
+                    self.assertFalse(tool.prototype_internal_path(future))
+                    self.assertFalse(tool.prototype_internal_path(outside))
+                    self.assertTrue(
+                        tool.should_skip({"features": ["Proxy"]}, future)
+                    )
+                    self.assertTrue(
+                        tool.should_skip({"features": ["Proxy"]}, outside)
                     )
                 finally:
                     tool.TEST262 = original_root

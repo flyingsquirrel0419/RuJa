@@ -2576,67 +2576,125 @@ impl Vm {
     /// Internal `[[GetPrototypeOf]]`, including Proxy `getPrototypeOf` traps
     /// and the non-extensible target invariant.
     pub(crate) fn get_prototype_of(&mut self, object: &Value) -> error::Result<Option<Value>> {
-        let Value::Object(idx) = object else {
+        let Value::Object(_) = object else {
             return Err(Error::type_err(
                 "Object prototype target must be an object".to_string(),
             ));
         };
 
-        let proxy_info = self.heap.with_obj(idx.0, |o| {
-            if let HeapObj::Proxy(proxy) = o {
-                if *proxy.revoked.lock() {
-                    return Some(Err(Error::type_err(
-                        "Cannot perform 'getPrototypeOf' on a proxy that has been revoked",
-                    )));
-                }
-                Some(Ok((proxy.target.clone(), proxy.handler.clone())))
-            } else {
-                None
-            }
-        });
-        if let Some(result) = proxy_info {
-            let (target, handler) = result?;
-            let trap = self.get_property(&handler, "getPrototypeOf")?;
-            if trap.is_undefined() || trap.is_null() {
-                return self.get_prototype_of(&target);
-            }
-            if !crate::builtins::is_callable(&trap, &self.heap) {
-                return Err(Error::type_err("getPrototypeOf trap is not callable"));
-            }
-            let handler_proto =
-                self.call_function(&trap, std::slice::from_ref(&target), Some(handler))?;
-            let proto = match handler_proto {
-                Value::Object(_) => Some(handler_proto),
-                Value::Null => None,
-                _ => {
+        enum Step {
+            Forward(Value),
+            Validate {
+                target: Value,
+                expected: Option<Value>,
+            },
+            Return(Option<Value>),
+        }
+
+        let root_pin = self.pin(object);
+        let mut current = object.clone();
+        let mut expected_prototypes = Vec::new();
+        let mut expected_pins = 0;
+        let result = (|| {
+            let result_proto = loop {
+                let Value::Object(idx) = &current else {
                     return Err(Error::type_err(
-                        "Proxy getPrototypeOf trap must return an object or null",
-                    ))
+                        "Proxy getPrototypeOf target must be an object",
+                    ));
+                };
+                let proxy_info = self.heap.with_obj(idx.0, |heap_object| {
+                    if let HeapObj::Proxy(proxy) = heap_object {
+                        if *proxy.revoked.lock() {
+                            return Some(Err(Error::type_err(
+                                "Cannot perform 'getPrototypeOf' on a proxy that has been revoked",
+                            )));
+                        }
+                        Some(Ok((proxy.target.clone(), proxy.handler.clone())))
+                    } else {
+                        None
+                    }
+                });
+                let Some(proxy_info) = proxy_info else {
+                    break self
+                        .heap
+                        .with_obj(idx.0, |heap_object| heap_object.proto().lock().clone());
+                };
+
+                let (target, handler) = proxy_info?;
+                self.consume_fuel()?;
+                let proxy_pins = self.pin_many(&[target.clone(), handler.clone()]);
+                let step = (|| {
+                    let trap = self.get_property(&handler, "getPrototypeOf")?;
+                    if trap.is_nullish() {
+                        return Ok(Step::Forward(target.clone()));
+                    }
+                    if !crate::builtins::is_callable(&trap, &self.heap) {
+                        return Err(Error::type_err("getPrototypeOf trap is not callable"));
+                    }
+                    let trap_pin = self.pin(&trap);
+                    let handler_proto = self.call_function(
+                        &trap,
+                        std::slice::from_ref(&target),
+                        Some(handler.clone()),
+                    );
+                    self.unpin(trap_pin);
+                    let handler_proto = handler_proto?;
+                    let proto = match handler_proto {
+                        Value::Object(_) => Some(handler_proto),
+                        Value::Null => None,
+                        _ => {
+                            return Err(Error::type_err(
+                                "Proxy getPrototypeOf trap must return an object or null",
+                            ))
+                        }
+                    };
+
+                    // The trap may return the only reference to this object.
+                    // Root it while nested [[IsExtensible]] runs observable JS.
+                    let proto_pin = proto
+                        .as_ref()
+                        .map(|prototype| self.pin(prototype))
+                        .unwrap_or(0);
+                    let extensible = self.is_extensible(&target);
+                    self.unpin(proto_pin);
+                    if extensible? {
+                        return Ok(Step::Return(proto));
+                    }
+                    Ok(Step::Validate {
+                        target: target.clone(),
+                        expected: proto,
+                    })
+                })();
+                self.unpin_many(proxy_pins);
+
+                match step? {
+                    Step::Forward(target) => current = target,
+                    Step::Validate { target, expected } => {
+                        // Keep each deferred expected prototype alive until the
+                        // innermost target result can be checked in reverse.
+                        expected_pins += expected
+                            .as_ref()
+                            .map(|prototype| self.pin(prototype))
+                            .unwrap_or(0);
+                        expected_prototypes.push(expected);
+                        current = target;
+                    }
+                    Step::Return(proto) => break proto,
                 }
             };
-            // A trap may return a fresh object that is not otherwise reachable.
-            // Keep it alive while nested Proxy invariant checks re-enter JS.
-            let proto_pin = proto
-                .as_ref()
-                .map(|prototype| self.pin(prototype))
-                .unwrap_or(0);
-            let result = (|| {
-                if self.is_extensible(&target)? {
-                    return Ok(proto.clone());
-                }
-                let target_proto = self.get_prototype_of(&target)?;
-                if proto != target_proto {
+
+            for expected in expected_prototypes.iter().rev() {
+                if expected != &result_proto {
                     return Err(Error::type_err(
                         "Proxy getPrototypeOf trap returned incompatible prototype",
                     ));
                 }
-                Ok(proto.clone())
-            })();
-            self.unpin_many(proto_pin);
-            return result;
-        }
-
-        Ok(self.heap.with_obj(idx.0, |o| o.proto().lock().clone()))
+            }
+            Ok(result_proto)
+        })();
+        self.unpin_many(expected_pins);
+        self.unpin(root_pin);
+        result
     }
 
     /// Internal `[[SetPrototypeOf]]`, including Proxy `setPrototypeOf` traps.
@@ -2647,74 +2705,113 @@ impl Vm {
         object: &Value,
         proto: Option<Value>,
     ) -> error::Result<bool> {
-        let Value::Object(idx) = object else {
+        let Value::Object(_) = object else {
             return Err(Error::type_err(
                 "Object prototype target must be an object".to_string(),
             ));
         };
 
-        let proxy_info = self.heap.with_obj(idx.0, |o| {
-            if let HeapObj::Proxy(proxy) = o {
-                if *proxy.revoked.lock() {
-                    return Some(Err(Error::type_err(
-                        "Cannot perform 'setPrototypeOf' on a proxy that has been revoked",
-                    )));
+        enum Step {
+            Forward(Value),
+            Return(bool),
+        }
+
+        let root_pin = self.pin(object)
+            + proto
+                .as_ref()
+                .map(|prototype| self.pin(prototype))
+                .unwrap_or(0);
+        let mut current = object.clone();
+        let result = (|| loop {
+            let Value::Object(idx) = &current else {
+                return Err(Error::type_err(
+                    "Proxy setPrototypeOf target must be an object",
+                ));
+            };
+            let proxy_info = self.heap.with_obj(idx.0, |heap_object| {
+                if let HeapObj::Proxy(proxy) = heap_object {
+                    if *proxy.revoked.lock() {
+                        return Some(Err(Error::type_err(
+                            "Cannot perform 'setPrototypeOf' on a proxy that has been revoked",
+                        )));
+                    }
+                    Some(Ok((proxy.target.clone(), proxy.handler.clone())))
+                } else {
+                    None
                 }
-                Some(Ok((proxy.target.clone(), proxy.handler.clone())))
-            } else {
-                None
+            });
+            if let Some(proxy_info) = proxy_info {
+                let (target, handler) = proxy_info?;
+                self.consume_fuel()?;
+                let proxy_pins = self.pin_many(&[target.clone(), handler.clone()]);
+                let step = (|| {
+                    let trap = self.get_property(&handler, "setPrototypeOf")?;
+                    if trap.is_nullish() {
+                        return Ok(Step::Forward(target.clone()));
+                    }
+                    if !crate::builtins::is_callable(&trap, &self.heap) {
+                        return Err(Error::type_err("setPrototypeOf trap is not callable"));
+                    }
+                    let trap_pin = self.pin(&trap);
+                    let trap_result = self.call_function(
+                        &trap,
+                        &[target.clone(), proto.clone().unwrap_or(Value::Null)],
+                        Some(handler.clone()),
+                    );
+                    self.unpin(trap_pin);
+                    let trap_result = trap_result?;
+                    if !self.to_boolean(&trap_result) {
+                        return Ok(Step::Return(false));
+                    }
+                    if self.is_extensible(&target)? {
+                        return Ok(Step::Return(true));
+                    }
+                    let target_proto = self.get_prototype_of(&target)?;
+                    if target_proto != proto {
+                        return Err(Error::type_err(
+                            "Proxy setPrototypeOf trap returned true for incompatible prototype",
+                        ));
+                    }
+                    Ok(Step::Return(true))
+                })();
+                self.unpin_many(proxy_pins);
+                match step? {
+                    Step::Forward(target) => {
+                        current = target;
+                        continue;
+                    }
+                    Step::Return(result) => return Ok(result),
+                }
             }
-        });
-        if let Some(result) = proxy_info {
-            let (target, handler) = result?;
-            let trap = self.get_property(&handler, "setPrototypeOf")?;
-            if trap.is_undefined() || trap.is_null() {
-                return self.set_prototype_of(&target, proto);
+
+            let current_proto = self
+                .heap
+                .with_obj(idx.0, |heap_object| heap_object.proto().lock().clone());
+            if current_proto == proto {
+                return Ok(true);
             }
-            if !crate::builtins::is_callable(&trap, &self.heap) {
-                return Err(Error::type_err("setPrototypeOf trap is not callable"));
-            }
-            let proto_value = proto.clone().unwrap_or(Value::Null);
-            let trap_result =
-                self.call_function(&trap, &[target.clone(), proto_value], Some(handler))?;
-            let boolean_trap_result = self.to_boolean(&trap_result);
-            if !boolean_trap_result {
+            if self.is_realm_object_prototype(*idx) {
                 return Ok(false);
             }
-            if !self.is_extensible(&target)? {
-                let target_proto = self.get_prototype_of(&target)?;
-                if target_proto != proto {
-                    return Err(Error::type_err(
-                        "Proxy setPrototypeOf trap returned true for incompatible prototype",
-                    ));
-                }
-            }
-            return Ok(true);
-        }
-
-        let current_proto = self.heap.with_obj(idx.0, |o| o.proto().lock().clone());
-        if current_proto == proto {
-            return Ok(true);
-        }
-
-        if self.is_realm_object_prototype(*idx) {
-            return Ok(false);
-        }
-
-        if !self.heap.with_obj(idx.0, |o| o.is_extensible()) {
-            return Ok(false);
-        }
-
-        if let Some(Value::Object(proto_idx)) = &proto {
-            if self.proto_chain_contains(proto_idx.0, idx.0) {
+            if !self
+                .heap
+                .with_obj(idx.0, |heap_object| heap_object.is_extensible())
+            {
                 return Ok(false);
             }
-        }
+            if let Some(Value::Object(proto_idx)) = &proto {
+                if self.prototype_chain_blocks_set(proto_idx.0, idx.0)? {
+                    return Ok(false);
+                }
+            }
 
-        self.heap.with_obj(idx.0, |o| {
-            *o.proto().lock() = proto;
-        });
-        Ok(true)
+            self.heap.with_obj(idx.0, |heap_object| {
+                *heap_object.proto().lock() = proto.clone();
+            });
+            return Ok(true);
+        })();
+        self.unpin_many(root_pin);
+        result
     }
 
     fn is_realm_object_prototype(&self, object: GcIdx) -> bool {
@@ -2973,26 +3070,48 @@ impl Vm {
         });
     }
 
-    /// Does the prototype chain starting at `start` contain an object with
-    /// heap index `target`? Used to reject cyclic `__proto__` assignments.
-    /// Bounded by a depth cap so a pre-existing (should-be-impossible) cycle
-    /// cannot hang the engine.
-    pub(crate) fn proto_chain_contains(&self, start: usize, target: usize) -> bool {
-        let mut cur = start;
-        for _ in 0..4096 {
-            if cur == target {
-                return true;
+    /// Scan the ordinary prototype chain used by OrdinarySetPrototypeOf.
+    /// Proxies stop the scan because their `[[GetPrototypeOf]]` method is not
+    /// the ordinary internal method. Brent checkpoints reject an impossible
+    /// pre-existing ordinary cycle without a depth cap or growing native set.
+    pub(crate) fn prototype_chain_blocks_set(
+        &mut self,
+        start: usize,
+        target: usize,
+    ) -> error::Result<bool> {
+        let mut current = GcIdx(start);
+        let mut checkpoint = current;
+        let mut checkpoint_span = 0usize;
+        let mut checkpoint_power = 1usize;
+
+        loop {
+            self.consume_fuel()?;
+            if current.0 == target {
+                return Ok(true);
             }
-            if self.heap.with_obj(cur, |o| matches!(o, HeapObj::Proxy(_))) {
-                return false;
+            let next = self.heap.with_obj(current.0, |heap_object| {
+                if matches!(heap_object, HeapObj::Proxy(_)) {
+                    return None;
+                }
+                match heap_object.proto().lock().clone() {
+                    Some(Value::Object(next)) => Some(next),
+                    _ => None,
+                }
+            });
+            let Some(next) = next else {
+                return Ok(false);
+            };
+            current = next;
+            checkpoint_span = checkpoint_span.saturating_add(1);
+            if current == checkpoint {
+                return Ok(true);
             }
-            let next = self.heap.with_obj(cur, |o| o.proto().lock().clone());
-            match next {
-                Some(Value::Object(p)) => cur = p.0,
-                _ => return false,
+            if checkpoint_span == checkpoint_power {
+                checkpoint = current;
+                checkpoint_span = 0;
+                checkpoint_power = checkpoint_power.saturating_mul(2);
             }
         }
-        false
     }
 
     /// Walk the prototype chain starting at `idx` looking for an accessor

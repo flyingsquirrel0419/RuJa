@@ -11178,6 +11178,86 @@ fn proxy_prototype_internal_methods_follow_traps_and_invariants() {
 }
 
 #[test]
+fn prototype_api_validation_and_false_status_order_match_spec() {
+    assert_eq!(
+        run(r#"
+            var nullProxy = new Proxy({}, {
+              getPrototypeOf: function () { return null; }
+            });
+            var nullResult =
+              Reflect.getPrototypeOf(nullProxy) === null &&
+              Object.getPrototypeOf(nullProxy) === null;
+
+            var trapReads = 0;
+            var validationHandler = {};
+            Object.defineProperty(validationHandler, "setPrototypeOf", {
+              get: function () {
+                trapReads += 1;
+                return function () { return true; };
+              }
+            });
+            var validationProxy = new Proxy({}, validationHandler);
+            var objectValidation = false;
+            var reflectValidation = false;
+            try { Object.setPrototypeOf(validationProxy, 1); }
+            catch (error) { objectValidation = error instanceof TypeError; }
+            try { Reflect.setPrototypeOf(validationProxy, 1); }
+            catch (error) { reflectValidation = error instanceof TypeError; }
+
+            var falseProxy = new Proxy({}, {
+              setPrototypeOf: function () { return false; }
+            });
+            var reflectFalse = Reflect.setPrototypeOf(falseProxy, {}) === false;
+            var objectFalse = false;
+            try { Object.setPrototypeOf(falseProxy, {}); }
+            catch (error) { objectFalse = error instanceof TypeError; }
+
+            var nestedLog = [];
+            var nestedPrototype = {};
+            var nestedBase = Object.preventExtensions(
+              Object.create(nestedPrototype)
+            );
+            var nestedInner = new Proxy(nestedBase, {
+              getPrototypeOf: function () {
+                nestedLog.push("inner");
+                return nestedPrototype;
+              }
+            });
+            var nestedOuter = new Proxy(nestedInner, {
+              getPrototypeOf: function () {
+                nestedLog.push("outer");
+                return nestedPrototype;
+              }
+            });
+            var nestedPass =
+              Reflect.getPrototypeOf(nestedOuter) === nestedPrototype;
+            var nestedMismatch = false;
+            var mismatchOuter = new Proxy(nestedInner, {
+              getPrototypeOf: function () {
+                nestedLog.push("mismatch");
+                return {};
+              }
+            });
+            try { Reflect.getPrototypeOf(mismatchOuter); }
+            catch (error) { nestedMismatch = error instanceof TypeError; }
+
+            [
+              nullResult,
+              objectValidation,
+              reflectValidation,
+              trapReads === 0,
+              reflectFalse,
+              objectFalse,
+              nestedPass,
+              nestedMismatch,
+              nestedLog.join(",") === "outer,inner,mismatch,inner"
+            ].join("|");
+        "#),
+        Value::String(Arc::from("true|true|true|true|true|true|true|true|true"))
+    );
+}
+
+#[test]
 fn proxy_revocable_revoke_function_has_spec_own_properties() {
     assert_eq!(
         run(r#"
