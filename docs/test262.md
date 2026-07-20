@@ -9130,7 +9130,19 @@ checking. GPT-5.6 runtime reviewer Kepler
 (`019f8047-0013-7712-910e-f1ffa4e7afd0`) and admission/documentation reviewer
 Nash (`019f8047-01fd-7713-abf0-c33f7469ef1a`) both report `CLEAN` after the
 final diff; both sessions are closed, and coder and Umans routes were not used.
-Final CI and matrix evidence are recorded with the delivery commit.
+Feature commit `4bb72313b5cb211414333fd14087ac533935da93`, ordinary CI
+`29759957749`, and full matrix `29759957873` are green; the matrix passes all
+**33/33** jobs.
+
+The 30 artifacts downloaded to `/tmp/ruja-array-fill.29759957873` aggregate to
+**31115 pass / 5826 fail / 11520 skip / 6 timeout / 0 error / 48467 total /
+36941 pass-or-fail executed**. Against
+`/tmp/ruja-array-iterators.29755632391`, 29 result files are byte-identical.
+Only `test262_built-ins_result.txt` changes from **15491/5023/3148/6/0** to
+**15505/5015/3142/6/0**, exactly **+14 pass / -8 fail / -6 skip**; timeout,
+error, total, and every unrelated shard remain unchanged. The downloaded
+release binary independently passes direct Array fill **22/22** and TypedArray
+fill **52/52** on the fixed checkout.
 
 ```text
 [Decision Log]

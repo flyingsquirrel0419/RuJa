@@ -38,7 +38,19 @@
   rustfmt, warnings-denied Clippy, and wasm32 all-features checking. Final
   GPT-5.6 runtime and admission/documentation reviews report `CLEAN`; both
   sessions are closed, and coder and Umans routes were not used. Final CI,
-  matrix, and artifact evidence is recorded after delivery.
+  matrix, and artifact evidence follows below.
+
+  Feature commit `4bb72313b5cb211414333fd14087ac533935da93` is pushed to
+  `main`. Ordinary CI `29759957749` passes both jobs, and full matrix
+  `29759957873` passes all **33/33** jobs. The 30 result files downloaded to
+  `/tmp/ruja-array-fill.29759957873` aggregate to **31115 pass / 5826 fail /
+  11520 skip / 6 timeout / 0 error / 48467 total / 36941 pass-or-fail
+  executed**. Against the preceding iterator matrix, 29 files are
+  byte-for-byte identical. Only `test262_built-ins_result.txt` changes from
+  **15491/5023/3148/6/0** to **15505/5015/3142/6/0**, exactly **+14 pass / -8
+  fail / -6 skip**, with no timeout, error, total, or unrelated-shard drift.
+  The downloaded release binary independently reproduces direct Array fill
+  **22/22** and TypedArray fill **52/52** on the fixed checkout.
 
 - `Array.prototype.entries`, `keys`, and `values` now create generic lazy Array
   iterators instead of represented-Array snapshots. Iterator creation performs
