@@ -30,7 +30,7 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 63.6% of all matrix files; 83.6% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 63.9% of all matrix files; 84.0% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (12752 pass / 0 fail / 7687 skip / 20439 total on the current pinned checkout) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
@@ -8844,6 +8844,97 @@ skip** with no fail, timeout, error, corpus, total, or unrelated-shard drift.
 - 선택한 방식: Keep the global feature gate and add a 22-path manifest plus per-path feature map shared by runner and analyzer, with live-checkout, disjointness, and closure tests.
 - 다른 대안 대신 이 방식을 선택한 이유: Global or prefix admission overclaims support as Test262 evolves, while admitting only old failures hides already passing direct behavior. Exact paths make the conformance claim reproducible and force review before expansion.
 - 장점, 단점 및 영향: The 22-file gain is honest, runner and analyzer remain symmetric, and unknown siblings stay skipped. Updating the pinned Test262 corpus now requires an explicit manifest and metadata audit rather than silently changing the supported surface.
+```
+
+## Array exotic prototype and generic indexed methods
+
+`%Array.prototype%` is now created as a real Array exotic in every Realm.
+Defining an indexed property updates its length through the same
+`ArraySetLength` path as any other Array. Realm construction also registers
+and roots the corresponding intrinsic Array constructor, allowing Slice and
+Splice species lookup to distinguish the current Realm's intrinsic constructor
+from an observable foreign constructor and to roll the registry back if Realm
+initialization fails.
+
+Push, Pop, Shift, Unshift, Splice, Slice, and With now begin with ToObject and
+LengthOfArrayLike and use generic Get, HasProperty, Set,
+DeletePropertyOrThrow, and CreateDataProperty operations. Generic receivers
+can expose lengths through `2^53 - 1`; actual Array creation retains the uint32
+length limit. Slice preserves holes and applies `ArraySpeciesCreate`; Splice
+uses species for its deleted-elements result; With ignores species and
+materializes holes as own `undefined` values. The Array constructor and Slice
+can create sparse results above `MAX_DENSE_ARRAY_LEN`, while With retains the
+documented 1,048,576-element materialization cap.
+
+The storage audit keeps ordinary dense indexed descriptors in `items` and
+`present`, and exceptional or sparse descriptors in `props`. This prevents a
+dense value and a property-table descriptor from competing for the same
+index. `IsArray` now traverses Proxy targets iteratively, checking revocation
+before charging one fuel unit per layer. Array length shrink precharges the
+descriptor scan and dense resize before mutation. Constructor, method, and
+species paths retain all observable inputs and results across GC-retrying
+allocation and restore pin depth on normal, abrupt, fuel, and heap-cap exits.
+
+`tools/test262_array_exotic_admission.txt` freezes exactly **20** previously
+feature-gated files: one Symbol.iterator file, four mutator
+not-a-constructor files, six Splice files, eight Slice files, and one With
+file. The paired feature map is exact and tooling verifies the live checkout,
+metadata, disjointness, runner/analyzer symmetry, and closed future-sibling or
+extra-feature admission.
+
+On fixed Test262 checkout
+`9e61c12835c5e4a3bdba93850427e6742c4f64c4`, all files in the seven Push,
+Pop, Shift, Unshift, Splice, Slice, and With directories are **262/262**. Six
+direct Array-prototype descriptor, identity, and exotic checks are **6/6**,
+for a selected cohort of **268 pass / 0 fail / 0 skip**. The clean pre-feature
+binary on the same checkout was **129 pass / 119 fail / 20 skip**, so the exact
+delta is **+139 pass / -119 fail / -20 skip**. The broader
+`methods-called-as-functions.js` file remains deliberately skipped because
+its unrelated legacy `concat` genericity assertion still fails.
+
+Local gates pass all targets and features with lib **168/168**, builtins
+**511/511**, operators **126/126**, fuel **29/29**, release lib **167/167**,
+warnings-denied Clippy, rustfmt/diff, wasm32, and Python tooling **118/118**.
+Four restored mutations prove intrinsic-prototype allocation, the dense
+descriptor invariant, foreign intrinsic-constructor handling, and exact
+IsArray Proxy fuel. GPT 5.6 reviewers Franklin
+(`019f7e0b-ec09-79f0-a097-9c124bd04c4f`) and Feynman
+(`019f7e0b-edb5-74a2-a4f9-8199956f29d3`) found and drove the Shift/Unshift,
+dense-property, raw-allocation, and ArraySetLength fuel corrections. Final
+runtime reviewer Ptolemy (`019f7e45-898b-79a2-bbb9-545edaf2ad53`) and tooling
+reviewer Meitner (`019f7e45-8b85-7600-bf12-ee42a3194ca2`) returned `CLEAN`.
+All four sessions are closed; the coder model and Umans provider were not
+used. Feature commit `48f33da967ce53565a374803a4c18372d61a84b1` is pushed to
+`main`, and ordinary CI `29723329186` passes both jobs.
+
+Full matrix `29723329226` succeeds across all **33/33** jobs. Its 30 result
+files at `/tmp/ruja-array-exotic.29723329226.complete` aggregate to **30973
+pass / 5898 fail / 11590 skip / 6 timeout / 0 error / 48467 total / 36871
+pass-or-fail executed** (**63.9%** all-file, **84.0%** executed). Against
+full-matrix baseline `29718464780`, 29 files are byte-identical. Only
+`test262_built-ins_result.txt` changes from **15216/5216/3230/6/0** to
+**15365/5087/3210/6/0**, exactly **+149 pass / -129 fail / -20 skip** with no
+timeout, error, total, or unrelated-shard drift.
+
+A same-runner A/B on the fixed checkout covers every built-ins file executed
+under the new admission policy. It finds **141 fail-to-pass** runtime
+transitions and no reverse transition: **132** under `built-ins/Array`, **8**
+under Iterator zip/zipKeyed, and **1** in TypedArray sort stability. The 20
+newly admitted files are **8 pass / 12 fail** on the baseline binary when
+forced through the new runner and **20/20** on the feature binary. Those
+admission and runtime movements compose exactly to the full artifact delta.
+The non-Array diagnostic sweep limits broader per-file timeout exceptions to
+eight seconds; the official full artifacts independently retain the same six
+timeouts.
+
+```text
+[Decision Log]
+- 목적과 의도: Admit the exact Array exotic, generic mutator, copy, species, and Proxy-IsArray surface that is now complete without broadening support to unrelated legacy Array methods.
+- 기존 구현 및 제약 조건: Array.prototype was not a real exotic, seven methods relied on represented-Array backing storage, Slice lacked complete species behavior, sparse results crossed dense assumptions, feature metadata kept valid files skipped, and broad Array directories contain independent unsupported methods.
+- 검토한 주요 대안: Remove Array-related features globally, admit whole method prefixes, list only formerly failing files, retain dense-only results, or freeze exact feature-gated paths while separately measuring the complete seven-directory cohort.
+- 선택한 방식: Keep global feature gates, add a 20-path manifest with exact metadata shared by runner and analyzer, run all 262 files in the seven repaired method directories plus six direct prototype checks, and compare the feature and baseline binaries on one fixed checkout.
+- 다른 대안 대신 이 방식을 선택한 이유: Global or prefix admission would silently claim future or unrelated semantics; former-failure-only admission would hide already passing coverage; aggregate full-suite movement can conceal regressions; and a fixed exact cohort ties the conformance claim to the runtime paths reviewed in this unit.
+- 장점, 단점 및 영향: The selected surface is 268/268 with an attributable +139/-119/-20 transition, metadata drift now fails tooling, and remaining Array work stays explicit. Corpus updates require a manifest audit, methods-called-as-functions remains skipped until concat is generic, and this admission does not claim the broader Array prototype directory is complete.
 ```
 
 ## Why the full-suite rate is not higher

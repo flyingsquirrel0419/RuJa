@@ -61,20 +61,15 @@ The following resource limits are enforced:
   abort earlier. This guard applies only to cyclic topology, not to a legal
   acyclic chain. A malformed all-ordinary cycle, which normal ECMAScript APIs
   cannot create, is rejected as soon as a directed edge repeats.
-- **Array prototype and generic copy gap**: `%Array.prototype%` is currently an
-  ordinary object tagged as an Array rather than a real `ArrayData` exotic.
-  Its required own `length` descriptor exists, but defining index `2` does not
-  advance that length to `3`; Test262 `Array/prototype/exotic-array.js` remains
-  a known failure. Array `slice` and `with` now implement their distinct hole
-  and inherited-value copy policies for represented Arrays, but they still do
-  not implement the complete generic `ToObject`/`LengthOfArrayLike` surface;
-  Slice also lacks `ArraySpeciesCreate`, and With retains incomplete relative
-  index normalization. Legacy `push`, `pop`, and `splice` also still derive
-  positions from dense backing storage rather than `sparse_max`, so mutating a
-  pre-existing above-cap sparse Array can report a stale length or write the
-  wrong index. Copy methods therefore never return a new sparse result.
-  Converting the intrinsic to the real Array exotic and then auditing generic
-  copy and mutation methods is a separate architecture unit.
+- **Remaining Array generic-method gap**: `%Array.prototype%` is a real
+  `ArrayData` exotic, and `push`, `pop`, `shift`, `unshift`, `splice`, `slice`,
+  and `with` now use generic internal property operations and logical lengths.
+  Slice and Splice implement `ArraySpeciesCreate`; With intentionally does not
+  consult species. Older implementations such as `concat`, `reverse`, `fill`,
+  and `copyWithin` still contain represented-Array shortcuts and need separate
+  generic-receiver, observable-order, sparse, fuel, and rooting audits. The
+  direct Test262 `methods-called-as-functions.js` aggregate remains outside the
+  exact admission because its unrelated `concat` assertions still fail.
 - **Test262 result enforcement and pinning gap**: the Python runner reports
   fail, timeout, and error counts but still exits with status zero, so a matrix
   job can be green while semantic failures remain. Full-matrix shards also
@@ -94,11 +89,11 @@ The following resource limits are enforced:
   hard wall-clock deadline must use a separately killable process.
 - **String/array caps**: `"x".repeat(n)` is capped at 256 MiB output.
   `Array.from(iterable)` is capped at 65k elements. Dense arrays are capped
-  at 1M elements (`MAX_DENSE_ARRAY_LEN`); beyond that, indices are stored
-  sparsely as named properties. `Array.prototype.slice` and `with` reject a
-  copy result above 1,048,576 elements before native hole-vector allocation;
-  this is intentionally stricter than ECMAScript until sparse mutators honor
-  the logical sparse length.
+  at 1M elements (`MAX_DENSE_ARRAY_LEN`); the Array constructor and Slice can
+  represent larger legal lengths sparsely without allocating a giant dense
+  vector. `Array.prototype.with` still rejects a captured length above
+  1,048,576 before its indexed scan because it must materialize every result
+  position. This sandbox bound is intentionally stricter than ECMAScript.
 - **Call argument caps**: `Reflect.apply`, `Reflect.construct`, and
   `Function.prototype.apply` share an observable `CreateListFromArrayLike`
   implementation that materializes at most 1,048,576 arguments and throws
@@ -346,9 +341,9 @@ guarantees are required.
   `toSpliced`. A callback or coercion can remove the original source edge and
   force host GC while a future value exists only in a Rust snapshot. Several
   also require live property access rather than merely pinning the current
-  snapshot, so they remain independent algorithm units. Slice and With now
-  use live indexed operations with operation-wide roots for represented
-  Arrays, but their generic receiver gaps are tracked above.
+  snapshot, so they remain independent algorithm units. Push, Pop, Shift,
+  Unshift, Splice, Slice, and With now use live generic indexed operations with
+  operation-wide roots; the remaining method-specific gaps are tracked above.
 - Private methods are stored per-instance as private fields (each instance
   gets its own closure copy); behavior is spec-correct, but this is more
   memory-heavy than a shared per-class method table would be

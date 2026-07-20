@@ -1019,27 +1019,23 @@ property and avoids a traversal-specific special case.
 
 Treating an own data value of `undefined` as present also exposed two older
 Array copy shortcuts that had passed by relying on the former incorrect Get
-sentinel. `Array.prototype.slice` now performs HasProperty before Get for each
-copied index, preserving a real hole while materializing an inherited value.
-`Array.prototype.with` performs Get for every non-replaced index, so holes
-become own `undefined` values and inherited values are copied. Both loops
-allocate a hole-only `ArrayData` with the current Realm's intrinsic prototype
-and leave `length` derived from the dense backing store instead of installing
-an own fixed descriptor. This is required because several legacy dense
-mutators still update backing storage directly. Copy results above
-`MAX_DENSE_ARRAY_LEN` are rejected before native vector allocation; a bounded
-Slice of a pre-existing sparse source still succeeds. Source, replacement,
-and fresh result remain pinned across observable prototype traps and abrupt
-completion.
+sentinel. `Array.prototype.slice` was changed to perform HasProperty before
+Get, while `Array.prototype.with` was changed to Get every non-replaced index.
+The interim result allocator intentionally used dense, hole-only `ArrayData`
+and rejected copies above `MAX_DENSE_ARRAY_LEN` because the mutators of that
+unit did not yet understand sparse logical length. The later Array-exotic unit
+below supersedes that allocation restriction and completes the coupled
+generic and sparse method paths. This paragraph records why the temporary
+boundary existed; it is not the current Array architecture.
 
 ```text
 [Decision Log]
 - 목적과 의도: Remove non-conforming ordinary Get, HasProperty, Set, and inherited Proxy GetMethod depth cutoffs without losing receiver semantics, observable mutation order, GC identity, host work bounds, or correct Array hole copying once own undefined values stop acting as absence sentinels.
 - 기존 구현 및 제약 조건: Get recursively returned undefined after 4096 hops, Has recursively returned false after 1024 hops, Set rejected after 1024 hops, Symbol Set bypassed the shared internal method, and node-based cycle rejection could suppress a later Proxy trap lookup. Rust-local object identities were not roots and could be reused after observable GC. Slice and With copied dense slots directly, so their inherited-value behavior depended on the old incorrect own-undefined fallback. General ArrayCreate installs an own length descriptor, but legacy push, pop, and splice still mutate dense backing storage directly and can leave that descriptor stale; sparse copy results would expose the same gap.
 - 검토한 주요 대안: Raise the traversal constants, remove guards without fuel, keep separate string and Symbol walkers, reject every repeated object, restore the undefined sentinel to hide Array copy defects, retain general ArrayCreate and repair every legacy mutator in this unit, allow sparse copy results, or use rooted directed-edge traversal plus specification-shaped Array copy loops with a bounded hole-only allocator.
-- 선택한 방식: Preserve separate Get, Has, and Set exotic ordering while sharing PropertyTraversal for directed edges, persistent roots, fuel credit, and Proxy-cycle replay. Coerce Value keys once into PropertyKey, return false from Module Namespace Set, install the missing Array prototype length descriptor at Realm construction, and repair Slice/With at their own Has/Get boundaries. Fresh copy results use the current Realm prototype without a stored length descriptor and reject lengths above the dense cap before allocation.
+- 선택한 방식: For that bounded unit, preserve separate Get, Has, and Set exotic ordering while sharing PropertyTraversal for directed edges, persistent roots, fuel credit, and Proxy-cycle replay. Coerce Value keys once into PropertyKey, return false from Module Namespace Set, install the missing Array prototype length descriptor at Realm construction, and repair Slice/With at their own Has/Get boundaries. The interim fresh-copy path used the current Realm prototype without a stored length descriptor and rejected lengths above the dense cap before allocation.
 - 다른 대안 대신 이 방식을 선택한 이유: Larger constants remain incorrect and stack-dependent; unmetered loops are unsafe for a sandbox; duplicate key paths drift; node rejection is observably wrong after trap mutation; native recursion cannot safely represent legal deep chains; and restoring sentinel behavior would make a present undefined property observably inherit through its prototype. The Array loops must implement their own distinct hole policies. Expanding this unit into every generic mutator would obscure the property-traversal correction, while returning a sparse copy before those mutators honor sparse_max creates immediately observable length and index errors.
-- 장점, 단점 및 영향: Acyclic chains and inherited traps are stack-safe at arbitrary legal depth, exact fuel and LIFO pin cleanup are testable, Symbol and receiver behavior use one path, Proxy Has gains complete direct admission, and Slice/With no longer regress when Get is corrected. Dense copy results remain compatible with existing mutators and cannot bypass the native allocation cap; bounded slices of sparse sources remain possible. Memory grows linearly with traversal depth, inert Proxy cycles retain a deliberate 512-replay host guard that can differ from another engine's implementation-specific stack limit, and copying more than 1,048,576 elements now raises a sandbox RangeError. Generic Array receiver, sparse mutators, and full Array-prototype exotic modeling remain separate work.
+- 장점, 단점 및 영향: Acyclic chains and inherited traps are stack-safe at arbitrary legal depth, exact fuel and LIFO pin cleanup are testable, Symbol and receiver behavior use one path, Proxy Has gains complete direct admission, and Slice/With no longer regress when Get is corrected. At that stage, dense copy results remained compatible with existing mutators and copying more than 1,048,576 elements raised a sandbox RangeError. Memory grows linearly with traversal depth, and inert Proxy cycles retain a deliberate 512-replay host guard that can differ from another engine's implementation-specific stack limit. The Array-specific copy cap, generic receiver gap, sparse mutators, and prototype facade described by this historical decision are superseded by the Array exotic unit below.
 ```
 
 ## Lazy Proxy-aware for-in enumeration
@@ -1096,6 +1092,60 @@ not appear in object enumeration.
 - 선택한 방식: Store CreateForInIterator-shaped state in IteratorData, advance one observable phase per pull, use iterative pending frames for Proxy OwnPropertyKeys invariants, trace and pin all live objects, and precharge ordinary snapshot work before native collection growth.
 - 다른 대안 대신 이 방식을 선택한 이유: A forwarding-only patch would still miss descriptor and prototype traps; eager collection changes break and mutation order; Rust recursion makes legal depth host-stack-dependent; and an exposed iterator adds non-standard surface. Reusing the internal-method helpers keeps Object and for-in behavior aligned.
 - 장점, 단점 및 영향: Proxy trap order, Symbol filtering, shadowing, abrupt completion, primitive boxing, and early break now follow the specification; deep chains are iterative and every unbounded walk is fuel- or replay-bounded. Iterator state and pending invariant frames use O(keys plus depth) native memory, non-ASCII String snapshot fuel is conservatively overcharged, and the 512 replay guard is an intentional sandbox policy for inert Proxy cycles.
+```
+
+## Array exotic prototype and generic indexed methods
+
+Every Realm now installs `%Array.prototype%` as an actual `HeapObj::Array`
+with empty `ArrayData`, not an ordinary object carrying an Array class tag.
+Array index definitions therefore participate in `ArraySetLength`, so writing
+prototype index `2` changes its length to `3`. The VM also records each
+Realm's intrinsic Array constructor alongside its Array prototype. Both
+registries are GC roots, Realm construction rolls them back transactionally,
+and `ArraySpeciesCreate` can distinguish the current Realm's intrinsic
+constructor from an observable foreign constructor.
+
+`ArrayData` now has one representation rule. Default writable, enumerable,
+configurable indexed data properties live in `items` and `present`; accessors,
+non-default descriptors, and sparse entries live in `props`. A default
+descriptor found in the legacy property table migrates into dense storage on
+write, preventing duplicate states whose visible value depended on which
+lookup path ran first. Mapped arguments retain their specialized aliasing
+path. Array length shrink computes one removable-property plan, precharges
+descriptor scanning and dense resize work after observable conversion but
+before mutation, and applies the planned property and logical-length update
+without rescanning mutable storage.
+
+`push`, `pop`, `shift`, `unshift`, `splice`, `slice`, and `with` now operate on
+generic receivers through ToObject, LengthOfArrayLike, Get, HasProperty, Set,
+DeletePropertyOrThrow, and CreateDataProperty. Generic lengths use the full
+ToLength range through `2^53 - 1`; creation of an actual Array still enforces
+the ECMAScript uint32 length limit. Slice preserves holes and uses
+`ArraySpeciesCreate`. Splice uses species for the deleted-elements result.
+With intentionally ignores species and reads every non-replaced position, so
+source holes become own `undefined` values. All observable values and fresh
+results remain pinned until ownership transfers or an abrupt completion
+restores the incoming pin depth.
+
+The Array constructor and Slice can allocate sparse results beyond
+`MAX_DENSE_ARRAY_LEN` without first reserving a dense vector. Dense allocation
+uses the VM's collecting allocator, including retry at an exact heap-object
+cap. With still rejects a result above 1,048,576 elements because its
+read-through-holes contract must materialize every index and the sandbox does
+not yet provide fallible native temporary storage for that many values.
+`IsArray` follows Proxy targets iteratively and checks revocation before
+charging one fuel unit per layer; that loop neither allocates nor re-enters
+JavaScript between target reads. Large ArraySetLength scans and dense resizes
+are similarly fuel-bounded before any irreversible mutation.
+
+```text
+[Decision Log]
+- 목적과 의도: Model the intrinsic Array prototype and the coupled mutation and copy methods with real Array exotic semantics while preserving Realm, species, GC, fuel, and heap-cap invariants.
+- 기존 구현 및 제약 조건: Array.prototype was an ordinary tagged facade, default indexed descriptors could exist in both dense storage and props, push/pop/splice derived positions from dense backing length, Slice and With accepted only represented Arrays, copy results above the dense cap were rejected, IsArray Proxy traversal was unmetered, and raw allocation could fail despite reclaimable garbage.
+- 검토한 주요 대안: Special-case only Array.prototype length, patch each failing Test262 path, retain dense-only results, convert every Array method in one release, replace ArrayData entirely, or establish one exotic representation invariant and repair the tightly coupled constructor, species, mutation, and copy surface first.
+- 선택한 방식: Allocate every intrinsic prototype as ArrayData, track Realm Array constructors, keep default dense descriptors in items/present and exceptional descriptors in props, implement seven methods through shared internal operations, permit sparse constructor and Slice results, and precharge Proxy, length-scan, and resize work before mutation.
+- 다른 대안 대신 이 방식을 선택한 이유: A prototype-only special case would diverge from ordinary Arrays; individual test patches would miss generic receivers and observable order; dense-only allocation rejects legal sparse results; changing every callback and legacy method at once is too broad to validate atomically; and retaining duplicate indexed representations makes descriptor and mutator behavior order-dependent.
+- 장점, 단점 및 영향: Array.prototype now has the same length/index invariants as every Array, generic receivers and species are observable in specification order, sparse construction no longer needs a giant vector, and exact fuel, GC retry, Realm rollback, and abrupt cleanup are regression-tested. The representation migration adds property-path complexity, With retains a deliberate 1,048,576-element sandbox cap, and older methods such as concat, reverse, fill, copyWithin, and several callback methods still need their own generic and rooting audits.
 ```
 
 ---

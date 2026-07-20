@@ -4,6 +4,66 @@
 
 ### Fixed
 
+- `%Array.prototype%` is now a real Array exotic in every Realm, so indexed
+  definitions update its length through the same invariants as ordinary
+  Arrays. Realm-local Array constructors are registered, rooted, and rolled
+  back transactionally for cross-Realm `ArraySpeciesCreate`. Default indexed
+  data descriptors have one representation in dense storage; accessors,
+  non-default descriptors, and sparse entries remain in the property table.
+
+  `push`, `pop`, `shift`, `unshift`, `splice`, `slice`, and `with` now use
+  generic ToObject, LengthOfArrayLike, Get, HasProperty, Set, Delete, and
+  CreateDataProperty operations. Slice preserves holes and uses species,
+  Splice uses species for deleted elements, and With ignores species while
+  materializing holes. The Array constructor and Slice create sparse results
+  above `MAX_DENSE_ARRAY_LEN`; With retains the documented 1,048,576-element
+  sandbox cap because every result position must be materialized.
+
+  Proxy `IsArray` traversal is iterative and fuel-metered with revocation
+  checked first. Array length shrink precharges descriptor scans and dense
+  resize work before mutation. Constructor, species, and method
+  paths use GC-retrying allocation, preserve live values through observable
+  re-entry, restore pin depth on every exit, and behave transactionally under
+  exact heap caps and fuel exhaustion.
+
+  Exact Test262 admission freezes **20** feature-gated paths with complete
+  metadata and future-sibling closure checks. On checkout
+  `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the complete seven-method
+  Push/Pop/Shift/Unshift/Splice/Slice/With cohort plus six direct prototype
+  checks is **268/268**. The clean pre-feature binary is **129 pass / 119 fail
+  / 20 skip**, for exactly **+139 pass / -119 fail / -20 skip**. The unrelated
+  `concat` assertion keeps the broader methods-called-as-functions aggregate
+  outside admission.
+
+  Local gates pass all targets/features with lib **168/168**, builtins
+  **511/511**, operators **126/126**, fuel **29/29**, release lib **167/167**,
+  warnings-denied Clippy, rustfmt/diff, wasm32, and Python tooling **118/118**.
+  Four mutations independently prove intrinsic exotic allocation, indexed
+  representation ownership, foreign intrinsic species handling, and exact
+  Proxy fuel. Two GPT 5.6 final reviewers returned `CLEAN`; all four GPT review
+  sessions are closed, and neither the coder model nor an Umans provider route
+  was used. Feature commit `48f33da967ce53565a374803a4c18372d61a84b1`
+  is pushed, and ordinary CI `29723329186` passes both jobs.
+
+  Full matrix `29723329226` passes all **33/33** jobs. Its 30 downloaded
+  results at `/tmp/ruja-array-exotic.29723329226.complete` aggregate to
+  **30973 pass / 5898 fail / 11590 skip / 6 timeout / 0 error / 48467 total /
+  36871 pass-or-fail executed** (**63.9%** all-file, **84.0%** executed).
+  Compared with full-matrix baseline `29718464780`, 29 files are
+  byte-identical; only built-ins changes from **15216/5216/3230/6/0** to
+  **15365/5087/3210/6/0**, exactly **+149 pass / -129 fail / -20 skip** with
+  no timeout, error, total, or unrelated-shard drift.
+
+  A same-runner, fixed-corpus binary A/B covers every built-ins file that is
+  executed under the new admission policy. Runtime behavior has **141
+  fail-to-pass** transitions and no reverse transition: **132** under Array,
+  **8** under Iterator zip/zipKeyed, and **1** TypedArray sort-stability test.
+  On the baseline binary, the 20 newly admitted paths are **8 pass / 12 fail**;
+  all 20 pass after the runtime fix. Composing that admission movement with
+  the 141 runtime transitions exactly reproduces the full artifact delta. The
+  non-Array diagnostic sweep caps exceptional per-file timeouts at eight
+  seconds; the official artifacts independently preserve all six timeouts.
+
 - `for...in` now uses a lazy, GC-traced iterator state that invokes
   `[[OwnPropertyKeys]]`, `[[GetOwnProperty]]`, and `[[GetPrototypeOf]]` at the
   observable phase of each advancement. Proxy trap order, early `break`,
