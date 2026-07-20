@@ -104,6 +104,12 @@
 
 ## Property model
 
+- Ordinary `[[Get]]`, `[[HasProperty]]`, and `[[Set]]` traverse prototype
+  chains iteratively, retain reached objects across observable GC, and charge
+  execution fuel per ordinary edge without imposing a fixed depth cutoff on
+  acyclic chains. String and Symbol keys share one `ToPropertyKey` path,
+  inherited accessors preserve the original receiver, and Module Namespace
+  `[[Set]]` rejects every receiver consistently
 - `Object.defineProperty` with data and accessor descriptors (`value`/
   `writable`, `get`/`set`); ordinary `[[Set]]` enforces `writable: false`
   (TypeError in strict mode, silent in sloppy) and invokes inherited setters
@@ -138,7 +144,11 @@
   `every`, `includes`, `indexOf`, `lastIndexOf`, `slice`, `concat`, `join`,
   `flat`, `flatMap`, `at`, `sort`, `reverse`, `copyWithin`, `reduceRight`,
   `toReversed`, `toSorted`, `toSpliced`, `with`; `Array.from`/`fromAsync`/`of`/
-  `isArray`
+  `isArray`. Slice preserves absent holes but copies inherited values, while
+  With reads through holes and materializes every result index. Fresh Slice
+  and With results keep a backing-store-derived length so legacy dense
+  mutators observe updates; copy results above 1,048,576 elements raise a
+  sandbox `RangeError`
 - **String**: `charAt`, `charCodeAt`, `slice`, `split`, `replace` (regex
   supported), `replaceAll`, `includes`, `startsWith`, `endsWith`, `repeat`,
   `padStart`/`padEnd`, `at`, `trim`/`trimStart`/`trimEnd`, `substring`, case

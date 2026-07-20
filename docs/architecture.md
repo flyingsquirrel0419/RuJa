@@ -635,7 +635,7 @@ design.
 - 검토한 주요 대안: Keep recursion, impose a fixed depth cap, track visited targets, accumulate every transparent layer, or advance one rooted current target iteratively while metering every nested Proxy operation.
 - 선택한 방식: Pin the original receiver, iterate one Proxy layer at a time with constant per-hop target/handler/trap pins, preserve the first real trap's descriptor and extensibility checks, and consume fuel in Delete plus shared Get, GetOwnProperty, and IsExtensible traversal.
 - 다른 대안 대신 이 방식을 선택한 이유: Recursion can abort the host, a cap rejects valid programs, target links are immutable and do not require cycle detection, and accumulated layers add unnecessary memory. A rooted current value directly models transparent forwarding while shared fuel closes nested-operation bypasses.
-- 장점, 단점 및 영향: A 100,000-layer delete is stack-safe, forced GC and every abrupt path restore pin depth, and hosts can stop deep handlers or invariant targets with fuel. Unbounded hosts can still spend linear time on arbitrarily deep legal chains. Set and receiver-side DefineOwnProperty now use the later iterative state machine; ordinary Get, HasProperty, and Set traversal caps remain separate audits.
+- 장점, 단점 및 영향: A 100,000-layer delete is stack-safe, forced GC and every abrupt path restore pin depth, and hosts can stop deep handlers or invariant targets with fuel. Unbounded hosts can still spend linear time on arbitrarily deep legal chains. Set and receiver-side DefineOwnProperty use the later iterative state machine, and the coordinated ordinary Get, HasProperty, and Set audit below removes their former caps.
 ```
 
 ## Reflect omitted property-key normalization
@@ -664,7 +664,7 @@ also hold for omitted keys.
 - 검토한 주요 대안: Keep per-method branches and patch three return values, duplicate the correct deleteProperty expression, or centralize only the argument-slot default and conversion while retaining each method's internal operation.
 - 선택한 방식: Validate each target first, call one shared slot-one ToPropertyKey helper, and then apply each method's existing receiver, value, and internal-method behavior.
 - 다른 대안 대신 이 방식을 선택한 이유: No return value can emulate an accessor, property creation, Proxy trap, revocation, or thrown completion. Sharing only conversion prevents future omission drift without merging semantically different get, set, has, and delete operations.
-- 장점, 단점 및 영향: Omitted and explicit undefined keys now agree through ordinary and Proxy paths, local GC and abrupt regressions provide coverage missing from Test262, and the change adds no allocation or fuel policy. Existing deep get, has, set, and receiver-define traversal caps remain separate architecture work.
+- 장점, 단점 및 영향: Omitted and explicit undefined keys now agree through ordinary and Proxy paths, local GC and abrupt regressions provide coverage missing from Test262, and the change adds no allocation or fuel policy. The later coordinated property-traversal state machine removes the deep Get, Has, and Set caps while preserving this coercion order.
 ```
 
 ## Realm-local Reflect intrinsic allocation
@@ -822,7 +822,7 @@ directly.
 - 검토한 주요 대안: Store one extensibility flag on every GC cell, keep a side table keyed by GcIdx, add flags only to the initially reported variants, raise a Proxy depth limit, or give each public variant explicit state and reuse the complete integrity/internal-method paths.
 - 선택한 방식: Keep per-variant atomic state behind exhaustive HeapObj helpers, walk Proxy targets iteratively with constant per-layer roots and fuel, validate truthy results through full IsExtensible, and route non-specialized exotics through rooted GC-retrying SetIntegrityLevel and TestIntegrityLevel.
 - 다른 대안 대신 이 방식을 선택한 이유: Cell-wide metadata would also describe internal Environment and Iterator records and complicate slot reuse; a side table risks stale GcIdx identity; a partial variant list recreates the bug when new exotics appear; and fixed depth limits reject valid programs. Existing complete internal-method helpers preserve observable order and typed-array or module-namespace behavior.
-- 장점, 단점 및 영향: Deep transparent chains are stack-safe and host-bounded, nested traps and Realm errors remain observable in order, every current exotic blocks new properties after prevention, and integrity operations process real descriptors under heap caps. The cost is one atomic field per stateful variant plus duplicated constructor initialization. Receiver-side DefineOwnProperty was completed by the later Set state machine; the remaining ordinary property traversals still require separate iterative audits.
+- 장점, 단점 및 영향: Deep transparent chains are stack-safe and host-bounded, nested traps and Realm errors remain observable in order, every current exotic blocks new properties after prevention, and integrity operations process real descriptors under heap caps. The cost is one atomic field per stateful variant plus duplicated constructor initialization. Receiver-side DefineOwnProperty and the remaining ordinary property traversals were completed by the later Set and coordinated traversal state machines.
 ```
 
 ## Iterative prototype internal methods
@@ -941,12 +941,12 @@ lookup. A missing trap advances directly to the target. A present trap is
 validated before invocation, receives the original receiver, and
 short-circuits on a false result before the target descriptor invariant walk.
 
-Ordinary `[[Set]]` still owns its specialized TypedArray, Array, mapped
+Ordinary `[[Set]]` owns its specialized TypedArray, Array, mapped
 arguments, accessor, and data-property behavior. When its prototype is a
 Proxy, it returns a forwarding outcome to the outer driver instead of
 recursively calling back into Proxy Set. This removes the native recursion and
-the separate 128-layer Proxy guard while retaining the existing 1024-object
-ordinary prototype guard as an explicit later audit.
+the separate 128-layer Proxy guard. The coordinated traversal state machine
+below later removes the former 1024-object ordinary guard.
 
 `OrdinarySetWithOwnDescriptor` distinguishes two receiver definitions. A
 missing receiver property uses the complete CreateDataProperty descriptor
@@ -972,7 +972,74 @@ identity, exact heap caps, cycle rejection, and pin-depth restoration.
 - 검토한 주요 대안: Raise the depth constant, retain separate recursive receiver helpers, build independent iterative Set and receiver-definition stacks, or let one rooted Set driver tail-forward while reusing the existing presence-aware iterative DefineOwnProperty state machine.
 - 선택한 방식: Pin operation inputs once, iterate Proxy Set targets with one fuel charge per layer, return an explicit forwarding outcome at ordinary-to-Proxy boundaries, represent receiver descriptors with presence bits, and route both complete and value-only definitions through the shared Proxy DefineOwnProperty driver before specialized ordinary fallback.
 - 다른 대안 대신 이 방식을 선택한 이유: A larger cap remains non-conforming and stack-dependent; duplicated iterative algorithms would drift in GetMethod, invariant, and cleanup order; an explicit continuation stack is unnecessary for transparent tail forwarding; and the existing DefineOwnProperty driver already owns the required roots, Realm allocation, and compatibility rules when descriptor presence is preserved.
-- 장점, 단점 및 영향: Deep legal Proxy Set and receiver-definition chains are stack-safe and exactly fuel-bounded, one cleanup scope restores roots on every Result exit, and complete versus value-only descriptors remain observable. The shared visited set grows with traversed objects, while ordinary Get, HasProperty, Set, and handler-prototype lookup retain their separate 4096/1024 limits for the next coordinated property-traversal audit.
+- 장점, 단점 및 영향: Deep legal Proxy Set and receiver-definition chains are stack-safe and exactly fuel-bounded, one cleanup scope restores roots on every Result exit, and complete versus value-only descriptors remain observable. The coordinated property traversal below replaces the shared node-visited policy and removes the former ordinary Get, HasProperty, Set, and handler-prototype limits.
+```
+
+## Iterative ordinary property traversal
+
+Ordinary `[[Get]]`, `[[HasProperty]]`, and `[[Set]]` now use iterative drivers
+without the former 4096/1024/1024 depth cutoffs. `PropertyTraversal` records
+directed `(from, to)` edges, pins each newly reached object until operation
+cleanup, and owns ordinary-edge fuel credit. Directed edges are necessary
+because a Proxy trap getter can mutate a previously visited target before
+returning `undefined`; rejecting a repeated object before its own lookup would
+skip that observable change. Keeping every reached object rooted also prevents
+a collected heap cell from being reused under an identity retained by the
+edge set.
+
+Get extracts own-property handling into an explicit value/accessor/absent
+result while retaining direct compatibility paths for TypedArray,
+ArrayBuffer, and DataView fields. Inherited getters receive the original
+receiver. Has checks TypedArray canonical numeric indices before ordinary own
+properties. Set keeps its TypedArray, Array, String, mapped-arguments, and
+receiver-definition paths, and Module Namespace `[[Set]]` now returns false
+for every key and receiver. Public Value-key Get/Set first perform one
+`ToPropertyKey` conversion into `PropertyKey`, preserving Symbols returned by
+`@@toPrimitive`.
+
+Fuel charges one unit per ordinary-to-ordinary edge and one per Proxy internal
+method layer; an ordinary-to-Proxy edge relies on the Proxy charge. Proxy
+`GetMethod` lookup and a transparently forwarded Set receive one initial
+ordinary-edge credit to preserve the established exact per-Proxy budgets, but
+deeper inherited handlers are metered. Revocation is validated before fuel.
+Nested handler, invariant, and receiver operations create independent
+traversal state.
+
+Pure ordinary repeated edges fail immediately. A Proxy cycle is different:
+each pass can run an observable trap lookup, so repeated edges are replayed.
+An inert cycle is stopped after 512 replays with a catchable RangeError rather
+than a native stack overflow; configured fuel can stop it earlier. This guard
+does not limit acyclic chain depth. Traversal memory is O(depth) because both
+the edge set and persistent GC roots grow with reached objects.
+
+The same intrinsic audit installs the required own `Array.prototype.length`
+descriptor in every Realm: value 0, writable, non-enumerable, and
+non-configurable. This restores transparent Proxy Has forwarding for that
+property and avoids a traversal-specific special case.
+
+Treating an own data value of `undefined` as present also exposed two older
+Array copy shortcuts that had passed by relying on the former incorrect Get
+sentinel. `Array.prototype.slice` now performs HasProperty before Get for each
+copied index, preserving a real hole while materializing an inherited value.
+`Array.prototype.with` performs Get for every non-replaced index, so holes
+become own `undefined` values and inherited values are copied. Both loops
+allocate a hole-only `ArrayData` with the current Realm's intrinsic prototype
+and leave `length` derived from the dense backing store instead of installing
+an own fixed descriptor. This is required because several legacy dense
+mutators still update backing storage directly. Copy results above
+`MAX_DENSE_ARRAY_LEN` are rejected before native vector allocation; a bounded
+Slice of a pre-existing sparse source still succeeds. Source, replacement,
+and fresh result remain pinned across observable prototype traps and abrupt
+completion.
+
+```text
+[Decision Log]
+- 목적과 의도: Remove non-conforming ordinary Get, HasProperty, Set, and inherited Proxy GetMethod depth cutoffs without losing receiver semantics, observable mutation order, GC identity, host work bounds, or correct Array hole copying once own undefined values stop acting as absence sentinels.
+- 기존 구현 및 제약 조건: Get recursively returned undefined after 4096 hops, Has recursively returned false after 1024 hops, Set rejected after 1024 hops, Symbol Set bypassed the shared internal method, and node-based cycle rejection could suppress a later Proxy trap lookup. Rust-local object identities were not roots and could be reused after observable GC. Slice and With copied dense slots directly, so their inherited-value behavior depended on the old incorrect own-undefined fallback. General ArrayCreate installs an own length descriptor, but legacy push, pop, and splice still mutate dense backing storage directly and can leave that descriptor stale; sparse copy results would expose the same gap.
+- 검토한 주요 대안: Raise the traversal constants, remove guards without fuel, keep separate string and Symbol walkers, reject every repeated object, restore the undefined sentinel to hide Array copy defects, retain general ArrayCreate and repair every legacy mutator in this unit, allow sparse copy results, or use rooted directed-edge traversal plus specification-shaped Array copy loops with a bounded hole-only allocator.
+- 선택한 방식: Preserve separate Get, Has, and Set exotic ordering while sharing PropertyTraversal for directed edges, persistent roots, fuel credit, and Proxy-cycle replay. Coerce Value keys once into PropertyKey, return false from Module Namespace Set, install the missing Array prototype length descriptor at Realm construction, and repair Slice/With at their own Has/Get boundaries. Fresh copy results use the current Realm prototype without a stored length descriptor and reject lengths above the dense cap before allocation.
+- 다른 대안 대신 이 방식을 선택한 이유: Larger constants remain incorrect and stack-dependent; unmetered loops are unsafe for a sandbox; duplicate key paths drift; node rejection is observably wrong after trap mutation; native recursion cannot safely represent legal deep chains; and restoring sentinel behavior would make a present undefined property observably inherit through its prototype. The Array loops must implement their own distinct hole policies. Expanding this unit into every generic mutator would obscure the property-traversal correction, while returning a sparse copy before those mutators honor sparse_max creates immediately observable length and index errors.
+- 장점, 단점 및 영향: Acyclic chains and inherited traps are stack-safe at arbitrary legal depth, exact fuel and LIFO pin cleanup are testable, Symbol and receiver behavior use one path, Proxy Has gains complete direct admission, and Slice/With no longer regress when Get is corrected. Dense copy results remain compatible with existing mutators and cannot bypass the native allocation cap; bounded slices of sparse sources remain possible. Memory grows linearly with traversal depth, inert Proxy cycles retain a deliberate 512-replay host guard that can differ from another engine's implementation-specific stack limit, and copying more than 1,048,576 elements now raises a sandbox RangeError. Generic Array receiver, sparse mutators, and full Array-prototype exotic modeling remain separate work.
 ```
 
 ---

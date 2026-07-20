@@ -4,6 +4,118 @@
 
 ### Fixed
 
+- Ordinary `[[Get]]`, `[[HasProperty]]`, and `[[Set]]` now traverse prototype
+  chains iteratively without the former 4096/1024/1024 correctness limits.
+  One rooted `PropertyTraversal` records directed edges, retains every reached
+  object across observable GC, preserves the original Get receiver, and
+  charges fuel per ordinary-to-ordinary edge while each Proxy layer retains
+  its existing charge. Inherited Proxy trap lookup is no longer truncated.
+
+  Proxy-induced cycles replay repeated edges so first- or later-pass trap
+  getters can mutate the target before transparent forwarding. Inert cycles
+  end with a catchable RangeError after 512 replays instead of overflowing the
+  native stack, and configured fuel can stop them earlier. Revocation precedes
+  fuel accounting. Exact legacy Proxy budgets retain one initial ordinary-edge
+  credit for GetMethod lookup and transparently forwarded Set.
+
+  Value-key Get/Set now perform one Symbol-preserving `ToPropertyKey`, including
+  Symbols returned by `@@toPrimitive`; Symbol Set shares the receiver-aware
+  internal method. Module Namespace Set returns false for every key and custom
+  receiver. Every Realm now installs the required own
+  `Array.prototype.length` descriptor `{value: 0, writable: true, enumerable:
+  false, configurable: false}`.
+
+  Regressions cover 5000 ordinary edges; deep String and Symbol Get/Has/Set;
+  inherited get/has/set/defineProperty traps; original receivers; forced GC
+  after severed prototype edges; WeakRef liveness; pin cleanup; exact ordinary
+  and inherited-handler fuel; revoked zero-fuel ordering; ordinary and Proxy
+  cycles; first- and second-pass trap mutation; Module Namespace custom
+  receivers; created-Realm Array descriptors; and object keys coercing to
+  Symbols. Three manual mutations prove repeated-target rechecks, persistent
+  traversal roots, and revoked-before-fuel ordering are required.
+
+  `tools/test262_proxy_has_admission.txt` freezes all **26/26** direct Proxy
+  Has files with checksum
+  `7adb36802ee9e5db473422707e7e7da98b16fc52420d02c666741e4c5b2de6ef`.
+  Tooling verifies exact live metadata, includes, flags, no negative entries,
+  disjointness, runner/analyzer symmetry, and closed future/extra-feature
+  gates. Proxy get/has/set/defineProperty plus Reflect get/has/set is
+  **135/135**, Module Namespace internals are **36/36**, and supported
+  expressions/statements remain **12751/0/7687/20438**.
+
+  Feature commit `d6e8e61d788fecf81772d3828e1ac47f5c138abf` passes local
+  all-target/all-feature tests with lib **155/155**, builtins **504/504**,
+  operators **126/126**, fuel **28/28**, warnings-denied Clippy, rustfmt/diff,
+  debug and release builds, wasm32, the release Realm rollback sweep, and
+  Python tooling **116/116**. Independent GPT runtime and admission reviews
+  found no remaining blocker; the coder model and Umans provider were not
+  used. Ordinary CI `29702222060` passes both jobs.
+
+  The first full-matrix artifact audit was not accepted on aggregate totals
+  alone. A fixed-corpus binary A/B found that corrected own-`undefined`
+  lookup exposed two old dense-copy bugs: `Array.prototype.slice` converted a
+  source hole into an own `undefined` instead of copying an inherited value,
+  and `Array.prototype.with` skipped inherited values while materializing
+  holes. Follow-up commit
+  `70973c4f78d4076db24dfbbf877c308a27602fdc` now makes Slice use
+  HasProperty followed by Get and makes With Get every non-replaced index.
+  Fresh results use the current Realm's intrinsic Array prototype, and source,
+  replacement, and result objects remain rooted across observable lookup and
+  every abrupt exit.
+
+  Focused Test262 A/B moves Array slice from **41/22/8** to **42/21/8** and
+  Array with from **13/7/1** to **15/5/1**, with no pass-to-fail transition.
+  The full Array comparison has four fail-to-pass transitions and no
+  regression; Object descriptor tests have 18 fail-to-pass transitions from
+  the corrected own-accessor-without-getter semantics. Forced-GC, abrupt pin
+  cleanup, inherited-value, and preserved-hole checks cover the follow-up.
+
+  Ordinary CI first exposed an unrelated timing flake in the existing
+  `Atomics.waitAsync` notification test: deliberate allocation pressure could
+  exceed its one-second notification deadline on a loaded debug runner. The
+  engine path passed **20/20** local repetitions. Test-only commit
+  `a3f0f3711582a17e9b329a5932427c0a88ca0438` raises that notification
+  deadline to ten seconds while retaining the independent ten-millisecond
+  timeout assertion. Ordinary CI `29704449961` passes both jobs.
+
+  Its green full matrix `29704449969` was still diagnostic rather than
+  accepted: 29 result files matched the prior baseline, but built-ins fell to
+  **14827/5583/3252/6**. Test262's shared TypedArray constructor harness calls
+  `slice()` and then `splice()` on the copy; general ArrayCreate had installed
+  a fixed own length descriptor that legacy dense mutators did not update.
+  The visible descriptor therefore stayed stale even though the backing store
+  changed.
+
+  Final follow-up commit
+  `29d0f275ee30a4c18fcdb790f15c5b6b951134bc` allocates successful Slice and
+  With copies through a current-Realm hole-only path whose length remains
+  derived from dense backing storage. It rejects copy results above
+  `MAX_DENSE_ARRAY_LEN` before native vector allocation because legacy sparse
+  mutators do not yet honor `sparse_max`; bounded slices from a pre-existing
+  sparse source still work. A same-corpus scan of all **1,995** supported files
+  that include `testTypedArray.js` has no status transition. Six copy/rooting/
+  mutator mutations and one cap-boundary mutation each fail focused coverage
+  and pass after restoration. Two GPT 5.6 final reviews report `CLEAN` after
+  finding and closing the sparse-result blocker.
+
+  Final local gates pass lib **158/158**, builtins **505/505**, all other Rust
+  targets/features, warnings-denied Clippy, rustfmt/diff, release, wasm32, the
+  release Realm rollback sweep, and Python tooling **116/116**. On fixed
+  Test262 `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the complete built-ins
+  diagnostic is **15194 pass / 5216 fail / 3252 skip / 6 timeout / 0 error**
+  with **23668 total / 20410 run**. Ordinary CI `29708233592` passes both
+  jobs for the final feature commit.
+
+  Final matrix `29708233596` succeeds across all **33/33** jobs. Its 30
+  downloaded result files at
+  `/tmp/ruja-property-final.29708233596.complete.0MkZJg` aggregate to **30802
+  pass / 6027 fail / 11632 skip / 6 timeout / 0 error / 48467 total / 36829
+  pass-or-fail executed** (**63.6%** all-file, **83.6%** executed). Against
+  `/tmp/ruja-property-baseline.yB3i4f`, 29 files are byte-identical. Only
+  `test262_built-ins_result.txt` changes from **15146/5238/3278** to
+  **15194/5216/3252**, exactly **+48 pass / -22 fail / -26 skip** with no
+  timeout, error, corpus, total, or unrelated-shard drift.
+
 - Proxy `[[Set]]` and receiver-side `[[DefineOwnProperty]]` forwarding now use
   iterative, fuel-metered, GC-rooted state machines instead of recursive
   helpers with a 128-layer limit. Ordinary prototype traversal hands a Proxy
@@ -37,9 +149,9 @@
   warnings-denied Clippy, rustfmt/diff, debug and release builds, wasm32, the
   release Realm rollback sweep, and Python tooling **115/115**. Mutation-backed
   GPT review found no code or admission defect; the stale documentation it
-  identified is corrected in the same bounded unit. The ordinary Set 1024-hop
-  guard and handler trap lookup through ordinary Get's 4096-hop boundary remain
-  explicit next work. The coder model and Umans provider were not used.
+  identified is corrected in the same bounded unit. The former ordinary Set
+  and handler GetMethod guards are removed by the coordinated traversal entry
+  above. The coder model and Umans provider were not used.
 
   Ordinary CI `29698474332` passes both jobs, and full matrix `29698474309`
   passes all **33/33** jobs. The 30 downloaded result files at

@@ -11,6 +11,12 @@ The following resource limits are enforced:
   `[[IsExtensible]]`, `[[PreventExtensions]]`, `[[GetPrototypeOf]]`, and
   `[[SetPrototypeOf]]` consume one unit per traversed Proxy layer, including
   nested handler and invariant walks.
+  Ordinary `[[Get]]`, `[[HasProperty]]`, and `[[Set]]` consume one unit per
+  ordinary-to-ordinary prototype edge. An ordinary-to-Proxy edge is not
+  charged separately because the Proxy dispatch consumes its own unit. Proxy
+  `GetMethod` lookup and trapless Set retain one initial ordinary-edge credit
+  so the established exact per-Proxy budgets remain stable; deeper inherited
+  handler traversal is still metered.
   Ordinary `[[SetPrototypeOf]]` cycle detection also consumes one unit per
   visited candidate object. Exhaustion throws a `RangeError("fuel exhausted")`
   that is *not catchable* by user `try/catch` (a host-level abort). `None` =
@@ -41,25 +47,45 @@ The following resource limits are enforced:
 - **Call-stack depth**: JavaScript execution is capped at 512 VM frames.
   Exceeding this throws a catchable `RangeError("Maximum call stack size
   exceeded")`, not a native stack overflow (SIGSEGV/abort).
-- **Remaining property traversal caps**: ordinary prototype `[[Get]]` returns
-  `undefined` beyond 4096 recursive hops, while `[[HasProperty]]` returns
-  `false` beyond 1024 ordinary or Proxy hops and ordinary `[[Set]]` rejects
-  beyond 1024 hops. Because Proxy `set` and `defineProperty` trap lookup uses
-  the same ordinary `[[Get]]`, an inherited trap beyond 4096 handler-prototype
-  hops can still be treated as missing. These guards avoid native-stack failure
-  but produce non-conforming results for otherwise valid deep chains.
-  Transparent Proxy calls, deletion, `[[Set]]`, receiver-side and direct
-  `[[DefineOwnProperty]]`, descriptor lookup, extensibility traversal, and
-  prototype get/set internal methods are iterative and fuel-metered. Proxy get
-  forwarding is also iterative, but its ordinary prototype segments are not
-  all free of arbitrary limits yet. Removing the remaining ordinary property
-  caps requires one coordinated traversal audit rather than isolated limit
-  increases.
+- **Property traversal cycle guard**: acyclic ordinary and transparent Proxy
+  `[[Get]]`, `[[HasProperty]]`, and `[[Set]]` chains are iterative and have no
+  fixed depth cutoff. Traversed nodes remain GC roots until the operation
+  exits, and directed edges are retained for cycle detection, so temporary
+  memory is linear in the traversed depth. Proxy-induced cycles must replay
+  repeated edges because each trap lookup is observable and can mutate the
+  target on a later pass. RuJa permits 512 such replays, then raises a
+  catchable `RangeError("Maximum cyclic property traversal depth exceeded")`
+  instead of overflowing the native stack; configured execution fuel can
+  abort earlier. This guard applies only to cyclic topology, not to a legal
+  acyclic chain. A malformed all-ordinary cycle, which normal ECMAScript APIs
+  cannot create, is rejected as soon as a directed edge repeats.
 - **Transparent Proxy enumeration gap**: `for...in` can omit keys forwarded
   from a transparent Proxy target. The underlying
   `[[GetOwnPropertyDescriptor]]` results are correct, but Proxy-focused harness
   cases that enumerate those keys still fail. This is separate from the direct
   Reflect descriptor files admitted in the current 153-file surface.
+- **Array prototype and generic copy gap**: `%Array.prototype%` is currently an
+  ordinary object tagged as an Array rather than a real `ArrayData` exotic.
+  Its required own `length` descriptor exists, but defining index `2` does not
+  advance that length to `3`; Test262 `Array/prototype/exotic-array.js` remains
+  a known failure. Array `slice` and `with` now implement their distinct hole
+  and inherited-value copy policies for represented Arrays, but they still do
+  not implement the complete generic `ToObject`/`LengthOfArrayLike` surface;
+  Slice also lacks `ArraySpeciesCreate`, and With retains incomplete relative
+  index normalization. Legacy `push`, `pop`, and `splice` also still derive
+  positions from dense backing storage rather than `sparse_max`, so mutating a
+  pre-existing above-cap sparse Array can report a stale length or write the
+  wrong index. Copy methods therefore never return a new sparse result.
+  Converting the intrinsic to the real Array exotic and then auditing generic
+  copy and mutation methods is a separate architecture unit.
+- **Test262 result enforcement and pinning gap**: the Python runner reports
+  fail, timeout, and error counts but still exits with status zero, so a matrix
+  job can be green while semantic failures remain. Full-matrix shards also
+  clone upstream Test262 independently without a shared commit pin. Aggregate
+  totals can therefore hide pass-to-fail swaps or include corpus drift. Until
+  the runner exits nonzero under an explicit policy and every shard consumes
+  one pinned checkout, release audits must download all 30 artifacts, compare
+  each file to a known baseline, and investigate every changed shard.
 - **Regex execution bounds**: ordinary matching uses the RE2-style,
   linear-time Rust `regex` backend. Backreferences use the vendored
   `fancy-regex` backend; that path has a finite work limit and reports an
@@ -72,7 +98,10 @@ The following resource limits are enforced:
 - **String/array caps**: `"x".repeat(n)` is capped at 256 MiB output.
   `Array.from(iterable)` is capped at 65k elements. Dense arrays are capped
   at 1M elements (`MAX_DENSE_ARRAY_LEN`); beyond that, indices are stored
-  sparsely as named properties.
+  sparsely as named properties. `Array.prototype.slice` and `with` reject a
+  copy result above 1,048,576 elements before native hole-vector allocation;
+  this is intentionally stricter than ECMAScript until sparse mutators honor
+  the logical sparse length.
 - **Call argument caps**: `Reflect.apply`, `Reflect.construct`, and
   `Function.prototype.apply` share an observable `CreateListFromArrayLike`
   implementation that materializes at most 1,048,576 arguments and throws
@@ -316,11 +345,13 @@ guarantees are required.
   native temporary-root, collected-list, and merge-buffer storage is bounded
   by the same limit but still uses infallible Rust vector allocation.
 - Older snapshot-based methods still need separate observable-semantics and
-  rooting passes: `join`, `filter`, `reduce`, `reduceRight`, `forEach`, `slice`,
-  `toSpliced`, and `with`. A callback or coercion can remove the original
-  source edge and force host GC while a future value exists only in a Rust
-  snapshot. Several also require live property access rather than merely
-  pinning the current snapshot, so they remain independent algorithm units.
+  rooting passes: `join`, `filter`, `reduce`, `reduceRight`, `forEach`, and
+  `toSpliced`. A callback or coercion can remove the original source edge and
+  force host GC while a future value exists only in a Rust snapshot. Several
+  also require live property access rather than merely pinning the current
+  snapshot, so they remain independent algorithm units. Slice and With now
+  use live indexed operations with operation-wide roots for represented
+  Arrays, but their generic receiver gaps are tracked above.
 - Private methods are stored per-instance as private fields (each instance
   gets its own closure copy); behavior is spec-correct, but this is more
   memory-heavy than a shared per-class method table would be
