@@ -88,6 +88,9 @@ try:
     from test262_proxy_own_keys_admission import (
         PROXY_OWN_KEYS_FEATURES, PROXY_OWN_KEYS_FILES,
     )
+    from test262_proxy_for_in_admission import (
+        PROXY_FOR_IN_FEATURES, PROXY_FOR_IN_FILES,
+    )
     from test262_reflect_set_has_admission import (
         REFLECT_SET_HAS_FEATURES, REFLECT_SET_HAS_FILES,
     )
@@ -189,6 +192,9 @@ except ModuleNotFoundError:
     from tools.test262_proxy_set_admission import PROXY_SET_FEATURES, PROXY_SET_FILES
     from tools.test262_proxy_own_keys_admission import (
         PROXY_OWN_KEYS_FEATURES, PROXY_OWN_KEYS_FILES,
+    )
+    from tools.test262_proxy_for_in_admission import (
+        PROXY_FOR_IN_FEATURES, PROXY_FOR_IN_FILES,
     )
     from tools.test262_reflect_set_has_admission import (
         REFLECT_SET_HAS_FEATURES, REFLECT_SET_HAS_FILES,
@@ -2368,6 +2374,24 @@ def proxy_own_keys_features(path):
         return frozenset()
     return PROXY_OWN_KEYS_FEATURES.get(rel.as_posix(), frozenset())
 
+def proxy_for_in_path(path):
+    if path is None:
+        return False
+    try:
+        rel = Path(path).resolve().relative_to(Path(TEST262).resolve() / "test")
+    except ValueError:
+        return False
+    return rel.as_posix() in PROXY_FOR_IN_FILES
+
+def proxy_for_in_features(path):
+    if path is None:
+        return frozenset()
+    try:
+        rel = Path(path).resolve().relative_to(Path(TEST262).resolve() / "test")
+    except ValueError:
+        return frozenset()
+    return PROXY_FOR_IN_FEATURES.get(rel.as_posix(), frozenset())
+
 def reflect_set_has_path(path):
     if path is None:
         return False
@@ -2718,6 +2742,8 @@ def should_skip(meta, path=None):
         feats.difference_update(proxy_set_features(path))
     if path is not None and proxy_own_keys_path(path):
         feats.difference_update(proxy_own_keys_features(path))
+    if path is not None and proxy_for_in_path(path):
+        feats.difference_update(proxy_for_in_features(path))
     if path is not None and reflect_set_has_path(path):
         feats.difference_update(reflect_set_has_features(path))
     if path is not None and reflect_remaining_path(path):

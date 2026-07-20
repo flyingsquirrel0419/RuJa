@@ -10123,6 +10123,101 @@ fn proxy_own_keys_enforces_duplicate_and_target_invariants() {
 }
 
 #[test]
+fn proxy_own_keys_checks_extensibility_before_target_keys() {
+    assert_eq!(
+        run(r##"
+            function probe(useForIn) {
+              var log = [];
+              var target = {};
+              var inner = new Proxy(target, {
+                isExtensible: function(target) {
+                  log.push("extensible");
+                  Object.defineProperty(target, "x", {
+                    value: 1,
+                    configurable: false
+                  });
+                  return Reflect.isExtensible(target);
+                },
+                ownKeys: function(target) {
+                  log.push("targetKeys");
+                  return Reflect.ownKeys(target);
+                },
+                getOwnPropertyDescriptor: function(target, key) {
+                  log.push("descriptor:" + key);
+                  return Reflect.getOwnPropertyDescriptor(target, key);
+                }
+              });
+              var outer = new Proxy(inner, {
+                ownKeys: function() {
+                  log.push("trapKeys");
+                  return [];
+                }
+              });
+              var errorName = "none";
+              try {
+                if (useForIn) {
+                  for (var key in outer) {}
+                } else {
+                  Reflect.ownKeys(outer);
+                }
+              } catch (error) {
+                errorName = error.name;
+              }
+              return errorName + "|" + log.join(",") + "|" +
+                Reflect.ownKeys(target).join(",");
+            }
+            probe(false) + "#" + probe(true);
+        "##),
+        Value::String(Arc::from(
+            "TypeError|trapKeys,extensible,targetKeys,descriptor:x|x#TypeError|trapKeys,extensible,targetKeys,descriptor:x|x"
+        ))
+    );
+}
+
+#[test]
+fn proxy_own_keys_gets_every_target_descriptor_before_omission_error() {
+    assert_eq!(
+        run(r##"
+            function probe(useForIn) {
+              var marker = {};
+              var log = [];
+              var target = {};
+              Object.defineProperty(target, "fixed", {
+                value: 1,
+                configurable: false
+              });
+              var inner = new Proxy(target, {
+                ownKeys: function() { return ["fixed", "later"]; },
+                getOwnPropertyDescriptor: function(target, key) {
+                  log.push("descriptor:" + key);
+                  if (key === "later") throw marker;
+                  return Reflect.getOwnPropertyDescriptor(target, key);
+                }
+              });
+              var outer = new Proxy(inner, {
+                ownKeys: function() { return []; }
+              });
+              var result = "none";
+              try {
+                if (useForIn) {
+                  for (var key in outer) {}
+                } else {
+                  Reflect.ownKeys(outer);
+                }
+              } catch (error) {
+                result = error === marker ? "marker" : error.name;
+              }
+              return result + "|" + log.join(",");
+            }
+            probe(false) + "#" + probe(true);
+        "##),
+        Value::String(Arc::from(
+            "marker|descriptor:fixed,descriptor:later#marker|descriptor:fixed,descriptor:later"
+        ))
+    );
+}
+
+#[test]
 fn object_property_is_enumerable() {
     assert_eq!(run("({a:1}).propertyIsEnumerable('a');"), Value::Bool(true));
     assert_eq!(
@@ -12563,6 +12658,38 @@ fn object_statics() {
         run("var s=Symbol(); var o={}; o[s]=1; [Object.hasOwn(o,s), Object.hasOwn({},s), Object.hasOwn.length, Object.hasOwn.name, Object.hasOwn.prototype].join(',');"),
         Value::String(Arc::from("true,false,2,hasOwn,"))
     );
+    assert_eq!(
+        run(r#"
+            var calls = [];
+            var target = new Proxy({}, {
+              getOwnPropertyDescriptor: function(_target, key) {
+                calls.push(key);
+                if (key === "virtual") {
+                  return { value: 1, enumerable: false, configurable: true };
+                }
+              }
+            });
+            var proxy = new Proxy(target, { getOwnPropertyDescriptor: null });
+            [
+              Object.prototype.hasOwnProperty.call(proxy, "virtual"),
+              Object.hasOwn(proxy, "virtual"),
+              Object.prototype.hasOwnProperty.call(proxy, "missing"),
+              Object.hasOwn(proxy, "missing"),
+              calls.join(",")
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "true|true|false|false|virtual,virtual,missing,missing"
+        ))
+    );
+    assert!(run_err(
+        r#"
+        var state = Proxy.revocable({}, {});
+        state.revoke();
+        Object.hasOwn(state.proxy, "key");
+    "#
+    )
+    .contains("TypeError"));
     assert_eq!(
         run(r#"
             var calls = 0;

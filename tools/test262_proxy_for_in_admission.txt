@@ -1,0 +1,23 @@
+# Proxy [[GetOwnProperty]] forwarding and Proxy-aware for-in enumeration.
+built-ins/Proxy/enumerate/removed-does-not-trigger.js
+built-ins/Proxy/getOwnPropertyDescriptor/call-parameters.js
+built-ins/Proxy/getOwnPropertyDescriptor/null-handler.js
+built-ins/Proxy/getOwnPropertyDescriptor/result-is-undefined-target-is-not-extensible.js
+built-ins/Proxy/getOwnPropertyDescriptor/result-is-undefined-targetdesc-is-not-configurable.js
+built-ins/Proxy/getOwnPropertyDescriptor/result-is-undefined-targetdesc-is-undefined.js
+built-ins/Proxy/getOwnPropertyDescriptor/result-is-undefined.js
+built-ins/Proxy/getOwnPropertyDescriptor/result-type-is-not-object-nor-undefined-realm.js
+built-ins/Proxy/getOwnPropertyDescriptor/result-type-is-not-object-nor-undefined.js
+built-ins/Proxy/getOwnPropertyDescriptor/resultdesc-is-invalid-descriptor.js
+built-ins/Proxy/getOwnPropertyDescriptor/resultdesc-is-not-configurable-not-writable-targetdesc-is-writable.js
+built-ins/Proxy/getOwnPropertyDescriptor/resultdesc-is-not-configurable-targetdesc-is-configurable.js
+built-ins/Proxy/getOwnPropertyDescriptor/resultdesc-is-not-configurable-targetdesc-is-undefined.js
+built-ins/Proxy/getOwnPropertyDescriptor/resultdesc-return-configurable.js
+built-ins/Proxy/getOwnPropertyDescriptor/resultdesc-return-not-configurable.js
+built-ins/Proxy/getOwnPropertyDescriptor/return-is-abrupt.js
+built-ins/Proxy/getOwnPropertyDescriptor/trap-is-missing-target-is-proxy.js
+built-ins/Proxy/getOwnPropertyDescriptor/trap-is-not-callable-realm.js
+built-ins/Proxy/getOwnPropertyDescriptor/trap-is-not-callable.js
+built-ins/Proxy/getOwnPropertyDescriptor/trap-is-null-target-is-proxy.js
+built-ins/Proxy/getOwnPropertyDescriptor/trap-is-undefined-target-is-proxy.js
+built-ins/Proxy/getOwnPropertyDescriptor/trap-is-undefined.js

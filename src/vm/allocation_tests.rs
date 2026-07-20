@@ -3654,6 +3654,380 @@ fn iterative_property_walks_root_values_across_gc_and_reject_ordinary_cycles() {
 }
 
 #[test]
+fn proxy_own_keys_walk_is_iterative_metered_and_restores_pin_depth() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.run(
+        r#"
+        var deepOwnKeys = { marker: 1 };
+        for (var i = 0; i < 5000; i += 1) {
+          deepOwnKeys = new Proxy(deepOwnKeys, {});
+        }
+        var meteredOwnKeys = { marker: 1 };
+        for (var j = 0; j < 100; j += 1) {
+          meteredOwnKeys = new Proxy(meteredOwnKeys, {});
+        }
+        "#,
+    )
+    .expect("deep ownKeys fixtures should initialize");
+    let baseline = vm.gc_pins.len();
+    let deep = vm.get_global("deepOwnKeys");
+    let keys = crate::builtins::own_property_keys_or_throw(&mut vm, &deep, false, true, true)
+        .expect("deep transparent Proxy ownKeys should not recurse on the Rust stack");
+    assert_eq!(keys, vec![crate::value::PropertyKey::from("marker")]);
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    let metered = vm.get_global("meteredOwnKeys");
+    vm.set_fuel(Some(100));
+    let error = crate::builtins::own_property_keys_or_throw(&mut vm, &metered, false, true, true)
+        .expect_err("Proxy layers without target-key fuel must still abort ownKeys");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    vm.set_fuel(Some(101));
+    let keys = crate::builtins::own_property_keys_or_throw(&mut vm, &metered, false, true, true)
+        .expect("exact Proxy-layer plus target-key fuel should complete ownKeys forwarding");
+    assert_eq!(keys, vec![crate::value::PropertyKey::from("marker")]);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+}
+
+#[test]
+fn for_in_roots_lazy_state_across_proxy_traps_and_heap_retry() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.clear_kept_objects();
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("GC hook should register");
+    let baseline = vm.gc_pins.len();
+
+    assert_eq!(
+        vm.run(
+            r#"
+            (function () {
+              var prototype = Object.create(null);
+              prototype.protoKey = 2;
+              var proxy = new Proxy({ ownKey: 1 }, {
+                ownKeys: function(target) {
+                  forceGc();
+                  return Reflect.ownKeys(target);
+                },
+                getOwnPropertyDescriptor: function(target, key) {
+                  forceGc();
+                  return Reflect.getOwnPropertyDescriptor(target, key);
+                },
+                getPrototypeOf: function() {
+                  var result = prototype;
+                  prototype = null;
+                  forceGc();
+                  return result;
+                }
+              });
+              var keys = [];
+              for (var key in proxy) keys.push(key);
+              return keys.join(",");
+            })()
+            "#,
+        )
+        .expect("for-in state and trap results should survive forced GC"),
+        Value::String(Arc::from("ownKey,protoKey"))
+    );
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    let prototype = vm
+        .new_object()
+        .expect("cross-advance prototype should allocate");
+    let prototype_value = Value::Object(prototype);
+    vm.heap.with_obj(prototype.0, |object| {
+        *object.proto().lock() = None;
+        object.props().lock().insert(
+            crate::value::PropertyKey::from("protoKey"),
+            crate::value::PropertyDescriptor::data(Value::Number(2.0)),
+        );
+    });
+    let source = vm
+        .new_object()
+        .expect("cross-advance source should allocate");
+    let source = Value::Object(source);
+    if let Value::Object(source_idx) = &source {
+        vm.heap.with_obj(source_idx.0, |object| {
+            *object.proto().lock() = Some(prototype_value);
+            object.props().lock().insert(
+                crate::value::PropertyKey::from("ownKey"),
+                crate::value::PropertyDescriptor::data(Value::Number(1.0)),
+            );
+        });
+    }
+    let iterator = vm
+        .make_for_in_keys(&source)
+        .expect("cross-advance for-in iterator should initialize");
+    assert_eq!(
+        vm.iterator_next(&iterator)
+            .expect("first for-in advance should succeed"),
+        (Value::String(Arc::from("ownKey")), false)
+    );
+    drop(source);
+    let iterator_pin = vm.pin(&iterator);
+    vm.gc();
+    for _ in 0..16 {
+        vm.new_object()
+            .expect("post-GC allocations should exercise reclaimed cell identities");
+    }
+    vm.unpin(iterator_pin);
+    assert_eq!(
+        vm.iterator_next(&iterator)
+            .expect("traced for-in state should survive body-time GC"),
+        (Value::String(Arc::from("protoKey")), false)
+    );
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    vm.run(
+        r#"
+        var forInSourceWeak;
+        var forInSourceAlive = false;
+        var collectingPrototype = new Proxy({}, {
+          ownKeys: function() {
+            forceGc();
+            forInSourceAlive = forInSourceWeak.deref() !== undefined;
+            return [];
+          },
+          getPrototypeOf: function() { return null; }
+        });
+        "#,
+    )
+    .expect("collecting prototype fixture should initialize");
+    let source = vm
+        .run(
+            r#"
+            (function () {
+              var object = Object.create(collectingPrototype);
+              forInSourceWeak = new WeakRef(object);
+              return object;
+            })()
+            "#,
+        )
+        .expect("weak for-in source should initialize");
+    let iterator = vm
+        .make_for_in_keys(&source)
+        .expect("weak for-in source iterator should initialize");
+    drop(source);
+    assert_eq!(
+        vm.iterator_next(&iterator)
+            .expect("empty source and prototype should finish"),
+        (Value::Undefined, true)
+    );
+    assert_eq!(vm.get_global("forInSourceAlive"), Value::Bool(true));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    let source = vm
+        .run("({ key: 1 })")
+        .expect("for-in allocation source should initialize");
+    let _garbage = vm
+        .new_object()
+        .expect("an unrooted object should provide GC retry capacity");
+    let limit = vm.heap.live_count();
+    vm.set_max_heap_objects(Some(limit));
+    let iterator = vm
+        .make_for_in_keys(&source)
+        .expect("iterator allocation should root the source across exact-cap GC");
+    vm.set_max_heap_objects(None);
+    assert!(vm.heap.live_count() <= limit);
+    assert_eq!(
+        vm.iterator_next(&iterator)
+            .expect("the rooted source should remain enumerable"),
+        (Value::String(Arc::from("key")), false)
+    );
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    let error = vm
+        .run(
+            r#"
+            for (var key in new Proxy({}, {
+              ownKeys: function() { forceGc(); throw new Error("for-in-gc-abrupt"); }
+            })) {}
+            "#,
+        )
+        .expect_err("an abrupt ownKeys trap should propagate");
+    assert!(error.to_string().contains("for-in-gc-abrupt"));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    for (source, marker) in [
+        (
+            r#"
+            for (var key in new Proxy({ key: 1 }, {
+              ownKeys: function(target) { return Reflect.ownKeys(target); },
+              getOwnPropertyDescriptor: function() {
+                forceGc();
+                throw new Error("for-in-descriptor-abrupt");
+              }
+            })) {}
+            "#,
+            "for-in-descriptor-abrupt",
+        ),
+        (
+            r#"
+            for (var key in new Proxy({}, {
+              ownKeys: function() { return []; },
+              getPrototypeOf: function() {
+                forceGc();
+                throw new Error("for-in-prototype-abrupt");
+              }
+            })) {}
+            "#,
+            "for-in-prototype-abrupt",
+        ),
+    ] {
+        let error = vm
+            .run(source)
+            .expect_err("for-in trap error should propagate");
+        assert!(error.to_string().contains(marker), "got: {error}");
+        assert_eq!(vm.gc_pins.len(), baseline, "pin leak after {marker}");
+    }
+
+    let error = vm
+        .run(
+            r#"
+            var invariantTarget = {};
+            var invariantInner = new Proxy(invariantTarget, {
+              isExtensible: function(target) {
+                Object.defineProperty(target, "fixed", {
+                  value: 1,
+                  configurable: false
+                });
+                forceGc();
+                return true;
+              }
+            });
+            var invariantOuter = new Proxy(invariantInner, {
+              ownKeys: function() { return []; }
+            });
+            for (var key in invariantOuter) {}
+            "#,
+        )
+        .expect_err("nested ownKeys invariant failure should propagate");
+    assert_eq!(error.kind, crate::error::ErrorKind::Type);
+    assert_eq!(vm.gc_pins.len(), baseline);
+}
+
+#[test]
+fn for_in_primitive_boxing_obeys_the_exact_heap_cap() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.gc();
+    let baseline_pins = vm.gc_pins.len();
+    let primitive = Value::String(Arc::from("ab"));
+
+    let success_limit = vm.heap.live_count() + 2;
+    vm.set_max_heap_objects(Some(success_limit));
+    let iterator = vm
+        .make_for_in_keys(&primitive)
+        .expect("one wrapper plus one iterator should fit the exact cap");
+    vm.set_max_heap_objects(None);
+    assert_eq!(vm.heap.live_count(), success_limit);
+    assert_eq!(
+        vm.iterator_next(&iterator)
+            .expect("the boxed primitive should remain rooted by the iterator"),
+        (Value::String(Arc::from("0")), false)
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    drop(iterator);
+    vm.gc();
+    let failure_limit = vm.heap.live_count() + 1;
+    vm.set_max_heap_objects(Some(failure_limit));
+    let error = vm
+        .make_for_in_keys(&primitive)
+        .expect_err("the iterator must not fit after only its wrapper allocates");
+    vm.set_max_heap_objects(None);
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+}
+
+#[test]
+fn for_in_prototype_cycles_are_iterative_and_bounded() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    assert_eq!(
+        vm.run(
+            r#"
+            var breakingProxy;
+            var prototypeCalls = 0;
+            breakingProxy = new Proxy({}, {
+              ownKeys: function() { return []; },
+              getPrototypeOf: function() {
+                prototypeCalls += 1;
+                return prototypeCalls < 3 ? breakingProxy : null;
+              }
+            });
+            for (var key in breakingProxy) {}
+            prototypeCalls;
+            "#,
+        )
+        .expect("an observable Proxy cycle may break itself"),
+        Value::Number(3.0)
+    );
+
+    vm.run(
+        r#"
+        var cyclicForInProxy;
+        cyclicForInProxy = new Proxy({}, {
+          ownKeys: function() { return []; },
+          getPrototypeOf: function() { return cyclicForInProxy; }
+        });
+        "#,
+    )
+    .expect("cyclic Proxy fixture should initialize");
+    let proxy = vm.get_global("cyclicForInProxy");
+    let iterator = vm
+        .make_for_in_keys(&proxy)
+        .expect("cyclic Proxy iterator should allocate");
+    let baseline = vm.gc_pins.len();
+    vm.set_fuel(Some(100));
+    let error = vm
+        .iterator_next(&iterator)
+        .expect_err("an inert Proxy prototype cycle should exhaust fuel");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+    vm.set_fuel(None);
+
+    let guarded_iterator = vm
+        .make_for_in_keys(&proxy)
+        .expect("guarded cyclic Proxy iterator should allocate");
+    let error = vm
+        .iterator_next(&guarded_iterator)
+        .expect_err("an unmetered inert Proxy cycle should hit the finite replay guard");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    let first = vm.new_object().expect("first cycle object should allocate");
+    let first_value = Value::Object(first);
+    let first_pin = vm.pin(&first_value);
+    let second = vm
+        .new_object()
+        .expect("second cycle object should allocate");
+    vm.heap.with_obj(first.0, |object| {
+        *object.proto().lock() = Some(Value::Object(second));
+    });
+    vm.heap.with_obj(second.0, |object| {
+        *object.proto().lock() = Some(first_value.clone());
+    });
+    let iterator = vm
+        .make_for_in_keys(&first_value)
+        .expect("ordinary cycle iterator should allocate");
+    vm.unpin(first_pin);
+    let error = vm
+        .iterator_next(&iterator)
+        .expect_err("a malformed all-ordinary prototype cycle must terminate");
+    assert_eq!(error.kind, crate::error::ErrorKind::Type);
+    assert_eq!(vm.gc_pins.len(), baseline);
+}
+
+#[test]
 fn revoked_property_proxies_fail_before_zero_fuel_and_restore_pin_depth() {
     let mut vm = Vm::new().expect("VM should initialize");
     vm.run(

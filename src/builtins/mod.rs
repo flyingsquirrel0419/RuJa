@@ -4881,7 +4881,10 @@ fn object_has_own_property(
             "Cannot convert undefined or null to object",
         ));
     }
-    Ok(Value::Bool(object_has_own_key(vm, &this, &key)?))
+    let object = vm.to_object(&this)?;
+    Ok(Value::Bool(
+        own_property_descriptor_for_key_or_throw(vm, &object, &key)?.is_some(),
+    ))
 }
 
 fn object_has_own(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
@@ -4893,7 +4896,9 @@ fn object_has_own(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Resul
     }
     let obj = vm.to_object(object)?;
     let key = to_property_key_descriptor(vm, args.get(1).unwrap_or(&Value::Undefined))?;
-    Ok(Value::Bool(object_has_own_key(vm, &obj, &key)?))
+    Ok(Value::Bool(
+        own_property_descriptor_for_key_or_throw(vm, &obj, &key)?.is_some(),
+    ))
 }
 
 fn object_property_is_enumerable(
@@ -5421,12 +5426,47 @@ fn ordinary_own_property_keys(
     enumerable_only: bool,
     include_strings: bool,
     include_symbols: bool,
-) -> Vec<PropertyKey> {
+) -> error::Result<Vec<PropertyKey>> {
     let mut keys = Vec::new();
     let mut seen = IndexSet::new();
     let typed_array_index_count = include_strings
         .then(|| vm.typed_array_integer_index_own_property_key_count(obj))
         .flatten();
+
+    // Charge before materializing native key collections. The byte length is
+    // a conservative O(1) upper bound for a string's UTF-16 key count.
+    let mut scan_work = typed_array_index_count.unwrap_or(0);
+    match obj {
+        Value::Object(idx) => {
+            scan_work = scan_work.saturating_add(vm.heap.with_obj(idx.0, |o| {
+                let mut work = o.props().lock().len();
+                if include_strings {
+                    if let HeapObj::Array(array) = o {
+                        work = work.saturating_add(array.present.lock().len());
+                    }
+                    if let HeapObj::Object(object) = o {
+                        if let Some(Value::String(string)) = object.primitive.lock().as_ref() {
+                            work = work.saturating_add(string.len());
+                        }
+                    }
+                    if let HeapObj::ModuleNamespace(namespace) = o {
+                        work = work.saturating_add(namespace.exports.lock().len());
+                    }
+                }
+                work
+            }));
+        }
+        Value::String(string) if include_strings => {
+            scan_work = scan_work.saturating_add(string.len());
+        }
+        _ => {}
+    }
+    if vm.fuel_remaining().is_some() {
+        for _ in 0..scan_work {
+            vm.consume_fuel()?;
+        }
+    }
+
     match obj {
         Value::Object(idx) => vm.heap.with_obj(idx.0, |o| {
             let mut index_keys: Vec<u32> = Vec::new();
@@ -5524,7 +5564,7 @@ fn ordinary_own_property_keys(
         }
         _ => {}
     }
-    keys
+    Ok(keys)
 }
 
 pub(crate) fn make_value_array(vm: &mut Vm, items: Vec<Value>) -> error::Result<Value> {
@@ -6222,86 +6262,162 @@ pub(crate) fn own_property_keys_or_throw(
     include_strings: bool,
     include_symbols: bool,
 ) -> error::Result<Vec<PropertyKey>> {
-    if let Value::Object(idx) = obj {
-        if let Some(proxy_result) = vm.heap.with_obj(idx.0, |heap_obj| {
-            if let HeapObj::Proxy(proxy) = heap_obj {
-                if *proxy.revoked.lock() {
-                    return Some(Err(Error::type_err(
-                        "Cannot perform 'ownKeys' on a proxy that has been revoked",
-                    )));
-                }
-                Some(Ok((proxy.target.clone(), proxy.handler.clone())))
-            } else {
-                None
-            }
-        }) {
-            let (target, handler) = proxy_result?;
-            let trap = vm.get_proxy_method(&handler, "ownKeys")?;
-            if trap.is_nullish() {
-                return own_property_keys_or_throw(
+    struct PendingProxyKeys {
+        object: Value,
+        target: Value,
+        trap_keys: Vec<PropertyKey>,
+        seen: IndexSet<PropertyKey>,
+        extensible_target: bool,
+        enumerable_only: bool,
+        include_strings: bool,
+        include_symbols: bool,
+    }
+
+    enum ProxyKeysStep {
+        Forward(Value),
+        Validate {
+            target: Value,
+            trap_keys: Vec<PropertyKey>,
+            seen: IndexSet<PropertyKey>,
+            extensible_target: bool,
+        },
+    }
+
+    let root_pin = vm.pin(obj);
+    let mut pending = Vec::new();
+    let mut pending_pins = 0;
+    let mut current = obj.clone();
+    let mut current_filters = (enumerable_only, include_strings, include_symbols);
+    let result = (|| {
+        let mut keys = loop {
+            let proxy_result = match &current {
+                Value::Object(idx) => vm.heap.with_obj(idx.0, |heap_obj| {
+                    if let HeapObj::Proxy(proxy) = heap_obj {
+                        if *proxy.revoked.lock() {
+                            return Some(Err(Error::type_err(
+                                "Cannot perform 'ownKeys' on a proxy that has been revoked",
+                            )));
+                        }
+                        Some(Ok((proxy.target.clone(), proxy.handler.clone())))
+                    } else {
+                        None
+                    }
+                }),
+                _ => None,
+            };
+            let Some(proxy_result) = proxy_result else {
+                break ordinary_own_property_keys(
                     vm,
-                    &target,
-                    enumerable_only,
-                    include_strings,
-                    include_symbols,
-                );
-            }
-            let key_list = vm.call_function(&trap, std::slice::from_ref(&target), Some(handler))?;
-            let trap_keys = proxy_own_keys_from_array_like(vm, &key_list)?;
-            let mut seen = IndexSet::new();
-            for key in &trap_keys {
-                if !seen.insert(key.clone()) {
-                    return Err(Error::type_err(
-                        "Proxy ownKeys trap returned duplicate entries",
-                    ));
+                    &current,
+                    current_filters.0,
+                    current_filters.1,
+                    current_filters.2,
+                )?;
+            };
+
+            let (target, handler) = proxy_result?;
+            vm.consume_fuel()?;
+            let proxy_pins = vm.pin_many(&[target.clone(), handler.clone()]);
+            let step = (|| {
+                let trap = vm.get_proxy_method(&handler, "ownKeys")?;
+                if trap.is_nullish() {
+                    return Ok(ProxyKeysStep::Forward(target.clone()));
+                }
+                let key_list =
+                    vm.call_function(&trap, std::slice::from_ref(&target), Some(handler.clone()))?;
+                let trap_keys = proxy_own_keys_from_array_like(vm, &key_list)?;
+                let mut seen = IndexSet::new();
+                for key in &trap_keys {
+                    if !seen.insert(key.clone()) {
+                        return Err(Error::type_err(
+                            "Proxy ownKeys trap returned duplicate entries",
+                        ));
+                    }
+                }
+                let extensible_target = vm.is_extensible(&target)?;
+                Ok(ProxyKeysStep::Validate {
+                    target: target.clone(),
+                    trap_keys,
+                    seen,
+                    extensible_target,
+                })
+            })();
+            vm.unpin_many(proxy_pins);
+
+            match step? {
+                ProxyKeysStep::Forward(target) => current = target,
+                ProxyKeysStep::Validate {
+                    target,
+                    trap_keys,
+                    seen,
+                    extensible_target,
+                } => {
+                    pending_pins += vm.pin_many(&[current.clone(), target.clone()]);
+                    pending.push(PendingProxyKeys {
+                        object: current,
+                        target: target.clone(),
+                        trap_keys,
+                        seen,
+                        extensible_target,
+                        enumerable_only: current_filters.0,
+                        include_strings: current_filters.1,
+                        include_symbols: current_filters.2,
+                    });
+                    current = target;
+                    current_filters = (false, true, true);
                 }
             }
-            let target_keys = own_property_keys_or_throw(vm, &target, false, true, true)?;
-            for target_key in &target_keys {
+        };
+
+        while let Some(frame) = pending.pop() {
+            let mut omitted_non_configurable = false;
+            for target_key in &keys {
                 vm.consume_fuel()?;
-                let descriptor = own_property_descriptor_for_key_or_throw(vm, &target, target_key)?;
+                let descriptor =
+                    own_property_descriptor_for_key_or_throw(vm, &frame.target, target_key)?;
                 if descriptor.is_some_and(|descriptor| !descriptor.configurable)
-                    && !seen.contains(target_key)
+                    && !frame.seen.contains(target_key)
                 {
-                    return Err(Error::type_err(
-                        "Proxy ownKeys trap omitted a non-configurable key",
-                    ));
+                    omitted_non_configurable = true;
                 }
             }
-            if !vm.is_extensible(&target)? {
-                let target_key_set: IndexSet<_> = target_keys.into_iter().collect();
-                if target_key_set != seen {
+            if omitted_non_configurable {
+                return Err(Error::type_err(
+                    "Proxy ownKeys trap omitted a non-configurable key",
+                ));
+            }
+            if !frame.extensible_target {
+                let target_key_set: IndexSet<_> = keys.iter().cloned().collect();
+                if target_key_set != frame.seen {
                     return Err(Error::type_err(
                         "Proxy ownKeys trap does not match a non-extensible target",
                     ));
                 }
             }
-            let mut keys = Vec::new();
-            for key in trap_keys {
+
+            let mut filtered = Vec::new();
+            for key in frame.trap_keys {
                 vm.consume_fuel()?;
-                let included = matches!(&key, PropertyKey::Str(_) if include_strings)
-                    || matches!(&key, PropertyKey::Symbol(_) if include_symbols);
+                let included = matches!(&key, PropertyKey::Str(_) if frame.include_strings)
+                    || matches!(&key, PropertyKey::Symbol(_) if frame.include_symbols);
                 if !included {
                     continue;
                 }
-                if enumerable_only
-                    && !own_property_descriptor_for_key_or_throw(vm, obj, &key)?
+                if frame.enumerable_only
+                    && !own_property_descriptor_for_key_or_throw(vm, &frame.object, &key)?
                         .is_some_and(|desc| desc.enumerable)
                 {
                     continue;
                 }
-                keys.push(key);
+                filtered.push(key);
             }
-            return Ok(keys);
+            keys = filtered;
         }
-    }
-    Ok(ordinary_own_property_keys(
-        vm,
-        obj,
-        enumerable_only,
-        include_strings,
-        include_symbols,
-    ))
+        Ok(keys)
+    })();
+    vm.unpin_many(pending_pins);
+    vm.unpin(root_pin);
+    result
 }
 
 struct IntegrityDescriptor {

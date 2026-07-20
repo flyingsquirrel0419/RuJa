@@ -1083,6 +1083,16 @@ pub struct LazyGeneratorData {
     pub extensible: AtomicBool,
 }
 
+/// State for the lazy `for...in` iterator described by CreateForInIterator.
+/// String keys are ordinary Rust data; only `object` needs GC tracing.
+pub struct ForInIteratorState {
+    pub object: Option<Value>,
+    pub object_was_visited: bool,
+    pub visited_keys: IndexSet<Arc<str>>,
+    pub remaining_keys: Vec<Arc<str>>,
+    pub remaining_index: usize,
+}
+
 /// Internal iterator state used by `for...of` / `for...in` and the spread operator.
 pub struct IteratorData {
     /// Remaining values to yield, in order (eager mode).
@@ -1103,13 +1113,9 @@ pub struct IteratorData {
     /// reads `length` plus the current integer property on each pull, so array
     /// growth, contraction, accessors, and arguments object mapping are visible.
     pub array_like: Mutex<Option<Value>>,
-    /// Lazy `for...in` mode. `items` stores the initial key list, while this
-    /// keeps the enumerated object alive and lets each key be revalidated
-    /// immediately before it is yielded.
-    pub for_in_source: Mutex<Option<Value>>,
-    /// Object where each `for...in` key was discovered. This is aligned with
-    /// `items` for for-in iterators and empty for all other iterator kinds.
-    pub for_in_key_sources: Mutex<Vec<Value>>,
+    /// Lazy `for...in` mode. Own keys, descriptors, and prototypes are queried
+    /// only as iteration advances so Proxy traps run at their observable phase.
+    pub for_in: Mutex<Option<ForInIteratorState>>,
     /// True when this iterator is the internal adapter returned by
     /// GetIterator(value, async) after falling back to the sync protocol.
     pub async_from_sync: AtomicBool,

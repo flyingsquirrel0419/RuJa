@@ -575,6 +575,108 @@ fn iterator_zip_keyed_proxy_own_keys_array_like_consumes_fuel() {
 }
 
 #[test]
+fn for_in_native_snapshots_candidates_and_prototypes_consume_fuel() {
+    let mut candidate_vm = Vm::new().expect("failed to initialize VM");
+    candidate_vm
+        .run(
+            r#"
+            var wideForIn = Object.create(null);
+            for (var i = 0; i < 200; i += 1) {
+              Object.defineProperty(wideForIn, "key" + i, {
+                value: i,
+                enumerable: false,
+                configurable: true
+              });
+            }
+            "#,
+        )
+        .expect("wide for-in fixture should initialize");
+    let source = candidate_vm.get_global("wideForIn");
+    let iterator = candidate_vm
+        .make_for_in_keys(&source)
+        .expect("wide for-in iterator should initialize");
+    candidate_vm.set_fuel(Some(199));
+    let error = candidate_vm
+        .iterator_next(&iterator)
+        .expect_err("N-1 fuel must abort before materializing N ordinary own keys");
+    assert_eq!(error.kind, ruja::ErrorKind::Fuel);
+    assert_eq!(candidate_vm.fuel_remaining(), Some(0));
+
+    candidate_vm.set_fuel(None);
+    let iterator = candidate_vm
+        .make_for_in_keys(&source)
+        .expect("second wide for-in iterator should initialize");
+    candidate_vm.set_fuel(Some(399));
+    let error = candidate_vm
+        .iterator_next(&iterator)
+        .expect_err("snapshot plus N-1 skipped candidates must exhaust fuel");
+    assert_eq!(error.kind, ruja::ErrorKind::Fuel);
+    assert_eq!(candidate_vm.fuel_remaining(), Some(0));
+
+    candidate_vm.set_fuel(None);
+    let iterator = candidate_vm
+        .make_for_in_keys(&source)
+        .expect("exact-budget wide for-in iterator should initialize");
+    candidate_vm.set_fuel(Some(400));
+    assert_eq!(
+        candidate_vm
+            .iterator_next(&iterator)
+            .expect("exact snapshot and candidate fuel should complete"),
+        (ruja::Value::Undefined, true)
+    );
+    assert_eq!(candidate_vm.fuel_remaining(), Some(0));
+
+    let mut non_string_vm = Vm::new().expect("failed to initialize VM");
+    non_string_vm
+        .run(
+            r#"
+            var symbolOnlyForIn = Object.create(null);
+            for (var i = 0; i < 200; i += 1) {
+              symbolOnlyForIn[Symbol(i)] = i;
+            }
+            var typedForIn = new Uint8Array(200);
+            var stringForIn = "x".repeat(200);
+            "#,
+        )
+        .expect("non-string and exotic for-in fixtures should initialize");
+    for name in ["symbolOnlyForIn", "typedForIn", "stringForIn"] {
+        let source = non_string_vm.get_global(name);
+        let iterator = non_string_vm
+            .make_for_in_keys(&source)
+            .expect("metered for-in iterator should initialize");
+        non_string_vm.set_fuel(Some(0));
+        let error = non_string_vm
+            .iterator_next(&iterator)
+            .expect_err("zero fuel must abort a non-empty own-key snapshot");
+        assert_eq!(error.kind, ruja::ErrorKind::Fuel, "{name}");
+        assert_eq!(non_string_vm.fuel_remaining(), Some(0), "{name}");
+        non_string_vm.set_fuel(None);
+    }
+
+    let mut prototype_vm = Vm::new().expect("failed to initialize VM");
+    prototype_vm
+        .run(
+            r#"
+            var deepForIn = Object.create(null);
+            for (var i = 0; i < 200; i += 1) {
+              deepForIn = Object.create(deepForIn);
+            }
+            "#,
+        )
+        .expect("deep for-in prototype fixture should initialize");
+    let source = prototype_vm.get_global("deepForIn");
+    let iterator = prototype_vm
+        .make_for_in_keys(&source)
+        .expect("deep for-in iterator should initialize");
+    prototype_vm.set_fuel(Some(100));
+    let error = prototype_vm
+        .iterator_next(&iterator)
+        .expect_err("native prototype transitions should consume fuel");
+    assert_eq!(error.kind, ruja::ErrorKind::Fuel);
+    assert_eq!(prototype_vm.fuel_remaining(), Some(0));
+}
+
+#[test]
 fn iterator_zip_keyed_padding_collection_consumes_fuel() {
     let mut vm = Vm::new().expect("failed to initialize VM");
     vm.run(
@@ -595,7 +697,7 @@ fn iterator_zip_keyed_padding_collection_consumes_fuel() {
         "#,
     )
     .expect("failed to create keyed padding inputs");
-    vm.set_fuel(Some(500));
+    vm.set_fuel(Some(700));
     let error = vm
         .run(
             r#"

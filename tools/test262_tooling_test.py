@@ -107,6 +107,10 @@ from test262_proxy_own_keys_admission import (
     PROXY_OWN_KEYS_FEATURES,
     PROXY_OWN_KEYS_FILES,
 )
+from test262_proxy_for_in_admission import (
+    PROXY_FOR_IN_FEATURES,
+    PROXY_FOR_IN_FILES,
+)
 from test262_reflect_set_has_admission import (
     REFLECT_SET_HAS_FEATURES,
     REFLECT_SET_HAS_FILES,
@@ -2972,6 +2976,110 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                     self.assertTrue(
                         tool.should_skip({"features": ["Proxy"]}, outside_path)
                     )
+                finally:
+                    tool.TEST262 = original_root
+
+    def test_proxy_for_in_manifest_is_exact_live_disjoint_and_shared(self):
+        self.assertEqual(len(PROXY_FOR_IN_FILES), 22)
+        self.assertEqual(frozenset(PROXY_FOR_IN_FEATURES), PROXY_FOR_IN_FILES)
+        self.assertEqual(
+            sum("/getOwnPropertyDescriptor/" in path for path in PROXY_FOR_IN_FILES),
+            21,
+        )
+        enumerate_path = "built-ins/Proxy/enumerate/removed-does-not-trigger.js"
+        realm_path = (
+            "built-ins/Proxy/getOwnPropertyDescriptor/"
+            "result-type-is-not-object-nor-undefined-realm.js"
+        )
+        missing_checks_path = (
+            "built-ins/Proxy/getOwnPropertyDescriptor/"
+            "resultdesc-is-not-configurable-not-writable-targetdesc-is-writable.js"
+        )
+        self.assertEqual(
+            PROXY_FOR_IN_FEATURES[enumerate_path],
+            {"Proxy", "Symbol", "Symbol.iterator"},
+        )
+        self.assertEqual(
+            PROXY_FOR_IN_FEATURES[realm_path], {"Proxy", "cross-realm"}
+        )
+        self.assertEqual(
+            PROXY_FOR_IN_FEATURES[missing_checks_path],
+            {"Proxy", "proxy-missing-checks"},
+        )
+
+        admission_dir = Path(__file__).resolve().parent
+        for manifest in admission_dir.glob("test262_*_admission.txt"):
+            if manifest.name == "test262_proxy_for_in_admission.txt":
+                continue
+            existing = {
+                line
+                for raw_line in manifest.read_text().splitlines()
+                if (line := raw_line.strip()) and not line.startswith("#")
+            }
+            self.assertFalse(PROXY_FOR_IN_FILES & existing, manifest.name)
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        try:
+            test_root_available = test_root.is_dir()
+        except OSError:
+            test_root_available = False
+        if test_root_available:
+            property_helper_files = {
+                "built-ins/Proxy/getOwnPropertyDescriptor/"
+                "trap-is-missing-target-is-proxy.js",
+                "built-ins/Proxy/getOwnPropertyDescriptor/"
+                "trap-is-null-target-is-proxy.js",
+                "built-ins/Proxy/getOwnPropertyDescriptor/"
+                "trap-is-undefined-target-is-proxy.js",
+                "built-ins/Proxy/getOwnPropertyDescriptor/trap-is-undefined.js",
+            }
+            for relative, features in PROXY_FOR_IN_FEATURES.items():
+                path = test_root / relative
+                self.assertTrue(path.is_file(), relative)
+                metadata = test262_runner.parse_meta(path.read_text())
+                self.assertEqual(
+                    frozenset(metadata.get("features", [])), features, relative
+                )
+                expected_includes = []
+                if relative in property_helper_files:
+                    expected_includes = ["propertyHelper.js"]
+                elif relative == enumerate_path:
+                    expected_includes = ["compareArray.js"]
+                self.assertEqual(metadata.get("includes", []), expected_includes, relative)
+                self.assertEqual(metadata.get("flags", []), [], relative)
+                self.assertIsNone(metadata.get("negative"), relative)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            future_descriptor = (
+                root / "test/built-ins/Proxy/getOwnPropertyDescriptor/future.js"
+            )
+            future_enumerate = root / "test/built-ins/Proxy/enumerate/future.js"
+            outside = root / "test/language/statements/for-in/future.js"
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for relative, features in PROXY_FOR_IN_FEATURES.items():
+                        path = root / "test" / relative
+                        self.assertTrue(tool.proxy_for_in_path(path), relative)
+                        self.assertEqual(tool.proxy_for_in_features(path), features)
+                        self.assertFalse(
+                            tool.should_skip({"features": sorted(features)}, path),
+                            relative,
+                        )
+                        self.assertTrue(
+                            tool.should_skip(
+                                {"features": sorted(features | {"decorators"})},
+                                path,
+                            ),
+                            relative,
+                        )
+                    for path in (future_descriptor, future_enumerate, outside):
+                        self.assertFalse(tool.proxy_for_in_path(path))
+                        self.assertTrue(
+                            tool.should_skip({"features": ["Proxy"]}, path)
+                        )
                 finally:
                     tool.TEST262 = original_root
 

@@ -108,11 +108,10 @@ pub fn trace_obj(obj: &HeapObj, marked: &[bool], worklist: &mut Vec<usize>) {
         if let Some(source) = it.array_like.lock().as_ref() {
             push_value(source, worklist);
         }
-        if let Some(source) = it.for_in_source.lock().as_ref() {
-            push_value(source, worklist);
-        }
-        for source in it.for_in_key_sources.lock().iter() {
-            push_value(source, worklist);
+        if let Some(state) = it.for_in.lock().as_ref() {
+            if let Some(object) = state.object.as_ref() {
+                push_value(object, worklist);
+            }
         }
         return;
     }
@@ -403,11 +402,10 @@ pub fn trace_obj(obj: &HeapObj, marked: &[bool], worklist: &mut Vec<usize>) {
             if let Some(source) = it.array_like.lock().as_ref() {
                 push_value(source, worklist);
             }
-            if let Some(source) = it.for_in_source.lock().as_ref() {
-                push_value(source, worklist);
-            }
-            for source in it.for_in_key_sources.lock().iter() {
-                push_value(source, worklist);
+            if let Some(state) = it.for_in.lock().as_ref() {
+                if let Some(object) = state.object.as_ref() {
+                    push_value(object, worklist);
+                }
             }
         }
         _ => {}

@@ -1344,6 +1344,243 @@ fn for_in_enumeration_descriptor_edges() {
 }
 
 #[test]
+fn for_in_observes_proxy_internal_methods_lazily() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            var proxy = new Proxy({ a: 1, b: 2 }, {
+              ownKeys: function(target) {
+                log.push("ownKeys");
+                return Reflect.ownKeys(target);
+              },
+              getOwnPropertyDescriptor: function(target, key) {
+                log.push("descriptor:" + key);
+                return Reflect.getOwnPropertyDescriptor(target, key);
+              },
+              getPrototypeOf: function() {
+                log.push("prototype");
+                return null;
+              }
+            });
+            for (var key in proxy) log.push("body:" + key);
+            log.join(",");
+        "#),
+        Value::String(Arc::from(
+            "ownKeys,descriptor:a,body:a,descriptor:b,body:b,prototype"
+        ))
+    );
+
+    assert_eq!(
+        run(r#"
+            var log = [];
+            var proxy = new Proxy({ a: 1, b: 2 }, {
+              ownKeys: function(target) {
+                log.push("ownKeys");
+                return Reflect.ownKeys(target);
+              },
+              getOwnPropertyDescriptor: function(target, key) {
+                log.push("descriptor:" + key);
+                return Reflect.getOwnPropertyDescriptor(target, key);
+              },
+              getPrototypeOf: function() {
+                log.push("prototype");
+                return null;
+              }
+            });
+            for (var key in proxy) {
+              log.push("body:" + key);
+              break;
+            }
+            log.join(",");
+        "#),
+        Value::String(Arc::from("ownKeys,descriptor:a,body:a"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var forwarded = [];
+            for (var key in new Proxy({ targetKey: 1 }, {})) forwarded.push(key);
+            var fabricated = new Proxy({}, {
+              ownKeys: function() { return ["second", "first"]; },
+              getOwnPropertyDescriptor: function() {
+                return { value: 1, enumerable: true, configurable: true };
+              },
+              getPrototypeOf: function() { return null; }
+            });
+            var custom = [];
+            for (var customKey in fabricated) custom.push(customKey);
+            forwarded.join(",") + "|" + custom.join(",");
+        "#),
+        Value::String(Arc::from("targetKey|second,first"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var calls = 0;
+            var cyclic;
+            cyclic = new Proxy({}, {
+              ownKeys: function() {
+                calls += 1;
+                return ["key" + calls];
+              },
+              getOwnPropertyDescriptor: function() {
+                return { value: 1, enumerable: true, configurable: true };
+              },
+              getPrototypeOf: function() { return cyclic; }
+            });
+            var keys = [];
+            for (var key in cyclic) {
+              keys.push(key);
+              if (keys.length === 3) break;
+            }
+            keys.join(",") + "|" + calls;
+        "#),
+        Value::String(Arc::from("key1,key2,key3|3"))
+    );
+}
+
+#[test]
+fn for_in_proxy_filters_and_shadowing_follow_descriptor_results() {
+    assert_eq!(
+        run(r#"
+            var symbol = Symbol("ignored");
+            var target = { a: 1 };
+            target[symbol] = 2;
+            var descriptorKeys = [];
+            var proxy = new Proxy(target, {
+              ownKeys: function() { return [symbol, "a"]; },
+              getOwnPropertyDescriptor: function(target, key) {
+                descriptorKeys.push(key === symbol ? "symbol" : key);
+                return Reflect.getOwnPropertyDescriptor(target, key);
+              },
+              getPrototypeOf: function() { return null; }
+            });
+            var keys = [];
+            for (var key in proxy) keys.push(key);
+            keys.join(",") + "|" + descriptorKeys.join(",");
+        "#),
+        Value::String(Arc::from("a|a"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var proto = Object.create(null);
+            proto.x = 1;
+            var hidden = new Proxy({}, {
+              ownKeys: function() { return ["x"]; },
+              getOwnPropertyDescriptor: function() {
+                return { value: 2, enumerable: false, configurable: true };
+              },
+              getPrototypeOf: function() { return proto; }
+            });
+            var absent = new Proxy({}, {
+              ownKeys: function() { return ["x"]; },
+              getOwnPropertyDescriptor: function() { return undefined; },
+              getPrototypeOf: function() { return proto; }
+            });
+            var hiddenKeys = [];
+            var absentKeys = [];
+            for (var hiddenKey in hidden) hiddenKeys.push(hiddenKey);
+            for (var absentKey in absent) absentKeys.push(absentKey);
+            hiddenKeys.join(",") + "|" + absentKeys.join(",");
+        "#),
+        Value::String(Arc::from("|x"))
+    );
+}
+
+#[test]
+fn for_in_proxy_revocation_and_abrupt_completions_propagate() {
+    assert_eq!(
+        run(r#"
+            var state = Proxy.revocable({ a: 1, b: 2 }, {
+              ownKeys: function(target) { return Reflect.ownKeys(target); },
+              getOwnPropertyDescriptor: function(target, key) {
+                return Reflect.getOwnPropertyDescriptor(target, key);
+              },
+              getPrototypeOf: function() { return null; }
+            });
+            var keys = [];
+            var errorName = "none";
+            try {
+              for (var key in state.proxy) {
+                keys.push(key);
+                state.revoke();
+              }
+            } catch (error) {
+              errorName = error.name;
+            }
+            keys.join(",") + "|" + errorName;
+        "#),
+        Value::String(Arc::from("a|TypeError"))
+    );
+
+    for trap in ["ownKeys", "getOwnPropertyDescriptor", "getPrototypeOf"] {
+        let source = format!(
+            r#"
+                var marker = {{}};
+                var caught;
+                var handler = {{
+                  ownKeys: function() {{ {own_keys} return ["key"]; }},
+                  getOwnPropertyDescriptor: function() {{ {descriptor}
+                    return {{ value: 1, enumerable: false, configurable: true }};
+                  }},
+                  getPrototypeOf: function() {{ {prototype} return null; }}
+                }};
+                try {{ for (var key in new Proxy({{}}, handler)) {{}} }}
+                catch (error) {{ caught = error; }}
+                caught === marker;
+            "#,
+            own_keys = if trap == "ownKeys" {
+                "throw marker;"
+            } else {
+                ""
+            },
+            descriptor = if trap == "getOwnPropertyDescriptor" {
+                "throw marker;"
+            } else {
+                ""
+            },
+            prototype = if trap == "getPrototypeOf" {
+                "throw marker;"
+            } else {
+                ""
+            },
+        );
+        assert_eq!(run(&source), Value::Bool(true), "trap: {trap}");
+    }
+
+    assert!(run_err(
+        "for (var key in new Proxy({}, { ownKeys: function(){ return ['x', 'x']; } })) {}"
+    )
+    .contains("duplicate"));
+}
+
+#[test]
+fn for_in_boxes_strings_and_uses_object_properties_not_collection_entries() {
+    assert_eq!(
+        run(r#"
+            var keys = [];
+            for (var key in "A\u{1D11E}") keys.push(key);
+            for (var nullKey in null) keys.push("null:" + nullKey);
+            for (var undefinedKey in undefined) keys.push("undefined:" + undefinedKey);
+            keys.join(",");
+        "#),
+        Value::String(Arc::from("0,1,2"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var map = new Map([["entry", 1]]);
+            map.own = 2;
+            var keys = [];
+            for (var key in map) keys.push(key);
+            keys.join(",");
+        "#),
+        Value::String(Arc::from("own"))
+    );
+}
+
+#[test]
 fn for_in_member_lhs_array_prototype_setter() {
     assert_eq!(
         run("var obj = Object.create(null); var let, value; obj.key = 1; for (let in obj); Object.defineProperty(Array.prototype, '1', { set: function(param) { value = param; }, configurable: true }); for ([let][1] in obj); delete Array.prototype[1]; value;"),
