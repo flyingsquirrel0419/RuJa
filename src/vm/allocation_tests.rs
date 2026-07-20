@@ -1116,6 +1116,187 @@ fn array_copy_within_roots_values_and_restores_pin_depth() {
 }
 
 #[test]
+fn array_fill_consumes_exact_per_index_fuel() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    let args = [Value::String(Arc::from("filled"))];
+    let target = vm
+        .run("({ 0: null, 1: null, 2: null, length: 3 })")
+        .expect("fill target should initialize");
+    let target_pin = vm.pin(&target);
+    let baseline = vm.gc_pins.len();
+
+    vm.set_fuel(Some(2));
+    let error = crate::builtins::array_fill(&mut vm, &args, Some(target.clone()))
+        .expect_err("N-1 fuel must abort the fill loop");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+    vm.set_fuel(None);
+    assert_eq!(
+        vm.get_property(&target, "0")
+            .expect("first partial fill should remain observable"),
+        Value::String(Arc::from("filled"))
+    );
+    assert_eq!(
+        vm.get_property(&target, "1")
+            .expect("second partial fill should remain observable"),
+        Value::String(Arc::from("filled"))
+    );
+    assert_eq!(
+        vm.get_property(&target, "2")
+            .expect("unfilled property should remain readable"),
+        Value::Null
+    );
+
+    let complete = vm
+        .run("({ 0: null, 1: null, 2: null, length: 3 })")
+        .expect("complete fill target should initialize");
+    let complete_pin = vm.pin(&complete);
+    let baseline = vm.gc_pins.len();
+    vm.set_fuel(Some(3));
+    let returned = crate::builtins::array_fill(&mut vm, &args, Some(complete.clone()))
+        .expect("exact fuel should complete fill");
+    assert_eq!(returned, complete);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+    vm.set_fuel(None);
+
+    vm.set_fuel(Some(0));
+    crate::builtins::array_fill(
+        &mut vm,
+        &[Value::Number(1.0), Value::Number(2.0), Value::Number(2.0)],
+        Some(complete),
+    )
+    .expect("an empty fill range should consume no loop fuel");
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+    vm.set_fuel(None);
+    vm.unpin(complete_pin);
+    vm.unpin(target_pin);
+}
+
+#[test]
+fn array_fill_roots_observable_state_and_restores_pin_depth() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("GC test hook should register");
+    let baseline = vm.gc_pins.len();
+    let result = vm.run(
+        r#"
+        (function () {
+          var value = { marker: 41 };
+          var target = { length: 2 };
+          var proxy = new Proxy(target, {
+            get: function (object, key, receiver) {
+              if (key === "length") forceGc();
+              return Reflect.get(object, key, receiver);
+            },
+            set: function (object, key, newValue) {
+              forceGc();
+              object[key] = newValue;
+              return true;
+            }
+          });
+          var returned = Array.prototype.fill.call(
+            proxy,
+            value,
+            { valueOf: function () { forceGc(); return 0; } },
+            { valueOf: function () { forceGc(); return 2; } }
+          );
+          return [returned === proxy, target[0].marker, target[1].marker].join(":");
+        })();
+        "#,
+    );
+    assert_eq!(
+        result.expect("fill state should survive every collecting callback"),
+        Value::String(Arc::from("true:41:41"))
+    );
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    for source in [
+        r#"
+        var error = {};
+        var source = new Proxy({}, {
+          get: function () { forceGc(); throw error; }
+        });
+        Array.prototype.fill.call(source, {}, 0, 1);
+        "#,
+        r#"
+        var error = {};
+        Array.prototype.fill.call(
+          { length: 1 },
+          {},
+          { valueOf: function () { forceGc(); throw error; } },
+          1
+        );
+        "#,
+        r#"
+        var error = {};
+        Array.prototype.fill.call(
+          { length: 1 },
+          {},
+          0,
+          { valueOf: function () { forceGc(); throw error; } }
+        );
+        "#,
+        r#"
+        var error = {};
+        var source = new Proxy({ length: 1 }, {
+          set: function () { forceGc(); throw error; }
+        });
+        Array.prototype.fill.call(source, {});
+        "#,
+    ] {
+        let mut vm = Vm::new().expect("VM should initialize");
+        vm.register_fn(
+            "forceGc",
+            |vm, _, _| {
+                vm.gc();
+                Ok(Value::Undefined)
+            },
+            0,
+        )
+        .expect("GC test hook should register");
+        let baseline = vm.gc_pins.len();
+        vm.run(source)
+            .expect_err("the observable fill step should complete abruptly");
+        assert_eq!(vm.gc_pins.len(), baseline);
+        assert_eq!(
+            vm.run("1 + 1").expect("VM should remain reusable"),
+            Value::Number(2.0)
+        );
+    }
+
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.gc();
+    let _garbage = vm
+        .new_object()
+        .expect("collectible garbage should allocate");
+    let baseline = vm.gc_pins.len();
+    vm.set_max_heap_objects(Some(vm.heap.live_count()));
+    let boxed = crate::builtins::array_fill(&mut vm, &[], Some(Value::Bool(true)))
+        .expect("primitive boxing should retry after collecting garbage");
+    vm.set_max_heap_objects(None);
+    let Value::Object(boxed_idx) = boxed else {
+        panic!("fill should return the boxed Boolean receiver");
+    };
+    vm.heap.with_obj(boxed_idx.0, |object| {
+        let HeapObj::Object(data) = object else {
+            panic!("Boolean boxing should allocate ordinary object data");
+        };
+        assert_eq!(*data.primitive.lock(), Some(Value::Bool(true)));
+    });
+    assert_eq!(vm.gc_pins.len(), baseline);
+}
+
+#[test]
 fn array_iterators_preserve_safe_indices_and_advance_before_allocation() {
     let mut vm = Vm::new().expect("VM should initialize");
     let iterator = vm

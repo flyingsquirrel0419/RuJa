@@ -100,6 +100,7 @@ try:
     from test262_array_copy_within_admission import (
         ARRAY_COPY_WITHIN_FEATURES, ARRAY_COPY_WITHIN_FILES,
     )
+    from test262_array_fill_admission import ARRAY_FILL_FEATURES, ARRAY_FILL_FILES
     from test262_array_iterator_admission import (
         ARRAY_ITERATOR_FEATURES, ARRAY_ITERATOR_FILES,
     )
@@ -217,6 +218,7 @@ except ModuleNotFoundError:
     from tools.test262_array_copy_within_admission import (
         ARRAY_COPY_WITHIN_FEATURES, ARRAY_COPY_WITHIN_FILES,
     )
+    from tools.test262_array_fill_admission import ARRAY_FILL_FEATURES, ARRAY_FILL_FILES
     from tools.test262_array_iterator_admission import (
         ARRAY_ITERATOR_FEATURES, ARRAY_ITERATOR_FILES,
     )
@@ -2470,6 +2472,24 @@ def array_copy_within_features(path):
         return frozenset()
     return ARRAY_COPY_WITHIN_FEATURES.get(rel.as_posix(), frozenset())
 
+def array_fill_path(path):
+    if path is None:
+        return False
+    try:
+        rel = Path(path).resolve().relative_to(Path(TEST262).resolve() / "test")
+    except ValueError:
+        return False
+    return rel.as_posix() in ARRAY_FILL_FILES
+
+def array_fill_features(path):
+    if path is None:
+        return frozenset()
+    try:
+        rel = Path(path).resolve().relative_to(Path(TEST262).resolve() / "test")
+    except ValueError:
+        return frozenset()
+    return ARRAY_FILL_FEATURES.get(rel.as_posix(), frozenset())
+
 def array_iterator_path(path):
     if path is None:
         return False
@@ -2846,6 +2866,8 @@ def should_skip(meta, path=None):
         feats.difference_update(array_concat_features(path))
     if path is not None and array_copy_within_path(path):
         feats.difference_update(array_copy_within_features(path))
+    if path is not None and array_fill_path(path):
+        feats.difference_update(array_fill_features(path))
     if path is not None and array_iterator_path(path):
         feats.difference_update(array_iterator_features(path))
     if path is not None and reflect_set_has_path(path):

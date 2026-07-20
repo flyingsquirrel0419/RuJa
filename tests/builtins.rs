@@ -4336,6 +4336,120 @@ fn array_fill_materializes_holes() {
 }
 
 #[test]
+fn array_fill_is_generic_ordered_live_and_realm_aware() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            var coercions = 0;
+            var value = {
+              marker: 41,
+              valueOf: function () { coercions += 1; throw new Error("unused"); }
+            };
+            var target = { length: 4 };
+            var proxy = new Proxy(target, {
+              get: function (object, key, receiver) {
+                log.push("get:" + String(key));
+                return Reflect.get(object, key, receiver);
+              },
+              set: function (object, key, newValue) {
+                log.push("set:" + String(key));
+                object[key] = newValue;
+                return true;
+              }
+            });
+            var returned = Array.prototype.fill.call(
+              proxy,
+              value,
+              { valueOf: function () {
+                  log.push("start");
+                  target.length = 1;
+                  return -3;
+              } },
+              { valueOf: function () {
+                  log.push("end");
+                  target.length = 10;
+                  return 3;
+              } }
+            );
+
+            var inheritedValue;
+            var inherited;
+            var prototype = {
+              set 0(newValue) {
+                inheritedValue = [this === inherited, newValue === value];
+              }
+            };
+            inherited = Object.create(prototype);
+            inherited.length = 1;
+            Array.prototype.fill.call(inherited, value);
+
+            var partialTarget = { length: 3 };
+            var partial = new Proxy(partialTarget, {
+              set: function (object, key, newValue) {
+                if (key === "1") return false;
+                object[key] = newValue;
+                return true;
+              }
+            });
+            var partialError;
+            try { Array.prototype.fill.call(partial, value); }
+            catch (error) { partialError = error; }
+
+            var huge = { length: Number.MAX_SAFE_INTEGER };
+            Array.prototype.fill.call(
+              huge,
+              value,
+              9007199254740989,
+              Number.MAX_SAFE_INTEGER
+            );
+
+            var coerced = { length: 3 };
+            Array.prototype.fill.call(coerced, 7, "1.9", Infinity);
+
+            var boxed = Array.prototype.fill.call(true, value);
+            var nullish = 0;
+            try { Array.prototype.fill.call(null, value); }
+            catch (error) { nullish += error instanceof TypeError; }
+            try { Array.prototype.fill.call(undefined, value); }
+            catch (error) { nullish += error instanceof TypeError; }
+            var stringError;
+            try { Array.prototype.fill.call("x", value); }
+            catch (error) { stringError = error instanceof TypeError; }
+
+            var other = $262.createRealm().global;
+            var foreignFill = other.Array.prototype.fill;
+            var foreignBox = foreignFill.call(false, value);
+            var foreignError;
+            try { foreignFill.call("x", value); }
+            catch (error) {
+              foreignError = Object.getPrototypeOf(error) === other.TypeError.prototype;
+            }
+
+            [
+              returned === proxy,
+              log.join(",") === "get:length,start,end,set:1,set:2",
+              target[1] === value && target[2] === value && !(0 in target),
+              coercions === 0,
+              inheritedValue[0] && inheritedValue[1] && !Object.hasOwn(inherited, "0"),
+              partialError instanceof TypeError,
+              partialTarget[0] === value && !(1 in partialTarget) && !(2 in partialTarget),
+              huge["9007199254740989"] === value,
+              huge["9007199254740990"] === value,
+              coerced[1] === 7 && coerced[2] === 7 && !(0 in coerced),
+              Object.getPrototypeOf(boxed) === Boolean.prototype,
+              nullish === 2,
+              stringError,
+              Object.getPrototypeOf(foreignBox) === other.Boolean.prototype,
+              foreignError
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "true|true|true|true|true|true|true|true|true|true|true|true|true|true|true"
+        ))
+    );
+}
+
+#[test]
 fn array_reverse() {
     assert_eq!(
         run("[1,2,3].reverse().join(',');"),

@@ -9101,6 +9101,47 @@ checkout.
 - 장점, 단점 및 영향: Direct copyWithin is 39/39 with 18 attributable runtime transitions, both tools remain symmetric, and future siblings stay gated. Updating Test262 requires an explicit manifest audit, and neither methods-called-as-functions nor reverse/fill/iterator receiver semantics are claimed by this unit.
 ```
 
+## Generic Array fill
+
+`tools/test262_array_fill_admission.txt` freezes exactly the **6** direct fill
+files that are otherwise hidden by broad `Symbol`, `Reflect.construct`, or
+resizable-ArrayBuffer gates. Its exact feature map is shared by the runner and
+analyzer. Tooling requires map/manifest equality, live metadata, disjointness
+from every other admission, runner/analyzer symmetry, rejection of extra
+unsupported features, and closure against future siblings. The other 16 files
+continue through ordinary policy.
+
+On fixed checkout `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the preceding
+binary under the preceding policy is **8 pass / 8 fail / 6 skip**. Applying the
+new exact policy to that binary produces **9 pass / 13 fail / 0 skip**. The
+repaired runtime is **22 pass / 0 fail / 0 skip**, proving **13 fail-to-pass**
+runtime transitions and no reverse transition under the final policy. A
+separate forced sweep of `%TypedArray%.prototype.fill` remains **52/52**.
+
+The broader `built-ins/Array/prototype/methods-called-as-functions.js`
+aggregate remains outside admission. It now clears fill and fails next at the
+independent generic `filter` gap.
+
+Local verification passes all targets and features with **188/188** library
+tests, **15/15** arguments tests, and **521/521** builtins tests, plus
+**187/187** release library tests, **122/122** Python tooling tests, **1/1**
+documentation tests, rustfmt, warnings-denied Clippy, and wasm32 all-features
+checking. GPT-5.6 runtime reviewer Kepler
+(`019f8047-0013-7712-910e-f1ffa4e7afd0`) and admission/documentation reviewer
+Nash (`019f8047-01fd-7713-abf0-c33f7469ef1a`) both report `CLEAN` after the
+final diff; both sessions are closed, and coder and Umans routes were not used.
+Final CI and matrix evidence are recorded with the delivery commit.
+
+```text
+[Decision Log]
+- 목적과 의도: Admit the complete current direct Array fill surface without weakening broad feature gates or claiming unrelated Array methods.
+- 기존 구현 및 제약 조건: Eight ordinarily executed files failed, six feature-tagged paths were skipped, forced execution exposed 13 runtime failures, and the containing Array prototype aggregate proceeds immediately into independent filter behavior.
+- 검토한 주요 대안: Remove Symbol, Reflect, arrow, and resizable-buffer gates globally; admit the fill directory by prefix; add the files to an older Array manifest; list only former failures; include methods-called-as-functions; or freeze the six current metadata-bearing paths separately.
+- 선택한 방식: Keep broad gates, add one exact six-path manifest and feature map shared by both tools, compare old and repaired binaries on one pinned checkout, and run the TypedArray fill directory as a separate compatibility cohort.
+- 다른 대안 대신 이 방식을 선택한 이유: Global and prefix admission silently overclaim unrelated or future behavior, failure-only lists hide existing passes, and the aggregate would claim filter prematurely. Exact paths make each support transition and corpus metadata change reviewable.
+- 장점, 단점 및 영향: Direct fill is 22/22 with 13 attributable runtime transitions, both tools remain symmetric, and future siblings stay gated while TypedArray fill remains green. Updating Test262 requires an explicit metadata audit, and this unit does not claim methods-called-as-functions, filter, reverse, or the full Array prototype directory.
+```
+
 ## Generic Array iterator and arguments admission
 
 `tools/test262_array_iterator_admission.txt` freezes exactly **47**
@@ -9122,9 +9163,11 @@ fail-to-pass transitions and no reverse transition. A separate forced sweep of
 all 94 TypedArray entries/keys/values, Map iterator, Set iterator, String
 iterator, and String `@@iterator` compatibility files is **94/94**.
 
-The broader `built-ins/Array/prototype/methods-called-as-functions.js`
-aggregate remains outside exact admission. It now clears entries, keys, and
-values and fails next at the independent generic `fill` gap.
+At this iterator unit boundary, the broader
+`built-ins/Array/prototype/methods-called-as-functions.js` aggregate remained
+outside exact admission: it cleared entries, keys, and values and failed next
+at the independent generic `fill` gap. The later fill section above records
+that repair and the aggregate's current progression to `filter`.
 
 Final local gates pass with all-feature library **186/186**, release library
 **185/185**, builtins **520/520**, arguments **15/15**, Python tooling
@@ -9152,7 +9195,7 @@ the fixed 65-file cohort and 94-file compatibility sweep.
 - 검토한 주요 대안: Remove Symbol, TypedArray, Reflect, resizable-buffer, and arrow gates globally; admit whole directory prefixes; list only former failures; include methods-called-as-functions; or freeze the exact metadata-bearing paths and measure the full related cohort separately.
 - 선택한 방식: Keep broad gates, add a 47-path manifest and exact feature map shared by both tools, compare old and repaired binaries on one pinned checkout, and run a separate 94-file shared-iterator compatibility sweep.
 - 다른 대안 대신 이 방식을 선택한 이유: Global and prefix admission can silently grow with upstream, failure-only lists hide existing coverage, and the aggregate would overclaim fill. Exact paths make every skip transition reviewable while the full cohort and A/B run prove runtime behavior.
-- 장점, 단점 및 영향: The selected surface is 65/65 with 26 attributable runtime transitions and no reverse transition, metadata drift fails tooling, and shared collection iterators remain green. Updating Test262 requires an explicit manifest audit, and fill plus other legacy Array methods remain outside this unit.
+- 장점, 단점 및 영향: The selected surface is 65/65 with 26 attributable runtime transitions and no reverse transition, metadata drift fails tooling, and shared collection iterators remain green. Updating Test262 requires an explicit manifest audit; at this unit boundary fill and other legacy Array methods remained outside scope, with fill completed by the later dedicated unit above.
 ```
 
 ## Why the full-suite rate is not higher

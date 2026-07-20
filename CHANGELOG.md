@@ -11,6 +11,35 @@
 
 ### Fixed
 
+- `Array.prototype.fill` now follows the generic ECMAScript algorithm instead
+  of rewriting represented-Array backing storage. It boxes primitive receivers,
+  snapshots `LengthOfArrayLike` once, coerces start and end in order, retains
+  safe-integer indices, and performs an ascending live strict `Set` for every
+  selected property. Generic objects, Proxies, inherited setters, non-writable
+  failures, sparse tails, arguments objects, and borrowed TypedArrays now retain
+  observable order and partial mutation without consulting species.
+
+  Receiver, arguments, boxed object, and fill value remain rooted across
+  getters, coercions, setters, traps, collection, and primitive-box heap-cap
+  retry. Every selected index consumes one fuel unit before property work, and
+  normal, semantic, strict-Set, allocation, and fuel exits restore the incoming
+  pin depth.
+
+  Exact admission freezes six feature-gated files. On fixed Test262 checkout
+  `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the preceding policy and binary
+  are **8 pass / 8 fail / 6 skip**; applying the new policy to that binary is
+  **9/13/0**; and the repaired runtime is **22/22**. The adjacent TypedArray
+  fill directory remains **52/52**, and the broader diagnostic now reaches the
+  independent generic `filter` gap.
+
+  Local all-target/all-feature tests pass with **188/188** library tests,
+  **521/521** builtins tests, **15/15** arguments tests, **187/187** release
+  library tests, **122/122** Test262 tooling tests, **1/1** documentation tests,
+  rustfmt, warnings-denied Clippy, and wasm32 all-features checking. Final
+  GPT-5.6 runtime and admission/documentation reviews report `CLEAN`; both
+  sessions are closed, and coder and Umans routes were not used. Final CI,
+  matrix, and artifact evidence is recorded after delivery.
+
 - `Array.prototype.entries`, `keys`, and `values` now create generic lazy Array
   iterators instead of represented-Array snapshots. Iterator creation performs
   `ToObject` once, while each `next` re-reads the live `LengthOfArrayLike`,
@@ -35,8 +64,10 @@
   policy to the preceding binary produces **39 pass / 26 fail**, proving 26
   runtime fail-to-pass transitions and no reverse transition. The shared
   TypedArray, Map, Set, and String iterator compatibility sweep is **94/94**.
-  The broader `methods-called-as-functions.js` diagnostic now reaches the
-  independent generic `fill` gap and remains outside admission.
+  At this iterator unit boundary, the broader
+  `methods-called-as-functions.js` diagnostic reached the independent generic
+  `fill` gap and remained outside admission; the later fill entry above records
+  its progression to `filter`.
 
   Final local gates pass with **186/186** all-feature library tests inside the
   complete all-target suite, **185/185** release library tests, **520/520**

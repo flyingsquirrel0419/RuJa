@@ -1,0 +1,7 @@
+# Exact feature-gated Array.prototype.fill coverage.
+built-ins/Array/prototype/fill/not-a-constructor.js
+built-ins/Array/prototype/fill/resizable-buffer.js
+built-ins/Array/prototype/fill/return-abrupt-from-end-as-symbol.js
+built-ins/Array/prototype/fill/return-abrupt-from-start-as-symbol.js
+built-ins/Array/prototype/fill/return-abrupt-from-this-length-as-symbol.js
+built-ins/Array/prototype/fill/typed-array-resize.js

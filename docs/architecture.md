@@ -1195,7 +1195,7 @@ are similarly fuel-bounded before any irreversible mutation.
 - 검토한 주요 대안: Special-case only Array.prototype length, patch each failing Test262 path, retain dense-only results, convert every Array method in one release, replace ArrayData entirely, or establish one exotic representation invariant and repair the tightly coupled constructor, species, mutation, and copy surface first.
 - 선택한 방식: Allocate every intrinsic prototype as ArrayData, track Realm Array constructors, keep default dense descriptors in items/present and exceptional descriptors in props, implement seven methods through shared internal operations, permit sparse constructor and Slice results, and precharge Proxy, length-scan, and resize work before mutation.
 - 다른 대안 대신 이 방식을 선택한 이유: A prototype-only special case would diverge from ordinary Arrays; individual test patches would miss generic receivers and observable order; dense-only allocation rejects legal sparse results; changing every callback and legacy method at once is too broad to validate atomically; and retaining duplicate indexed representations makes descriptor and mutator behavior order-dependent.
-- 장점, 단점 및 영향: Array.prototype now has the same length/index invariants as every Array, generic receivers and species are observable in specification order, sparse construction no longer needs a giant vector, and exact fuel, GC retry, Realm rollback, and abrupt cleanup are regression-tested. The representation migration adds property-path complexity, With retains a deliberate 1,048,576-element sandbox cap, and older methods such as reverse, fill, and several callback methods still need their own generic and rooting audits.
+- 장점, 단점 및 영향: Array.prototype now has the same length/index invariants as every Array, generic receivers and species are observable in specification order, sparse construction no longer needs a giant vector, and exact fuel, GC retry, Realm rollback, and abrupt cleanup are regression-tested. The representation migration adds property-path complexity, With retains a deliberate 1,048,576-element sandbox cap, and at this decision boundary older methods such as reverse, fill, and several callback methods still needed their own generic and rooting audits; the later fill pipeline section records that follow-up's completion.
 ```
 
 ### Generic Array concat pipeline
@@ -1275,6 +1275,35 @@ boxing and native errors use the method Realm.
 - 장점, 단점 및 영향: The direct fixed Test262 directory is 39/39, TypedArray borrowing remains compatible, MAX_SAFE_INTEGER work uses O(1) source storage, and exact fuel, Realm, GC, heap-cap, partial-mutation, and pin cleanup behavior is regression-tested. Unconfigured hosts can still request a specification-required linear scan, and native property-key strings plus traversal work remain subject to the broader process-memory policy.
 ```
 
+### Generic Array fill pipeline
+
+`Array.prototype.fill` now boxes its receiver and snapshots
+`LengthOfArrayLike` exactly once before coercing start and an optional,
+non-undefined end through `ToIntegerOrInfinity`. Relative positions stay `u64`
+through `2^53 - 1`; the fill value itself is never coerced. Each selected index
+then consumes one fuel unit and performs a live strict `Set`, in ascending
+order. This preserves inherited setters, Proxy traps, non-writable failures,
+resizable TypedArray behavior, partial mutation before abrupt completion, and
+safe-integer property keys without consulting species or allocating a result.
+
+The receiver and every argument are rooted before boxing. The boxed object
+stays rooted across the observable length read, index coercions, and every
+setter or Proxy trap, while the original fill value remains rooted as part of
+the argument suffix. One cleanup boundary restores the incoming pin depth on
+normal return, semantic throws, strict-Set rejection, collection, primitive
+boxing at an exact heap cap, or fuel abort. Boxing and native errors therefore
+retain the active method Realm.
+
+```text
+[Decision Log]
+- 목적과 의도: Replace the represented-Array fill shortcut with the complete generic live-Set algorithm while preserving safe-integer, fuel, GC, Realm, and abrupt-completion behavior.
+- 기존 구현 및 제약 조건: Fill cloned and rewrote dense backing storage, ignored observable length and sparse indices, accepted only numeric bounds, returned undefined for primitive and generic receivers, bypassed descriptors, prototypes, Proxies, arguments mappings, and TypedArrays, and performed an unmetered host loop.
+- 검토한 주요 대안: Patch only the failing direct tests, retain a dense fast path, reuse the specialized TypedArray bulk fill, precompute property writes, cap work at the dense-array limit, or execute the abstract-operation sequence directly.
+- 선택한 방식: Reuse ToObject, u64 LengthOfArrayLike and relative-index helpers; coerce bounds once in specification order; call strict Set for each ascending index after one fuel charge; root the receiver, arguments, and boxed object for the entire operation; and return that object.
+- 다른 대안 대신 이 방식을 선택한 이유: Backing and bulk paths cannot preserve setters, Proxy order, per-index TypedArray conversion, or partial writes; a precomputed write set loses live mutation; and a dense cap rejects legal sparse array-like lengths. One generic path gives represented Arrays and borrowed receivers identical observable semantics.
+- 장점, 단점 및 영향: Direct Array fill is 22/22 and adjacent TypedArray fill remains 52/52; safe-integer tails need constant native state; every observable exit restores roots; and configured fuel bounds the logical scan. Unbounded hosts can still request a specification-required linear scan, and native index-string plus property-traversal allocations remain governed by broader process-memory policy.
+```
+
 ### Generic live Array iterator records
 
 `entries`, `keys`, and `values` all create the same lazy
@@ -1314,7 +1343,7 @@ while later deletion or replacement of the own iterator remains observable.
 - 검토한 주요 대안: Patch only detached receiver tests, retain a dense fast path, keep the old IteratorData fallback for arguments, snapshot length or values, use one unbranded next function for every collection, or represent the specification iterator record directly.
 - 선택한 방식: Perform ToObject at iterator creation, store a mutable rooted source and u64 cursor, read live length and indexed values per next, advance before abrupt indexed work, release the source at completion, allocate pairs/results in the method Realm, preserve the original Realm Array-values identity for arguments, and remove the unreachable fallback cursor.
 - 다른 대안 대신 이 방식을 선택한 이유: Snapshots lose live mutation and Proxy order, usize truncates legal safe-integer positions on wasm32, fallback paths drift in deletion and override behavior, and a shared unbranded native entry point violates internal-slot checks. One record keeps Array and TypedArray behavior aligned without claiming unrelated Array methods.
-- 장점, 단점 및 영향: Generic, primitive, arguments, Proxy, inherited, resizable, detached, abrupt, cross-Realm, and exact-cap cases share one tested path; completion releases retained sources; and wasm32 cannot re-enter the obsolete cursor. Each next still performs specification-required property work, and generic reverse, fill, and other snapshot-based Array methods remain separate follow-ups.
+- 장점, 단점 및 영향: Generic, primitive, arguments, Proxy, inherited, resizable, detached, abrupt, cross-Realm, and exact-cap cases share one tested path; completion releases retained sources; and wasm32 cannot re-enter the obsolete cursor. Each next still performs specification-required property work. At this iterator decision boundary generic reverse, fill, and other snapshot-based Array methods remained separate follow-ups; the preceding fill pipeline section records fill's later completion.
 ```
 
 ---

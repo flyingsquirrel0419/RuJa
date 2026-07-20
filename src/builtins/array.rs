@@ -2495,61 +2495,29 @@ pub(crate) fn array_find_last_index(
     Ok(Value::Number(-1.0))
 }
 pub(crate) fn array_fill(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let value = args.first().cloned().unwrap_or(Value::Undefined);
-    if let Some(Value::Object(idx)) = this {
-        let items = vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Array(a) = obj {
-                a.items.lock().clone()
-            } else {
-                Vec::new()
-            }
-        });
-        let len = items.len() as i64;
-        let start = args
-            .get(1)
-            .and_then(|v| {
-                if let Value::Number(n) = v {
-                    Some(*n as i64)
-                } else {
-                    None
-                }
-            })
-            .unwrap_or(0);
-        let end = args
-            .get(2)
-            .and_then(|v| {
-                if let Value::Number(n) = v {
-                    Some(*n as i64)
-                } else {
-                    None
-                }
-            })
-            .unwrap_or(len);
-        let s = if start < 0 {
-            (len + start).max(0) as usize
-        } else {
-            (start as usize).min(items.len())
+    let receiver = this.unwrap_or(Value::Undefined);
+    let mut pin_count = vm.pin(&receiver);
+    pin_count += vm.pin_many(args);
+    let result = (|| {
+        let object = array_method_to_object(vm, &receiver)?;
+        pin_count += vm.pin(&object);
+        let len = length_of_array_like_u64(vm, &object)?;
+        let mut index = relative_array_index(to_integer_or_infinity(vm, &get_arg(args, 1))?, len);
+        let final_index = match args.get(2) {
+            None | Some(Value::Undefined) => len,
+            Some(value) => relative_array_index(to_integer_or_infinity(vm, value)?, len),
         };
-        let e = if end < 0 {
-            (len + end).max(0) as usize
-        } else {
-            (end as usize).min(items.len())
-        };
-        if s < e {
-            vm.heap.with_obj(idx.0, |obj| {
-                if let HeapObj::Array(a) = obj {
-                    let mut items = a.items.lock();
-                    let mut present = a.present.lock();
-                    for i in s..e.min(items.len()) {
-                        items[i] = value.clone();
-                        present[i] = true;
-                    }
-                }
-            });
+        let value = get_arg(args, 0);
+
+        while index < final_index {
+            vm.consume_fuel()?;
+            vm.set_property_strict(&object, &index.to_string(), value.clone())?;
+            index += 1;
         }
-        return Ok(Value::Object(idx));
-    }
-    Ok(Value::Undefined)
+        Ok(object)
+    })();
+    vm.unpin_many(pin_count);
+    result
 }
 pub(crate) fn array_some(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let (object, len, callback, this_arg) = array_find_object_and_callback(vm, args, this)?;

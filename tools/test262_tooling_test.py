@@ -123,6 +123,7 @@ from test262_array_copy_within_admission import (
     ARRAY_COPY_WITHIN_FEATURES,
     ARRAY_COPY_WITHIN_FILES,
 )
+from test262_array_fill_admission import ARRAY_FILL_FEATURES, ARRAY_FILL_FILES
 from test262_array_iterator_admission import (
     ARRAY_ITERATOR_FEATURES,
     ARRAY_ITERATOR_FILES,
@@ -3344,6 +3345,78 @@ class ArrayCopyWithinAdmissionTests(unittest.TestCase):
                         self.assertTrue(
                             tool.should_skip({"features": ["Proxy"]}, path)
                         )
+                finally:
+                    tool.TEST262 = original_root
+
+
+class ArrayFillAdmissionTests(unittest.TestCase):
+    def test_manifest_is_exact_live_disjoint_and_shared(self):
+        expected = frozenset(
+            {
+                "built-ins/Array/prototype/fill/not-a-constructor.js",
+                "built-ins/Array/prototype/fill/resizable-buffer.js",
+                "built-ins/Array/prototype/fill/return-abrupt-from-end-as-symbol.js",
+                "built-ins/Array/prototype/fill/return-abrupt-from-start-as-symbol.js",
+                "built-ins/Array/prototype/fill/return-abrupt-from-this-length-as-symbol.js",
+                "built-ins/Array/prototype/fill/typed-array-resize.js",
+            }
+        )
+        self.assertEqual(ARRAY_FILL_FILES, expected)
+        self.assertEqual(frozenset(ARRAY_FILL_FEATURES), ARRAY_FILL_FILES)
+
+        tools_dir = Path(__file__).resolve().parent
+        for manifest in tools_dir.glob("test262_*_admission.txt"):
+            if manifest.name == "test262_array_fill_admission.txt":
+                continue
+            existing = {
+                line
+                for raw_line in manifest.read_text().splitlines()
+                if (line := raw_line.strip()) and not line.startswith("#")
+            }
+            self.assertFalse(ARRAY_FILL_FILES & existing, manifest.name)
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        try:
+            test_root_available = test_root.is_dir()
+        except OSError:
+            test_root_available = False
+        if test_root_available:
+            for relative, features in ARRAY_FILL_FEATURES.items():
+                path = test_root / relative
+                self.assertTrue(path.is_file(), relative)
+                metadata = test262_runner.parse_meta(path.read_text())
+                self.assertEqual(
+                    frozenset(metadata.get("features", [])), features, relative
+                )
+                self.assertEqual(metadata.get("flags", []), [], relative)
+                self.assertIsNone(metadata.get("negative"), relative)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            future = root / "test/built-ins/Array/prototype/fill/future-symbol.js"
+            outside = root / "test/built-ins/Array/prototype/reverse/future-symbol.js"
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for relative, features in ARRAY_FILL_FEATURES.items():
+                        path = root / "test" / relative
+                        self.assertTrue(tool.array_fill_path(path), relative)
+                        self.assertEqual(tool.array_fill_features(path), features)
+                        self.assertFalse(
+                            tool.should_skip({"features": sorted(features)}, path),
+                            relative,
+                        )
+                        self.assertTrue(
+                            tool.should_skip(
+                                {"features": sorted(features | {"decorators"})},
+                                path,
+                            ),
+                            relative,
+                        )
+                    for path in (future, outside):
+                        self.assertFalse(tool.array_fill_path(path))
+                        self.assertTrue(tool.should_skip({"features": ["Symbol"]}, path))
                 finally:
                     tool.TEST262 = original_root
 
