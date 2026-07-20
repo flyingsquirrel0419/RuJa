@@ -10,6 +10,17 @@ fn cap_heap_at_current_live_count(vm: &mut Vm) -> crate::error::Result<Value> {
     Ok(Value::Undefined)
 }
 
+fn call_iterator_next_result(vm: &mut Vm, iterator: &Value) -> crate::error::Result<Value> {
+    let mut pin_count = vm.pin(iterator);
+    let result = (|| {
+        let next = vm.get_property(iterator, "next")?;
+        pin_count += vm.pin(&next);
+        vm.call_function(&next, &[], Some(iterator.clone()))
+    })();
+    vm.unpin_many(pin_count);
+    result
+}
+
 fn promise_state_and_result(vm: &Vm, value: Value) -> (PromiseStatus, Value) {
     let Value::Object(promise) = value else {
         panic!("expected a Promise object");
@@ -129,13 +140,14 @@ const FOREIGN_EAGER_NATIVE_CONSTRUCTOR_SOURCES: &[&str] = &[
     "AggregateError",
 ];
 
-fn realm_registry_counts(vm: &Vm) -> [usize; 33] {
+fn realm_registry_counts(vm: &Vm) -> [usize; 34] {
     [
         vm.realm_globals.len(),
         vm.realm_object_prototypes.len(),
         vm.realm_object_prototype_ids.len(),
         vm.realm_array_constructors.len(),
         vm.realm_array_prototypes.len(),
+        vm.realm_array_values_functions.len(),
         vm.realm_promise_constructors.len(),
         vm.realm_promise_prototypes.len(),
         vm.realm_generator_prototypes.len(),
@@ -204,7 +216,7 @@ fn assert_main_realm_range_error(vm: &Vm, error: &crate::error::Error) {
 fn assert_failed_realm_attempt(
     vm: &mut Vm,
     baseline_live: usize,
-    baseline_registries: [usize; 33],
+    baseline_registries: [usize; 34],
     baseline_pins: usize,
     extra_capacity: usize,
 ) {
@@ -1104,6 +1116,257 @@ fn array_copy_within_roots_values_and_restores_pin_depth() {
 }
 
 #[test]
+fn array_iterators_preserve_safe_indices_and_advance_before_allocation() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    let iterator = vm
+        .run("Array.prototype.keys.call({ length: Number.MAX_SAFE_INTEGER })")
+        .expect("large array-like iterator should initialize");
+    let iterator_pin = vm.pin(&iterator);
+    let Value::Object(iterator_idx) = iterator else {
+        panic!("keys should return an iterator object");
+    };
+    vm.heap.with_obj(iterator_idx.0, |object| {
+        let HeapObj::CollectionIterator(iterator) = object else {
+            panic!("keys should return a collection iterator");
+        };
+        *iterator.index.lock() = 9_007_199_254_740_990;
+    });
+    let baseline = vm.gc_pins.len();
+    let result = call_iterator_next_result(&mut vm, &Value::Object(iterator_idx))
+        .expect("safe-integer key should be produced");
+    let result_pin = vm.pin(&result);
+    assert_eq!(
+        vm.get_property(&result, "value")
+            .expect("iterator value should be readable"),
+        Value::Number(9_007_199_254_740_990.0)
+    );
+    assert_eq!(
+        vm.get_property(&result, "done")
+            .expect("iterator done flag should be readable"),
+        Value::Bool(false)
+    );
+    vm.unpin(result_pin);
+    let exhausted = call_iterator_next_result(&mut vm, &Value::Object(iterator_idx))
+        .expect("safe-integer iterator should exhaust");
+    assert_eq!(
+        vm.get_property(&exhausted, "done")
+            .expect("exhausted done flag should be readable"),
+        Value::Bool(true)
+    );
+    vm.heap.with_obj(iterator_idx.0, |object| {
+        let HeapObj::CollectionIterator(iterator) = object else {
+            panic!("iterator should retain its internal slots");
+        };
+        assert!(iterator.source.lock().is_undefined());
+        assert_eq!(*iterator.index.lock(), 9_007_199_254_740_991);
+    });
+    call_iterator_next_result(&mut vm, &Value::Object(iterator_idx))
+        .expect("an exhausted iterator should stay exhausted");
+    assert_eq!(vm.gc_pins.len(), baseline);
+    vm.unpin(iterator_pin);
+
+    let iterator = vm
+        .run("Array.prototype.values.call({ 0: 'first', 1: 'second', length: 2 })")
+        .expect("value iterator should initialize");
+    let iterator_pin = vm.pin(&iterator);
+    vm.clear_kept_objects();
+    vm.gc();
+    let baseline = vm.gc_pins.len();
+    vm.set_max_heap_objects(Some(vm.heap.live_count()));
+    let error = call_iterator_next_result(&mut vm, &iterator)
+        .expect_err("iterator result allocation should respect the exact heap cap");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.gc_pins.len(), baseline);
+    vm.set_max_heap_objects(None);
+    let result = call_iterator_next_result(&mut vm, &iterator)
+        .expect("the index must remain advanced after result allocation fails");
+    assert_eq!(
+        vm.get_property(&result, "value")
+            .expect("post-failure value should be readable"),
+        Value::String(Arc::from("second"))
+    );
+    vm.unpin(iterator_pin);
+
+    let empty = vm
+        .run("Array.prototype.values.call({ length: 0 })")
+        .expect("empty iterator should initialize");
+    let empty_pin = vm.pin(&empty);
+    vm.clear_kept_objects();
+    vm.gc();
+    let baseline = vm.gc_pins.len();
+    vm.set_max_heap_objects(Some(vm.heap.live_count()));
+    let error = call_iterator_next_result(&mut vm, &empty)
+        .expect_err("done-result allocation should respect the exact heap cap");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.gc_pins.len(), baseline);
+    let Value::Object(empty_idx) = empty else {
+        panic!("values should return an iterator object");
+    };
+    vm.heap.with_obj(empty_idx.0, |object| {
+        let HeapObj::CollectionIterator(iterator) = object else {
+            panic!("values should return a collection iterator");
+        };
+        assert!(iterator.source.lock().is_undefined());
+    });
+    vm.set_max_heap_objects(None);
+    let result = call_iterator_next_result(&mut vm, &Value::Object(empty_idx))
+        .expect("completion state should survive result allocation failure");
+    assert_eq!(
+        vm.get_property(&result, "done")
+            .expect("done flag should be readable"),
+        Value::Bool(true)
+    );
+    vm.unpin(empty_pin);
+}
+
+#[test]
+fn array_iterator_creation_and_entries_root_across_gc_retry() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    let source = vm
+        .run("({ length: 0 })")
+        .expect("iterator source should initialize");
+    let source_pin = vm.pin(&source);
+    vm.clear_kept_objects();
+    vm.gc();
+    let _garbage = vm.new_object().expect("garbage object should allocate");
+    let limit = vm.heap.live_count();
+    let baseline = vm.gc_pins.len();
+    vm.set_max_heap_objects(Some(limit));
+    let iterator = crate::builtins::array_values(&mut vm, &[], Some(source.clone()))
+        .expect("iterator allocation should retry after collecting garbage");
+    assert!(matches!(iterator, Value::Object(_)));
+    assert!(vm.heap.live_count() <= limit);
+    assert_eq!(vm.gc_pins.len(), baseline);
+    vm.set_max_heap_objects(None);
+    vm.unpin(source_pin);
+
+    let source = vm
+        .run("({ 0: { marker: 17 }, length: 1 })")
+        .expect("entry source should initialize");
+    let iterator = crate::builtins::array_entries(&mut vm, &[], Some(source))
+        .expect("entry iterator should initialize");
+    let iterator_pin = vm.pin(&iterator);
+    vm.clear_kept_objects();
+    vm.gc();
+    let _garbage_one = vm
+        .new_object()
+        .expect("first garbage object should allocate");
+    let _garbage_two = vm
+        .new_object()
+        .expect("second garbage object should allocate");
+    let limit = vm.heap.live_count();
+    let baseline = vm.gc_pins.len();
+    vm.set_max_heap_objects(Some(limit));
+    let result = call_iterator_next_result(&mut vm, &iterator)
+        .expect("entry pair and result should retry across exact-cap collection");
+    vm.set_max_heap_objects(None);
+    let result_pin = vm.pin(&result);
+    let pair = vm
+        .get_property(&result, "value")
+        .expect("entry result value should be readable");
+    let pair_pin = vm.pin(&pair);
+    let value = vm
+        .get_property(&pair, "1")
+        .expect("entry element should be readable");
+    assert_eq!(
+        vm.get_property(&value, "marker")
+            .expect("rooted entry marker should be readable"),
+        Value::Number(17.0)
+    );
+    vm.unpin(pair_pin);
+    vm.unpin(result_pin);
+    assert!(vm.heap.live_count() <= limit);
+    assert_eq!(vm.gc_pins.len(), baseline);
+    vm.unpin(iterator_pin);
+}
+
+#[test]
+fn array_iterator_next_roots_observable_state_and_restores_pin_depth() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("GC test hook should register");
+    let baseline = vm.gc_pins.len();
+    let result = vm.run(
+        r#"
+        (function () {
+          var target = {
+            0: { marker: 23 },
+            get length() { forceGc(); return 1; }
+          };
+          var source = new Proxy(target, {
+            get: function (target, key, receiver) {
+              var value = Reflect.get(target, key, receiver);
+              if (key === "0") delete target[0];
+              forceGc();
+              return value;
+            }
+          });
+          var iterator = Array.prototype.entries.call(source);
+          source = null;
+          var result = iterator.next();
+          forceGc();
+          return [result.value[0], result.value[1].marker, result.done].join(":");
+        })();
+        "#,
+    );
+    assert_eq!(
+        result.expect("source and fetched value should survive observable GC"),
+        Value::String(Arc::from("0:23:false"))
+    );
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    for source in [
+        r#"
+        var error = {};
+        var iterator = Array.prototype.values.call(new Proxy({}, {
+          get: function (target, key) {
+            forceGc();
+            if (key === "length") throw error;
+          }
+        }));
+        iterator.next();
+        "#,
+        r#"
+        var error = {};
+        var iterator = Array.prototype.values.call(new Proxy({ length: 1 }, {
+          get: function (target, key, receiver) {
+            forceGc();
+            if (key === "0") throw error;
+            return Reflect.get(target, key, receiver);
+          }
+        }));
+        iterator.next();
+        "#,
+    ] {
+        let mut vm = Vm::new().expect("VM should initialize");
+        vm.register_fn(
+            "forceGc",
+            |vm, _, _| {
+                vm.gc();
+                Ok(Value::Undefined)
+            },
+            0,
+        )
+        .expect("GC test hook should register");
+        let baseline = vm.gc_pins.len();
+        vm.run(source)
+            .expect_err("observable iterator step should complete abruptly");
+        assert_eq!(vm.gc_pins.len(), baseline);
+        assert_eq!(
+            vm.run("1 + 1").expect("VM should remain reusable"),
+            Value::Number(2.0)
+        );
+    }
+}
+
+#[test]
 fn array_concat_consumes_exact_per_item_and_per_index_fuel() {
     let mut vm = Vm::new().expect("VM should initialize");
     let empty = vm
@@ -1279,36 +1542,148 @@ fn array_concat_retries_result_allocation_after_heap_cap_gc() {
 }
 
 #[test]
-fn array_mapping_allocation_failures_restore_gc_pin_depth() {
-    for source in [
-        r#"
+fn array_map_raw_result_allocation_failure_restores_gc_pin_depth() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn("capHeap", |vm, _, _| cap_heap_at_current_live_count(vm), 0)
+        .expect("heap-cap hook should register");
+    let baseline = vm.gc_pins.len();
+
+    let error = vm
+        .run(
+            r#"
         [1, 2].map(function(value) {
           if (value === 2) { capHeap(); return value; }
           return { value: value };
         });
         "#,
-        r#"
+        )
+        .expect_err("the raw result Array allocation should hit the heap limit");
+    vm.set_max_heap_objects(None);
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.gc_pins.len(), baseline);
+    assert_eq!(
+        vm.run("1 + 1").expect("VM should remain reusable"),
+        Value::Number(2.0)
+    );
+}
+
+#[test]
+fn flat_map_result_allocation_collects_and_preserves_retained_values() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn("capHeap", |vm, _, _| cap_heap_at_current_live_count(vm), 0)
+        .expect("heap-cap hook should register");
+    let baseline = vm.gc_pins.len();
+
+    let result = vm
+        .run(
+            r#"
+        globalThis.marker = { retained: 41 };
         [1, 2].flatMap(function(value) {
           if (value === 2) { capHeap(); return value; }
-          return [{ value: value }];
+          return [marker];
         });
         "#,
+        )
+        .expect("flatMap result allocation should collect garbage and retry");
+    vm.set_max_heap_objects(None);
+    let result_pin = vm.pin(&result);
+    let marker = vm
+        .run("marker")
+        .expect("retained marker should remain observable");
+    assert_eq!(
+        vm.get_property(&result, "0")
+            .expect("flatMap result should retain its first value"),
+        marker
+    );
+    assert_eq!(
+        vm.get_property(&result, "1")
+            .expect("flatMap result should retain its second value"),
+        Value::Number(2.0)
+    );
+    vm.unpin(result_pin);
+    assert_eq!(vm.gc_pins.len(), baseline);
+}
+
+#[test]
+fn arguments_objects_retry_allocation_and_restore_pins_at_the_exact_cap() {
+    for (setup, function_name, values_name) in [
+        (
+            "globalThis.f = function(a) { return arguments; }; globalThis.v = Array.prototype.values;",
+            "f",
+            "v",
+        ),
+        (
+            "globalThis.f = function(a) { 'use strict'; return arguments; }; globalThis.v = Array.prototype.values;",
+            "f",
+            "v",
+        ),
+        (
+            r#"
+            globalThis.realm = $262.createRealm().global;
+            globalThis.f = new realm.Function("a", "return arguments;");
+            globalThis.v = realm.Array.prototype.values;
+            "#,
+            "f",
+            "v",
+        ),
     ] {
         let mut vm = Vm::new().expect("VM should initialize");
-        vm.register_fn("capHeap", |vm, _, _| cap_heap_at_current_live_count(vm), 0)
-            .expect("heap-cap hook should register");
-        let baseline = vm.gc_pins.len();
+        vm.run(setup).expect("arguments fixture should initialize");
+        let function = vm
+            .run(function_name)
+            .expect("arguments function should be available");
+        let values = vm
+            .run(values_name)
+            .expect("Realm Array values intrinsic should be available");
+        let marker = Value::Object(vm.new_object().expect("argument marker should allocate"));
+        let function_pin = vm.pin(&function);
+        let values_pin = vm.pin(&values);
+        let marker_pin = vm.pin(&marker);
+        vm.gc();
+        vm.run(
+            "(function () { for (var i = 0; i < 32; i++) ({ index: i }); })();",
+        )
+        .expect("garbage fixture should initialize");
+        let retry_limit = vm.heap.live_count() + 1;
+        vm.set_max_heap_objects(Some(retry_limit));
+        let baseline_pins = vm.gc_pins.len();
 
+        let arguments = vm
+            .call_function(&function, std::slice::from_ref(&marker), None)
+            .expect("arguments allocation should collect garbage and retry");
+        vm.set_max_heap_objects(None);
+        let arguments_pin = vm.pin(&arguments);
+        assert_eq!(
+            vm.get_property(&arguments, "0")
+                .expect("argument value should remain observable"),
+            marker
+        );
+        let iterator = vm
+            .get_property_by_key(
+                &arguments,
+                &crate::value::PropertyKey::Symbol(vm.well_known_symbols.iterator),
+            )
+            .expect("arguments iterator should be readable");
+        assert_eq!(iterator, values);
+        vm.unpin(arguments_pin);
+        assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+        vm.gc();
+        vm.set_max_heap_objects(Some(vm.heap.live_count() + 1));
         let error = vm
-            .run(source)
-            .expect_err("the result Array allocation should hit the heap limit");
+            .call_function(&function, std::slice::from_ref(&marker), None)
+            .expect_err("arguments allocation should fail after the call environment fills the cap");
         vm.set_max_heap_objects(None);
         assert_eq!(error.kind, crate::error::ErrorKind::Range);
-        assert_eq!(vm.gc_pins.len(), baseline);
+        assert_eq!(vm.gc_pins.len(), baseline_pins);
         assert_eq!(
             vm.run("1 + 1").expect("VM should remain reusable"),
             Value::Number(2.0)
         );
+
+        vm.unpin(marker_pin);
+        vm.unpin(values_pin);
+        vm.unpin(function_pin);
     }
 }
 

@@ -24,6 +24,82 @@ fn arguments_object_uses_object_prototype_and_stays_iterable() {
 }
 
 #[test]
+fn arguments_iterator_uses_the_immutable_realm_array_values_intrinsic() {
+    assert_eq!(
+        run(r#"
+            var original = Array.prototype.values;
+            Array.prototype.values = function replacement() { throw new Error("wrong"); };
+            function mapped(a) {
+              var descriptor = Object.getOwnPropertyDescriptor(arguments, Symbol.iterator);
+              return [
+                descriptor.value === original,
+                descriptor.writable,
+                descriptor.enumerable,
+                descriptor.configurable,
+                Array.from(arguments).join(":")
+              ].join(",");
+            }
+            function unmapped(a = 1) {
+              return arguments[Symbol.iterator] === original;
+            }
+
+            var other = $262.createRealm().global;
+            var foreign = other.eval("(function () { return arguments; })")();
+            [
+              mapped(2, 3),
+              unmapped(4),
+              foreign[Symbol.iterator] === other.Array.prototype.values,
+              foreign[Symbol.iterator] !== original
+            ].join("|");
+        "#),
+        Value::String(Arc::from("true,true,false,true,2:3|true|true|true"))
+    );
+}
+
+#[test]
+fn arguments_iteration_observes_deleted_overridden_and_noncallable_methods() {
+    assert_eq!(
+        run(r#"
+            function deleted() {
+              delete arguments[Symbol.iterator];
+              try {
+                for (var value of arguments) {}
+              } catch (error) {
+                return error instanceof TypeError;
+              }
+              return false;
+            }
+            function overridden() {
+              arguments[Symbol.iterator] = function() {
+                var done = false;
+                return {
+                  next: function() {
+                    if (done) return { value: undefined, done: true };
+                    done = true;
+                    return { value: 9, done: false };
+                  }
+                };
+              };
+              var values = [];
+              for (var value of arguments) values.push(value);
+              return values.join(":");
+            }
+            function noncallable() {
+              arguments[Symbol.iterator] = 1;
+              try {
+                for (var value of arguments) {}
+              } catch (error) {
+                return error instanceof TypeError;
+              }
+              return false;
+            }
+            [deleted(1), overridden(1, 2), noncallable(1)].join("|");
+        "#),
+        Value::String(Arc::from("true|9|true"))
+    );
+}
+
+#[test]
 fn arguments_length_is_configurable_data_property() {
     assert_eq!(
         run(r#"

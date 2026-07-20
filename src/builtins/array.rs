@@ -1463,7 +1463,7 @@ fn to_length_u64(vm: &mut Vm, value: &Value) -> error::Result<u64> {
     Ok(number.trunc().min(MAX_SAFE_ARRAY_LENGTH) as u64)
 }
 
-fn length_of_array_like_u64(vm: &mut Vm, value: &Value) -> error::Result<u64> {
+pub(super) fn length_of_array_like_u64(vm: &mut Vm, value: &Value) -> error::Result<u64> {
     let length = vm.get_property(value, "length")?;
     let pin_count = vm.pin(&length);
     let result = to_length_u64(vm, &length);
@@ -1471,7 +1471,7 @@ fn length_of_array_like_u64(vm: &mut Vm, value: &Value) -> error::Result<u64> {
     result
 }
 
-fn array_method_to_object(vm: &mut Vm, receiver: &Value) -> error::Result<Value> {
+pub(super) fn array_method_to_object(vm: &mut Vm, receiver: &Value) -> error::Result<Value> {
     if receiver.is_nullish() {
         return Err(Error::type_err(
             "Cannot convert undefined or null to object",
@@ -2317,57 +2317,37 @@ pub(crate) fn array_keys(
     _args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    let len = if let Some(Value::Object(idx)) = this {
-        vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Array(a) = obj {
-                a.items.lock().len()
-            } else {
-                0
-            }
-        })
-    } else {
-        0
-    };
-    let items: Vec<Value> = (0..len).map(|i| Value::Number(i as f64)).collect();
-    make_value_array(vm, items)
+    create_array_iterator(vm, this, CollectionIteratorKind::ArrayKeys)
 }
 pub(crate) fn array_values(
     vm: &mut Vm,
     _args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    let source = this.unwrap_or(Value::Undefined);
-    if source.is_undefined() || source.is_null() {
-        return Err(Error::type_err(
-            "Array.prototype.values called on null or undefined",
-        ));
-    }
-    new_collection_iterator(vm, source, CollectionIteratorKind::ArrayValues)
+    create_array_iterator(vm, this, CollectionIteratorKind::ArrayValues)
 }
 pub(crate) fn array_entries(
     vm: &mut Vm,
     _args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    let items = if let Some(Value::Object(idx)) = this {
-        vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Array(a) = obj {
-                a.items.lock().clone()
-            } else {
-                Vec::new()
-            }
-        })
-    } else {
-        Vec::new()
-    };
-    let mut pairs: Vec<Value> = Vec::with_capacity(items.len());
-    for (i, v) in items.iter().enumerate() {
-        pairs.push(make_value_array(
-            vm,
-            vec![Value::Number(i as f64), v.clone()],
-        )?);
-    }
-    make_value_array(vm, pairs)
+    create_array_iterator(vm, this, CollectionIteratorKind::ArrayEntries)
+}
+
+fn create_array_iterator(
+    vm: &mut Vm,
+    this: Option<Value>,
+    kind: CollectionIteratorKind,
+) -> error::Result<Value> {
+    let receiver = this.unwrap_or(Value::Undefined);
+    let mut pin_count = vm.pin(&receiver);
+    let result = (|| {
+        let object = array_method_to_object(vm, &receiver)?;
+        pin_count += vm.pin(&object);
+        new_collection_iterator(vm, object, kind)
+    })();
+    vm.unpin_many(pin_count);
+    result
 }
 
 pub(crate) fn array_constructor(

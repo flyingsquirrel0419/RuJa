@@ -11,6 +11,43 @@
 
 ### Fixed
 
+- `Array.prototype.entries`, `keys`, and `values` now create generic lazy Array
+  iterators instead of represented-Array snapshots. Iterator creation performs
+  `ToObject` once, while each `next` re-reads the live `LengthOfArrayLike`,
+  advances its safe-integer index before indexed `Get` or result allocation,
+  preserves inherited and Proxy access, and permanently releases its source on
+  completion. Keys avoid indexed `Get`; entries and iterator result objects use
+  the active method Realm. Array, Map, and Set iterator `next` methods enforce
+  distinct internal brands.
+
+  Mapped and unmapped arguments objects now receive the Realm's immutable
+  original `%Array.prototype.values%` as an own `Symbol.iterator` even if user
+  code replaced the observable Array prototype method. Iteration observes
+  deletion, replacement, and non-callable own methods. Mutable iterator source
+  and `u64` index slots are traced and rooted across getters, Proxy traps,
+  current-Realm pair/result allocation, exact-cap collection, and abrupt exits.
+
+  Exact admission freezes 47 feature-gated files and combines them with 18
+  already executed direct files. On fixed Test262 checkout
+  `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the preceding binary and policy
+  are **12 pass / 6 fail / 47 skip**; the repaired runtime under the old policy
+  is **18/0/47**; and the final exact cohort is **65/65**. Applying the new
+  policy to the preceding binary produces **39 pass / 26 fail**, proving 26
+  runtime fail-to-pass transitions and no reverse transition. The shared
+  TypedArray, Map, Set, and String iterator compatibility sweep is **94/94**.
+  The broader `methods-called-as-functions.js` diagnostic now reaches the
+  independent generic `fill` gap and remains outside admission.
+
+  Final local gates pass with **186/186** all-feature library tests inside the
+  complete all-target suite, **185/185** release library tests, **520/520**
+  builtins tests, **15/15** arguments tests, **121/121** Test262 tooling tests,
+  **1/1** documentation tests, rustfmt, Clippy with `-D warnings`, and wasm32
+  all-features checking. GPT-5.6 reviewers Zeno
+  (`019f7fe9-85ee-70a0-8018-4de31e315ec5`) and Avicenna
+  (`019f7fe9-87a0-7970-ab6a-86592a461ac7`) drove brand, override,
+  allocation, dead-cursor, and admission corrections before both returned
+  `CLEAN`. Both sessions are closed; coder and Umans routes were not used.
+
 - `Array.prototype.copyWithin` now follows the generic ECMAScript algorithm
   instead of copying represented Array backing storage. It boxes primitive
   receivers, snapshots `LengthOfArrayLike`, coerces target/start/end in order,

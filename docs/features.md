@@ -153,7 +153,14 @@
   `Get`/strict `Set` or deletion without consulting species, while With also
   deliberately ignores species. The Array constructor, Slice, and Concat can
   create sparse results above the dense cap. With reads through holes and
-  retains a 1,048,576-element sandbox cap
+  retains a 1,048,576-element sandbox cap. `entries`, `keys`, and `values`
+  are generic lazy iterators: they box primitive receivers once, re-read the
+  live array-like length for every `next`, preserve inherited and Proxy index
+  access, and use the iterator method Realm for result and entry arrays.
+  Mapped and unmapped arguments objects install the Realm's immutable original
+  `%Array.prototype.values%` as their own writable, non-enumerable
+  `Symbol.iterator`, while iteration still observes later deletion or
+  replacement of that own property
 - **String**: `charAt`, `charCodeAt`, `slice`, `split`, `replace` (regex
   supported), `replaceAll`, `includes`, `startsWith`, `endsWith`, `repeat`,
   `padStart`/`padEnd`, `at`, `trim`/`trimStart`/`trimEnd`, `substring`, case

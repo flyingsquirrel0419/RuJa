@@ -123,6 +123,10 @@ from test262_array_copy_within_admission import (
     ARRAY_COPY_WITHIN_FEATURES,
     ARRAY_COPY_WITHIN_FILES,
 )
+from test262_array_iterator_admission import (
+    ARRAY_ITERATOR_FEATURES,
+    ARRAY_ITERATOR_FILES,
+)
 from test262_reflect_set_has_admission import (
     REFLECT_SET_HAS_FEATURES,
     REFLECT_SET_HAS_FILES,
@@ -3339,6 +3343,132 @@ class ArrayCopyWithinAdmissionTests(unittest.TestCase):
                         self.assertFalse(tool.array_copy_within_path(path))
                         self.assertTrue(
                             tool.should_skip({"features": ["Proxy"]}, path)
+                        )
+                finally:
+                    tool.TEST262 = original_root
+
+
+class ArrayIteratorAdmissionTests(unittest.TestCase):
+    def test_manifest_is_exact_live_disjoint_and_shared(self):
+        direct_names = (
+            "not-a-constructor.js",
+            "resizable-buffer-grow-mid-iteration.js",
+            "resizable-buffer-shrink-mid-iteration.js",
+            "resizable-buffer.js",
+            "returns-iterator-from-object.js",
+            "returns-iterator.js",
+        )
+        expected = {
+            f"built-ins/Array/prototype/{method}/{name}"
+            for method in ("entries", "keys", "values")
+            for name in direct_names
+        }
+        expected.update(
+            {
+                "built-ins/ArrayIteratorPrototype/Symbol.toStringTag/property-descriptor.js",
+                "built-ins/ArrayIteratorPrototype/Symbol.toStringTag/value-direct.js",
+                "built-ins/ArrayIteratorPrototype/Symbol.toStringTag/value-from-to-string.js",
+                "built-ins/ArrayIteratorPrototype/next/Float32Array.js",
+                "built-ins/ArrayIteratorPrototype/next/Float64Array.js",
+                "built-ins/ArrayIteratorPrototype/next/Int16Array.js",
+                "built-ins/ArrayIteratorPrototype/next/Int32Array.js",
+                "built-ins/ArrayIteratorPrototype/next/Int8Array.js",
+                "built-ins/ArrayIteratorPrototype/next/Uint16Array.js",
+                "built-ins/ArrayIteratorPrototype/next/Uint32Array.js",
+                "built-ins/ArrayIteratorPrototype/next/Uint8Array.js",
+                "built-ins/ArrayIteratorPrototype/next/Uint8ClampedArray.js",
+                "built-ins/ArrayIteratorPrototype/next/args-mapped-expansion-after-exhaustion.js",
+                "built-ins/ArrayIteratorPrototype/next/args-mapped-expansion-before-exhaustion.js",
+                "built-ins/ArrayIteratorPrototype/next/args-mapped-iteration.js",
+                "built-ins/ArrayIteratorPrototype/next/args-mapped-truncation-before-exhaustion.js",
+                "built-ins/ArrayIteratorPrototype/next/args-unmapped-expansion-after-exhaustion.js",
+                "built-ins/ArrayIteratorPrototype/next/args-unmapped-expansion-before-exhaustion.js",
+                "built-ins/ArrayIteratorPrototype/next/args-unmapped-iteration.js",
+                "built-ins/ArrayIteratorPrototype/next/args-unmapped-truncation-before-exhaustion.js",
+                "built-ins/ArrayIteratorPrototype/next/detach-typedarray-in-progress.js",
+                "built-ins/ArrayIteratorPrototype/next/iteration-mutable.js",
+                "built-ins/ArrayIteratorPrototype/next/iteration.js",
+                "built-ins/ArrayIteratorPrototype/next/length.js",
+                "built-ins/ArrayIteratorPrototype/next/name.js",
+                "built-ins/ArrayIteratorPrototype/next/non-own-slots.js",
+                "built-ins/ArrayIteratorPrototype/next/property-descriptor.js",
+                "language/arguments-object/mapped/Symbol.iterator.js",
+                "language/arguments-object/unmapped/Symbol.iterator.js",
+            }
+        )
+        self.assertEqual(ARRAY_ITERATOR_FILES, frozenset(expected))
+        self.assertEqual(frozenset(ARRAY_ITERATOR_FEATURES), ARRAY_ITERATOR_FILES)
+
+        admission_dir = Path(__file__).resolve().parent
+        for manifest in admission_dir.glob("test262_*_admission.txt"):
+            if manifest.name == "test262_array_iterator_admission.txt":
+                continue
+            existing = {
+                line
+                for raw_line in manifest.read_text().splitlines()
+                if (line := raw_line.strip()) and not line.startswith("#")
+            }
+            self.assertFalse(ARRAY_ITERATOR_FILES & existing, manifest.name)
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        try:
+            test_root_available = test_root.is_dir()
+        except OSError:
+            test_root_available = False
+        if test_root_available:
+            for relative, features in ARRAY_ITERATOR_FEATURES.items():
+                path = test_root / relative
+                self.assertTrue(path.is_file(), relative)
+                metadata = test262_runner.parse_meta(path.read_text())
+                self.assertEqual(
+                    frozenset(metadata.get("features", [])), features, relative
+                )
+                expected_flags = (
+                    ["noStrict"]
+                    if "/next/args-" in relative
+                    or relative.startswith("language/arguments-object/")
+                    else []
+                )
+                self.assertEqual(metadata.get("flags", []), expected_flags, relative)
+                self.assertIsNone(metadata.get("negative"), relative)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            future_paths = (
+                root / "test/built-ins/Array/prototype/entries/future-proxy.js",
+                root
+                / "test/built-ins/ArrayIteratorPrototype/next/future-symbol.js",
+                root
+                / "test/language/arguments-object/mapped/future-symbol-iterator.js",
+                root / "test/built-ins/Array/prototype/fill/future-proxy.js",
+            )
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for relative, features in ARRAY_ITERATOR_FEATURES.items():
+                        path = root / "test" / relative
+                        self.assertTrue(tool.array_iterator_path(path), relative)
+                        self.assertEqual(tool.array_iterator_features(path), features)
+                        self.assertFalse(
+                            tool.should_skip({"features": sorted(features)}, path),
+                            relative,
+                        )
+                        self.assertTrue(
+                            tool.should_skip(
+                                {"features": sorted(features | {"decorators"})},
+                                path,
+                            ),
+                            relative,
+                        )
+                    for path in future_paths:
+                        self.assertFalse(tool.array_iterator_path(path))
+                        self.assertTrue(
+                            tool.should_skip({"features": ["Proxy"]}, path)
+                            if "proxy" in path.name
+                            else tool.should_skip(
+                                {"features": ["Symbol.iterator"]}, path
+                            )
                         )
                 finally:
                     tool.TEST262 = original_root

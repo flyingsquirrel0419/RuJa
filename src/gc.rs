@@ -105,9 +105,6 @@ pub fn trace_obj(obj: &HeapObj, marked: &[bool], worklist: &mut Vec<usize>) {
         if let Some(gen) = it.generator.lock().as_ref() {
             push_value(gen, worklist);
         }
-        if let Some(source) = it.array_like.lock().as_ref() {
-            push_value(source, worklist);
-        }
         if let Some(state) = it.for_in.lock().as_ref() {
             if let Some(object) = state.object.as_ref() {
                 push_value(object, worklist);
@@ -228,7 +225,7 @@ pub fn trace_obj(obj: &HeapObj, marked: &[bool], worklist: &mut Vec<usize>) {
             }
         }
         HeapObj::CollectionIterator(it) => {
-            push_value(&it.source, worklist);
+            push_value(&it.source.lock(), worklist);
             if let Some(next) = it.next_method.lock().as_ref() {
                 push_value(next, worklist);
             }
@@ -399,9 +396,6 @@ pub fn trace_obj(obj: &HeapObj, marked: &[bool], worklist: &mut Vec<usize>) {
             }
             if let Some(gen) = it.generator.lock().as_ref() {
                 push_value(gen, worklist);
-            }
-            if let Some(source) = it.array_like.lock().as_ref() {
-                push_value(source, worklist);
             }
             if let Some(state) = it.for_in.lock().as_ref() {
                 if let Some(object) = state.object.as_ref() {

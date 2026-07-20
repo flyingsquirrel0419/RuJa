@@ -3387,6 +3387,8 @@ fn install_array_intrinsic_in_env(
     });
 
     let values = vm.get_property(&prototype_value, "values")?;
+    vm.realm_array_values_functions
+        .insert(env.0, values.clone());
     vm.heap.with_obj(prototype.0, |object| {
         object.props().lock().insert(
             PropertyKey::Symbol(vm.well_known_symbols.iterator),
@@ -5586,8 +5588,11 @@ pub(crate) fn make_value_array_in_env(
     env: GcIdx,
 ) -> error::Result<Value> {
     let prototype = vm.array_prototype_for_env(env);
+    let pin_count = vm.pin_many(&items) + vm.pin(&prototype);
     let arr = HeapObj::Array(ArrayData::new(items, Some(prototype)));
-    Ok(Value::Object(GcIdx(vm.heap.allocate(arr)?)))
+    let result = vm.alloc(arr).map(Value::Object);
+    vm.unpin_many(pin_count);
+    result
 }
 
 pub(crate) fn make_value_array_in_current_realm(
@@ -8253,10 +8258,10 @@ fn iterator_from(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Re
             .ok_or_else(|| Error::internal("missing valid Iterator wrapper prototype"))?;
         let wrapper = Value::Object(vm.alloc(HeapObj::CollectionIterator(
             CollectionIteratorData {
-                source: iterator.clone(),
+                source: Mutex::new(iterator.clone()),
                 next_method: Mutex::new(Some(next)),
                 kind: CollectionIteratorKind::WrappedIterator,
-                index: std::sync::atomic::AtomicUsize::new(0),
+                index: Mutex::new(0),
                 props: Mutex::new(IndexMap::new()),
                 proto: Mutex::new(Some(proto)),
                 extensible: AtomicBool::new(true),
@@ -8287,7 +8292,7 @@ fn valid_iterator_wrapper_record(vm: &Vm, this: Option<Value>) -> error::Result<
                 .next_method
                 .lock()
                 .clone()
-                .map(|next| (iterator.source.clone(), next))
+                .map(|next| (iterator.source.lock().clone(), next))
         })
         .ok_or_else(|| {
             Error::type_err("valid Iterator wrapper method called on incompatible receiver")

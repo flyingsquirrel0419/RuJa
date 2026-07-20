@@ -479,7 +479,7 @@ allocation through final wrapper attachment. It records the incoming
 the intrinsic graph, allocates the host wrapper, and attaches the Realm global.
 A successful commit releases only the transaction's pins. Any error first
 truncates the complete transaction-owned pin suffix and then removes that
-environment's entries from all 31 rooted per-Realm registry families and the
+environment's entries from all 33 rooted per-Realm registry families and the
 non-rooting `%Object.prototype%` reverse identity index. Native error
 materialization runs afterward in the calling Realm, so its collecting retry
 can reclaim the abandoned graph.
@@ -495,7 +495,7 @@ logical rollback surface.
 ```text
 [Decision Log]
 - 목적과 의도: Make failed test262 Realm construction leave no inaccessible GC roots while preserving exact heap-cap and error-Realm behavior.
-- 기존 구현 및 제약 조건: Intrinsic installers publish 31 families of Realm roots incrementally and use fallible LIFO temporary pins; wrapper allocation remains fallible after every registry has been populated.
+- 기존 구현 및 제약 조건: Intrinsic installers publish 33 families of Realm roots incrementally and use fallible LIFO temporary pins; wrapper allocation remains fallible after every registry has been populated.
 - 검토한 주요 대안: Publish nothing until setup completes; clean only the last inserted map; make every installer independently error-safe; or own all provisional roots and pins in one outer transaction.
 - 선택한 방식: Keep provisional registry publication, pin the fresh environment, capture the incoming pin depth, include wrapper attachment in the transaction, truncate the owned pin suffix on every result, and remove every Realm registry entry on error.
 - 다른 대안 대신 이 방식을 선택한 이유: Later installers require earlier intrinsic identities, map-specific cleanup misses other roots, and duplicating rollback in every installer creates drift. One lexical owner matches the actual observability boundary.
@@ -1273,6 +1273,48 @@ boxing and native errors use the method Realm.
 - 선택한 방식: Reuse ToObject, u64 LengthOfArrayLike and relative-index helpers, iterate in the specification-selected direction, call HasProperty plus Get/strict Set or DeletePropertyOrThrow for every position, root the receiver/arguments/object/value, and charge one fuel unit immediately before each indexed step.
 - 다른 대안 대신 이 방식을 선택한 이유: Test-only patches and dense fast paths miss live traps, inherited values, holes, and generic receivers; snapshots change mutation and abrupt-completion order; reverse and fill have different property sequences; and a dense cap rejects legal sparse objects near the safe-integer limit.
 - 장점, 단점 및 영향: The direct fixed Test262 directory is 39/39, TypedArray borrowing remains compatible, MAX_SAFE_INTEGER work uses O(1) source storage, and exact fuel, Realm, GC, heap-cap, partial-mutation, and pin cleanup behavior is regression-tested. Unconfigured hosts can still request a specification-required linear scan, and native property-key strings plus traversal work remain subject to the broader process-memory policy.
+```
+
+### Generic live Array iterator records
+
+`entries`, `keys`, and `values` all create the same lazy
+`CollectionIteratorData` shape after one method-Realm `ToObject`. The iterator
+stores its source behind a mutex and its cursor as `u64`, so safe-integer
+array-like positions are not truncated on 32-bit targets. Every `next` reads
+the current `LengthOfArrayLike`; TypedArray sources instead use their current
+buffer witness so resize, out-of-bounds, and detach state remain observable.
+Keys return the cursor without an indexed Get. Values and entries advance the
+cursor before indexed Get or any result allocation, preserving progress after
+an abrupt getter or heap failure. Completion replaces the source with
+`undefined` before allocating the done result, both releasing the collection
+and making completion sticky if that allocation fails.
+
+The source, fetched element, entry pair, and iterator result remain roots
+across Proxy access and collecting allocation. Entry pairs and all iterator
+results use the active `next` function Realm. Array, Map, and Set prototypes
+have separate native `next` entry points that accept only their own iterator
+kinds; String iteration retains its separate brand. The obsolete internal
+`IteratorData.array_like` cursor and its `usize` resume path were removed, so
+Array and arguments iteration always observes the actual `@@iterator`
+protocol.
+
+Arguments creation records each Realm's immutable original
+`%Array.prototype.values%` in a traced registry and installs that identity as
+an own writable, non-enumerable, configurable `Symbol.iterator`. The registry
+is included in Realm rollback. Arguments allocation pins its values,
+prototype, iterator function, restricted callee, and unpublished object while
+using the GC-retrying VM allocator. Mapped and unmapped objects therefore
+survive reclaimable heap caps without exposing a partially initialized object,
+while later deletion or replacement of the own iterator remains observable.
+
+```text
+[Decision Log]
+- 목적과 의도: Replace represented-Array snapshots and the duplicate internal array-like cursor with one specification-shaped, generic, live, Realm-correct, and GC-safe Array iterator path.
+- 기존 구현 및 제약 조건: Entries and keys eagerly materialized arrays, values accepted only a narrow source shape, the shared iterator used a usize cursor and immutable source, arguments lacked the required own iterator identity, cross-brand next calls were accepted, and arguments allocation bypassed GC retry.
+- 검토한 주요 대안: Patch only detached receiver tests, retain a dense fast path, keep the old IteratorData fallback for arguments, snapshot length or values, use one unbranded next function for every collection, or represent the specification iterator record directly.
+- 선택한 방식: Perform ToObject at iterator creation, store a mutable rooted source and u64 cursor, read live length and indexed values per next, advance before abrupt indexed work, release the source at completion, allocate pairs/results in the method Realm, preserve the original Realm Array-values identity for arguments, and remove the unreachable fallback cursor.
+- 다른 대안 대신 이 방식을 선택한 이유: Snapshots lose live mutation and Proxy order, usize truncates legal safe-integer positions on wasm32, fallback paths drift in deletion and override behavior, and a shared unbranded native entry point violates internal-slot checks. One record keeps Array and TypedArray behavior aligned without claiming unrelated Array methods.
+- 장점, 단점 및 영향: Generic, primitive, arguments, Proxy, inherited, resizable, detached, abrupt, cross-Realm, and exact-cap cases share one tested path; completion releases retained sources; and wasm32 cannot re-enter the obsolete cursor. Each next still performs specification-required property work, and generic reverse, fill, and other snapshot-based Array methods remain separate follow-ups.
 ```
 
 ---

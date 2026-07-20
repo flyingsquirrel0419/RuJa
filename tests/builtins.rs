@@ -528,6 +528,122 @@ fn array_copy_within_observes_live_iteration_and_partial_failures() {
 }
 
 #[test]
+fn array_iterators_are_generic_live_ordered_and_realm_aware() {
+    assert_eq!(
+        run(r#"
+            var entryLog = [];
+            var entryRaw = { 0: "a", 1: "b", length: 2 };
+            var entrySource = new Proxy(entryRaw, {
+              get: function(target, key, receiver) {
+                entryLog.push("get:" + String(key));
+                return Reflect.get(target, key, receiver);
+              }
+            });
+            var entries = Array.prototype.entries.call(entrySource);
+            var firstEntry = entries.next();
+            entryRaw[1] = "changed";
+            var secondEntry = entries.next();
+
+            var keyLog = [];
+            var keySource = new Proxy({ 0: "ignored", length: 1 }, {
+              get: function(target, key, receiver) {
+                keyLog.push("get:" + String(key));
+                return Reflect.get(target, key, receiver);
+              }
+            });
+            var firstKey = Array.prototype.keys.call(keySource).next();
+
+            var inherited = Object.create({ 1: "proto" });
+            inherited.length = 3;
+            var inheritedValues = Array.prototype.values.call(inherited);
+            var inheritedFirst = inheritedValues.next();
+            var inheritedSecond = inheritedValues.next();
+            var inheritedThird = inheritedValues.next();
+
+            var elementError = {};
+            var abruptSource = {
+              length: 2,
+              get 0() { throw elementError; },
+              1: "next"
+            };
+            var abrupt = Array.prototype.values.call(abruptSource);
+            var caughtElement = false;
+            try { abrupt.next(); }
+            catch (error) { caughtElement = error === elementError; }
+            var afterElementError = abrupt.next();
+
+            var lengthError = {};
+            var lengthReads = 0;
+            var lengthSource = {
+              0: "zero",
+              get length() {
+                lengthReads++;
+                if (lengthReads === 1) throw lengthError;
+                return 1;
+              }
+            };
+            var lengthIterator = Array.prototype.values.call(lengthSource);
+            var caughtLength = false;
+            try { lengthIterator.next(); }
+            catch (error) { caughtLength = error === lengthError; }
+            var afterLengthError = lengthIterator.next();
+            var exhausted = lengthIterator.next();
+            var exhaustedAgain = lengthIterator.next();
+
+            var stringIterator = Array.prototype.values.call("ab");
+            var boolIterator = Array.prototype.keys.call(true);
+
+            var other = $262.createRealm().global;
+            var foreign = other.Array.prototype.entries.call({ 0: "x", length: 1 });
+            var foreignResult = foreign.next();
+            var foreignPrototype = Object.getPrototypeOf(foreign);
+            var foreignNullError = false;
+            var foreignBrandError = false;
+            try { other.Array.prototype.entries.call(null); }
+            catch (error) {
+              foreignNullError = error instanceof other.TypeError &&
+                !(error instanceof TypeError);
+            }
+            try { foreignPrototype.next.call({}); }
+            catch (error) {
+              foreignBrandError = error instanceof other.TypeError &&
+                !(error instanceof TypeError);
+            }
+
+            [
+              firstEntry.value.join(":") + ":" + firstEntry.done,
+              secondEntry.value.join(":") + ":" + secondEntry.done,
+              entryLog.join(","),
+              firstKey.value + ":" + firstKey.done,
+              keyLog.join(","),
+              inheritedFirst.value === undefined,
+              inheritedSecond.value,
+              inheritedThird.value === undefined,
+              caughtElement,
+              afterElementError.value,
+              caughtLength,
+              afterLengthError.value,
+              exhausted.done,
+              exhaustedAgain.done,
+              lengthReads,
+              stringIterator.next().value,
+              stringIterator.next().value,
+              boolIterator.next().done,
+              Object.getPrototypeOf(foreignResult) === other.Object.prototype,
+              Object.getPrototypeOf(foreignResult.value) === other.Array.prototype,
+              Object.getPrototypeOf(foreignPrototype.next) === other.Function.prototype,
+              foreignNullError,
+              foreignBrandError,
+              Array.prototype.values === Array.prototype[Symbol.iterator]
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "0:a:false|1:changed:false|get:length,get:0,get:length,get:1|0:false|get:length|true|proto|true|true|next|true|zero|true|true|3|a|b|true|true|true|true|true|true|true"
+        ))
+    );
+}
+
+#[test]
 fn array_copy_results_and_intrinsic_prototype_survive_all_dense_mutators() {
     assert_eq!(
         run(r#"
@@ -668,6 +784,49 @@ fn synchronous_iterators_share_iterator_prototype_and_dispose() {
         Value::String(Arc::from(
             "true|true|true|true|true|true|true|true|true|[object Array Iterator]|[object Map Iterator]|[object Set Iterator]|[object RegExp String Iterator]|true|1|true"
         ))
+    );
+}
+
+#[test]
+fn collection_iterator_next_methods_enforce_their_own_brand() {
+    assert_eq!(
+        run(r#"
+            var array = [1].values();
+            var map = new Map([[1, 2]]).entries();
+            var set = new Set([1]).values();
+            var arrayNext = Object.getPrototypeOf(array).next;
+            var mapNext = Object.getPrototypeOf(map).next;
+            var setNext = Object.getPrototypeOf(set).next;
+            var errors = 0;
+            for (var pair of [
+              [arrayNext, map], [arrayNext, set],
+              [mapNext, array], [mapNext, set],
+              [setNext, array], [setNext, map]
+            ]) {
+              try { pair[0].call(pair[1]); }
+              catch (error) { if (error instanceof TypeError) errors++; }
+            }
+
+            var other = $262.createRealm().global;
+            var foreignNext = Object.getPrototypeOf(
+              other.Array.prototype.values.call([])
+            ).next;
+            var foreignError = false;
+            try { foreignNext.call(map); }
+            catch (error) {
+              foreignError = error instanceof other.TypeError &&
+                !(error instanceof TypeError);
+            }
+
+            [
+              errors,
+              arrayNext.call(array).value,
+              mapNext.call(map).value.join(":"),
+              setNext.call(set).value,
+              foreignError
+            ].join("|");
+        "#),
+        Value::String(Arc::from("6|1|1:2|1|true"))
     );
 }
 

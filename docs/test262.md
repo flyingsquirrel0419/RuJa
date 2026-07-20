@@ -9101,6 +9101,41 @@ checkout.
 - 장점, 단점 및 영향: Direct copyWithin is 39/39 with 18 attributable runtime transitions, both tools remain symmetric, and future siblings stay gated. Updating Test262 requires an explicit manifest audit, and neither methods-called-as-functions nor reverse/fill/iterator receiver semantics are claimed by this unit.
 ```
 
+## Generic Array iterator and arguments admission
+
+`tools/test262_array_iterator_admission.txt` freezes exactly **47**
+feature-gated files across direct `entries`, `keys`, and `values`,
+`%ArrayIteratorPrototype%`, TypedArray-backed Array iterators, and mapped or
+unmapped arguments `Symbol.iterator`. Its exact feature map is shared by the
+runner and analyzer. Tooling checks live metadata, map/manifest equality,
+disjointness from every existing admission, runner/analyzer symmetry, rejection
+of extra decorators, and closure against future siblings. Eighteen related
+files remain admitted by ordinary policy, producing a fixed 65-file cohort.
+
+On fixed checkout `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the preceding
+binary under the preceding policy is **12 pass / 6 fail / 47 skip**. The
+repaired runtime under that old policy is **18 pass / 0 fail / 47 skip**. With
+the exact admission enabled, the repaired binary is **65 pass / 0 fail / 0
+skip**; applying the same new policy to the preceding binary is **39 pass / 26
+fail / 0 skip**. File-by-file comparison therefore proves 26 runtime
+fail-to-pass transitions and no reverse transition. A separate forced sweep of
+all 94 TypedArray entries/keys/values, Map iterator, Set iterator, String
+iterator, and String `@@iterator` compatibility files is **94/94**.
+
+The broader `built-ins/Array/prototype/methods-called-as-functions.js`
+aggregate remains outside exact admission. It now clears entries, keys, and
+values and fails next at the independent generic `fill` gap.
+
+```text
+[Decision Log]
+- 목적과 의도: Admit the complete audited generic Array iterator and arguments-iterator cluster without weakening broad feature gates or claiming unrelated Array methods.
+- 기존 구현 및 제약 조건: Six ordinarily executed files failed, 47 relevant files were feature-gated, the forced cohort exposed 26 runtime failures, and the parent Array prototype aggregate includes independent fill semantics.
+- 검토한 주요 대안: Remove Symbol, TypedArray, Reflect, resizable-buffer, and arrow gates globally; admit whole directory prefixes; list only former failures; include methods-called-as-functions; or freeze the exact metadata-bearing paths and measure the full related cohort separately.
+- 선택한 방식: Keep broad gates, add a 47-path manifest and exact feature map shared by both tools, compare old and repaired binaries on one pinned checkout, and run a separate 94-file shared-iterator compatibility sweep.
+- 다른 대안 대신 이 방식을 선택한 이유: Global and prefix admission can silently grow with upstream, failure-only lists hide existing coverage, and the aggregate would overclaim fill. Exact paths make every skip transition reviewable while the full cohort and A/B run prove runtime behavior.
+- 장점, 단점 및 영향: The selected surface is 65/65 with 26 attributable runtime transitions and no reverse transition, metadata drift fails tooling, and shared collection iterators remain green. Updating Test262 requires an explicit manifest audit, and fill plus other legacy Array methods remain outside this unit.
+```
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is

@@ -1460,15 +1460,33 @@ impl Vm {
                         );
                     }
                     if !is_arrow {
-                        let mut arg_array = crate::value::ArrayData::new(
-                            args.to_vec(),
-                            Some(self.object_prototype_for_env(call_env)),
-                        );
+                        let realm = env::global_env_root(&self.heap, call_env);
+                        let arguments_iterator = self
+                            .realm_array_values_functions
+                            .get(&realm.0)
+                            .cloned()
+                            .ok_or_else(|| {
+                                Error::internal("missing Array values intrinsic for arguments")
+                            })?;
+                        let arguments_prototype = self.object_prototype_for_env(call_env);
+                        let mapped_arguments =
+                            !func.chunk.is_strict && !func.has_parameter_expressions;
+                        let restricted_callee = if mapped_arguments {
+                            None
+                        } else {
+                            Some(crate::builtins::throw_type_error_intrinsic(self, closure)?)
+                        };
+                        let mut arguments_pin_count = self.pin_many(args);
+                        arguments_pin_count += self.pin(&arguments_iterator);
+                        arguments_pin_count += self.pin(&arguments_prototype);
+                        if let Some(thrower) = &restricted_callee {
+                            arguments_pin_count += self.pin(thrower);
+                        }
+                        let mut arg_array =
+                            crate::value::ArrayData::new(args.to_vec(), Some(arguments_prototype));
                         arg_array
                             .is_arguments
                             .store(true, std::sync::atomic::Ordering::Relaxed);
-                        let mapped_arguments =
-                            !func.chunk.is_strict && !func.has_parameter_expressions;
                         if mapped_arguments {
                             let mut seen = std::collections::HashSet::new();
                             let mut names = vec![None; func.params.len()];
@@ -1484,7 +1502,15 @@ impl Vm {
                                 }));
                         }
                         let arr = HeapObj::Array(arg_array);
-                        let arg_idx = GcIdx(self.heap.allocate(arr)?);
+                        let arg_idx = match self.alloc(arr) {
+                            Ok(index) => index,
+                            Err(error) => {
+                                self.unpin_many(arguments_pin_count);
+                                return Err(error);
+                            }
+                        };
+                        let arguments = Value::Object(arg_idx);
+                        arguments_pin_count += self.pin(&arguments);
                         self.heap.with_obj(arg_idx.0, |obj| {
                             if let HeapObj::Array(a) = obj {
                                 let mut props = a.props.lock();
@@ -1496,11 +1522,21 @@ impl Vm {
                                 length_desc.configurable = true;
                                 props
                                     .insert(crate::value::PropertyKey::from("length"), length_desc);
+                                let mut iterator_desc = crate::value::PropertyDescriptor::data(
+                                    arguments_iterator.clone(),
+                                );
+                                iterator_desc.enumerable = false;
+                                props.insert(
+                                    crate::value::PropertyKey::Symbol(
+                                        self.well_known_symbols.iterator,
+                                    ),
+                                    iterator_desc,
+                                );
                             }
                         });
                         if !mapped_arguments {
-                            let thrower =
-                                crate::builtins::throw_type_error_intrinsic(self, closure)?;
+                            let thrower = restricted_callee
+                                .expect("unmapped arguments should retain a restricted callee");
                             self.heap.with_obj(arg_idx.0, |obj| {
                                 if let HeapObj::Array(a) = obj {
                                     a.props.lock().insert(
@@ -1533,9 +1569,10 @@ impl Vm {
                             &self.heap,
                             call_env,
                             "arguments",
-                            Value::Object(arg_idx),
+                            arguments,
                             crate::value::BindingKind::Var,
                         );
+                        self.unpin_many(arguments_pin_count);
                     }
                     // In sloppy (non-strict) mode, an unbound `this` (plain
                     // function call with no receiver) defaults to the global
@@ -2048,25 +2085,19 @@ impl Vm {
     /// Build a heap iterator object that yields the values of `iterable`.
     pub fn make_iterator(&mut self, iterable: &Value) -> error::Result<Value> {
         // Built-in String/Map/Set/Generator values use fast paths below.
-        // Arrays must still observe their `@@iterator` method because
-        // destructuring and for-of are sensitive to deletion and overrides.
-        // Arguments objects reuse ArrayData internally but keep RuJa's
-        // array-like iterator behavior.
-        let (is_map, is_set, is_gen, is_arr, is_arguments) = match iterable {
+        // Arrays and arguments objects must observe their `@@iterator` method
+        // because destructuring and for-of are sensitive to deletion and
+        // overrides.
+        let (is_map, is_set, is_gen, is_arr) = match iterable {
             Value::Object(idx) => self.heap.with_obj(idx.0, |o| {
-                let is_arguments = match o {
-                    HeapObj::Array(a) => a.is_arguments.load(Ordering::Relaxed),
-                    _ => false,
-                };
                 (
                     matches!(o, HeapObj::Map(_)),
                     matches!(o, HeapObj::Set(_)),
                     matches!(o, HeapObj::Generator(_) | HeapObj::LazyGenerator(_)),
                     matches!(o, HeapObj::Array(_)),
-                    is_arguments,
                 )
             }),
-            _ => (false, false, false, false, false),
+            _ => (false, false, false, false),
         };
         let is_builtin_iterable = is_map || is_set || is_gen;
         if !matches!(iterable, Value::Object(_)) {
@@ -2078,7 +2109,7 @@ impl Vm {
             let iter_obj = self.call_function(&iter_method, &[], Some(iterable.clone()))?;
             return self.new_lazy_iterator(iter_obj);
         }
-        if is_arr && !is_arguments {
+        if is_arr {
             let sym_key = crate::value::PropertyKey::Symbol(self.well_known_symbols.iterator);
             let iter_method = self.get_property_by_key(iterable, &sym_key)?;
             if iter_method.is_undefined() || iter_method.is_null() {
@@ -2097,15 +2128,6 @@ impl Vm {
                 }
             }
         }
-        if let Value::Object(idx) = iterable {
-            let is_array = self
-                .heap
-                .with_obj(idx.0, |o| matches!(o, HeapObj::Array(_)));
-            if is_array {
-                return self.new_array_like_iterator(iterable.clone());
-            }
-        }
-
         match iterable {
             Value::Object(idx) => {
                 let (is_array, is_map, is_set, is_generator) = self.heap.with_obj(idx.0, |o| {
@@ -2217,7 +2239,6 @@ impl Vm {
             lazy_iter: Mutex::new(None),
             lazy_next: Mutex::new(None),
             generator: Mutex::new(None),
-            array_like: Mutex::new(None),
             for_in: Mutex::new(None),
             async_from_sync: AtomicBool::new(false),
             done: std::sync::atomic::AtomicBool::new(false),
@@ -2242,7 +2263,6 @@ impl Vm {
                 lazy_iter: Mutex::new(Some(iter_obj)),
                 lazy_next: Mutex::new(Some(next)),
                 generator: Mutex::new(None),
-                array_like: Mutex::new(None),
                 for_in: Mutex::new(None),
                 async_from_sync: AtomicBool::new(false),
                 done: std::sync::atomic::AtomicBool::new(false),
@@ -2267,7 +2287,6 @@ impl Vm {
             lazy_iter: Mutex::new(Some(iter_obj)),
             lazy_next: Mutex::new(Some(next)),
             generator: Mutex::new(None),
-            array_like: Mutex::new(None),
             for_in: Mutex::new(None),
             async_from_sync: AtomicBool::new(true),
             done: std::sync::atomic::AtomicBool::new(false),
@@ -2286,22 +2305,6 @@ impl Vm {
             lazy_iter: Mutex::new(None),
             lazy_next: Mutex::new(Some(next)),
             generator: Mutex::new(Some(gen)),
-            array_like: Mutex::new(None),
-            for_in: Mutex::new(None),
-            async_from_sync: AtomicBool::new(false),
-            done: std::sync::atomic::AtomicBool::new(false),
-        });
-        Ok(Value::Object(GcIdx(self.heap.allocate(it)?)))
-    }
-
-    pub(crate) fn new_array_like_iterator(&mut self, source: Value) -> error::Result<Value> {
-        let it = HeapObj::Iterator(crate::value::IteratorData {
-            items: Mutex::new(Vec::new()),
-            index: std::sync::atomic::AtomicUsize::new(0),
-            lazy_iter: Mutex::new(None),
-            lazy_next: Mutex::new(None),
-            generator: Mutex::new(None),
-            array_like: Mutex::new(Some(source)),
             for_in: Mutex::new(None),
             async_from_sync: AtomicBool::new(false),
             done: std::sync::atomic::AtomicBool::new(false),
@@ -2317,7 +2320,6 @@ impl Vm {
             lazy_iter: Mutex::new(None),
             lazy_next: Mutex::new(None),
             generator: Mutex::new(None),
-            array_like: Mutex::new(None),
             for_in: Mutex::new(Some(crate::value::ForInIteratorState {
                 object: source,
                 object_was_visited: false,
@@ -2606,69 +2608,23 @@ impl Vm {
         it: &Value,
         resume: Value,
     ) -> error::Result<(Value, bool)> {
-        let (lazy, is_gen, is_array_like, is_for_in, already_done) = match it {
+        let (lazy, is_gen, is_for_in, already_done) = match it {
             Value::Object(idx) => self.heap.with_obj(idx.0, |o| {
                 if let HeapObj::Iterator(it) = o {
                     (
                         it.lazy_iter.lock().is_some(),
                         it.generator.lock().is_some(),
-                        it.array_like.lock().is_some(),
                         it.for_in.lock().is_some(),
                         it.done.load(Ordering::Relaxed),
                     )
                 } else {
-                    (false, false, false, false, true)
+                    (false, false, false, true)
                 }
             }),
             _ => return Err(Error::type_err("not an iterator".to_string())),
         };
         if already_done {
             return Ok((Value::Undefined, true));
-        }
-        if is_array_like {
-            let source = self.heap.with_obj(
-                match it {
-                    Value::Object(idx) => idx.0,
-                    _ => return Err(Error::type_err("not an iterator".to_string())),
-                },
-                |o| {
-                    if let HeapObj::Iterator(it) = o {
-                        it.array_like.lock().clone()
-                    } else {
-                        None
-                    }
-                },
-            );
-            let source = source.ok_or_else(|| Error::type_err("not an iterator".to_string()))?;
-            let idx = match it {
-                Value::Object(idx) => idx.0,
-                _ => return Err(Error::type_err("not an iterator".to_string())),
-            };
-            let i = self.heap.with_obj(idx, |o| {
-                if let HeapObj::Iterator(it) = o {
-                    let i = it.index.load(Ordering::Relaxed);
-                    it.index.store(i + 1, Ordering::Relaxed);
-                    i
-                } else {
-                    0
-                }
-            });
-            let len = match self.get_property(&source, "length")? {
-                Value::Number(n) if n.is_finite() && n > 0.0 => n.floor() as usize,
-                _ => 0,
-            };
-            if i >= len {
-                if let Value::Object(idx) = it {
-                    self.heap.with_obj(idx.0, |o| {
-                        if let HeapObj::Iterator(it) = o {
-                            it.done.store(true, Ordering::Relaxed);
-                        }
-                    });
-                }
-                return Ok((Value::Undefined, true));
-            }
-            let value = self.get_property(&source, &i.to_string())?;
-            return Ok((value, false));
         }
         if is_gen {
             // Resume the wrapped generator with `resume`. The generator's

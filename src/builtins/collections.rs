@@ -52,19 +52,18 @@ pub(crate) fn new_collection_iterator(
         }
         _ => vm.object_proto.clone(),
     };
-    vm.keep_during_job(&source);
-    let obj_idx = vm
-        .heap
-        .allocate(HeapObj::CollectionIterator(CollectionIteratorData {
-            source,
-            next_method: Mutex::new(None),
-            kind,
-            index: std::sync::atomic::AtomicUsize::new(0),
-            props: Mutex::new(IndexMap::new()),
-            proto: Mutex::new(Some(proto)),
-            extensible: std::sync::atomic::AtomicBool::new(true),
-        }))?;
-    let iterator = Value::Object(GcIdx(obj_idx));
+    let pin_count = vm.pin(&source) + vm.pin(&proto);
+    let allocation = vm.alloc(HeapObj::CollectionIterator(CollectionIteratorData {
+        source: Mutex::new(source),
+        next_method: Mutex::new(None),
+        kind,
+        index: Mutex::new(0),
+        props: Mutex::new(IndexMap::new()),
+        proto: Mutex::new(Some(proto)),
+        extensible: std::sync::atomic::AtomicBool::new(true),
+    }));
+    vm.unpin_many(pin_count);
+    let iterator = Value::Object(allocation?);
     vm.keep_during_job(&iterator);
     Ok(iterator)
 }
@@ -93,79 +92,88 @@ fn string_iterator_method(
         .get(&realm.0)
         .cloned()
         .ok_or_else(|| Error::internal("missing String Iterator prototype intrinsic"))?;
-    let iterator = Value::Object(GcIdx(vm.heap.allocate(HeapObj::CollectionIterator(
-        CollectionIteratorData {
-            source: Value::String(string),
-            next_method: Mutex::new(None),
-            kind: CollectionIteratorKind::StringValues,
-            index: std::sync::atomic::AtomicUsize::new(0),
-            props: Mutex::new(IndexMap::new()),
-            proto: Mutex::new(Some(proto)),
-            extensible: std::sync::atomic::AtomicBool::new(true),
-        },
-    ))?));
+    let source = Value::String(string);
+    let pin_count = vm.pin(&source) + vm.pin(&proto);
+    let allocation = vm.alloc(HeapObj::CollectionIterator(CollectionIteratorData {
+        source: Mutex::new(source),
+        next_method: Mutex::new(None),
+        kind: CollectionIteratorKind::StringValues,
+        index: Mutex::new(0),
+        props: Mutex::new(IndexMap::new()),
+        proto: Mutex::new(Some(proto)),
+        extensible: std::sync::atomic::AtomicBool::new(true),
+    }));
+    vm.unpin_many(pin_count);
+    let iterator = Value::Object(allocation?);
     vm.keep_during_job(&iterator);
     Ok(iterator)
 }
 
 fn string_iterator_next(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let Some(Value::Object(iter_idx)) = this else {
-        return Err(Error::type_err(
-            "String Iterator next called on incompatible receiver",
-        ));
-    };
-    let Some((string, index)) = vm.heap.with_obj(iter_idx.0, |obj| {
-        let HeapObj::CollectionIterator(iter) = obj else {
-            return None;
+    let receiver = this.unwrap_or(Value::Undefined);
+    let pin_count = vm.pin(&receiver);
+    let result = (|| {
+        let Value::Object(iter_idx) = receiver else {
+            return Err(Error::type_err(
+                "String Iterator next called on incompatible receiver",
+            ));
         };
-        if iter.kind != CollectionIteratorKind::StringValues {
-            return None;
-        }
-        let Value::String(string) = &iter.source else {
-            return None;
+        let Some((source, raw_index)) = vm.heap.with_obj(iter_idx.0, |obj| {
+            let HeapObj::CollectionIterator(iter) = obj else {
+                return None;
+            };
+            if iter.kind != CollectionIteratorKind::StringValues {
+                return None;
+            }
+            Some((iter.source.lock().clone(), *iter.index.lock()))
+        }) else {
+            return Err(Error::type_err(
+                "String Iterator next called on incompatible receiver",
+            ));
         };
-        Some((
-            string.clone(),
-            iter.index.load(std::sync::atomic::Ordering::Relaxed),
-        ))
-    }) else {
-        return Err(Error::type_err(
-            "String Iterator next called on incompatible receiver",
-        ));
-    };
+        let Value::String(string) = source else {
+            if source.is_undefined() {
+                return gen_result(vm, Value::Undefined, true, false);
+            }
+            return Err(Error::type_err(
+                "String Iterator next called on incompatible receiver",
+            ));
+        };
 
-    let len = crate::value::utf16_len(&string);
-    if index == usize::MAX || index >= len {
+        let len = crate::value::utf16_len(&string) as u64;
+        if raw_index >= len {
+            vm.heap.with_obj(iter_idx.0, |obj| {
+                if let HeapObj::CollectionIterator(iter) = obj {
+                    *iter.source.lock() = Value::Undefined;
+                }
+            });
+            return gen_result(vm, Value::Undefined, true, false);
+        }
+
+        let index = raw_index as usize;
+        let first = crate::value::utf16_get(&string, index).unwrap();
+        let width = if (0xD800..=0xDBFF).contains(&first)
+            && crate::value::utf16_get(&string, index + 1)
+                .is_some_and(|second| (0xDC00..=0xDFFF).contains(&second))
+        {
+            2
+        } else {
+            1
+        };
+        let start = crate::value::utf16_index_to_byte(&string, index)
+            .ok_or_else(|| Error::internal("invalid String Iterator position"))?;
+        let end = crate::value::utf16_index_to_byte(&string, index + width)
+            .ok_or_else(|| Error::internal("invalid String Iterator position"))?;
+        let value = Value::String(Arc::from(&string[start..end]));
         vm.heap.with_obj(iter_idx.0, |obj| {
             if let HeapObj::CollectionIterator(iter) = obj {
-                iter.index
-                    .store(usize::MAX, std::sync::atomic::Ordering::Relaxed);
+                *iter.index.lock() = raw_index + width as u64;
             }
         });
-        return gen_result(vm, Value::Undefined, true, false);
-    }
-
-    let first = crate::value::utf16_get(&string, index).unwrap();
-    let width = if (0xD800..=0xDBFF).contains(&first)
-        && crate::value::utf16_get(&string, index + 1)
-            .is_some_and(|second| (0xDC00..=0xDFFF).contains(&second))
-    {
-        2
-    } else {
-        1
-    };
-    let start = crate::value::utf16_index_to_byte(&string, index)
-        .ok_or_else(|| Error::internal("invalid String Iterator position"))?;
-    let end = crate::value::utf16_index_to_byte(&string, index + width)
-        .ok_or_else(|| Error::internal("invalid String Iterator position"))?;
-    let value = &string[start..end];
-    vm.heap.with_obj(iter_idx.0, |obj| {
-        if let HeapObj::CollectionIterator(iter) = obj {
-            iter.index
-                .store(index + width, std::sync::atomic::Ordering::Relaxed);
-        }
-    });
-    gen_result(vm, Value::String(Arc::from(value)), false, false)
+        gen_result(vm, value, false, false)
+    })();
+    vm.unpin_many(pin_count);
+    result
 }
 
 pub(crate) fn setup_string_iterator_proto_in_env(
@@ -222,7 +230,7 @@ pub(crate) fn setup_array_iterator_proto_in_env(
     realm: GcIdx,
     iterator_base: Value,
 ) -> error::Result<Value> {
-    let next = vm.new_native_function_in_env("next", collection_iterator_next, 0, realm)?;
+    let next = vm.new_native_function_in_env("next", array_iterator_next, 0, realm)?;
     let proto = Value::Object(GcIdx(vm.heap.allocate(HeapObj::Object(ObjectData {
         props: Mutex::new(IndexMap::new()),
         proto: Mutex::new(Some(iterator_base)),
@@ -254,11 +262,11 @@ pub(crate) fn setup_array_iterator_proto_in_env(
 }
 
 pub(crate) fn setup_map_set_iterator_protos(vm: &mut Vm) -> error::Result<()> {
-    let map_next = vm.new_native_function("next", collection_iterator_next, 0)?;
+    let map_next = vm.new_native_function("next", map_iterator_next, 0)?;
     let map_proto = collection_iterator_proto(vm, Value::Object(map_next), "Map Iterator")?;
     vm.map_iterator_proto = Value::Object(map_proto);
 
-    let set_next = vm.new_native_function("next", collection_iterator_next, 0)?;
+    let set_next = vm.new_native_function("next", set_iterator_next, 0)?;
     let set_proto = collection_iterator_proto(vm, Value::Object(set_next), "Set Iterator")?;
     vm.set_iterator_proto = Value::Object(set_proto);
     Ok(())
@@ -306,137 +314,207 @@ pub(crate) fn collection_iterator_this(
     this.ok_or_else(|| Error::type_err("Iterator method called on non-iterator"))
 }
 
+#[derive(Clone, Copy)]
+enum CollectionIteratorBrand {
+    Array,
+    Map,
+    Set,
+}
+
+impl CollectionIteratorBrand {
+    fn accepts(self, kind: CollectionIteratorKind) -> bool {
+        match self {
+            Self::Array => matches!(
+                kind,
+                CollectionIteratorKind::ArrayEntries
+                    | CollectionIteratorKind::ArrayKeys
+                    | CollectionIteratorKind::ArrayValues
+            ),
+            Self::Map => matches!(
+                kind,
+                CollectionIteratorKind::MapEntries
+                    | CollectionIteratorKind::MapKeys
+                    | CollectionIteratorKind::MapValues
+            ),
+            Self::Set => matches!(
+                kind,
+                CollectionIteratorKind::SetEntries | CollectionIteratorKind::SetValues
+            ),
+        }
+    }
+}
+
+fn array_iterator_next(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    collection_iterator_next(vm, args, this, CollectionIteratorBrand::Array)
+}
+
+fn map_iterator_next(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    collection_iterator_next(vm, args, this, CollectionIteratorBrand::Map)
+}
+
+fn set_iterator_next(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    collection_iterator_next(vm, args, this, CollectionIteratorBrand::Set)
+}
+
 fn collection_iterator_next(
     vm: &mut Vm,
     _args: &[Value],
     this: Option<Value>,
+    brand: CollectionIteratorBrand,
 ) -> error::Result<Value> {
-    let Some(Value::Object(iter_idx)) = this else {
-        return Err(Error::type_err("Iterator next called on non-iterator"));
-    };
-    let Some((source, kind, raw_index)) = vm.heap.with_obj(iter_idx.0, |obj| {
-        if let HeapObj::CollectionIterator(iter) = obj {
+    let receiver = this.unwrap_or(Value::Undefined);
+    let mut pin_count = vm.pin(&receiver);
+    let result = (|| {
+        let Value::Object(iter_idx) = receiver else {
+            return Err(Error::type_err("Iterator next called on non-iterator"));
+        };
+        let Some((source, kind, index)) = vm.heap.with_obj(iter_idx.0, |obj| {
+            let HeapObj::CollectionIterator(iter) = obj else {
+                return None;
+            };
             if matches!(
                 iter.kind,
                 CollectionIteratorKind::WrappedIterator | CollectionIteratorKind::StringValues
             ) {
                 return None;
             }
-            Some((
-                iter.source.clone(),
-                iter.kind,
-                iter.index.load(std::sync::atomic::Ordering::Relaxed),
-            ))
-        } else {
-            None
+            Some((iter.source.lock().clone(), iter.kind, *iter.index.lock()))
+        }) else {
+            return Err(Error::type_err("Iterator next called on non-iterator"));
+        };
+        if !brand.accepts(kind) {
+            return Err(Error::type_err(
+                "Iterator next called on incompatible iterator kind",
+            ));
         }
-    }) else {
-        return Err(Error::type_err("Iterator next called on non-iterator"));
-    };
-    if raw_index == usize::MAX {
-        return gen_result(vm, Value::Undefined, true, false);
-    }
-    let index = raw_index;
+        if source.is_undefined() {
+            return gen_result(vm, Value::Undefined, true, false);
+        }
+        pin_count += vm.pin(&source);
 
-    let next_value = match (&source, kind) {
-        (
-            _,
-            kind @ (CollectionIteratorKind::ArrayEntries
-            | CollectionIteratorKind::ArrayKeys
-            | CollectionIteratorKind::ArrayValues),
-        ) => {
-            let typed_array_slots = match &source {
-                Value::Object(source_idx) => vm.heap.with_obj(source_idx.0, |obj| {
-                    let HeapObj::TypedArray(array) = obj else {
-                        return None;
-                    };
-                    Some((
-                        array.kind,
-                        array.viewed_array_buffer.clone(),
-                        array.byte_offset,
-                        array.byte_length,
-                        array.length_tracking,
-                    ))
-                }),
-                _ => None,
-            };
-            let len = if let Some((kind, buffer, byte_offset, byte_length, tracking)) =
-                typed_array_slots
-            {
-                let byte_length = effective_view_byte_length(
-                    vm,
-                    buffer.as_ref(),
-                    byte_offset,
-                    byte_length,
-                    tracking,
-                    kind.element_size(),
-                )
-                .ok_or_else(|| Error::type_err("Array iterator source is out of bounds"))?;
-                typed_array_element_count(kind, byte_length)
-            } else {
-                match vm.get_property(&source, "length")? {
-                    Value::Number(n) if n.is_finite() && n > 0.0 => n.floor() as usize,
-                    _ => 0,
-                }
-            };
-            if index < len {
-                match kind {
-                    CollectionIteratorKind::ArrayKeys => Some(Value::Number(index as f64)),
-                    CollectionIteratorKind::ArrayValues => {
-                        Some(vm.get_property(&source, &index.to_string())?)
-                    }
-                    CollectionIteratorKind::ArrayEntries => {
-                        let value = vm.get_property(&source, &index.to_string())?;
-                        Some(make_value_array(
-                            vm,
-                            vec![Value::Number(index as f64), value],
-                        )?)
-                    }
-                    _ => unreachable!(),
-                }
-            } else {
-                None
+        if matches!(
+            kind,
+            CollectionIteratorKind::ArrayEntries
+                | CollectionIteratorKind::ArrayKeys
+                | CollectionIteratorKind::ArrayValues
+        ) {
+            return array_iterator_step(vm, iter_idx, &source, kind, index);
+        }
+
+        let next_value = match (&source, kind, usize::try_from(index).ok()) {
+            (Value::Object(source_idx), CollectionIteratorKind::MapEntries, Some(index)) => {
+                map_entry_at(vm, *source_idx, index)?
+                    .map(|(key, value)| make_value_array_in_current_realm(vm, vec![key, value]))
+                    .transpose()?
             }
+            (Value::Object(source_idx), CollectionIteratorKind::MapKeys, Some(index)) => {
+                map_entry_at(vm, *source_idx, index)?.map(|(key, _)| key)
+            }
+            (Value::Object(source_idx), CollectionIteratorKind::MapValues, Some(index)) => {
+                map_entry_at(vm, *source_idx, index)?.map(|(_, value)| value)
+            }
+            (Value::Object(source_idx), CollectionIteratorKind::SetEntries, Some(index)) => {
+                set_value_at(vm, *source_idx, index)?
+                    .map(|value| make_value_array_in_current_realm(vm, vec![value.clone(), value]))
+                    .transpose()?
+            }
+            (Value::Object(source_idx), CollectionIteratorKind::SetValues, Some(index)) => {
+                set_value_at(vm, *source_idx, index)?
+            }
+            _ => None,
+        };
+
+        if let Some(value) = next_value {
+            vm.heap.with_obj(iter_idx.0, |obj| {
+                if let HeapObj::CollectionIterator(iter) = obj {
+                    *iter.index.lock() = index + 1;
+                }
+            });
+            let value_pin = vm.pin(&value);
+            let result = gen_result(vm, value, false, false);
+            vm.unpin_many(value_pin);
+            result
+        } else {
+            finish_collection_iterator(vm, iter_idx)
         }
-        (Value::Object(source_idx), CollectionIteratorKind::MapEntries) => {
-            map_entry_at(vm, *source_idx, index)?
-                .map(|(key, value)| make_value_array(vm, vec![key, value]))
-                .transpose()?
-        }
-        (Value::Object(source_idx), CollectionIteratorKind::MapKeys) => {
-            map_entry_at(vm, *source_idx, index)?.map(|(key, _)| key)
-        }
-        (Value::Object(source_idx), CollectionIteratorKind::MapValues) => {
-            map_entry_at(vm, *source_idx, index)?.map(|(_, value)| value)
-        }
-        (Value::Object(source_idx), CollectionIteratorKind::SetEntries) => {
-            set_value_at(vm, *source_idx, index)?
-                .map(|value| make_value_array(vm, vec![value.clone(), value]))
-                .transpose()?
-        }
-        (Value::Object(source_idx), CollectionIteratorKind::SetValues) => {
-            set_value_at(vm, *source_idx, index)?
-        }
+    })();
+    vm.unpin_many(pin_count);
+    result
+}
+
+fn array_iterator_step(
+    vm: &mut Vm,
+    iter_idx: GcIdx,
+    source: &Value,
+    kind: CollectionIteratorKind,
+    index: u64,
+) -> error::Result<Value> {
+    let typed_array_slots = match source {
+        Value::Object(source_idx) => vm.heap.with_obj(source_idx.0, |obj| {
+            let HeapObj::TypedArray(array) = obj else {
+                return None;
+            };
+            Some((
+                array.kind,
+                array.viewed_array_buffer.clone(),
+                array.byte_offset,
+                array.byte_length,
+                array.length_tracking,
+            ))
+        }),
         _ => None,
     };
-
-    if let Some(value) = next_value {
-        vm.heap.with_obj(iter_idx.0, |obj| {
-            if let HeapObj::CollectionIterator(iter) = obj {
-                iter.index
-                    .store(index + 1, std::sync::atomic::Ordering::Relaxed);
-            }
-        });
-        gen_result(vm, value, false, false)
+    let length = if let Some((element_kind, buffer, byte_offset, byte_length, tracking)) =
+        typed_array_slots
+    {
+        let byte_length = effective_view_byte_length(
+            vm,
+            buffer.as_ref(),
+            byte_offset,
+            byte_length,
+            tracking,
+            element_kind.element_size(),
+        )
+        .ok_or_else(|| Error::type_err("Array iterator source is out of bounds"))?;
+        typed_array_element_count(element_kind, byte_length) as u64
     } else {
-        vm.heap.with_obj(iter_idx.0, |obj| {
-            if let HeapObj::CollectionIterator(iter) = obj {
-                iter.index
-                    .store(usize::MAX, std::sync::atomic::Ordering::Relaxed);
-            }
-        });
-        gen_result(vm, Value::Undefined, true, false)
+        length_of_array_like_u64(vm, source)?
+    };
+    if index >= length {
+        return finish_collection_iterator(vm, iter_idx);
     }
+
+    vm.heap.with_obj(iter_idx.0, |obj| {
+        if let HeapObj::CollectionIterator(iter) = obj {
+            *iter.index.lock() = index + 1;
+        }
+    });
+    let index_value = Value::Number(index as f64);
+    let result = match kind {
+        CollectionIteratorKind::ArrayKeys => index_value,
+        CollectionIteratorKind::ArrayValues => vm.get_property(source, &index.to_string())?,
+        CollectionIteratorKind::ArrayEntries => {
+            let element = vm.get_property(source, &index.to_string())?;
+            let element_pin = vm.pin(&element);
+            let pair = make_value_array_in_current_realm(vm, vec![index_value, element]);
+            vm.unpin_many(element_pin);
+            pair?
+        }
+        _ => unreachable!(),
+    };
+    let result_pin = vm.pin(&result);
+    let completion = gen_result(vm, result, false, false);
+    vm.unpin_many(result_pin);
+    completion
+}
+
+fn finish_collection_iterator(vm: &mut Vm, iter_idx: GcIdx) -> error::Result<Value> {
+    vm.heap.with_obj(iter_idx.0, |obj| {
+        if let HeapObj::CollectionIterator(iter) = obj {
+            *iter.source.lock() = Value::Undefined;
+        }
+    });
+    gen_result(vm, Value::Undefined, true, false)
 }
 
 fn map_entry_at(vm: &Vm, idx: GcIdx, index: usize) -> error::Result<Option<(Value, Value)>> {

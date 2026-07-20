@@ -775,10 +775,10 @@ pub enum CollectionIteratorKind {
 }
 
 pub struct CollectionIteratorData {
-    pub source: Value,
+    pub source: Mutex<Value>,
     pub next_method: Mutex<Option<Value>>,
     pub kind: CollectionIteratorKind,
-    pub index: AtomicUsize,
+    pub index: Mutex<u64>,
     pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
     pub proto: Mutex<Option<Value>>,
     pub extensible: AtomicBool,
@@ -1110,10 +1110,6 @@ pub struct IteratorData {
     /// `next()`. Mutually exclusive with `lazy_iter`. Preserves the
     /// generator's return value (used by `yield*`).
     pub generator: Mutex<Option<Value>>,
-    /// Lazy ArrayIterator mode. Keeps the iterated array-like object alive and
-    /// reads `length` plus the current integer property on each pull, so array
-    /// growth, contraction, accessors, and arguments object mapping are visible.
-    pub array_like: Mutex<Option<Value>>,
     /// Lazy `for...in` mode. Own keys, descriptors, and prototypes are queried
     /// only as iteration advances so Proxy traps run at their observable phase.
     pub for_in: Mutex<Option<ForInIteratorState>>,

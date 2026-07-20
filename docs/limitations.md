@@ -82,7 +82,7 @@ The following resource limits are enforced:
   shortcuts and need separate generic-receiver, observable-order, sparse, fuel,
   and rooting audits. The direct Test262 `methods-called-as-functions.js`
   aggregate remains outside exact admission because its next failure is the
-  unrelated detached-receiver behavior of `entries`.
+  unrelated detached-receiver behavior of `fill`.
 - **Test262 result enforcement and pinning gap**: the Python runner reports
   fail, timeout, and error counts but still exits with status zero, so a matrix
   job can be green while semantic failures remain. Full-matrix shards also

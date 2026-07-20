@@ -3968,6 +3968,9 @@ impl Vm {
         for v in self.realm_array_prototypes.values() {
             Self::push_value_roots(&mut roots, v);
         }
+        for v in self.realm_array_values_functions.values() {
+            Self::push_value_roots(&mut roots, v);
+        }
         for v in self.realm_promise_constructors.values() {
             Self::push_value_roots(&mut roots, v);
         }

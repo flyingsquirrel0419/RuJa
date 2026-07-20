@@ -1,0 +1,102 @@
+"""Frozen feature-gated Test262 Array iterator and arguments coverage."""
+
+from pathlib import Path
+
+
+_MANIFEST = Path(__file__).with_name("test262_array_iterator_admission.txt")
+ARRAY_ITERATOR_FILES = frozenset(
+    line
+    for raw_line in _MANIFEST.read_text().splitlines()
+    if (line := raw_line.strip()) and not line.startswith("#")
+)
+
+ARRAY_ITERATOR_FEATURES = {}
+
+
+def _admit(paths, features):
+    frozen = frozenset(features)
+    for path in paths:
+        ARRAY_ITERATOR_FEATURES[path] = frozen
+
+
+_admit(
+    (
+        "built-ins/Array/prototype/entries/not-a-constructor.js",
+        "built-ins/Array/prototype/keys/not-a-constructor.js",
+    ),
+    {"Reflect.construct", "arrow-function"},
+)
+_admit(
+    ("built-ins/Array/prototype/values/not-a-constructor.js",),
+    {"Reflect.construct", "Array.prototype.values", "arrow-function"},
+)
+_admit(
+    (
+        "built-ins/Array/prototype/entries/resizable-buffer-grow-mid-iteration.js",
+        "built-ins/Array/prototype/entries/resizable-buffer-shrink-mid-iteration.js",
+        "built-ins/Array/prototype/entries/resizable-buffer.js",
+        "built-ins/Array/prototype/keys/resizable-buffer-grow-mid-iteration.js",
+        "built-ins/Array/prototype/keys/resizable-buffer-shrink-mid-iteration.js",
+        "built-ins/Array/prototype/keys/resizable-buffer.js",
+        "built-ins/Array/prototype/values/resizable-buffer-grow-mid-iteration.js",
+        "built-ins/Array/prototype/values/resizable-buffer-shrink-mid-iteration.js",
+        "built-ins/Array/prototype/values/resizable-buffer.js",
+    ),
+    {"resizable-arraybuffer"},
+)
+_admit(
+    (
+        "built-ins/Array/prototype/entries/returns-iterator-from-object.js",
+        "built-ins/Array/prototype/entries/returns-iterator.js",
+        "built-ins/Array/prototype/keys/returns-iterator-from-object.js",
+        "built-ins/Array/prototype/keys/returns-iterator.js",
+        "built-ins/Array/prototype/values/returns-iterator-from-object.js",
+        "built-ins/Array/prototype/values/returns-iterator.js",
+        "built-ins/ArrayIteratorPrototype/Symbol.toStringTag/value-from-to-string.js",
+        "built-ins/ArrayIteratorPrototype/next/args-mapped-expansion-after-exhaustion.js",
+        "built-ins/ArrayIteratorPrototype/next/args-mapped-expansion-before-exhaustion.js",
+        "built-ins/ArrayIteratorPrototype/next/args-mapped-iteration.js",
+        "built-ins/ArrayIteratorPrototype/next/args-mapped-truncation-before-exhaustion.js",
+        "built-ins/ArrayIteratorPrototype/next/args-unmapped-expansion-after-exhaustion.js",
+        "built-ins/ArrayIteratorPrototype/next/args-unmapped-expansion-before-exhaustion.js",
+        "built-ins/ArrayIteratorPrototype/next/args-unmapped-iteration.js",
+        "built-ins/ArrayIteratorPrototype/next/args-unmapped-truncation-before-exhaustion.js",
+        "built-ins/ArrayIteratorPrototype/next/iteration-mutable.js",
+        "built-ins/ArrayIteratorPrototype/next/iteration.js",
+        "built-ins/ArrayIteratorPrototype/next/length.js",
+        "built-ins/ArrayIteratorPrototype/next/name.js",
+        "built-ins/ArrayIteratorPrototype/next/non-own-slots.js",
+        "built-ins/ArrayIteratorPrototype/next/property-descriptor.js",
+        "language/arguments-object/mapped/Symbol.iterator.js",
+        "language/arguments-object/unmapped/Symbol.iterator.js",
+    ),
+    {"Symbol.iterator"},
+)
+_admit(
+    (
+        "built-ins/ArrayIteratorPrototype/Symbol.toStringTag/property-descriptor.js",
+        "built-ins/ArrayIteratorPrototype/Symbol.toStringTag/value-direct.js",
+    ),
+    {"Symbol.iterator", "Symbol.toStringTag"},
+)
+_admit(
+    (
+        "built-ins/ArrayIteratorPrototype/next/Float32Array.js",
+        "built-ins/ArrayIteratorPrototype/next/Float64Array.js",
+        "built-ins/ArrayIteratorPrototype/next/Int16Array.js",
+        "built-ins/ArrayIteratorPrototype/next/Int32Array.js",
+        "built-ins/ArrayIteratorPrototype/next/Int8Array.js",
+        "built-ins/ArrayIteratorPrototype/next/Uint16Array.js",
+        "built-ins/ArrayIteratorPrototype/next/Uint32Array.js",
+        "built-ins/ArrayIteratorPrototype/next/Uint8Array.js",
+        "built-ins/ArrayIteratorPrototype/next/Uint8ClampedArray.js",
+    ),
+    {"Symbol.iterator", "TypedArray"},
+)
+_admit(
+    ("built-ins/ArrayIteratorPrototype/next/detach-typedarray-in-progress.js",),
+    {"TypedArray"},
+)
+
+if frozenset(ARRAY_ITERATOR_FEATURES) != ARRAY_ITERATOR_FILES:
+    raise RuntimeError("Array iterator admission manifest and feature map differ")
