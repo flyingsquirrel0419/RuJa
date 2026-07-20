@@ -19,6 +19,8 @@ The following resource limits are enforced:
   handler traversal is still metered. `for...in` precharges ordinary own-key
   snapshots before native collection growth, then charges each string
   candidate and ordinary prototype edge separately.
+  `Array.prototype.concat` charges each outer input, including an empty
+  spreadable value, and every scanned logical source index, including holes.
   Ordinary `[[SetPrototypeOf]]` cycle detection also consumes one unit per
   visited candidate object. Exhaustion throws a `RangeError("fuel exhausted")`
   that is *not catchable* by user `try/catch` (a host-level abort). `None` =
@@ -63,13 +65,24 @@ The following resource limits are enforced:
   cannot create, is rejected as soon as a directed edge repeats.
 - **Remaining Array generic-method gap**: `%Array.prototype%` is a real
   `ArrayData` exotic, and `push`, `pop`, `shift`, `unshift`, `splice`, `slice`,
-  and `with` now use generic internal property operations and logical lengths.
-  Slice and Splice implement `ArraySpeciesCreate`; With intentionally does not
-  consult species. Older implementations such as `concat`, `reverse`, `fill`,
-  and `copyWithin` still contain represented-Array shortcuts and need separate
+  `concat`, and `with` now use generic internal property operations and logical
+  lengths. Slice, Splice, and Concat implement `ArraySpeciesCreate`; Concat
+  also implements `Symbol.isConcatSpreadable`, while With intentionally does
+  not consult species. Older implementations such as `reverse`, `fill`, and
+  `copyWithin` still contain represented-Array shortcuts and need separate
   generic-receiver, observable-order, sparse, fuel, and rooting audits. The
   direct Test262 `methods-called-as-functions.js` aggregate remains outside the
-  exact admission because its unrelated `concat` assertions still fail.
+  exact admission because its next failure is the unrelated detached-receiver
+  behavior of `copyWithin`.
+- **Constructor-chain fuel gap**: `IsConstructor`, constructor-Realm lookup,
+  and construction still traverse deeply nested Proxy and Bound Function
+  targets without charging one fuel unit per edge. This is observable through
+  an Array species constructor and other construction paths, and bound-argument
+  prepending can become quadratic across a deep chain. The traversal is
+  iterative and native-stack safe, but execution fuel does not yet bound this
+  host work. Hosts requiring a hard bound must retain a separately killable
+  process until the shared constructor path is metered and argument collection
+  is linearized.
 - **Test262 result enforcement and pinning gap**: the Python runner reports
   fail, timeout, and error counts but still exits with status zero, so a matrix
   job can be green while semantic failures remain. Full-matrix shards also
@@ -89,11 +102,12 @@ The following resource limits are enforced:
   hard wall-clock deadline must use a separately killable process.
 - **String/array caps**: `"x".repeat(n)` is capped at 256 MiB output.
   `Array.from(iterable)` is capped at 65k elements. Dense arrays are capped
-  at 1M elements (`MAX_DENSE_ARRAY_LEN`); the Array constructor and Slice can
-  represent larger legal lengths sparsely without allocating a giant dense
-  vector. `Array.prototype.with` still rejects a captured length above
-  1,048,576 before its indexed scan because it must materialize every result
-  position. This sandbox bound is intentionally stricter than ECMAScript.
+  at 1M elements (`MAX_DENSE_ARRAY_LEN`); the Array constructor, Slice, and
+  Concat can represent larger legal lengths sparsely without allocating a
+  giant dense vector. `Array.prototype.with` still rejects a captured length
+  above 1,048,576 before its indexed scan because it must materialize every
+  result position. This sandbox bound is intentionally stricter than
+  ECMAScript.
 - **Call argument caps**: `Reflect.apply`, `Reflect.construct`, and
   `Function.prototype.apply` share an observable `CreateListFromArrayLike`
   implementation that materializes at most 1,048,576 arguments and throws
@@ -342,8 +356,9 @@ guarantees are required.
   force host GC while a future value exists only in a Rust snapshot. Several
   also require live property access rather than merely pinning the current
   snapshot, so they remain independent algorithm units. Push, Pop, Shift,
-  Unshift, Splice, Slice, and With now use live generic indexed operations with
-  operation-wide roots; the remaining method-specific gaps are tracked above.
+  Unshift, Splice, Slice, Concat, and With now use live generic indexed
+  operations with operation-wide roots; the remaining method-specific gaps
+  are tracked above.
 - Private methods are stored per-instance as private fields (each instance
   gets its own closure copy); behavior is spec-correct, but this is more
   memory-heavy than a shared per-class method table would be

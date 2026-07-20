@@ -75,6 +75,12 @@ target, argument array, and original forwarded new target. Normal and spread
 path, so bound `this` and Proxy `apply` traps cannot leak into superclass
 construction. Construction inputs and temporary trap values remain on
 `gc_pins` across every observable or collecting boundary.
+These constructor-edge walks are native-stack safe but do not yet consume VM
+fuel per followed Bound Function or Proxy edge. Construction also prepends
+each bound-argument layer by copying the already accumulated list, which can
+make a deep chain quadratic. The next constructor traversal unit must preserve
+revocation and observable trap order while adding shared edge metering and
+one-pass bound-argument materialization.
 
 Deep Proxy property forwarding uses the same stack-safety rule. Transparent
 `get` chains are iterative and do not consume ordinary prototype depth.
@@ -1145,7 +1151,49 @@ are similarly fuel-bounded before any irreversible mutation.
 - 검토한 주요 대안: Special-case only Array.prototype length, patch each failing Test262 path, retain dense-only results, convert every Array method in one release, replace ArrayData entirely, or establish one exotic representation invariant and repair the tightly coupled constructor, species, mutation, and copy surface first.
 - 선택한 방식: Allocate every intrinsic prototype as ArrayData, track Realm Array constructors, keep default dense descriptors in items/present and exceptional descriptors in props, implement seven methods through shared internal operations, permit sparse constructor and Slice results, and precharge Proxy, length-scan, and resize work before mutation.
 - 다른 대안 대신 이 방식을 선택한 이유: A prototype-only special case would diverge from ordinary Arrays; individual test patches would miss generic receivers and observable order; dense-only allocation rejects legal sparse results; changing every callback and legacy method at once is too broad to validate atomically; and retaining duplicate indexed representations makes descriptor and mutator behavior order-dependent.
-- 장점, 단점 및 영향: Array.prototype now has the same length/index invariants as every Array, generic receivers and species are observable in specification order, sparse construction no longer needs a giant vector, and exact fuel, GC retry, Realm rollback, and abrupt cleanup are regression-tested. The representation migration adds property-path complexity, With retains a deliberate 1,048,576-element sandbox cap, and older methods such as concat, reverse, fill, copyWithin, and several callback methods still need their own generic and rooting audits.
+- 장점, 단점 및 영향: Array.prototype now has the same length/index invariants as every Array, generic receivers and species are observable in specification order, sparse construction no longer needs a giant vector, and exact fuel, GC retry, Realm rollback, and abrupt cleanup are regression-tested. The representation migration adds property-path complexity, With retains a deliberate 1,048,576-element sandbox cap, and older methods such as reverse, fill, copyWithin, and several callback methods still need their own generic and rooting audits.
+```
+
+### Generic Array concat pipeline
+
+`Array.prototype.concat` now treats its boxed receiver and each argument as an
+ordered input stream rather than reading represented Array backing vectors.
+It creates the result before querying spreadability, then performs one
+`Symbol.isConcatSpreadable` Get per object. An undefined override falls back to
+Proxy-aware `IsArray`; a defined value is converted with `ToBoolean`.
+Spreadable inputs capture `LengthOfArrayLike`, reject `n + length` above
+`2^53 - 1` before indexed work, and execute `HasProperty` followed by
+conditional `Get` for every logical index. Missing properties advance the
+target index without materialization, while present values use
+`CreateDataPropertyOrThrow`. Non-spread inputs become one data property. The
+algorithm always ends with strict `Set(result, "length", n)` so custom species
+setters, false Proxy traps, and non-writable lengths remain observable.
+
+The receiver and all arguments are pinned before any boxing or species work.
+The boxed receiver and species result join that operation-wide root set, and a
+fetched value receives a temporary root across its observable result property
+definition. One cleanup boundary restores the incoming pin depth for semantic
+throws, Proxy revocation, fuel aborts, and heap-limit errors. Default species
+allocation uses the existing collecting Array allocator. Since the result
+starts at length zero and only present properties are defined, a large sparse
+source does not reserve its logical length as dense storage. One fuel unit is
+charged for every outer input, including an empty spreadable object, plus one
+for every scanned source index, including holes.
+
+TypedArray concat coverage exposed a transitional property-model defect:
+TypedArray, ArrayBuffer, and DataView instance-field compatibility reads ran
+before ordinary own descriptors. Those fields conceptually stand in for
+prototype accessors, so an own `length`, `byteLength`, `byteOffset`, or `buffer`
+descriptor now shadows the compatibility value before that fallback executes.
+
+```text
+[Decision Log]
+- 목적과 의도: Replace the dense-only concat shortcut with the complete generic, species-aware, sparse-safe algorithm while preserving Realm, GC, fuel, and heap-cap invariants.
+- 기존 구현 및 제약 조건: Concat cloned ArrayData.items, spread only direct represented Arrays, converted holes to own undefined values, bypassed ToObject and observable property operations, allocated outside the collecting VM path, and ignored custom species and Symbol.isConcatSpreadable. TypedArray compatibility reads also hid valid ordinary own length properties.
+- 검토한 주요 대안: Patch only the failing typed-array files, keep a fast represented-Array branch, preallocate from captured lengths, reuse Set for copied indices, broaden Test262 feature gates by prefix, or implement the abstract-operation sequence directly and freeze only audited feature-gated files.
+- 선택한 방식: Reuse the shared ToObject, LengthOfArrayLike, ArraySpeciesCreate, Proxy-aware IsArray, property-definition, strict-Set, Realm registry, and collecting allocation paths; retain u64 logical indices; root every observable value; meter each outer item and index; and admit nine exact Test262 paths through one manifest shared by both tools.
+- 다른 대안 대신 이 방식을 선택한 이유: Fast backing-storage paths cannot preserve holes, inherited indices, Proxy traps, or custom species; preallocation is unsafe for huge sparse lengths; Set invokes inherited setters instead of CreateDataProperty; prefix admission expands silently with upstream; and one generic path keeps represented and non-represented receivers behaviorally identical.
+- 장점, 단점 및 영향: All 69 direct concat files pass, sparse output above the dense cap is bounded by fuel rather than allocation size, observable failures restore roots, and TypedArray own length shadowing is corrected for every direct compatibility field. The algorithm must still scan every spreadable logical index as ECMAScript requires, native key strings and root vectors remain infallible Rust allocations, and shared Proxy or Bound constructor traversal needs separate per-edge fuel and linear argument collection.
 ```
 
 ---

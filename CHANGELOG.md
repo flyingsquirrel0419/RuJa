@@ -4,6 +4,62 @@
 
 ### Fixed
 
+- `Array.prototype.concat` now follows the generic ECMAScript pipeline:
+  `ToObject`, `ArraySpeciesCreate`, `IsConcatSpreadable`,
+  `LengthOfArrayLike`, safe-integer validation, `HasProperty`/`Get`,
+  `CreateDataPropertyOrThrow`, and the final strict length `Set`. Arrays,
+  Proxy-wrapped Arrays, explicitly spreadable objects and TypedArrays,
+  primitive receivers and arguments, inherited indices, holes, custom species
+  results, and foreign intrinsic Array constructors now preserve the required
+  observable order. Default results grow sparsely beyond
+  `MAX_DENSE_ARRAY_LEN` instead of cloning or preallocating dense backing
+  storage.
+
+  Receiver, arguments, boxed receivers, result objects, and copied values stay
+  rooted across species constructors, getters, Proxy traps, property creation,
+  and final length writes. Outer items and source indices consume cooperative
+  execution fuel, abrupt and fuel exits restore pin depth, and default result
+  allocation retries after collection at an exact heap-object cap. Ordinary
+  own `length`, `byteLength`, `byteOffset`, and `buffer` properties now shadow
+  the temporary TypedArray, ArrayBuffer, and DataView direct-field compatibility
+  paths, fixing the TypedArray length override exposed by generic concat.
+
+  Exact Test262 admission freezes the nine feature-gated concat files with
+  complete metadata, runner/analyzer symmetry, disjointness, and future-sibling
+  closure checks. On fixed checkout
+  `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the direct directory moves from
+  **16 pass / 44 fail / 9 skip** under the previous policy to **69 pass / 0
+  fail / 0 skip**. With the new policy forced onto the clean pre-feature
+  binary, runtime alone moves from **17 pass / 52 fail** to **69/0**, with no
+  reverse transition. The affected Array and Proxy cohort is **320 pass / 0
+  fail / 3 skip**.
+
+  Local gates pass all targets and features with lib **172/172**, builtins
+  **516/516**, operators **126/126**, fuel **29/29**, release lib **171/171**,
+  warnings-denied Clippy, rustfmt/diff, wasm32 all-features, and Python tooling
+  **119/119**. Two independent GPT 5.6 audits reproduced the baseline,
+  verified the implementation and exact admission, and identified the separate
+  shared constructor-chain fuel gap now recorded in the limitations. A third
+  final-diff reviewer returned `CLEAN`; all three sessions are closed. Neither
+  the coder model nor an Umans provider route was used. Feature commit
+  `549693cf5942ed60816ad80402ab4dd0dcc97412` is pushed to `main`. Ordinary CI
+  `29728440834` passes both jobs.
+
+  Full matrix `29728440863` passes all **33/33** jobs after rerunning its
+  Annex B shard. The initial artifact had two load-sensitive Annex B timeouts;
+  the same downloaded release binary on the fixed 1,086-file corpus reproduced
+  the baseline **201 pass / 811 fail / 74 skip / 0 timeout**, and the isolated
+  CI rerun did likewise. The 30 final result files at
+  `/tmp/ruja-array-concat.29728440863.rerun` aggregate to **31026 pass / 5854
+  fail / 11581 skip / 6 timeout / 0 error / 48467 total / 36880 pass-or-fail
+  executed** (**64.0%** all-file, **84.1%** executed).
+
+  Compared with full-matrix baseline `29723329226`, 29 files are byte-for-byte
+  identical. Only built-ins changes from **15365/5087/3210/6/0** to
+  **15418/5043/3201/6/0**, exactly **+53 pass / -44 fail / -9 skip** with no
+  timeout, error, total, or unrelated-shard drift. The downloaded release
+  binary independently passes the exact concat directory **69/69**.
+
 - `%Array.prototype%` is now a real Array exotic in every Realm, so indexed
   definitions update its length through the same invariants as ordinary
   Arrays. Realm-local Array constructors are registered, rooted, and rolled
@@ -31,9 +87,10 @@
   `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the complete seven-method
   Push/Pop/Shift/Unshift/Splice/Slice/With cohort plus six direct prototype
   checks is **268/268**. The clean pre-feature binary is **129 pass / 119 fail
-  / 20 skip**, for exactly **+139 pass / -119 fail / -20 skip**. The unrelated
-  `concat` assertion keeps the broader methods-called-as-functions aggregate
-  outside admission.
+  / 20 skip**, for exactly **+139 pass / -119 fail / -20 skip**. At that
+  intermediate boundary, the unrelated `concat` assertion kept the broader
+  methods-called-as-functions aggregate outside admission; the concat unit
+  above clears that assertion, while `copyWithin` remains independent work.
 
   Local gates pass all targets/features with lib **168/168**, builtins
   **511/511**, operators **126/126**, fuel **29/29**, release lib **167/167**,

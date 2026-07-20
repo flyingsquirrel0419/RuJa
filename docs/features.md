@@ -145,10 +145,13 @@
   `flat`, `flatMap`, `at`, `sort`, `reverse`, `copyWithin`, `reduceRight`,
   `toReversed`, `toSorted`, `toSpliced`, `with`; `Array.from`/`fromAsync`/`of`/
   `isArray`. `%Array.prototype%` is a real Array exotic. Push, Pop, Shift,
-  Unshift, Splice, Slice, and With use generic indexed operations and logical
-  lengths; Slice and Splice honor species, while With deliberately does not.
-  The Array constructor and Slice can create sparse results above the dense
-  cap. With reads through holes and retains a 1,048,576-element sandbox cap
+  Unshift, Splice, Slice, Concat, and With use generic indexed operations and
+  logical lengths. Slice, Splice, and Concat honor species; Concat also applies
+  `Symbol.isConcatSpreadable` to each input, preserves holes through
+  `HasProperty`, and performs strict result definitions and final length
+  update, while With deliberately ignores species. The Array constructor,
+  Slice, and Concat can create sparse results above the dense cap. With reads
+  through holes and retains a 1,048,576-element sandbox cap
 - **String**: `charAt`, `charCodeAt`, `slice`, `split`, `replace` (regex
   supported), `replaceAll`, `includes`, `startsWith`, `endsWith`, `repeat`,
   `padStart`/`padEnd`, `at`, `trim`/`trimStart`/`trimEnd`, `substring`, case

@@ -8888,9 +8888,10 @@ Pop, Shift, Unshift, Splice, Slice, and With directories are **262/262**. Six
 direct Array-prototype descriptor, identity, and exotic checks are **6/6**,
 for a selected cohort of **268 pass / 0 fail / 0 skip**. The clean pre-feature
 binary on the same checkout was **129 pass / 119 fail / 20 skip**, so the exact
-delta is **+139 pass / -119 fail / -20 skip**. The broader
-`methods-called-as-functions.js` file remains deliberately skipped because
-its unrelated legacy `concat` genericity assertion still fails.
+delta is **+139 pass / -119 fail / -20 skip**. At this intermediate boundary,
+the broader `methods-called-as-functions.js` file stayed deliberately skipped
+because its unrelated legacy `concat` genericity assertion still failed. The
+following concat unit clears that assertion and exposes `copyWithin` next.
 
 Local gates pass all targets and features with lib **168/168**, builtins
 **511/511**, operators **126/126**, fuel **29/29**, release lib **167/167**,
@@ -8934,7 +8935,88 @@ timeouts.
 - 검토한 주요 대안: Remove Array-related features globally, admit whole method prefixes, list only formerly failing files, retain dense-only results, or freeze exact feature-gated paths while separately measuring the complete seven-directory cohort.
 - 선택한 방식: Keep global feature gates, add a 20-path manifest with exact metadata shared by runner and analyzer, run all 262 files in the seven repaired method directories plus six direct prototype checks, and compare the feature and baseline binaries on one fixed checkout.
 - 다른 대안 대신 이 방식을 선택한 이유: Global or prefix admission would silently claim future or unrelated semantics; former-failure-only admission would hide already passing coverage; aggregate full-suite movement can conceal regressions; and a fixed exact cohort ties the conformance claim to the runtime paths reviewed in this unit.
-- 장점, 단점 및 영향: The selected surface is 268/268 with an attributable +139/-119/-20 transition, metadata drift now fails tooling, and remaining Array work stays explicit. Corpus updates require a manifest audit, methods-called-as-functions remains skipped until concat is generic, and this admission does not claim the broader Array prototype directory is complete.
+- 장점, 단점 및 영향: The selected surface is 268/268 with an attributable +139/-119/-20 transition, metadata drift now fails tooling, and remaining Array work stays explicit. Corpus updates require a manifest audit; at this boundary methods-called-as-functions stayed skipped pending generic concat, and this admission did not claim the broader Array prototype directory was complete.
+```
+
+## Generic and species-aware Array concat
+
+`Array.prototype.concat` now executes the ECMA-262 abstract-operation order:
+ToObject and `ArraySpeciesCreate` precede processing of the receiver and
+arguments; `IsConcatSpreadable` performs one `@@isConcatSpreadable` Get before
+falling back to Proxy-aware `IsArray`; spreadable values capture
+`LengthOfArrayLike`, check the safe-integer boundary before indexed work, and
+copy only properties found by `HasProperty` followed by `Get`. Present values
+use `CreateDataPropertyOrThrow`, holes advance the logical output index, and a
+strict final length Set runs even for empty or trailing-hole results.
+
+Custom and cross-Realm species, Proxy revocation and trap order, primitive and
+generic receivers, inherited indices, arguments objects, sparse objects,
+TypedArrays, non-extensible or constrained species results, and the
+`2^53 - 1` boundary share the same path. Operation-wide and per-value roots
+cover every observable callback; result allocation retries collection at an
+exact heap cap; and item/index loops consume fuel. The TypedArray tests also
+proved that ordinary own compatibility-field descriptors must shadow the
+temporary direct `length`, `byteLength`, `byteOffset`, and `buffer` reads, which
+is now enforced for TypedArray, ArrayBuffer, and DataView instances.
+
+`tools/test262_array_concat_admission.txt` freezes exactly **9** feature-gated
+files. Its feature map is shared by runner and analyzer, and tooling verifies
+the exact path set, live metadata, disjointness from every other admission,
+extra-feature rejection, and closure against future concat siblings. The
+broad feature gates remain unchanged.
+
+On fixed Test262 checkout
+`9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the complete direct concat
+directory changes from **16 pass / 44 fail / 9 skip** under the preceding
+binary and policy to **69 pass / 0 fail / 0 skip**. Applying the new admission
+policy to the clean pre-feature binary yields **17 pass / 52 fail / 0 skip**;
+the feature binary is **69/0/0**, proving **52 fail-to-pass** runtime
+transitions and no reverse transition. The admission-policy movement on the
+old binary is therefore **+1 pass / +8 fail / -9 skip**, and the composed
+direct-directory artifact movement is **+53 pass / -44 fail / -9 skip**.
+
+The focused regression sweep across Concat, Slice, Splice, `Array.isArray`,
+`Array[Symbol.species]`, and Proxy get/has/defineProperty is **320 pass / 0
+fail / 3 skip / 323 total**. Local all-target/all-feature tests pass with lib
+**172/172**, builtins **516/516**, operators **126/126**, fuel **29/29**, and
+release lib **171/171**; warnings-denied Clippy, rustfmt/diff, wasm32
+all-features, and Python tooling **119/119** also pass.
+Two baseline/specification auditors drove the implementation and admission
+boundary; a third GPT 5.6 final-diff reviewer returned `CLEAN`. All three
+review sessions are closed, and neither the coder model nor an Umans provider
+route was used.
+
+Feature commit `549693cf5942ed60816ad80402ab4dd0dcc97412` is pushed to
+`main`, and ordinary CI `29728440834` passes both jobs. Full matrix
+`29728440863` passes **33/33** jobs after one isolated Annex B rerun. Its first
+download contained two Annex B timeouts under runner load; the exact downloaded
+release binary reproduced the fixed-corpus baseline at **201 pass / 811 fail /
+74 skip / 0 timeout**, and the isolated CI rerun restored the same result.
+
+The 30 final files at `/tmp/ruja-array-concat.29728440863.rerun` aggregate to
+**31026 pass / 5854 fail / 11581 skip / 6 timeout / 0 error / 48467 total /
+36880 pass-or-fail executed**, or **64.0%** of all files and **84.1%** of
+executed files. Against full-matrix baseline `29723329226`, 29 files are
+byte-for-byte identical. Only `test262_built-ins_result.txt` changes from
+**15365/5087/3210/6/0** to **15418/5043/3201/6/0**, exactly **+53 pass / -44
+fail / -9 skip**, with no timeout, error, total, or unrelated-shard drift. The
+downloaded release binary independently passes the direct concat directory
+**69/69** on the fixed checkout.
+
+`methods-called-as-functions.js` remains outside admission. Concat now clears
+its detached-receiver assertion, but the file's next failure is the independent
+legacy `copyWithin` detached-receiver shortcut. Deep Proxy or Bound species
+constructor traversal is also tracked separately because shared constructor
+helpers are iterative but not yet charged to execution fuel per edge.
+
+```text
+[Decision Log]
+- 목적과 의도: Admit the complete current direct concat surface without weakening broad feature gates or silently claiming future files.
+- 기존 구현 및 제약 조건: The dense shortcut failed 44 executed files, nine implemented feature-tagged paths remained skipped, direct TypedArray tests exposed own length shadowing, and the containing Array prototype directory includes unrelated legacy methods.
+- 검토한 주요 대안: Remove Symbol, Proxy, species, and Reflect feature gates globally; admit the concat prefix; extend the earlier Array exotic manifest; list only former failures; or freeze the nine remaining feature-gated direct files in a dedicated manifest.
+- 선택한 방식: Keep global gates, add an exact nine-path manifest and metadata map shared by runner and analyzer, test future-sibling and extra-feature closure, and measure all 69 direct files plus shared Array and Proxy cohorts on one fixed checkout.
+- 다른 대안 대신 이 방식을 선택한 이유: Global and prefix admission overclaim unrelated or future behavior, folding this into the earlier unit obscures attribution, and former-failure-only evidence hides accidental passes. A dedicated exact boundary makes corpus drift and support expansion reviewable.
+- 장점, 단점 및 영향: Direct concat is 69/69 with 52 runtime fail-to-pass transitions and no reverse transition; runner and analyzer stay symmetric; and the next legacy Array failure remains explicit. Updating Test262 requires a manifest metadata audit, and this admission does not claim methods-called-as-functions or the full Array prototype directory.
 ```
 
 ## Why the full-suite rate is not higher
