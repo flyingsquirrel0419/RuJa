@@ -910,6 +910,200 @@ fn generic_array_method_loops_restore_pin_depth_after_fuel_abort() {
 }
 
 #[test]
+fn array_copy_within_consumes_exact_per_index_fuel() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    let args = [Value::Number(1.0), Value::Number(0.0), Value::Number(3.0)];
+
+    let partial = vm
+        .run("({ 0: 'a', 1: 'b', 2: 'c', length: 3 })")
+        .expect("partial-copy receiver should initialize");
+    let partial_pin = vm.pin(&partial);
+    let baseline = vm.gc_pins.len();
+    vm.set_fuel(Some(1));
+    let error = crate::builtins::array_copy_within(&mut vm, &args, Some(partial.clone()))
+        .expect_err("N-1 fuel must abort the overlapping copy");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+    vm.set_fuel(None);
+    assert_eq!(
+        vm.get_property(&partial, "0")
+            .expect("first partial value should remain readable"),
+        Value::String(Arc::from("a"))
+    );
+    assert_eq!(
+        vm.get_property(&partial, "1")
+            .expect("second partial value should remain readable"),
+        Value::String(Arc::from("b"))
+    );
+    assert_eq!(
+        vm.get_property(&partial, "2")
+            .expect("the first backward iteration should be visible"),
+        Value::String(Arc::from("b"))
+    );
+    vm.unpin(partial_pin);
+
+    let complete = vm
+        .run("({ 0: 'a', 1: 'b', 2: 'c', length: 3 })")
+        .expect("complete-copy receiver should initialize");
+    let complete_pin = vm.pin(&complete);
+    let baseline = vm.gc_pins.len();
+    vm.set_fuel(Some(2));
+    let returned = crate::builtins::array_copy_within(&mut vm, &args, Some(complete.clone()))
+        .expect("exact fuel should complete the overlapping copy");
+    assert_eq!(returned, complete);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+    vm.set_fuel(None);
+    assert_eq!(
+        vm.get_property(&complete, "1")
+            .expect("completed target value should be readable"),
+        Value::String(Arc::from("a"))
+    );
+    assert_eq!(
+        vm.get_property(&complete, "2")
+            .expect("completed trailing value should be readable"),
+        Value::String(Arc::from("b"))
+    );
+
+    vm.set_fuel(Some(0));
+    crate::builtins::array_copy_within(
+        &mut vm,
+        &[Value::Number(0.0), Value::Number(0.0), Value::Number(0.0)],
+        Some(complete),
+    )
+    .expect("an empty copy should consume no loop fuel");
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+    vm.set_fuel(None);
+    vm.unpin(complete_pin);
+}
+
+#[test]
+fn array_copy_within_roots_values_and_restores_pin_depth() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("GC test hook should register");
+    let baseline = vm.gc_pins.len();
+    let result = vm.run(
+        r#"
+        (function () {
+          var target = { 0: { marker: 41 }, length: 1 };
+          var proxy = new Proxy(target, {
+            has: function (target, key) {
+              forceGc();
+              return Reflect.has(target, key);
+            },
+            get: function (target, key, receiver) {
+              var value = Reflect.get(target, key, receiver);
+              if (key === "0") delete target[0];
+              forceGc();
+              return value;
+            },
+            set: function (target, key, value, receiver) {
+              forceGc();
+              return Reflect.set(target, key, value, receiver);
+            }
+          });
+          var returned = Array.prototype.copyWithin.call(
+            proxy,
+            { valueOf: function () { forceGc(); return 0; } },
+            { valueOf: function () { forceGc(); return 0; } },
+            { valueOf: function () { forceGc(); return 1; } }
+          );
+          return [returned === proxy, target[0].marker].join(":");
+        })();
+        "#,
+    );
+    assert_eq!(
+        result.expect("the fetched value should survive the collecting setter"),
+        Value::String(Arc::from("true:41"))
+    );
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    for source in [
+        r#"
+        var error = {};
+        var source = new Proxy({ 0: 1, length: 1 }, {
+          has: function () { forceGc(); throw error; }
+        });
+        Array.prototype.copyWithin.call(source, 0, 0, 1);
+        "#,
+        r#"
+        var error = {};
+        var source = new Proxy({ 0: 1, length: 1 }, {
+          get: function (target, key, receiver) {
+            if (key === "0") { forceGc(); throw error; }
+            return Reflect.get(target, key, receiver);
+          }
+        });
+        Array.prototype.copyWithin.call(source, 0, 0, 1);
+        "#,
+        r#"
+        var error = {};
+        var source = new Proxy({ 0: 1, length: 1 }, {
+          set: function () { forceGc(); throw error; }
+        });
+        Array.prototype.copyWithin.call(source, 0, 0, 1);
+        "#,
+        r#"
+        var error = {};
+        var source = new Proxy({ 0: 1, length: 2 }, {
+          deleteProperty: function () { forceGc(); throw error; }
+        });
+        Array.prototype.copyWithin.call(source, 0, 1, 2);
+        "#,
+    ] {
+        let mut vm = Vm::new().expect("VM should initialize");
+        vm.register_fn(
+            "forceGc",
+            |vm, _, _| {
+                vm.gc();
+                Ok(Value::Undefined)
+            },
+            0,
+        )
+        .expect("GC test hook should register");
+        let baseline = vm.gc_pins.len();
+        vm.run(source)
+            .expect_err("the observable copy step should complete abruptly");
+        assert_eq!(vm.gc_pins.len(), baseline);
+        assert_eq!(
+            vm.run("1 + 1").expect("VM should remain reusable"),
+            Value::Number(2.0)
+        );
+    }
+
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.gc();
+    let _garbage = vm
+        .new_object()
+        .expect("collectible garbage should allocate");
+    let baseline = vm.gc_pins.len();
+    vm.set_max_heap_objects(Some(vm.heap.live_count()));
+    let boxed = crate::builtins::array_copy_within(&mut vm, &[], Some(Value::Bool(true)))
+        .expect("primitive boxing should retry after collecting garbage");
+    vm.set_max_heap_objects(None);
+    let Value::Object(boxed_idx) = boxed else {
+        panic!("copyWithin should return the boxed Boolean receiver");
+    };
+    vm.heap.with_obj(boxed_idx.0, |object| {
+        let HeapObj::Object(data) = object else {
+            panic!("Boolean boxing should allocate ordinary object data");
+        };
+        assert_eq!(*data.primitive.lock(), Some(Value::Bool(true)));
+    });
+    assert_eq!(vm.gc_pins.len(), baseline);
+}
+
+#[test]
 fn array_concat_consumes_exact_per_item_and_per_index_fuel() {
     let mut vm = Vm::new().expect("VM should initialize");
     let empty = vm

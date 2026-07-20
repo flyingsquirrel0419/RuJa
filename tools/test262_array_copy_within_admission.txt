@@ -1,0 +1,9 @@
+# Exact Array.prototype.copyWithin feature-gated coverage.
+built-ins/Array/prototype/copyWithin/not-a-constructor.js
+built-ins/Array/prototype/copyWithin/resizable-buffer.js
+built-ins/Array/prototype/copyWithin/return-abrupt-from-delete-proxy-target.js
+built-ins/Array/prototype/copyWithin/return-abrupt-from-end-as-symbol.js
+built-ins/Array/prototype/copyWithin/return-abrupt-from-has-start.js
+built-ins/Array/prototype/copyWithin/return-abrupt-from-start-as-symbol.js
+built-ins/Array/prototype/copyWithin/return-abrupt-from-target-as-symbol.js
+built-ins/Array/prototype/copyWithin/return-abrupt-from-this-length-as-symbol.js

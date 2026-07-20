@@ -2264,55 +2264,53 @@ pub(crate) fn array_copy_within(
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    if let Some(Value::Object(idx)) = this {
-        let len = vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Array(a) = obj {
-                a.items.lock().len()
-            } else {
-                0
-            }
-        }) as f64;
-        let target = match args.first() {
-            Some(v) => vm.to_number(v)?,
-            None => 0.0,
+    let receiver = this.unwrap_or(Value::Undefined);
+    let mut pin_count = vm.pin(&receiver);
+    pin_count += vm.pin_many(args);
+    let result = (|| {
+        let object = array_method_to_object(vm, &receiver)?;
+        pin_count += vm.pin(&object);
+        let len = length_of_array_like_u64(vm, &object)?;
+
+        let mut to = relative_array_index(to_integer_or_infinity(vm, &get_arg(args, 0))?, len);
+        let mut from = relative_array_index(to_integer_or_infinity(vm, &get_arg(args, 1))?, len);
+        let final_index = match args.get(2) {
+            None | Some(Value::Undefined) => len,
+            Some(value) => relative_array_index(to_integer_or_infinity(vm, value)?, len),
         };
-        let start = match args.get(1) {
-            Some(v) => vm.to_number(v)?,
-            None => 0.0,
-        };
-        let end = match args.get(2) {
-            Some(v) => vm.to_number(v)?,
-            None => len,
-        };
-        let to = norm_idx(target, len) as usize;
-        let from = norm_idx(start, len) as usize;
-        let last = if end < 0.0 {
-            (len + end).max(0.0) as usize
+        let mut count = final_index.saturating_sub(from).min(len - to);
+
+        let direction = if from < to && to < from + count {
+            from += count - 1;
+            to += count - 1;
+            -1i64
         } else {
-            (end as usize).min(len as usize)
+            1i64
         };
-        if from >= last || to >= len as usize {
-            return Ok(Value::Object(idx));
-        }
-        let count = (last - from).min(len as usize - to);
-        let src: Vec<Value> = vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Array(a) = obj {
-                a.items.lock()[from..from + count].to_vec()
+        let mut from = from as i64;
+        let mut to = to as i64;
+
+        while count > 0 {
+            vm.consume_fuel()?;
+            let from_key = from.to_string();
+            let to_key = to.to_string();
+            if vm.has_property(&object, &from_key)? {
+                let value = vm.get_property(&object, &from_key)?;
+                let value_pin = vm.pin(&value);
+                let set = vm.set_property_strict(&object, &to_key, value);
+                vm.unpin(value_pin);
+                set?;
             } else {
-                Vec::new()
+                delete_property_or_throw(vm, &object, &to_key)?;
             }
-        });
-        vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Array(a) = obj {
-                let mut items = a.items.lock();
-                for (i, v) in src.into_iter().enumerate() {
-                    items[to + i] = v;
-                }
-            }
-        });
-        return Ok(Value::Object(idx));
-    }
-    Ok(Value::Undefined)
+            from += direction;
+            to += direction;
+            count -= 1;
+        }
+        Ok(object.clone())
+    })();
+    vm.unpin_many(pin_count);
+    result
 }
 pub(crate) fn array_keys(
     vm: &mut Vm,

@@ -1165,16 +1165,17 @@ descriptor scanning and dense resize work after observable conversion but
 before mutation, and applies the planned property and logical-length update
 without rescanning mutable storage.
 
-`push`, `pop`, `shift`, `unshift`, `splice`, `slice`, and `with` now operate on
-generic receivers through ToObject, LengthOfArrayLike, Get, HasProperty, Set,
-DeletePropertyOrThrow, and CreateDataProperty. Generic lengths use the full
-ToLength range through `2^53 - 1`; creation of an actual Array still enforces
-the ECMAScript uint32 length limit. Slice preserves holes and uses
-`ArraySpeciesCreate`. Splice uses species for the deleted-elements result.
-With intentionally ignores species and reads every non-replaced position, so
-source holes become own `undefined` values. All observable values and fresh
-results remain pinned until ownership transfers or an abrupt completion
-restores the incoming pin depth.
+`push`, `pop`, `shift`, `unshift`, `splice`, `slice`, `copyWithin`, and `with`
+now operate on generic receivers through ToObject, LengthOfArrayLike, Get,
+HasProperty, Set, DeletePropertyOrThrow, and CreateDataProperty. Generic lengths
+use the full ToLength range through `2^53 - 1`; creation of an actual Array
+still enforces the ECMAScript uint32 length limit. Slice preserves holes and
+uses `ArraySpeciesCreate`. Splice uses species for the deleted-elements result.
+CopyWithin mutates through live property operations without a snapshot. With
+intentionally ignores species and reads every non-replaced position, so source
+holes become own `undefined` values. All observable values and fresh results
+remain pinned until ownership transfers or an abrupt completion restores the
+incoming pin depth.
 
 The Array constructor and Slice can allocate sparse results beyond
 `MAX_DENSE_ARRAY_LEN` without first reserving a dense vector. Dense allocation
@@ -1194,7 +1195,7 @@ are similarly fuel-bounded before any irreversible mutation.
 - 검토한 주요 대안: Special-case only Array.prototype length, patch each failing Test262 path, retain dense-only results, convert every Array method in one release, replace ArrayData entirely, or establish one exotic representation invariant and repair the tightly coupled constructor, species, mutation, and copy surface first.
 - 선택한 방식: Allocate every intrinsic prototype as ArrayData, track Realm Array constructors, keep default dense descriptors in items/present and exceptional descriptors in props, implement seven methods through shared internal operations, permit sparse constructor and Slice results, and precharge Proxy, length-scan, and resize work before mutation.
 - 다른 대안 대신 이 방식을 선택한 이유: A prototype-only special case would diverge from ordinary Arrays; individual test patches would miss generic receivers and observable order; dense-only allocation rejects legal sparse results; changing every callback and legacy method at once is too broad to validate atomically; and retaining duplicate indexed representations makes descriptor and mutator behavior order-dependent.
-- 장점, 단점 및 영향: Array.prototype now has the same length/index invariants as every Array, generic receivers and species are observable in specification order, sparse construction no longer needs a giant vector, and exact fuel, GC retry, Realm rollback, and abrupt cleanup are regression-tested. The representation migration adds property-path complexity, With retains a deliberate 1,048,576-element sandbox cap, and older methods such as reverse, fill, copyWithin, and several callback methods still need their own generic and rooting audits.
+- 장점, 단점 및 영향: Array.prototype now has the same length/index invariants as every Array, generic receivers and species are observable in specification order, sparse construction no longer needs a giant vector, and exact fuel, GC retry, Realm rollback, and abrupt cleanup are regression-tested. The representation migration adds property-path complexity, With retains a deliberate 1,048,576-element sandbox cap, and older methods such as reverse, fill, and several callback methods still need their own generic and rooting audits.
 ```
 
 ### Generic Array concat pipeline
@@ -1237,6 +1238,41 @@ descriptor now shadows the compatibility value before that fallback executes.
 - 선택한 방식: Reuse the shared ToObject, LengthOfArrayLike, ArraySpeciesCreate, Proxy-aware IsArray, property-definition, strict-Set, Realm registry, and collecting allocation paths; retain u64 logical indices; root every observable value; meter each outer item and index; and admit nine exact Test262 paths through one manifest shared by both tools.
 - 다른 대안 대신 이 방식을 선택한 이유: Fast backing-storage paths cannot preserve holes, inherited indices, Proxy traps, or custom species; preallocation is unsafe for huge sparse lengths; Set invokes inherited setters instead of CreateDataProperty; prefix admission expands silently with upstream; and one generic path keeps represented and non-represented receivers behaviorally identical.
 - 장점, 단점 및 영향: All 69 direct concat files pass, sparse output above the dense cap is bounded by fuel rather than allocation size, observable failures restore roots, and TypedArray own length shadowing is corrected for every direct compatibility field. The algorithm must still scan every spreadable logical index as ECMAScript requires, native key strings and root vectors remain infallible Rust allocations, and shared Proxy or Bound constructor traversal needs separate per-edge fuel and linear argument collection.
+```
+
+### Generic Array copyWithin pipeline
+
+`Array.prototype.copyWithin` snapshots only `LengthOfArrayLike`, then coerces
+target, start, and an optional non-undefined end in source order through
+`ToIntegerOrInfinity`. Relative positions remain `u64` through the full
+`2^53 - 1` range. Overlap selects backward iteration only when the target begins
+inside the source interval; all other copies advance forward.
+
+Each logical iteration consumes one fuel unit before observable work. It then
+performs `HasProperty(source)`. A present source is read with `Get` and written
+with strict `Set`; an absent source invokes `DeletePropertyOrThrow` on the
+destination. The method therefore preserves inherited values and holes,
+observes live mutations from earlier traps, retains partial writes before a
+later abrupt completion, and performs same-range operations rather than
+silently treating them as a no-op. It never snapshots or materializes the
+source interval, so native temporary memory is constant apart from property
+traversal state and index strings.
+
+The receiver and all arguments are rooted before boxing or coercion. The boxed
+object remains rooted for the operation, and every fetched value receives a
+temporary root across an observable setter or Proxy trap. One cleanup boundary
+restores the incoming pin depth after semantic throws, Proxy false results,
+collection, heap-cap retry during primitive boxing, or fuel abort. Primitive
+boxing and native errors use the method Realm.
+
+```text
+[Decision Log]
+- 목적과 의도: Implement the complete generic copyWithin algorithm without dense-array shortcuts, source snapshots, or host work that configured fuel cannot bound.
+- 기존 구현 및 제약 조건: The method accepted only represented Arrays, used dense backing length, coerced arguments incompletely, copied a temporary Vec of values, collapsed holes, bypassed prototypes and Proxy traps, returned undefined for primitives and generic objects, and had no loop fuel or operation-wide roots.
+- 검토한 주요 대안: Patch the 18 failing Test262 files, retain a dense fast path, snapshot presence/value records before mutation, share one algorithm with reverse or fill, cap logical length at the dense limit, or execute the abstract property operations directly.
+- 선택한 방식: Reuse ToObject, u64 LengthOfArrayLike and relative-index helpers, iterate in the specification-selected direction, call HasProperty plus Get/strict Set or DeletePropertyOrThrow for every position, root the receiver/arguments/object/value, and charge one fuel unit immediately before each indexed step.
+- 다른 대안 대신 이 방식을 선택한 이유: Test-only patches and dense fast paths miss live traps, inherited values, holes, and generic receivers; snapshots change mutation and abrupt-completion order; reverse and fill have different property sequences; and a dense cap rejects legal sparse objects near the safe-integer limit.
+- 장점, 단점 및 영향: The direct fixed Test262 directory is 39/39, TypedArray borrowing remains compatible, MAX_SAFE_INTEGER work uses O(1) source storage, and exact fuel, Realm, GC, heap-cap, partial-mutation, and pin cleanup behavior is regression-tested. Unconfigured hosts can still request a specification-required linear scan, and native property-key strings plus traversal work remain subject to the broader process-memory policy.
 ```
 
 ---

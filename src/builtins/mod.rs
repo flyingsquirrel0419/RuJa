@@ -5596,13 +5596,6 @@ pub(crate) fn make_value_array_in_current_realm(
 ) -> error::Result<Value> {
     make_value_array_in_env(vm, items, vm.current_realm_global_env())
 }
-pub(crate) fn norm_idx(n: f64, len: f64) -> f64 {
-    if n < 0.0 {
-        (len + n).max(0.0)
-    } else {
-        n.min(len)
-    }
-}
 
 pub(crate) fn make_str_array(vm: &mut Vm, strs: Vec<Arc<str>>) -> error::Result<Value> {
     let items: Vec<Value> = strs.into_iter().map(Value::String).collect();

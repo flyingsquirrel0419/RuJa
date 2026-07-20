@@ -350,6 +350,184 @@ fn array_splice_is_generic_sparse_and_species_aware() {
 }
 
 #[test]
+fn array_copy_within_is_generic_sparse_and_observable() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            var prototype = { 1: "inherited" };
+            var raw = Object.create(prototype);
+            raw.length = 4;
+            raw[0] = "zero";
+            raw[2] = "two";
+            raw[3] = "three";
+            var proxy = new Proxy(raw, {
+              has: function(target, key) {
+                if (typeof key === "string" && key !== "length") log.push("has:" + key);
+                return Reflect.has(target, key);
+              },
+              get: function(target, key, receiver) {
+                if (typeof key === "string") log.push("get:" + key);
+                return Reflect.get(target, key, receiver);
+              },
+              set: function(target, key, value, receiver) {
+                if (typeof key === "string") log.push("set:" + key + ":" + value);
+                return Reflect.set(target, key, value, receiver);
+              }
+            });
+            var same = Array.prototype.copyWithin.call(
+              proxy,
+              { valueOf: function() { log.push("target"); return 1; } },
+              { valueOf: function() { log.push("start"); return 0; } },
+              { valueOf: function() { log.push("end"); return 3; } }
+            ) === proxy;
+
+            var sparseLog = [];
+            var sparse = { 0: "delete-me", 2: "keep", length: 3 };
+            var sparseProxy = new Proxy(sparse, {
+              has: function(target, key) {
+                sparseLog.push("has:" + key);
+                return Reflect.has(target, key);
+              },
+              deleteProperty: function(target, key) {
+                sparseLog.push("delete:" + key);
+                return Reflect.deleteProperty(target, key);
+              }
+            });
+            Array.prototype.copyWithin.call(sparseProxy, 0, 1, 2);
+
+            var huge = { length: Number.MAX_SAFE_INTEGER };
+            huge["9007199254740990"] = { marker: 9 };
+            var hugeSame = Array.prototype.copyWithin.call(
+              huge, 0, 9007199254740990
+            ) === huge;
+            var boxed = Array.prototype.copyWithin.call(true);
+            var other = $262.createRealm().global;
+            var foreignBoxed = other.Array.prototype.copyWithin.call(true);
+            var foreignError = false;
+            try { other.Array.prototype.copyWithin.call(null, 0, 0); }
+            catch (error) {
+              foreignError = error instanceof other.TypeError &&
+                !(error instanceof TypeError);
+            }
+            var frozenError = false;
+            try { Object.freeze([1, 2]).copyWithin(1, 0, 1); }
+            catch (error) { frozenError = error instanceof TypeError; }
+
+            [
+              same, log.join(","),
+              raw[0], raw[1], raw[2], raw[3],
+              Object.hasOwn(raw, "1"), Object.hasOwn(raw, "2"),
+              sparseLog.join(","), Object.hasOwn(sparse, "0"),
+              hugeSame, huge[0].marker,
+              boxed instanceof Boolean,
+              Object.getPrototypeOf(foreignBoxed) === other.Boolean.prototype,
+              foreignError, frozenError
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "true|get:length,target,start,end,has:2,get:2,set:3:two,has:1,get:1,set:2:inherited,has:0,get:0,set:1:zero|zero|zero|inherited|two|true|true|has:1,delete:0|false|true|9|true|true|true|true"
+        ))
+    );
+}
+
+#[test]
+fn array_copy_within_observes_live_iteration_and_partial_failures() {
+    assert_eq!(
+        run(r#"
+            var identityLog = [];
+            var identity = new Proxy({ 0: "a", 1: "b", length: 2 }, {
+              has: function(target, key) {
+                identityLog.push("has:" + key);
+                return Reflect.has(target, key);
+              },
+              get: function(target, key, receiver) {
+                if (key !== "length") identityLog.push("get:" + key);
+                return Reflect.get(target, key, receiver);
+              },
+              set: function(target, key, value, receiver) {
+                identityLog.push("set:" + key + ":" + value);
+                return Reflect.set(target, key, value, receiver);
+              }
+            });
+            Array.prototype.copyWithin.call(identity, 0, 0, 2);
+
+            var liveRaw = { 0: "a", 1: "b", 2: "x", 3: "y", length: 4 };
+            var live = new Proxy(liveRaw, {
+              set: function(target, key, value, receiver) {
+                if (key === "2") target[1] = "changed";
+                return Reflect.set(target, key, value, receiver);
+              }
+            });
+            Array.prototype.copyWithin.call(live, 2, 0, 2);
+
+            var setError = {};
+            var setRaw = { 0: "a", 1: "b", 2: "x", 3: "y", length: 4 };
+            var setProxy = new Proxy(setRaw, {
+              set: function(target, key, value, receiver) {
+                if (key === "3") throw setError;
+                return Reflect.set(target, key, value, receiver);
+              }
+            });
+            var caughtSet = false;
+            try { Array.prototype.copyWithin.call(setProxy, 2, 0, 2); }
+            catch (error) { caughtSet = error === setError; }
+
+            var deleteError = {};
+            var deleteRaw = { 0: "x", 1: "y", length: 4 };
+            var deleteProxy = new Proxy(deleteRaw, {
+              deleteProperty: function(target, key) {
+                if (key === "1") throw deleteError;
+                return Reflect.deleteProperty(target, key);
+              }
+            });
+            var caughtDelete = false;
+            try { Array.prototype.copyWithin.call(deleteProxy, 0, 2, 4); }
+            catch (error) { caughtDelete = error === deleteError; }
+
+            var snapshot = { 0: "a", 1: "b", 2: "c", length: 3 };
+            Array.prototype.copyWithin.call(snapshot, 1, 0, {
+              valueOf: function() { snapshot.length = 1; return 3; }
+            });
+
+            var bigintError = false;
+            var stringError = false;
+            var falseSetError = false;
+            var falseDeleteError = false;
+            try { Array.prototype.copyWithin.call({ length: 1 }, 0n, 0); }
+            catch (error) { bigintError = error instanceof TypeError; }
+            try { Array.prototype.copyWithin.call("abc", 1, 0, 1); }
+            catch (error) { stringError = error instanceof TypeError; }
+            try {
+              Array.prototype.copyWithin.call(
+                new Proxy({ 0: 1, length: 1 }, { set: function() { return false; } }),
+                0, 0, 1
+              );
+            } catch (error) { falseSetError = error instanceof TypeError; }
+            try {
+              Array.prototype.copyWithin.call(
+                new Proxy({ 0: 1, length: 2 }, {
+                  deleteProperty: function() { return false; }
+                }),
+                0, 1, 2
+              );
+            } catch (error) { falseDeleteError = error instanceof TypeError; }
+
+            [
+              identityLog.join(","),
+              liveRaw[2], liveRaw[3],
+              caughtSet, setRaw[2], setRaw[3],
+              caughtDelete, Object.hasOwn(deleteRaw, "0"), deleteRaw[1],
+              snapshot.length, snapshot[1], snapshot[2],
+              bigintError, stringError, falseSetError, falseDeleteError
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "has:0,get:0,set:0:a,has:1,get:1,set:1:b|a|changed|true|a|y|true|false|y|1|a|b|true|true|true|true"
+        ))
+    );
+}
+
+#[test]
 fn array_copy_results_and_intrinsic_prototype_survive_all_dense_mutators() {
     assert_eq!(
         run(r#"

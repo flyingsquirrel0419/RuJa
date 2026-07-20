@@ -9030,11 +9030,9 @@ fail / -9 skip**, with no timeout, error, total, or unrelated-shard drift. The
 downloaded release binary independently passes the direct concat directory
 **69/69** on the fixed checkout.
 
-`methods-called-as-functions.js` remains outside admission. Concat now clears
-its detached-receiver assertion, but the file's next failure is the independent
-legacy `copyWithin` detached-receiver shortcut. Deep Proxy or Bound species
-constructor traversal is also tracked separately because shared constructor
-helpers are iterative but not yet charged to execution fuel per edge.
+`methods-called-as-functions.js` remains outside admission. Concat and the
+following copyWithin unit clear their detached-receiver assertions, but the
+file's next failure is the independent detached `entries` method.
 
 ```text
 [Decision Log]
@@ -9044,6 +9042,43 @@ helpers are iterative but not yet charged to execution fuel per edge.
 - 선택한 방식: Keep global gates, add an exact nine-path manifest and metadata map shared by runner and analyzer, test future-sibling and extra-feature closure, and measure all 69 direct files plus shared Array and Proxy cohorts on one fixed checkout.
 - 다른 대안 대신 이 방식을 선택한 이유: Global and prefix admission overclaim unrelated or future behavior, folding this into the earlier unit obscures attribution, and former-failure-only evidence hides accidental passes. A dedicated exact boundary makes corpus drift and support expansion reviewable.
 - 장점, 단점 및 영향: Direct concat is 69/69 with 52 runtime fail-to-pass transitions and no reverse transition; runner and analyzer stay symmetric; and the next legacy Array failure remains explicit. Updating Test262 requires a manifest metadata audit, and this admission does not claim methods-called-as-functions or the full Array prototype directory.
+```
+
+## Generic Array copyWithin
+
+`Array.prototype.copyWithin` now follows the generic live-property algorithm:
+ToObject and one LengthOfArrayLike snapshot precede target/start/end coercion;
+overlap selects forward or backward iteration; and each position executes
+HasProperty followed by Get and strict Set, or DeletePropertyOrThrow for a
+hole. The receiver, arguments, boxed object, and fetched values remain GC roots
+across coercion, accessors, Proxy traps, setters, primitive-box allocation, and
+abrupt completion. One fuel unit precedes every logical copy step, including a
+hole deletion, and no source interval is materialized.
+
+`tools/test262_array_copy_within_admission.txt` freezes the exact **8**
+feature-gated files in the direct directory with a metadata map shared by the
+runner and analyzer. Tooling verifies live metadata, manifest disjointness,
+future-sibling closure, rejection of extra features, and symmetry between both
+tools. The other 31 files retain ordinary policy handling.
+
+On fixed checkout `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the preceding
+binary and policy are **17 pass / 14 fail / 8 skip**. Applying the new exact
+admission to that binary produces **21 pass / 18 fail / 0 skip**. The feature
+binary is **39 pass / 0 fail / 0 skip**, proving **18 fail-to-pass** runtime
+transitions and no reverse transition. The combined Array and TypedArray
+copyWithin directories are **104/104**. The broader
+`methods-called-as-functions.js` diagnostic now clears copyWithin and fails
+next at the independent detached `entries` method; it remains outside this
+admission.
+
+```text
+[Decision Log]
+- 목적과 의도: Admit the complete current direct Array copyWithin surface while preserving broad feature gates and keeping unrelated Array methods explicit.
+- 기존 구현 및 제약 조건: The dense shortcut failed 14 executed files, eight feature-tagged files remained skipped, forced execution exposed four additional failures, and the parent Array prototype contains independent legacy methods.
+- 검토한 주요 대안: Remove Proxy, Symbol, Reflect, arrow, and resizable-buffer gates globally; admit the directory prefix; fold paths into the older Array exotic manifest; list only failures; or freeze the eight remaining feature-gated files separately.
+- 선택한 방식: Keep global gates, add one exact eight-path manifest and live metadata map shared by runner and analyzer, run all 39 direct files on one fixed checkout, and retain a separate 104-file Array/TypedArray compatibility sweep.
+- 다른 대안 대신 이 방식을 선택한 이유: Global and prefix admission overclaim unrelated or future behavior, the older unit has separate attribution, and former-failure-only evidence hides accidental passes. Exact file metadata makes support growth and corpus drift reviewable.
+- 장점, 단점 및 영향: Direct copyWithin is 39/39 with 18 attributable runtime transitions, both tools remain symmetric, and future siblings stay gated. Updating Test262 requires an explicit manifest audit, and neither methods-called-as-functions nor reverse/fill/iterator receiver semantics are claimed by this unit.
 ```
 
 ## Why the full-suite rate is not higher

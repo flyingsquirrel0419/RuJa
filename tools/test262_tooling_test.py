@@ -119,6 +119,10 @@ from test262_array_concat_admission import (
     ARRAY_CONCAT_FEATURES,
     ARRAY_CONCAT_FILES,
 )
+from test262_array_copy_within_admission import (
+    ARRAY_COPY_WITHIN_FEATURES,
+    ARRAY_COPY_WITHIN_FILES,
+)
 from test262_reflect_set_has_admission import (
     REFLECT_SET_HAS_FEATURES,
     REFLECT_SET_HAS_FILES,
@@ -3250,6 +3254,89 @@ class ArrayConcatAdmissionTests(unittest.TestCase):
                         )
                     for path in (future, outside):
                         self.assertFalse(tool.array_concat_path(path))
+                        self.assertTrue(
+                            tool.should_skip({"features": ["Proxy"]}, path)
+                        )
+                finally:
+                    tool.TEST262 = original_root
+
+
+class ArrayCopyWithinAdmissionTests(unittest.TestCase):
+    def test_manifest_is_exact_live_disjoint_and_shared(self):
+        expected = frozenset(
+            {
+                "built-ins/Array/prototype/copyWithin/not-a-constructor.js",
+                "built-ins/Array/prototype/copyWithin/resizable-buffer.js",
+                "built-ins/Array/prototype/copyWithin/return-abrupt-from-delete-proxy-target.js",
+                "built-ins/Array/prototype/copyWithin/return-abrupt-from-end-as-symbol.js",
+                "built-ins/Array/prototype/copyWithin/return-abrupt-from-has-start.js",
+                "built-ins/Array/prototype/copyWithin/return-abrupt-from-start-as-symbol.js",
+                "built-ins/Array/prototype/copyWithin/return-abrupt-from-target-as-symbol.js",
+                "built-ins/Array/prototype/copyWithin/return-abrupt-from-this-length-as-symbol.js",
+            }
+        )
+        self.assertEqual(ARRAY_COPY_WITHIN_FILES, expected)
+        self.assertEqual(
+            frozenset(ARRAY_COPY_WITHIN_FEATURES), ARRAY_COPY_WITHIN_FILES
+        )
+
+        admission_dir = Path(__file__).resolve().parent
+        for manifest in admission_dir.glob("test262_*_admission.txt"):
+            if manifest.name == "test262_array_copy_within_admission.txt":
+                continue
+            existing = {
+                line
+                for raw_line in manifest.read_text().splitlines()
+                if (line := raw_line.strip()) and not line.startswith("#")
+            }
+            self.assertFalse(ARRAY_COPY_WITHIN_FILES & existing, manifest.name)
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        try:
+            test_root_available = test_root.is_dir()
+        except OSError:
+            test_root_available = False
+        if test_root_available:
+            for relative, features in ARRAY_COPY_WITHIN_FEATURES.items():
+                path = test_root / relative
+                self.assertTrue(path.is_file(), relative)
+                metadata = test262_runner.parse_meta(path.read_text())
+                self.assertEqual(
+                    frozenset(metadata.get("features", [])), features, relative
+                )
+                self.assertEqual(metadata.get("flags", []), [], relative)
+                self.assertIsNone(metadata.get("negative"), relative)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            future = (
+                root
+                / "test/built-ins/Array/prototype/copyWithin/future-proxy.js"
+            )
+            outside = root / "test/built-ins/Array/prototype/fill/future-proxy.js"
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for relative, features in ARRAY_COPY_WITHIN_FEATURES.items():
+                        path = root / "test" / relative
+                        self.assertTrue(tool.array_copy_within_path(path), relative)
+                        self.assertEqual(
+                            tool.array_copy_within_features(path), features
+                        )
+                        self.assertFalse(
+                            tool.should_skip({"features": sorted(features)}, path),
+                            relative,
+                        )
+                        self.assertTrue(
+                            tool.should_skip(
+                                {"features": sorted(features | {"decorators"})},
+                                path,
+                            ),
+                            relative,
+                        )
+                    for path in (future, outside):
+                        self.assertFalse(tool.array_copy_within_path(path))
                         self.assertTrue(
                             tool.should_skip({"features": ["Proxy"]}, path)
                         )

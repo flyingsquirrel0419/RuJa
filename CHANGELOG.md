@@ -11,6 +11,35 @@
 
 ### Fixed
 
+- `Array.prototype.copyWithin` now follows the generic ECMAScript algorithm
+  instead of copying represented Array backing storage. It boxes primitive
+  receivers, snapshots `LengthOfArrayLike`, coerces target/start/end in order,
+  selects the overlap direction, and performs live `HasProperty` plus
+  `Get`/strict `Set` or `DeletePropertyOrThrow` operations. Inherited values,
+  holes, generic and Proxy receivers, TypedArrays, same-range traps, partial
+  mutation before abrupt completion, and lengths through `2^53 - 1` now retain
+  observable semantics without materializing a source vector.
+
+  Receiver, arguments, boxed object, and fetched values remain rooted across
+  coercion, accessors, traps, setters, collection, and primitive-box heap-cap
+  retry. Every logical iteration consumes one fuel unit before property work,
+  and all normal, semantic, Proxy-false, allocation, and fuel exits restore the
+  incoming pin depth. Primitive wrappers and errors retain the method Realm.
+
+  Exact admission freezes eight feature-gated files with shared runner/analyzer
+  metadata and future-sibling closure. On fixed Test262 checkout
+  `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the complete direct directory
+  moves from **17 pass / 14 fail / 8 skip** to **39/39**. With the new policy
+  applied to the preceding binary, runtime moves from **21 pass / 18 fail** to
+  **39/0** with no reverse transition. Array and TypedArray copyWithin coverage
+  is **104/104**, and Python tooling is **120/120**.
+
+  Final local gates pass with **181/181** all-feature library tests inside the
+  full all-target suite, **180/180** release library tests, **120/120** Test262
+  tooling tests, **1/1** documentation tests, rustfmt, Clippy with `-D
+  warnings`, and wasm32 all-features checking. Two independent GPT-5.6 reviews
+  report `CLEAN`; coder and Umans routes were not used for this review.
+
 - Bound Functions and Proxies now retain immutable `[[Construct]]` capability,
   making `IsConstructor` constant-time and side-effect free. Constructor Realm
   lookup and actual Bound/Proxy construction consume one fuel unit per followed

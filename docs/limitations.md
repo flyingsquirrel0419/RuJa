@@ -74,15 +74,15 @@ The following resource limits are enforced:
   cannot create, is rejected as soon as a directed edge repeats.
 - **Remaining Array generic-method gap**: `%Array.prototype%` is a real
   `ArrayData` exotic, and `push`, `pop`, `shift`, `unshift`, `splice`, `slice`,
-  `concat`, and `with` now use generic internal property operations and logical
-  lengths. Slice, Splice, and Concat implement `ArraySpeciesCreate`; Concat
-  also implements `Symbol.isConcatSpreadable`, while With intentionally does
-  not consult species. Older implementations such as `reverse`, `fill`, and
-  `copyWithin` still contain represented-Array shortcuts and need separate
-  generic-receiver, observable-order, sparse, fuel, and rooting audits. The
-  direct Test262 `methods-called-as-functions.js` aggregate remains outside the
-  exact admission because its next failure is the unrelated detached-receiver
-  behavior of `copyWithin`.
+  `concat`, `copyWithin`, and `with` now use generic internal property
+  operations and logical lengths. Slice, Splice, and Concat implement
+  `ArraySpeciesCreate`; Concat also implements `Symbol.isConcatSpreadable`,
+  while CopyWithin and With intentionally do not consult species. Older
+  implementations such as `reverse` and `fill` still contain represented-Array
+  shortcuts and need separate generic-receiver, observable-order, sparse, fuel,
+  and rooting audits. The direct Test262 `methods-called-as-functions.js`
+  aggregate remains outside exact admission because its next failure is the
+  unrelated detached-receiver behavior of `entries`.
 - **Test262 result enforcement and pinning gap**: the Python runner reports
   fail, timeout, and error counts but still exits with status zero, so a matrix
   job can be green while semantic failures remain. Full-matrix shards also
