@@ -9071,6 +9071,26 @@ copyWithin directories are **104/104**. The broader
 next at the independent detached `entries` method; it remains outside this
 admission.
 
+Final local gates pass with **181/181** all-feature library tests inside the
+full all-target suite, **180/180** release library tests, **120/120** tooling
+tests, **1/1** documentation tests, rustfmt, warnings-denied Clippy, and wasm32
+all-features checking. Two independent GPT-5.6 reviews report `CLEAN`; both
+sessions are closed, and neither the coder model nor an Umans provider route
+was used.
+
+Feature commit `1678cc6b6789ee37f881d40460f9edb95da0fc90` is pushed to
+`main`. Ordinary CI `29747022947` passes both jobs, and full matrix
+`29747022998` passes all **33/33** jobs. The 30 result files downloaded to
+`/tmp/ruja-array-copy-within.29747022998` aggregate to **31048 pass / 5840
+fail / 11573 skip / 6 timeout / 0 error / 48467 total / 36888 pass-or-fail
+executed**. Against `/tmp/ruja-constructor-traversal.29741522114`, 29 files are
+byte-for-byte identical. Only `test262_built-ins_result.txt` changes from
+**15418/5043/3201/6/0** to **15440/5029/3193/6/0**, exactly **+22 pass / -14
+fail / -8 skip**, with no timeout, error, total, or unrelated-shard drift. The
+downloaded release binary independently reproduces direct **39/39** and
+combined Array/TypedArray **104/104** copyWithin coverage on the fixed
+checkout.
+
 ```text
 [Decision Log]
 - 목적과 의도: Admit the complete current direct Array copyWithin surface while preserving broad feature gates and keeping unrelated Array methods explicit.

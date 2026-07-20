@@ -40,6 +40,18 @@
   warnings`, and wasm32 all-features checking. Two independent GPT-5.6 reviews
   report `CLEAN`; coder and Umans routes were not used for this review.
 
+  Feature commit `1678cc6b6789ee37f881d40460f9edb95da0fc90` is pushed to
+  `main`. Ordinary CI `29747022947` passes both jobs, and full matrix
+  `29747022998` passes all **33/33** jobs. The 30 downloaded result files at
+  `/tmp/ruja-array-copy-within.29747022998` aggregate to **31048 pass / 5840
+  fail / 11573 skip / 6 timeout / 0 error / 48467 total / 36888 pass-or-fail
+  executed**. Against the preceding constructor-traversal matrix, 29 files are
+  byte-for-byte identical. Only `test262_built-ins_result.txt` changes by
+  exactly **+22 pass / -14 fail / -8 skip**, with no timeout, error, total, or
+  unrelated-shard drift. The downloaded release binary independently
+  reproduces direct **39/39** and combined Array/TypedArray **104/104**
+  copyWithin coverage on the fixed checkout.
+
 - Bound Functions and Proxies now retain immutable `[[Construct]]` capability,
   making `IsConstructor` constant-time and side-effect free. Constructor Realm
   lookup and actual Bound/Proxy construction consume one fuel unit per followed
