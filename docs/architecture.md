@@ -1042,6 +1042,62 @@ completion.
 - 장점, 단점 및 영향: Acyclic chains and inherited traps are stack-safe at arbitrary legal depth, exact fuel and LIFO pin cleanup are testable, Symbol and receiver behavior use one path, Proxy Has gains complete direct admission, and Slice/With no longer regress when Get is corrected. Dense copy results remain compatible with existing mutators and cannot bypass the native allocation cap; bounded slices of sparse sources remain possible. Memory grows linearly with traversal depth, inert Proxy cycles retain a deliberate 512-replay host guard that can differ from another engine's implementation-specific stack limit, and copying more than 1,048,576 elements now raises a sandbox RangeError. Generic Array receiver, sparse mutators, and full Array-prototype exotic modeling remain separate work.
 ```
 
+## Lazy Proxy-aware for-in enumeration
+
+`ForInIteratorState` mirrors the state described by `CreateForInIterator`: it
+retains the current object, whether that object has been snapshotted, the
+visited string keys, and the current own-key snapshot plus cursor. The state
+lives in `IteratorData` and GC tracing follows its current object. Creating an
+iterator first boxes a non-nullish primitive and pins that wrapper across the
+GC-retrying iterator allocation; `null` and `undefined` produce an already
+empty iteration without boxing.
+
+Each `iterator_next_resume` advances only far enough to yield one key or reach
+completion. It obtains a current object's keys through `[[OwnPropertyKeys]]`,
+discards Symbols without invoking `[[GetOwnProperty]]` for them, then queries
+each remaining string descriptor at the point it is processed. A name enters
+the visited set only when the descriptor still exists, and is yielded only
+when that descriptor is enumerable. After the snapshot is exhausted, the
+iterator calls `[[GetPrototypeOf]]` and repeats on the returned object. This
+preserves deleted-key, non-enumerable-shadowing, absent-descriptor, abrupt
+completion, revocation, and early `break` behavior. State locks are never held
+across an observable trap.
+
+`own_property_keys_or_throw` now uses an explicit stack of pending Proxy
+frames instead of recursive Rust calls. Every Proxy layer validates revocation,
+consumes fuel, and roots its target and handler across `GetMethod` and trap
+execution. A present trap validates its array-like result and duplicates,
+then performs `IsExtensible(target)` before the target's
+`[[OwnPropertyKeys]]`. On unwind, every target key's descriptor is queried
+before an omitted non-configurable key is reported; non-extensible targets
+then require an exact key set. The trap's original order is retained for the
+caller. Missing traps tail-forward without imposing a legal chain-depth cap.
+
+Ordinary own-key snapshots precharge fuel for every native key source before
+materializing vectors or sets: typed-array indices, dense Array presence,
+boxed or primitive String indices, module namespace exports, and stored
+properties. String byte length is a conservative upper bound for UTF-16 key
+count. Candidate processing and ordinary prototype edges are separately
+metered. Reached prototypes remain pinned for one advancement. Ordinary cycles
+fail when an edge repeats; observable Proxy cycles may replay and are bounded
+by configured fuel or the shared 512-replay host guard.
+
+`Object.hasOwn` and `Object.prototype.hasOwnProperty` now use the same complete
+Proxy `[[GetOwnProperty]]` path as `propertyIsEnumerable`, so virtual
+descriptors, transparent nested targets, revocation, and abrupt values are no
+longer bypassed. Map entries remain internal collection data and therefore do
+not appear in object enumeration.
+
+```text
+[Decision Log]
+- 목적과 의도: Make for-in enumerate ordinary and Proxy objects through the required internal methods while remaining lazy, stack-safe, GC-safe, and bounded by host fuel.
+- 기존 구현 및 제약 조건: make_for_in_keys eagerly walked raw heap properties and prototype slots, treated Map entries as object keys, bypassed Proxy traps, retained per-key source objects, and could materialize an unmetered ordinary snapshot before a host could stop it.
+- 검토한 주요 대안: Patch only transparent Proxy forwarding, eagerly collect all Proxy keys before loop execution, recurse through Proxy targets and prototypes, expose the internal iterator to JavaScript, or keep one lazy state machine backed by complete internal methods.
+- 선택한 방식: Store CreateForInIterator-shaped state in IteratorData, advance one observable phase per pull, use iterative pending frames for Proxy OwnPropertyKeys invariants, trace and pin all live objects, and precharge ordinary snapshot work before native collection growth.
+- 다른 대안 대신 이 방식을 선택한 이유: A forwarding-only patch would still miss descriptor and prototype traps; eager collection changes break and mutation order; Rust recursion makes legal depth host-stack-dependent; and an exposed iterator adds non-standard surface. Reusing the internal-method helpers keeps Object and for-in behavior aligned.
+- 장점, 단점 및 영향: Proxy trap order, Symbol filtering, shadowing, abrupt completion, primitive boxing, and early break now follow the specification; deep chains are iterative and every unbounded walk is fuel- or replay-bounded. Iterator state and pending invariant frames use O(keys plus depth) native memory, non-ASCII String snapshot fuel is conservatively overcharged, and the 512 replay guard is an intentional sandbox policy for inert Proxy cycles.
+```
+
 ---
 
 **Next:** [Features](features.md) · [Known limitations](limitations.md) · [Back to README](../README.md)

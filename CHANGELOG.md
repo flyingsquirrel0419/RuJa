@@ -4,6 +4,51 @@
 
 ### Fixed
 
+- `for...in` now uses a lazy, GC-traced iterator state that invokes
+  `[[OwnPropertyKeys]]`, `[[GetOwnProperty]]`, and `[[GetPrototypeOf]]` at the
+  observable phase of each advancement. Proxy trap order, early `break`,
+  Symbols, deleted keys, non-enumerable shadowing, absent descriptors,
+  revocation, abrupt values, primitive String UTF-16 indices, nullish sources,
+  and Map object-property boundaries are preserved.
+
+  Proxy `[[OwnPropertyKeys]]` is iterative rather than Rust-recursive. It roots
+  every target and handler, meters every layer, validates duplicates, performs
+  target extensibility before target keys, obtains all target descriptors
+  before omission errors, and enforces non-extensible exact-set invariants.
+  Ordinary snapshots precharge every native key source before materializing
+  collections. Candidate and prototype traversal are also fuel-bounded, and
+  inert Proxy cycles use the existing finite replay guard. `Object.hasOwn` and
+  `Object.prototype.hasOwnProperty` now use complete Proxy descriptors.
+
+  Regressions cover lazy trap/body order, transparent and fabricated keys,
+  Symbol filtering, shadowing, deleted descriptors, revocation, abrupt
+  identity, primitive boxing, collection boundaries, deep Proxy targets,
+  exact fuel and heap caps, forced GC and cell reuse, pin cleanup, and ordinary
+  or Proxy prototype cycles. Four mutation probes independently prove snapshot
+  precharge, extensibility ordering, iterator GC tracing, and complete target
+  descriptor traversal. Two GPT 5.6 reviewers returned `CLEAN`; the coder model
+  and Umans provider were not used.
+
+  Exact Test262 admission freezes **22** paths: all **21** direct Proxy
+  getOwnPropertyDescriptor files and one removed-enumerate file. On fixed
+  checkout `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, those paths are
+  **22/22**, `language/statements/for-in` is **78/0/37/115**, and supported
+  expressions/statements are **12752/0/7687/20439**. Local all-target and
+  all-feature tests pass with lib **162/162**, builtins **507/507**, and fuel
+  **29/29**, together with release lib **161/161**, warnings-denied Clippy,
+  rustfmt/diff, release, wasm32, and Python tooling **117/117**. Feature commit
+  `e98a31a1d0b5c93f4a34c37b7e37abb61dd1ebcd` is pushed, and ordinary CI
+  `29718464784` passes both jobs.
+
+  Full matrix `29718464780` passes all **33/33** jobs. Its 30 downloaded
+  artifacts at `/tmp/ruja-proxy-for-in.29718464780.complete.faEQF1` aggregate
+  to **30824 pass / 6027 fail / 11610 skip / 6 timeout / 0 error / 48467 total
+  / 36851 pass-or-fail executed** (**63.6%** all-file, **83.6%** executed).
+  Compared with the preceding confirmed matrix, 29 files are byte-identical;
+  only built-ins changes from **15194/5216/3252/6/0** to
+  **15216/5216/3230/6/0**, exactly **+22 pass / -22 skip** with no failure,
+  timeout, error, corpus, total, or unrelated-shard drift.
+
 - Ordinary `[[Get]]`, `[[HasProperty]]`, and `[[Set]]` now traverse prototype
   chains iteratively without the former 4096/1024/1024 correctness limits.
   One rooted `PropertyTraversal` records directed edges, retains every reached

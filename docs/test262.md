@@ -30,8 +30,8 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 63.5% of all matrix files; 83.6% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (12751 pass / 0 fail / 7687 skip / 20438 total on the current pinned checkout) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 63.6% of all matrix files; 83.6% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (12752 pass / 0 fail / 7687 skip / 20439 total on the current pinned checkout) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
@@ -8770,6 +8770,81 @@ restoration. GPT runtime reviewer Locke
 (`019f7bbe-3686-7f02-8c56-85cb514d7ab5`) found no remaining runtime,
 metadata, or tooling blocker. Neither the coder model nor an Umans provider
 route was used.
+
+## Proxy-aware for-in and descriptor forwarding
+
+`for...in` now advances a lazy `CreateForInIterator`-shaped state instead of
+eagerly scanning raw heap properties. Every object level obtains its snapshot
+through `[[OwnPropertyKeys]]`, filters Symbols, queries string descriptors
+through `[[GetOwnProperty]]` only when each candidate is processed, and moves
+through `[[GetPrototypeOf]]` after the snapshot is exhausted. A key is marked
+visited only when its descriptor exists, so non-enumerable own properties
+shadow a prototype name while a disappeared property does not. Early `break`
+does not run later descriptor or prototype traps. Primitive Strings enumerate
+UTF-16 indices; nullish values are empty; Map collection entries are not
+object properties.
+
+Proxy `[[OwnPropertyKeys]]` uses an iterative pending-frame stack. Duplicate
+validation precedes `IsExtensible(target)`, which precedes target
+`[[OwnPropertyKeys]]`; all target descriptors are queried before an omitted
+non-configurable-key TypeError can replace a later abrupt completion. Target
+and handler values stay rooted across traps, pending frames unwind in order,
+and ordinary key sources are fuel-precharged before native collections grow.
+`Object.hasOwn` and `Object.prototype.hasOwnProperty` now consume the same
+Proxy-aware descriptor operation.
+
+`tools/test262_proxy_for_in_admission.txt` freezes exactly **22** audited paths
+with normalized checksum
+`056b97ae1ead9c50c7f5c36177cd7d82c5a52cd0b9289f24fbde5f38cc3c4b1a`:
+all **21** `built-ins/Proxy/getOwnPropertyDescriptor/` files and
+`built-ins/Proxy/enumerate/removed-does-not-trigger.js`. The paired metadata
+map records only each file's live features. Tooling checks the fixed checkout,
+includes, flags, negative metadata, pairwise disjointness, runner/analyzer
+symmetry, and closed future-sibling and extra-feature gates.
+
+On fixed Test262 `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the descriptor
+directory is **21 pass / 0 fail**, the removed-enumerate file is **1/0**, and
+`language/statements/for-in` is **78 pass / 0 fail / 37 skip / 115 total**.
+The broad expressions/statements supported subset is **12752 pass / 0 fail /
+7687 skip / 20439 total**. Local gates pass every Rust target and feature with
+lib **162/162**, builtins **507/507**, and fuel **29/29**, plus release lib
+**161/161**, warnings-denied Clippy, rustfmt/diff, release, wasm32, and Python
+tooling **117/117**.
+
+Four manual mutations prove the new safety and ordering assertions. Removing
+ordinary snapshot precharge lets an N-1 budget materialize N keys; moving
+target own-key lookup before extensibility changes the nested trap log;
+removing iterator-state GC tracing loses a source across body-time collection;
+and throwing on the first omitted non-configurable key suppresses a later
+descriptor's unique abrupt marker. Each focused test fails under its mutation
+and passes after restoration. GPT 5.6 reviewers Poincare
+(`019f7d0c-e986-7e20-a6b8-987709000a2d`) and Bernoulli
+(`019f7d0c-eb4a-7a80-93d1-35dbb32bbf2e`) returned `CLEAN` after the ordering
+corrections. Both sessions are closed; neither the coder model nor an Umans
+provider route was used.
+
+Feature commit `e98a31a1d0b5c93f4a34c37b7e37abb61dd1ebcd` is pushed to
+`main`. Ordinary CI `29718464784` passes both jobs.
+
+Full matrix `29718464780` succeeds across all **33/33** jobs. Its 30
+downloaded result files at
+`/tmp/ruja-proxy-for-in.29718464780.complete.faEQF1` aggregate to **30824 pass
+/ 6027 fail / 11610 skip / 6 timeout / 0 error / 48467 total / 36851
+pass-or-fail executed** (**63.6%** all-file, **83.6%** executed). Against
+`/tmp/ruja-property-final.29708233596.complete.0MkZJg`, 29 files are
+byte-identical. Only `test262_built-ins_result.txt` changes, from
+**15194/5216/3252/6/0** to **15216/5216/3230/6/0**, exactly **+22 pass / -22
+skip** with no fail, timeout, error, corpus, total, or unrelated-shard drift.
+
+```text
+[Decision Log]
+- 목적과 의도: Admit only the Proxy descriptor and enumeration files whose complete runtime paths are now implemented, while proving that runner support cannot silently expand with a future Test262 checkout.
+- 기존 구현 및 제약 조건: Proxy-feature metadata caused the direct descriptor and removed-enumerate files to remain skipped; broad prefix admission would also auto-admit future files with unreviewed metadata or semantics.
+- 검토한 주요 대안: Remove Proxy from the global unsupported set, admit both directories by prefix, list only the previously observed failing files, or freeze every currently audited passing path with exact metadata.
+- 선택한 방식: Keep the global feature gate and add a 22-path manifest plus per-path feature map shared by runner and analyzer, with live-checkout, disjointness, and closure tests.
+- 다른 대안 대신 이 방식을 선택한 이유: Global or prefix admission overclaims support as Test262 evolves, while admitting only old failures hides already passing direct behavior. Exact paths make the conformance claim reproducible and force review before expansion.
+- 장점, 단점 및 영향: The 22-file gain is honest, runner and analyzer remain symmetric, and unknown siblings stay skipped. Updating the pinned Test262 corpus now requires an explicit manifest and metadata audit rather than silently changing the supported surface.
+```
 
 ## Why the full-suite rate is not higher
 

@@ -9,14 +9,16 @@ The following resource limits are enforced:
   explicitly metered native-loop steps. Proxy `[[Call]]`, `[[Delete]]`,
   `[[Get]]`, `[[Set]]`, `[[GetOwnProperty]]`, `[[DefineOwnProperty]]`,
   `[[IsExtensible]]`, `[[PreventExtensions]]`, `[[GetPrototypeOf]]`, and
-  `[[SetPrototypeOf]]` consume one unit per traversed Proxy layer, including
-  nested handler and invariant walks.
+  `[[SetPrototypeOf]]`, and `[[OwnPropertyKeys]]` consume one unit per
+  traversed Proxy layer, including nested handler and invariant walks.
   Ordinary `[[Get]]`, `[[HasProperty]]`, and `[[Set]]` consume one unit per
   ordinary-to-ordinary prototype edge. An ordinary-to-Proxy edge is not
   charged separately because the Proxy dispatch consumes its own unit. Proxy
   `GetMethod` lookup and trapless Set retain one initial ordinary-edge credit
   so the established exact per-Proxy budgets remain stable; deeper inherited
-  handler traversal is still metered.
+  handler traversal is still metered. `for...in` precharges ordinary own-key
+  snapshots before native collection growth, then charges each string
+  candidate and ordinary prototype edge separately.
   Ordinary `[[SetPrototypeOf]]` cycle detection also consumes one unit per
   visited candidate object. Exhaustion throws a `RangeError("fuel exhausted")`
   that is *not catchable* by user `try/catch` (a host-level abort). `None` =
@@ -59,11 +61,6 @@ The following resource limits are enforced:
   abort earlier. This guard applies only to cyclic topology, not to a legal
   acyclic chain. A malformed all-ordinary cycle, which normal ECMAScript APIs
   cannot create, is rejected as soon as a directed edge repeats.
-- **Transparent Proxy enumeration gap**: `for...in` can omit keys forwarded
-  from a transparent Proxy target. The underlying
-  `[[GetOwnPropertyDescriptor]]` results are correct, but Proxy-focused harness
-  cases that enumerate those keys still fail. This is separate from the direct
-  Reflect descriptor files admitted in the current 153-file surface.
 - **Array prototype and generic copy gap**: `%Array.prototype%` is currently an
   ordinary object tagged as an Array rather than a real `ArrayData` exotic.
   Its required own `length` descriptor exists, but defining index `2` does not

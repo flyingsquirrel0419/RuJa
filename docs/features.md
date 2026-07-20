@@ -183,7 +183,10 @@
   allocation, and observable argument arrays use the current execution Realm.
   `[[Set]]` forwarding and receiver-side `[[DefineOwnProperty]]` delegation are
   likewise iterative, rooted, and fuel-metered while preserving complete
-  versus value-only descriptor presence
+  versus value-only descriptor presence. Proxy `[[OwnPropertyKeys]]` is also
+  iterative and invariant-complete, and `for...in` lazily invokes
+  `[[OwnPropertyKeys]]`, `[[GetOwnProperty]]`, and `[[GetPrototypeOf]]` while
+  suppressing Symbols and duplicate prototype names
 - **Reflect**: all 13 standard methods: `apply`, `construct`, `defineProperty`,
   `deleteProperty`, `get`, `getOwnPropertyDescriptor`, `getPrototypeOf`, `has`,
   `isExtensible`, `ownKeys`, `preventExtensions`, `set`, and `setPrototypeOf`.
