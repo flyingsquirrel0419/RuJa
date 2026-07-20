@@ -48,6 +48,19 @@
   allocation, dead-cursor, and admission corrections before both returned
   `CLEAN`. Both sessions are closed; coder and Umans routes were not used.
 
+  Feature commit `7ebc8eea42c11141db89498c4ea7c9dd4e54fbea` is pushed to
+  `main`. Ordinary CI `29755632464` passes both jobs, and full matrix
+  `29755632391` passes all **33/33** jobs. The 30 downloaded result files at
+  `/tmp/ruja-array-iterators.29755632391` aggregate to **31101 pass / 5834
+  fail / 11526 skip / 6 timeout / 0 error / 48467 total / 36935 pass-or-fail
+  executed**. Against the preceding copyWithin matrix, 28 files are
+  byte-for-byte identical. `test262_built-ins_result.txt` changes by exactly
+  **+51 pass / -6 fail / -45 skip**, while
+  `test262_language_arguments-object_result.txt` changes by **+2 pass / -2
+  skip**; timeout, error, total, and every unrelated shard are unchanged. The
+  downloaded release binary independently reproduces the exact **65/65** and
+  shared iterator **94/94** cohorts on the fixed checkout.
+
 - `Array.prototype.copyWithin` now follows the generic ECMAScript algorithm
   instead of copying represented Array backing storage. It boxes primitive
   receivers, snapshots `LengthOfArrayLike`, coerces target/start/end in order,

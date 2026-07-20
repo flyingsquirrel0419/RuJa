@@ -9126,6 +9126,25 @@ The broader `built-ins/Array/prototype/methods-called-as-functions.js`
 aggregate remains outside exact admission. It now clears entries, keys, and
 values and fails next at the independent generic `fill` gap.
 
+Final local gates pass with all-feature library **186/186**, release library
+**185/185**, builtins **520/520**, arguments **15/15**, Python tooling
+**121/121**, documentation **1/1**, rustfmt, warnings-denied Clippy, and wasm32
+all-features checking. GPT-5.6 reviewers Zeno and Avicenna returned `CLEAN`.
+Feature commit `7ebc8eea42c11141db89498c4ea7c9dd4e54fbea`, ordinary CI
+`29755632464`, and full matrix `29755632391` are green; the matrix passes all
+**33/33** jobs.
+
+The 30 artifacts downloaded to
+`/tmp/ruja-array-iterators.29755632391` aggregate to **31101 pass / 5834 fail
+/ 11526 skip / 6 timeout / 0 error / 48467 total / 36935 pass-or-fail
+executed**. Against full-matrix baseline `29747022998`, 28 files are
+byte-identical. Built-ins moves from **15440/5029/3193/6/0** to
+**15491/5023/3148/6/0**, exactly **+51 pass / -6 fail / -45 skip**.
+`language/arguments-object` moves from **126/0/137/0/0** to
+**128/0/135/0/0**, exactly **+2 pass / -2 skip**. No unrelated shard, timeout,
+error, or total changes. The downloaded release binary independently passes
+the fixed 65-file cohort and 94-file compatibility sweep.
+
 ```text
 [Decision Log]
 - 목적과 의도: Admit the complete audited generic Array iterator and arguments-iterator cluster without weakening broad feature gates or claiming unrelated Array methods.
