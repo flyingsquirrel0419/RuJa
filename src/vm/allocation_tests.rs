@@ -483,6 +483,142 @@ fn array_push_pop_and_splice_roots_survive_observable_gc() {
 }
 
 #[test]
+fn array_concat_roots_survive_every_observable_gc_boundary() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("GC test hook should register");
+    let baseline = vm.gc_pins.len();
+
+    let result = vm.run(
+        r#"
+        var first = { marker: 11 };
+        var third = { marker: 33 };
+        var target = [first, , third];
+        target.constructor = {
+          get [Symbol.species]() {
+            forceGc();
+            return function Species() {
+              forceGc();
+              return new Proxy({ length: 0 }, {
+                defineProperty: function(target, key, descriptor) {
+                  forceGc();
+                  return Reflect.defineProperty(target, key, descriptor);
+                },
+                set: function(target, key, value) {
+                  forceGc();
+                  target[key] = value;
+                  return true;
+                }
+              });
+            };
+          }
+        };
+        target[Symbol.isConcatSpreadable] = true;
+        var source = new Proxy(target, {
+          get: function(target, key, receiver) {
+            forceGc();
+            return Reflect.get(target, key, receiver);
+          },
+          has: function(target, key) {
+            forceGc();
+            return Reflect.has(target, key);
+          }
+        });
+        var fourth = { marker: 44 };
+        var result = Array.prototype.concat.call(source, fourth);
+        [
+          result[0].marker, Object.hasOwn(result, "1"),
+          result[2].marker, result[3].marker, result.length
+        ].join(":");
+        "#,
+    );
+
+    assert_eq!(
+        result.expect("concat roots should survive observable GC"),
+        Value::String(Arc::from("11:false:33:44:4"))
+    );
+    assert_eq!(vm.gc_pins.len(), baseline);
+}
+
+#[test]
+fn array_concat_restores_gc_pin_depth_after_abrupt_observable_steps() {
+    for source in [
+        r#"
+        var error = {};
+        var source = [1];
+        source.constructor = {
+          get [Symbol.species]() { forceGc(); throw error; }
+        };
+        source.concat();
+        "#,
+        r#"
+        var error = {};
+        var source = [1];
+        Object.defineProperty(source, Symbol.isConcatSpreadable, {
+          get: function() { forceGc(); throw error; }
+        });
+        source.concat();
+        "#,
+        r#"
+        var error = {};
+        var source = new Proxy([1], {
+          has: function() { forceGc(); throw error; }
+        });
+        Array.prototype.concat.call(source);
+        "#,
+        r#"
+        var error = {};
+        function Species() {
+          return new Proxy({}, {
+            defineProperty: function() { forceGc(); throw error; }
+          });
+        }
+        var source = [1];
+        source.constructor = { [Symbol.species]: Species };
+        source.concat();
+        "#,
+        r#"
+        var error = {};
+        function Species() {
+          return new Proxy({}, {
+            set: function() { forceGc(); throw error; }
+          });
+        }
+        var source = [];
+        source.constructor = { [Symbol.species]: Species };
+        source.concat();
+        "#,
+    ] {
+        let mut vm = Vm::new().expect("VM should initialize");
+        vm.register_fn(
+            "forceGc",
+            |vm, _, _| {
+                vm.gc();
+                Ok(Value::Undefined)
+            },
+            0,
+        )
+        .expect("GC test hook should register");
+        let baseline = vm.gc_pins.len();
+
+        vm.run(source)
+            .expect_err("the observable concat step should complete abruptly");
+        assert_eq!(vm.gc_pins.len(), baseline);
+        assert_eq!(
+            vm.run("1 + 1").expect("VM should remain reusable"),
+            Value::Number(2.0)
+        );
+    }
+}
+
+#[test]
 fn array_slice_and_with_restore_gc_pin_depth_after_abrupt_gets() {
     for expression in ["source.slice();", "source.with(0, replacement);"] {
         let mut vm = Vm::new().expect("VM should initialize");
@@ -593,6 +729,26 @@ fn array_copy_results_preserve_sparse_slice_and_cap_materializing_with() {
     });
     assert_eq!(vm.gc_pins.len(), baseline_pins);
 
+    let concatenated = crate::builtins::array_concat(&mut vm, &[], Some(source.clone()))
+        .expect("Concat should preserve a large sparse result without dense backing");
+    assert_eq!(
+        vm.get_property(&concatenated, "length")
+            .expect("sparse concat length should be readable"),
+        Value::Number(length as f64)
+    );
+    let Value::Object(concatenated_idx) = concatenated else {
+        panic!("Concat should return an object");
+    };
+    vm.heap.with_obj(concatenated_idx.0, |object| {
+        let HeapObj::Array(array) = object else {
+            panic!("default Concat should allocate ArrayData");
+        };
+        assert!(array.items.lock().is_empty());
+        assert!(array.present.lock().is_empty());
+        assert_eq!(*array.sparse_max.lock(), Some(length));
+    });
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
     let error = crate::builtins::array::array_with(
         &mut vm,
         &[Value::Number(0.0), Value::Number(1.0)],
@@ -680,6 +836,7 @@ fn array_set_length_precharges_dense_work_before_mutation() {
 #[test]
 fn generic_array_method_loops_restore_pin_depth_after_fuel_abort() {
     for expression in [
+        "Array.prototype.concat.call(source);",
         "Array.prototype.slice.call(source);",
         "Array.prototype.with.call(source, 0, replacement);",
         "Array.prototype.splice.call(source, 0, 0, replacement);",
@@ -689,6 +846,7 @@ fn generic_array_method_loops_restore_pin_depth_after_fuel_abort() {
             r#"
             globalThis.replacement = { marker: 1 };
             globalThis.source = { length: 1000, 0: replacement };
+            source[Symbol.isConcatSpreadable] = true;
             "#,
         )
         .expect("fuel fixture should initialize");
@@ -731,8 +889,81 @@ fn generic_array_method_loops_restore_pin_depth_after_fuel_abort() {
 }
 
 #[test]
+fn array_concat_consumes_exact_per_item_and_per_index_fuel() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    let empty = vm
+        .run(
+            r#"
+            var empty = { length: 0 };
+            empty[Symbol.isConcatSpreadable] = true;
+            empty;
+            "#,
+        )
+        .expect("empty spreadable receiver should initialize");
+    let empty_pin = vm.pin(&empty);
+    let baseline = vm.gc_pins.len();
+
+    vm.set_fuel(Some(0));
+    let error = crate::builtins::array_concat(&mut vm, &[], Some(empty.clone()))
+        .expect_err("an empty spreadable item still requires one unit of fuel");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    vm.set_fuel(Some(1));
+    let empty_result = crate::builtins::array_concat(&mut vm, &[], Some(empty))
+        .expect("exact outer-item fuel should complete empty concat");
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(
+        vm.get_property(&empty_result, "length")
+            .expect("empty concat result length should be readable"),
+        Value::Number(0.0)
+    );
+    assert_eq!(vm.gc_pins.len(), baseline);
+    vm.set_fuel(None);
+    vm.unpin(empty_pin);
+
+    let source = vm
+        .run(
+            r#"
+            var source = { length: 2, 0: 1, 1: 2 };
+            source[Symbol.isConcatSpreadable] = true;
+            source;
+            "#,
+        )
+        .expect("spreadable receiver should initialize");
+    let source_pin = vm.pin(&source);
+    let baseline = vm.gc_pins.len();
+
+    vm.set_fuel(Some(2));
+    let error = crate::builtins::array_concat(&mut vm, &[], Some(source.clone()))
+        .expect_err("N-1 fuel must abort the indexed scan");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    vm.set_fuel(Some(3));
+    let result = crate::builtins::array_concat(&mut vm, &[], Some(source))
+        .expect("one item plus two indices should consume exactly three fuel units");
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(
+        vm.get_property(&result, "length")
+            .expect("concat result length should be readable"),
+        Value::Number(2.0)
+    );
+    assert_eq!(
+        vm.get_property(&result, "1")
+            .expect("second concat result value should be readable"),
+        Value::Number(2.0)
+    );
+    assert_eq!(vm.gc_pins.len(), baseline);
+    vm.set_fuel(None);
+    vm.unpin(source_pin);
+}
+
+#[test]
 fn array_species_allocation_failures_restore_pin_depth_and_preserve_sources() {
     for expression in [
+        "source.concat();",
         "source.slice();",
         "source.splice(0, 1);",
         "source.with(0, 2);",
@@ -791,6 +1022,45 @@ fn array_constructor_retries_after_collecting_garbage_at_the_heap_cap() {
             .expect("sparse Array length should be readable"),
         Value::Number((crate::value::MAX_DENSE_ARRAY_LEN + 1) as f64)
     );
+}
+
+#[test]
+fn array_concat_retries_result_allocation_after_heap_cap_gc() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    let source = vm
+        .run("globalThis.source = [{ marker: 1 }]; source;")
+        .expect("concat source should initialize");
+    let source_pin = vm.pin(&source);
+    vm.gc();
+    let baseline_live = vm.heap.live_count();
+    vm.run(
+        r#"
+        (function () {
+          for (var i = 0; i < 100; i++) ({ index: i });
+        })();
+        "#,
+    )
+    .expect("garbage fixture should initialize");
+    let capped_live = vm.heap.live_count();
+    assert!(capped_live > baseline_live, "fixture must leave garbage");
+    vm.set_max_heap_objects(Some(capped_live));
+    let baseline_pins = vm.gc_pins.len();
+
+    let result = crate::builtins::array_concat(&mut vm, &[], Some(source))
+        .expect("concat result allocation should collect garbage and retry");
+    vm.set_max_heap_objects(None);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(
+        vm.run("source[0].marker")
+            .expect("source should survive the allocation retry"),
+        Value::Number(1.0)
+    );
+    assert_eq!(
+        vm.get_property(&result, "length")
+            .expect("concat result length should be readable"),
+        Value::Number(1.0)
+    );
+    vm.unpin(source_pin);
 }
 
 #[test]

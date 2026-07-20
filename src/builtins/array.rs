@@ -1555,6 +1555,18 @@ fn array_species_create(vm: &mut Vm, original: &Value, length: u64) -> error::Re
     result
 }
 
+fn is_concat_spreadable(vm: &mut Vm, value: &Value) -> error::Result<bool> {
+    if !value.is_object() {
+        return Ok(false);
+    }
+    let key = PropertyKey::Symbol(vm.well_known_symbols.is_concat_spreadable);
+    let spreadable = vm.get_property_by_key(value, &key)?;
+    if !spreadable.is_undefined() {
+        return Ok(spreadable.is_truthy());
+    }
+    is_array_or_throw(vm, value)
+}
+
 fn delete_property_or_throw(vm: &mut Vm, object: &Value, key: &str) -> error::Result<()> {
     if vm.delete_property(object, key)? {
         Ok(())
@@ -1733,37 +1745,69 @@ pub(crate) fn array_concat(
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    let mut items = Vec::new();
-    if let Some(Value::Object(idx)) = this {
-        items = vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Array(a) = obj {
-                a.items.lock().clone()
+    let receiver = this.unwrap_or(Value::Undefined);
+    let mut pin_count = vm.pin(&receiver);
+    pin_count += vm.pin_many(args);
+    let result = (|| {
+        let object = array_method_to_object(vm, &receiver)?;
+        pin_count += vm.pin(&object);
+        let result = array_species_create(vm, &object, 0)?;
+        pin_count += vm.pin(&result);
+
+        let mut next_index = 0u64;
+        for item_index in 0..=args.len() {
+            let item = if item_index == 0 {
+                &object
             } else {
-                Vec::new()
-            }
-        });
-    }
-    for a in args {
-        if let Value::Object(aidx) = a {
-            let is_arr = vm
-                .heap
-                .with_obj(aidx.0, |obj| matches!(obj, HeapObj::Array(_)));
-            if is_arr {
-                let extra = vm.heap.with_obj(aidx.0, |obj| {
-                    if let HeapObj::Array(a) = obj {
-                        a.items.lock().clone()
-                    } else {
-                        Vec::new()
+                &args[item_index - 1]
+            };
+            if is_concat_spreadable(vm, item)? {
+                let length = length_of_array_like_u64(vm, item)?;
+                if next_index > MAX_SAFE_ARRAY_LENGTH_U64 - length {
+                    return Err(Error::type_err(
+                        "Array.prototype.concat result is too large",
+                    ));
+                }
+                // Empty spreadable inputs still consume host work.
+                vm.consume_fuel()?;
+                let mut source_index = 0u64;
+                while source_index < length {
+                    vm.consume_fuel()?;
+                    let source_key = source_index.to_string();
+                    if vm.has_property(item, &source_key)? {
+                        let value = vm.get_property(item, &source_key)?;
+                        let value_pin = vm.pin(&value);
+                        let define = vm.define_own_property_or_throw(
+                            &result,
+                            PropertyKey::from(next_index.to_string()),
+                            PropertyDescriptor::data(value),
+                        );
+                        vm.unpin(value_pin);
+                        define?;
                     }
-                });
-                items.extend(extra);
-                continue;
+                    source_index += 1;
+                    next_index += 1;
+                }
+            } else {
+                if next_index >= MAX_SAFE_ARRAY_LENGTH_U64 {
+                    return Err(Error::type_err(
+                        "Array.prototype.concat result is too large",
+                    ));
+                }
+                vm.consume_fuel()?;
+                vm.define_own_property_or_throw(
+                    &result,
+                    PropertyKey::from(next_index.to_string()),
+                    PropertyDescriptor::data(item.clone()),
+                )?;
+                next_index += 1;
             }
         }
-        items.push(a.clone());
-    }
-    let arr = HeapObj::Array(ArrayData::new(items, Some(vm.array_proto.clone())));
-    Ok(Value::Object(GcIdx(vm.heap.allocate(arr)?)))
+        vm.set_property_strict(&result, "length", Value::Number(next_index as f64))?;
+        Ok(result.clone())
+    })();
+    vm.unpin_many(pin_count);
+    result
 }
 
 pub(crate) fn array_reverse(

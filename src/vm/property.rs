@@ -451,6 +451,35 @@ impl Vm {
         };
         let key_str = key.as_str();
 
+        // These instance-field compatibility paths stand in for prototype
+        // accessors, so an ordinary own property must still be able to shadow
+        // them just as it would shadow the eventual accessor.
+        if include_direct_exotics
+            && matches!(
+                key_str,
+                Some("length" | "byteLength" | "byteOffset" | "buffer")
+            )
+        {
+            let uses_direct_exotic_field = self.heap.with_obj(idx.0, |object| {
+                matches!(
+                    object,
+                    HeapObj::TypedArray(_) | HeapObj::ArrayBuffer(_) | HeapObj::DataView(_)
+                )
+            });
+            if uses_direct_exotic_field {
+                let descriptor = self
+                    .heap
+                    .with_obj(idx.0, |object| object.props().lock().get(key).cloned());
+                if let Some(descriptor) = descriptor {
+                    return if descriptor.is_accessor {
+                        Ok(GetOwnPropertyOutcome::Accessor(descriptor.get))
+                    } else {
+                        Ok(GetOwnPropertyOutcome::Value(descriptor.value))
+                    };
+                }
+            }
+        }
+
         // Some built-ins still expose instance fields directly rather than
         // through prototype accessors. Restrict those compatibility paths to
         // direct property reads; Proxy forwarding and Reflect.get must retain

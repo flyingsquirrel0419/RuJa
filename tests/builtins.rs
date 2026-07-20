@@ -159,6 +159,154 @@ fn array_slice_uses_species_while_with_is_generic_and_species_free() {
 }
 
 #[test]
+fn array_concat_is_generic_sparse_and_spreadability_aware() {
+    assert_eq!(
+        run(r#"
+            var inherited = { 1: "inherited" };
+            var spreadable = Object.create(inherited);
+            spreadable[0] = "own";
+            spreadable.length = 3;
+            spreadable[Symbol.isConcatSpreadable] = true;
+
+            var opaqueArray = [4, , 6];
+            opaqueArray[Symbol.isConcatSpreadable] = false;
+            var result = [].concat(spreadable, opaqueArray, "tail");
+            var primitiveReceiver = Array.prototype.concat.call(7, 8);
+
+            [
+              result.length, result[0], result[1],
+              Object.hasOwn(result, "1"), Object.hasOwn(result, "2"),
+              result[3] === opaqueArray, result[4],
+              primitiveReceiver.length,
+              Number.prototype.valueOf.call(primitiveReceiver[0]),
+              primitiveReceiver[1]
+            ].join("|");
+        "#),
+        Value::String(Arc::from("5|own|inherited|true|false|true|tail|2|7|8"))
+    );
+}
+
+#[test]
+fn array_concat_observes_species_property_order_and_strict_result_writes() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            var first = { marker: 1 };
+            var third = { marker: 3 };
+            var target = [first, , third];
+            function Species(length) {
+              log.push("construct:" + length);
+              return new Proxy({ length: 99 }, {
+                defineProperty: function(target, key, descriptor) {
+                  log.push("define:" + key);
+                  return Reflect.defineProperty(target, key, descriptor);
+                },
+                set: function(target, key, value) {
+                  log.push("set:" + key + ":" + value);
+                  target[key] = value;
+                  return true;
+                }
+              });
+            }
+            target.constructor = {
+              get [Symbol.species]() {
+                log.push("species");
+                return Species;
+              }
+            };
+            target[Symbol.isConcatSpreadable] = true;
+            var source = new Proxy(target, {
+              get: function(target, key, receiver) {
+                if (key === "constructor") log.push("get:constructor");
+                else if (key === Symbol.isConcatSpreadable) log.push("get:spread");
+                else if (key === "length") log.push("get:length");
+                else if (key === "0" || key === "2") log.push("get:" + key);
+                return Reflect.get(target, key, receiver);
+              },
+              has: function(target, key) {
+                if (key === "0" || key === "1" || key === "2") {
+                  log.push("has:" + key);
+                }
+                return Reflect.has(target, key);
+              }
+            });
+            var fourth = { marker: 4 };
+            var result = Array.prototype.concat.call(source, fourth);
+            var zero = Object.getOwnPropertyDescriptor(result, "0");
+
+            [
+              log.join(","), result.length,
+              result[0] === first, Object.hasOwn(result, "1"),
+              result[2] === third, result[3] === fourth,
+              zero.writable, zero.enumerable, zero.configurable
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "get:constructor,species,construct:0,get:spread,get:length,has:0,get:0,define:0,has:1,has:2,get:2,define:2,define:3,set:length:4|4|true|false|true|true|true|true|true"
+        ))
+    );
+
+    assert!(
+        run_err(
+            r#"
+            function LockedLength() {
+              return Object.defineProperty({}, "length", {
+                value: 0,
+                writable: false
+              });
+            }
+            var source = [1];
+            source.constructor = { [Symbol.species]: LockedLength };
+            source.concat();
+            "#
+        )
+        .contains("TypeError"),
+        "concat must use a strict final Set for a custom species result"
+    );
+}
+
+#[test]
+fn array_concat_uses_the_calling_realm_for_foreign_intrinsic_arrays() {
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var foreignSource = other.Array.of(1, 2);
+            var mainResult = Array.prototype.concat.call(foreignSource, 3);
+            var foreignResult = other.Array.prototype.concat.call([4, 5], 6);
+            [
+              Object.getPrototypeOf(mainResult) === Array.prototype,
+              Object.getPrototypeOf(foreignResult) === other.Array.prototype,
+              mainResult.join(","), foreignResult.join(",")
+            ].join("|");
+        "#),
+        Value::String(Arc::from("true|true|1,2,3|4,5,6"))
+    );
+}
+
+#[test]
+fn array_concat_checks_the_safe_integer_limit_before_indexed_work() {
+    assert_eq!(
+        run(r#"
+            var indexed = false;
+            var huge = new Proxy({
+              length: Number.MAX_SAFE_INTEGER,
+              [Symbol.isConcatSpreadable]: true
+            }, {
+              has: function() {
+                indexed = true;
+                return false;
+              }
+            });
+            var typeError = false;
+            try { [0].concat(huge); }
+            catch (error) { typeError = error instanceof TypeError; }
+            [typeError, indexed].join(":");
+        "#),
+        Value::String(Arc::from("true:false"))
+    );
+}
+
+#[test]
 fn array_splice_is_generic_sparse_and_species_aware() {
     assert_eq!(
         run(r#"
@@ -7971,6 +8119,34 @@ fn typed_array_define_own_property_noncanonical_keys_are_ordinary() {
             Object.getOwnPropertyDescriptor(sample, "+1").value;
         "#),
         Value::String(Arc::from("ordinary"))
+    );
+}
+
+#[test]
+fn direct_buffer_view_fields_respect_ordinary_own_shadowing() {
+    assert_eq!(
+        run(r#"
+            var typed = new Uint8Array([7]);
+            Object.defineProperty(typed, "length", { value: 4 });
+            Object.defineProperty(typed, "byteLength", { value: 40 });
+            typed[Symbol.isConcatSpreadable] = true;
+            var concatenated = [].concat(typed);
+
+            var buffer = new ArrayBuffer(8);
+            Object.defineProperty(buffer, "byteLength", { value: 80 });
+            var view = new DataView(new ArrayBuffer(8), 2, 4);
+            Object.defineProperty(view, "byteOffset", { value: 20 });
+            Object.defineProperty(view, "buffer", { value: "shadow" });
+
+            [
+              typed.length, typed.byteLength,
+              concatenated.length, concatenated[0],
+              Object.hasOwn(concatenated, "1"),
+              Object.hasOwn(concatenated, "3"),
+              buffer.byteLength, view.byteOffset, view.buffer
+            ].join(":");
+        "#),
+        Value::String(Arc::from("4:40:4:7:false:false:80:20:shadow"))
     );
 }
 
