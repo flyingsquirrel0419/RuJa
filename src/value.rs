@@ -704,6 +704,7 @@ pub enum FunctionKind {
         target: GcIdx,
         this_val: Value,
         bound_args: Vec<Value>,
+        constructable: bool,
     },
 }
 

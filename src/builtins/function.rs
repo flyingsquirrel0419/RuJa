@@ -116,6 +116,7 @@ pub(crate) fn function_bind(
     // target and captured arguments, but this returned prototype is a new Rust
     // local and must survive the bound function's GC-aware allocation.
     let function_proto = vm.get_prototype_of(&target)?;
+    let constructable = vm.is_constructor_value(&target);
     let proto_pin = function_proto
         .as_ref()
         .map(|prototype| vm.pin(prototype))
@@ -126,6 +127,7 @@ pub(crate) fn function_bind(
             target: target_idx,
             this_val: this_arg,
             bound_args,
+            constructable,
         },
         closure: vm.global,
         lexical_new_target: Value::Undefined,

@@ -114,6 +114,33 @@ The focused analyzer mirrors the runner's `raw`, `onlyStrict` directive
 prologue, and `negative:` metadata handling, so strict-mode and parse-negative
 tests are not reported as false failure buckets.
 
+## Constructor traversal resource audit
+
+Constructor capability, Realm, and dispatch hardening intentionally changes
+only configured host-fuel and native-resource behavior, so it does not widen a
+Test262 admission boundary. On fixed checkout
+`9e61c12835c5e4a3bdba93850427e6742c4f64c4`, a file-by-file A/B between the
+preceding downloaded release artifact and the new release binary reports zero
+status transitions across two cohorts:
+
+- Function bind, Proxy construct, Reflect construct, and class subclass:
+  **248** files. Current policy is **204 pass / 7 fail / 37 skip** on both
+  binaries; forcing every feature gate is **239 pass / 9 fail** on both.
+- Array concat/slice/splice, Promise species/then/resolve, TypedArray
+  map/filter/slice/subarray, and RegExp species/matchAll/split: **734** files.
+  Current policy is **663 pass / 71 skip** on both binaries; forcing every
+  feature gate is **734/734** on both.
+
+The remaining nine forced constructor-cohort failures are unrelated existing
+Bind/class cases, not regressions or candidates for broad gate removal. Exact
+fuel, revocation, GC, argument-order/cap, fallback-Realm, Promise transaction,
+post-`then` continuation, one-shot, and settlement-job retry behavior is
+covered by Rust tests because Test262 has no host-fuel interface. A separate
+custom-capability regression proves that arbitrary species callbacks are not
+replayed after Fuel; cross-Realm regressions retain the selected thenable-job
+Realm for nested resolving-function prototypes and the resolver operation Realm
+for revoked-handler fallback across staged retry.
+
 ## Private class boundary admission
 
 `tools/test262_class_private_admission.txt` freezes **37** class declaration

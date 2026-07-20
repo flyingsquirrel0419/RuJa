@@ -2,7 +2,59 @@
 
 ## [Unreleased]
 
+### Changed
+
+- The embedding methods `Vm::promise_resolve` and `Vm::promise_reject` now
+  return `error::Result<()>` instead of `()`. This 0.4.0-alpha API change lets
+  embedders observe non-catchable host aborts before Promise settlement becomes
+  irreversible instead of silently dropping them.
+
 ### Fixed
+
+- Bound Functions and Proxies now retain immutable `[[Construct]]` capability,
+  making `IsConstructor` constant-time and side-effect free. Constructor Realm
+  lookup and actual Bound/Proxy construction consume one fuel unit per followed
+  edge with revocation checked first. The shared dispatcher roots every
+  wrapper, Proxy target/handler/trap, argument array, prototype, and fallback
+  Realm across observable calls and collecting allocation.
+
+  Bound arguments are collected outer-to-inner and flattened once in reverse
+  wrapper order, preserving `innerArgs, outerArgs, callArgs` and per-wrapper
+  `newTarget` substitution in linear time. The combined list shares the
+  1,048,576-entry argument cap; direct constructor/newTarget validation occurs
+  before any argument pin growth, and Bound overflow is rejected before an
+  observable target Proxy `construct` lookup. Ordinary interpreted receiver
+  allocation now uses the GC-retrying VM allocator. Eager native constructors
+  retain either the observed prototype or one already-resolved fallback Realm,
+  avoiding a second `GetFunctionRealm` traversal.
+
+  Promise settlement precomputes every selected handler Realm before changing
+  state. Intrinsic resolving functions retain Realm-rooted, phase-specific
+  Resolve, Reject, or post-`then` work when Fuel aborts: completed reaction
+  handlers, thenables, observable `then` access, and selected allocation-error
+  rejection are not replayed. Direct settlement retains the resolver operation
+  Realm for handler fallback, while nested resolving functions and
+  allocation-error materialization use the callable `then` job Realm. Staged
+  settlement runs before later external jobs, while arbitrary species-provided
+  capability functions are never automatically replayed.
+
+  Regressions cover exact fuel and revocation order, direct and Bound argument
+  caps without transient pin growth, 4,096 ordered Bound layers, 20,000-deep
+  constructor chains, forced GC and heap-cap allocation, fallback Realms,
+  Promise one-shot ownership, phase transfer, queue-front/FIFO order, task-only
+  GC roots, thenables that call resolve/reject, selected heap-limit rejection,
+  and custom capability no-replay behavior. On fixed Test262 checkout
+  `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the 248-file constructor cohort
+  remains **204 pass / 7 fail / 37 skip** under policy and **239 pass / 9 fail**
+  with gates forced; the 734-file species cohort remains **663 pass / 71 skip**
+  and **734/734** forced. File-by-file A/B against the preceding release binary
+  has zero status transitions in all four runs.
+
+  Final local gates pass with **179/179** all-feature library tests inside the
+  full all-target suite, **178/178** release library tests, **119/119** test262
+  tooling tests, rustfmt, Clippy with `-D warnings`, and wasm32 all-features
+  checking. Two independent GPT-5.6 reviews report `CLEAN`; coder and Umans
+  routes were not used for this review.
 
 - `Array.prototype.concat` now follows the generic ECMAScript pipeline:
   `ToObject`, `ArraySpeciesCreate`, `IsConcatSpreadable`,

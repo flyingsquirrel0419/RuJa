@@ -66,21 +66,43 @@ construct-trap argument array are allocated with that operation Realm's
 intrinsics. Exact-cap construction pins every provisional Proxy value before a
 collecting allocation.
 
-`is_constructor_value` and `construct_with_new_target` iteratively follow
-arbitrarily deep BoundFunction and transparent-Proxy chains. Bound arguments
-are prepended in wrapper order, BoundFunction `newTarget` substitution occurs
-only when required, and a Proxy construct trap receives the still-active
-target, argument array, and original forwarded new target. Normal and spread
-`super()` execute this same `[[Construct]]` dispatcher rather than the call
-path, so bound `this` and Proxy `apply` traps cannot leak into superclass
-construction. Construction inputs and temporary trap values remain on
-`gc_pins` across every observable or collecting boundary.
-These constructor-edge walks are native-stack safe but do not yet consume VM
-fuel per followed Bound Function or Proxy edge. Construction also prepends
-each bound-argument layer by copying the already accumulated list, which can
-make a deep chain quadratic. The next constructor traversal unit must preserve
-revocation and observable trap order while adding shared edge metering and
-one-pass bound-argument materialization.
+Bound Functions and Proxies store immutable `constructable` metadata when
+their exotic object is created. `is_constructor_value` therefore implements
+`IsConstructor` as a constant-time `[[Construct]]` capability read: it neither
+walks a target chain, checks Proxy revocation, nor consumes fuel.
+
+`constructor_realm` and `construct_with_new_target` share one constructor-step
+classifier for the operations that do follow targets. A Bound or live Proxy
+edge consumes one fuel unit immediately before traversal. Proxy revocation is
+validated before that charge and before observable `construct` lookup. Each
+followed wrapper, Proxy target, handler, trap, and argument array belongs to
+the outer construction pin scope, so normal, thrown, allocation, and host-abort
+exits restore the incoming pin depth even if a trap getter revokes its Proxy.
+
+Construction records Bound wrapper IDs outer-to-inner and materializes the
+argument list once in reverse wrapper order, followed by the original call
+arguments. This preserves `innerArgs, outerArgs, callArgs` and per-wrapper
+`newTarget` substitution while making copying linear in wrappers plus values.
+The combined argument list shares the 1,048,576-entry call-argument sandbox
+cap. Normal and spread `super()`, Reflect, species constructors, and native
+constructor dispatch all use this path.
+
+Eager native construction records either the already-observed object
+prototype or the already-resolved fallback Realm in `NewTargetPrototype`.
+Native bodies reuse that state, so non-object fallback does not repeat
+`GetFunctionRealm`; both variants are GC roots in pending and active execution
+contexts. Ordinary interpreted receiver allocation now uses the collecting VM
+allocator while pinning its resolved prototype across a heap-cap retry.
+
+```text
+[Decision Log]
+- 목적과 의도: Bound and Proxy constructor operations must preserve ECMAScript capability, Realm, argument, trap, and newTarget semantics while remaining stack-safe, fuel-bounded, linear, and GC-safe.
+- 기존 구현 및 제약 조건: Bound IsConstructor walked targets, Realm and Construct edges were unmetered, every Bound layer recopied the accumulated argument list, eager native fallback repeated Realm traversal, and Proxy traversal roots depended on retained revoked slots.
+- 검토한 주요 대안: Meter the existing IsConstructor walk, impose a wrapper-depth cap, keep repeated argument prepending, flatten each time a Proxy is reached, or cache immutable capability and carry one argument/prototype plan through the shared dispatcher.
+- 선택한 방식: Cache Bound constructability at creation, keep IsConstructor constant-time, meter only GetFunctionRealm and actual Construct edges after revocation validation, collect wrapper IDs and flatten once, and pass observed-prototype or fallback-Realm state into native execution.
+- 다른 대안 대신 이 방식을 선택한 이유: IsConstructor does not recursively inspect targets in ECMAScript; fixed depth caps reject legal programs; repeated or intermediate flattening remains quadratic; and recomputing fallback Realm changes exact fuel and can reorder errors relative to native constructor validation.
+- 장점, 단점 및 영향: Deep legal chains remain stack-safe and now have exact host work bounds, 4,096 one-argument layers preserve order with linear materialization, intrinsic Promise settlement retains staged work after Fuel without replaying completed handlers or then access, and all construction callers share one policy. Arbitrary species capability functions are not replayed after a host abort, unbounded hosts can still spend linear time, and temporary wrapper/root vectors remain native memory subject to the broader process-memory policy.
+```
 
 Deep Proxy property forwarding uses the same stack-safety rule. Transparent
 `get` chains are iterative and do not consume ordinary prototype depth.
@@ -736,6 +758,27 @@ revocation or unrelated re-entry can change how an error is constructed. Job
 payloads and Promise continuations trace these Realm environments together
 with their capabilities, handlers, promises, and generator references.
 
+Handler Realm selection treats catchable `GetFunctionRealm` failures, such as
+a revoked callable Proxy, as the specification's current-Realm fallback while
+propagating non-catchable host aborts. Pending Promise settlement precomputes
+every selected handler Realm before changing state or draining handlers. If
+Fuel ends that preflight, the Promise, handler list, resolving one-shot flag,
+and FIFO queue remain retryable. Intrinsic resolving functions claim their
+one-shot state and enqueue only the unfinished direct Resolve/Reject stage, so
+external jobs, reactions, async state machines, and thenables that already ran
+are not replayed. Staged settlement runs before later external jobs, while a
+direct Resolve/Reject stage that aborts again is pushed back to the front.
+Direct staged settlement roots the resolver operation Realm for later handler
+fallback. Promise resolution that completed observable `Get(resolution,
+"then")` retains that Realm together with the resolution, observed `then`, and
+claimed one-shot state until `GetFunctionRealm(then)` selects the thenable-job
+Realm. Nested resolving functions and allocation-error materialization then use
+that selected job Realm. Retry therefore resumes after the Get without invoking
+the getter again or confusing the resolver and job Realms.
+An arbitrary species-provided capability function is invoked once and never
+automatically replayed after Fuel, because replay could duplicate unknown user
+effects.
+
 `promise_rejection_reason_in_realm` is the common completion boundary. It
 preserves an explicit thrown JavaScript value, materializes a catchable native
 error in the operation Realm, and returns non-catchable Fuel exhaustion to the
@@ -761,8 +804,8 @@ calls and resumptions. It is intentionally separate from the bytecode frame
 stack: a native builtin can call interpreted code before a frame exists, and a
 suspended generator or async function can later resume beneath an unrelated
 native caller. Every context owns its callee Realm environment and callee;
-native contexts additionally own `NewTarget` and any already-observed
-`NewTarget.prototype` value.
+native contexts additionally own `NewTarget` and either an already-observed
+`NewTarget.prototype` value or its already-resolved fallback Realm.
 
 Interpreted dispatch pushes a setup context before class validation, sloppy
 `this` conversion, and arguments/rest allocation so those pre-frame operations

@@ -1,4 +1,4 @@
-use super::Vm;
+use super::{ExternalPromiseJob, Microtask, Vm};
 use crate::value::{HeapObj, NativeConstructMode, PromiseStatus};
 use crate::Value;
 use std::fs;
@@ -20,6 +20,27 @@ fn promise_state_and_result(vm: &Vm, value: Value) -> (PromiseStatus, Value) {
         };
         (*data.state.lock(), data.result.lock().clone())
     })
+}
+
+fn promise_state_and_handler_count(vm: &Vm, value: &Value) -> (PromiseStatus, usize) {
+    let Value::Object(promise) = value else {
+        panic!("expected a Promise object");
+    };
+    vm.heap.with_obj(promise.0, |object| {
+        let HeapObj::Promise(data) = object else {
+            panic!("expected a Promise heap object");
+        };
+        (*data.state.lock(), data.handlers.lock().len())
+    })
+}
+
+fn increment_global_counter(vm: &mut Vm, name: &str) -> crate::error::Result<()> {
+    let counter = vm.get_global(name);
+    let count = match vm.get_property(&counter, "count")? {
+        Value::Number(count) => count,
+        _ => 0.0,
+    };
+    vm.set_property(&counter, "count", Value::Number(count + 1.0))
 }
 
 fn native_construct_mode(vm: &Vm, value: &Value) -> Option<NativeConstructMode> {
@@ -1411,6 +1432,1350 @@ fn constructor_checks_follow_deep_proxy_and_bound_chains_iteratively() {
     assert_eq!(vm.get_global("deepTrapExtensible"), Value::Bool(true));
     assert_eq!(vm.get_global("deepTrapDescriptor"), Value::Bool(true));
     assert_eq!(vm.get_global("deepFreshDescriptor"), Value::Bool(true));
+}
+
+#[test]
+fn constructor_traversals_consume_fuel_per_followed_wrapper_edge() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.run(
+        r#"
+        var fuelBoundConstructor = Object.bind(null).bind(null).bind(null);
+        var fuelBoundNonConstructor = Math.abs.bind(null).bind(null);
+        var fuelInnerBound = Object.bind(null);
+        var fuelMixedConstructor = new Proxy(fuelInnerBound, {}).bind(null);
+        var fuelProxyConstructor = new Proxy(new Proxy(new Proxy(Object, {}), {}), {});
+        var fuelRevocableConstructor = Proxy.revocable(Object, {});
+        var fuelRevokedConstructor = fuelRevocableConstructor.proxy;
+        fuelRevocableConstructor.revoke();
+        "#,
+    )
+    .expect("constructor wrappers should initialize");
+    let baseline_pins = vm.gc_pins.len();
+
+    let bound = vm.get_global("fuelBoundConstructor");
+    vm.set_fuel(Some(0));
+    assert!(vm.is_constructor_value(&bound));
+    assert!(!vm.is_constructor_value(&vm.get_global("fuelBoundNonConstructor")));
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    let mixed = vm.get_global("fuelMixedConstructor");
+    vm.set_fuel(Some(2));
+    let error = vm
+        .constructor_realm(&mixed)
+        .expect_err("Bound, Proxy, Bound should require three fuel units");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+
+    vm.set_fuel(Some(3));
+    assert_eq!(
+        vm.constructor_realm(&mixed)
+            .expect("mixed constructor Realm traversal should complete"),
+        vm.global
+    );
+    assert_eq!(vm.fuel_remaining(), Some(0));
+
+    let revoked = vm.get_global("fuelRevokedConstructor");
+    vm.set_fuel(Some(0));
+    assert!(vm.is_constructor_value(&revoked));
+    let error = vm
+        .constructor_realm(&revoked)
+        .expect_err("GetFunctionRealm must reject a revoked Proxy before fuel");
+    assert_eq!(error.kind, crate::error::ErrorKind::Type);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    vm.set_fuel(None);
+}
+
+#[test]
+fn constructor_dispatch_is_metered_linear_and_roots_bound_arguments() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("GC test hook should register");
+    vm.run(
+        r#"
+        var dispatchBoundConstructor = Object.bind(null).bind(null).bind(null);
+        var dispatchProxyConstructor = new Proxy(new Proxy(new Proxy(Object, {}), {}), {});
+        var dispatchGetterCalls = 0;
+        var dispatchThrowingGetterProxy = new Proxy(Object, {
+          get construct() {
+            dispatchGetterCalls += 1;
+            throw new Error("construct getter should not run");
+          }
+        });
+        var dispatchEagerNewTarget = Object.bind(null).bind(null).bind(null);
+        Object.defineProperty(dispatchEagerNewTarget, "prototype", { value: undefined });
+        var dispatchFallbackRevocable = Proxy.revocable(Object, {});
+        var dispatchRevokedFallbackNewTarget = dispatchFallbackRevocable.proxy.bind(null);
+        Object.defineProperty(dispatchRevokedFallbackNewTarget, "prototype", {
+          value: undefined
+        });
+        dispatchFallbackRevocable.revoke();
+        var dispatchRevocableConstructor = Proxy.revocable(Object, {});
+        var dispatchRevokedConstructor = dispatchRevocableConstructor.proxy;
+        dispatchRevocableConstructor.revoke();
+        "#,
+    )
+    .expect("dispatch wrappers should initialize");
+    let baseline_pins = vm.gc_pins.len();
+    let object_constructor = vm.get_global("Object");
+
+    let throwing_getter = vm.get_global("dispatchThrowingGetterProxy");
+    vm.set_fuel(Some(0));
+    let error = vm
+        .construct_with_new_target(&throwing_getter, &[], &object_constructor)
+        .expect_err("fuel must abort before a live Proxy construct getter");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.get_global("dispatchGetterCalls"), Value::Number(0.0));
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    let proxy = vm.get_global("dispatchProxyConstructor");
+    vm.set_fuel(Some(2));
+    let error = vm
+        .construct_with_new_target(&proxy, &[], &object_constructor)
+        .expect_err("three Proxy dispatch edges should exhaust two fuel units");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    vm.set_fuel(Some(3));
+    assert!(matches!(
+        vm.construct_with_new_target(&proxy, &[], &object_constructor)
+            .expect("three Proxy dispatch edges should fit three fuel units"),
+        Value::Object(_)
+    ));
+    assert_eq!(vm.fuel_remaining(), Some(0));
+
+    let bound = vm.get_global("dispatchBoundConstructor");
+    vm.set_fuel(Some(2));
+    let error = vm
+        .construct_with_new_target(&bound, &[], &object_constructor)
+        .expect_err("three Bound dispatch edges should exhaust two fuel units");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    vm.set_fuel(Some(3));
+    assert!(matches!(
+        vm.construct_with_new_target(&bound, &[], &object_constructor)
+            .expect("three metered Bound dispatch edges should complete"),
+        Value::Object(_)
+    ));
+    assert_eq!(vm.fuel_remaining(), Some(0));
+
+    let array_constructor = vm.get_global("Array");
+    let eager_new_target = vm.get_global("dispatchEagerNewTarget");
+    vm.set_fuel(Some(2));
+    let error = vm
+        .construct_with_new_target(&array_constructor, &[], &eager_new_target)
+        .expect_err("eager fallback Realm traversal should exhaust two fuel units");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert!(vm.pending_new_target.is_none());
+    assert!(vm.pending_new_target_prototype.is_none());
+
+    vm.set_fuel(Some(3));
+    assert!(matches!(
+        vm.construct_with_new_target(&array_constructor, &[], &eager_new_target)
+            .expect("eager fallback Realm should traverse each Bound edge once"),
+        Value::Object(_)
+    ));
+    assert_eq!(vm.fuel_remaining(), Some(0));
+
+    let revoked_fallback = vm.get_global("dispatchRevokedFallbackNewTarget");
+    vm.set_fuel(Some(1));
+    let error = vm
+        .construct_with_new_target(
+            &array_constructor,
+            &[Value::Number(-1.0)],
+            &revoked_fallback,
+        )
+        .expect_err("fallback Realm failure must precede Array argument validation");
+    assert_eq!(error.kind, crate::error::ErrorKind::Type);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    let revoked = vm.get_global("dispatchRevokedConstructor");
+    vm.set_fuel(Some(0));
+    let error = vm
+        .construct_with_new_target(&revoked, &[], &object_constructor)
+        .expect_err("revoked Proxy construction should fail before fuel");
+    assert_eq!(error.kind, crate::error::ErrorKind::Type);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    vm.set_fuel(None);
+    let oversized_value = Value::Object(
+        vm.new_object()
+            .expect("oversized argument fixture should allocate"),
+    );
+    let oversized_args =
+        vec![oversized_value; crate::builtins::call_arguments::MAX_MATERIALIZED_CALL_ARGUMENTS + 1];
+    let pin_capacity_before_cap_checks = vm.gc_pins.capacity();
+    let error = vm
+        .construct_with_new_target(&Value::Undefined, &oversized_args, &object_constructor)
+        .expect_err("constructor validation must precede the argument cap");
+    assert_eq!(error.kind, crate::error::ErrorKind::Type);
+    assert_eq!(vm.gc_pins.capacity(), pin_capacity_before_cap_checks);
+    let error = vm
+        .construct_with_new_target(&object_constructor, &oversized_args, &Value::Undefined)
+        .expect_err("newTarget validation must precede the argument cap");
+    assert_eq!(error.kind, crate::error::ErrorKind::Type);
+    assert_eq!(vm.gc_pins.capacity(), pin_capacity_before_cap_checks);
+    let error = vm
+        .construct_with_new_target(&object_constructor, &oversized_args, &object_constructor)
+        .expect_err("constructor argument materialization must enforce the sandbox cap");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.gc_pins.capacity(), pin_capacity_before_cap_checks);
+
+    let bind = vm
+        .get_property(&throwing_getter, "bind")
+        .expect("Proxy constructor should inherit Function.prototype.bind");
+    let mut oversized_bind_args = Vec::with_capacity(oversized_args.len() + 1);
+    oversized_bind_args.push(Value::Undefined);
+    oversized_bind_args.extend(oversized_args);
+    let oversized_bound = vm
+        .call_function(&bind, &oversized_bind_args, Some(throwing_getter.clone()))
+        .expect("host call should create an oversized Bound argument fixture");
+    vm.set_fuel(Some(1));
+    let error = vm
+        .construct_with_new_target(&oversized_bound, &[], &object_constructor)
+        .expect_err("Bound argument overflow must precede the target Proxy getter");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.get_global("dispatchGetterCalls"), Value::Number(0.0));
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    drop(oversized_bound);
+    drop(oversized_bind_args);
+    vm.clear_kept_objects();
+    vm.gc();
+    vm.set_fuel(None);
+
+    assert_eq!(
+        vm.run(
+            r#"
+            function DirectTarget() {
+              this.args = Array.from(arguments).join(",");
+              this.newTargetMatches = new.target === DirectTarget;
+            }
+            var directResult = new (
+              DirectTarget.bind(null, "inner").bind(null, "outer")
+            )("call");
+
+            function ProxyTarget(first, second, third) {
+              forceGc();
+              this.args = first.label + "," + second.label + "," + third.label;
+              this.newTargetMatches = new.target === forwardingConstructor;
+            }
+            var constructLog = [];
+            var constructHandler = {};
+            Object.defineProperty(constructHandler, "construct", {
+              get: function () {
+                constructLog.push("get");
+                forceGc();
+                return function (target, args, newTarget) {
+                  constructLog.push("trap:" + args.length);
+                  forceGc();
+                  return Reflect.construct(target, args, newTarget);
+                };
+              }
+            });
+            var forwardingConstructor = new Proxy(ProxyTarget, constructHandler);
+            function constructThroughTemporaryBounds() {
+              return new (
+                forwardingConstructor
+                  .bind(null, { label: "inner" })
+                  .bind(null, { label: "outer" })
+              )({ label: "call" });
+            }
+            var proxyResult = constructThroughTemporaryBounds();
+            var linearConstructor = Array;
+            for (var i = 0; i < 4096; i += 1) {
+              linearConstructor = linearConstructor.bind(null, i);
+            }
+            var linearResult = new linearConstructor(4096);
+            var linearOrder =
+              linearResult.length === 4097 &&
+              linearResult[0] === 0 &&
+              linearResult[2048] === 2048 &&
+              linearResult[4095] === 4095 &&
+              linearResult[4096] === 4096;
+            directResult.args + ":" + directResult.newTargetMatches + "|" +
+              proxyResult.args + ":" + proxyResult.newTargetMatches + "|" +
+              constructLog.join(",") + "|" + linearOrder;
+            "#,
+        )
+        .expect("Bound and Proxy construction should preserve order across GC"),
+        Value::String(Arc::from(
+            "inner,outer,call:true|inner,outer,call:true|get,trap:3|true"
+        ))
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+}
+
+#[test]
+fn promise_settlement_precomputes_metered_handler_realms_transactionally() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.run(
+        r#"
+        var fulfilledResolve;
+        var fulfilledPromise = new Promise(function (resolve) {
+          fulfilledResolve = resolve;
+        });
+        var fulfilledHandler = function (value) { return value; };
+        fulfilledHandler = fulfilledHandler.bind(null).bind(null).bind(null);
+        fulfilledPromise.then(fulfilledHandler);
+
+        var rejectedReject;
+        var rejectedPromise = new Promise(function (resolve, reject) {
+          rejectedReject = reject;
+        });
+        var rejectedHandler = function (reason) { return reason; };
+        rejectedHandler = rejectedHandler.bind(null).bind(null);
+        rejectedPromise.then(undefined, rejectedHandler);
+
+        var multiLog = [];
+        var multiResolve;
+        var multiPromise = new Promise(function (resolve) { multiResolve = resolve; });
+        var multiFirst = function () { multiLog.push("first"); }.bind(null);
+        var multiSecond = function () { multiLog.push("second"); };
+        multiSecond = multiSecond.bind(null).bind(null).bind(null);
+        multiPromise.then(multiFirst);
+        multiPromise.then(multiSecond);
+
+        var fallbackResolve;
+        var fallbackPromise = new Promise(function (resolve) { fallbackResolve = resolve; });
+        var fallbackHandlerRecord = Proxy.revocable(function (value) { return value; }, {});
+        fallbackPromise.then(fallbackHandlerRecord.proxy);
+        fallbackHandlerRecord.revoke();
+        "#,
+    )
+    .expect("pending Promise handlers should initialize");
+    let baseline_pins = vm.gc_pins.len();
+    let baseline_jobs = vm.microtask_queue.len();
+
+    let fulfilled = vm.get_global("fulfilledPromise");
+    let Value::Object(fulfilled_idx) = fulfilled else {
+        panic!("fulfilledPromise should be a Promise object");
+    };
+    let fulfilled_resolve = vm.get_global("fulfilledResolve");
+    assert!(!vm.is_constructor_value(&fulfilled_resolve));
+    let object_constructor = vm.get_global("Object");
+    let error = vm
+        .construct_with_new_target(&object_constructor, &[], &fulfilled_resolve)
+        .expect_err("internal Promise resolvers must not expose [[Construct]]");
+    assert_eq!(error.kind, crate::error::ErrorKind::Type);
+    vm.set_fuel(Some(2));
+    let error = vm
+        .call_function(
+            &fulfilled_resolve,
+            &[Value::Number(7.0)],
+            Some(Value::Undefined),
+        )
+        .expect_err("three handler wrapper edges should exhaust two fuel units");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    let (status, handler_count) =
+        promise_state_and_handler_count(&vm, &Value::Object(fulfilled_idx));
+    assert!(status == PromiseStatus::Pending);
+    assert_eq!(handler_count, 1);
+    assert!(matches!(
+        vm.microtask_queue.front(),
+        Some(Microtask::ResolveInRealm { promise, value, .. })
+            if *promise == fulfilled_idx && *value == Value::Number(7.0)
+    ));
+    assert_eq!(vm.microtask_queue.len(), baseline_jobs + 1);
+    vm.call_function(
+        &fulfilled_resolve,
+        &[Value::Number(70.0)],
+        Some(Value::Undefined),
+    )
+    .expect("the original resolving function should remain one-shot");
+    assert_eq!(vm.microtask_queue.len(), baseline_jobs + 1);
+
+    vm.set_fuel(Some(3));
+    assert!(vm
+        .tick()
+        .expect("the staged fulfillment should fit three fuel units"));
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    let (status, handler_count) =
+        promise_state_and_handler_count(&vm, &Value::Object(fulfilled_idx));
+    assert!(status == PromiseStatus::Fulfilled);
+    assert_eq!(handler_count, 0);
+    assert_eq!(vm.microtask_queue.len(), baseline_jobs + 1);
+
+    let rejected = vm.get_global("rejectedPromise");
+    let Value::Object(rejected_idx) = rejected else {
+        panic!("rejectedPromise should be a Promise object");
+    };
+    let rejected_reject = vm.get_global("rejectedReject");
+    vm.set_fuel(Some(1));
+    let error = vm
+        .call_function(
+            &rejected_reject,
+            &[Value::String(Arc::from("reason"))],
+            Some(Value::Undefined),
+        )
+        .expect_err("two rejection-handler edges should exhaust one fuel unit");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    let (status, handler_count) =
+        promise_state_and_handler_count(&vm, &Value::Object(rejected_idx));
+    assert!(status == PromiseStatus::Pending);
+    assert_eq!(handler_count, 1);
+    assert!(matches!(
+        vm.microtask_queue.front(),
+        Some(Microtask::RejectInRealm {
+            promise,
+            reason: Value::String(reason),
+            ..
+        }) if *promise == rejected_idx && reason.as_ref() == "reason"
+    ));
+
+    vm.set_fuel(Some(2));
+    assert!(vm
+        .tick()
+        .expect("the staged rejection should fit two fuel units"));
+    let (status, handler_count) =
+        promise_state_and_handler_count(&vm, &Value::Object(rejected_idx));
+    assert!(status == PromiseStatus::Rejected);
+    assert_eq!(handler_count, 0);
+    assert_eq!(vm.microtask_queue.len(), baseline_jobs + 2);
+
+    let multi = vm.get_global("multiPromise");
+    let Value::Object(multi_idx) = multi else {
+        panic!("multiPromise should be a Promise object");
+    };
+    let multi_resolve = vm.get_global("multiResolve");
+    vm.set_fuel(Some(3));
+    let error = vm
+        .call_function(
+            &multi_resolve,
+            &[Value::Number(8.0)],
+            Some(Value::Undefined),
+        )
+        .expect_err("a later handler Realm must abort settlement transactionally");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    let (status, handler_count) = promise_state_and_handler_count(&vm, &Value::Object(multi_idx));
+    assert!(status == PromiseStatus::Pending);
+    assert_eq!(handler_count, 2);
+    assert_eq!(vm.microtask_queue.len(), baseline_jobs + 3);
+    assert!(matches!(
+        vm.microtask_queue.front(),
+        Some(Microtask::ResolveInRealm { promise, value, .. })
+            if *promise == multi_idx && *value == Value::Number(8.0)
+    ));
+
+    vm.set_fuel(Some(4));
+    assert!(vm
+        .tick()
+        .expect("the staged multi-handler settlement should fit exact fuel"));
+    let (status, handler_count) = promise_state_and_handler_count(&vm, &Value::Object(multi_idx));
+    assert!(status == PromiseStatus::Fulfilled);
+    assert_eq!(handler_count, 0);
+    assert_eq!(vm.microtask_queue.len(), baseline_jobs + 4);
+
+    let fallback = vm.get_global("fallbackPromise");
+    let Value::Object(fallback_idx) = fallback else {
+        panic!("fallbackPromise should be a Promise object");
+    };
+    let fallback_resolve = vm.get_global("fallbackResolve");
+    vm.set_fuel(Some(0));
+    vm.call_function(
+        &fallback_resolve,
+        &[Value::Number(9.0)],
+        Some(Value::Undefined),
+    )
+    .expect("revoked handler Realm lookup should use the current Realm fallback");
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    let (status, handler_count) =
+        promise_state_and_handler_count(&vm, &Value::Object(fallback_idx));
+    assert!(status == PromiseStatus::Fulfilled);
+    assert_eq!(handler_count, 0);
+    assert_eq!(vm.microtask_queue.len(), baseline_jobs + 5);
+    vm.set_fuel(None);
+    vm.run_microtasks()
+        .expect("queued reactions should retain FIFO order after retry");
+    assert_eq!(
+        vm.run("multiLog.join(',')")
+            .expect("multi-handler order should remain observable"),
+        Value::String(Arc::from("first,second"))
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+}
+
+#[test]
+fn promise_settlement_jobs_requeue_after_noncatchable_fuel_abort() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "recordReaction",
+        |vm, args, _| {
+            increment_global_counter(vm, "reactionCounter")?;
+            Ok(args.first().cloned().unwrap_or(Value::Undefined))
+        },
+        1,
+    )
+    .expect("reaction counter hook should register");
+    vm.register_fn(
+        "recordThenGetter",
+        |vm, _, _| {
+            increment_global_counter(vm, "getterCounter")?;
+            Ok(vm.get_global("getterThenFunction"))
+        },
+        0,
+    )
+    .expect("then getter counter hook should register");
+    vm.register_fn(
+        "settleGetterThen",
+        |vm, args, _| {
+            let thenable = args.first().cloned().unwrap_or(Value::Undefined);
+            let marker = vm.get_property(&thenable, "marker")?;
+            let resolve = args.get(1).cloned().unwrap_or(Value::Undefined);
+            vm.call_function(&resolve, &[marker], Some(Value::Undefined))?;
+            Ok(Value::Undefined)
+        },
+        2,
+    )
+    .expect("retained thenable hook should register");
+    vm.register_fn(
+        "rejectThenable",
+        |vm, _, _| {
+            increment_global_counter(vm, "thenableCounter")?;
+            Err(crate::error::Error::type_err("thenable marker"))
+        },
+        2,
+    )
+    .expect("thenable counter hook should register");
+    vm.register_fn(
+        "callSuppliedResolve",
+        |vm, args, _| {
+            increment_global_counter(vm, "suppliedResolveCounter")?;
+            let resolve = args.first().cloned().unwrap_or(Value::Undefined);
+            vm.call_function(&resolve, &[Value::Number(17.0)], Some(Value::Undefined))?;
+            Ok(Value::Undefined)
+        },
+        2,
+    )
+    .expect("supplied resolve hook should register");
+    vm.register_fn(
+        "callSuppliedReject",
+        |vm, args, _| {
+            increment_global_counter(vm, "suppliedRejectCounter")?;
+            let reject = args.get(1).cloned().unwrap_or(Value::Undefined);
+            vm.call_function(&reject, &[Value::Number(18.0)], Some(Value::Undefined))?;
+            Ok(Value::Undefined)
+        },
+        2,
+    )
+    .expect("supplied reject hook should register");
+    vm.run(
+        r#"
+        var externalDrainResolver;
+        var externalDrainPromise = new Promise(function (resolve) {
+          externalDrainResolver = resolve;
+        });
+        var externalOrder = [];
+        function externalFirstHandler(value) {
+          externalOrder.push("first");
+          return value;
+        }
+        externalDrainPromise.then(externalFirstHandler.bind(null).bind(null));
+
+        var externalFollowerResolver;
+        var externalFollowerPromise = new Promise(function (resolve) {
+          externalFollowerResolver = resolve;
+        });
+        externalFollowerPromise.then(function (value) {
+          externalOrder.push("second");
+          return value;
+        });
+
+        var externalTickResolver;
+        var externalTickPromise = new Promise(function (resolve) {
+          externalTickResolver = resolve;
+        });
+        externalTickPromise.then(Math.abs.bind(null).bind(null));
+
+        var microtaskDrainPromise = new Promise(function () {});
+        microtaskDrainPromise.then(Math.abs.bind(null).bind(null));
+
+        var microtaskTickPromise = new Promise(function () {});
+        microtaskTickPromise.then(undefined, Math.abs.bind(null).bind(null));
+
+        var reactionCounter = { count: 0 };
+        var reactionSourceResolve;
+        var reactionSource = new Promise(function (resolve) {
+          reactionSourceResolve = resolve;
+        });
+        var reactionDerived = reactionSource.then(recordReaction);
+        reactionDerived.then(Math.abs.bind(null).bind(null));
+
+        var getterCounter = { count: 0 };
+        var getterResolve;
+        var getterPromise = new Promise(function (resolve) { getterResolve = resolve; });
+        getterPromise.then(Math.abs.bind(null).bind(null));
+        var getterSentinel = new Promise(function () {});
+        var getterResolution = { marker: 16 };
+        var getterThenFunction = settleGetterThen.bind(null, getterResolution).bind(null);
+        Object.defineProperty(getterResolution, "then", { get: recordThenGetter });
+
+        var thenableCounter = { count: 0 };
+        var thenableResolve;
+        var thenablePromise = new Promise(function (resolve) {
+          thenableResolve = resolve;
+        });
+        thenablePromise.then(undefined, Math.abs.bind(null).bind(null));
+        var throwingThenable = { then: rejectThenable };
+
+        var suppliedResolveCounter = { count: 0 };
+        var suppliedResolveOuter;
+        var suppliedResolvePromise = new Promise(function (resolve) {
+          suppliedResolveOuter = resolve;
+        });
+        suppliedResolvePromise.then(Math.abs.bind(null).bind(null));
+        var resolvingThenable = { then: callSuppliedResolve };
+
+        var suppliedRejectCounter = { count: 0 };
+        var suppliedRejectOuter;
+        var suppliedRejectPromise = new Promise(function (resolve) {
+          suppliedRejectOuter = resolve;
+        });
+        suppliedRejectPromise.then(undefined, Math.abs.bind(null).bind(null));
+        var rejectingThenable = { then: callSuppliedReject };
+        "#,
+    )
+    .expect("retryable Promise job fixtures should initialize");
+    let baseline_pins = vm.gc_pins.len();
+
+    let external_drain = vm.get_global("externalDrainPromise");
+    let Value::Object(external_drain_idx) = external_drain else {
+        panic!("externalDrainPromise should be a Promise object");
+    };
+    let external_drain_resolver = vm.get_global("externalDrainResolver");
+    vm.external_jobs.lock().jobs.push_back(ExternalPromiseJob {
+        resolve: external_drain_resolver.clone(),
+        value: Value::Number(11.0),
+    });
+    vm.external_jobs.lock().jobs.push_back(ExternalPromiseJob {
+        resolve: vm.get_global("externalFollowerResolver"),
+        value: Value::Number(22.0),
+    });
+    vm.set_fuel(Some(1));
+    let error = vm
+        .run_microtasks()
+        .expect_err("external drain job should transfer settlement ownership");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    {
+        let jobs = vm.external_jobs.lock();
+        assert_eq!(jobs.jobs.len(), 1);
+        assert_eq!(
+            jobs.jobs.front().map(|job| &job.value),
+            Some(&Value::Number(22.0))
+        );
+    }
+    assert!(matches!(
+        vm.microtask_queue.front(),
+        Some(Microtask::ResolveInRealm { promise, value, .. })
+            if *promise == external_drain_idx && *value == Value::Number(11.0)
+    ));
+    let (status, handler_count) =
+        promise_state_and_handler_count(&vm, &Value::Object(external_drain_idx));
+    assert!(status == PromiseStatus::Pending);
+    assert_eq!(handler_count, 1);
+    assert_eq!(
+        promise_state_and_result(&vm, Value::Object(external_drain_idx)).1,
+        Value::Undefined
+    );
+
+    vm.set_fuel(Some(100));
+    vm.run_microtasks()
+        .expect("staged settlement should precede the next external job");
+    assert!(vm.external_jobs.lock().jobs.is_empty());
+    let (status, result) = promise_state_and_result(&vm, Value::Object(external_drain_idx));
+    assert!(status == PromiseStatus::Fulfilled);
+    assert_eq!(result, Value::Number(11.0));
+    assert_eq!(
+        vm.run("externalOrder.join(',')")
+            .expect("external reactions should preserve FIFO order"),
+        Value::String(Arc::from("first,second"))
+    );
+
+    let external_tick = vm.get_global("externalTickPromise");
+    let Value::Object(external_tick_idx) = external_tick else {
+        panic!("externalTickPromise should be a Promise object");
+    };
+    vm.external_jobs.lock().jobs.push_back(ExternalPromiseJob {
+        resolve: vm.get_global("externalTickResolver"),
+        value: Value::Number(12.0),
+    });
+    vm.set_fuel(Some(1));
+    let error = vm
+        .tick()
+        .expect_err("external tick job should transfer to staged settlement");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert!(vm.external_jobs.lock().jobs.is_empty());
+    assert!(matches!(
+        vm.microtask_queue.front(),
+        Some(Microtask::ResolveInRealm { promise, value, .. })
+            if *promise == external_tick_idx && *value == Value::Number(12.0)
+    ));
+    assert_eq!(
+        promise_state_and_result(&vm, Value::Object(external_tick_idx)).1,
+        Value::Undefined
+    );
+    vm.set_fuel(Some(2));
+    assert!(vm
+        .tick()
+        .expect("refilled external tick settlement should run"));
+    assert!(vm.external_jobs.lock().jobs.is_empty());
+    let (status, result) = promise_state_and_result(&vm, Value::Object(external_tick_idx));
+    assert!(status == PromiseStatus::Fulfilled);
+    assert_eq!(result, Value::Number(12.0));
+    vm.set_fuel(Some(0));
+    assert!(vm
+        .tick()
+        .expect("native external tick reaction should run without fuel"));
+
+    let microtask_drain = vm.get_global("microtaskDrainPromise");
+    let Value::Object(microtask_drain_idx) = microtask_drain else {
+        panic!("microtaskDrainPromise should be a Promise object");
+    };
+    vm.microtask_queue.push_back(Microtask::Resolve {
+        promise: microtask_drain_idx,
+        value: Value::Number(13.0),
+    });
+    vm.microtask_queue.push_back(Microtask::Resolve {
+        promise: microtask_drain_idx,
+        value: Value::Number(99.0),
+    });
+    vm.set_fuel(Some(1));
+    let error = vm
+        .run_microtasks()
+        .expect_err("Resolve microtask should requeue after handler Realm Fuel");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert!(matches!(
+        vm.microtask_queue.front(),
+        Some(Microtask::Resolve { promise, value })
+            if *promise == microtask_drain_idx && *value == Value::Number(13.0)
+    ));
+    assert!(matches!(
+        vm.microtask_queue.back(),
+        Some(Microtask::Resolve { promise, value })
+            if *promise == microtask_drain_idx && *value == Value::Number(99.0)
+    ));
+    let (status, handler_count) =
+        promise_state_and_handler_count(&vm, &Value::Object(microtask_drain_idx));
+    assert!(status == PromiseStatus::Pending);
+    assert_eq!(handler_count, 1);
+    assert_eq!(
+        promise_state_and_result(&vm, Value::Object(microtask_drain_idx)).1,
+        Value::Undefined
+    );
+    vm.set_fuel(Some(2));
+    vm.run_microtasks()
+        .expect("refilled Resolve microtask should settle and drain reactions");
+    let (status, result) = promise_state_and_result(&vm, Value::Object(microtask_drain_idx));
+    assert!(status == PromiseStatus::Fulfilled);
+    assert_eq!(result, Value::Number(13.0));
+
+    let microtask_tick = vm.get_global("microtaskTickPromise");
+    let Value::Object(microtask_tick_idx) = microtask_tick else {
+        panic!("microtaskTickPromise should be a Promise object");
+    };
+    vm.microtask_queue.push_back(Microtask::Reject {
+        promise: microtask_tick_idx,
+        reason: Value::Number(14.0),
+    });
+    vm.set_fuel(Some(1));
+    let error = vm
+        .tick()
+        .expect_err("Reject microtask should requeue after handler Realm Fuel");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert!(matches!(
+        vm.microtask_queue.front(),
+        Some(Microtask::Reject { promise, .. }) if *promise == microtask_tick_idx
+    ));
+    assert_eq!(
+        promise_state_and_result(&vm, Value::Object(microtask_tick_idx)).1,
+        Value::Undefined
+    );
+    vm.set_fuel(Some(2));
+    assert!(vm.tick().expect("refilled Reject microtask should settle"));
+    let (status, result) = promise_state_and_result(&vm, Value::Object(microtask_tick_idx));
+    assert!(status == PromiseStatus::Rejected);
+    assert_eq!(result, Value::Number(14.0));
+    vm.set_fuel(Some(0));
+    assert!(vm
+        .tick()
+        .expect("native rejection handler should run without additional fuel"));
+
+    let getter_resolve = vm.get_global("getterResolve");
+    let getter_resolution = vm.get_global("getterResolution");
+    let getter_promise = vm.get_global("getterPromise");
+    let Value::Object(getter_promise_idx) = &getter_promise else {
+        panic!("getterPromise should be a Promise object");
+    };
+    let getter_promise_idx = *getter_promise_idx;
+    let getter_sentinel = vm.get_global("getterSentinel");
+    let Value::Object(getter_sentinel_idx) = getter_sentinel else {
+        panic!("getterSentinel should be a Promise object");
+    };
+    vm.microtask_queue.push_back(Microtask::Resolve {
+        promise: getter_sentinel_idx,
+        value: Value::Number(99.0),
+    });
+    vm.set_fuel(Some(1));
+    let error = vm
+        .call_function(
+            &getter_resolve,
+            std::slice::from_ref(&getter_resolution),
+            Some(Value::Undefined),
+        )
+        .expect_err("post-Get fulfillment should preserve its observed then value");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert!(matches!(
+        vm.microtask_queue.front(),
+        Some(Microtask::PromiseResolveAfterThen { .. })
+    ));
+    assert!(matches!(
+        vm.microtask_queue.back(),
+        Some(Microtask::Resolve { promise, value })
+            if *promise == getter_sentinel_idx && *value == Value::Number(99.0)
+    ));
+    let (status, result) = promise_state_and_result(&vm, getter_promise.clone());
+    assert!(status == PromiseStatus::Pending);
+    assert_eq!(result, Value::Undefined);
+    vm.set_fuel(None);
+    vm.call_function(
+        &getter_resolve,
+        std::slice::from_ref(&getter_resolution),
+        Some(Value::Undefined),
+    )
+    .expect("the original resolver must remain one-shot while continuation owns resolution");
+    assert_eq!(
+        vm.run("getterCounter.count")
+            .expect("then getter count should remain observable"),
+        Value::Number(1.0)
+    );
+    vm.run("getterResolution = undefined; getterThenFunction = undefined")
+        .expect("the observed resolution should be retained only by queued state");
+    vm.clear_kept_objects();
+    vm.gc();
+    vm.set_fuel(Some(100));
+    vm.run_microtasks()
+        .expect("refilled post-Get continuation should fulfill without a second Get");
+    let (status, result) = promise_state_and_result(&vm, getter_promise);
+    assert!(status == PromiseStatus::Fulfilled);
+    assert_eq!(result, Value::Number(16.0));
+
+    let thenable_resolve = vm.get_global("thenableResolve");
+    let throwing_thenable = vm.get_global("throwingThenable");
+    let thenable_promise = vm.get_global("thenablePromise");
+    let Value::Object(thenable_promise_idx) = &thenable_promise else {
+        panic!("thenablePromise should be a Promise object");
+    };
+    let thenable_promise_idx = *thenable_promise_idx;
+    vm.set_fuel(None);
+    vm.call_function(
+        &thenable_resolve,
+        std::slice::from_ref(&throwing_thenable),
+        Some(Value::Undefined),
+    )
+    .expect("thenable assimilation should enqueue its job");
+    vm.microtask_queue.push_back(Microtask::Resolve {
+        promise: thenable_promise_idx,
+        value: Value::Number(99.0),
+    });
+    vm.set_fuel(Some(1));
+    let error = vm
+        .run_microtasks()
+        .expect_err("post-thenable rejection should preserve only settlement");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert!(matches!(
+        vm.microtask_queue.front(),
+        Some(Microtask::RejectInRealm { promise, .. }) if *promise == thenable_promise_idx
+    ));
+    assert!(matches!(
+        vm.microtask_queue.back(),
+        Some(Microtask::Resolve { promise, value })
+            if *promise == thenable_promise_idx && *value == Value::Number(99.0)
+    ));
+    let (status, result) = promise_state_and_result(&vm, thenable_promise.clone());
+    assert!(status == PromiseStatus::Pending);
+    assert_eq!(result, Value::Undefined);
+    vm.clear_kept_objects();
+    vm.gc();
+    vm.set_fuel(Some(16));
+    vm.run_microtasks()
+        .expect("refilled thenable rejection should settle without replay");
+    let (status, _) = promise_state_and_result(&vm, thenable_promise);
+    assert!(status == PromiseStatus::Rejected);
+    vm.set_fuel(None);
+    assert_eq!(
+        vm.run("thenableCounter.count")
+            .expect("thenable call count should remain observable"),
+        Value::Number(1.0)
+    );
+
+    let supplied_resolve_outer = vm.get_global("suppliedResolveOuter");
+    let resolving_thenable = vm.get_global("resolvingThenable");
+    let supplied_resolve_promise = vm.get_global("suppliedResolvePromise");
+    let Value::Object(supplied_resolve_idx) = supplied_resolve_promise else {
+        panic!("suppliedResolvePromise should be a Promise object");
+    };
+    vm.call_function(
+        &supplied_resolve_outer,
+        std::slice::from_ref(&resolving_thenable),
+        Some(Value::Undefined),
+    )
+    .expect("resolver-calling thenable should enqueue its job");
+    vm.microtask_queue.push_back(Microtask::Resolve {
+        promise: supplied_resolve_idx,
+        value: Value::Number(99.0),
+    });
+    vm.set_fuel(Some(1));
+    let error = vm
+        .run_microtasks()
+        .expect_err("a supplied resolve call should transfer settlement ownership");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert!(matches!(
+        vm.microtask_queue.front(),
+        Some(Microtask::ResolveInRealm { promise, value, .. })
+            if *promise == supplied_resolve_idx && *value == Value::Number(17.0)
+    ));
+    assert!(matches!(
+        vm.microtask_queue.back(),
+        Some(Microtask::Resolve { promise, value })
+            if *promise == supplied_resolve_idx && *value == Value::Number(99.0)
+    ));
+    let (status, result) = promise_state_and_result(&vm, Value::Object(supplied_resolve_idx));
+    assert!(status == PromiseStatus::Pending);
+    assert_eq!(result, Value::Undefined);
+    vm.set_fuel(Some(16));
+    vm.run_microtasks()
+        .expect("refilled supplied resolve settlement should complete without replay");
+    let (status, result) = promise_state_and_result(&vm, Value::Object(supplied_resolve_idx));
+    assert!(status == PromiseStatus::Fulfilled);
+    assert_eq!(result, Value::Number(17.0));
+    vm.set_fuel(None);
+    assert_eq!(
+        vm.run("suppliedResolveCounter.count")
+            .expect("supplied resolve call count should remain observable"),
+        Value::Number(1.0)
+    );
+
+    let supplied_reject_outer = vm.get_global("suppliedRejectOuter");
+    let rejecting_thenable = vm.get_global("rejectingThenable");
+    let supplied_reject_promise = vm.get_global("suppliedRejectPromise");
+    let Value::Object(supplied_reject_idx) = supplied_reject_promise else {
+        panic!("suppliedRejectPromise should be a Promise object");
+    };
+    vm.call_function(
+        &supplied_reject_outer,
+        std::slice::from_ref(&rejecting_thenable),
+        Some(Value::Undefined),
+    )
+    .expect("rejecter-calling thenable should enqueue its job");
+    vm.microtask_queue.push_back(Microtask::Resolve {
+        promise: supplied_reject_idx,
+        value: Value::Number(99.0),
+    });
+    vm.set_fuel(Some(1));
+    let error = vm
+        .run_microtasks()
+        .expect_err("a supplied reject call should transfer settlement ownership");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert!(matches!(
+        vm.microtask_queue.front(),
+        Some(Microtask::RejectInRealm {
+            promise, reason, ..
+        })
+            if *promise == supplied_reject_idx && *reason == Value::Number(18.0)
+    ));
+    assert!(matches!(
+        vm.microtask_queue.back(),
+        Some(Microtask::Resolve { promise, value })
+            if *promise == supplied_reject_idx && *value == Value::Number(99.0)
+    ));
+    let (status, result) = promise_state_and_result(&vm, Value::Object(supplied_reject_idx));
+    assert!(status == PromiseStatus::Pending);
+    assert_eq!(result, Value::Undefined);
+    vm.set_fuel(Some(16));
+    vm.run_microtasks()
+        .expect("refilled supplied rejection should complete without replay");
+    let (status, result) = promise_state_and_result(&vm, Value::Object(supplied_reject_idx));
+    assert!(status == PromiseStatus::Rejected);
+    assert_eq!(result, Value::Number(18.0));
+    vm.set_fuel(None);
+    assert_eq!(
+        vm.run("suppliedRejectCounter.count")
+            .expect("supplied reject call count should remain observable"),
+        Value::Number(1.0)
+    );
+
+    let reaction_source_resolve = vm.get_global("reactionSourceResolve");
+    let reaction_derived = vm.get_global("reactionDerived");
+    let Value::Object(reaction_derived_idx) = &reaction_derived else {
+        panic!("reactionDerived should be a Promise object");
+    };
+    let reaction_derived_idx = *reaction_derived_idx;
+    vm.call_function(
+        &reaction_source_resolve,
+        &[Value::Number(15.0)],
+        Some(Value::Undefined),
+    )
+    .expect("source settlement should enqueue its reaction without fuel");
+    vm.microtask_queue.push_back(Microtask::Resolve {
+        promise: reaction_derived_idx,
+        value: Value::Number(99.0),
+    });
+    vm.set_fuel(Some(1));
+    let error = vm
+        .run_microtasks()
+        .expect_err("post-handler derived settlement should preserve a continuation");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert!(matches!(
+        vm.microtask_queue.front(),
+        Some(Microtask::ResolveInRealm { promise, value, .. })
+            if *promise == reaction_derived_idx && *value == Value::Number(15.0)
+    ));
+    assert!(matches!(
+        vm.microtask_queue.back(),
+        Some(Microtask::Resolve { promise, value })
+            if *promise == reaction_derived_idx && *value == Value::Number(99.0)
+    ));
+    assert_eq!(
+        vm.run("reactionCounter.count")
+            .expect_err("the exhausted VM should remain fuel-bounded")
+            .kind,
+        crate::error::ErrorKind::Fuel
+    );
+    let (status, handler_count) = promise_state_and_handler_count(&vm, &reaction_derived);
+    assert!(status == PromiseStatus::Pending);
+    assert_eq!(handler_count, 1);
+    assert_eq!(
+        promise_state_and_result(&vm, reaction_derived.clone()).1,
+        Value::Undefined
+    );
+
+    vm.set_fuel(Some(2));
+    vm.run_microtasks()
+        .expect("refilled post-handler settlement should complete without replay");
+    let (status, result) = promise_state_and_result(&vm, reaction_derived);
+    assert!(status == PromiseStatus::Fulfilled);
+    assert_eq!(result, Value::Number(15.0));
+    vm.set_fuel(None);
+    assert_eq!(
+        vm.run("reactionCounter.count")
+            .expect("reaction count should remain observable"),
+        Value::Number(1.0)
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+}
+
+#[test]
+fn custom_promise_capability_fuel_abort_is_not_replayed() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "customCapabilityHandler",
+        |vm, _, _| {
+            increment_global_counter(vm, "customHandlerCounter")?;
+            Ok(Value::Number(19.0))
+        },
+        1,
+    )
+    .expect("custom handler hook should register");
+    vm.register_fn(
+        "customCapabilityResolve",
+        |vm, _, _| {
+            increment_global_counter(vm, "customResolveCounter")?;
+            vm.consume_fuel()?;
+            Ok(Value::Undefined)
+        },
+        1,
+    )
+    .expect("custom capability hook should register");
+    vm.run(
+        r#"
+        var customHandlerCounter = { count: 0 };
+        var customResolveCounter = { count: 0 };
+        var customSource = Promise.resolve(1);
+        var customOutput = new Promise(function () {});
+        var customSentinel = new Promise(function () {});
+        "#,
+    )
+    .expect("custom capability fixtures should initialize");
+    let baseline_pins = vm.gc_pins.len();
+
+    let custom_source = vm.get_global("customSource");
+    let Value::Object(custom_source_idx) = custom_source else {
+        panic!("customSource should be a Promise object");
+    };
+    let custom_output = vm.get_global("customOutput");
+    let custom_sentinel = vm.get_global("customSentinel");
+    let Value::Object(custom_sentinel_idx) = custom_sentinel else {
+        panic!("customSentinel should be a Promise object");
+    };
+    let custom_resolve = vm.get_global("customCapabilityResolve");
+    vm.microtask_queue.push_back(Microtask::Then {
+        promise: custom_source_idx,
+        on_fulfilled: vm.get_global("customCapabilityHandler"),
+        on_rejected: Value::Undefined,
+        derived: Some(crate::value::PromiseReactionCapability {
+            promise: custom_output.clone(),
+            resolve: custom_resolve.clone(),
+            reject: custom_resolve,
+        }),
+        continuation: None,
+        realm: Some(vm.global),
+    });
+    vm.microtask_queue.push_back(Microtask::Resolve {
+        promise: custom_sentinel_idx,
+        value: Value::Number(20.0),
+    });
+
+    vm.set_fuel(Some(0));
+    let error = vm
+        .run_microtasks()
+        .expect_err("an arbitrary capability abort should propagate to the host");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.microtask_queue.len(), 1);
+    assert!(matches!(
+        vm.microtask_queue.front(),
+        Some(Microtask::Resolve { promise, value })
+            if *promise == custom_sentinel_idx && *value == Value::Number(20.0)
+    ));
+    let (status, result) = promise_state_and_result(&vm, custom_output.clone());
+    assert!(status == PromiseStatus::Pending);
+    assert_eq!(result, Value::Undefined);
+
+    vm.set_fuel(None);
+    vm.run_microtasks()
+        .expect("only the independent sentinel should remain queued");
+    assert_eq!(
+        vm.run("customHandlerCounter.count + ':' + customResolveCounter.count")
+            .expect("custom capability counters should remain observable"),
+        Value::String(Arc::from("1:1"))
+    );
+    let (status, result) = promise_state_and_result(&vm, custom_output);
+    assert!(status == PromiseStatus::Pending);
+    assert_eq!(result, Value::Undefined);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+}
+
+#[test]
+fn promise_resolution_allocation_failure_retains_selected_rejection_after_fuel() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "recordAllocationThen",
+        |vm, _, _| {
+            increment_global_counter(vm, "allocationThenCounter")?;
+            Ok(Value::Undefined)
+        },
+        2,
+    )
+    .expect("thenable call counter should register");
+    vm.register_fn(
+        "capHeapThen",
+        |vm, _, _| {
+            cap_heap_at_current_live_count(vm)?;
+            Ok(vm.get_global("recordAllocationThen"))
+        },
+        0,
+    )
+    .expect("heap-cap getter should register");
+    vm.run(
+        r#"
+        var allocationThenCounter = { count: 0 };
+        var allocationFailureResolve;
+        var allocationFailurePromise = new Promise(function (resolve) {
+          allocationFailureResolve = resolve;
+        });
+        allocationFailurePromise.then(undefined, Math.abs.bind(null).bind(null));
+        var allocationFailureThenable = {};
+        Object.defineProperty(allocationFailureThenable, "then", { get: capHeapThen });
+        "#,
+    )
+    .expect("allocation-failure Promise fixtures should initialize");
+    let baseline_pins = vm.gc_pins.len();
+
+    let promise = vm.get_global("allocationFailurePromise");
+    let Value::Object(promise_idx) = &promise else {
+        panic!("allocationFailurePromise should be a Promise object");
+    };
+    let promise_idx = *promise_idx;
+    let resolver = vm.get_global("allocationFailureResolve");
+    let thenable = vm.get_global("allocationFailureThenable");
+    vm.set_fuel(Some(1));
+    let error = vm
+        .call_function(
+            &resolver,
+            std::slice::from_ref(&thenable),
+            Some(Value::Undefined),
+        )
+        .expect_err("selected heap-limit rejection should transfer on Fuel");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert!(matches!(
+        vm.microtask_queue.front(),
+        Some(Microtask::RejectInRealm { promise, .. }) if *promise == promise_idx
+    ));
+    assert!(!matches!(
+        vm.microtask_queue.front(),
+        Some(Microtask::PromiseResolveAfterThen { .. })
+    ));
+    let (status, result) = promise_state_and_result(&vm, promise.clone());
+    assert!(status == PromiseStatus::Pending);
+    assert_eq!(result, Value::Undefined);
+
+    vm.set_max_heap_objects(None);
+    vm.clear_kept_objects();
+    vm.gc();
+    vm.set_fuel(Some(16));
+    vm.run_microtasks()
+        .expect("refilled settlement must retain the selected rejection phase");
+    let (status, reason) = promise_state_and_result(&vm, promise);
+    assert!(status == PromiseStatus::Rejected);
+    assert_eq!(
+        vm.get_property(&reason, "name")
+            .expect("selected rejection should remain an Error"),
+        Value::String(Arc::from("RangeError"))
+    );
+    vm.set_fuel(None);
+    assert_eq!(
+        vm.run("allocationThenCounter.count")
+            .expect("the original then function should remain uncalled"),
+        Value::Number(0.0)
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+}
+
+#[test]
+fn staged_promise_settlement_preserves_selected_realms() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.run(
+        r#"
+        var stagedForeign = $262.createRealm().global;
+        var stagedForeignData = stagedForeign.eval(`
+          (function () {
+            var resolve;
+            var promise = new Promise(function (r) { resolve = r; });
+            return {
+              promise: promise,
+              resolve: resolve
+            };
+          })()
+        `);
+        var stagedThenChecks = [];
+        function stagedThen(resolve) {
+          stagedThenChecks.push(
+            Object.getPrototypeOf(resolve) === Function.prototype
+          );
+          resolve(23);
+        }
+        var stagedResolution = {
+          then: stagedThen.bind(null).bind(null)
+        };
+
+        var revokedForeignData = stagedForeign.eval(`
+          (function () {
+            var resolve;
+            var promise = new Promise(function (r) { resolve = r; });
+            return { promise: promise, resolve: resolve };
+          })()
+        `);
+        var revokedHandlerRecord = Proxy.revocable(function (value) {
+          return value;
+        }, {});
+        var revokedBoundHandler = revokedHandlerRecord.proxy.bind(null);
+        var revokedDerived = revokedForeignData.promise.then(revokedBoundHandler);
+        revokedHandlerRecord.revoke();
+        "#,
+    )
+    .expect("cross-Realm staged Promise fixtures should initialize");
+    let baseline_pins = vm.gc_pins.len();
+
+    let foreign_data = vm.get_global("stagedForeignData");
+    let foreign_resolver = vm
+        .get_property(&foreign_data, "resolve")
+        .expect("foreign resolver should be readable");
+    let Value::Object(foreign_resolver_idx) = &foreign_resolver else {
+        panic!("foreign resolver should be a function object");
+    };
+    let foreign_realm = vm.heap.with_obj(foreign_resolver_idx.0, |object| {
+        let HeapObj::Function(function) = object else {
+            panic!("foreign resolver should be a function");
+        };
+        function.closure
+    });
+    let staged_resolution = vm.get_global("stagedResolution");
+    vm.set_fuel(Some(1));
+    let error = vm
+        .call_function(
+            &foreign_resolver,
+            std::slice::from_ref(&staged_resolution),
+            Some(Value::Undefined),
+        )
+        .expect_err("foreign post-then Realm traversal should stage on Fuel");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert!(matches!(
+        vm.microtask_queue.front(),
+        Some(Microtask::PromiseResolveAfterThen { realm, .. }) if *realm == foreign_realm
+    ));
+    vm.set_fuel(Some(100));
+    vm.run_microtasks()
+        .expect("foreign post-then stage should use the selected thenable-job Realm");
+    assert_eq!(
+        vm.run("stagedThenChecks.join(',')")
+            .expect("nested resolving-function Realm check should be observable"),
+        Value::String(Arc::from("true"))
+    );
+    let foreign_promise = vm
+        .get_property(&foreign_data, "promise")
+        .expect("foreign Promise should be readable");
+    let (status, result) = promise_state_and_result(&vm, foreign_promise);
+    assert!(status == PromiseStatus::Fulfilled);
+    assert_eq!(result, Value::Number(23.0));
+
+    let revoked_data = vm.get_global("revokedForeignData");
+    let revoked_resolver = vm
+        .get_property(&revoked_data, "resolve")
+        .expect("revoked-handler resolver should be readable");
+    vm.set_fuel(Some(0));
+    let error = vm
+        .call_function(
+            &revoked_resolver,
+            &[Value::Number(24.0)],
+            Some(Value::Undefined),
+        )
+        .expect_err("foreign handler preflight should transfer on Fuel");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert!(matches!(
+        vm.microtask_queue.front(),
+        Some(Microtask::ResolveInRealm { realm, .. }) if *realm == foreign_realm
+    ));
+    vm.set_fuel(Some(1));
+    assert!(vm
+        .tick()
+        .expect("refilled staged settlement should use foreign fallback Realm"));
+    assert!(matches!(
+        vm.microtask_queue.front(),
+        Some(Microtask::Then {
+            realm: Some(realm),
+            ..
+        }) if *realm == foreign_realm
+    ));
+    vm.set_fuel(None);
+    vm.run_microtasks()
+        .expect("revoked handler reaction should finish through its derived Promise");
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
 }
 
 #[test]

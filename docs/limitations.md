@@ -19,6 +19,15 @@ The following resource limits are enforced:
   handler traversal is still metered. `for...in` precharges ordinary own-key
   snapshots before native collection growth, then charges each string
   candidate and ordinary prototype edge separately.
+  `GetFunctionRealm` and actual Bound/Proxy `[[Construct]]` traversal consume
+  one unit per followed wrapper edge, with Proxy revocation checked before the
+  charge. `IsConstructor` is a constant-time immutable capability read and
+  neither follows targets nor consumes fuel.
+  Intrinsic Promise resolving functions preserve completed handler, thenable,
+  and `then`-access stages across such an abort. Arbitrary species-provided
+  capability functions are not automatically replayed after Fuel because the
+  engine cannot repeat unknown user effects safely; a user-created output may
+  remain pending after that host abort.
   `Array.prototype.concat` charges each outer input, including an empty
   spreadable value, and every scanned logical source index, including holes.
   Ordinary `[[SetPrototypeOf]]` cycle detection also consumes one unit per
@@ -74,15 +83,6 @@ The following resource limits are enforced:
   direct Test262 `methods-called-as-functions.js` aggregate remains outside the
   exact admission because its next failure is the unrelated detached-receiver
   behavior of `copyWithin`.
-- **Constructor-chain fuel gap**: `IsConstructor`, constructor-Realm lookup,
-  and construction still traverse deeply nested Proxy and Bound Function
-  targets without charging one fuel unit per edge. This is observable through
-  an Array species constructor and other construction paths, and bound-argument
-  prepending can become quadratic across a deep chain. The traversal is
-  iterative and native-stack safe, but execution fuel does not yet bound this
-  host work. Hosts requiring a hard bound must retain a separately killable
-  process until the shared constructor path is metered and argument collection
-  is linearized.
 - **Test262 result enforcement and pinning gap**: the Python runner reports
   fail, timeout, and error counts but still exits with status zero, so a matrix
   job can be green while semantic failures remain. Full-matrix shards also
@@ -110,11 +110,15 @@ The following resource limits are enforced:
   ECMAScript.
 - **Call argument caps**: `Reflect.apply`, `Reflect.construct`, and
   `Function.prototype.apply` share an observable `CreateListFromArrayLike`
-  implementation that materializes at most 1,048,576 arguments and throws
-  `RangeError` above that limit. The cap is checked after `ToLength` truncates
-  and clamps the observed `length`, but before any indexed `Get`. This sandbox
-  resource policy is stricter than ECMAScript's full `ToLength` range and
-  intentionally prevents enormous argument-list allocation.
+  implementation that materializes at most 1,048,576 arguments. Constructor
+  dispatch applies the same cap to the combined inner-to-outer Bound arguments
+  plus direct call arguments, accumulating the count on each Bound edge before
+  a target Proxy's observable `construct` lookup. Both paths throw `RangeError`
+  above the limit.
+  The array-like cap is checked after `ToLength` truncates and clamps the
+  observed `length`, but before any indexed `Get`. This sandbox resource policy
+  is stricter than ECMAScript's full `ToLength` range and intentionally prevents
+  enormous argument-list allocation.
 
 These limits bound the major interpreter-controlled resources, but they are
 not OS-level isolation. A long native call is not preempted by fuel, and the

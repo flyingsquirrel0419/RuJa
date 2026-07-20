@@ -70,6 +70,12 @@ pub(crate) struct ExternalJobState {
 }
 
 #[derive(Clone)]
+pub(crate) enum NewTargetPrototype {
+    Observed(Value),
+    FallbackRealm(GcIdx),
+}
+
+#[derive(Clone)]
 pub(crate) enum ExecutionContextKind {
     Interpreted {
         callee: Value,
@@ -77,7 +83,7 @@ pub(crate) enum ExecutionContextKind {
     Native {
         callee: Value,
         new_target: Option<Value>,
-        new_target_prototype: Option<Value>,
+        new_target_prototype: Option<NewTargetPrototype>,
     },
 }
 
@@ -95,8 +101,8 @@ pub struct Vm {
     pub(crate) global_this: Value,
     /// `new.target` to set on the next pushed frame (used by `construct`).
     pub(crate) pending_new_target: Option<Value>,
-    /// Observable `newTarget.prototype` value already read by `construct`.
-    pub(crate) pending_new_target_prototype: Option<Value>,
+    /// Observable `newTarget.prototype` or its already-resolved fallback Realm.
+    pub(crate) pending_new_target_prototype: Option<NewTargetPrototype>,
     /// Calls and resumptions are ordered independently from bytecode frames:
     /// a native builtin can re-enter interpreted code before another frame is
     /// available, and generators later resume beneath a different native call.
@@ -481,6 +487,22 @@ pub enum Microtask {
     Reject {
         promise: GcIdx,
         reason: Value,
+    },
+    ResolveInRealm {
+        promise: GcIdx,
+        value: Value,
+        realm: GcIdx,
+    },
+    RejectInRealm {
+        promise: GcIdx,
+        reason: Value,
+        realm: GcIdx,
+    },
+    PromiseResolveAfterThen {
+        promise: GcIdx,
+        resolution: Value,
+        then: Value,
+        realm: GcIdx,
     },
     AsyncGeneratorDrain {
         generator: GcIdx,
@@ -2345,7 +2367,23 @@ impl Vm {
             ExecutionContextKind::Native {
                 new_target_prototype,
                 ..
-            } => new_target_prototype.as_ref(),
+            } => match new_target_prototype.as_ref()? {
+                NewTargetPrototype::Observed(prototype) => Some(prototype),
+                NewTargetPrototype::FallbackRealm(_) => None,
+            },
+            ExecutionContextKind::Interpreted { .. } => None,
+        }
+    }
+
+    pub(crate) fn current_native_new_target_fallback_realm(&self) -> Option<GcIdx> {
+        match &self.execution_contexts.last()?.kind {
+            ExecutionContextKind::Native {
+                new_target_prototype,
+                ..
+            } => match new_target_prototype.as_ref()? {
+                NewTargetPrototype::FallbackRealm(realm) => Some(*realm),
+                NewTargetPrototype::Observed(_) => None,
+            },
             ExecutionContextKind::Interpreted { .. } => None,
         }
     }

@@ -1957,7 +1957,11 @@ pub(crate) fn native_constructor_prototype_with_default(
         if matches!(proto, Value::Object(_)) {
             return Ok(proto);
         }
-    } else if let Some(new_target) = vm.current_native_new_target().cloned() {
+    }
+    if let Some(realm) = vm.current_native_new_target_fallback_realm() {
+        return vm.realm_default_prototype(realm, intrinsic, fallback);
+    }
+    if let Some(new_target) = vm.current_native_new_target().cloned() {
         let proto = vm.get_property_by_key(&new_target, &PropertyKey::from("prototype"))?;
         if matches!(proto, Value::Object(_)) {
             return Ok(proto);
@@ -10214,10 +10218,10 @@ fn async_iterator_dispose(
             } else {
                 let realm = match state {
                     crate::value::PromiseStatus::Fulfilled => {
-                        vm.promise_reaction_job_realm(&handler.on_fulfilled)
+                        vm.promise_reaction_job_realm(&handler.on_fulfilled)?
                     }
                     crate::value::PromiseStatus::Rejected => {
-                        vm.promise_reaction_job_realm(&handler.on_rejected)
+                        vm.promise_reaction_job_realm(&handler.on_rejected)?
                     }
                     crate::value::PromiseStatus::Pending => None,
                 };

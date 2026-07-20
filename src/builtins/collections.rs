@@ -2168,6 +2168,7 @@ fn create_bound_native_function_in_env(
     };
     let target_val = Value::Object(target);
     let target_pin = vm.pin(&target_val);
+    let constructable = vm.is_constructor_value(&target_val);
     let function_proto = vm
         .realm_function_prototypes
         .get(&realm.0)
@@ -2179,6 +2180,7 @@ fn create_bound_native_function_in_env(
             target,
             this_val,
             bound_args: Vec::new(),
+            constructable,
         },
         closure: realm,
         lexical_new_target: Value::Undefined,
@@ -2203,7 +2205,17 @@ fn create_promise_resolving_functions(
     vm: &mut Vm,
     promise: Value,
 ) -> error::Result<(Value, Value)> {
-    let state_idx = vm.new_object()?;
+    let realm = vm.current_realm_global_env();
+    create_promise_resolving_functions_in_env(vm, promise, realm)
+}
+
+fn create_promise_resolving_functions_in_env(
+    vm: &mut Vm,
+    promise: Value,
+    realm: GcIdx,
+) -> error::Result<(Value, Value)> {
+    let realm = env::global_env_root(&vm.heap, realm);
+    let state_idx = vm.new_object_in_env(realm)?;
     let state = Value::Object(state_idx);
     vm.heap.with_obj(state_idx.0, |object| {
         let mut props = object.props().lock();
@@ -2217,7 +2229,8 @@ fn create_promise_resolving_functions(
         );
     });
     let pins = vm.pin_many(&[promise, state.clone()]);
-    let resolve = create_bound_native_function(vm, "", "", promise_resolve, 1, state.clone());
+    let resolve =
+        create_bound_native_function_in_env(vm, "", "", promise_resolve, 1, state.clone(), realm);
     let resolve = match resolve {
         Ok(resolve) => resolve,
         Err(error) => {
@@ -2226,13 +2239,18 @@ fn create_promise_resolving_functions(
         }
     };
     let resolve_pin = vm.pin(&resolve);
-    let reject = create_bound_native_function(vm, "", "", promise_reject, 1, state);
+    let reject = create_bound_native_function_in_env(vm, "", "", promise_reject, 1, state, realm);
     vm.unpin(resolve_pin);
     vm.unpin_many(pins);
     Ok((resolve, reject?))
 }
 
-fn take_promise_resolving_target(vm: &Vm, this: Option<Value>) -> Option<usize> {
+struct PromiseResolvingTarget {
+    promise: usize,
+    state: GcIdx,
+}
+
+fn take_promise_resolving_target(vm: &Vm, this: Option<Value>) -> Option<PromiseResolvingTarget> {
     let Some(Value::Object(state)) = this else {
         return None;
     };
@@ -2247,13 +2265,32 @@ fn take_promise_resolving_target(vm: &Vm, this: Option<Value>) -> Option<usize> 
         if let Some(descriptor) = props.get_mut(&PropertyKey::from("alreadyResolved")) {
             descriptor.value = Value::Bool(true);
         }
-        props
+        let promise = props
             .get(&PropertyKey::from("promise"))
             .and_then(|descriptor| match descriptor.value {
                 Value::Object(promise) => Some(promise.0),
                 _ => None,
-            })
+            })?;
+        Some(PromiseResolvingTarget { promise, state })
     })
+}
+
+fn restore_promise_resolving_target(vm: &Vm, target: &PromiseResolvingTarget) {
+    let pending = vm.heap.with_obj(target.promise, |object| {
+        matches!(object, HeapObj::Promise(promise) if *promise.state.lock() == crate::value::PromiseStatus::Pending)
+    });
+    if !pending {
+        return;
+    }
+    vm.heap.with_obj(target.state.0, |object| {
+        if let Some(descriptor) = object
+            .props()
+            .lock()
+            .get_mut(&PropertyKey::from("alreadyResolved"))
+        {
+            descriptor.value = Value::Bool(false);
+        }
+    });
 }
 
 pub(crate) struct PromiseCapability {
@@ -2367,20 +2404,57 @@ pub(crate) fn promise_resolve(
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    let p_idx = match take_promise_resolving_target(vm, this) {
-        Some(promise) => promise,
+    let target = match take_promise_resolving_target(vm, this) {
+        Some(target) => target,
         None => return Ok(Value::Undefined),
     };
+    let mut continuation_owns_resolution = false;
+    let result = promise_resolve_once(vm, args, target.promise, &mut continuation_owns_resolution);
+    if !continuation_owns_resolution && result.as_ref().is_err_and(|error| !error.catchable()) {
+        restore_promise_resolving_target(vm, &target);
+    }
+    result
+}
+
+fn preserve_promise_resolution_continuation(
+    vm: &mut Vm,
+    task: crate::vm::Microtask,
+    result: error::Result<()>,
+    continuation_owns_resolution: &mut bool,
+) -> error::Result<()> {
+    if result.as_ref().is_err_and(|error| !error.catchable()) {
+        vm.microtask_queue.push_front(task);
+        *continuation_owns_resolution = true;
+    }
+    result
+}
+
+fn promise_resolve_once(
+    vm: &mut Vm,
+    args: &[Value],
+    p_idx: usize,
+    continuation_owns_resolution: &mut bool,
+) -> error::Result<Value> {
     let value = args.first().cloned().unwrap_or(Value::Undefined);
+    let promise_realm = vm.current_realm_global_env();
     if value == Value::Object(GcIdx(p_idx)) {
         let error = Error::type_err("A Promise cannot resolve to itself");
         let reason = vm.make_error_value(&error)?;
-        vm.promise_reject(p_idx, reason);
+        let settlement = vm.promise_reject(p_idx, reason.clone());
+        preserve_promise_resolution_continuation(
+            vm,
+            crate::vm::Microtask::RejectInRealm {
+                promise: GcIdx(p_idx),
+                reason,
+                realm: promise_realm,
+            },
+            settlement,
+            continuation_owns_resolution,
+        )?;
         return Ok(Value::Undefined);
     }
     if matches!(value, Value::Object(_)) {
         let pins = vm.pin_many(&[Value::Object(GcIdx(p_idx)), value.clone()]);
-        let promise_realm = vm.current_realm_global_env();
         let then = match vm.get_property(&value, "then") {
             Ok(then) => then,
             Err(error) => {
@@ -2391,61 +2465,158 @@ pub(crate) fn promise_resolve(
                         return Err(error);
                     }
                 };
-                vm.promise_reject(p_idx, reason);
+                let settlement = vm.promise_reject(p_idx, reason.clone());
+                let settlement = preserve_promise_resolution_continuation(
+                    vm,
+                    crate::vm::Microtask::RejectInRealm {
+                        promise: GcIdx(p_idx),
+                        reason,
+                        realm: promise_realm,
+                    },
+                    settlement,
+                    continuation_owns_resolution,
+                );
                 vm.unpin_many(pins);
+                settlement?;
                 return Ok(Value::Undefined);
             }
         };
-        if is_callable(&then, &vm.heap) {
-            let then_realm = vm.constructor_realm(&then).unwrap_or(promise_realm);
-            let then_pin = vm.pin(&then);
-            let resolving = create_promise_resolving_functions(vm, Value::Object(GcIdx(p_idx)));
-            let (resolve, reject) = match resolving {
-                Ok(resolving) => resolving,
-                Err(error) => {
-                    let reason = match vm.promise_rejection_reason_in_realm(&error, promise_realm) {
-                        Ok(reason) => reason,
-                        Err(error) => {
-                            vm.unpin(then_pin);
-                            vm.unpin_many(pins);
-                            return Err(error);
-                        }
-                    };
-                    vm.promise_reject(p_idx, reason);
-                    vm.unpin(then_pin);
-                    vm.unpin_many(pins);
-                    return Ok(Value::Undefined);
-                }
-            };
-            vm.microtask_queue
-                .push_back(crate::vm::Microtask::Thenable {
-                    thenable: value,
-                    then,
-                    resolve,
-                    reject,
-                    realm: then_realm,
-                });
-            vm.unpin(then_pin);
-            vm.unpin_many(pins);
-            return Ok(Value::Undefined);
-        }
+        let resolution =
+            continue_promise_resolution_after_then(vm, p_idx, value, then, promise_realm);
+        let resolution = match resolution {
+            Ok(()) => Ok(()),
+            Err(abort) => {
+                vm.microtask_queue.push_front(abort.continuation);
+                *continuation_owns_resolution = true;
+                Err(abort.error)
+            }
+        };
         vm.unpin_many(pins);
+        resolution?;
+        return Ok(Value::Undefined);
     }
-    vm.promise_resolve(p_idx, value);
+    let settlement = vm.promise_resolve(p_idx, value.clone());
+    preserve_promise_resolution_continuation(
+        vm,
+        crate::vm::Microtask::ResolveInRealm {
+            promise: GcIdx(p_idx),
+            value,
+            realm: promise_realm,
+        },
+        settlement,
+        continuation_owns_resolution,
+    )?;
     Ok(Value::Undefined)
 }
+
+pub(crate) struct PromiseResolutionAbort {
+    pub(crate) error: std::sync::Arc<Error>,
+    pub(crate) continuation: crate::vm::Microtask,
+}
+
+pub(crate) fn continue_promise_resolution_after_then(
+    vm: &mut Vm,
+    p_idx: usize,
+    resolution: Value,
+    then: Value,
+    promise_realm: GcIdx,
+) -> Result<(), Box<PromiseResolutionAbort>> {
+    let pins = vm.pin_many(&[
+        Value::Object(GcIdx(p_idx)),
+        resolution.clone(),
+        then.clone(),
+    ]);
+    let retry_after_then = || crate::vm::Microtask::PromiseResolveAfterThen {
+        promise: GcIdx(p_idx),
+        resolution: resolution.clone(),
+        then: then.clone(),
+        realm: promise_realm,
+    };
+    let result = if is_callable(&then, &vm.heap) {
+        match vm.constructor_realm_or_fallback(&then, promise_realm) {
+            Ok(then_realm) => {
+                match create_promise_resolving_functions_in_env(
+                    vm,
+                    Value::Object(GcIdx(p_idx)),
+                    then_realm,
+                ) {
+                    Ok((resolve, reject)) => {
+                        vm.microtask_queue
+                            .push_back(crate::vm::Microtask::Thenable {
+                                thenable: resolution,
+                                then,
+                                resolve,
+                                reject,
+                                realm: then_realm,
+                            });
+                        Ok(())
+                    }
+                    Err(error) => match vm.promise_rejection_reason_in_realm(&error, then_realm) {
+                        Ok(reason) => {
+                            match vm.promise_reject_in_realm(p_idx, reason.clone(), then_realm) {
+                                Ok(()) => Ok(()),
+                                Err(error) => Err(Box::new(PromiseResolutionAbort {
+                                    error,
+                                    continuation: crate::vm::Microtask::RejectInRealm {
+                                        promise: GcIdx(p_idx),
+                                        reason,
+                                        realm: then_realm,
+                                    },
+                                })),
+                            }
+                        }
+                        Err(error) => Err(Box::new(PromiseResolutionAbort {
+                            error,
+                            continuation: retry_after_then(),
+                        })),
+                    },
+                }
+            }
+            Err(error) => Err(Box::new(PromiseResolutionAbort {
+                error,
+                continuation: retry_after_then(),
+            })),
+        }
+    } else {
+        match vm.promise_resolve_in_realm(p_idx, resolution.clone(), promise_realm) {
+            Ok(()) => Ok(()),
+            Err(error) => Err(Box::new(PromiseResolutionAbort {
+                error,
+                continuation: crate::vm::Microtask::ResolveInRealm {
+                    promise: GcIdx(p_idx),
+                    value: resolution.clone(),
+                    realm: promise_realm,
+                },
+            })),
+        }
+    };
+    vm.unpin_many(pins);
+    result
+}
+
 pub(crate) fn promise_reject(
     vm: &mut Vm,
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    let p_idx = match take_promise_resolving_target(vm, this) {
-        Some(promise) => promise,
+    let target = match take_promise_resolving_target(vm, this) {
+        Some(target) => target,
         None => return Ok(Value::Undefined),
     };
     let reason = args.first().cloned().unwrap_or(Value::Undefined);
-    vm.promise_reject(p_idx, reason);
-    Ok(Value::Undefined)
+    let promise_realm = vm.current_realm_global_env();
+    let result = vm
+        .promise_reject_in_realm(target.promise, reason.clone(), promise_realm)
+        .map(|()| Value::Undefined);
+    if result.as_ref().is_err_and(|error| !error.catchable()) {
+        vm.microtask_queue
+            .push_front(crate::vm::Microtask::RejectInRealm {
+                promise: GcIdx(target.promise),
+                reason,
+                realm: promise_realm,
+            });
+    }
+    result
 }
 
 fn promise_resolve_with_constructor(
@@ -4733,10 +4904,10 @@ pub(crate) fn promise_then(
             // already settled: schedule immediately, passing derived for chaining
             let realm = match state {
                 crate::value::PromiseStatus::Fulfilled => {
-                    vm.promise_reaction_job_realm(&on_fulfilled)
+                    vm.promise_reaction_job_realm(&on_fulfilled)?
                 }
                 crate::value::PromiseStatus::Rejected => {
-                    vm.promise_reaction_job_realm(&on_rejected)
+                    vm.promise_reaction_job_realm(&on_rejected)?
                 }
                 crate::value::PromiseStatus::Pending => None,
             };

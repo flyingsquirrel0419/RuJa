@@ -181,6 +181,7 @@ pub fn trace_obj(obj: &HeapObj, marked: &[bool], worklist: &mut Vec<usize>) {
                 target,
                 this_val,
                 bound_args,
+                ..
             } = &f.kind
             {
                 worklist.push(target.0);

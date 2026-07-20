@@ -3692,8 +3692,11 @@ impl Vm {
         if let Some(v) = &self.pending_new_target {
             Self::push_value_roots(&mut roots, v);
         }
-        if let Some(v) = &self.pending_new_target_prototype {
-            Self::push_value_roots(&mut roots, v);
+        if let Some(prototype) = &self.pending_new_target_prototype {
+            match prototype {
+                NewTargetPrototype::Observed(value) => Self::push_value_roots(&mut roots, value),
+                NewTargetPrototype::FallbackRealm(realm) => roots.push(realm.0),
+            }
         }
         for context in &self.execution_contexts {
             roots.push(context.realm_env.0);
@@ -3710,8 +3713,13 @@ impl Vm {
                     if let Some(value) = new_target {
                         Self::push_value_roots(&mut roots, value);
                     }
-                    if let Some(value) = new_target_prototype {
-                        Self::push_value_roots(&mut roots, value);
+                    if let Some(prototype) = new_target_prototype {
+                        match prototype {
+                            NewTargetPrototype::Observed(value) => {
+                                Self::push_value_roots(&mut roots, value);
+                            }
+                            NewTargetPrototype::FallbackRealm(realm) => roots.push(realm.0),
+                        }
                     }
                 }
             }
@@ -3898,6 +3906,35 @@ impl Vm {
                 Microtask::Reject { promise, reason } => {
                     roots.push(promise.0);
                     Self::push_value_roots(&mut roots, reason);
+                }
+                Microtask::ResolveInRealm {
+                    promise,
+                    value,
+                    realm,
+                } => {
+                    roots.push(promise.0);
+                    Self::push_value_roots(&mut roots, value);
+                    roots.push(realm.0);
+                }
+                Microtask::RejectInRealm {
+                    promise,
+                    reason,
+                    realm,
+                } => {
+                    roots.push(promise.0);
+                    Self::push_value_roots(&mut roots, reason);
+                    roots.push(realm.0);
+                }
+                Microtask::PromiseResolveAfterThen {
+                    promise,
+                    resolution,
+                    then,
+                    realm,
+                } => {
+                    roots.push(promise.0);
+                    Self::push_value_roots(&mut roots, resolution);
+                    Self::push_value_roots(&mut roots, then);
+                    roots.push(realm.0);
                 }
                 Microtask::AsyncGeneratorDrain { generator } => roots.push(generator.0),
                 Microtask::DynamicImport {
@@ -4110,59 +4147,191 @@ impl Vm {
         }
     }
 
-    /// Allocate a plain object and return its handle.
-    /// Resolve a promise: set state to Fulfilled and schedule its handlers.
-    pub fn promise_resolve(&mut self, promise_idx: usize, value: Value) {
-        let handlers: Vec<crate::value::PromiseHandler> = self.heap.with_obj(promise_idx, |o| {
-            if let HeapObj::Promise(p) = o {
-                if *p.state.lock() != PromiseStatus::Pending {
+    fn settle_promise(
+        &mut self,
+        promise_idx: usize,
+        result: Value,
+        status: PromiseStatus,
+        fallback_realm: GcIdx,
+    ) -> error::Result<()> {
+        let callbacks = self.heap.with_obj(promise_idx, |object| {
+            let HeapObj::Promise(promise) = object else {
+                return None;
+            };
+            if *promise.state.lock() != PromiseStatus::Pending {
+                return None;
+            }
+            let handlers = promise.handlers.lock();
+            Some(
+                handlers
+                    .iter()
+                    .map(|handler| {
+                        if status == PromiseStatus::Fulfilled {
+                            handler.on_fulfilled.clone()
+                        } else {
+                            handler.on_rejected.clone()
+                        }
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        });
+        let Some(callbacks) = callbacks else {
+            return Ok(());
+        };
+
+        // Realm discovery can traverse arbitrarily deep wrapper chains. Finish
+        // every fallible traversal before making Promise settlement irreversible.
+        let mut realms = Vec::with_capacity(callbacks.len());
+        for callback in &callbacks {
+            realms.push(self.promise_reaction_job_realm_with_fallback(callback, fallback_realm)?);
+        }
+
+        let handlers: Vec<crate::value::PromiseHandler> =
+            self.heap.with_obj(promise_idx, |object| {
+                let HeapObj::Promise(promise) = object else {
+                    return Vec::new();
+                };
+                if *promise.state.lock() != PromiseStatus::Pending {
                     return Vec::new();
                 }
-                *p.state.lock() = PromiseStatus::Fulfilled;
-                *p.result.lock() = value.clone();
-                p.handlers.lock().drain(..).collect()
-            } else {
-                Vec::new()
-            }
-        });
-        for h in handlers {
-            let realm = self.promise_reaction_job_realm(&h.on_fulfilled);
+                *promise.state.lock() = status;
+                *promise.result.lock() = result;
+                promise.handlers.lock().drain(..).collect()
+            });
+        debug_assert_eq!(handlers.len(), realms.len());
+        for (handler, realm) in handlers.into_iter().zip(realms) {
             self.microtask_queue.push_back(Microtask::Then {
                 promise: GcIdx(promise_idx),
-                on_fulfilled: h.on_fulfilled,
-                on_rejected: h.on_rejected,
-                derived: h.derived,
-                continuation: h.continuation,
+                on_fulfilled: handler.on_fulfilled,
+                on_rejected: handler.on_rejected,
+                derived: handler.derived,
+                continuation: handler.continuation,
                 realm,
             });
+        }
+        Ok(())
+    }
+
+    /// Resolve a Promise and schedule its handlers.
+    ///
+    /// A non-catchable handler-Realm abort is returned before state changes, so
+    /// embedders may refill fuel and retry the same settlement.
+    pub fn promise_resolve(&mut self, promise_idx: usize, value: Value) -> error::Result<()> {
+        let realm = self.current_realm_global_env();
+        self.promise_resolve_in_realm(promise_idx, value, realm)
+    }
+
+    /// Reject a Promise and schedule its handlers with the same transactional
+    /// host-abort behavior as [`Vm::promise_resolve`].
+    pub fn promise_reject(&mut self, promise_idx: usize, reason: Value) -> error::Result<()> {
+        let realm = self.current_realm_global_env();
+        self.promise_reject_in_realm(promise_idx, reason, realm)
+    }
+
+    pub(crate) fn promise_resolve_in_realm(
+        &mut self,
+        promise_idx: usize,
+        value: Value,
+        realm: GcIdx,
+    ) -> error::Result<()> {
+        self.settle_promise(promise_idx, value, PromiseStatus::Fulfilled, realm)
+    }
+
+    pub(crate) fn promise_reject_in_realm(
+        &mut self,
+        promise_idx: usize,
+        reason: Value,
+        realm: GcIdx,
+    ) -> error::Result<()> {
+        self.settle_promise(promise_idx, reason, PromiseStatus::Rejected, realm)
+    }
+
+    fn run_external_promise_job(&mut self, job: ExternalPromiseJob) -> error::Result<()> {
+        self.call_function(
+            &job.resolve,
+            std::slice::from_ref(&job.value),
+            Some(Value::Undefined),
+        )
+        .map(|_| ())
+    }
+
+    fn has_staged_promise_settlement(&self) -> bool {
+        matches!(
+            self.microtask_queue.front(),
+            Some(
+                Microtask::Resolve { .. }
+                    | Microtask::Reject { .. }
+                    | Microtask::ResolveInRealm { .. }
+                    | Microtask::RejectInRealm { .. }
+                    | Microtask::PromiseResolveAfterThen { .. }
+            )
+        )
+    }
+
+    fn retryable_settlement_task(task: &Microtask) -> Option<Microtask> {
+        match task {
+            Microtask::Resolve { promise, value } => Some(Microtask::Resolve {
+                promise: *promise,
+                value: value.clone(),
+            }),
+            Microtask::Reject { promise, reason } => Some(Microtask::Reject {
+                promise: *promise,
+                reason: reason.clone(),
+            }),
+            Microtask::ResolveInRealm {
+                promise,
+                value,
+                realm,
+            } => Some(Microtask::ResolveInRealm {
+                promise: *promise,
+                value: value.clone(),
+                realm: *realm,
+            }),
+            Microtask::RejectInRealm {
+                promise,
+                reason,
+                realm,
+            } => Some(Microtask::RejectInRealm {
+                promise: *promise,
+                reason: reason.clone(),
+                realm: *realm,
+            }),
+            _ => None,
         }
     }
 
-    /// Reject a promise: set state to Rejected and schedule its handlers.
-    pub fn promise_reject(&mut self, promise_idx: usize, reason: Value) {
-        let handlers: Vec<crate::value::PromiseHandler> = self.heap.with_obj(promise_idx, |o| {
-            if let HeapObj::Promise(p) = o {
-                if *p.state.lock() != PromiseStatus::Pending {
-                    return Vec::new();
-                }
-                *p.state.lock() = PromiseStatus::Rejected;
-                *p.result.lock() = reason.clone();
-                p.handlers.lock().drain(..).collect()
-            } else {
-                Vec::new()
-            }
-        });
-        for h in handlers {
-            let realm = self.promise_reaction_job_realm(&h.on_rejected);
-            self.microtask_queue.push_back(Microtask::Then {
-                promise: GcIdx(promise_idx),
-                on_fulfilled: h.on_fulfilled,
-                on_rejected: h.on_rejected,
-                derived: h.derived,
-                continuation: h.continuation,
+    fn run_queued_microtask(&mut self, task: Microtask) -> error::Result<()> {
+        let (result, retry) = match task {
+            Microtask::PromiseResolveAfterThen {
+                promise,
+                resolution,
+                then,
                 realm,
-            });
+            } => {
+                let result = crate::builtins::collections::continue_promise_resolution_after_then(
+                    self, promise.0, resolution, then, realm,
+                );
+                let result = match result {
+                    Ok(()) => Ok(()),
+                    Err(abort) => {
+                        self.microtask_queue.push_front(abort.continuation);
+                        Err(abort.error)
+                    }
+                };
+                (result, None)
+            }
+            task => {
+                let retry = Self::retryable_settlement_task(&task);
+                (self.run_microtask(task), retry)
+            }
+        };
+        self.clear_kept_objects();
+        if result.as_ref().is_err_and(|error| !error.catchable()) {
+            if let Some(task) = retry {
+                self.microtask_queue.push_front(task);
+            }
         }
+        result
     }
 
     /// Drain the microtask queue, running scheduled then/catch callbacks.
@@ -4172,6 +4341,9 @@ impl Vm {
         // O(n), but microtask queues are typically small per drain cycle.)
         loop {
             loop {
+                if self.has_staged_promise_settlement() {
+                    break;
+                }
                 let job = {
                     let mut external = self.external_jobs.lock();
                     external.jobs.pop_front()
@@ -4179,11 +4351,7 @@ impl Vm {
                 let Some(job) = job else {
                     break;
                 };
-                self.call_function(
-                    &job.resolve,
-                    std::slice::from_ref(&job.value),
-                    Some(Value::Undefined),
-                )?;
+                self.run_external_promise_job(job)?;
             }
             let Some(task) = self.microtask_queue.pop_front() else {
                 if self.external_jobs.lock().jobs.is_empty() {
@@ -4191,9 +4359,7 @@ impl Vm {
                 }
                 continue;
             };
-            let result = self.run_microtask(task);
-            self.clear_kept_objects();
-            result?;
+            self.run_queued_microtask(task)?;
         }
         Ok(())
     }
@@ -4204,22 +4370,18 @@ impl Vm {
     /// execution with other work, rather than draining all microtasks at once.
     pub fn tick(&mut self) -> error::Result<bool> {
         let mut ran_external = false;
-        let external_job = {
+        let external_job = if self.has_staged_promise_settlement() {
+            None
+        } else {
             let mut external = self.external_jobs.lock();
             external.jobs.pop_front()
         };
         if let Some(job) = external_job {
-            self.call_function(
-                &job.resolve,
-                std::slice::from_ref(&job.value),
-                Some(Value::Undefined),
-            )?;
+            self.run_external_promise_job(job)?;
             ran_external = true;
         }
         if let Some(task) = self.microtask_queue.pop_front() {
-            let result = self.run_microtask(task);
-            self.clear_kept_objects();
-            result?;
+            self.run_queued_microtask(task)?;
             Ok(true)
         } else {
             Ok(ran_external)
@@ -4322,13 +4484,20 @@ impl Vm {
                 reject,
                 realm,
             } => self.run_thenable_job(thenable, then, resolve, reject, realm),
-            Microtask::Resolve { promise, value } => {
-                self.promise_resolve(promise.0, value);
-                Ok(())
-            }
-            Microtask::Reject { promise, reason } => {
-                self.promise_reject(promise.0, reason);
-                Ok(())
+            Microtask::Resolve { promise, value } => self.promise_resolve(promise.0, value),
+            Microtask::Reject { promise, reason } => self.promise_reject(promise.0, reason),
+            Microtask::ResolveInRealm {
+                promise,
+                value,
+                realm,
+            } => self.promise_resolve_in_realm(promise.0, value, realm),
+            Microtask::RejectInRealm {
+                promise,
+                reason,
+                realm,
+            } => self.promise_reject_in_realm(promise.0, reason, realm),
+            Microtask::PromiseResolveAfterThen { .. } => {
+                unreachable!("post-then resolution is handled by run_queued_microtask")
             }
             Microtask::AsyncGeneratorDrain { generator } => {
                 crate::builtins::regexp::drain_async_generator_queue(self, generator)

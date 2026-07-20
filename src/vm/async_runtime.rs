@@ -20,6 +20,27 @@ enum AsyncFromSyncMethod {
     Throw,
 }
 
+enum ConstructorTraversalStep {
+    Bound {
+        function: GcIdx,
+        target: GcIdx,
+        bound_len: usize,
+        constructable: bool,
+    },
+    Proxy {
+        target: Value,
+        handler: Value,
+        constructable: bool,
+        revoked: bool,
+    },
+    Function {
+        function: GcIdx,
+        closure: GcIdx,
+        constructable: bool,
+    },
+    Other,
+}
+
 impl Vm {
     pub(crate) fn evaluate_module_chunk_async(
         &mut self,
@@ -644,9 +665,9 @@ impl Vm {
             // pass-through: settle the derived promise with the same outcome
             if let Some(capability) = &derived {
                 if state == PromiseStatus::Rejected {
-                    self.settle_promise_capability(capability, result, true)?;
+                    self.settle_promise_reaction_capability(capability, result, true)?;
                 } else {
-                    self.settle_promise_capability(capability, result, false)?;
+                    self.settle_promise_reaction_capability(capability, result, false)?;
                 }
             }
             return Ok(());
@@ -670,7 +691,7 @@ impl Vm {
                     // PromiseReactionJob always calls the capability's resolve
                     // function. That path performs self-resolution checks and
                     // observes an overridden `then` even for native Promises.
-                    self.settle_promise_capability(capability, ret, false)
+                    self.settle_promise_reaction_capability(capability, ret, false)
                 } else {
                     Ok(())
                 }
@@ -679,7 +700,9 @@ impl Vm {
             Err(error) => {
                 if let Some(capability) = &derived {
                     match self.promise_rejection_reason_in_realm(&error, handler_realm) {
-                        Ok(reason) => self.settle_promise_capability(capability, reason, true),
+                        Ok(reason) => {
+                            self.settle_promise_reaction_capability(capability, reason, true)
+                        }
                         Err(error) => Err(error),
                     }
                 } else {
@@ -693,7 +716,18 @@ impl Vm {
         outcome
     }
 
-    fn settle_promise_capability(
+    fn settle_promise_reaction_capability(
+        &mut self,
+        capability: &PromiseReactionCapability,
+        value: Value,
+        rejected: bool,
+    ) -> error::Result<()> {
+        // Never replay an arbitrary species-provided capability function.
+        // Intrinsic resolving functions preserve their own post-call stage.
+        self.settle_promise_capability(capability, value, rejected)
+    }
+
+    pub(super) fn settle_promise_capability(
         &mut self,
         capability: &PromiseReactionCapability,
         value: Value,
@@ -928,42 +962,104 @@ impl Vm {
         }
     }
 
-    pub(crate) fn constructor_realm(&self, constructor: &Value) -> error::Result<GcIdx> {
+    fn constructor_traversal_step(&self, value: &Value) -> ConstructorTraversalStep {
+        let Value::Object(index) = value else {
+            return ConstructorTraversalStep::Other;
+        };
+        self.heap.with_obj(index.0, |object| match object {
+            HeapObj::Function(function) => match &function.kind {
+                FunctionKind::Bound {
+                    target,
+                    bound_args,
+                    constructable,
+                    ..
+                } => ConstructorTraversalStep::Bound {
+                    function: *index,
+                    target: *target,
+                    bound_len: bound_args.len(),
+                    constructable: *constructable,
+                },
+                FunctionKind::Interpreted { func } => ConstructorTraversalStep::Function {
+                    function: *index,
+                    closure: function.closure,
+                    constructable: !func.is_arrow
+                        && !func.is_method
+                        && !func.is_async
+                        && !func.is_generator,
+                },
+                FunctionKind::Native { construct_mode, .. } => ConstructorTraversalStep::Function {
+                    function: *index,
+                    closure: function.closure,
+                    constructable: construct_mode.is_some(),
+                },
+            },
+            HeapObj::Proxy(proxy) => ConstructorTraversalStep::Proxy {
+                target: proxy.target.clone(),
+                handler: proxy.handler.clone(),
+                constructable: proxy.constructable,
+                revoked: *proxy.revoked.lock(),
+            },
+            _ => ConstructorTraversalStep::Other,
+        })
+    }
+
+    pub(crate) fn constructor_realm(&mut self, constructor: &Value) -> error::Result<GcIdx> {
         let mut current = constructor.clone();
         loop {
-            let Value::Object(idx) = current else {
-                return Err(Error::type_err("constructor has no Realm"));
-            };
-            let next: error::Result<std::result::Result<GcIdx, Value>> =
-                self.heap.with_obj(idx.0, |obj| match obj {
-                    HeapObj::Function(f) => match &f.kind {
-                        FunctionKind::Bound { target, .. } => Ok(Err(Value::Object(*target))),
-                        _ => Ok(Ok(crate::environment::global_env_root(
-                            &self.heap, f.closure,
-                        ))),
-                    },
-                    HeapObj::Proxy(proxy) => {
-                        if *proxy.revoked.lock() {
-                            Err(Error::type_err("Cannot get Realm of a revoked Proxy"))
-                        } else {
-                            Ok(Err(proxy.target.clone()))
-                        }
+            match self.constructor_traversal_step(&current) {
+                ConstructorTraversalStep::Bound { target, .. } => {
+                    self.consume_fuel()?;
+                    current = Value::Object(target);
+                }
+                ConstructorTraversalStep::Proxy {
+                    target, revoked, ..
+                } => {
+                    if revoked {
+                        return Err(Error::type_err("Cannot get Realm of a revoked Proxy"));
                     }
-                    _ => Err(Error::type_err("constructor has no Realm")),
-                });
-            match next? {
-                Ok(realm) => return Ok(realm),
-                Err(next) => current = next,
+                    self.consume_fuel()?;
+                    current = target;
+                }
+                ConstructorTraversalStep::Function { closure, .. } => {
+                    return Ok(crate::environment::global_env_root(&self.heap, closure));
+                }
+                ConstructorTraversalStep::Other => {
+                    return Err(Error::type_err("constructor has no Realm"));
+                }
             }
         }
     }
 
-    pub(crate) fn promise_reaction_job_realm(&self, handler: &Value) -> Option<GcIdx> {
-        if !crate::builtins::is_callable(handler, &self.heap) {
-            return None;
+    pub(crate) fn constructor_realm_or_fallback(
+        &mut self,
+        constructor: &Value,
+        fallback: GcIdx,
+    ) -> error::Result<GcIdx> {
+        match self.constructor_realm(constructor) {
+            Ok(realm) => Ok(realm),
+            Err(error) if !error.catchable() => Err(error),
+            Err(_) => Ok(fallback),
         }
-        let current_realm = self.current_realm_global_env();
-        Some(self.constructor_realm(handler).unwrap_or(current_realm))
+    }
+
+    pub(crate) fn promise_reaction_job_realm(
+        &mut self,
+        handler: &Value,
+    ) -> error::Result<Option<GcIdx>> {
+        let fallback = self.current_realm_global_env();
+        self.promise_reaction_job_realm_with_fallback(handler, fallback)
+    }
+
+    pub(crate) fn promise_reaction_job_realm_with_fallback(
+        &mut self,
+        handler: &Value,
+        fallback: GcIdx,
+    ) -> error::Result<Option<GcIdx>> {
+        if !crate::builtins::is_callable(handler, &self.heap) {
+            return Ok(None);
+        }
+        self.constructor_realm_or_fallback(handler, fallback)
+            .map(Some)
     }
 
     pub(crate) fn constructor_realm_default_prototype(
@@ -973,6 +1069,15 @@ impl Vm {
         fallback: Value,
     ) -> error::Result<Value> {
         let realm = self.constructor_realm(constructor)?;
+        self.realm_default_prototype(realm, intrinsic, fallback)
+    }
+
+    pub(crate) fn realm_default_prototype(
+        &mut self,
+        realm: GcIdx,
+        intrinsic: &str,
+        fallback: Value,
+    ) -> error::Result<Value> {
         if intrinsic == "Object" {
             return Ok(self
                 .realm_object_prototypes
@@ -1054,42 +1159,19 @@ impl Vm {
     }
 
     pub(crate) fn is_constructor_value(&self, value: &Value) -> bool {
-        let Value::Object(mut current) = value else {
+        let Value::Object(index) = value else {
             return false;
         };
-        loop {
-            let next = self.heap.with_obj(current.0, |obj| match obj {
-                HeapObj::Function(f) => match &f.kind {
-                    crate::value::FunctionKind::Interpreted { func } => Err(!func.is_arrow
-                        && !func.is_method
-                        && !func.is_async
-                        && !func.is_generator),
-                    crate::value::FunctionKind::Native { construct_mode, .. } => {
-                        Err(construct_mode.is_some())
-                    }
-                    crate::value::FunctionKind::Bound { target, .. } => Ok(*target),
-                },
-                HeapObj::Proxy(proxy) => Err(proxy.constructable),
-                _ => Err(false),
-            });
-            match next {
-                Ok(target) => current = target,
-                Err(result) => return result,
-            }
-        }
-    }
-
-    fn proxy_construct_info(&self, constructor: GcIdx) -> Option<error::Result<(Value, Value)>> {
-        self.heap.with_obj(constructor.0, |obj| {
-            let HeapObj::Proxy(proxy) = obj else {
-                return None;
-            };
-            if *proxy.revoked.lock() {
-                return Some(Err(Error::type_err(
-                    "Cannot perform 'construct' on a proxy that has been revoked",
-                )));
-            }
-            Some(Ok((proxy.target.clone(), proxy.handler.clone())))
+        self.heap.with_obj(index.0, |object| match object {
+            HeapObj::Function(function) => match &function.kind {
+                FunctionKind::Interpreted { func } => {
+                    !func.is_arrow && !func.is_method && !func.is_async && !func.is_generator
+                }
+                FunctionKind::Native { construct_mode, .. } => construct_mode.is_some(),
+                FunctionKind::Bound { constructable, .. } => *constructable,
+            },
+            HeapObj::Proxy(proxy) => proxy.constructable,
+            _ => false,
         })
     }
 
@@ -1276,6 +1358,7 @@ impl Vm {
                         target,
                         this_val,
                         bound_args,
+                        ..
                     } => Some(FuncCallInfo::Bound {
                         target: *target,
                         this_val: this_val.clone(),
@@ -1677,19 +1760,70 @@ impl Vm {
         })
     }
 
+    fn materialize_bound_constructor_arguments(
+        &self,
+        bound_functions: &[GcIdx],
+        args: &[Value],
+    ) -> error::Result<Vec<Value>> {
+        let mut total_len = args.len();
+        if total_len > crate::builtins::call_arguments::MAX_MATERIALIZED_CALL_ARGUMENTS {
+            return Err(Error::range("argument list too large"));
+        }
+        for function in bound_functions {
+            let bound_len = self.heap.with_obj(function.0, |object| {
+                let HeapObj::Function(data) = object else {
+                    return None;
+                };
+                let FunctionKind::Bound { bound_args, .. } = &data.kind else {
+                    return None;
+                };
+                Some(bound_args.len())
+            });
+            let bound_len =
+                bound_len.ok_or_else(|| Error::internal("bound constructor metadata changed"))?;
+            total_len = total_len
+                .checked_add(bound_len)
+                .ok_or_else(|| Error::range("argument list too large"))?;
+            if total_len > crate::builtins::call_arguments::MAX_MATERIALIZED_CALL_ARGUMENTS {
+                return Err(Error::range("argument list too large"));
+            }
+        }
+
+        let mut materialized = Vec::with_capacity(total_len);
+        // The outermost bound function is visited first, but its arguments
+        // follow every inner bound layer in the eventual [[Construct]] call.
+        for function in bound_functions.iter().rev() {
+            let appended = self.heap.with_obj(function.0, |object| {
+                let HeapObj::Function(data) = object else {
+                    return false;
+                };
+                let FunctionKind::Bound { bound_args, .. } = &data.kind else {
+                    return false;
+                };
+                materialized.extend(bound_args.iter().cloned());
+                true
+            });
+            if !appended {
+                return Err(Error::internal("bound constructor metadata changed"));
+            }
+        }
+        materialized.extend_from_slice(args);
+        Ok(materialized)
+    }
+
     pub(crate) fn call_function_with_new_target(
         &mut self,
         constructor: &Value,
         args: &[Value],
         this_value: Value,
         new_target: &Value,
-        observed_prototype: Option<Value>,
+        prototype_state: Option<NewTargetPrototype>,
     ) -> error::Result<Value> {
         // Dispatch can fail before it consumes pending construction metadata,
         // so the caller owns a scoped save/restore on every result path.
         let previous_new_target = self.pending_new_target.replace(new_target.clone());
         let previous_prototype =
-            std::mem::replace(&mut self.pending_new_target_prototype, observed_prototype);
+            std::mem::replace(&mut self.pending_new_target_prototype, prototype_state);
         let result = self.call_function(constructor, args, Some(this_value));
         self.pending_new_target = previous_new_target;
         self.pending_new_target_prototype = previous_prototype;
@@ -1702,12 +1836,22 @@ impl Vm {
         args: &[Value],
         new_target: &Value,
     ) -> error::Result<Value> {
+        if !self.is_constructor_value(constructor) {
+            return Err(Error::type_err("not a constructor".to_string()));
+        }
+        if !self.is_constructor_value(new_target) {
+            return Err(Error::type_err("newTarget is not a constructor"));
+        }
+        if args.len() > crate::builtins::call_arguments::MAX_MATERIALIZED_CALL_ARGUMENTS {
+            return Err(Error::range("argument list too large"));
+        }
         // `new` removes its operands from the VM stack before an observable
         // prototype lookup, so keep every construction input rooted here.
         let mut pin_count = self.pin(constructor);
         pin_count += self.pin_many(args);
         pin_count += self.pin(new_target);
-        let result = self.construct_with_new_target_inner(constructor, args, new_target);
+        let result =
+            self.construct_with_new_target_inner(constructor, args, new_target, &mut pin_count);
         self.unpin_many(pin_count);
         result
     }
@@ -1717,99 +1861,118 @@ impl Vm {
         constructor: &Value,
         args: &[Value],
         new_target: &Value,
+        pin_count: &mut usize,
     ) -> error::Result<Value> {
-        if !self.is_constructor_value(constructor) {
-            return Err(Error::type_err("not a constructor".to_string()));
-        }
-        if !self.is_constructor_value(new_target) {
-            return Err(Error::type_err("newTarget is not a constructor"));
-        }
-
         let mut active_constructor = constructor.clone();
-        let mut active_args = args.to_vec();
         let mut active_new_target = new_target.clone();
+        let mut bound_functions = Vec::new();
+        let mut materialized_argument_count = args.len();
         let idx = loop {
-            let Value::Object(idx) = &active_constructor else {
-                unreachable!("constructor metadata must resolve to an object");
-            };
-            let idx = *idx;
-            let bound_construct = self.heap.with_obj(idx.0, |obj| {
-                if let HeapObj::Function(f) = obj {
-                    if let crate::value::FunctionKind::Bound {
-                        target, bound_args, ..
-                    } = &f.kind
+            match self.constructor_traversal_step(&active_constructor) {
+                ConstructorTraversalStep::Bound {
+                    function,
+                    target,
+                    bound_len,
+                    constructable,
+                } => {
+                    if !constructable {
+                        return Err(Error::type_err("not a constructor"));
+                    }
+                    self.consume_fuel()?;
+                    materialized_argument_count = materialized_argument_count
+                        .checked_add(bound_len)
+                        .ok_or_else(|| Error::range("argument list too large"))?;
+                    if materialized_argument_count
+                        > crate::builtins::call_arguments::MAX_MATERIALIZED_CALL_ARGUMENTS
                     {
-                        return Some((*target, bound_args.clone()));
+                        return Err(Error::range("argument list too large"));
                     }
-                }
-                None
-            });
-            if let Some((target, bound_args)) = bound_construct {
-                let mut all = bound_args;
-                all.extend_from_slice(&active_args);
-                if active_constructor == active_new_target {
-                    active_new_target = Value::Object(target);
-                }
-                active_constructor = Value::Object(target);
-                active_args = all;
-                continue;
-            }
-
-            if let Some(proxy_construct) = self.proxy_construct_info(idx) {
-                let (target, handler) = proxy_construct?;
-                let trap = self.get_proxy_method(&handler, "construct")?;
-                if trap.is_undefined() || trap.is_null() {
-                    active_constructor = target;
-                    continue;
-                }
-                if !crate::builtins::is_callable(&trap, &self.heap) {
-                    return Err(Error::type_err("Proxy construct trap is not callable"));
-                }
-                let mut pin_count = self.pin(&trap);
-                let arg_array = match crate::builtins::make_value_array_in_current_realm(
-                    self,
-                    active_args.clone(),
-                ) {
-                    Ok(array) => array,
-                    Err(error) => {
-                        self.unpin_many(pin_count);
-                        return Err(error);
+                    bound_functions
+                        .try_reserve(1)
+                        .map_err(|_| Error::range("constructor wrapper chain is too large"))?;
+                    bound_functions.push(function);
+                    *pin_count += self.pin(&Value::Object(function));
+                    if active_constructor == active_new_target {
+                        active_new_target = Value::Object(target);
                     }
-                };
-                pin_count += self.pin(&arg_array);
-                let new_obj = self.call_function(
-                    &trap,
-                    &[target, arg_array, active_new_target.clone()],
-                    Some(handler),
-                );
-                self.unpin_many(pin_count);
-                let new_obj = new_obj?;
-                if matches!(new_obj, Value::Object(_)) {
-                    return Ok(new_obj);
+                    active_constructor = Value::Object(target);
                 }
-                return Err(Error::type_err(
-                    "Proxy construct trap must return an object".to_string(),
-                ));
+                ConstructorTraversalStep::Proxy {
+                    target,
+                    handler,
+                    constructable,
+                    revoked,
+                } => {
+                    if !constructable {
+                        return Err(Error::type_err("not a constructor"));
+                    }
+                    if revoked {
+                        return Err(Error::type_err(
+                            "Cannot perform 'construct' on a proxy that has been revoked",
+                        ));
+                    }
+                    self.consume_fuel()?;
+                    *pin_count += self.pin_many(&[target.clone(), handler.clone()]);
+                    let trap = self.get_proxy_method(&handler, "construct")?;
+                    if trap.is_nullish() {
+                        active_constructor = target;
+                        continue;
+                    }
+                    if !crate::builtins::is_callable(&trap, &self.heap) {
+                        return Err(Error::type_err("Proxy construct trap is not callable"));
+                    }
+                    *pin_count += self.pin(&trap);
+                    let active_args =
+                        self.materialize_bound_constructor_arguments(&bound_functions, args)?;
+                    let arg_array =
+                        crate::builtins::make_value_array_in_current_realm(self, active_args)?;
+                    *pin_count += self.pin(&arg_array);
+                    let new_obj = self.call_function(
+                        &trap,
+                        &[target, arg_array, active_new_target.clone()],
+                        Some(handler),
+                    );
+                    let new_obj = new_obj?;
+                    if matches!(new_obj, Value::Object(_)) {
+                        return Ok(new_obj);
+                    }
+                    return Err(Error::type_err(
+                        "Proxy construct trap must return an object".to_string(),
+                    ));
+                }
+                ConstructorTraversalStep::Function {
+                    function,
+                    constructable,
+                    ..
+                } => {
+                    if !constructable {
+                        return Err(Error::type_err("not a constructor"));
+                    }
+                    break function;
+                }
+                ConstructorTraversalStep::Other => {
+                    return Err(Error::type_err("not a constructor"));
+                }
             }
-
-            break idx;
         };
         let constructor = &active_constructor;
+        let active_args = self.materialize_bound_constructor_arguments(&bound_functions, args)?;
         let args = active_args.as_slice();
         let new_target = &active_new_target;
         match self.native_construct_mode(idx) {
             Some(NativeConstructMode::InternalEagerPrototype) => {
                 let observed_prototype = self.get_property(new_target, "prototype")?;
-                if !matches!(observed_prototype, Value::Object(_)) {
-                    let fallback = self.object_proto.clone();
-                    self.constructor_realm_default_prototype(new_target, "Object", fallback)?;
-                }
+                let prototype_state = if matches!(observed_prototype, Value::Object(_)) {
+                    NewTargetPrototype::Observed(observed_prototype)
+                } else {
+                    NewTargetPrototype::FallbackRealm(self.constructor_realm(new_target)?)
+                };
                 return self.call_function_with_new_target(
                     constructor,
                     args,
                     Value::Undefined,
                     new_target,
-                    Some(observed_prototype),
+                    Some(prototype_state),
                 );
             }
             Some(NativeConstructMode::InternalDeferredPrototype) => {
@@ -1854,6 +2017,7 @@ impl Vm {
                 None
             }
         });
+        let prototype_pin = self.pin(&proto);
         let new_obj = HeapObj::Object(crate::value::ObjectData {
             props: Mutex::new(IndexMap::new()),
             proto: Mutex::new(Some(proto)),
@@ -1862,13 +2026,15 @@ impl Vm {
             private_fields: Mutex::new(std::collections::HashMap::new()),
             primitive: Mutex::new(None),
         });
-        let this_obj = Value::Object(GcIdx(self.heap.allocate(new_obj)?));
+        let allocation = self.alloc(new_obj);
+        self.unpin(prototype_pin);
+        let this_obj = Value::Object(allocation?);
         let result = self.call_function_with_new_target(
             constructor,
             args,
             this_obj.clone(),
             new_target,
-            Some(observed_proto),
+            Some(NewTargetPrototype::Observed(observed_proto)),
         )?;
         if matches!(result, Value::Object(_)) {
             Ok(result)
@@ -3179,7 +3345,7 @@ impl Vm {
             let then = self.get_property(&v, "then")?;
             if crate::builtins::is_callable(&then, &self.heap) {
                 let current_realm = self.current_realm_global_env();
-                let realm = self.constructor_realm(&then).unwrap_or(current_realm);
+                let realm = self.constructor_realm_or_fallback(&then, current_realm)?;
                 let ctor = self.current_realm_promise_constructor();
                 let capability = crate::builtins::new_promise_capability(self, ctor)?;
                 let pins = self.pin_many(&[
