@@ -128,24 +128,6 @@ pub(crate) fn array_create_in_current_realm(vm: &mut Vm, length: usize) -> error
     array_create_in_realm(vm, length, realm)
 }
 
-fn array_create_holes_in_current_realm(vm: &mut Vm, length: usize) -> error::Result<Value> {
-    if length > u32::MAX as usize {
-        return Err(Error::range("Invalid array length"));
-    }
-    // Copy results must remain dense until legacy mutators honor sparse_max.
-    if length > crate::value::MAX_DENSE_ARRAY_LEN {
-        return Err(Error::range("Array copy result too large"));
-    }
-    let prototype = vm.array_prototype_for_env(vm.current_realm_global_env());
-    // Keep length derived from ArrayData until an explicit length definition.
-    // Several legacy dense mutators still update backing storage directly.
-    vm.alloc(HeapObj::Array(ArrayData::new_holes(
-        length,
-        Some(prototype),
-    )))
-    .map(Value::Object)
-}
-
 fn pin_array_from_async_frame(
     vm: &mut Vm,
     frame: &crate::value::ArrayFromAsyncContinuation,
@@ -775,38 +757,52 @@ pub(crate) fn array_is_array(
     is_array_or_throw(vm, args.first().unwrap_or(&Value::Undefined)).map(Value::Bool)
 }
 pub(crate) fn array_push(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    if let Some(Value::Object(idx)) = this {
-        vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Array(a) = obj {
-                a.items.lock().extend_from_slice(args);
-                a.present
-                    .lock()
-                    .extend(std::iter::repeat_n(true, args.len()));
-            }
-        });
-        let len = vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Array(a) = obj {
-                a.items.lock().len()
-            } else {
-                0
-            }
-        });
-        return Ok(Value::Number(len as f64));
-    }
-    Ok(Value::Number(0.0))
+    let receiver = this.unwrap_or(Value::Undefined);
+    let mut pin_count = vm.pin(&receiver);
+    pin_count += vm.pin_many(args);
+    let result = (|| {
+        let object = array_method_to_object(vm, &receiver)?;
+        pin_count += vm.pin(&object);
+        let len = length_of_array_like_u64(vm, &object)?;
+        let arg_count = u64::try_from(args.len())
+            .map_err(|_| Error::type_err("Array.prototype.push result is too large"))?;
+        let new_len = len
+            .checked_add(arg_count)
+            .filter(|length| *length <= MAX_SAFE_ARRAY_LENGTH_U64)
+            .ok_or_else(|| Error::type_err("Array.prototype.push result is too large"))?;
+
+        for (index, item) in (len..new_len).zip(args.iter()) {
+            vm.consume_fuel()?;
+            vm.set_property_strict(&object, &index.to_string(), item.clone())?;
+        }
+        vm.set_property_strict(&object, "length", Value::Number(new_len as f64))?;
+        Ok(Value::Number(new_len as f64))
+    })();
+    vm.unpin_many(pin_count);
+    result
 }
 pub(crate) fn array_pop(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    if let Some(Value::Object(idx)) = this {
-        return Ok(vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Array(a) = obj {
-                a.present.lock().pop();
-                a.items.lock().pop().unwrap_or(Value::Undefined)
-            } else {
-                Value::Undefined
-            }
-        }));
-    }
-    Ok(Value::Undefined)
+    let receiver = this.unwrap_or(Value::Undefined);
+    let mut pin_count = vm.pin(&receiver);
+    let result = (|| {
+        let object = array_method_to_object(vm, &receiver)?;
+        pin_count += vm.pin(&object);
+        let len = length_of_array_like_u64(vm, &object)?;
+        if len == 0 {
+            vm.set_property_strict(&object, "length", Value::Number(0.0))?;
+            return Ok(Value::Undefined);
+        }
+
+        let new_len = len - 1;
+        let key = new_len.to_string();
+        let element = vm.get_property(&object, &key)?;
+        pin_count += vm.pin(&element);
+        delete_property_or_throw(vm, &object, &key)?;
+        vm.set_property_strict(&object, "length", Value::Number(new_len as f64))?;
+        Ok(element)
+    })();
+    vm.unpin_many(pin_count);
+    result
 }
 pub(crate) fn array_to_string(
     vm: &mut Vm,
@@ -1329,49 +1325,52 @@ pub(crate) fn array_to_spliced(
 }
 
 pub(crate) fn array_with(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    if let Some(Value::Object(idx)) = this {
-        let object = Value::Object(idx);
-        let replacement = get_arg(args, 1);
-        let root_pins = vm.pin_many(&[object.clone(), replacement.clone()]);
-        let result = (|| {
-            let len = vm.heap.with_obj(idx.0, |obj| {
-                if let HeapObj::Array(a) = obj {
-                    a.items.lock().len().max(a.sparse_max.lock().unwrap_or(0))
-                } else {
-                    0
-                }
-            });
-            let index = norm_index(get_arg(args, 0), len as f64, vm)?;
-            if index >= len {
-                return Err(Error::range("Invalid array index"));
-            }
-            if len > crate::value::MAX_DENSE_ARRAY_LEN {
-                return Err(Error::range("Array.with result too large"));
-            }
+    let receiver = this.unwrap_or(Value::Undefined);
+    let mut pin_count = vm.pin(&receiver);
+    pin_count += vm.pin_many(args);
+    let result = (|| {
+        let object = array_method_to_object(vm, &receiver)?;
+        pin_count += vm.pin(&object);
+        let len = length_of_array_like_u64(vm, &object)?;
+        let relative_index = to_integer_or_infinity(vm, &get_arg(args, 0))?;
+        let actual_index = if relative_index >= 0.0 {
+            relative_index
+        } else {
+            len as f64 + relative_index
+        };
+        if actual_index < 0.0 || actual_index >= len as f64 {
+            return Err(Error::range("Invalid array index"));
+        }
+        if len > crate::value::MAX_DENSE_ARRAY_LEN as u64 {
+            return Err(Error::range("Array.with result too large"));
+        }
 
-            let result = array_create_holes_in_current_realm(vm, len)?;
-            let result_pin = vm.pin(&result);
-            let completion = (|| {
-                let Value::Object(result_idx) = &result else {
-                    return Err(Error::internal("ArrayCreate returned a non-object"));
-                };
-                for i in 0..len {
-                    let value = if i == index {
-                        replacement.clone()
-                    } else {
-                        vm.get_property(&object, &i.to_string())?
-                    };
-                    vm.set_array_index(result_idx.0, i, value)?;
-                }
-                Ok(result.clone())
-            })();
-            vm.unpin(result_pin);
-            completion
-        })();
-        vm.unpin_many(root_pins);
-        return result;
-    }
-    Ok(Value::Undefined)
+        let result = array_create_u64_in_current_realm(vm, len)?;
+        pin_count += vm.pin(&result);
+        let replacement = get_arg(args, 1);
+        let actual_index = actual_index as u64;
+        let mut index = 0;
+        while index < len {
+            vm.consume_fuel()?;
+            let value = if index == actual_index {
+                replacement.clone()
+            } else {
+                vm.get_property(&object, &index.to_string())?
+            };
+            let value_pin = vm.pin(&value);
+            let define = vm.define_own_property_or_throw(
+                &result,
+                PropertyKey::from(index.to_string()),
+                PropertyDescriptor::data(value),
+            );
+            vm.unpin(value_pin);
+            define?;
+            index += 1;
+        }
+        Ok(result.clone())
+    })();
+    vm.unpin_many(pin_count);
+    result
 }
 
 pub(crate) fn array_for_each(
@@ -1432,6 +1431,7 @@ pub(crate) fn from_index_arg(
 }
 
 const MAX_SAFE_ARRAY_LENGTH: f64 = 9_007_199_254_740_991.0;
+const MAX_SAFE_ARRAY_LENGTH_U64: u64 = 9_007_199_254_740_991;
 
 fn to_length(vm: &mut Vm, value: &Value) -> error::Result<usize> {
     let n = vm.to_number(value)?;
@@ -1450,6 +1450,120 @@ fn length_of_array_like(vm: &mut Vm, value: &Value) -> error::Result<usize> {
     let completion = to_length(vm, &len);
     vm.unpin_many(pin_count);
     completion
+}
+
+fn to_length_u64(vm: &mut Vm, value: &Value) -> error::Result<u64> {
+    let number = vm.to_number(value)?;
+    if number.is_nan() || number <= 0.0 {
+        return Ok(0);
+    }
+    if number.is_infinite() {
+        return Ok(MAX_SAFE_ARRAY_LENGTH_U64);
+    }
+    Ok(number.trunc().min(MAX_SAFE_ARRAY_LENGTH) as u64)
+}
+
+fn length_of_array_like_u64(vm: &mut Vm, value: &Value) -> error::Result<u64> {
+    let length = vm.get_property(value, "length")?;
+    let pin_count = vm.pin(&length);
+    let result = to_length_u64(vm, &length);
+    vm.unpin_many(pin_count);
+    result
+}
+
+fn array_method_to_object(vm: &mut Vm, receiver: &Value) -> error::Result<Value> {
+    if receiver.is_nullish() {
+        return Err(Error::type_err(
+            "Cannot convert undefined or null to object",
+        ));
+    }
+    vm.to_object(receiver)
+}
+
+fn to_integer_or_infinity(vm: &mut Vm, value: &Value) -> error::Result<f64> {
+    let number = vm.to_number(value)?;
+    if number.is_nan() || number == 0.0 {
+        Ok(0.0)
+    } else if number.is_infinite() {
+        Ok(number)
+    } else {
+        Ok(number.trunc())
+    }
+}
+
+fn relative_array_index(integer: f64, len: u64) -> u64 {
+    if integer == f64::NEG_INFINITY {
+        return 0;
+    }
+    if integer < 0.0 {
+        return (len as f64 + integer).max(0.0) as u64;
+    }
+    if integer == f64::INFINITY {
+        return len;
+    }
+    integer.min(len as f64) as u64
+}
+
+fn array_create_u64_in_current_realm(vm: &mut Vm, length: u64) -> error::Result<Value> {
+    if length > u32::MAX as u64 {
+        return Err(Error::range("Invalid array length"));
+    }
+    let length = usize::try_from(length).map_err(|_| Error::range("Invalid array length"))?;
+    array_create_in_current_realm(vm, length)
+}
+
+fn array_species_create(vm: &mut Vm, original: &Value, length: u64) -> error::Result<Value> {
+    let mut pin_count = vm.pin(original);
+    let result = (|| {
+        if !is_array_or_throw(vm, original)? {
+            return array_create_u64_in_current_realm(vm, length);
+        }
+
+        let mut constructor = vm.get_property(original, "constructor")?;
+        pin_count += vm.pin(&constructor);
+        if vm.is_constructor_value(&constructor) {
+            let current_realm = vm.current_realm_global_env();
+            let constructor_realm = vm.constructor_realm(&constructor)?;
+            let is_foreign_intrinsic = constructor_realm != current_realm
+                && vm
+                    .realm_array_constructors
+                    .get(&constructor_realm.0)
+                    .is_some_and(|intrinsic| intrinsic == &constructor);
+            if is_foreign_intrinsic {
+                constructor = Value::Undefined;
+            }
+        }
+        if matches!(constructor, Value::Object(_)) {
+            let species_key = PropertyKey::Symbol(vm.well_known_symbols.species);
+            let species = vm.get_property_by_key(&constructor, &species_key)?;
+            pin_count += vm.pin(&species);
+            constructor = if matches!(species, Value::Null) {
+                Value::Undefined
+            } else {
+                species
+            };
+        }
+        if constructor.is_undefined() {
+            return array_create_u64_in_current_realm(vm, length);
+        }
+        if !vm.is_constructor_value(&constructor) {
+            return Err(Error::type_err("Array species is not a constructor"));
+        }
+        vm.construct(&constructor, &[Value::Number(length as f64)])
+    })();
+    vm.unpin_many(pin_count);
+    result
+}
+
+fn delete_property_or_throw(vm: &mut Vm, object: &Value, key: &str) -> error::Result<()> {
+    if vm.delete_property(object, key)? {
+        Ok(())
+    } else {
+        Err(Error::type_err(format!(
+            "Cannot delete property '{}' of object",
+            key
+        )))
+    }
 }
 
 fn array_find_object_and_callback(
@@ -1568,72 +1682,51 @@ pub(crate) fn array_slice(
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    if let Some(Value::Object(idx)) = this {
-        let object = Value::Object(idx);
-        let root_pin = vm.pin(&object);
-        let result = (|| {
-            let len = vm.heap.with_obj(idx.0, |obj| {
-                if let HeapObj::Array(a) = obj {
-                    a.items.lock().len().max(a.sparse_max.lock().unwrap_or(0))
-                } else {
-                    0
-                }
-            });
-            let start = array_slice_bound(vm, args.first(), len, 0)?;
-            let end = array_slice_bound(vm, args.get(1), len, len)?;
-            let count = end.saturating_sub(start);
-            let result = array_create_holes_in_current_realm(vm, count)?;
-            let result_pin = vm.pin(&result);
-            let completion = (|| {
-                let Value::Object(result_idx) = &result else {
-                    return Err(Error::internal("ArrayCreate returned a non-object"));
-                };
-                for (to, from) in (start..end).enumerate() {
-                    let key = from.to_string();
-                    if vm.has_property(&object, &key)? {
-                        let value = vm.get_property(&object, &key)?;
-                        vm.set_array_index(result_idx.0, to, value)?;
-                    }
-                }
-                Ok(result.clone())
-            })();
-            vm.unpin(result_pin);
-            completion
-        })();
-        vm.unpin(root_pin);
-        return result;
-    }
-    Ok(Value::Undefined)
-}
+    let receiver = this.unwrap_or(Value::Undefined);
+    let mut pin_count = vm.pin(&receiver);
+    pin_count += vm.pin_many(args);
+    let result = (|| {
+        let object = array_method_to_object(vm, &receiver)?;
+        pin_count += vm.pin(&object);
+        let len = length_of_array_like_u64(vm, &object)?;
+        let start = match args.first() {
+            Some(value) => relative_array_index(to_integer_or_infinity(vm, value)?, len),
+            None => 0,
+        };
+        let end = match args.get(1) {
+            Some(value) if !value.is_undefined() => {
+                relative_array_index(to_integer_or_infinity(vm, value)?, len)
+            }
+            _ => len,
+        };
+        let count = end.saturating_sub(start);
+        let result = array_species_create(vm, &object, count)?;
+        pin_count += vm.pin(&result);
 
-fn array_slice_bound(
-    vm: &mut Vm,
-    value: Option<&Value>,
-    len: usize,
-    default: usize,
-) -> error::Result<usize> {
-    let Some(value) = value else {
-        return Ok(default);
-    };
-    if value.is_undefined() {
-        return Ok(default);
-    }
-    let number = vm.to_number(value)?;
-    if number.is_nan() {
-        return Ok(0);
-    }
-    if number == f64::INFINITY {
-        return Ok(len);
-    }
-    if number == f64::NEG_INFINITY {
-        return Ok(0);
-    }
-    let integer = number.trunc();
-    if integer < 0.0 {
-        Ok(((len as f64) + integer).max(0.0) as usize)
-    } else {
-        Ok((integer as usize).min(len))
-    }
+        let mut source_index = start;
+        let mut target_index = 0;
+        while source_index < end {
+            vm.consume_fuel()?;
+            let source_key = source_index.to_string();
+            if vm.has_property(&object, &source_key)? {
+                let value = vm.get_property(&object, &source_key)?;
+                let value_pin = vm.pin(&value);
+                let define = vm.define_own_property_or_throw(
+                    &result,
+                    PropertyKey::from(target_index.to_string()),
+                    PropertyDescriptor::data(value),
+                );
+                vm.unpin(value_pin);
+                define?;
+            }
+            source_index += 1;
+            target_index += 1;
+        }
+        vm.set_property_strict(&result, "length", Value::Number(target_index as f64))?;
+        Ok(result.clone())
+    })();
+    vm.unpin_many(pin_count);
+    result
 }
 pub(crate) fn array_concat(
     vm: &mut Vm,
@@ -1731,102 +1824,206 @@ pub(crate) fn array_shift(
     _args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    if let Some(Value::Object(idx)) = this {
-        return Ok(vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Array(a) = obj {
-                let mut items = a.items.lock();
-                let mut present = a.present.lock();
-                if items.is_empty() {
-                    Value::Undefined
-                } else {
-                    present.remove(0);
-                    items.remove(0)
-                }
+    let receiver = this.unwrap_or(Value::Undefined);
+    let mut pin_count = vm.pin(&receiver);
+    let result = (|| {
+        let object = array_method_to_object(vm, &receiver)?;
+        pin_count += vm.pin(&object);
+        let len = length_of_array_like_u64(vm, &object)?;
+        if len == 0 {
+            vm.set_property_strict(&object, "length", Value::Number(0.0))?;
+            return Ok(Value::Undefined);
+        }
+
+        let first = vm.get_property(&object, "0")?;
+        pin_count += vm.pin(&first);
+        let mut index = 1;
+        while index < len {
+            vm.consume_fuel()?;
+            let from_key = index.to_string();
+            let to_key = (index - 1).to_string();
+            if vm.has_property(&object, &from_key)? {
+                let value = vm.get_property(&object, &from_key)?;
+                let value_pin = vm.pin(&value);
+                let set = vm.set_property_strict(&object, &to_key, value);
+                vm.unpin(value_pin);
+                set?;
             } else {
-                Value::Undefined
+                delete_property_or_throw(vm, &object, &to_key)?;
             }
-        }));
-    }
-    Ok(Value::Undefined)
+            index += 1;
+        }
+        delete_property_or_throw(vm, &object, &(len - 1).to_string())?;
+        vm.set_property_strict(&object, "length", Value::Number((len - 1) as f64))?;
+        Ok(first)
+    })();
+    vm.unpin_many(pin_count);
+    result
 }
 pub(crate) fn array_unshift(
     vm: &mut Vm,
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    if let Some(Value::Object(idx)) = this {
-        vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Array(a) = obj {
-                let mut items = a.items.lock();
-                let mut present = a.present.lock();
-                for (i, v) in args.iter().enumerate() {
-                    items.insert(i, v.clone());
-                    present.insert(i, true);
+    let receiver = this.unwrap_or(Value::Undefined);
+    let mut pin_count = vm.pin(&receiver);
+    pin_count += vm.pin_many(args);
+    let result = (|| {
+        let object = array_method_to_object(vm, &receiver)?;
+        pin_count += vm.pin(&object);
+        let len = length_of_array_like_u64(vm, &object)?;
+        let arg_count = u64::try_from(args.len())
+            .map_err(|_| Error::type_err("Array.prototype.unshift result is too large"))?;
+        let new_len = len
+            .checked_add(arg_count)
+            .filter(|length| *length <= MAX_SAFE_ARRAY_LENGTH_U64)
+            .ok_or_else(|| Error::type_err("Array.prototype.unshift result is too large"))?;
+
+        if arg_count > 0 {
+            let mut index = len;
+            while index > 0 {
+                vm.consume_fuel()?;
+                let from_key = (index - 1).to_string();
+                let to_key = (index + arg_count - 1).to_string();
+                if vm.has_property(&object, &from_key)? {
+                    let value = vm.get_property(&object, &from_key)?;
+                    let value_pin = vm.pin(&value);
+                    let set = vm.set_property_strict(&object, &to_key, value);
+                    vm.unpin(value_pin);
+                    set?;
+                } else {
+                    delete_property_or_throw(vm, &object, &to_key)?;
                 }
+                index -= 1;
             }
-        });
-        let len = vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Array(a) = obj {
-                a.items.lock().len()
-            } else {
-                0
+            for (index, item) in args.iter().enumerate() {
+                vm.consume_fuel()?;
+                vm.set_property_strict(&object, &index.to_string(), item.clone())?;
             }
-        });
-        return Ok(Value::Number(len as f64));
-    }
-    Ok(Value::Number(0.0))
+        }
+        vm.set_property_strict(&object, "length", Value::Number(new_len as f64))?;
+        Ok(Value::Number(new_len as f64))
+    })();
+    vm.unpin_many(pin_count);
+    result
 }
 pub(crate) fn array_splice(
     vm: &mut Vm,
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    if let Some(Value::Object(idx)) = this {
-        let items_clone = vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Array(a) = obj {
-                a.items.lock().clone()
-            } else {
-                Vec::new()
-            }
-        });
-        let len = items_clone.len() as f64;
-        let start = match args.first() {
-            Some(v) => vm.to_number(v)?,
-            None => 0.0,
+    let receiver = this.unwrap_or(Value::Undefined);
+    let mut pin_count = vm.pin(&receiver);
+    pin_count += vm.pin_many(args);
+    let result = (|| {
+        let object = array_method_to_object(vm, &receiver)?;
+        pin_count += vm.pin(&object);
+        let len = length_of_array_like_u64(vm, &object)?;
+        let actual_start = match args.first() {
+            Some(value) => relative_array_index(to_integer_or_infinity(vm, value)?, len),
+            None => 0,
         };
-        let start = if start < 0.0 {
-            (len + start).max(0.0) as usize
-        } else {
-            (start as usize).min(items_clone.len())
-        };
-        let delete_count = match args.get(1) {
-            Some(v) => vm.to_number(v)?,
-            None => (items_clone.len() - start) as f64,
-        };
-        let delete_count = if delete_count < 0.0 {
-            0
-        } else {
-            (delete_count as usize).min(items_clone.len() - start)
-        };
-        let removed: Vec<Value> = vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Array(a) = obj {
-                let mut items = a.items.lock();
-                let mut present = a.present.lock();
-                let r: Vec<Value> = items.drain(start..start + delete_count).collect();
-                present.drain(start..start + delete_count);
-                for (i, v) in args.iter().skip(2).enumerate() {
-                    items.insert(start + i, v.clone());
-                    present.insert(start + i, true);
+        let insert_count = u64::try_from(args.len().saturating_sub(2))
+            .map_err(|_| Error::type_err("Array.prototype.splice result is too large"))?;
+        let actual_delete_count = match args.len() {
+            0 => 0,
+            1 => len - actual_start,
+            _ => {
+                let delete_count = to_integer_or_infinity(vm, &args[1])?;
+                if delete_count <= 0.0 {
+                    0
+                } else {
+                    delete_count.min((len - actual_start) as f64) as u64
                 }
-                r
-            } else {
-                Vec::new()
             }
-        });
-        let arr = make_value_array(vm, removed)?;
-        return Ok(arr);
-    }
-    Ok(Value::Undefined)
+        };
+        let new_len = len as u128 + insert_count as u128 - actual_delete_count as u128;
+        if new_len > MAX_SAFE_ARRAY_LENGTH_U64 as u128 {
+            return Err(Error::type_err(
+                "Array.prototype.splice result is too large",
+            ));
+        }
+        let new_len = new_len as u64;
+
+        let removed = array_species_create(vm, &object, actual_delete_count)?;
+        pin_count += vm.pin(&removed);
+        let mut removed_index = 0;
+        while removed_index < actual_delete_count {
+            vm.consume_fuel()?;
+            let source_key = (actual_start + removed_index).to_string();
+            if vm.has_property(&object, &source_key)? {
+                let value = vm.get_property(&object, &source_key)?;
+                let value_pin = vm.pin(&value);
+                let define = vm.define_own_property_or_throw(
+                    &removed,
+                    PropertyKey::from(removed_index.to_string()),
+                    PropertyDescriptor::data(value),
+                );
+                vm.unpin(value_pin);
+                define?;
+            }
+            removed_index += 1;
+        }
+        vm.set_property_strict(
+            &removed,
+            "length",
+            Value::Number(actual_delete_count as f64),
+        )?;
+
+        if insert_count < actual_delete_count {
+            let mut index = actual_start;
+            let shift_end = len - actual_delete_count;
+            while index < shift_end {
+                vm.consume_fuel()?;
+                let from_key = (index + actual_delete_count).to_string();
+                let to_key = (index + insert_count).to_string();
+                if vm.has_property(&object, &from_key)? {
+                    let value = vm.get_property(&object, &from_key)?;
+                    let value_pin = vm.pin(&value);
+                    let set = vm.set_property_strict(&object, &to_key, value);
+                    vm.unpin(value_pin);
+                    set?;
+                } else {
+                    delete_property_or_throw(vm, &object, &to_key)?;
+                }
+                index += 1;
+            }
+            let mut index = len;
+            while index > new_len {
+                vm.consume_fuel()?;
+                delete_property_or_throw(vm, &object, &(index - 1).to_string())?;
+                index -= 1;
+            }
+        } else if insert_count > actual_delete_count {
+            let mut index = len - actual_delete_count;
+            while index > actual_start {
+                vm.consume_fuel()?;
+                let from_key = (index + actual_delete_count - 1).to_string();
+                let to_key = (index + insert_count - 1).to_string();
+                if vm.has_property(&object, &from_key)? {
+                    let value = vm.get_property(&object, &from_key)?;
+                    let value_pin = vm.pin(&value);
+                    let set = vm.set_property_strict(&object, &to_key, value);
+                    vm.unpin(value_pin);
+                    set?;
+                } else {
+                    delete_property_or_throw(vm, &object, &to_key)?;
+                }
+                index -= 1;
+            }
+        }
+
+        for (offset, item) in args.iter().skip(2).enumerate() {
+            vm.consume_fuel()?;
+            let offset = u64::try_from(offset)
+                .map_err(|_| Error::type_err("Array.prototype.splice result is too large"))?;
+            vm.set_property_strict(&object, &(actual_start + offset).to_string(), item.clone())?;
+        }
+        vm.set_property_strict(&object, "length", Value::Number(new_len as f64))?;
+        Ok(removed.clone())
+    })();
+    vm.unpin_many(pin_count);
+    result
 }
 pub(crate) fn array_last_index_of(
     vm: &mut Vm,
@@ -2152,11 +2349,7 @@ pub(crate) fn array_constructor(
             if *n >= (1u64 << 32) as f64 {
                 return Err(Error::range("Invalid array length"));
             }
-            // Avoid attempting an enormous allocation: cap at a sane limit.
             let len = *n as usize;
-            if len > 1 << 24 {
-                return Err(Error::range("Invalid array length"));
-            }
             (Vec::new(), Some(len))
         } else {
             (args.to_vec(), None)
@@ -2171,12 +2364,35 @@ pub(crate) fn array_constructor(
         .cloned()
         .unwrap_or_else(|| vm.array_proto.clone());
     let proto = native_constructor_prototype_with_default(vm, "Array", default_proto)?;
+    let sparse_length = holes_len.filter(|length| *length > crate::value::MAX_DENSE_ARRAY_LEN);
     let arr = if let Some(len) = holes_len {
-        HeapObj::Array(ArrayData::new_holes(len, Some(proto)))
+        if sparse_length.is_some() {
+            HeapObj::Array(ArrayData::new(Vec::new(), Some(proto)))
+        } else {
+            HeapObj::Array(ArrayData::new_holes(len, Some(proto)))
+        }
     } else {
         HeapObj::Array(ArrayData::new(items, Some(proto)))
     };
-    Ok(Value::Object(GcIdx(vm.heap.allocate(arr)?)))
+    let pin_count = match &arr {
+        HeapObj::Array(array) => {
+            let mut pin_count = vm.pin_many(&array.items.lock());
+            if let Some(prototype) = array.proto.lock().as_ref() {
+                pin_count += vm.pin(prototype);
+            }
+            pin_count
+        }
+        _ => unreachable!("Array constructor must allocate ArrayData"),
+    };
+    let result = (|| {
+        let array = vm.alloc(arr)?;
+        if let Some(length) = sparse_length {
+            vm.set_array_length(array.0, Value::Number(length as f64))?;
+        }
+        Ok(Value::Object(array))
+    })();
+    vm.unpin_many(pin_count);
+    result
 }
 
 pub(crate) fn array_find(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {

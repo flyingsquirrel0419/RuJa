@@ -164,7 +164,9 @@ pub struct Vm {
     /// Reverse identity index for immutable-prototype checks. The owning map
     /// remains the GC root and both collections are updated transactionally.
     pub(crate) realm_object_prototype_ids: HashSet<GcIdx>,
-    /// Realm global environment index -> original `%Array.prototype%`.
+    /// Realm global environment index -> original `%Array%` and
+    /// `%Array.prototype%` identities used by ArraySpeciesCreate.
+    pub(crate) realm_array_constructors: HashMap<usize, Value>,
     pub(crate) realm_array_prototypes: HashMap<usize, Value>,
     /// Realm global environment -> `%Promise%` and `%Promise.prototype%`.
     /// Async execution and Promise species defaults must use intrinsic
@@ -656,6 +658,7 @@ impl Vm {
             realm_globals: HashMap::new(),
             realm_object_prototypes: HashMap::new(),
             realm_object_prototype_ids: HashSet::new(),
+            realm_array_constructors: HashMap::new(),
             realm_array_prototypes: HashMap::new(),
             realm_promise_constructors: HashMap::new(),
             realm_promise_prototypes: HashMap::new(),
@@ -2070,6 +2073,7 @@ impl Vm {
             let removed = self.realm_object_prototype_ids.remove(&prototype);
             debug_assert!(removed);
         }
+        self.realm_array_constructors.remove(&realm);
         self.realm_array_prototypes.remove(&realm);
         self.realm_promise_constructors.remove(&realm);
         self.realm_promise_prototypes.remove(&realm);

@@ -111,6 +111,10 @@ from test262_proxy_for_in_admission import (
     PROXY_FOR_IN_FEATURES,
     PROXY_FOR_IN_FILES,
 )
+from test262_array_exotic_admission import (
+    ARRAY_EXOTIC_FEATURES,
+    ARRAY_EXOTIC_FILES,
+)
 from test262_reflect_set_has_admission import (
     REFLECT_SET_HAS_FEATURES,
     REFLECT_SET_HAS_FILES,
@@ -3080,6 +3084,91 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                         self.assertTrue(
                             tool.should_skip({"features": ["Proxy"]}, path)
                         )
+                finally:
+                    tool.TEST262 = original_root
+
+
+class ArrayExoticAdmissionTests(unittest.TestCase):
+    def test_manifest_is_exact_live_disjoint_and_shared(self):
+        self.assertEqual(len(ARRAY_EXOTIC_FILES), 20)
+        self.assertEqual(frozenset(ARRAY_EXOTIC_FEATURES), ARRAY_EXOTIC_FILES)
+        self.assertEqual(
+            {
+                method: sum(f"/prototype/{method}/" in path for path in ARRAY_EXOTIC_FILES)
+                for method in (
+                    "push",
+                    "pop",
+                    "shift",
+                    "unshift",
+                    "splice",
+                    "slice",
+                    "with",
+                )
+            },
+            {
+                "push": 1,
+                "pop": 1,
+                "shift": 1,
+                "unshift": 1,
+                "splice": 6,
+                "slice": 8,
+                "with": 1,
+            },
+        )
+
+        admission_dir = Path(__file__).resolve().parent
+        for manifest in admission_dir.glob("test262_*_admission.txt"):
+            if manifest.name == "test262_array_exotic_admission.txt":
+                continue
+            existing = {
+                line
+                for raw_line in manifest.read_text().splitlines()
+                if (line := raw_line.strip()) and not line.startswith("#")
+            }
+            self.assertFalse(ARRAY_EXOTIC_FILES & existing, manifest.name)
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        try:
+            test_root_available = test_root.is_dir()
+        except OSError:
+            test_root_available = False
+        if test_root_available:
+            for relative, features in ARRAY_EXOTIC_FEATURES.items():
+                path = test_root / relative
+                self.assertTrue(path.is_file(), relative)
+                metadata = test262_runner.parse_meta(path.read_text())
+                self.assertEqual(
+                    frozenset(metadata.get("features", [])), features, relative
+                )
+                self.assertEqual(metadata.get("flags", []), [], relative)
+                self.assertIsNone(metadata.get("negative"), relative)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            outside = root / "test/built-ins/Array/prototype/slice/future.js"
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for relative, features in ARRAY_EXOTIC_FEATURES.items():
+                        path = root / "test" / relative
+                        self.assertTrue(tool.array_exotic_path(path), relative)
+                        self.assertEqual(tool.array_exotic_features(path), features)
+                        self.assertFalse(
+                            tool.should_skip({"features": sorted(features)}, path),
+                            relative,
+                        )
+                        self.assertTrue(
+                            tool.should_skip(
+                                {"features": sorted(features | {"decorators"})},
+                                path,
+                            ),
+                            relative,
+                        )
+                    self.assertFalse(tool.array_exotic_path(outside))
+                    self.assertTrue(
+                        tool.should_skip({"features": ["Proxy"]}, outside)
+                    )
                 finally:
                     tool.TEST262 = original_root
 

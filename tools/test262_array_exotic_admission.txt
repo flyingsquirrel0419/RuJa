@@ -1,0 +1,21 @@
+# Array prototype exotic and generic mutator/copy method coverage.
+built-ins/Array/prototype/Symbol.iterator.js
+built-ins/Array/prototype/push/not-a-constructor.js
+built-ins/Array/prototype/pop/not-a-constructor.js
+built-ins/Array/prototype/shift/not-a-constructor.js
+built-ins/Array/prototype/unshift/not-a-constructor.js
+built-ins/Array/prototype/splice/create-proxy.js
+built-ins/Array/prototype/splice/create-revoked-proxy.js
+built-ins/Array/prototype/splice/create-species-non-ctor.js
+built-ins/Array/prototype/splice/create-species-undef-invalid-len.js
+built-ins/Array/prototype/splice/not-a-constructor.js
+built-ins/Array/prototype/splice/property-traps-order-with-species.js
+built-ins/Array/prototype/slice/coerced-start-end-grow.js
+built-ins/Array/prototype/slice/coerced-start-end-shrink.js
+built-ins/Array/prototype/slice/create-proxied-array-invalid-len.js
+built-ins/Array/prototype/slice/create-proxy.js
+built-ins/Array/prototype/slice/create-revoked-proxy.js
+built-ins/Array/prototype/slice/create-species-non-ctor.js
+built-ins/Array/prototype/slice/not-a-constructor.js
+built-ins/Array/prototype/slice/resizable-buffer.js
+built-ins/Array/prototype/with/not-a-constructor.js

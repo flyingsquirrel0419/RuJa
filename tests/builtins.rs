@@ -30,9 +30,23 @@ fn array_prototype_has_the_intrinsic_length_property() {
             Array.prototype.length = 2;
             var written = Array.prototype.length;
             Array.prototype.length = 0;
-            before + ":" + written;
+            Array.prototype[2] = 42;
+            var indexedLength = Array.prototype.length;
+            var indexedValue = Array.prototype[2];
+            delete Array.prototype[2];
+            Array.prototype.length = 0;
+            other.Array.prototype[1] = 7;
+            var foreignIndexedLength = other.Array.prototype.length;
+            delete other.Array.prototype[1];
+            other.Array.prototype.length = 0;
+            [
+              before, written, indexedLength, indexedValue,
+              foreignIndexedLength, Array.isArray(Array.prototype)
+            ].join(":");
             "#),
-        Value::String(Arc::from("0:true:false:false:true:0:true:false:false:2"))
+        Value::String(Arc::from(
+            "0:true:false:false:true:0:true:false:false:2:3:42:2:true"
+        ))
     );
 }
 
@@ -67,6 +81,159 @@ fn array_slice_and_with_copy_inherited_values_through_holes() {
             ].join(":");
         "#),
         Value::String(Arc::from("1:true:1:false:true:true:6:3:true:2:1,3:3:3,2,4"))
+    );
+}
+
+#[test]
+fn array_push_and_pop_are_generic_and_observe_array_like_properties() {
+    assert_eq!(
+        run(r#"
+            var object = { length: 1, 0: "a" };
+            var pushed = Array.prototype.push.call(object, "b", "c");
+            var inherited = { 2: "inherited" };
+            var child = Object.create(inherited);
+            child.length = 3;
+            var popped = Array.prototype.pop.call(child);
+            var maxError = false;
+            try {
+              Array.prototype.push.call({ length: Number.MAX_SAFE_INTEGER }, 1);
+            } catch (error) {
+              maxError = error instanceof TypeError;
+            }
+            var frozenError = false;
+            try { Array.prototype.pop.call(Object.freeze([1])); }
+            catch (error) { frozenError = error instanceof TypeError; }
+            [
+              pushed, object.length, object[1], object[2],
+              popped, child.length, Object.hasOwn(child, "2"),
+              maxError, frozenError
+            ].join("|");
+        "#),
+        Value::String(Arc::from("3|3|b|c|inherited|2|false|true|true"))
+    );
+}
+
+#[test]
+fn array_slice_uses_species_while_with_is_generic_and_species_free() {
+    assert_eq!(
+        run(r#"
+            var speciesCalls = [];
+            function Species(length) {
+              speciesCalls.push(length);
+              this.length = length;
+            }
+            var source = [, "b"];
+            source.constructor = { [Symbol.species]: Species };
+            var speciesResult = source.slice();
+
+            var generic = Array.prototype.slice.call({ length: 3, 1: "x" });
+            var withSource = { length: 3, 0: "a", 2: "c" };
+            withSource.constructor = {
+              get [Symbol.species]() { throw new Error("must not run"); }
+            };
+            var withResult = Array.prototype.with.call(withSource, 2, "z");
+
+            var other = $262.createRealm().global;
+            var foreignSource = other.Array.of(1, 2);
+            var mainResult = Array.prototype.slice.call(foreignSource);
+            var foreignResult = other.Array.prototype.slice.call([3, 4]);
+            var rangeError = false;
+            try { Array.prototype.with.call({ length: 1 }, -2, 0); }
+            catch (error) { rangeError = error instanceof RangeError; }
+
+            [
+              speciesCalls.join(","), speciesResult instanceof Species,
+              speciesResult.length, Object.hasOwn(speciesResult, "0"), speciesResult[1],
+              Array.isArray(generic), generic.length,
+              Object.hasOwn(generic, "0"), generic[1], Object.hasOwn(generic, "2"),
+              withResult.join(","), Object.hasOwn(withResult, "1"),
+              Object.getPrototypeOf(mainResult) === Array.prototype,
+              Object.getPrototypeOf(foreignResult) === other.Array.prototype,
+              rangeError
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "2|true|2|false|b|true|3|false|x|false|a,,z|true|true|true|true"
+        ))
+    );
+}
+
+#[test]
+fn array_splice_is_generic_sparse_and_species_aware() {
+    assert_eq!(
+        run(r#"
+            var proto = { 1: "inherited" };
+            var object = Object.create(proto);
+            object[0] = "a";
+            object[2] = "c";
+            object.length = 3;
+            var genericRemoved = Array.prototype.splice.call(
+              object, 1, 1, "x", "y"
+            );
+
+            var sparse = [0, , 2, 3];
+            var speciesLengths = [];
+            function Species(length) {
+              speciesLengths.push(length);
+              this.length = length;
+            }
+            sparse.constructor = { [Symbol.species]: Species };
+            var sparseRemoved = sparse.splice(1, 2, "z");
+
+            var noArgs = [1, 2];
+            var noArgsRemoved = noArgs.splice();
+            var frozenError = false;
+            try { Array.prototype.splice.call(Object.freeze([1, 2]), 0, 1); }
+            catch (error) { frozenError = error instanceof TypeError; }
+
+            [
+              genericRemoved.join(","), object.length,
+              object[0], object[1], object[2], object[3],
+              speciesLengths.join(","), sparseRemoved instanceof Species,
+              sparseRemoved.length, Object.hasOwn(sparseRemoved, "0"),
+              sparseRemoved[1], sparse.join(","),
+              noArgsRemoved.length, noArgs.join(","), frozenError
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "inherited|4|a|x|y|c|2|true|2|false|2|0,z,3|0|1,2|true"
+        ))
+    );
+}
+
+#[test]
+fn array_copy_results_and_intrinsic_prototype_survive_all_dense_mutators() {
+    assert_eq!(
+        run(r#"
+            var sliced = [1, 2].slice();
+            var shifted = sliced.shift();
+            var copied = [1, 2, 3].slice();
+            copied.copyWithin(0, 1);
+            var reversed = [1, 2].slice();
+            reversed.reverse();
+            var filled = [1, 2].with(0, 3);
+            filled.fill(9);
+
+            Array.prototype.unshift("x");
+            var prototypeLengthAfterUnshift = Array.prototype.length;
+            var prototypeValue = Array.prototype[0];
+            var prototypeShifted = Array.prototype.shift();
+            var prototypeLengthAfterShift = Array.prototype.length;
+
+            var generic = { length: 2, 0: "a", 1: "b" };
+            var genericLength = Array.prototype.unshift.call(generic, "z");
+            var genericFirst = Array.prototype.shift.call(generic);
+
+            [
+              shifted, sliced.length, sliced[0],
+              copied.join(","), reversed.join(","), filled.join(","),
+              prototypeLengthAfterUnshift, prototypeValue,
+              prototypeShifted, prototypeLengthAfterShift,
+              genericLength, genericFirst, generic.length,
+              generic[0], generic[1]
+            ].join("|");
+        "#),
+        Value::String(Arc::from("1|1|2|2,3,3|2,1|9,9|1|x|x|0|3|z|2|a|b"))
     );
 }
 

@@ -1995,7 +1995,7 @@ pub(crate) fn is_array(value: &Value, heap: &Heap) -> bool {
     }
 }
 
-pub(crate) fn is_array_or_throw(vm: &Vm, value: &Value) -> error::Result<bool> {
+pub(crate) fn is_array_or_throw(vm: &mut Vm, value: &Value) -> error::Result<bool> {
     enum Step {
         Done(bool),
         Proxy(Value),
@@ -2017,7 +2017,10 @@ pub(crate) fn is_array_or_throw(vm: &Vm, value: &Value) -> error::Result<bool> {
             _ => Step::Done(false),
         }) {
             Step::Done(is_array) => return Ok(is_array),
-            Step::Proxy(target) => current = target,
+            Step::Proxy(target) => {
+                vm.consume_fuel()?;
+                current = target;
+            }
             Step::Revoked => {
                 return Err(Error::type_err(
                     "Cannot determine whether a revoked Proxy is an array",
@@ -3343,7 +3346,7 @@ fn install_array_intrinsic_in_env(
     env: GcIdx,
     realm_global: Option<&Value>,
 ) -> error::Result<(GcIdx, GcIdx)> {
-    let (constructor, prototype) = make_builtin_constructor_with_in_env(
+    let (constructor, prototype) = make_builtin_constructor_with_array_prototype_in_env(
         vm,
         "Array",
         1,
@@ -3410,6 +3413,8 @@ fn install_array_intrinsic_in_env(
         );
     });
 
+    vm.realm_array_constructors
+        .insert(env.0, constructor_value.clone());
     vm.realm_array_prototypes
         .insert(env.0, prototype_value.clone());
     if env == vm.global {

@@ -3115,6 +3115,26 @@ pub(crate) fn make_builtin_constructor_with_in_env(
     )
 }
 
+pub(crate) fn make_builtin_constructor_with_array_prototype_in_env(
+    vm: &mut Vm,
+    name: &str,
+    length: usize,
+    ctor: NativeFn,
+    construct_mode: NativeConstructMode,
+    methods: &[(&str, NativeFn, usize)],
+    env: GcIdx,
+) -> error::Result<(GcIdx, GcIdx)> {
+    make_builtin_constructor_with_prototype_kind_in_env(
+        vm,
+        name,
+        length,
+        (ctor, construct_mode),
+        methods,
+        env,
+        BuiltinPrototypeKind::Array,
+    )
+}
+
 pub(crate) fn make_builtin_constructor_with_proto_class(
     vm: &mut Vm,
     name: &str,
@@ -3144,6 +3164,31 @@ pub(crate) fn make_builtin_constructor_with_proto_class_in_env(
     env: GcIdx,
     proto_class_name: Option<&str>,
 ) -> error::Result<(GcIdx, GcIdx)> {
+    make_builtin_constructor_with_prototype_kind_in_env(
+        vm,
+        name,
+        length,
+        constructor,
+        methods,
+        env,
+        BuiltinPrototypeKind::Ordinary(proto_class_name),
+    )
+}
+
+enum BuiltinPrototypeKind<'a> {
+    Ordinary(Option<&'a str>),
+    Array,
+}
+
+fn make_builtin_constructor_with_prototype_kind_in_env(
+    vm: &mut Vm,
+    name: &str,
+    length: usize,
+    constructor: (NativeFn, NativeConstructMode),
+    methods: &[(&str, NativeFn, usize)],
+    env: GcIdx,
+    prototype_kind: BuiltinPrototypeKind<'_>,
+) -> error::Result<(GcIdx, GcIdx)> {
     let (ctor, construct_mode) = constructor;
     let realm = crate::environment::global_env_root(&vm.heap, env);
     let object_proto = vm
@@ -3161,14 +3206,21 @@ pub(crate) fn make_builtin_constructor_with_proto_class_in_env(
         let func_idx = vm.new_native_function_in_env(n, *f, *len, env)?;
         method_props.insert(PropertyKey::from(*n), data_prop(Value::Object(func_idx)));
     }
-    let proto_obj = HeapObj::Object(ObjectData {
-        props: Mutex::new(method_props),
-        proto: Mutex::new(Some(object_proto)),
-        extensible: AtomicBool::new(true),
-        class_name: proto_class_name.map(Arc::from),
-        private_fields: Mutex::new(std::collections::HashMap::new()),
-        primitive: Mutex::new(None),
-    });
+    let proto_obj = match prototype_kind {
+        BuiltinPrototypeKind::Ordinary(class_name) => HeapObj::Object(ObjectData {
+            props: Mutex::new(method_props),
+            proto: Mutex::new(Some(object_proto)),
+            extensible: AtomicBool::new(true),
+            class_name: class_name.map(Arc::from),
+            private_fields: Mutex::new(std::collections::HashMap::new()),
+            primitive: Mutex::new(None),
+        }),
+        BuiltinPrototypeKind::Array => {
+            let array = ArrayData::new(Vec::new(), Some(object_proto));
+            *array.props.lock() = method_props;
+            HeapObj::Array(array)
+        }
+    };
     let proto_idx = GcIdx(vm.heap.allocate(proto_obj)?);
     let ctor_func = FunctionData {
         name: Some(Arc::from(name)),

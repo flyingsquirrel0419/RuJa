@@ -1202,34 +1202,74 @@ impl Vm {
                 return Ok(false);
             }
             self.heap.with_obj(idx.0, |o| {
-                if let HeapObj::Array(a) = o {
-                    if let Some(index) = array_index {
-                        if !desc.is_accessor && index < crate::value::MAX_DENSE_ARRAY_LEN {
-                            let mut items = a.items.lock();
-                            let mut present = a.present.lock();
-                            while items.len() <= index {
-                                items.push(Value::Undefined);
-                                present.push(false);
-                            }
-                            items[index] = desc.value.clone();
-                            if present.len() <= index {
-                                present.resize(index + 1, false);
-                            }
-                            present[index] = true;
-                            let dense_length = items.len();
-                            let mut sparse_max = a.sparse_max.lock();
-                            if sparse_max.is_some_and(|sparse| sparse <= dense_length) {
-                                *sparse_max = None;
-                            }
-                        } else {
-                            let mut sparse_max = a.sparse_max.lock();
-                            if sparse_max.is_none_or(|current| index >= current) {
-                                *sparse_max = Some(index + 1);
-                            }
+                let HeapObj::Array(array) = o else {
+                    o.props().lock().insert(key.clone(), desc.clone());
+                    return;
+                };
+                let Some(index) = array_index else {
+                    array.props.lock().insert(key.clone(), desc.clone());
+                    return;
+                };
+
+                let is_arguments = array
+                    .is_arguments
+                    .load(std::sync::atomic::Ordering::Relaxed);
+                let dense_default_data = !is_arguments
+                    && !desc.is_accessor
+                    && desc.writable
+                    && desc.enumerable
+                    && desc.configurable
+                    && index < crate::value::MAX_DENSE_ARRAY_LEN;
+                if dense_default_data {
+                    let mut items = array.items.lock();
+                    let mut present = array.present.lock();
+                    while items.len() <= index {
+                        items.push(Value::Undefined);
+                        present.push(false);
+                    }
+                    items[index] = desc.value.clone();
+                    if present.len() <= index {
+                        present.resize(index + 1, false);
+                    }
+                    present[index] = true;
+                    let dense_length = items.len();
+                    array.props.lock().shift_remove(&key);
+                    let mut sparse_max = array.sparse_max.lock();
+                    if sparse_max.is_some_and(|sparse| sparse <= dense_length) {
+                        *sparse_max = None;
+                    }
+                    return;
+                }
+
+                if is_arguments && !desc.is_accessor && index < crate::value::MAX_DENSE_ARRAY_LEN {
+                    let mut items = array.items.lock();
+                    let mut present = array.present.lock();
+                    while items.len() <= index {
+                        items.push(Value::Undefined);
+                        present.push(false);
+                    }
+                    items[index] = desc.value.clone();
+                    if present.len() <= index {
+                        present.resize(index + 1, false);
+                    }
+                    present[index] = true;
+                } else {
+                    let dense_length = array.items.lock().len();
+                    if index < dense_length {
+                        if let Some(item) = array.items.lock().get_mut(index) {
+                            *item = Value::Undefined;
+                        }
+                        if let Some(slot) = array.present.lock().get_mut(index) {
+                            *slot = false;
+                        }
+                    } else {
+                        let mut sparse_max = array.sparse_max.lock();
+                        if sparse_max.is_none_or(|current| index >= current) {
+                            *sparse_max = Some(index + 1);
                         }
                     }
                 }
-                o.props().lock().insert(key, desc);
+                array.props.lock().insert(key.clone(), desc.clone());
             });
             if array_index.is_some() {
                 self.sync_array_length_descriptor_after_index(idx.0);
@@ -1695,10 +1735,17 @@ impl Vm {
                         }
                         self.heap.with_obj(idx.0, |o| {
                             if let HeapObj::Array(a) = o {
-                                // Indexed data descriptors and the dense array
-                                // store represent the same property. Keep both
-                                // views synchronized for native Array methods.
-                                if i < crate::value::MAX_DENSE_ARRAY_LEN {
+                                let is_arguments =
+                                    a.is_arguments.load(std::sync::atomic::Ordering::Relaxed);
+                                let migrate_to_dense = !is_arguments
+                                    && !desc.is_accessor
+                                    && desc.writable
+                                    && desc.enumerable
+                                    && desc.configurable
+                                    && i < crate::value::MAX_DENSE_ARRAY_LEN;
+                                if (is_arguments || migrate_to_dense)
+                                    && i < crate::value::MAX_DENSE_ARRAY_LEN
+                                {
                                     let mut items = a.items.lock();
                                     let mut present = a.present.lock();
                                     while items.len() <= i {
@@ -1711,8 +1758,11 @@ impl Vm {
                                     }
                                     present[i] = true;
                                 }
-                                if let Some(desc) = a.props.lock().get_mut(&pkey) {
-                                    desc.value = value.clone();
+                                let mut props = a.props.lock();
+                                if migrate_to_dense {
+                                    props.shift_remove(&pkey);
+                                } else if let Some(descriptor) = props.get_mut(&pkey) {
+                                    descriptor.value = value.clone();
                                 }
                             }
                         });
@@ -3432,22 +3482,19 @@ impl Vm {
 
             // ArraySetLength performs both observable conversions before it
             // reads and validates the current length descriptor.
-            let (old_len, old_writable) = self.heap.with_obj(idx, |object| {
-                let HeapObj::Array(array) = object else {
-                    return (0, false);
-                };
-                let old_len = array
-                    .items
-                    .lock()
-                    .len()
-                    .max(array.sparse_max.lock().unwrap_or(0));
-                let old_writable = array
-                    .props
-                    .lock()
-                    .get(&crate::value::PropertyKey::from("length"))
-                    .is_none_or(|descriptor| descriptor.writable);
-                (old_len, old_writable)
-            });
+            let (old_len, old_writable, dense_len, property_count) =
+                self.heap.with_obj(idx, |object| {
+                    let HeapObj::Array(array) = object else {
+                        return (0, false, 0, 0);
+                    };
+                    let dense_len = array.items.lock().len();
+                    let old_len = dense_len.max(array.sparse_max.lock().unwrap_or(0));
+                    let props = array.props.lock();
+                    let old_writable = props
+                        .get(&crate::value::PropertyKey::from("length"))
+                        .is_none_or(|descriptor| descriptor.writable);
+                    (old_len, old_writable, dense_len, props.len())
+                });
             if is_accessor
                 || (has_configurable && configurable)
                 || (has_enumerable && enumerable)
@@ -3483,6 +3530,46 @@ impl Vm {
                 return Ok(new_len == old_len);
             }
 
+            let mut effective_len = new_len;
+            let mut removable = Vec::new();
+            if new_len < old_len {
+                for _ in 0..property_count {
+                    self.consume_fuel()?;
+                }
+                let indexed_properties = self.heap.with_obj(idx, |object| {
+                    let HeapObj::Array(array) = object else {
+                        return Vec::new();
+                    };
+                    array
+                        .props
+                        .lock()
+                        .iter()
+                        .filter_map(|(key, descriptor)| {
+                            let index = key.as_str().and_then(crate::value::parse_array_index)?;
+                            Some((key.clone(), index, descriptor.configurable))
+                        })
+                        .collect::<Vec<_>>()
+                });
+                for (_, index, configurable) in &indexed_properties {
+                    if *index >= new_len && !configurable {
+                        effective_len = effective_len.max(index + 1);
+                    }
+                }
+                removable.extend(indexed_properties.into_iter().filter_map(
+                    |(key, index, configurable)| {
+                        (index >= effective_len && configurable).then_some(key)
+                    },
+                ));
+            }
+            let dense_target = if effective_len <= crate::value::MAX_DENSE_ARRAY_LEN {
+                effective_len
+            } else {
+                dense_len.min(crate::value::MAX_DENSE_ARRAY_LEN)
+            };
+            for _ in 0..dense_len.abs_diff(dense_target) {
+                self.consume_fuel()?;
+            }
+
             let delete_succeeded = self.heap.with_obj(idx, |object| {
                 let HeapObj::Array(array) = object else {
                     return false;
@@ -3490,31 +3577,13 @@ impl Vm {
                 let cap = crate::value::MAX_DENSE_ARRAY_LEN;
                 let mut items = array.items.lock();
                 let mut present = array.present.lock();
-                let mut effective_len = new_len;
-
                 if new_len < old_len {
                     // Delete in descending-index effect: the highest
                     // non-configurable index is the first failure, so lower
                     // indices must remain and length rolls back above it.
                     let mut props = array.props.lock();
-                    for (key, descriptor) in props.iter() {
-                        let Some(index) = key.as_str().and_then(crate::value::parse_array_index)
-                        else {
-                            continue;
-                        };
-                        if index >= new_len && !descriptor.configurable {
-                            effective_len = effective_len.max(index + 1);
-                        }
-                    }
-                    let removable: Vec<_> = props
-                        .iter()
-                        .filter_map(|(key, descriptor)| {
-                            let index = key.as_str().and_then(crate::value::parse_array_index)?;
-                            (index >= effective_len && descriptor.configurable).then(|| key.clone())
-                        })
-                        .collect();
-                    for key in removable {
-                        props.shift_remove(&key);
+                    for key in &removable {
+                        props.shift_remove(key);
                     }
                 }
 
@@ -3825,6 +3894,9 @@ impl Vm {
             Self::push_value_roots(&mut roots, v);
         }
         for v in self.realm_object_prototypes.values() {
+            Self::push_value_roots(&mut roots, v);
+        }
+        for v in self.realm_array_constructors.values() {
             Self::push_value_roots(&mut roots, v);
         }
         for v in self.realm_array_prototypes.values() {

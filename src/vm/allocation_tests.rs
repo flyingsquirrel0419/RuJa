@@ -108,11 +108,12 @@ const FOREIGN_EAGER_NATIVE_CONSTRUCTOR_SOURCES: &[&str] = &[
     "AggregateError",
 ];
 
-fn realm_registry_counts(vm: &Vm) -> [usize; 32] {
+fn realm_registry_counts(vm: &Vm) -> [usize; 33] {
     [
         vm.realm_globals.len(),
         vm.realm_object_prototypes.len(),
         vm.realm_object_prototype_ids.len(),
+        vm.realm_array_constructors.len(),
         vm.realm_array_prototypes.len(),
         vm.realm_promise_constructors.len(),
         vm.realm_promise_prototypes.len(),
@@ -182,7 +183,7 @@ fn assert_main_realm_range_error(vm: &Vm, error: &crate::error::Error) {
 fn assert_failed_realm_attempt(
     vm: &mut Vm,
     baseline_live: usize,
-    baseline_registries: [usize; 32],
+    baseline_registries: [usize; 33],
     baseline_pins: usize,
     extra_capacity: usize,
 ) {
@@ -389,6 +390,99 @@ fn array_slice_and_with_roots_survive_observable_gc() {
 }
 
 #[test]
+fn array_push_pop_and_splice_roots_survive_observable_gc() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("GC test hook should register");
+    let baseline = vm.gc_pins.len();
+
+    let result = vm.run(
+        r#"
+        var pushedValue = { marker: 11 };
+        var pushTarget = new Proxy({ length: 0 }, {
+          set: function(target, key, value, receiver) {
+            forceGc();
+            return Reflect.set(target, key, value, receiver);
+          }
+        });
+        Array.prototype.push.call(pushTarget, pushedValue);
+
+        var popTarget = new Proxy({ 0: { marker: 22 }, length: 1 }, {
+          get: function(target, key, receiver) {
+            forceGc();
+            return Reflect.get(target, key, receiver);
+          },
+          deleteProperty: function(target, key) {
+            forceGc();
+            return Reflect.deleteProperty(target, key);
+          },
+          set: function(target, key, value, receiver) {
+            forceGc();
+            return Reflect.set(target, key, value, receiver);
+          }
+        });
+        var poppedValue = Array.prototype.pop.call(popTarget);
+
+        var spliceSource = [{ marker: 31 }, { marker: 32 }, { marker: 33 }];
+        spliceSource.constructor = {
+          get [Symbol.species]() {
+            forceGc();
+            return function Species(length) {
+              forceGc();
+              return new Proxy({}, {
+                defineProperty: function(target, key, descriptor) {
+                  forceGc();
+                  return Reflect.defineProperty(target, key, descriptor);
+                },
+                set: function(target, key, value, receiver) {
+                  forceGc();
+                  return Reflect.set(target, key, value, receiver);
+                }
+              });
+            };
+          }
+        };
+        var spliceProxy = new Proxy(spliceSource, {
+          has: function(target, key) { forceGc(); return Reflect.has(target, key); },
+          get: function(target, key, receiver) {
+            forceGc();
+            return Reflect.get(target, key, receiver);
+          },
+          set: function(target, key, value, receiver) {
+            forceGc();
+            return Reflect.set(target, key, value, receiver);
+          },
+          deleteProperty: function(target, key) {
+            forceGc();
+            return Reflect.deleteProperty(target, key);
+          }
+        });
+        var insertedValue = { marker: 44 };
+        var removed = Array.prototype.splice.call(spliceProxy, 1, 1, insertedValue);
+
+        [
+          pushTarget[0].marker, pushedValue.marker,
+          poppedValue.marker, popTarget.length,
+          removed[0].marker, spliceSource[1].marker, insertedValue.marker
+        ].join(":");
+        "#,
+    );
+
+    assert_eq!(
+        result.expect("mutator roots should survive every observable collection"),
+        Value::String(Arc::from("11:11:22:0:32:44:44"))
+    );
+    assert_eq!(vm.gc_pins.len(), baseline);
+}
+
+#[test]
 fn array_slice_and_with_restore_gc_pin_depth_after_abrupt_gets() {
     for expression in ["source.slice();", "source.with(0, replacement);"] {
         let mut vm = Vm::new().expect("VM should initialize");
@@ -434,7 +528,7 @@ fn array_slice_and_with_restore_gc_pin_depth_after_abrupt_gets() {
 }
 
 #[test]
-fn array_copy_hole_allocation_respects_the_dense_cap() {
+fn array_copy_results_preserve_sparse_slice_and_cap_materializing_with() {
     let mut vm = Vm::new().expect("VM should initialize");
     let length = crate::value::MAX_DENSE_ARRAY_LEN + 1;
     let source = crate::builtins::array::array_create_in_current_realm(&mut vm, length)
@@ -479,10 +573,24 @@ fn array_copy_hole_allocation_respects_the_dense_cap() {
     assert!(!vm.has_own_property(&tail, "0"));
 
     let baseline_pins = vm.gc_pins.len();
-    let error = crate::builtins::array::array_slice(&mut vm, &[], Some(source.clone()))
-        .expect_err("Slice must reject a result above the dense cap");
-    assert_eq!(error.kind, crate::error::ErrorKind::Range);
-    assert_eq!(error.message, "Array copy result too large");
+    let copied = crate::builtins::array::array_slice(&mut vm, &[], Some(source.clone()))
+        .expect("Slice should preserve a large sparse result without dense backing");
+    assert_eq!(
+        vm.get_property(&copied, "length")
+            .expect("sparse copy length should be readable"),
+        Value::Number(length as f64)
+    );
+    let Value::Object(copied_idx) = copied else {
+        panic!("Slice should return an object");
+    };
+    vm.heap.with_obj(copied_idx.0, |object| {
+        let HeapObj::Array(array) = object else {
+            panic!("default Slice should allocate ArrayData");
+        };
+        assert!(array.items.lock().is_empty());
+        assert!(array.present.lock().is_empty());
+        assert_eq!(*array.sparse_max.lock(), Some(length));
+    });
     assert_eq!(vm.gc_pins.len(), baseline_pins);
 
     let error = crate::builtins::array::array_with(
@@ -495,6 +603,194 @@ fn array_copy_hole_allocation_respects_the_dense_cap() {
     assert_eq!(error.message, "Array.with result too large");
     assert_eq!(vm.gc_pins.len(), baseline_pins);
     vm.unpin(source_pin);
+}
+
+#[test]
+fn array_is_array_proxy_walk_consumes_exact_fuel_and_restores_pin_depth() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    let value = vm
+        .run(
+            r#"
+            var value = [];
+            for (var i = 0; i < 100; i++) value = new Proxy(value, {});
+            value;
+            "#,
+        )
+        .expect("deep Proxy array should initialize");
+    let value_pin = vm.pin(&value);
+    let baseline = vm.gc_pins.len();
+
+    vm.set_fuel(Some(99));
+    let error = crate::builtins::array_is_array(&mut vm, std::slice::from_ref(&value), None)
+        .expect_err("N-1 fuel must abort the Proxy walk");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    vm.set_fuel(Some(100));
+    assert_eq!(
+        crate::builtins::array_is_array(&mut vm, &[value], None)
+            .expect("exact fuel should reach the target array"),
+        Value::Bool(true)
+    );
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+    vm.set_fuel(None);
+    vm.unpin(value_pin);
+}
+
+#[test]
+fn array_set_length_precharges_dense_work_before_mutation() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    let array = crate::builtins::array::array_create_in_current_realm(&mut vm, 0)
+        .expect("empty Array should allocate");
+    let array_pin = vm.pin(&array);
+    let Value::Object(array_idx) = array.clone() else {
+        panic!("ArrayCreate should return an object");
+    };
+    let baseline = vm.gc_pins.len();
+
+    vm.set_fuel(Some(99));
+    let error = vm
+        .set_array_length(array_idx.0, Value::Number(100.0))
+        .expect_err("N-1 fuel must abort before resizing dense storage");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+    assert_eq!(
+        vm.get_property(&array, "length")
+            .expect("failed length update should leave the old length"),
+        Value::Number(0.0)
+    );
+
+    vm.set_fuel(Some(100));
+    vm.set_array_length(array_idx.0, Value::Number(100.0))
+        .expect("exact fuel should complete the resize");
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+    assert_eq!(
+        vm.get_property(&array, "length")
+            .expect("completed length update should be visible"),
+        Value::Number(100.0)
+    );
+    vm.set_fuel(None);
+    vm.unpin(array_pin);
+}
+
+#[test]
+fn generic_array_method_loops_restore_pin_depth_after_fuel_abort() {
+    for expression in [
+        "Array.prototype.slice.call(source);",
+        "Array.prototype.with.call(source, 0, replacement);",
+        "Array.prototype.splice.call(source, 0, 0, replacement);",
+    ] {
+        let mut vm = Vm::new().expect("VM should initialize");
+        vm.run(
+            r#"
+            globalThis.replacement = { marker: 1 };
+            globalThis.source = { length: 1000, 0: replacement };
+            "#,
+        )
+        .expect("fuel fixture should initialize");
+        let baseline = vm.gc_pins.len();
+
+        vm.set_fuel(Some(50));
+        let error = vm
+            .run(expression)
+            .expect_err("the native indexed-property loop should exhaust fuel");
+        assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+        assert_eq!(vm.gc_pins.len(), baseline, "pin leak after {expression}");
+
+        vm.set_fuel(None);
+        assert_eq!(
+            vm.run("source[0] === replacement")
+                .expect("VM should remain reusable after fuel abort"),
+            Value::Bool(true)
+        );
+    }
+
+    let mut vm = Vm::new().expect("VM should initialize");
+    let source = vm
+        .run("globalThis.source = { length: 0 }; source;")
+        .expect("generic push receiver should initialize");
+    let source_pin = vm.pin(&source);
+    let args = vec![Value::Number(1.0); 100];
+    let baseline = vm.gc_pins.len();
+    vm.set_fuel(Some(50));
+    let error = crate::builtins::array_push(&mut vm, &args, Some(source.clone()))
+        .expect_err("push should charge each inserted property");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.gc_pins.len(), baseline);
+    vm.set_fuel(None);
+    assert_eq!(
+        vm.get_property(&source, "0")
+            .expect("partially pushed receiver should remain valid"),
+        Value::Number(1.0)
+    );
+    vm.unpin(source_pin);
+}
+
+#[test]
+fn array_species_allocation_failures_restore_pin_depth_and_preserve_sources() {
+    for expression in [
+        "source.slice();",
+        "source.splice(0, 1);",
+        "source.with(0, 2);",
+    ] {
+        let mut vm = Vm::new().expect("VM should initialize");
+        vm.register_fn("capHeap", |vm, _, _| cap_heap_at_current_live_count(vm), 0)
+            .expect("heap-cap hook should register");
+        vm.run("globalThis.source = [{ marker: 1 }];")
+            .expect("copy source should initialize");
+        let baseline = vm.gc_pins.len();
+
+        let error = vm
+            .run(&format!("capHeap(); {expression}"))
+            .expect_err("Array result allocation should hit the heap cap");
+        vm.set_max_heap_objects(None);
+        assert_eq!(error.kind, crate::error::ErrorKind::Range);
+        assert_eq!(vm.gc_pins.len(), baseline, "pin leak after {expression}");
+        assert_eq!(
+            vm.run("source.length === 1 && source[0].marker === 1")
+                .expect("failed result allocation must not mutate the source"),
+            Value::Bool(true)
+        );
+    }
+}
+
+#[test]
+fn array_constructor_retries_after_collecting_garbage_at_the_heap_cap() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.gc();
+    let baseline_live = vm.heap.live_count();
+    vm.run(
+        r#"
+        (function () {
+          for (var i = 0; i < 100; i++) ({ index: i });
+        })();
+        "#,
+    )
+    .expect("garbage fixture should initialize");
+    let capped_live = vm.heap.live_count();
+    assert!(capped_live > baseline_live, "fixture must leave garbage");
+    vm.set_max_heap_objects(Some(capped_live));
+    let baseline_pins = vm.gc_pins.len();
+
+    let array = crate::builtins::array_constructor(
+        &mut vm,
+        &[Value::Number(
+            (crate::value::MAX_DENSE_ARRAY_LEN + 1) as f64,
+        )],
+        None,
+    )
+    .expect("Array allocation should collect garbage and retry");
+    vm.set_max_heap_objects(None);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(
+        vm.get_property(&array, "length")
+            .expect("sparse Array length should be readable"),
+        Value::Number((crate::value::MAX_DENSE_ARRAY_LEN + 1) as f64)
+    );
 }
 
 #[test]
