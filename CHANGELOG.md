@@ -52,9 +52,19 @@
 
   Final local gates pass with **179/179** all-feature library tests inside the
   full all-target suite, **178/178** release library tests, **119/119** test262
-  tooling tests, rustfmt, Clippy with `-D warnings`, and wasm32 all-features
-  checking. Two independent GPT-5.6 reviews report `CLEAN`; coder and Umans
-  routes were not used for this review.
+  tooling tests, **1/1** documentation tests, rustfmt, Clippy with `-D
+  warnings`, and wasm32 all-features checking. Two independent GPT-5.6 reviews
+  report `CLEAN`; coder and Umans routes were not used for this review.
+
+  Feature commit `5122d2ab54fa72a7ba535c1b1bb13157a24f0aeb` is pushed to
+  `main`. Ordinary CI `29741522154` passes both jobs, and full matrix
+  `29741522114` passes all **33/33** jobs. The 30 downloaded result files at
+  `/tmp/ruja-constructor-traversal.29741522114` aggregate to **31026 pass / 5854
+  fail / 11581 skip / 6 timeout / 0 error / 48467 total / 36880 pass-or-fail
+  executed**. Every result file is byte-for-byte identical to the preceding
+  concat matrix at `/tmp/ruja-array-concat.29728440863.rerun`. The downloaded
+  release binary independently reproduces both fixed-checkout cohorts and all
+  four policy/forced counts above.
 
 - `Array.prototype.concat` now follows the generic ECMAScript pipeline:
   `ToObject`, `ArraySpeciesCreate`, `IsConcatSpreadable`,
