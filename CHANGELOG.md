@@ -36,7 +36,13 @@
   **202/202** library tests, **531/531** builtins tests, and **15/15**
   arguments tests, plus **202/202** release library tests, **129/129** Python
   tooling tests, **1/1** doctest, rustfmt, warnings-denied Clippy, release
-  build, generated documentation, and wasm32 checking.
+  build, generated documentation, and wasm32 checking. Feature commit
+  `61cd755` passes CI `29829395637` and full matrix `29829395686`. Downloaded
+  artifacts aggregate to **31830 pass / 5160 fail / 11474 skip / 3 timeout /
+  0 error / 48467 total / 36990 run**; only the built-ins result changes from
+  the preceding matrix, by exactly **+166 pass / -161 fail / -5 skip**. The
+  downloaded release binary independently reproduces Array reduceRight
+  **260/260** and TypedArray reduceRight **50/50**.
 
 - `Array.prototype.reduce` now follows the generic ECMAScript algorithm
   instead of reducing a copied represented-Array backing vector. It performs
