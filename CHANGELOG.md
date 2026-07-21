@@ -36,7 +36,13 @@
   **200/200** library tests, **530/530** builtins tests, and **15/15**
   arguments tests, plus **200/200** release library tests, **128/128** Python
   tooling tests, **1/1** doctest, rustfmt, warnings-denied Clippy, release
-  build, generated documentation, and wasm32 checking.
+  build, generated documentation, and wasm32 checking. Feature commit
+  `5362a2c` passes CI `29825824540` and full matrix `29825824539`. Downloaded
+  artifacts aggregate to **31664 pass / 5321 fail / 11479 skip / 3 timeout /
+  0 error / 48467 total / 36985 run**; only the built-ins result changes from
+  the preceding matrix, by exactly **+171 pass / -166 fail / -5 skip**. The
+  downloaded release binary independently reproduces Array reduce **260/260**
+  and TypedArray reduce **50/50**.
 
 - `Array.prototype.map` now follows the generic ECMAScript algorithm instead
   of mapping a copied represented-Array backing vector. It performs

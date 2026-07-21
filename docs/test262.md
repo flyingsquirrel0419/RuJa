@@ -30,7 +30,7 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 63.9% of all matrix files; 84.0% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 65.3% of all matrix files; 85.6% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (12752 pass / 0 fail / 7687 skip / 20439 total on the current pinned checkout) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
@@ -9513,6 +9513,14 @@ tests, **530/530** builtins tests, and **15/15** arguments tests, plus
 doctest, rustfmt, warnings-denied Clippy, release build, generated
 documentation, and wasm32 checking. Rustdoc retains the 13 pre-existing broken
 intra-doc-link warnings.
+
+CI `29825824540` and full matrix `29825824539` pass all jobs. Downloaded
+artifacts aggregate to **31664 pass / 5321 fail / 11479 skip / 3 timeout / 0
+error / 48467 total / 36985 run**. Against map run `29821941873`, this is
+exactly **+171 pass / -166 fail / -5 skip**. The built-ins shard moves from
+**15883/4676/3106/3/0** to **16054/4510/3101/3/0**; every other result file is
+byte-identical. The downloaded release binary again reports Array reduce
+**260/260** and TypedArray reduce **50/50**.
 
 ```text
 [Decision Log]
