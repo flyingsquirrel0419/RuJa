@@ -871,6 +871,8 @@ fn generic_array_method_loops_restore_pin_depth_after_fuel_abort() {
     for expression in [
         "Array.prototype.concat.call(source);",
         "Array.prototype.slice.call(source);",
+        "Array.prototype.flat.call(source);",
+        "Array.prototype.flatMap.call(source, function(value) { return [value]; });",
         "Array.prototype.with.call(source, 0, replacement);",
         "Array.prototype.splice.call(source, 0, 0, replacement);",
     ] {
@@ -918,6 +920,42 @@ fn generic_array_method_loops_restore_pin_depth_after_fuel_abort() {
             .expect("partially pushed receiver should remain valid"),
         Value::Number(1.0)
     );
+    vm.unpin(source_pin);
+}
+
+#[test]
+fn array_flat_consumes_exact_fuel_across_nested_indices() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    let source = vm
+        .run("({ 0: [1, 2], length: 1 })")
+        .expect("flat source should initialize");
+    let source_pin = vm.pin(&source);
+    let baseline = vm.gc_pins.len();
+
+    vm.set_fuel(Some(2));
+    let error = crate::builtins::array_flat(&mut vm, &[], Some(source.clone()))
+        .expect_err("three visited indices must require three fuel units");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    vm.set_fuel(Some(3));
+    let result = crate::builtins::array_flat(&mut vm, &[], Some(source.clone()))
+        .expect("exact nested-index fuel should complete flat");
+    let result_pin = vm.pin(&result);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(
+        vm.get_property(&result, "0")
+            .expect("first flattened value should be present"),
+        Value::Number(1.0)
+    );
+    assert_eq!(
+        vm.get_property(&result, "1")
+            .expect("second flattened value should be present"),
+        Value::Number(2.0)
+    );
+    vm.unpin(result_pin);
+    assert_eq!(vm.gc_pins.len(), baseline);
+    vm.set_fuel(None);
     vm.unpin(source_pin);
 }
 
@@ -1854,6 +1892,8 @@ fn array_species_allocation_failures_restore_pin_depth_and_preserve_sources() {
     for expression in [
         "source.concat();",
         "source.filter(function () { return true; });",
+        "source.flat();",
+        "source.flatMap(function (value) { return value; });",
         "source.slice();",
         "source.splice(0, 1);",
         "source.with(0, 2);",
@@ -1980,10 +2020,17 @@ fn array_map_raw_result_allocation_failure_restores_gc_pin_depth() {
 }
 
 #[test]
-fn flat_map_result_allocation_collects_and_preserves_retained_values() {
+fn flat_map_target_retains_values_across_late_callback_gc() {
     let mut vm = Vm::new().expect("VM should initialize");
-    vm.register_fn("capHeap", |vm, _, _| cap_heap_at_current_live_count(vm), 0)
-        .expect("heap-cap hook should register");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("GC hook should register");
     let baseline = vm.gc_pins.len();
 
     let result = vm
@@ -1991,13 +2038,12 @@ fn flat_map_result_allocation_collects_and_preserves_retained_values() {
             r#"
         globalThis.marker = { retained: 41 };
         [1, 2].flatMap(function(value) {
-          if (value === 2) { capHeap(); return value; }
+          if (value === 2) { forceGc(); return value; }
           return [marker];
         });
         "#,
         )
-        .expect("flatMap result allocation should collect garbage and retry");
-    vm.set_max_heap_objects(None);
+        .expect("flatMap target and prior values should survive callback GC");
     let result_pin = vm.pin(&result);
     let marker = vm
         .run("marker")
@@ -2014,6 +2060,88 @@ fn flat_map_result_allocation_collects_and_preserves_retained_values() {
     );
     vm.unpin(result_pin);
     assert_eq!(vm.gc_pins.len(), baseline);
+}
+
+#[test]
+fn array_flattening_roots_nested_state_and_restores_pins_after_abrupt_steps() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("GC test hook should register");
+    let baseline = vm.gc_pins.len();
+
+    let result = vm
+        .run(
+            r#"
+            var marker = { value: 41 };
+            var nested = new Proxy([marker], {
+              get: function(target, key, receiver) {
+                if (key === "length") forceGc();
+                return Reflect.get(target, key, receiver);
+              }
+            });
+            var flat = [nested].flat()[0];
+            var mapped = [1].flatMap(function() { return nested; })[0];
+            flat.value + mapped.value;
+            "#,
+        )
+        .expect("nested flattening values should survive observable GC");
+    assert_eq!(result, Value::Number(82.0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    for source in [
+        r#"
+        var error = {};
+        var source = [1];
+        source.constructor = { get [Symbol.species]() { forceGc(); throw error; } };
+        source.flat();
+        "#,
+        r#"
+        var error = {};
+        Array.prototype.flat.call(new Proxy({ length: 1 }, {
+          has: function() { forceGc(); throw error; }
+        }));
+        "#,
+        r#"
+        var error = {};
+        var nested = new Proxy([1], {
+          get: function(target, key, receiver) {
+            if (key === "length") { forceGc(); throw error; }
+            return Reflect.get(target, key, receiver);
+          }
+        });
+        [nested].flat();
+        "#,
+        r#"
+        var error = {};
+        function Species() {
+          return new Proxy({}, {
+            defineProperty: function() { forceGc(); throw error; }
+          });
+        }
+        var source = [1];
+        source.constructor = { [Symbol.species]: Species };
+        source.flat();
+        "#,
+        r#"
+        var error = {};
+        [1].flatMap(function() { forceGc(); throw error; });
+        "#,
+    ] {
+        vm.run(source)
+            .expect_err("the observable flattening step should complete abruptly");
+        assert_eq!(vm.gc_pins.len(), baseline);
+        assert_eq!(
+            vm.run("1 + 1").expect("VM should remain reusable"),
+            Value::Number(2.0)
+        );
+    }
 }
 
 #[test]

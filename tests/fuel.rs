@@ -45,6 +45,43 @@ fn array_sort_native_index_scans_consume_fuel() {
 }
 
 #[test]
+fn array_flat_infinite_cycles_consume_fuel_without_native_recursion() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run("globalThis.cycle = []; cycle[0] = cycle;")
+        .expect("flat cycle fixture should initialize");
+    vm.set_fuel(Some(100));
+
+    let error = vm
+        .run("cycle.flat(Infinity);")
+        .expect_err("cyclic infinite-depth flattening must exhaust fuel");
+    assert_eq!(error.kind, ruja::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+
+    vm.set_fuel(None);
+    let error = vm
+        .run("cycle.flat(Infinity);")
+        .expect_err("unmetered cyclic flattening must reach the cycle guard");
+    assert_eq!(error.kind, ruja::ErrorKind::Range);
+    assert!(error
+        .to_string()
+        .contains("Maximum cyclic Array flattening depth exceeded"));
+
+    vm.run(
+        r#"
+        globalThis.proxyCycle = [];
+        Object.defineProperty(proxyCycle, "0", {
+          get: function() { return new Proxy(proxyCycle, {}); }
+        });
+        "#,
+    )
+    .expect("fresh-proxy cycle fixture should initialize");
+    let error = vm
+        .run("proxyCycle.flat(Infinity);")
+        .expect_err("fresh wrappers around one Array must not bypass the cycle guard");
+    assert_eq!(error.kind, ruja::ErrorKind::Range);
+}
+
+#[test]
 fn regexp_symbol_split_native_loops_consume_fuel() {
     let mut vm = Vm::new().expect("failed to initialize VM");
     vm.run(

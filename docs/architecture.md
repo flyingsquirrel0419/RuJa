@@ -1376,6 +1376,40 @@ while later deletion or replacement of the own iterator remains observable.
 - 장점, 단점 및 영향: Generic, primitive, arguments, Proxy, inherited, resizable, detached, abrupt, cross-Realm, and exact-cap cases share one tested path; completion releases retained sources; and wasm32 cannot re-enter the obsolete cursor. Each next still performs specification-required property work. At this iterator decision boundary generic reverse, fill, and other snapshot-based Array methods remained separate follow-ups; the preceding fill pipeline section records fill's later completion.
 ```
 
+## Generic Array FlattenIntoArray
+
+`Array.prototype.flat` and `flatMap` share one specification-shaped
+`flatten_into_array` path. The entry points perform `ToObject`, one source
+length snapshot, depth or mapper validation, and `ArraySpeciesCreate` in their
+specified order. The shared loop then observes every source index through
+`HasProperty` and `Get`, applies the mapper only in the initial flatMap frame,
+checks `IsArray`, reads each nested length at descent time, and defines dense
+target properties from the supplied `start` index without setting an ordinary
+custom species result's length.
+
+The algorithm uses a Rust `Vec<FlattenFrame>` rather than native recursion.
+Each child frame owns the exact GC pin suffix for its source and any original
+flatMap input retained below a mapped result. Frame completion pops that suffix;
+the outer cleanup pops all still-live suffixes after abrupt completion. One
+fuel unit is charged before each logical source index, which bounds huge sparse
+lengths when an embedder configures a budget. Infinite-depth traversal tracks
+only repeated sources on the active path: it permits 512 observable replays so
+getters can break a cycle, then raises `RangeError` instead of growing host
+memory forever. Active identities are normalized through transparent Proxy
+wrappers and stored in a ref-count map, so fresh wrappers cannot bypass the
+guard and cycle checks do not turn deep acyclic nesting into quadratic native
+work. Acyclic nesting has no fixed depth cutoff.
+
+```text
+[Decision Log]
+- 목적과 의도: Replace Array-only snapshot flattening with one generic, observable, GC-safe, and sandbox-bounded implementation shared by flat and flatMap.
+- 기존 구현 및 제약 조건: flat coerced depth before receiver length, accepted only represented Arrays, copied dense backing vectors, lost holes and inherited values, ignored species and Proxy operations, and recursively consumed the native stack; flatMap separately snapshotted and mapped the dense backing vector.
+- 검토한 주요 대안: Patch only detached calls, retain an Array fast path, recursively translate the specification, materialize nested lists before output, cap depth at a fixed number, or use an explicit traversal stack with lexical pins.
+- 선택한 방식: Keep the entry-point ordering separate, share an iterative frame stack for FlattenIntoArray, perform live property operations, transfer temporary roots into child frames, use CreateDataPropertyOrThrow semantics, enforce the safe-integer target bound, meter every visited source index, and bound only repeated active-path sources after 512 observable replays.
+- 다른 대안 대신 이 방식을 선택한 이유: Snapshot and fast paths change observable mutation and Proxy order, native recursion makes Infinity cycles a host crash risk, a fixed depth cap rejects finite valid programs, and late rooting permits heap-cell reuse during getters or callbacks. Frames preserve depth-first order while making both roots and resource work explicit.
+- 장점, 단점 및 영향: Direct flat and flatMap Test262 are 43/43, cyclic Infinity inputs terminate by fuel or RangeError, and all abrupt paths restore pin depth. Frame storage and retained roots grow linearly with active acyclic nesting depth; a cycle that would mutate only after more than 512 replays is intentionally terminated by the sandbox guard. Reverse, forEach, map, reduce, and other independent Array methods remain separate conformance units.
+```
+
 ---
 
 **Next:** [Features](features.md) · [Known limitations](limitations.md) · [Back to README](../README.md)

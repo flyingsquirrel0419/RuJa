@@ -9273,6 +9273,48 @@ the fixed 65-file cohort and 94-file compatibility sweep.
 - 장점, 단점 및 영향: The selected surface is 65/65 with 26 attributable runtime transitions and no reverse transition, metadata drift fails tooling, and shared collection iterators remain green. Updating Test262 requires an explicit manifest audit; at this unit boundary fill and other legacy Array methods remained outside scope, with fill completed by the later dedicated unit above.
 ```
 
+## Generic Array flat and flatMap
+
+`tools/test262_array_flat_admission.txt` freezes exactly **1** direct `flat`
+file and **9** direct `flatMap` files otherwise hidden by broad Symbol,
+`Reflect.construct`, arrow-function, or TypedArray gates. Separate feature maps
+for the two methods are shared by the runner and analyzer. Tooling checks
+map/manifest equality, live metadata, disjointness from every other admission,
+runner/analyzer symmetry, and closure against future siblings.
+
+On fixed checkout `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the preceding
+binary under the preceding policy is **18 pass / 15 fail / 10 skip**. Applying
+the final exact policy to that binary produces **20 pass / 23 fail / 0 skip**.
+The repaired runtime is **43 pass / 0 fail / 0 skip**, proving **23
+fail-to-pass** runtime transitions under the final policy with no reverse
+transition. Current Test262 `020cb74075849d1e404bbcdb62feb7a02e6966db`
+independently produces the same direct **43/43** result.
+
+The broader `built-ins/Array/prototype/methods-called-as-functions.js`
+aggregate remains outside admission. It now clears both flat and flatMap and
+fails next at the independent detached `forEach` behavior.
+
+Local verification passes all targets and features with **193/193** library
+tests, **15/15** arguments tests, and **524/524** builtins tests, plus
+**192/192** release library tests, **124/124** Python tooling tests, **1/1**
+doctest, rustfmt, warnings-denied Clippy, release build, generated
+documentation, and wasm32 checking. GPT-5.6 runtime reviewer Russell
+(`019f834f-c8ac-7b01-901f-2b1b8fa2e36f`) and admission reviewer James
+(`019f834f-c9fe-72d0-b940-4af81ae1496d`) both report `CLEAN` after the final
+diff; both sessions are closed, and coder and Umans routes were not used.
+Commit, CI, full-matrix, and artifact evidence follows after the pushed
+feature boundary completes.
+
+```text
+[Decision Log]
+- 목적과 의도: Admit complete direct flat and flatMap coverage without weakening broad feature gates or claiming the containing Array prototype directory.
+- 기존 구현 및 제약 조건: Fifteen ordinarily executed files failed, ten relevant files were policy-skipped, forced execution exposed 23 runtime failures, and the broader aggregate continues into independent forEach behavior.
+- 검토한 주요 대안: Remove Symbol, Reflect, arrow, or TypedArray gates globally; admit directory prefixes; combine the two methods into an older Array manifest; list only former failures; or freeze each current metadata-bearing path while retaining separate method maps.
+- 선택한 방식: Keep broad gates, freeze one flat and nine flatMap exact paths, share their separate feature maps across runner and analyzer, and compare old and repaired binaries on one fixed checkout.
+- 다른 대안 대신 이 방식을 선택한 이유: Global and prefix admission silently grows with unrelated or future behavior, a combined undifferentiated surface hides which method is supported, and failure-only lists hide existing passes. Exact paths preserve reviewable attribution.
+- 장점, 단점 및 영향: Both direct directories are 43/43 with 23 attributable runtime transitions, both tools remain symmetric, and future siblings stay gated. Updating Test262 requires an explicit metadata audit; methods-called-as-functions, forEach, and the complete Array prototype directory remain outside this unit.
+```
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is

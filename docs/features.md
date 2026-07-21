@@ -145,7 +145,7 @@
   `flat`, `flatMap`, `at`, `sort`, `reverse`, `copyWithin`, `reduceRight`,
   `toReversed`, `toSorted`, `toSpliced`, `with`; `Array.from`/`fromAsync`/`of`/
   `isArray`. `%Array.prototype%` is a real Array exotic. Push, Pop, Shift,
-  Unshift, Splice, Slice, Concat, CopyWithin, Fill, Filter, and With use generic
+  Unshift, Splice, Slice, Concat, CopyWithin, Fill, Filter, Flat, FlatMap, and With use generic
   indexed operations and logical lengths. Slice, Splice, Concat, and Filter
   honor species;
   Concat also applies `Symbol.isConcatSpreadable` to each input, preserves
@@ -154,7 +154,10 @@
   `Get`/strict `Set` or deletion without consulting species. Fill performs a
   live strict `Set` for each selected index after one length snapshot. Filter
   performs live `HasProperty`/`Get`, callback calls, and dense result property
-  creation; Fill and With deliberately ignore species. The Array constructor,
+  creation. Flat and FlatMap share an iterative `FlattenIntoArray` path with
+  live nested array access, species-created targets, mapper ordering, GC roots,
+  and per-index fuel; cyclic infinite-depth inputs exhaust configured fuel or
+  reach the bounded cycle-replay guard without native recursion. Fill and With deliberately ignore species. The Array constructor,
   Slice, and Concat can create sparse results above the dense cap. With reads
   through holes and retains a 1,048,576-element sandbox cap. `entries`, `keys`, and `values`
   are generic lazy iterators: they box primitive receivers once, re-read the

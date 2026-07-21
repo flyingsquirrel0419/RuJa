@@ -74,16 +74,20 @@ The following resource limits are enforced:
   cannot create, is rejected as soon as a directed edge repeats.
 - **Remaining Array generic-method gap**: `%Array.prototype%` is a real
   `ArrayData` exotic, and `push`, `pop`, `shift`, `unshift`, `splice`, `slice`,
-  `concat`, `copyWithin`, `fill`, `filter`, and `with` now use generic internal
-  property operations and logical lengths. Slice, Splice, Concat, and Filter
-  implement `ArraySpeciesCreate`; Concat also implements
-  `Symbol.isConcatSpreadable`,
-  while CopyWithin, Fill, and With intentionally do not consult species. Older
+  `concat`, `copyWithin`, `fill`, `filter`, `flat`, `flatMap`, and `with` now
+  use generic internal property operations and logical lengths. Slice, Splice,
+  Concat, and Filter implement `ArraySpeciesCreate`; Concat also implements
+  `Symbol.isConcatSpreadable`. Flat and FlatMap share an iterative,
+  fuel-metered `FlattenIntoArray`, while
+  CopyWithin, Fill, and With intentionally do not consult species. Older
   implementations such as `reverse` still contain represented-Array shortcuts
   and need separate generic-receiver, observable-order, sparse, fuel, and
   rooting audits. The direct Test262 `methods-called-as-functions.js` aggregate
   remains outside exact admission because its next failure is the unrelated
-  detached-receiver behavior of `flat`.
+  detached-receiver behavior of `forEach`.
+  Infinite-depth flattening permits 512 repeated active-path source visits so
+  observable getters can break a cycle, then raises `RangeError`; finite and
+  acyclic nesting has no fixed depth cutoff.
 - **Test262 result enforcement and pinning gap**: the Python runner reports
   fail, timeout, and error counts but still exits with status zero, so a matrix
   job can be green while semantic failures remain. Full-matrix shards also
@@ -345,8 +349,8 @@ guarantees are required.
 - GC runs at safe points only (after a run settles, and throttled at frame
   boundaries). Incremental marking is supported via `collect_incremental(roots, budget)`,
   but there is no generational collector yet
-- Native snapshot rooting is complete for `Array.prototype.map`, `flatMap`,
-  `Array.of`, `sort`, and `toSorted`. The sorting methods implement generic
+- Native snapshot rooting is complete for `Array.prototype.map`, `Array.of`,
+  `sort`, and `toSorted`; `flatMap` no longer uses a snapshot. The sorting methods implement generic
   `ToObject`/`LengthOfArrayLike`, inherited and accessor-backed indices, live
   Proxy-aware `HasProperty`/`Get`, strict `Set`/`Delete`, and the distinct
   skip-holes versus read-through-holes modes. Sorting rejects a captured
@@ -361,7 +365,7 @@ guarantees are required.
   force host GC while a future value exists only in a Rust snapshot. Several
   also require live property access rather than merely pinning the current
   snapshot, so they remain independent algorithm units. Push, Pop, Shift,
-  Unshift, Splice, Slice, Concat, and With now use live generic indexed
+  Unshift, Splice, Slice, Concat, Flat, FlatMap, and With now use live generic indexed
   operations with operation-wide roots; the remaining method-specific gaps
   are tracked above.
 - Private methods are stored per-instance as private fields (each instance

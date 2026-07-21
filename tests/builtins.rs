@@ -12826,6 +12826,83 @@ fn array_flat_flatmap() {
 }
 
 #[test]
+fn array_flat_is_generic_species_aware_and_observable() {
+    assert_eq!(
+        run(r#"
+            var proto = { 0: [1, , 3] };
+            var source = Object.create(proto);
+            source[1] = 4;
+            source.length = 2;
+            Array.prototype.flat.call(source).join(",");
+            "#,),
+        Value::String(Arc::from("1,3,4"))
+    );
+    assert_eq!(
+        run(r#"
+            var log = [];
+            var depth = { valueOf: function() { log.push("depth"); return 1; } };
+            var array = [1];
+            array.constructor = {
+              get [Symbol.species]() {
+                log.push("species");
+                return function() { log.push("construct"); };
+              }
+            };
+            var source = new Proxy(array, {
+              get: function(target, key, receiver) {
+                if (key === "length") log.push("length");
+                return Reflect.get(target, key, receiver);
+              }
+            });
+            var result = source.flat(depth);
+            log.join(",") + "|" + result[0] + "|" +
+              Object.prototype.hasOwnProperty.call(result, "length");
+            "#,),
+        Value::String(Arc::from("length,depth,species,construct|1|false"))
+    );
+    assert_eq!(
+        run(r#"
+            var log = [];
+            var source = new Proxy({ 0: [2], length: 1 }, {
+              has: function(target, key) { log.push("has:" + key); return key in target; },
+              get: function(target, key) { log.push("get:" + key); return target[key]; }
+            });
+            Array.prototype.flat.call(source);
+            log.join(",");
+            "#,),
+        Value::String(Arc::from("get:length,has:0,get:0"))
+    );
+}
+
+#[test]
+fn array_flat_map_uses_shared_live_flattening_path() {
+    assert_eq!(
+        run(r#"
+            var source = { 0: 1, 1: 2, length: 2 };
+            var seen = [];
+            var context = { factor: 10 };
+            var result = Array.prototype.flatMap.call(source, function(value, index, object) {
+              seen.push(value + ":" + index + ":" + (object === source));
+              return [value * this.factor];
+            }, context);
+            seen.join(",") + "|" + result.join(",");
+            "#,),
+        Value::String(Arc::from("1:0:true,2:1:true|10,20"))
+    );
+    assert_eq!(
+        run(r#"
+            var source = [1, 2, 3];
+            var result = source.flatMap(function(value, index) {
+              if (index === 0) delete source[1];
+              return [value];
+            });
+            result.join(",");
+            "#,),
+        Value::String(Arc::from("1,3"))
+    );
+}
+
+#[test]
 fn array_flat_map_roots_prior_callback_results_across_gc() {
     let mut vm = Vm::new().expect("failed to initialize VM");
     vm.register_fn(

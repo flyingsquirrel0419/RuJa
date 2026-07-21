@@ -1462,6 +1462,7 @@ pub(crate) fn from_index_arg(
 
 const MAX_SAFE_ARRAY_LENGTH: f64 = 9_007_199_254_740_991.0;
 const MAX_SAFE_ARRAY_LENGTH_U64: u64 = 9_007_199_254_740_991;
+const MAX_FLATTEN_CYCLE_REPLAYS: usize = 512;
 
 fn to_length(vm: &mut Vm, value: &Value) -> error::Result<usize> {
     let n = vm.to_number(value)?;
@@ -2173,118 +2174,211 @@ pub(crate) fn array_at(vm: &mut Vm, args: &[Value], this: Option<Value>) -> erro
     vm.get_property(&object, &(k as usize).to_string())
 }
 pub(crate) fn array_flat(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let depth = match args.first() {
-        Some(v) => vm.to_number(v)?,
-        None => 1.0,
-    };
-    let depth = if depth < 0.0 { 0 } else { depth as usize };
-    fn flatten(vm: &mut Vm, items: &[Value], depth: usize, out: &mut Vec<Value>) {
-        for v in items {
-            let is_arr = match v {
-                Value::Object(idx) => vm.heap.with_obj(idx.0, |o| matches!(o, HeapObj::Array(_))),
-                _ => false,
-            };
-            if is_arr && depth > 0 {
-                let sub = vm.heap.with_obj(
-                    match v {
-                        Value::Object(i) => i.0,
-                        _ => 0,
-                    },
-                    |o| {
-                        if let HeapObj::Array(a) = o {
-                            a.items.lock().clone()
-                        } else {
-                            Vec::new()
-                        }
-                    },
-                );
-                flatten(vm, &sub, depth - 1, out);
-            } else {
-                out.push(v.clone());
-            }
+    let receiver = this.unwrap_or(Value::Undefined);
+    let mut pin_count = vm.pin(&receiver);
+    pin_count += vm.pin_many(args);
+    let result = (|| {
+        let object = array_method_to_object(vm, &receiver)?;
+        pin_count += vm.pin(&object);
+        let source_length = length_of_array_like_u64(vm, &object)?;
+        let mut depth = match args.first() {
+            Some(value) if !value.is_undefined() => to_integer_or_infinity(vm, value)?,
+            _ => 1.0,
+        };
+        if depth < 0.0 {
+            depth = 0.0;
+        }
+        let target = array_species_create(vm, &object, 0)?;
+        pin_count += vm.pin(&target);
+        flatten_into_array(vm, &target, &object, source_length, 0, depth, None)?;
+        Ok(target.clone())
+    })();
+    vm.unpin_many(pin_count);
+    result
+}
+
+struct FlattenFrame {
+    source: Value,
+    source_id: usize,
+    source_length: u64,
+    source_index: u64,
+    depth: f64,
+    apply_mapper: bool,
+    owned_pins: usize,
+    repeats_active_source: bool,
+}
+
+fn flatten_source_identity(vm: &Vm, value: &Value) -> error::Result<usize> {
+    let mut current = value.clone();
+    loop {
+        let Value::Object(index) = &current else {
+            return Err(Error::internal("FlattenIntoArray source must be an object"));
+        };
+        let target = vm.heap.with_obj(index.0, |object| match object {
+            HeapObj::Proxy(proxy) => Some(proxy.target.clone()),
+            _ => None,
+        });
+        match target {
+            Some(target) => current = target,
+            None => return Ok(index.0),
         }
     }
-    if let Some(Value::Object(idx)) = this {
-        let items = vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Array(a) = obj {
-                a.items.lock().clone()
-            } else {
-                Vec::new()
-            }
-        });
-        let mut out = Vec::new();
-        flatten(vm, &items, depth, &mut out);
-        return make_value_array(vm, out);
-    }
-    Ok(Value::Undefined)
 }
+
+fn flatten_into_array(
+    vm: &mut Vm,
+    target: &Value,
+    source: &Value,
+    source_length: u64,
+    start: u64,
+    depth: f64,
+    mapper: Option<(&Value, &Value)>,
+) -> error::Result<u64> {
+    let source_id = flatten_source_identity(vm, source)?;
+    let mut frames = vec![FlattenFrame {
+        source: source.clone(),
+        source_id,
+        source_length,
+        source_index: 0,
+        depth,
+        apply_mapper: mapper.is_some(),
+        owned_pins: 0,
+        repeats_active_source: false,
+    }];
+    let mut target_index = start;
+    let mut active_pins = 0usize;
+    let mut active_cycle_replays = 0usize;
+    let mut active_sources = std::collections::HashMap::from([(source_id, 1usize)]);
+
+    let result = (|| loop {
+        let Some(frame) = frames.last_mut() else {
+            return Ok(target_index);
+        };
+        if frame.source_index >= frame.source_length {
+            let completed = frames.pop().expect("flatten frame must exist");
+            if completed.repeats_active_source {
+                active_cycle_replays -= 1;
+            }
+            if let std::collections::hash_map::Entry::Occupied(mut entry) =
+                active_sources.entry(completed.source_id)
+            {
+                if *entry.get() == 1 {
+                    entry.remove();
+                } else {
+                    *entry.get_mut() -= 1;
+                }
+            }
+            vm.unpin_many(completed.owned_pins);
+            active_pins -= completed.owned_pins;
+            continue;
+        }
+
+        vm.consume_fuel()?;
+        let source_index = frame.source_index;
+        frame.source_index += 1;
+        let source = frame.source.clone();
+        let frame_depth = frame.depth;
+        let apply_mapper = frame.apply_mapper;
+        let source_key = source_index.to_string();
+        if !vm.has_property(&source, &source_key)? {
+            continue;
+        }
+
+        let mut element = vm.get_property(&source, &source_key)?;
+        let mut element_pins = vm.pin(&element);
+        active_pins += element_pins;
+        if apply_mapper {
+            let (mapper_function, this_arg) =
+                mapper.expect("the initial flatten frame owns the mapper");
+            element = vm.call_function(
+                mapper_function,
+                &[element, Value::Number(source_index as f64), source.clone()],
+                Some(this_arg.clone()),
+            )?;
+            let mapped_pin = vm.pin(&element);
+            element_pins += mapped_pin;
+            active_pins += mapped_pin;
+        }
+
+        let should_flatten = frame_depth > 0.0 && is_array_or_throw(vm, &element)?;
+        if should_flatten {
+            let element_length = length_of_array_like_u64(vm, &element)?;
+            let next_depth = if frame_depth == f64::INFINITY {
+                f64::INFINITY
+            } else {
+                frame_depth - 1.0
+            };
+            let source_id = flatten_source_identity(vm, &element)?;
+            let repeats_active_source = next_depth == f64::INFINITY
+                && active_sources.get(&source_id).copied().unwrap_or(0) > 0;
+            if repeats_active_source {
+                if active_cycle_replays >= MAX_FLATTEN_CYCLE_REPLAYS {
+                    return Err(Error::range(
+                        "Maximum cyclic Array flattening depth exceeded",
+                    ));
+                }
+                active_cycle_replays += 1;
+            }
+            *active_sources.entry(source_id).or_insert(0) += 1;
+            frames.push(FlattenFrame {
+                source: element,
+                source_id,
+                source_length: element_length,
+                source_index: 0,
+                depth: next_depth,
+                apply_mapper: false,
+                owned_pins: element_pins,
+                repeats_active_source,
+            });
+            continue;
+        }
+
+        if target_index >= MAX_SAFE_ARRAY_LENGTH_U64 {
+            return Err(Error::type_err("Array.prototype.flat result is too large"));
+        }
+        let define = vm.define_own_property_or_throw(
+            target,
+            PropertyKey::from(target_index.to_string()),
+            PropertyDescriptor::data(element),
+        );
+        vm.unpin_many(element_pins);
+        active_pins -= element_pins;
+        define?;
+        target_index += 1;
+    })();
+    vm.unpin_many(active_pins);
+    result
+}
+
 pub(crate) fn array_flat_map(
     vm: &mut Vm,
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    // flatMap(fn) = map(fn).flat(1)
-    let items = if let Some(Value::Object(idx)) = this {
-        vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Array(a) = obj {
-                a.items.lock().clone()
-            } else {
-                Vec::new()
-            }
-        })
-    } else {
-        Vec::new()
-    };
-    let fn_val = args.first().cloned().unwrap_or(Value::Undefined);
-    let mut pin_count = vm.pin_many(&items);
-    pin_count += vm.pin(&fn_val);
-    if let Some(receiver) = &this {
-        pin_count += vm.pin(receiver);
-    }
-
-    // Callback execution may collect values held only in Rust locals. Keep
-    // every accumulated result alive until the output Array owns the values.
+    let receiver = this.unwrap_or(Value::Undefined);
+    let mut pin_count = vm.pin(&receiver);
+    pin_count += vm.pin_many(args);
     let result = (|| {
-        let mut mapped: Vec<Value> = Vec::new();
-        for (i, v) in items.iter().enumerate() {
-            let result = vm.call_function(
-                &fn_val,
-                &[
-                    v.clone(),
-                    Value::Number(i as f64),
-                    this.clone().unwrap_or(Value::Undefined),
-                ],
-                None,
-            )?;
-            pin_count += vm.pin(&result);
-            mapped.push(result);
+        let object = array_method_to_object(vm, &receiver)?;
+        pin_count += vm.pin(&object);
+        let source_length = length_of_array_like_u64(vm, &object)?;
+        let mapper = get_arg(args, 0);
+        if !is_callable(&mapper, &vm.heap) {
+            return Err(Error::type_err("Array mapper is not callable"));
         }
-        let mut out = Vec::new();
-        for v in &mapped {
-            let is_arr = match v {
-                Value::Object(idx) => vm.heap.with_obj(idx.0, |o| matches!(o, HeapObj::Array(_))),
-                _ => false,
-            };
-            if is_arr {
-                let sub = vm.heap.with_obj(
-                    match v {
-                        Value::Object(i) => i.0,
-                        _ => 0,
-                    },
-                    |o| {
-                        if let HeapObj::Array(a) = o {
-                            a.items.lock().clone()
-                        } else {
-                            Vec::new()
-                        }
-                    },
-                );
-                out.extend(sub);
-            } else {
-                out.push(v.clone());
-            }
-        }
-        make_value_array(vm, out)
+        let this_arg = get_arg(args, 1);
+        let target = array_species_create(vm, &object, 0)?;
+        pin_count += vm.pin(&target);
+        flatten_into_array(
+            vm,
+            &target,
+            &object,
+            source_length,
+            0,
+            1.0,
+            Some((&mapper, &this_arg)),
+        )?;
+        Ok(target.clone())
     })();
     vm.unpin_many(pin_count);
     result

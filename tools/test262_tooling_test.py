@@ -125,6 +125,12 @@ from test262_array_copy_within_admission import (
 )
 from test262_array_fill_admission import ARRAY_FILL_FEATURES, ARRAY_FILL_FILES
 from test262_array_filter_admission import ARRAY_FILTER_FEATURES, ARRAY_FILTER_FILES
+from test262_array_flat_admission import (
+    ARRAY_FLAT_FEATURES,
+    ARRAY_FLAT_FILES,
+    ARRAY_FLAT_MAP_FEATURES,
+    ARRAY_FLAT_MAP_FILES,
+)
 from test262_array_iterator_admission import (
     ARRAY_ITERATOR_FEATURES,
     ARRAY_ITERATOR_FILES,
@@ -3493,6 +3499,93 @@ class ArrayFilterAdmissionTests(unittest.TestCase):
                     for path in (future, outside):
                         self.assertFalse(tool.array_filter_path(path))
                         self.assertTrue(tool.should_skip({"features": ["Proxy"]}, path))
+                finally:
+                    tool.TEST262 = original_root
+
+
+class ArrayFlatAdmissionTests(unittest.TestCase):
+    def test_manifests_are_exact_live_disjoint_and_shared(self):
+        expected_flat = frozenset(
+            {"built-ins/Array/prototype/flat/not-a-constructor.js"}
+        )
+        flat_map_names = {
+            "array-like-objects-nested.js",
+            "array-like-objects-typedarrays.js",
+            "non-callable-argument-throws.js",
+            "not-a-constructor.js",
+            "this-value-ctor-non-object.js",
+            "this-value-ctor-object-species-bad-throws.js",
+            "this-value-ctor-object-species-custom-ctor-poisoned-throws.js",
+            "this-value-ctor-object-species-custom-ctor.js",
+            "this-value-ctor-object-species.js",
+        }
+        expected_flat_map = frozenset(
+            f"built-ins/Array/prototype/flatMap/{name}" for name in flat_map_names
+        )
+        self.assertEqual(ARRAY_FLAT_FILES, expected_flat)
+        self.assertEqual(ARRAY_FLAT_MAP_FILES, expected_flat_map)
+        self.assertEqual(frozenset(ARRAY_FLAT_FEATURES), ARRAY_FLAT_FILES)
+        self.assertEqual(frozenset(ARRAY_FLAT_MAP_FEATURES), ARRAY_FLAT_MAP_FILES)
+        self.assertFalse(ARRAY_FLAT_FILES & ARRAY_FLAT_MAP_FILES)
+
+        admitted = ARRAY_FLAT_FILES | ARRAY_FLAT_MAP_FILES
+        tools_dir = Path(__file__).resolve().parent
+        for manifest in tools_dir.glob("test262_*_admission.txt"):
+            if manifest.name == "test262_array_flat_admission.txt":
+                continue
+            existing = {
+                line
+                for raw_line in manifest.read_text().splitlines()
+                if (line := raw_line.strip()) and not line.startswith("#")
+            }
+            self.assertFalse(admitted & existing, manifest.name)
+
+        feature_maps = (ARRAY_FLAT_FEATURES, ARRAY_FLAT_MAP_FEATURES)
+        test_root = Path(test262_runner.TEST262) / "test"
+        if test_root.is_dir():
+            for feature_map in feature_maps:
+                for relative, features in feature_map.items():
+                    path = test_root / relative
+                    self.assertTrue(path.is_file(), relative)
+                    metadata = test262_runner.parse_meta(path.read_text())
+                    self.assertEqual(
+                        frozenset(metadata.get("features", [])), features, relative
+                    )
+                    self.assertEqual(metadata.get("flags", []), [], relative)
+                    self.assertIsNone(metadata.get("negative"), relative)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            future = root / "test/built-ins/Array/prototype/flat/future.js"
+            outside = root / "test/built-ins/Array/prototype/map/not-a-constructor.js"
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for relative, features in ARRAY_FLAT_FEATURES.items():
+                        path = root / "test" / relative
+                        self.assertTrue(tool.array_flat_path(path), relative)
+                        self.assertEqual(tool.array_flat_features(path), features)
+                        self.assertFalse(tool.should_skip({"features": list(features)}, path))
+                        self.assertTrue(
+                            tool.should_skip(
+                                {"features": list(features | {"decorators"})}, path
+                            )
+                        )
+                    for relative, features in ARRAY_FLAT_MAP_FEATURES.items():
+                        path = root / "test" / relative
+                        self.assertTrue(tool.array_flat_map_path(path), relative)
+                        self.assertEqual(tool.array_flat_map_features(path), features)
+                        self.assertFalse(tool.should_skip({"features": list(features)}, path))
+                        self.assertTrue(
+                            tool.should_skip(
+                                {"features": list(features | {"decorators"})}, path
+                            )
+                        )
+                    for path in (future, outside):
+                        self.assertFalse(tool.array_flat_path(path))
+                        self.assertFalse(tool.array_flat_map_path(path))
+                        self.assertTrue(tool.should_skip({"features": ["Symbol"]}, path))
                 finally:
                     tool.TEST262 = original_root
 

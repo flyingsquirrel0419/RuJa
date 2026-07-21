@@ -11,6 +11,44 @@
 
 ### Fixed
 
+- `Array.prototype.flat` and `flatMap` now share a generic, species-aware
+  `FlattenIntoArray` implementation instead of copying represented-Array
+  backing vectors. Both methods box receivers, snapshot `LengthOfArrayLike`,
+  preserve their specified validation and species order, and perform live
+  `HasProperty`, `Get`, `IsArray`, nested length, mapper, and
+  `CreateDataPropertyOrThrow` operations. Holes, inherited indices, generic
+  and Proxy receivers, callback mutation, custom species, and partial abrupt
+  results are observable in specification order.
+
+  Flattening uses an explicit frame stack rather than Rust recursion. Nested
+  sources and mapped values remain pinned across getters, callbacks, Proxy
+  traps, collection, and target definitions; every normal, semantic,
+  allocation, property, callback, and fuel exit restores the incoming pin
+  depth. Each visited source index consumes fuel. Cyclic `flat(Infinity)`
+  terminates through the configured sandbox budget or, with unbounded fuel,
+  after 512 observable active-path replays instead of overflowing the native
+  stack or growing until host OOM.
+
+  Exact admission keeps the two method surfaces separate and freezes only the
+  10 files hidden by broader feature gates. On fixed Test262 checkout
+  `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the preceding binary and policy
+  are **18 pass / 15 fail / 10 skip**; applying the final exact policy to that
+  binary is **20/23/0**; and the repaired runtime is **43/43**. The broader
+  detached-method diagnostic now clears both methods and reaches the
+  independent `forEach` gap.
+
+  Local all-target/all-feature tests pass with **193/193** library tests,
+  **524/524** builtins tests, **15/15** arguments tests, **192/192** release
+  library tests, **124/124** Test262 tooling tests, and **1/1** doctest, plus
+  rustfmt, warnings-denied Clippy, release build, generated documentation, and
+  wasm32 checking. GPT-5.6 reviewers Russell
+  (`019f834f-c8ac-7b01-901f-2b1b8fa2e36f`) and James
+  (`019f834f-c9fe-72d0-b940-4af81ae1496d`) report `CLEAN` after the final
+  cycle, complexity, allocation, admission, and documentation corrections;
+  both sessions are closed, and coder and Umans routes were not used. Commit,
+  CI, matrix, and artifact evidence will be recorded after the pushed feature
+  boundary completes.
+
 - `Array.prototype.filter` now follows the generic, species-aware ECMAScript
   algorithm instead of filtering a represented-Array snapshot. It boxes
   primitive receivers, snapshots `LengthOfArrayLike`, validates the callback
