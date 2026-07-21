@@ -9417,6 +9417,17 @@ tests, **528/528** builtins tests, and **15/15** arguments tests, plus
 doctest, rustfmt, warnings-denied Clippy, release build, generated
 documentation, and wasm32 checking.
 
+CI `29817687979` and full matrix `29817687917` pass all jobs. Downloaded
+artifacts aggregate to **31372 pass / 5598 fail / 11493 skip / 4 timeout / 0
+error / 48467 total / 36970 run**. Against full run `29812349142`, this is
+**+10 pass / -6 fail / -4 skip** with every non-built-ins result file
+byte-identical. The built-ins shard moves from **15752/4793/3119/4/0** to
+**15762/4787/3115/4/0**: the direct join cohort accounts for eight net passes,
+and `Array.prototype.toString/S15.4.4.2_A1_T4.js` plus
+`S15.4.4.2_A3_T1.js` supply the two additional fail-to-pass transitions by
+delegating to the repaired generic join. The downloaded release binary again
+reports Array join **23/23** and TypedArray join **32/32**.
+
 ```text
 [Decision Log]
 - 목적과 의도: Admit complete direct Array join coverage without weakening broad feature gates or claiming the containing Array prototype directory.

@@ -44,6 +44,15 @@
   doctest, rustfmt, warnings-denied Clippy, release build, generated
   documentation, and wasm32 checking.
 
+  CI `29817687979` and full Test262 `29817687917` pass. Downloaded full-run
+  artifacts aggregate to **31372 pass / 5598 fail / 11493 skip / 4 timeout /
+  0 error / 48467 total / 36970 run**, a **+10 pass / -6 fail / -4 skip**
+  change from the preceding run with no reverse transition. Only the
+  `built-ins` shard changes: direct join contributes the expected eight net
+  passes, while generic join also repairs two `Array.prototype.toString`
+  tests that delegate to it. The downloaded binary independently reproduces
+  Array join **23/23** and TypedArray join **32/32**.
+
 - `Array.prototype.forEach` now follows the generic ECMAScript algorithm
   instead of iterating a copied represented-Array backing vector. It performs
   `ToObject`, one `LengthOfArrayLike` snapshot, callback validation, and live
