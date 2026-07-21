@@ -42,6 +42,20 @@
   (`019f83a7-55e4-7680-944c-4114e05d91fe`) report `CLEAN` after the stale
   limitations entry was corrected; both sessions are closed.
 
+  Feature commit `24458d56c82462d0503c0ac7882b2359c7d95315` is pushed to
+  `main`. Ordinary CI `29812349225` passes both jobs, and full matrix
+  `29812349142` passes all **33/33** jobs. Its 30 result artifacts at
+  `/tmp/ruja-array-for-each.29812349142` aggregate to **31362 pass / 5604 fail
+  / 11497 skip / 4 timeout / 0 error / 48467 total / 36966 pass-or-fail
+  executed**.
+
+  Against `/tmp/ruja-array-flat.29808658857`, 29 result files are
+  byte-identical. Only `test262_built-ins_result.txt` changes from
+  **15652/4887/3124/5/0** to **15752/4793/3119/4/0**, exactly **+100 pass /
+  -94 fail / -5 skip / -1 timeout** with no error, total, or unrelated-shard
+  drift. The downloaded release binary independently reproduces direct Array
+  forEach **190/190** and TypedArray forEach **42/42** on the fixed checkout.
+
 - `Array.prototype.flat` and `flatMap` now share a generic, species-aware
   `FlattenIntoArray` implementation instead of copying represented-Array
   backing vectors. Both methods box receivers, snapshot `LengthOfArrayLike`,
