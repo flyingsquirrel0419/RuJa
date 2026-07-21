@@ -9611,6 +9611,15 @@ doctest, rustfmt, warnings-denied Clippy, release build, generated
 documentation, and wasm32 checking. Rustdoc retains the 13 pre-existing broken
 intra-doc-link warnings.
 
+CI `29833297247` and full matrix `29833297271` pass all jobs. Downloaded
+artifacts aggregate to **31841 pass / 5151 fail / 11472 skip / 3 timeout / 0
+error / 48467 total / 36992 run**. Against reduceRight run `29829395686`, this
+is exactly **+11 pass / -9 fail / -2 skip**. The built-ins shard moves from
+**16220/4349/3096/3/0** to **16231/4340/3094/3/0**; every other result file is
+byte-identical. The downloaded release binary again reports Array reverse
+**18/18**, TypedArray reverse **22/22**, and a passing forced-gate
+`methods-called-as-functions.js` diagnostic.
+
 ```text
 [Decision Log]
 - 목적과 의도: Admit complete direct Array reverse coverage without weakening broad feature gates or claiming the containing Array prototype directory.

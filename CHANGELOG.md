@@ -37,7 +37,13 @@
   builtins tests, and **15/15** arguments tests, plus **204/204** release
   library tests, **130/130** Python tooling tests, **1/1** doctest, rustfmt,
   warnings-denied Clippy, release build, generated documentation, and wasm32
-  checking.
+  checking. Feature commit `2aa46ec` passes CI `29833297247` and full matrix
+  `29833297271`. Downloaded artifacts aggregate to **31841 pass / 5151 fail /
+  11472 skip / 3 timeout / 0 error / 48467 total / 36992 run**; only the
+  built-ins result changes from the preceding matrix, by exactly **+11 pass /
+  -9 fail / -2 skip**. The downloaded release binary independently reproduces
+  Array reverse **18/18**, TypedArray reverse **22/22**, and the passing
+  forced-gate detached-method diagnostic.
 
 - `Array.prototype.reduceRight` now follows the generic ECMAScript algorithm
   instead of reducing a reversed copy of represented-Array storage. It performs
