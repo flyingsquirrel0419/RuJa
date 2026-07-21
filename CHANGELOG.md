@@ -11,6 +11,40 @@
 
 ### Fixed
 
+- `Array.prototype.toSpliced` now follows the generic ECMAScript
+  change-array-by-copy algorithm instead of splicing a represented-Array
+  snapshot. It performs `ToObject`, captures `LengthOfArrayLike` once,
+  uses argument count so no arguments delete nothing, one `start` argument
+  deletes the tail, and an explicit `undefined` `skipCount` deletes nothing. It
+  creates a fresh intrinsic Array in the method Realm without reading
+  `constructor` or `Symbol.species`. Retained prefix and suffix indices are read
+  live in specification order, discarded indices are not read, inserted values
+  are placed between those ranges, and holes become own `undefined` data
+  properties in the dense result.
+
+  Receiver, arguments, boxed source, fresh result, and copied values remain
+  rooted across coercion, allocation, Proxy traps, property definition, and
+  forced GC. Result allocation retries after collecting garbage, an exact-cap
+  failure happens before indexed access, every result index consumes one loop
+  plus one property-definition fuel unit, and computed result lengths above
+  `2^53 - 1` fail in the method Realm. Exact admission freezes only the direct
+  `not-a-constructor.js` path hidden by the broad `Reflect.construct` gate. On
+  fixed Test262 checkout `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the
+  preceding policy and binary are **17 pass / 12 fail / 1 skip**; applying the
+  final policy to that binary is **18/12/0**; the repaired runtime under the
+  preceding policy is **29/0/1**; and the final cohort is **30/30**. Adjacent
+  `Array.prototype.splice` remains **81/81**. Local verification passes all
+  targets/features with **210/210** library tests, **534/534** builtins tests,
+  and **15/15** arguments tests, plus **209/209** release library tests,
+  **132/132** Python tooling tests, **1/1** doctest, rustfmt, warnings-denied
+  Clippy, release build, generated documentation, and wasm32 checking. Feature
+  commit `174f006` passes CI `29850160241` and full matrix `29850160482`.
+  Downloaded artifacts aggregate to **31863 pass / 5131 fail / 11470 skip / 3
+  timeout / 0 error / 48467 total / 36994 run**; only the built-ins result
+  changes from the preceding matrix, by exactly **+13 pass / -12 fail / -1
+  skip**. The downloaded release binary independently reproduces Array
+  toSpliced **30/30** and Array splice **81/81**.
+
 - `Array.prototype.toReversed` now follows the generic ECMAScript
   change-array-by-copy algorithm instead of reversing represented-Array
   storage. It performs `ToObject`, captures `LengthOfArrayLike` once, creates a

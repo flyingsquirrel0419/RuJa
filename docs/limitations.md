@@ -72,18 +72,16 @@ The following resource limits are enforced:
   abort earlier. This guard applies only to cyclic topology, not to a legal
   acyclic chain. A malformed all-ordinary cycle, which normal ECMAScript APIs
   cannot create, is rejected as soon as a directed edge repeats.
-- **Remaining Array generic-method gap**: `%Array.prototype%` is a real
+- **Array generic-method coverage**: `%Array.prototype%` is a real
   `ArrayData` exotic, and `push`, `pop`, `shift`, `unshift`, `splice`, `slice`,
   `concat`, `copyWithin`, `fill`, `filter`, `flat`, `flatMap`, `forEach`,
-  `join`, `map`, `reduce`, `reduceRight`, `reverse`, `toReversed`, and `with` now
-  use generic internal property operations and logical lengths. Slice, Splice,
-  Concat, and Filter implement `ArraySpeciesCreate`; Concat also implements
-  `Symbol.isConcatSpreadable`. Flat and FlatMap share an iterative,
-  fuel-metered `FlattenIntoArray`, while
-  CopyWithin, Fill, ToReversed, and With intentionally do not consult species.
-  `toSpliced` still contains a represented-Array shortcut and needs a separate
-  generic-receiver, observable-order, sparse, fuel, and rooting audit. The
-  direct Test262 `methods-called-as-functions.js` aggregate
+  `join`, `map`, `reduce`, `reduceRight`, `reverse`, `toReversed`, `toSpliced`,
+  and `with` now use generic internal property operations and logical lengths.
+  Slice, Splice, Concat, and Filter implement `ArraySpeciesCreate`; Concat also
+  implements `Symbol.isConcatSpreadable`. Flat and FlatMap share an iterative,
+  fuel-metered `FlattenIntoArray`, while CopyWithin, Fill, ToReversed,
+  ToSpliced, and With intentionally do not consult species. The direct Test262
+  `methods-called-as-functions.js` aggregate
   passes when forced through broad feature gates, but remains skipped by normal
   policy and outside exact admission because it spans otherwise independent
   Array method families.
@@ -356,9 +354,9 @@ guarantees are required.
   infallible allocation path. Hard host OOM isolation therefore remains an
   embedder responsibility even though capacity overflow is reported as
   `RangeError`.
-- Native snapshot rooting is complete for `Array.of`, `sort`, and `toSorted`;
-  `map` and `flatMap` no longer use snapshots. The sorting methods implement
-  generic
+- Native operation rooting is complete for `Array.of`, `sort`, `toSorted`, and
+  `toSpliced`; `map` and `flatMap` no longer use snapshots. The sorting methods
+  implement generic
   `ToObject`/`LengthOfArrayLike`, inherited and accessor-backed indices, live
   Proxy-aware `HasProperty`/`Get`, strict `Set`/`Delete`, and the distinct
   skip-holes versus read-through-holes modes. Sorting rejects a captured
@@ -367,15 +365,12 @@ guarantees are required.
   intentionally stricter than ECMAScript for very large sparse receivers;
   native temporary-root, collected-list, and merge-buffer storage is bounded
   by the same limit but still uses infallible Rust vector allocation.
-- The remaining older snapshot-based Array method is `toSpliced`; it still
-  needs a separate observable-semantics and rooting pass. A coercion can remove
-  the original source edge and force host GC while a future value exists only
-  in a Rust snapshot. It also requires live property access rather than merely
-  pinning the current snapshot. Push, Pop, Shift,
-  Unshift, Splice, Slice, Concat, Flat, FlatMap, ForEach, Join, Map, Reduce,
-  ReduceRight, Reverse, ToReversed, and With now use
-  live generic indexed operations with operation-wide roots; the remaining
-  method-specific gaps are tracked above.
+- Push, Pop, Shift, Unshift, Splice, Slice, Concat, Flat, FlatMap, ForEach,
+  Join, Map, Reduce, ReduceRight, Reverse, ToReversed, ToSpliced, and With use
+  live generic indexed operations with operation-wide roots. ToSpliced retains
+  only the captured length and coerced splice bounds before copying; it does not
+  retain source elements in a Rust snapshot. Remaining method-specific gaps are
+  tracked above.
 - Private methods are stored per-instance as private fields (each instance
   gets its own closure copy); behavior is spec-correct, but this is more
   memory-heavy than a shared per-class method table would be

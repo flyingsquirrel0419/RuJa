@@ -9663,9 +9663,9 @@ error / 48467 total / 36993 run**. Against reverse run `29833297271`, this is
 exactly **+9 pass / -8 fail / -1 skip**. The built-ins shard moves from
 **16231/4340/3094/3/0** to **16240/4332/3093/3/0**; every other result file is
 byte-identical. The downloaded release binary again reports Array toReversed
-**17/17** and TypedArray toReversed **9/9**. The next tracked represented-Array
-shortcut is `Array.prototype.toSpliced`, currently **17 pass / 12 fail / 1
-skip** on the same fixed checkout.
+**17/17** and TypedArray toReversed **9/9**. The following section closes the
+adjacent `Array.prototype.toSpliced` represented-Array shortcut as an
+independent argument-coercion and copy-range algorithm.
 
 ```text
 [Decision Log]
@@ -9675,6 +9675,51 @@ skip** on the same fixed checkout.
 - 선택한 방식: Use one generic live descending Get loop, create a method-Realm intrinsic Array before indexed access, define every result index, root all observable state, meter loop and property work, and admit exactly one frozen metadata-bearing path.
 - 다른 대안 대신 이 방식을 선택한 이유: One path avoids semantic drift between arrays and array-likes; snapshots break live getter ordering and GC ownership; species is forbidden by the algorithm; global or prefix admission overclaims unrelated and future behavior; and toSpliced has independent argument-coercion and copy-range semantics.
 - 장점, 단점 및 영향: Direct toReversed is 17/17 with eight runtime fail-to-pass transitions, holes become dense undefined values, foreign Realms and allocation retries are covered, future siblings remain gated, and TypedArray stays green. The loop may still traverse up to the Array length limit under embedder fuel control, and updating Test262 requires an explicit metadata audit.
+```
+
+## Generic Array toSpliced
+
+`tools/test262_array_to_spliced_admission.txt` freezes exactly the direct
+`Array.prototype.toSpliced/not-a-constructor.js` file otherwise hidden by the
+broad `Reflect.construct` gate. Its exact feature map is shared by runner and
+analyzer. Tooling checks map/manifest equality, live features and includes,
+empty flags, absent negative metadata, disjointness, runner/analyzer symmetry,
+extra-feature rejection, and closure against future or outside siblings.
+
+On fixed checkout `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the preceding
+binary under the preceding policy is **17 pass / 12 fail / 1 skip**. Applying
+the final exact policy to that binary produces **18 pass / 12 fail / 0 skip**.
+The repaired runtime under the preceding policy is **29 pass / 0 fail / 1
+skip**, and under the final policy is **30/30**. This proves **12** attributable
+runtime fail-to-pass transitions with no reverse transition; the policy-only
+change admits one already-passing constructor-shape test. Adjacent
+`Array.prototype.splice` remains **81/81**.
+
+Local verification passes all targets/features with **210/210** library tests,
+**534/534** builtins tests, and **15/15** arguments tests, plus **209/209**
+release library tests, **132/132** Python tooling tests, **1/1** doctest,
+rustfmt, warnings-denied Clippy, release build, generated documentation, and
+wasm32 checking. Rustdoc retains the 13 pre-existing broken intra-doc-link
+warnings. Runtime review is CLEAN, including allocation-failure, GC-retry,
+pin-balance, fuel, generic receiver, live access, omission, and foreign-Realm
+coverage; admission review confirms exact metadata and policy isolation.
+
+CI `29850160241` and full matrix `29850160482` pass all jobs. Downloaded
+artifacts aggregate to **31863 pass / 5131 fail / 11470 skip / 3 timeout / 0
+error / 48467 total / 36994 run**. Against toReversed run `29845649723`, this
+is exactly **+13 pass / -12 fail / -1 skip**. The built-ins shard moves from
+**16240/4332/3093/3/0** to **16253/4320/3092/3/0**; every other result file is
+byte-identical. The downloaded release binary again reports Array toSpliced
+**30/30** and Array splice **81/81**.
+
+```text
+[Decision Log]
+- 목적과 의도: Complete generic Array toSpliced semantics and admit its full direct Test262 cohort without weakening shared feature gates.
+- 기존 구현 및 제약 조건: The old method accepted only represented Arrays, snapshotted source values before argument coercion, treated a zero-argument call like one explicit undefined start argument, preserved holes incorrectly, and hid one constructor-shape test behind a broad Reflect gate.
+- 검토한 주요 대안: Keep a represented-Array fast path plus generic fallback; snapshot retained values before coercion; use ArraySpeciesCreate; remove the Reflect gate globally; admit the whole directory by prefix; or combine this unit with splice.
+- 선택한 방식: Use one generic ToObject/LengthOfArrayLike path, coerce splice bounds before ArrayCreate, copy the retained prefix and suffix with live Get operations around inserted arguments, define every result index, root all observable state, meter loop and property work, and admit exactly one frozen metadata-bearing path.
+- 다른 대안 대신 이 방식을 선택한 이유: One path avoids semantic drift between arrays and array-likes; snapshots break coercion and getter ordering plus GC ownership; species is forbidden by the algorithm; global or prefix admission overclaims unrelated and future behavior; and splice has separate in-place mutation and species semantics.
+- 장점, 단점 및 영향: Direct toSpliced is 30/30 with twelve runtime fail-to-pass transitions, discarded indices are never read, holes become dense undefined values, foreign Realms and allocation retries are covered, future siblings remain gated, and splice stays green. The result loop may still traverse up to the Array length limit under embedder fuel control, and updating Test262 requires an explicit metadata audit.
 ```
 
 ## Why the full-suite rate is not higher

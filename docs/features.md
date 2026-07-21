@@ -146,8 +146,8 @@
   `toReversed`, `toSorted`, `toSpliced`, `with`; `Array.from`/`fromAsync`/`of`/
   `isArray`. `%Array.prototype%` is a real Array exotic. Push, Pop, Shift,
   Unshift, Splice, Slice, Concat, CopyWithin, Fill, Filter, Flat, FlatMap,
-  ForEach, Join, Reduce, ReduceRight, Reverse, ToReversed, and With use generic
-  indexed operations and logical lengths.
+  ForEach, Join, Reduce, ReduceRight, Reverse, ToReversed, ToSpliced, and With
+  use generic indexed operations and logical lengths.
   Slice, Splice, Concat, and Filter
   honor species;
   Concat also applies `Symbol.isConcatSpreadable` to each input, preserves
@@ -167,7 +167,11 @@
   lower/upper existence checks, reads, strict writes, and deletions for each
   in-place pair. ToReversed creates a fresh intrinsic Array without consulting
   species, reads every source index live in descending order, and materializes
-  holes as own `undefined` properties in the result. Flat and FlatMap share an
+  holes as own `undefined` properties in the result. ToSpliced uses argument
+  count to distinguish no arguments, one `start` argument, and an explicit
+  `undefined` `skipCount`; it creates a fresh intrinsic Array without
+  consulting species and reads the retained prefix and suffix live while
+  materializing holes as own `undefined` properties. Flat and FlatMap share an
   iterative `FlattenIntoArray` path with
   live nested array access, species-created targets, mapper ordering, GC roots,
   and per-index fuel; cyclic infinite-depth inputs exhaust configured fuel or
