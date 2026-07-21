@@ -81,12 +81,12 @@ The following resource limits are enforced:
   `Symbol.isConcatSpreadable`. Flat and FlatMap share an iterative,
   fuel-metered `FlattenIntoArray`, while
   CopyWithin, Fill, and With intentionally do not consult species. Older
-  implementations such as `reduceRight` and `reverse` still contain
+  implementations such as `reverse` still contain
   represented-Array shortcuts
   and need separate generic-receiver, observable-order, sparse, fuel, and
   rooting audits. The direct Test262 `methods-called-as-functions.js` aggregate
   remains outside exact admission because its next failure is the unrelated
-  detached-receiver behavior of `reduceRight`.
+  detached-receiver behavior of `reverse`.
   Infinite-depth flattening permits 512 repeated active-path source visits so
   observable getters can break a cycle, then raises `RangeError`; finite and
   acyclic nesting has no fixed depth cutoff.
@@ -368,13 +368,13 @@ guarantees are required.
   native temporary-root, collected-list, and merge-buffer storage is bounded
   by the same limit but still uses infallible Rust vector allocation.
 - Older snapshot-based methods still need separate observable-semantics and
-  rooting passes: `reduceRight` and `toSpliced`. A callback
+  rooting passes: `reverse` and `toSpliced`. A callback
   or coercion can remove the original source edge and
   force host GC while a future value exists only in a Rust snapshot. Several
   also require live property access rather than merely pinning the current
   snapshot, so they remain independent algorithm units. Push, Pop, Shift,
   Unshift, Splice, Slice, Concat, Flat, FlatMap, ForEach, Join, Map, Reduce,
-  and With now use
+  ReduceRight, and With now use
   live generic indexed operations with operation-wide roots; the remaining
   method-specific gaps are tracked above.
 - Private methods are stored per-instance as private fields (each instance

@@ -131,6 +131,10 @@ from test262_array_for_each_admission import (
     ARRAY_FOR_EACH_FILES,
 )
 from test262_array_reduce_admission import ARRAY_REDUCE_FEATURES, ARRAY_REDUCE_FILES
+from test262_array_reduce_right_admission import (
+    ARRAY_REDUCE_RIGHT_FEATURES,
+    ARRAY_REDUCE_RIGHT_FILES,
+)
 from test262_array_join_admission import ARRAY_JOIN_FEATURES, ARRAY_JOIN_FILES
 from test262_array_flat_admission import (
     ARRAY_FLAT_FEATURES,
@@ -3720,6 +3724,122 @@ class ArrayReduceAdmissionTests(unittest.TestCase):
                     for path in (future, outside):
                         self.assertFalse(tool.array_reduce_path(path))
                         self.assertEqual(tool.array_reduce_features(path), frozenset())
+                        self.assertTrue(
+                            tool.should_skip(
+                                {"flags": [], "features": ["resizable-arraybuffer"]},
+                                path,
+                            )
+                        )
+                finally:
+                    tool.TEST262 = original_root
+
+
+class ArrayReduceRightAdmissionTests(unittest.TestCase):
+    def test_manifest_is_exact_live_disjoint_and_shared(self):
+        expected_features = {
+            "built-ins/Array/prototype/reduceRight/callbackfn-resize-arraybuffer.js": frozenset(
+                {"TypedArray", "resizable-arraybuffer"}
+            ),
+            "built-ins/Array/prototype/reduceRight/not-a-constructor.js": frozenset(
+                {"Reflect.construct", "arrow-function"}
+            ),
+            "built-ins/Array/prototype/reduceRight/resizable-buffer-grow-mid-iteration.js": frozenset(
+                {"resizable-arraybuffer"}
+            ),
+            "built-ins/Array/prototype/reduceRight/resizable-buffer-shrink-mid-iteration.js": frozenset(
+                {"resizable-arraybuffer"}
+            ),
+            "built-ins/Array/prototype/reduceRight/resizable-buffer.js": frozenset(
+                {"resizable-arraybuffer"}
+            ),
+        }
+        self.assertEqual(ARRAY_REDUCE_RIGHT_FILES, frozenset(expected_features))
+        self.assertEqual(ARRAY_REDUCE_RIGHT_FEATURES, expected_features)
+
+        tools_dir = Path(__file__).resolve().parent
+        for manifest in tools_dir.glob("test262_*_admission.txt"):
+            if manifest.name == "test262_array_reduce_right_admission.txt":
+                continue
+            existing = {
+                line
+                for raw_line in manifest.read_text().splitlines()
+                if (line := raw_line.strip()) and not line.startswith("#")
+            }
+            self.assertTrue(ARRAY_REDUCE_RIGHT_FILES.isdisjoint(existing), manifest.name)
+
+        expected_includes = {
+            "built-ins/Array/prototype/reduceRight/callbackfn-resize-arraybuffer.js": [
+                "testTypedArray.js",
+                "compareArray.js",
+            ],
+            "built-ins/Array/prototype/reduceRight/not-a-constructor.js": [
+                "isConstructor.js",
+            ],
+            "built-ins/Array/prototype/reduceRight/resizable-buffer-grow-mid-iteration.js": [
+                "compareArray.js",
+                "resizableArrayBufferUtils.js",
+            ],
+            "built-ins/Array/prototype/reduceRight/resizable-buffer-shrink-mid-iteration.js": [
+                "compareArray.js",
+                "resizableArrayBufferUtils.js",
+            ],
+            "built-ins/Array/prototype/reduceRight/resizable-buffer.js": [
+                "compareArray.js",
+                "resizableArrayBufferUtils.js",
+            ],
+        }
+        test_root = Path(test262_runner.TEST262) / "test"
+        try:
+            test_root_available = test_root.is_dir()
+        except OSError:
+            test_root_available = False
+        if test_root_available:
+            for relative, features in expected_features.items():
+                path = test_root / relative
+                self.assertTrue(path.is_file(), relative)
+                metadata = test262_runner.parse_meta(path.read_text())
+                self.assertEqual(
+                    frozenset(metadata.get("features", [])), features, relative
+                )
+                self.assertEqual(
+                    metadata.get("includes", []), expected_includes[relative], relative
+                )
+                self.assertEqual(metadata.get("flags", []), [], relative)
+                self.assertIsNone(metadata.get("negative"), relative)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            future = root / "test/built-ins/Array/prototype/reduceRight/future.js"
+            outside = root / "test/built-ins/Array/prototype/reduce/not-a-constructor.js"
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    self.assertFalse(tool.array_reduce_right_path(None))
+                    self.assertEqual(tool.array_reduce_right_features(None), frozenset())
+                    for relative, features in expected_features.items():
+                        path = root / "test" / relative
+                        self.assertTrue(tool.array_reduce_right_path(path), relative)
+                        self.assertEqual(tool.array_reduce_right_features(path), features)
+                        self.assertFalse(
+                            tool.should_skip(
+                                {"flags": [], "features": sorted(features)}, path
+                            ),
+                            relative,
+                        )
+                        self.assertTrue(
+                            tool.should_skip(
+                                {
+                                    "flags": [],
+                                    "features": sorted(features | {"decorators"}),
+                                },
+                                path,
+                            ),
+                            relative,
+                        )
+                    for path in (future, outside):
+                        self.assertFalse(tool.array_reduce_right_path(path))
+                        self.assertEqual(tool.array_reduce_right_features(path), frozenset())
                         self.assertTrue(
                             tool.should_skip(
                                 {"flags": [], "features": ["resizable-arraybuffer"]},

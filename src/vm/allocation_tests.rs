@@ -1636,6 +1636,134 @@ fn array_reduce_roots_accumulator_and_restores_pin_depth() {
 }
 
 #[test]
+fn array_reduce_right_consumes_exact_per_index_fuel() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn("reduceRightValue", |_, args, _| Ok(args[0].clone()), 4)
+        .expect("native callback should register");
+    let callback = vm
+        .run("reduceRightValue")
+        .expect("callback should be readable");
+    let source = vm
+        .run("Object.assign(Object.create(null), { 0: 4, 2: 2, length: 4 })")
+        .expect("reduceRight source should initialize");
+    let source_pin = vm.pin(&source);
+    let callback_pin = vm.pin(&callback);
+    let baseline = vm.gc_pins.len();
+
+    vm.set_fuel(Some(3));
+    let error = crate::builtins::array_reduce_right(
+        &mut vm,
+        std::slice::from_ref(&callback),
+        Some(source.clone()),
+    )
+    .expect_err("N-1 fuel must abort accumulator search plus the logical scan");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    vm.set_fuel(Some(4));
+    let result =
+        crate::builtins::array_reduce_right(&mut vm, std::slice::from_ref(&callback), Some(source))
+            .expect("exact logical-index fuel should complete reduceRight");
+    assert_eq!(result, Value::Number(2.0));
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+    vm.set_fuel(None);
+
+    let object_initial = vm
+        .run("({ marker: 9 })")
+        .expect("object accumulator should initialize");
+    let fuel_source = vm
+        .run("({ 0: 1, length: 1 })")
+        .expect("fuel source should initialize");
+    vm.set_fuel(Some(0));
+    let error = crate::builtins::array_reduce_right(
+        &mut vm,
+        &[callback.clone(), object_initial],
+        Some(fuel_source),
+    )
+    .expect_err("fuel exhaustion after rooting an object accumulator must clean up");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.gc_pins.len(), baseline);
+    vm.set_fuel(None);
+
+    let empty = vm
+        .run("({ length: 0 })")
+        .expect("empty source should initialize");
+    vm.set_fuel(Some(0));
+    let result =
+        crate::builtins::array_reduce_right(&mut vm, &[callback, Value::Number(9.0)], Some(empty))
+            .expect("empty reduceRight with an initial value should consume no loop fuel");
+    assert_eq!(result, Value::Number(9.0));
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+    vm.set_fuel(None);
+    vm.unpin(callback_pin);
+    vm.unpin(source_pin);
+}
+
+#[test]
+fn array_reduce_right_roots_accumulator_and_restores_pin_depth() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("GC test hook should register");
+    let baseline = vm.gc_pins.len();
+
+    let result = vm
+        .run(
+            r#"
+            (function () {
+              var retained = { marker: 40 };
+              var target = { 0: 2, 1: 1, length: 2 };
+              var source = new Proxy(target, {
+                has: function (object, key) {
+                  if (key === "0") {
+                    retained = null;
+                    forceGc();
+                  }
+                  return Reflect.has(object, key);
+                }
+              });
+              return Array.prototype.reduceRight.call(
+                source,
+                function (accumulator, value, index) {
+                  if (index === 1) return retained;
+                  return accumulator.marker + value;
+                },
+                { marker: 0 }
+              );
+            })();
+            "#,
+        )
+        .expect("reduceRight accumulator should survive later observable property work");
+    assert_eq!(result, Value::Number(42.0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    for source in [
+        "Array.prototype.reduceRight.call(new Proxy({ length: 1 }, { has: function () { throw 'has'; } }), function () {}, 0);",
+        "Array.prototype.reduceRight.call(new Proxy({ 0: 1, length: 1 }, { get: function (target, key, receiver) { if (key === '0') throw 'get'; return Reflect.get(target, key, receiver); } }), function () {}, 0);",
+        "Array.prototype.reduceRight.call(new Proxy({ 0: 1, 1: 2, length: 2 }, { has: function (target, key) { if (key === '0') { forceGc(); throw 'late-has'; } return Reflect.has(target, key); } }), function () { return { marker: 1 }; }, { marker: 0 });",
+        "[1].reduceRight(function () { forceGc(); throw 'callback'; }, { marker: 0 });",
+        "Array.prototype.reduceRight.call({ length: 1 }, function () {});",
+    ] {
+        vm.run(source)
+            .expect_err("the observable reduceRight step should complete abruptly");
+        assert_eq!(vm.gc_pins.len(), baseline);
+        assert_eq!(
+            vm.run("1 + 1").expect("VM should remain reusable"),
+            Value::Number(2.0)
+        );
+    }
+}
+
+#[test]
 fn array_for_each_consumes_exact_per_index_fuel() {
     let mut vm = Vm::new().expect("VM should initialize");
     vm.register_fn("visit", |_, _, _| Ok(Value::Undefined), 3)

@@ -11,6 +11,33 @@
 
 ### Fixed
 
+- `Array.prototype.reduceRight` now follows the generic ECMAScript algorithm
+  instead of reducing a reversed copy of represented-Array storage. It performs
+  `ToObject`, one `LengthOfArrayLike` snapshot, callback validation, live
+  descending `HasProperty`/`Get` accumulator discovery when the initial value
+  is omitted, and live callback traversal from `length - 1` to zero. Generic
+  and primitive receivers, holes, inheritance, mutation, Proxy traps, explicit
+  `undefined` initial values, callback arguments, abrupt completion, and
+  method-Realm errors are observable correctly.
+
+  Receiver, arguments, boxed object, current value, and accumulator remain
+  rooted across observable work. Callback result roots replace prior
+  accumulator roots in LIFO order with O(1) native root growth. Every examined
+  logical index consumes one fuel unit, and decrement-before-access loops avoid
+  unsigned underflow at zero. Exact admission freezes only the five direct
+  reduceRight files hidden by broad feature gates. On fixed Test262 checkout
+  `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the preceding policy and binary
+  are **94 pass / 161 fail / 5 skip**; applying the final policy to that binary
+  is **95/165/0**; the repaired runtime under the preceding policy is
+  **255/0/5**; and the final cohort is **260/260**. Adjacent
+  `%TypedArray%.prototype.reduceRight` remains **50/50**. The detached-method
+  diagnostic now clears reduceRight and reaches the independent generic
+  `reverse` gap. Local verification passes all targets/features with
+  **202/202** library tests, **531/531** builtins tests, and **15/15**
+  arguments tests, plus **202/202** release library tests, **129/129** Python
+  tooling tests, **1/1** doctest, rustfmt, warnings-denied Clippy, release
+  build, generated documentation, and wasm32 checking.
+
 - `Array.prototype.reduce` now follows the generic ECMAScript algorithm
   instead of reducing a copied represented-Array backing vector. It performs
   `ToObject`, one `LengthOfArrayLike` snapshot, callback validation, live

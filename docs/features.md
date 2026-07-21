@@ -146,7 +146,8 @@
   `toReversed`, `toSorted`, `toSpliced`, `with`; `Array.from`/`fromAsync`/`of`/
   `isArray`. `%Array.prototype%` is a real Array exotic. Push, Pop, Shift,
   Unshift, Splice, Slice, Concat, CopyWithin, Fill, Filter, Flat, FlatMap,
-  ForEach, Join, and With use generic indexed operations and logical lengths.
+  ForEach, Join, Reduce, ReduceRight, and With use generic indexed operations
+  and logical lengths.
   Slice, Splice, Concat, and Filter
   honor species;
   Concat also applies `Symbol.isConcatSpreadable` to each input, preserves
@@ -160,8 +161,9 @@
   definitions. ForEach snapshots only length, then performs live
   `HasProperty`/`Get` and callback calls for each present index. Join snapshots
   length before separator coercion and performs live `Get`/`ToString` work for
-  every index. Reduce discovers an omitted initial accumulator and visits later
-  values through live `HasProperty`/`Get` operations. Flat and FlatMap share an
+  every index. Reduce and ReduceRight discover an omitted initial accumulator
+  and visit remaining values through live `HasProperty`/`Get` operations in
+  ascending and descending order respectively. Flat and FlatMap share an
   iterative `FlattenIntoArray` path with
   live nested array access, species-created targets, mapper ordering, GC roots,
   and per-index fuel; cyclic infinite-depth inputs exhaust configured fuel or

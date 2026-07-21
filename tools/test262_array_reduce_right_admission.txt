@@ -1,0 +1,6 @@
+# Exact feature-gated Array.prototype.reduceRight coverage.
+built-ins/Array/prototype/reduceRight/callbackfn-resize-arraybuffer.js
+built-ins/Array/prototype/reduceRight/not-a-constructor.js
+built-ins/Array/prototype/reduceRight/resizable-buffer-grow-mid-iteration.js
+built-ins/Array/prototype/reduceRight/resizable-buffer-shrink-mid-iteration.js
+built-ins/Array/prototype/reduceRight/resizable-buffer.js

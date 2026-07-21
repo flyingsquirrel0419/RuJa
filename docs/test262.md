@@ -9532,6 +9532,45 @@ byte-identical. The downloaded release binary again reports Array reduce
 - 장점, 단점 및 영향: Direct reduce is 260/260 with 170 attributable runtime transitions, future siblings remain gated, and TypedArray stays green. Updating Test262 requires an explicit metadata audit; methods-called-as-functions, reduceRight, and the complete Array prototype directory remain outside this unit.
 ```
 
+## Generic Array reduceRight
+
+`tools/test262_array_reduce_right_admission.txt` freezes exactly **5** direct
+`Array.prototype.reduceRight` files otherwise hidden by broad TypedArray,
+resizable-buffer, `Reflect.construct`, or arrow-function gates. Its exact
+feature map is shared by runner and analyzer. Tooling checks map/manifest
+equality, live features and includes, empty flags, absent negative metadata,
+disjointness, runner/analyzer symmetry, extra-feature rejection, and closure
+against future siblings.
+
+On fixed checkout `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the preceding
+binary under the preceding policy is **94 pass / 161 fail / 5 skip**. Applying
+the final exact policy to that binary produces **95 pass / 165 fail / 0 skip**.
+The repaired runtime under the preceding policy is **255 pass / 0 fail / 5
+skip**, and under the final policy is **260/260**. This proves **165**
+attributable runtime fail-to-pass transitions with no reverse transition.
+Adjacent `%TypedArray%.prototype.reduceRight` remains **50/50**.
+
+The broader `built-ins/Array/prototype/methods-called-as-functions.js`
+diagnostic remains outside admission. It now clears reduceRight and fails next
+at the independent detached `Array.prototype.reverse` behavior.
+
+Local verification passes all targets/features with **202/202** library
+tests, **531/531** builtins tests, and **15/15** arguments tests, plus
+**202/202** release library tests, **129/129** Python tooling tests, **1/1**
+doctest, rustfmt, warnings-denied Clippy, release build, generated
+documentation, and wasm32 checking. Rustdoc retains the 13 pre-existing broken
+intra-doc-link warnings.
+
+```text
+[Decision Log]
+- 목적과 의도: Admit complete direct Array reduceRight coverage without weakening broad feature gates or claiming the containing Array prototype directory.
+- 기존 구현 및 제약 조건: One hundred sixty-one ordinarily executed files failed, five feature-tagged paths were skipped, and the broader aggregate continues into independent reverse behavior.
+- 검토한 주요 대안: Remove TypedArray, resizable-buffer, Reflect, or arrow gates globally; admit the reduceRight directory by prefix; list only former failures; combine this with TypedArray reduceRight or reverse; or freeze all five metadata-bearing paths.
+- 선택한 방식: Keep broad gates, add one exact five-path feature map shared by both tools, compare old and repaired binaries on one fixed checkout, and run TypedArray reduceRight as a separate compatibility cohort.
+- 다른 대안 대신 이 방식을 선택한 이유: Global and prefix admission silently overclaim unrelated or future behavior, failure-only lists hide existing passes, and combining TypedArray or reverse obscures distinct integer-indexed or in-place mutation semantics. Exact paths keep every policy transition reviewable.
+- 장점, 단점 및 영향: Direct reduceRight is 260/260 with 165 attributable runtime transitions, future siblings remain gated, and TypedArray stays green. Updating Test262 requires an explicit metadata audit; methods-called-as-functions, reverse, and the complete Array prototype directory remain outside this unit.
+```
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is

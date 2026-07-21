@@ -1405,7 +1405,7 @@ work. Acyclic nesting has no fixed depth cutoff.
 - 검토한 주요 대안: Patch only detached calls, retain an Array fast path, recursively translate the specification, materialize nested lists before output, cap depth at a fixed number, or use an explicit traversal stack with lexical pins.
 - 선택한 방식: Keep the entry-point ordering separate, share an iterative frame stack for FlattenIntoArray, perform live property operations, transfer temporary roots into child frames, use CreateDataPropertyOrThrow semantics, enforce the safe-integer target bound, meter every visited source index, and bound only repeated active-path sources after 512 observable replays.
 - 다른 대안 대신 이 방식을 선택한 이유: Snapshot and fast paths change observable mutation and Proxy order, native recursion makes Infinity cycles a host crash risk, a fixed depth cap rejects finite valid programs, and late rooting permits heap-cell reuse during getters or callbacks. Frames preserve depth-first order while making both roots and resource work explicit.
-- 장점, 단점 및 영향: Direct flat and flatMap Test262 are 43/43, cyclic Infinity inputs terminate by fuel or RangeError, and all abrupt paths restore pin depth. Frame storage and retained roots grow linearly with active acyclic nesting depth; a cycle that would mutate only after more than 512 replays is intentionally terminated by the sandbox guard. Reverse, reduceRight, and other independent Array methods remain separate conformance units.
+- 장점, 단점 및 영향: Direct flat and flatMap Test262 are 43/43, cyclic Infinity inputs terminate by fuel or RangeError, and all abrupt paths restore pin depth. Frame storage and retained roots grow linearly with active acyclic nesting depth; a cycle that would mutate only after more than 512 replays is intentionally terminated by the sandbox guard. Reverse and other independent Array methods remain separate conformance units.
 ```
 
 ## Generic Array forEach
@@ -1493,7 +1493,7 @@ All normal and abrupt exits restore the incoming pin depth.
 - 검토한 주요 대안: Patch only detached calls, retain a dense fast path, collect mapped values before allocation, share filter with an index-preserving mode, or implement the direct indexed algorithm.
 - 선택한 방식: Perform ToObject, one length snapshot, callback validation, ArraySpeciesCreate(length), then live HasProperty/Get/callback/CreateDataPropertyOrThrow while explicitly rooting every native-frame value and metering result materialization plus each logical index.
 - 다른 대안 대신 이 방식을 선택한 이유: Snapshot and fast paths change observable holes, mutation, inheritance, Proxy, allocation, and abrupt order; adapting filter would hide map's fixed-index and captured-length result contract. The direct loop mirrors the specification and reuses the established species helper without a second materialized list.
-- 장점, 단점 및 영향: Direct Array map is 216/216 and adjacent TypedArray map remains 85/85 on the fixed corpus; forced GC, Proxy definitions, callback errors, species allocation failures, and fuel aborts preserve roots and cleanup. Runtime remains linear in captured length as required, with cooperative fuel bounding sparse scans. ReduceRight, reverse, and other independent snapshot methods remain separate units.
+- 장점, 단점 및 영향: Direct Array map is 216/216 and adjacent TypedArray map remains 85/85 on the fixed corpus; forced GC, Proxy definitions, callback errors, species allocation failures, and fuel aborts preserve roots and cleanup. Runtime remains linear in captured length as required, with cooperative fuel bounding sparse scans. Reverse and other independent snapshot methods remain separate units.
 ```
 
 ## Generic Array reduce
@@ -1522,7 +1522,37 @@ omitted-initial discovery.
 - 검토한 주요 대안: Patch only detached calls, retain a dense Array fast path, precompute present values, share one direction-parameterized core with the still-unrepaired reduceRight, or implement reduce's direct ascending algorithm first.
 - 선택한 방식: Perform ToObject, one length snapshot, callback validation, live omitted-initial discovery, then one ascending HasProperty/Get/callback loop with explicit current-value and accumulator root ownership and one fuel charge per examined index.
 - 다른 대안 대신 이 방식을 선택한 이유: Snapshot and fast paths change observable holes, inheritance, mutation, and Proxy order. Combining reduceRight before its independent baseline and descending-order audit would widen this unit. The direct loop mirrors the specification and keeps the next change reviewable.
-- 장점, 단점 및 영향: Direct Array reduce is 260/260 and adjacent TypedArray reduce remains 50/50 on the fixed corpus; object-to-object accumulator replacement, forced GC, fuel aborts, property errors, callback throws, and empty-without-initial errors restore pin depth. Runtime remains linear in captured length with O(1) native temporary roots. ReduceRight, reverse, and other independent snapshot methods remain separate units.
+- 장점, 단점 및 영향: Direct Array reduce is 260/260 and adjacent TypedArray reduce remains 50/50 on the fixed corpus; object-to-object accumulator replacement, forced GC, fuel aborts, property errors, callback throws, and empty-without-initial errors restore pin depth. Runtime remains linear in captured length with O(1) native temporary roots. Reverse and other independent snapshot methods remain separate units.
+```
+
+## Generic Array reduceRight
+
+`Array.prototype.reduceRight` boxes its receiver, snapshots
+`LengthOfArrayLike`, and validates the callback before inspecting indexed
+properties. An explicitly provided initial value is used even when it is
+`undefined`; otherwise the method scans downward with live `HasProperty` and
+`Get` operations until it finds the first accumulator. Remaining captured
+indices are visited in descending order, skipping absent properties and
+calling the reducer with `(accumulator, value, index, object)` and `undefined`
+as the call this-value.
+
+The receiver, arguments, boxed object, current value, and changing accumulator
+follow the same explicit root ownership as ascending reduce. The descending
+loops hold the next index as an exclusive upper bound and decrement before
+property access, so index zero is examined exactly once without unsigned
+underflow. A callback result temporarily becomes the newest root; that root
+and the old accumulator root are popped together before exactly one persistent
+new accumulator root is installed. One fuel unit is charged for every examined
+logical index, including holes during omitted-initial discovery.
+
+```text
+[Decision Log]
+- 목적과 의도: Replace represented-Array snapshot reduction with specification-shaped generic, live, GC-safe, and fuel-bounded descending traversal.
+- 기존 구현 및 제약 조건: The old method accepted only represented Arrays, copied dense storage, selected physical storage rather than live properties, invoked callbacks for holes, ignored inheritance and mutation, accepted invalid detached receivers, used a non-standard third argument as callback this, and did not root a changing accumulator.
+- 검토한 주요 대안: Patch only detached calls, reverse a collected value list, parameterize ascending reduce before auditing reverse boundaries, or implement the direct descending algorithm with an exclusive upper-bound index.
+- 선택한 방식: Perform ToObject, one length snapshot, callback validation, live omitted-initial discovery, then one descending HasProperty/Get/callback loop with decrement-before-access indexing, explicit current-value and accumulator root ownership, and one fuel charge per examined index.
+- 다른 대안 대신 이 방식을 선택한 이유: Snapshots change observable holes, inheritance, mutation, and Proxy order. Premature direction parameterization can hide zero-boundary and omitted-initial position defects. An exclusive upper bound mirrors the specification while making underflow impossible.
+- 장점, 단점 및 영향: Direct Array reduceRight is 260/260 and adjacent TypedArray reduceRight remains 50/50 on the fixed corpus; forced GC, fuel aborts, property errors, callback throws, and empty-without-initial errors restore pin depth. Runtime remains linear in captured length with O(1) native temporary roots. Reverse and other independent snapshot methods remain separate units.
 ```
 
 ---

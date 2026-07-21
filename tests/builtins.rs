@@ -5015,6 +5015,88 @@ fn array_reduce_is_generic_ordered_live_and_realm_aware() {
 }
 
 #[test]
+fn array_reduce_right_is_generic_ordered_live_and_realm_aware() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            var prototype = { 2: 3 };
+            var target = Object.create(prototype);
+            Object.defineProperty(target, "length", {
+              get: function() { log.push("length"); return 4; }
+            });
+            target[1] = 2;
+            target[3] = 4;
+            var result = Array.prototype.reduceRight.call(
+              target,
+              function(accumulator, value, index, object) {
+                "use strict";
+                log.push(
+                  "callback:" + accumulator + ":" + value + ":" + index +
+                  ":" + (object === target) + ":" + (this === undefined)
+                );
+                if (index === 3) target[0] = 1;
+                if (index === 2) delete target[1];
+                return accumulator + value;
+              },
+              0
+            );
+
+            var omitted = Array.prototype.reduceRight.call(
+              Object.assign(Object.create({ 2: 5 }), { 0: 7, length: 4 }),
+              function(accumulator, value) { return accumulator + value; }
+            );
+            var explicitUndefinedCalls = 0;
+            var explicitUndefined = [2].reduceRight(function(accumulator, value) {
+              explicitUndefinedCalls += 1;
+              return String(accumulator) + value;
+            }, undefined);
+
+            var validationLog = [];
+            var validationError = false;
+            try {
+              Array.prototype.reduceRight.call({
+                get length() { validationLog.push("length"); return 0; }
+              }, null);
+            } catch (error) { validationError = error instanceof TypeError; }
+
+            var emptyError = false;
+            try { Array.prototype.reduceRight.call({ length: 3 }, function() {}); }
+            catch (error) { emptyError = error instanceof TypeError; }
+
+            var stringResult = Array.prototype.reduceRight.call(
+              "abc", function(accumulator, value) { return accumulator + value; }
+            );
+            var booleanResult = Array.prototype.reduceRight.call(
+              false, function() { throw "unreachable"; }, 9
+            );
+
+            var other = $262.createRealm().global;
+            var foreignError = false;
+            try { other.Array.prototype.reduceRight.call(null, function() {}); }
+            catch (error) {
+              foreignError = Object.getPrototypeOf(error) === other.TypeError.prototype;
+            }
+
+            [
+              result === 8,
+              log.join(",") === [
+                "length", "callback:0:4:3:true:true",
+                "callback:4:3:2:true:true", "callback:7:1:0:true:true"
+              ].join(","),
+              omitted === 12,
+              explicitUndefined === "undefined2" && explicitUndefinedCalls === 1,
+              validationLog.join(",") === "length" && validationError,
+              emptyError,
+              stringResult === "cba",
+              booleanResult === 9,
+              foreignError
+            ].join("|");
+        "#),
+        Value::String(Arc::from("true|true|true|true|true|true|true|true|true"))
+    );
+}
+
+#[test]
 fn array_reverse() {
     assert_eq!(
         run("[1,2,3].reverse().join(',');"),

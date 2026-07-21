@@ -1280,46 +1280,67 @@ pub(crate) fn array_reduce_right(
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    let cb = args.first().cloned().unwrap_or(Value::Undefined);
-    if let Some(Value::Object(idx)) = this {
-        let items = vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Array(a) = obj {
-                a.items.lock().clone()
-            } else {
-                Vec::new()
-            }
-        });
-        let len = items.len();
-        let (mut acc, start) = if args.len() >= 2 {
-            (args.get(1).cloned().unwrap_or(Value::Undefined), len)
+    let receiver = this.unwrap_or(Value::Undefined);
+    let mut pin_count = vm.pin(&receiver);
+    pin_count += vm.pin_many(args);
+    let mut accumulator_pin = 0;
+    let result = (|| {
+        let object = array_method_to_object(vm, &receiver)?;
+        pin_count += vm.pin(&object);
+        let len = length_of_array_like_u64(vm, &object)?;
+        let callback = get_arg(args, 0);
+        if !is_callable(&callback, &vm.heap) {
+            return Err(Error::type_err("Array reducer is not callable"));
+        }
+
+        let mut index = len;
+        let mut accumulator = if args.len() >= 2 {
+            get_arg(args, 1)
         } else {
-            (
-                items.last().cloned().unwrap_or(Value::Undefined),
-                len.saturating_sub(1),
-            )
+            let mut found = None;
+            while index > 0 {
+                index -= 1;
+                vm.consume_fuel()?;
+                let key = index.to_string();
+                if vm.has_property(&object, &key)? {
+                    found = Some(vm.get_property(&object, &key)?);
+                    break;
+                }
+            }
+            found.ok_or_else(|| Error::type_err("Reduce of empty array with no initial value"))?
         };
-        if items.is_empty() && args.len() < 2 {
-            return Err(Error::type_err(
-                "Reduce of empty array with no initial value",
-            ));
+        accumulator_pin = vm.pin(&accumulator);
+
+        while index > 0 {
+            index -= 1;
+            vm.consume_fuel()?;
+            let key = index.to_string();
+            if vm.has_property(&object, &key)? {
+                let value = vm.get_property(&object, &key)?;
+                let value_pin = vm.pin(&value);
+                let next = vm.call_function(
+                    &callback,
+                    &[
+                        accumulator,
+                        value,
+                        Value::Number(index as f64),
+                        object.clone(),
+                    ],
+                    Some(Value::Undefined),
+                );
+                vm.unpin(value_pin);
+                let next = next?;
+                let next_pin = vm.pin(&next);
+                vm.unpin_many(next_pin + accumulator_pin);
+                accumulator = next;
+                accumulator_pin = vm.pin(&accumulator);
+            }
         }
-        let mut i = start;
-        while i > 0 {
-            i -= 1;
-            acc = vm.call_function(
-                &cb,
-                &[
-                    acc,
-                    items[i].clone(),
-                    Value::Number(i as f64),
-                    this.clone().unwrap_or(Value::Undefined),
-                ],
-                args.get(2).cloned(),
-            )?;
-        }
-        return Ok(acc);
-    }
-    Ok(Value::Undefined)
+        Ok(accumulator)
+    })();
+    vm.unpin(accumulator_pin);
+    vm.unpin_many(pin_count);
+    result
 }
 
 pub(crate) fn array_to_reversed(
