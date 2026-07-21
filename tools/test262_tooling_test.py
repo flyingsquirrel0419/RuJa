@@ -140,6 +140,10 @@ from test262_array_to_reversed_admission import (
     ARRAY_TO_REVERSED_FEATURES,
     ARRAY_TO_REVERSED_FILES,
 )
+from test262_array_to_spliced_admission import (
+    ARRAY_TO_SPLICED_FEATURES,
+    ARRAY_TO_SPLICED_FILES,
+)
 from test262_array_join_admission import ARRAY_JOIN_FEATURES, ARRAY_JOIN_FILES
 from test262_array_flat_admission import (
     ARRAY_FLAT_FEATURES,
@@ -4000,7 +4004,7 @@ class ArrayToReversedAdmissionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             future = root / "test/built-ins/Array/prototype/toReversed/future.js"
-            outside = root / "test/built-ins/Array/prototype/toSpliced/not-a-constructor.js"
+            outside = root / "test/built-ins/Array/prototype/unrelated/not-a-constructor.js"
             for tool in (test262_runner, test262_analyze):
                 original_root = tool.TEST262
                 tool.TEST262 = str(root)
@@ -4041,6 +4045,105 @@ class ArrayToReversedAdmissionTests(unittest.TestCase):
                         self.assertEqual(
                             tool.array_to_reversed_features(path), frozenset()
                         )
+                        self.assertTrue(
+                            tool.should_skip(
+                                {"flags": [], "features": ["Reflect.construct"]},
+                                path,
+                            )
+                        )
+                finally:
+                    tool.TEST262 = original_root
+
+
+class ArrayToSplicedAdmissionTests(unittest.TestCase):
+    def test_manifest_is_exact_live_disjoint_and_shared(self):
+        expected_features = {
+            "built-ins/Array/prototype/toSpliced/not-a-constructor.js": frozenset(
+                {"Reflect.construct"}
+            ),
+        }
+        self.assertEqual(ARRAY_TO_SPLICED_FILES, frozenset(expected_features))
+        self.assertEqual(ARRAY_TO_SPLICED_FEATURES, expected_features)
+
+        tools_dir = Path(__file__).resolve().parent
+        for manifest in tools_dir.glob("test262_*_admission.txt"):
+            if manifest.name == "test262_array_to_spliced_admission.txt":
+                continue
+            existing = {
+                line
+                for raw_line in manifest.read_text().splitlines()
+                if (line := raw_line.strip()) and not line.startswith("#")
+            }
+            self.assertTrue(ARRAY_TO_SPLICED_FILES.isdisjoint(existing), manifest.name)
+
+        expected_includes = {
+            "built-ins/Array/prototype/toSpliced/not-a-constructor.js": [
+                "isConstructor.js",
+            ],
+        }
+        test_root = Path(test262_runner.TEST262) / "test"
+        try:
+            test_root_available = test_root.is_dir()
+        except OSError:
+            test_root_available = False
+        if test_root_available:
+            for relative, features in expected_features.items():
+                path = test_root / relative
+                self.assertTrue(path.is_file(), relative)
+                metadata = test262_runner.parse_meta(path.read_text())
+                self.assertEqual(
+                    frozenset(metadata.get("features", [])),
+                    features | {"change-array-by-copy"},
+                    relative,
+                )
+                self.assertEqual(
+                    metadata.get("includes", []), expected_includes[relative], relative
+                )
+                self.assertEqual(metadata.get("flags", []), [], relative)
+                self.assertIsNone(metadata.get("negative"), relative)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            future = root / "test/built-ins/Array/prototype/toSpliced/future.js"
+            outside = root / "test/built-ins/Array/prototype/unrelatedCopy/not-a-constructor.js"
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    self.assertFalse(tool.array_to_spliced_path(None))
+                    self.assertEqual(tool.array_to_spliced_features(None), frozenset())
+                    for relative, features in expected_features.items():
+                        path = root / "test" / relative
+                        self.assertTrue(tool.array_to_spliced_path(path), relative)
+                        self.assertEqual(tool.array_to_spliced_features(path), features)
+                        self.assertFalse(
+                            tool.should_skip(
+                                {
+                                    "flags": [],
+                                    "features": sorted(
+                                        features | {"change-array-by-copy"}
+                                    ),
+                                },
+                                path,
+                            ),
+                            relative,
+                        )
+                        self.assertTrue(
+                            tool.should_skip(
+                                {
+                                    "flags": [],
+                                    "features": sorted(
+                                        features
+                                        | {"change-array-by-copy", "decorators"}
+                                    ),
+                                },
+                                path,
+                            ),
+                            relative,
+                        )
+                    for path in (future, outside):
+                        self.assertFalse(tool.array_to_spliced_path(path))
+                        self.assertEqual(tool.array_to_spliced_features(path), frozenset())
                         self.assertTrue(
                             tool.should_skip(
                                 {"flags": [], "features": ["Reflect.construct"]},

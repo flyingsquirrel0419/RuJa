@@ -2063,6 +2063,241 @@ fn array_to_reversed_result_allocation_obeys_heap_cap_and_gc_retry() {
 }
 
 #[test]
+fn array_to_spliced_consumes_exact_per_result_index_fuel() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    let baseline = vm.gc_pins.len();
+
+    let source = vm
+        .run("({ 0: 1, 1: 2, 2: 3, length: 3 })")
+        .expect("toSpliced source should initialize");
+    vm.set_fuel(Some(7));
+    let error = crate::builtins::array_to_spliced(
+        &mut vm,
+        &[
+            Value::Number(1.0),
+            Value::Number(1.0),
+            Value::Number(9.0),
+            Value::Number(8.0),
+        ],
+        Some(source),
+    )
+    .expect_err("N-1 total loop and property fuel must abort toSpliced");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    vm.set_fuel(None);
+    let source = vm
+        .run("({ 0: 1, 1: 2, 2: 3, length: 3 })")
+        .expect("fresh toSpliced source should initialize");
+    vm.set_fuel(Some(8));
+    crate::builtins::array_to_spliced(
+        &mut vm,
+        &[
+            Value::Number(1.0),
+            Value::Number(1.0),
+            Value::Number(9.0),
+            Value::Number(8.0),
+        ],
+        Some(source),
+    )
+    .expect("exact loop and property fuel should complete toSpliced");
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    vm.set_fuel(None);
+    let source = vm
+        .run("({ length: 0 })")
+        .expect("empty toSpliced source should initialize");
+    vm.set_fuel(Some(0));
+    crate::builtins::array_to_spliced(&mut vm, &[], Some(source))
+        .expect("empty toSpliced should consume no result-index fuel");
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+}
+
+#[test]
+fn array_to_spliced_roots_results_and_restores_pin_depth() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("GC test hook should register");
+    let baseline = vm.gc_pins.len();
+
+    let result = vm
+        .run(
+            r#"
+            (function () {
+              var retained = { marker: 42 };
+              var inserted = { marker: 43 };
+              var target = { 0: retained, 1: "discard", 2: "tail", length: 3 };
+              var source = new Proxy(target, {
+                get: function (object, key, receiver) {
+                  if (key === "2") {
+                    delete object[0];
+                    retained = null;
+                    forceGc();
+                  }
+                  return Reflect.get(object, key, receiver);
+                }
+              });
+              var copy = Array.prototype.toSpliced.call(source, 1, 1, inserted);
+              return copy[0].marker + copy[1].marker;
+            })();
+            "#,
+        )
+        .expect("prior result and inserted argument should survive later observable Gets");
+    assert_eq!(result, Value::Number(85.0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    vm.run(
+        r#"
+        globalThis.coercionSource = { 0: { marker: 40 }, length: 1 };
+        globalThis.coercionInserted = { marker: 2 };
+        globalThis.coercionStart = {
+          valueOf: function () {
+            coercionSource = null;
+            coercionInserted = null;
+            forceGc();
+            return 1;
+          }
+        };
+        "#,
+    )
+    .expect("coercion rooting fixture should initialize");
+    let source = vm
+        .run("coercionSource")
+        .expect("coercion source should be readable");
+    let start = vm
+        .run("coercionStart")
+        .expect("coercion start should be readable");
+    let inserted = vm
+        .run("coercionInserted")
+        .expect("coercion insertion should be readable");
+    let copy = crate::builtins::array_to_spliced(
+        &mut vm,
+        &[start, Value::Number(0.0), inserted],
+        Some(source),
+    )
+    .expect("source and insertion should survive start coercion GC");
+    assert_eq!(
+        vm.get_property(&copy, "0")
+            .and_then(|value| vm.get_property(&value, "marker"))
+            .expect("source value should survive start coercion"),
+        Value::Number(40.0)
+    );
+    assert_eq!(
+        vm.get_property(&copy, "1")
+            .and_then(|value| vm.get_property(&value, "marker"))
+            .expect("inserted value should survive start coercion"),
+        Value::Number(2.0)
+    );
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    for source in [
+        "Array.prototype.toSpliced.call(new Proxy({ length: 1 }, { get: function (target, key, receiver) { if (key === '0') throw 'get'; return Reflect.get(target, key, receiver); } }), 0, 0);",
+        "Array.prototype.toSpliced.call({ length: 1 }, { valueOf: function () { forceGc(); throw 'start'; } });",
+        "Array.prototype.toSpliced.call({ length: 1 }, 0, { valueOf: function () { forceGc(); throw 'skip'; } });",
+        "Array.prototype.toSpliced.call({ length: Number.MAX_SAFE_INTEGER }, 0, 0, 1);",
+        "Array.prototype.toSpliced.call(null);",
+    ] {
+        vm.run(source)
+            .expect_err("the observable toSpliced step should complete abruptly");
+        assert_eq!(vm.gc_pins.len(), baseline);
+        assert_eq!(
+            vm.run("1 + 1").expect("VM should remain reusable"),
+            Value::Number(2.0)
+        );
+    }
+}
+
+#[test]
+fn array_to_spliced_result_allocation_obeys_heap_cap_and_gc_retry() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    let source = vm
+        .run(
+            r#"
+            globalThis.toSplicedReads = 0;
+            ({ get 0() { toSplicedReads++; return 1; }, length: 1 });
+            "#,
+        )
+        .expect("allocation-failure source should initialize");
+    let source_pin = vm.pin(&source);
+    vm.gc();
+    let baseline = vm.gc_pins.len();
+    vm.set_max_heap_objects(Some(vm.heap.live_count()));
+    let error = crate::builtins::array_to_spliced(&mut vm, &[], Some(source))
+        .expect_err("result allocation should respect the exact heap cap");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.gc_pins.len(), baseline);
+    vm.set_max_heap_objects(None);
+    assert_eq!(
+        vm.run("toSplicedReads")
+            .expect("indexed getter count should remain readable"),
+        Value::Number(0.0),
+        "ArrayCreate must fail before indexed Gets"
+    );
+    vm.unpin(source_pin);
+
+    let mut vm = Vm::new().expect("retry VM should initialize");
+    vm.run(
+        r#"
+        globalThis.other = $262.createRealm().global;
+        globalThis.retrySource = [{ marker: 42 }];
+        "#,
+    )
+    .expect("foreign Realm retry fixture should initialize");
+    let method = vm
+        .run("other.Array.prototype.toSpliced")
+        .expect("foreign method should be readable");
+    let source = vm
+        .run("retrySource")
+        .expect("retry source should be readable");
+    let expected_proto = vm
+        .run("other.Array.prototype")
+        .expect("foreign Array prototype should be readable");
+    let fixture_pins = vm.pin_many(&[method.clone(), source.clone(), expected_proto.clone()]);
+    vm.gc();
+    let baseline_live = vm.heap.live_count();
+    vm.run(
+        r#"
+        (function () {
+          for (var i = 0; i < 100; i++) ({ index: i });
+        })();
+        "#,
+    )
+    .expect("collectible retry garbage should initialize");
+    let capped_live = vm.heap.live_count();
+    assert!(capped_live > baseline_live, "fixture must leave garbage");
+    vm.set_max_heap_objects(Some(capped_live));
+    let baseline = vm.gc_pins.len();
+
+    let result = vm
+        .call_function(&method, &[], Some(source.clone()))
+        .expect("result allocation should collect garbage and retry");
+    vm.set_max_heap_objects(None);
+    assert_eq!(vm.gc_pins.len(), baseline);
+    assert_eq!(
+        vm.get_prototype_of(&result)
+            .expect("result prototype lookup should succeed"),
+        Some(expected_proto)
+    );
+    assert_eq!(
+        vm.get_property(&result, "0")
+            .and_then(|value| vm.get_property(&value, "marker"))
+            .expect("copied source value should survive allocation retry"),
+        Value::Number(42.0)
+    );
+    vm.unpin_many(fixture_pins);
+}
+
+#[test]
 fn array_for_each_consumes_exact_per_index_fuel() {
     let mut vm = Vm::new().expect("VM should initialize");
     vm.register_fn("visit", |_, _, _| Ok(Value::Undefined), 3)

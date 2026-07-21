@@ -5218,6 +5218,70 @@ fn array_to_reversed_is_generic_live_dense_and_realm_aware() {
 }
 
 #[test]
+fn array_to_spliced_is_generic_live_dense_and_realm_aware() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            var constructorReads = 0;
+            var target = { 0: "zero", 1: "discard", 2: "two", length: 4 };
+            Object.defineProperty(target, "constructor", {
+              get: function() {
+                constructorReads++;
+                throw new Error("constructor must not be read");
+              }
+            });
+            var source = new Proxy(target, {
+              get: function(object, key, receiver) {
+                log.push("get:" + key);
+                if (key === "0") object[2] = "late";
+                if (key === "2") delete object[3];
+                return Reflect.get(object, key, receiver);
+              },
+              has: function() {
+                throw new Error("HasProperty must not be used");
+              }
+            });
+            var start = { valueOf: function() { log.push("start"); return 1; } };
+            var skip = { valueOf: function() { log.push("skip"); return 1; } };
+            var copy = Array.prototype.toSpliced.call(source, start, skip, "x", "y");
+
+            var omitted = Array.prototype.toSpliced.call({ 0: "a", 1: "b", length: 2 });
+            var tail = Array.prototype.toSpliced.call({ 0: "a", 1: "b", length: 2 }, 1);
+            var explicitUndefined = Array.prototype.toSpliced.call(
+              { 0: "a", 1: "b", length: 2 }, 1, undefined
+            );
+            var booleanCopy = Array.prototype.toSpliced.call(false);
+
+            var other = $262.createRealm().global;
+            var foreignCopy = other.Array.prototype.toSpliced.call(
+              { 0: 7, length: 1 }, 0, 0, 8
+            );
+            var foreignError = false;
+            try { other.Array.prototype.toSpliced.call(null); }
+            catch (error) {
+              foreignError = Object.getPrototypeOf(error) === other.TypeError.prototype;
+            }
+
+            [
+              copy !== source && Array.isArray(copy),
+              copy.length === 5 && copy.join(",") === "zero,x,y,late,",
+              copy.hasOwnProperty(0) && copy.hasOwnProperty(1) &&
+                copy.hasOwnProperty(2) && copy.hasOwnProperty(3) && copy.hasOwnProperty(4),
+              log.join(",") === "get:length,start,skip,get:0,get:2,get:3",
+              constructorReads === 0 && target[1] === "discard",
+              omitted.join(",") === "a,b" && tail.join(",") === "a" &&
+                explicitUndefined.join(",") === "a,b",
+              Array.isArray(booleanCopy) && booleanCopy.length === 0,
+              Object.getPrototypeOf(foreignCopy) === other.Array.prototype &&
+                foreignCopy.join(",") === "8,7",
+              foreignError
+            ].join("|");
+        "#),
+        Value::String(Arc::from("true|true|true|true|true|true|true|true|true"))
+    );
+}
+
+#[test]
 fn string_methods() {
     assert_eq!(
         run("'hello'.toUpperCase();"),

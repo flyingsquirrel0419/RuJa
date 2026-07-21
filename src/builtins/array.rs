@@ -1427,32 +1427,86 @@ pub(crate) fn array_to_spliced(
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    if let Some(Value::Object(idx)) = this {
-        let items = vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Array(a) = obj {
-                a.items.lock().clone()
-            } else {
-                Vec::new()
+    let receiver = this.unwrap_or(Value::Undefined);
+    let mut pin_count = vm.pin(&receiver);
+    pin_count += vm.pin_many(args);
+    let result = (|| {
+        let object = array_method_to_object(vm, &receiver)?;
+        pin_count += vm.pin(&object);
+        let len = length_of_array_like_u64(vm, &object)?;
+        let actual_start =
+            relative_array_index(to_integer_or_infinity(vm, &get_arg(args, 0))?, len);
+        let insert_count = u64::try_from(args.len().saturating_sub(2))
+            .map_err(|_| Error::type_err("Array.prototype.toSpliced result is too large"))?;
+        let actual_skip_count = match args.len() {
+            0 => 0,
+            1 => len - actual_start,
+            _ => {
+                let skip_count = to_integer_or_infinity(vm, &args[1])?;
+                if skip_count <= 0.0 {
+                    0
+                } else {
+                    skip_count.min((len - actual_start) as f64) as u64
+                }
             }
-        });
-        let len = items.len() as f64;
-        let start = norm_index(get_arg(args, 0), len, vm)?;
-        let start = start.min(items.len());
-        let del_count = if args.len() >= 2 {
-            let d = vm.to_number(&get_arg(args, 1))?;
-            let d = if d < 0.0 { 0.0 } else { d };
-            (d as usize).min(items.len().saturating_sub(start))
-        } else {
-            items.len() - start
         };
-        let mut result = items[..start].to_vec();
-        for a in args.iter().skip(2) {
-            result.push(a.clone());
+        let new_len = len as u128 + insert_count as u128 - actual_skip_count as u128;
+        if new_len > MAX_SAFE_ARRAY_LENGTH_U64 as u128 {
+            return Err(Error::type_err(
+                "Array.prototype.toSpliced result is too large",
+            ));
         }
-        result.extend_from_slice(&items[start + del_count..]);
-        return make_array(vm, result);
-    }
-    Ok(Value::Undefined)
+        let new_len = new_len as u64;
+
+        // Change-array-by-copy deliberately ignores @@species. Allocation and
+        // every argument coercion must complete before indexed source reads.
+        let result = array_create_u64_in_current_realm(vm, new_len)?;
+        pin_count += vm.pin(&result);
+
+        let mut write_index = 0u64;
+        while write_index < actual_start {
+            vm.consume_fuel()?;
+            let value = vm.get_property(&object, &write_index.to_string())?;
+            let value_pin = vm.pin(&value);
+            let define = vm.define_own_property_or_throw(
+                &result,
+                PropertyKey::from(write_index.to_string()),
+                PropertyDescriptor::data(value),
+            );
+            vm.unpin(value_pin);
+            define?;
+            write_index += 1;
+        }
+
+        for item in args.iter().skip(2) {
+            vm.consume_fuel()?;
+            vm.define_own_property_or_throw(
+                &result,
+                PropertyKey::from(write_index.to_string()),
+                PropertyDescriptor::data(item.clone()),
+            )?;
+            write_index += 1;
+        }
+
+        let mut read_index = actual_start + actual_skip_count;
+        while write_index < new_len {
+            vm.consume_fuel()?;
+            let value = vm.get_property(&object, &read_index.to_string())?;
+            let value_pin = vm.pin(&value);
+            let define = vm.define_own_property_or_throw(
+                &result,
+                PropertyKey::from(write_index.to_string()),
+                PropertyDescriptor::data(value),
+            );
+            vm.unpin(value_pin);
+            define?;
+            write_index += 1;
+            read_index += 1;
+        }
+        Ok(result.clone())
+    })();
+    vm.unpin_many(pin_count);
+    result
 }
 
 pub(crate) fn array_with(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {

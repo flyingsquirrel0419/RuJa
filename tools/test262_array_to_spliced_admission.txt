@@ -1,0 +1,2 @@
+# Exact feature-gated Array.prototype.toSpliced coverage.
+built-ins/Array/prototype/toSpliced/not-a-constructor.js
