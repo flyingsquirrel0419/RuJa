@@ -45,9 +45,27 @@
   (`019f834f-c8ac-7b01-901f-2b1b8fa2e36f`) and James
   (`019f834f-c9fe-72d0-b940-4af81ae1496d`) report `CLEAN` after the final
   cycle, complexity, allocation, admission, and documentation corrections;
-  both sessions are closed, and coder and Umans routes were not used. Commit,
-  CI, matrix, and artifact evidence will be recorded after the pushed feature
-  boundary completes.
+  both sessions are closed, and coder and Umans routes were not used.
+
+  Feature commit `f9d3ef296a189734712b66ae9cb0140d0552c512` is pushed to
+  `main`. Its first ordinary CI run `29808658860` exposed one tooling-only
+  portability error because the admission test did not catch `PermissionError`
+  while probing an unavailable `/root/test262`; test commit
+  `d346c05ef05cc811b30d19c46029c2d3952be379` adds the same `OSError` handling
+  used by neighboring admissions, and ordinary CI `29809211211` passes both
+  jobs. The feature full matrix `29808658857` passes all **33/33** jobs; the
+  redundant test-only full run was cancelled after the feature matrix stayed
+  authoritative.
+
+  The 30 result files at `/tmp/ruja-array-flat.29808658857` aggregate to
+  **31262 pass / 5698 fail / 11502 skip / 5 timeout / 0 error / 48467 total /
+  36960 pass-or-fail executed**. Against
+  `/tmp/ruja-array-filter.29804173104.rerun`, 29 files are byte-for-byte
+  identical. Only `test262_built-ins_result.txt` changes from
+  **15627/4902/3134/5/0** to **15652/4887/3124/5/0**, exactly **+25 pass / -15
+  fail / -10 skip** with no timeout, error, total, or unrelated-shard drift.
+  The downloaded release binary independently reproduces direct flat and
+  flatMap **43/43** on the fixed checkout.
 
 - `Array.prototype.filter` now follows the generic, species-aware ECMAScript
   algorithm instead of filtering a represented-Array snapshot. It boxes

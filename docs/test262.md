@@ -9302,8 +9302,25 @@ documentation, and wasm32 checking. GPT-5.6 runtime reviewer Russell
 (`019f834f-c8ac-7b01-901f-2b1b8fa2e36f`) and admission reviewer James
 (`019f834f-c9fe-72d0-b940-4af81ae1496d`) both report `CLEAN` after the final
 diff; both sessions are closed, and coder and Umans routes were not used.
-Commit, CI, full-matrix, and artifact evidence follows after the pushed
-feature boundary completes.
+
+Feature commit `f9d3ef296a189734712b66ae9cb0140d0552c512` is pushed to
+`main`. Ordinary CI `29808658860` found one admission-test portability error:
+probing unavailable `/root/test262` raised `PermissionError` before live
+metadata checks could be skipped. Test commit
+`d346c05ef05cc811b30d19c46029c2d3952be379` applies the neighboring tests'
+`OSError` guard, and ordinary CI `29809211211` passes both jobs. The feature
+full matrix `29808658857` passes all **33/33** jobs. Its 30 result artifacts at
+`/tmp/ruja-array-flat.29808658857` aggregate to **31262 pass / 5698 fail /
+11502 skip / 5 timeout / 0 error / 48467 total / 36960 pass-or-fail
+executed**.
+
+Against `/tmp/ruja-array-filter.29804173104.rerun`, 29 result files are
+byte-identical. Only `test262_built-ins_result.txt` changes from
+**15627/4902/3134/5/0** to **15652/4887/3124/5/0**, exactly **+25 pass / -15
+fail / -10 skip**; timeout, error, total, and every unrelated shard remain
+unchanged. The downloaded release binary independently passes direct flat and
+flatMap **43/43** on fixed checkout
+`9e61c12835c5e4a3bdba93850427e6742c4f64c4`.
 
 ```text
 [Decision Log]
