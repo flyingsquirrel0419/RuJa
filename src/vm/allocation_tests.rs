@@ -1887,6 +1887,182 @@ fn array_reverse_roots_pair_values_and_restores_pin_depth() {
 }
 
 #[test]
+fn array_to_reversed_consumes_exact_per_index_fuel() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    let baseline = vm.gc_pins.len();
+
+    let source = vm
+        .run("({ 0: 1, 1: 2, 2: 3, length: 3 })")
+        .expect("toReversed source should initialize");
+    vm.set_fuel(Some(5));
+    let error = crate::builtins::array_to_reversed(&mut vm, &[], Some(source))
+        .expect_err("N-1 total loop and property fuel must abort toReversed");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    vm.set_fuel(None);
+    let source = vm
+        .run("({ 0: 1, 1: 2, 2: 3, length: 3 })")
+        .expect("fresh toReversed source should initialize");
+    vm.set_fuel(Some(6));
+    crate::builtins::array_to_reversed(&mut vm, &[], Some(source))
+        .expect("exact loop and property fuel should complete toReversed");
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    vm.set_fuel(None);
+    let source = vm
+        .run("({ length: 0 })")
+        .expect("empty toReversed source should initialize");
+    vm.set_fuel(Some(0));
+    crate::builtins::array_to_reversed(&mut vm, &[], Some(source))
+        .expect("empty toReversed should consume no loop fuel");
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+}
+
+#[test]
+fn array_to_reversed_roots_results_and_restores_pin_depth() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("GC test hook should register");
+    let baseline = vm.gc_pins.len();
+
+    let result = vm
+        .run(
+            r#"
+            (function () {
+              var retained = { marker: 42 };
+              var target = { 1: retained, 0: "lower", length: 2 };
+              var source = new Proxy(target, {
+                get: function (object, key, receiver) {
+                  if (key === "0") {
+                    delete object[1];
+                    retained = null;
+                    forceGc();
+                  }
+                  return Reflect.get(object, key, receiver);
+                }
+              });
+              return Array.prototype.toReversed.call(source)[0].marker;
+            })();
+            "#,
+        )
+        .expect("an earlier result element should survive a later observable Get");
+    assert_eq!(result, Value::Number(42.0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    for source in [
+        "Array.prototype.toReversed.call(new Proxy({ length: 1 }, { get: function (target, key, receiver) { if (key === '0') throw 'get'; return Reflect.get(target, key, receiver); } }));",
+        "Array.prototype.toReversed.call(new Proxy({}, { get: function () { throw 'length'; } }));",
+        "Array.prototype.toReversed.call({ length: 4294967296 });",
+        "Array.prototype.toReversed.call(null);",
+    ] {
+        vm.run(source)
+            .expect_err("the observable toReversed step should complete abruptly");
+        assert_eq!(vm.gc_pins.len(), baseline);
+        assert_eq!(
+            vm.run("1 + 1").expect("VM should remain reusable"),
+            Value::Number(2.0)
+        );
+    }
+}
+
+#[test]
+fn array_to_reversed_result_allocation_obeys_heap_cap_and_gc_retry() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    let source = vm
+        .run(
+            r#"
+            globalThis.toReversedReads = 0;
+            ({ get 0() { toReversedReads++; return 1; }, length: 1 });
+            "#,
+        )
+        .expect("allocation-failure source should initialize");
+    let source_pin = vm.pin(&source);
+    vm.gc();
+    let baseline = vm.gc_pins.len();
+    vm.set_max_heap_objects(Some(vm.heap.live_count()));
+    let error = crate::builtins::array_to_reversed(&mut vm, &[], Some(source))
+        .expect_err("result allocation should respect the exact heap cap");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.gc_pins.len(), baseline);
+    vm.set_max_heap_objects(None);
+    assert_eq!(
+        vm.run("toReversedReads")
+            .expect("indexed getter count should remain readable"),
+        Value::Number(0.0),
+        "ArrayCreate must fail before indexed Gets"
+    );
+    vm.unpin(source_pin);
+
+    let mut vm = Vm::new().expect("retry VM should initialize");
+    vm.run(
+        r#"
+        globalThis.other = $262.createRealm().global;
+        globalThis.retrySource = [{ marker: 42 }];
+        "#,
+    )
+    .expect("foreign Realm retry fixture should initialize");
+    let method = vm
+        .run("other.Array.prototype.toReversed")
+        .expect("foreign method should be readable");
+    let source = vm
+        .run("retrySource")
+        .expect("retry source should be readable");
+    let expected_proto = vm
+        .run("other.Array.prototype")
+        .expect("foreign Array prototype should be readable");
+    let fixture_pins = vm.pin_many(&[method.clone(), source.clone(), expected_proto.clone()]);
+    vm.gc();
+    let baseline_live = vm.heap.live_count();
+    vm.run(
+        r#"
+        (function () {
+          for (var i = 0; i < 100; i++) ({ index: i });
+        })();
+        "#,
+    )
+    .expect("collectible retry garbage should initialize");
+    let capped_live = vm.heap.live_count();
+    assert!(capped_live > baseline_live, "fixture must leave garbage");
+    vm.set_max_heap_objects(Some(capped_live));
+    let baseline = vm.gc_pins.len();
+
+    let result = vm
+        .call_function(&method, &[], Some(source.clone()))
+        .expect("result allocation should collect garbage and retry");
+    vm.set_max_heap_objects(None);
+    assert_eq!(vm.gc_pins.len(), baseline);
+    assert_eq!(
+        vm.get_prototype_of(&result)
+            .expect("result prototype lookup should succeed"),
+        Some(expected_proto)
+    );
+    assert_eq!(
+        vm.get_property(&result, "0")
+            .and_then(|value| vm.get_property(&value, "marker"))
+            .expect("copied source value should survive allocation retry"),
+        Value::Number(42.0)
+    );
+    assert_eq!(
+        vm.get_property(&source, "0")
+            .and_then(|value| vm.get_property(&value, "marker"))
+            .expect("source should survive allocation retry"),
+        Value::Number(42.0)
+    );
+    vm.unpin_many(fixture_pins);
+}
+
+#[test]
 fn array_for_each_consumes_exact_per_index_fuel() {
     let mut vm = Vm::new().expect("VM should initialize");
     vm.register_fn("visit", |_, _, _| Ok(Value::Undefined), 3)

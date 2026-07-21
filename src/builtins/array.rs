@@ -1348,17 +1348,37 @@ pub(crate) fn array_to_reversed(
     _args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    if let Some(Value::Object(idx)) = this {
-        let items = vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Array(a) = obj {
-                a.items.lock().iter().rev().cloned().collect()
-            } else {
-                Vec::new()
-            }
-        });
-        return make_array(vm, items);
-    }
-    Ok(Value::Undefined)
+    let receiver = this.unwrap_or(Value::Undefined);
+    let mut pin_count = vm.pin(&receiver);
+    let result = (|| {
+        let object = array_method_to_object(vm, &receiver)?;
+        pin_count += vm.pin(&object);
+        let len = length_of_array_like_u64(vm, &object)?;
+
+        // Change-array-by-copy methods intentionally bypass @@species. The
+        // intrinsic result must exist before any indexed Get becomes visible.
+        let result = array_create_u64_in_current_realm(vm, len)?;
+        pin_count += vm.pin(&result);
+
+        let mut index = 0u64;
+        while index < len {
+            vm.consume_fuel()?;
+            let from = len - index - 1;
+            let value = vm.get_property(&object, &from.to_string())?;
+            let value_pin = vm.pin(&value);
+            let define = vm.define_own_property_or_throw(
+                &result,
+                PropertyKey::from(index.to_string()),
+                PropertyDescriptor::data(value),
+            );
+            vm.unpin(value_pin);
+            define?;
+            index += 1;
+        }
+        Ok(result.clone())
+    })();
+    vm.unpin_many(pin_count);
+    result
 }
 
 pub(crate) fn array_to_sorted(

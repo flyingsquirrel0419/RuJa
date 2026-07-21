@@ -5163,6 +5163,61 @@ fn array_reverse_is_generic_sparse_ordered_and_realm_aware() {
 }
 
 #[test]
+fn array_to_reversed_is_generic_live_dense_and_realm_aware() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            var constructorReads = 0;
+            var target = { 0: "zero", 2: "two", length: 4 };
+            Object.defineProperty(target, "constructor", {
+              get: function() {
+                constructorReads++;
+                throw new Error("constructor must not be read");
+              }
+            });
+            var source = new Proxy(target, {
+              get: function(object, key, receiver) {
+                log.push("get:" + key);
+                if (key === "2") {
+                  object[1] = "late";
+                  delete object[0];
+                }
+                return Reflect.get(object, key, receiver);
+              },
+              has: function() {
+                throw new Error("HasProperty must not be used");
+              }
+            });
+            var copy = Array.prototype.toReversed.call(source);
+
+            var booleanCopy = Array.prototype.toReversed.call(false);
+            var other = $262.createRealm().global;
+            var foreignCopy = other.Array.prototype.toReversed.call({ 0: 7, length: 1 });
+            var foreignError = false;
+            try { other.Array.prototype.toReversed.call(null); }
+            catch (error) {
+              foreignError = Object.getPrototypeOf(error) === other.TypeError.prototype;
+            }
+
+            [
+              copy !== source && Array.isArray(copy),
+              copy.length === 4 && copy[0] === undefined && copy[1] === "two" &&
+                copy[2] === "late" && copy[3] === undefined,
+              copy.hasOwnProperty(0) && copy.hasOwnProperty(1) &&
+                copy.hasOwnProperty(2) && copy.hasOwnProperty(3),
+              log.join(",") === "get:length,get:3,get:2,get:1,get:0",
+              constructorReads === 0,
+              target.length === 4 && target[1] === "late" && !(0 in target),
+              Array.isArray(booleanCopy) && booleanCopy.length === 0,
+              Object.getPrototypeOf(foreignCopy) === other.Array.prototype && foreignCopy[0] === 7,
+              foreignError
+            ].join("|");
+        "#),
+        Value::String(Arc::from("true|true|true|true|true|true|true|true|true"))
+    );
+}
+
+#[test]
 fn string_methods() {
     assert_eq!(
         run("'hello'.toUpperCase();"),

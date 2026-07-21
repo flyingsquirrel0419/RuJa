@@ -1,0 +1,2 @@
+# Exact feature-gated Array.prototype.toReversed coverage.
+built-ins/Array/prototype/toReversed/not-a-constructor.js
