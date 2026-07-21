@@ -155,7 +155,9 @@
   `Get`/strict `Set` or deletion without consulting species. Fill performs a
   live strict `Set` for each selected index after one length snapshot. Filter
   performs live `HasProperty`/`Get`, callback calls, and dense result property
-  creation. ForEach snapshots only length, then performs live
+  creation. Map creates its species result at the captured length, preserves
+  holes, and performs live `HasProperty`/`Get`, callback, and strict result
+  definitions. ForEach snapshots only length, then performs live
   `HasProperty`/`Get` and callback calls for each present index. Join snapshots
   length before separator coercion and performs live `Get`/`ToString` work for
   every index. Flat and FlatMap share an iterative `FlattenIntoArray` path with

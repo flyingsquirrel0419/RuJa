@@ -1,0 +1,10 @@
+# Exact feature-gated Array.prototype.map coverage.
+built-ins/Array/prototype/map/callbackfn-resize-arraybuffer.js
+built-ins/Array/prototype/map/create-proxy.js
+built-ins/Array/prototype/map/create-revoked-proxy.js
+built-ins/Array/prototype/map/create-species-non-ctor.js
+built-ins/Array/prototype/map/create-species-undef-invalid-len.js
+built-ins/Array/prototype/map/not-a-constructor.js
+built-ins/Array/prototype/map/resizable-buffer-grow-mid-iteration.js
+built-ins/Array/prototype/map/resizable-buffer-shrink-mid-iteration.js
+built-ins/Array/prototype/map/resizable-buffer.js

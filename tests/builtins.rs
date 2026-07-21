@@ -4842,6 +4842,97 @@ fn array_join_is_generic_ordered_live_and_realm_aware() {
 }
 
 #[test]
+fn array_map_is_generic_species_aware_live_and_realm_aware() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            var prototype = { 1: "inherited" };
+            var target = Object.create(prototype);
+            Object.defineProperty(target, "length", {
+              get: function() { log.push("length"); return 4; }
+            });
+            target[0] = "zero";
+            target[2] = "remove";
+            var generic = Array.prototype.map.call(target, function(value, index, object) {
+              log.push("callback:" + index + ":" + value + ":" + (object === target));
+              if (index === 0) target[3] = "late";
+              if (index === 1) delete target[2];
+              return value + "!";
+            });
+
+            var speciesLog = [];
+            var speciesTarget = {};
+            var speciesProxy = new Proxy(speciesTarget, {
+              defineProperty: function(object, key, descriptor) {
+                speciesLog.push("define:" + key + ":" + descriptor.value);
+                return Reflect.defineProperty(object, key, descriptor);
+              }
+            });
+            function Species(length) {
+              speciesLog.push("species:" + length);
+              return speciesProxy;
+            }
+            var array = [1, , 3];
+            array.constructor = { [Symbol.species]: Species };
+            var speciesResult = array.map(function(value, index, object) {
+              speciesLog.push("callback:" + index + ":" + (object === array));
+              return value * 2;
+            });
+
+            var validationLog = [];
+            var validationError = false;
+            try {
+              Array.prototype.map.call({
+                get length() { validationLog.push("length"); return 0; }
+              }, null);
+            } catch (error) { validationError = error instanceof TypeError; }
+
+            var defineCalls = 0;
+            var abrupt = [1];
+            abrupt.constructor = { [Symbol.species]: function() {
+              return new Proxy({}, {
+                defineProperty: function() { defineCalls += 1; return false; }
+              });
+            }};
+            var defineError = false;
+            try { abrupt.map(function(value) { return value; }); }
+            catch (error) { defineError = error instanceof TypeError; }
+
+            var other = $262.createRealm().global;
+            var foreignResult = other.Array.prototype.map.call(
+              { 0: 1, length: 1 }, function(value) { return value + 1; }
+            );
+            var foreignError = false;
+            try { other.Array.prototype.map.call(null, function() {}); }
+            catch (error) {
+              foreignError = Object.getPrototypeOf(error) === other.TypeError.prototype;
+            }
+
+            [
+              generic.length === 4 && generic[0] === "zero!" &&
+                generic[1] === "inherited!" && !(2 in generic) &&
+                generic[3] === "late!",
+              log.join(",") === [
+                "length", "callback:0:zero:true", "callback:1:inherited:true",
+                "callback:3:late:true"
+              ].join(","),
+              speciesResult === speciesProxy && !("1" in speciesTarget),
+              speciesLog.join(",") === [
+                "species:3", "callback:0:true", "define:0:2",
+                "callback:2:true", "define:2:6"
+              ].join(","),
+              validationLog.join(",") === "length" && validationError,
+              defineCalls === 1 && defineError,
+              Object.getPrototypeOf(foreignResult) === other.Array.prototype &&
+                foreignResult[0] === 2,
+              foreignError
+            ].join("|");
+        "#),
+        Value::String(Arc::from("true|true|true|true|true|true|true|true"))
+    );
+}
+
+#[test]
 fn array_reverse() {
     assert_eq!(
         run("[1,2,3].reverse().join(',');"),

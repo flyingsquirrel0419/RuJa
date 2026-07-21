@@ -554,13 +554,11 @@ an earlier argument collectible.
 
 ## Native Array callback result ownership
 
-`Array.prototype.map` and `flatMap` keep source snapshots in Rust vectors and
-invoke JavaScript once per element. The VM therefore pins every heap value in
-the snapshot before the first callback and pins each callback result before the
-next callback can collect. `flatMap` retains the mapped container roots while
-copying their elements, so tracing the container also preserves nested values.
-The roots remain owned by the native operation until the final Array has taken
-ownership.
+`Array.prototype.map` and `flatMap` use live generic indexed traversal. Each
+current source value is pinned across its callback, and each fresh mapped
+result remains pinned until the destination owns it. `flatMap` additionally
+retains mapped container roots while copying their elements, so tracing the
+container also preserves nested values.
 
 `Array.of` follows the same rule across a different observable boundary. Its
 arguments and constructor remain rooted through construction, and the returned
@@ -573,7 +571,7 @@ failures restore the incoming pin depth.
 ```text
 [Decision Log]
 - 목적과 의도: Prevent native Array methods from exposing collected-and-reused heap slots when JavaScript re-enters the VM during callback or property-definition work.
-- 기존 구현 및 제약 조건: GcIdx is a generation-free cell index, the collector sees only VM roots, and map/flatMap callback results plus the Array.of result lived only in Rust locals across observable calls. A Rust Vec<Value> does not participate in tracing.
+- 기존 구현 및 제약 조건: GcIdx is a generation-free cell index, the collector sees only VM roots, and map/flatMap callback results plus the Array.of result lived only in Rust locals across observable calls. Rust locals do not participate in tracing.
 - 검토한 주요 대안: Make all Rust Value locals implicit roots, add generations to every GcIdx, disable collection during native built-ins, pin only the final value, or explicitly own temporary roots at each observable boundary.
 - 선택한 방식: Pin source/argument values before re-entry, pin each fresh callback or constructed result immediately, retain those roots until the destination owns the values, and release them from one success/error cleanup scope.
 - 다른 대안 대신 이 방식을 선택한 이유: Global implicit rooting or generation handles require a VM-wide representation change, disabling GC weakens the sandbox, and late pinning occurs after a slot may already be reused. Explicit lexical ownership matches the existing gc_pins contract and keeps this correction bounded.
@@ -1407,7 +1405,7 @@ work. Acyclic nesting has no fixed depth cutoff.
 - 검토한 주요 대안: Patch only detached calls, retain an Array fast path, recursively translate the specification, materialize nested lists before output, cap depth at a fixed number, or use an explicit traversal stack with lexical pins.
 - 선택한 방식: Keep the entry-point ordering separate, share an iterative frame stack for FlattenIntoArray, perform live property operations, transfer temporary roots into child frames, use CreateDataPropertyOrThrow semantics, enforce the safe-integer target bound, meter every visited source index, and bound only repeated active-path sources after 512 observable replays.
 - 다른 대안 대신 이 방식을 선택한 이유: Snapshot and fast paths change observable mutation and Proxy order, native recursion makes Infinity cycles a host crash risk, a fixed depth cap rejects finite valid programs, and late rooting permits heap-cell reuse during getters or callbacks. Frames preserve depth-first order while making both roots and resource work explicit.
-- 장점, 단점 및 영향: Direct flat and flatMap Test262 are 43/43, cyclic Infinity inputs terminate by fuel or RangeError, and all abrupt paths restore pin depth. Frame storage and retained roots grow linearly with active acyclic nesting depth; a cycle that would mutate only after more than 512 replays is intentionally terminated by the sandbox guard. Reverse, forEach, map, reduce, and other independent Array methods remain separate conformance units.
+- 장점, 단점 및 영향: Direct flat and flatMap Test262 are 43/43, cyclic Infinity inputs terminate by fuel or RangeError, and all abrupt paths restore pin depth. Frame storage and retained roots grow linearly with active acyclic nesting depth; a cycle that would mutate only after more than 512 replays is intentionally terminated by the sandbox guard. Reverse, reduce, and other independent Array methods remain separate conformance units.
 ```
 
 ## Generic Array forEach
@@ -1435,7 +1433,7 @@ embedder's cooperative budget.
 - 검토한 주요 대안: Patch only detached calls, retain a dense Array fast path, share filter through a discarded result, precompute present values, or implement the direct indexed traversal.
 - 선택한 방식: Perform ToObject, one LengthOfArrayLike snapshot, callback validation, then live HasProperty/Get/callback work while pinning all native-frame roots and charging every logical index.
 - 다른 대안 대신 이 방식을 선택한 이유: Snapshot and fast paths change observable holes, inheritance, mutation, and Proxy order; reusing filter would incorrectly allocate and consult species. The direct loop mirrors the specification and existing generic Array runtime contracts.
-- 장점, 단점 및 영향: Direct Array forEach is 190/190 and adjacent TypedArray forEach remains 42/42 on the fixed corpus; callback and fuel failures restore pin depth. Sparse scans remain linear in captured length as required, but configured fuel bounds their sandbox cost. Join, map, reduce, and other independent snapshot methods remain separate units.
+- 장점, 단점 및 영향: Direct Array forEach is 190/190 and adjacent TypedArray forEach remains 42/42 on the fixed corpus; callback and fuel failures restore pin depth. Sparse scans remain linear in captured length as required, but configured fuel bounds their sandbox cost. Reduce, reverse, and other independent snapshot methods remain separate units.
 ```
 
 ## Generic Array join
@@ -1466,7 +1464,36 @@ separator while direct or indirect element cycles contribute an empty field.
 - 검토한 주요 대안: Patch only detached calls, retain a dense fast path, collect all element strings before joining, reuse TypedArray join, impose a fixed source-length cap, or build the result incrementally from generic indexed reads.
 - 선택한 방식: Perform ToObject, one LengthOfArrayLike snapshot, separator ToString, then live Get and immediate element ToString while pinning native-frame roots, charging every index, reserving each string append fallibly, and tracking active receiver identities to suppress cyclic native re-entry.
 - 다른 대안 대신 이 방식을 선택한 이유: Snapshot and fast paths change observable mutation, inheritance, Proxy, and abrupt order; TypedArray join has distinct receiver validation; and a fixed index cap rejects valid sparse programs that cooperative fuel can bound. Incremental construction follows the specification without retaining a second element snapshot.
-- 장점, 단점 및 영향: Direct Array join is 23/23 and adjacent TypedArray join remains 32/32 on the fixed corpus; abrupt and fuel exits restore pin depth, finite separator re-entry remains observable, and direct or indirect element cycles cannot overflow the native stack. Runtime and output work remain linear in captured length and produced bytes, while configured fuel and checked reservation prevent unbounded native traversal or String capacity panic. Final conversion of the completed Rust String into Arc<str> still follows the runtime-wide infallible allocation model. Map, reduce, reverse, and other independent snapshot methods remain separate units.
+- 장점, 단점 및 영향: Direct Array join is 23/23 and adjacent TypedArray join remains 32/32 on the fixed corpus; abrupt and fuel exits restore pin depth, finite separator re-entry remains observable, and direct or indirect element cycles cannot overflow the native stack. Runtime and output work remain linear in captured length and produced bytes, while configured fuel and checked reservation prevent unbounded native traversal or String capacity panic. Final conversion of the completed Rust String into Arc<str> still follows the runtime-wide infallible allocation model. Reduce, reverse, and other independent snapshot methods remain separate units.
+```
+
+## Generic Array map
+
+`Array.prototype.map` boxes its receiver, snapshots `LengthOfArrayLike`,
+validates the callback, and creates the species result at that captured length
+before indexed work. It then performs live `HasProperty` and `Get` operations,
+calls the mapper with `(value, index, object)` and the supplied `thisArg`, and
+defines the mapped value at the same index. Holes remain holes, inherited
+values are visited, and callback mutation affects only unvisited indices
+inside the captured range.
+
+The receiver, arguments, boxed object, and species result remain roots for the
+operation. Each fetched value is pinned across callback execution, and each
+mapped result is pinned across the potentially observable species-target
+definition. One fuel unit is charged for every captured source index. Creating
+an intrinsic dense result also uses the existing Array length materialization
+meter, so a three-element ordinary map consumes three creation units plus
+three scan units; custom sparse species results pay their own constructor work.
+All normal and abrupt exits restore the incoming pin depth.
+
+```text
+[Decision Log]
+- 목적과 의도: Replace represented-Array snapshot mapping with specification-shaped generic, live, species-aware, GC-safe, and fuel-bounded traversal.
+- 기존 구현 및 제약 조건: The old method accepted only represented Arrays, copied dense storage, invoked callbacks for holes, ignored inheritance, mutation, Proxy operations, species, detached receiver errors, and method-Realm result allocation, then allocated the result only after every callback.
+- 검토한 주요 대안: Patch only detached calls, retain a dense fast path, collect mapped values before allocation, share filter with an index-preserving mode, or implement the direct indexed algorithm.
+- 선택한 방식: Perform ToObject, one length snapshot, callback validation, ArraySpeciesCreate(length), then live HasProperty/Get/callback/CreateDataPropertyOrThrow while explicitly rooting every native-frame value and metering result materialization plus each logical index.
+- 다른 대안 대신 이 방식을 선택한 이유: Snapshot and fast paths change observable holes, mutation, inheritance, Proxy, allocation, and abrupt order; adapting filter would hide map's fixed-index and captured-length result contract. The direct loop mirrors the specification and reuses the established species helper without a second materialized list.
+- 장점, 단점 및 영향: Direct Array map is 216/216 and adjacent TypedArray map remains 85/85 on the fixed corpus; forced GC, Proxy definitions, callback errors, species allocation failures, and fuel aborts preserve roots and cleanup. Runtime remains linear in captured length as required, with cooperative fuel bounding sparse scans. Reduce, reduceRight, reverse, and other independent snapshot methods remain separate units.
 ```
 
 ---

@@ -1399,6 +1399,117 @@ fn array_filter_consumes_exact_per_index_fuel() {
 }
 
 #[test]
+fn array_map_consumes_exact_result_and_index_fuel() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn("mapValue", |_, args, _| Ok(args[0].clone()), 3)
+        .expect("native callback should register");
+    let callback = vm.run("mapValue").expect("callback should be readable");
+    let source = vm
+        .run("Object.assign(Object.create(null), { 0: 1, 2: 3, length: 3 })")
+        .expect("map source should initialize");
+    let source_pin = vm.pin(&source);
+    let callback_pin = vm.pin(&callback);
+    let baseline = vm.gc_pins.len();
+
+    vm.set_fuel(Some(5));
+    let error = crate::builtins::array_map(
+        &mut vm,
+        std::slice::from_ref(&callback),
+        Some(source.clone()),
+    )
+    .expect_err("N-1 fuel must abort result creation plus the logical map scan");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    vm.set_fuel(Some(6));
+    let result = crate::builtins::array_map(&mut vm, std::slice::from_ref(&callback), Some(source))
+        .expect("exact result-creation and logical-index fuel should complete map");
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+    vm.set_fuel(None);
+    assert_eq!(
+        vm.get_property(&result, "length")
+            .expect("map result length should be readable"),
+        Value::Number(3.0)
+    );
+    assert!(!vm
+        .has_property(&result, "1")
+        .expect("map result hole should be testable"));
+
+    let empty = vm
+        .run("({ length: 0 })")
+        .expect("empty source should initialize");
+    vm.set_fuel(Some(0));
+    crate::builtins::array_map(&mut vm, &[callback], Some(empty))
+        .expect("empty map should consume no loop fuel");
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+    vm.set_fuel(None);
+    vm.unpin(callback_pin);
+    vm.unpin(source_pin);
+}
+
+#[test]
+fn array_map_roots_observable_state_and_restores_pin_depth() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("GC test hook should register");
+    let baseline = vm.gc_pins.len();
+
+    let result = vm
+        .run(
+            r#"
+            (function () {
+              var retained = { marker: 41 };
+              var source = [retained];
+              var target = {};
+              source.constructor = { [Symbol.species]: function () {
+                return new Proxy(target, {
+                  defineProperty: function (object, key, descriptor) {
+                    forceGc();
+                    return Reflect.defineProperty(object, key, descriptor);
+                  }
+                });
+              }};
+              var mapped = source.map(function (value) {
+                delete source[0];
+                retained = null;
+                forceGc();
+                return { marker: value.marker };
+              });
+              forceGc();
+              return mapped[0].marker;
+            })();
+            "#,
+        )
+        .expect("map roots should survive callbacks and species Proxy definitions");
+    assert_eq!(result, Value::Number(41.0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    for source in [
+        "Array.prototype.map.call(new Proxy({ length: 1 }, { has: function () { throw 'has'; } }), function () {});",
+        "Array.prototype.map.call(new Proxy({ 0: 1, length: 1 }, { get: function (target, key, receiver) { if (key === '0') throw 'get'; return Reflect.get(target, key, receiver); } }), function () {});",
+        "[1].map(function () { throw 'callback'; });",
+    ] {
+        vm.run(source)
+            .expect_err("the observable map step should complete abruptly");
+        assert_eq!(vm.gc_pins.len(), baseline);
+        assert_eq!(
+            vm.run("1 + 1").expect("VM should remain reusable"),
+            Value::Number(2.0)
+        );
+    }
+}
+
+#[test]
 fn array_for_each_consumes_exact_per_index_fuel() {
     let mut vm = Vm::new().expect("VM should initialize");
     vm.register_fn("visit", |_, _, _| Ok(Value::Undefined), 3)
@@ -2215,6 +2326,7 @@ fn array_species_allocation_failures_restore_pin_depth_and_preserve_sources() {
         "source.filter(function () { return true; });",
         "source.flat();",
         "source.flatMap(function (value) { return value; });",
+        "source.map(function (value) { return value; });",
         "source.slice();",
         "source.splice(0, 1);",
         "source.with(0, 2);",
@@ -2312,32 +2424,6 @@ fn array_concat_retries_result_allocation_after_heap_cap_gc() {
         Value::Number(1.0)
     );
     vm.unpin(source_pin);
-}
-
-#[test]
-fn array_map_raw_result_allocation_failure_restores_gc_pin_depth() {
-    let mut vm = Vm::new().expect("VM should initialize");
-    vm.register_fn("capHeap", |vm, _, _| cap_heap_at_current_live_count(vm), 0)
-        .expect("heap-cap hook should register");
-    let baseline = vm.gc_pins.len();
-
-    let error = vm
-        .run(
-            r#"
-        [1, 2].map(function(value) {
-          if (value === 2) { capHeap(); return value; }
-          return { value: value };
-        });
-        "#,
-        )
-        .expect_err("the raw result Array allocation should hit the heap limit");
-    vm.set_max_heap_objects(None);
-    assert_eq!(error.kind, crate::error::ErrorKind::Range);
-    assert_eq!(vm.gc_pins.len(), baseline);
-    assert_eq!(
-        vm.run("1 + 1").expect("VM should remain reusable"),
-        Value::Number(2.0)
-    );
 }
 
 #[test]

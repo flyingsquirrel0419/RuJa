@@ -11,6 +11,34 @@
 
 ### Fixed
 
+- `Array.prototype.map` now follows the generic ECMAScript algorithm instead
+  of mapping a copied represented-Array backing vector. It performs
+  `ToObject`, one `LengthOfArrayLike` snapshot, callback validation,
+  `ArraySpeciesCreate`, then live `HasProperty`/`Get`, callback, and
+  `CreateDataPropertyOrThrow` operations in specification order. Generic and
+  primitive receivers, holes, inheritance, mutation, Proxy traps, custom
+  species, resizable TypedArrays, abrupt completion, and method-Realm results
+  are observable correctly.
+
+  Native-frame values are pinned across every getter, callback, species
+  constructor, Proxy definition, and forced collection. Result creation and
+  every logical source index consume cooperative fuel, while normal, property,
+  callback, definition, allocation, and fuel exits restore pin depth. Exact
+  admission freezes only the nine direct map files hidden by broad feature
+  gates. On fixed Test262 checkout
+  `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the preceding policy and binary
+  are **95 pass / 111 fail / 9 skip / 1 timeout**; applying the final policy
+  to that binary is **96/119/0/1**; the repaired runtime under the preceding
+  policy is **207/0/9/0**; and the final cohort is **216/216**. Adjacent
+  `%TypedArray%.prototype.map` remains **85/85**. The detached-method
+  diagnostic now clears map and reaches the independent generic `reduce` gap.
+
+  Local verification passes all targets and features with **198/198** library
+  tests, **529/529** builtins tests, and **15/15** arguments tests, plus
+  **198/198** release library tests, **127/127** Python tooling tests, **1/1**
+  doctest, rustfmt, warnings-denied Clippy, release build, generated
+  documentation, and wasm32 checking.
+
 - `Array.prototype.join` now follows the generic ECMAScript algorithm instead
   of joining a copied represented-Array backing vector. It performs
   `ToObject`, one `LengthOfArrayLike` snapshot, separator coercion, and live

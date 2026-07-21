@@ -881,46 +881,50 @@ pub(crate) fn array_join(vm: &mut Vm, args: &[Value], this: Option<Value>) -> er
     completion
 }
 pub(crate) fn array_map(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let cb = args.first().cloned().unwrap_or(Value::Undefined);
-    if let Some(Value::Object(idx)) = this {
-        let items = vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Array(a) = obj {
-                a.items.lock().clone()
-            } else {
-                Vec::new()
-            }
-        });
-        let mut pin_count = vm.pin_many(&items);
-        pin_count += vm.pin(&cb);
-        if let Some(receiver) = &this {
-            pin_count += vm.pin(receiver);
+    let receiver = this.unwrap_or(Value::Undefined);
+    let mut pin_count = vm.pin(&receiver);
+    pin_count += vm.pin_many(args);
+    let result = (|| {
+        let object = array_method_to_object(vm, &receiver)?;
+        pin_count += vm.pin(&object);
+        let len = length_of_array_like_u64(vm, &object)?;
+        let callback = get_arg(args, 0);
+        if !is_callable(&callback, &vm.heap) {
+            return Err(Error::type_err("Array mapper is not callable"));
         }
-        if let Some(this_arg) = args.get(1) {
-            pin_count += vm.pin(this_arg);
-        }
+        let this_arg = get_arg(args, 1);
+        let result = array_species_create(vm, &object, len)?;
+        pin_count += vm.pin(&result);
 
-        let completion = (|| {
-            let mut result = Vec::new();
-            for (i, item) in items.iter().enumerate() {
+        let mut index = 0u64;
+        while index < len {
+            vm.consume_fuel()?;
+            let key = index.to_string();
+            if vm.has_property(&object, &key)? {
+                let value = vm.get_property(&object, &key)?;
+                let value_pin = vm.pin(&value);
                 let mapped = vm.call_function(
-                    &cb,
-                    &[
-                        item.clone(),
-                        Value::Number(i as f64),
-                        this.clone().unwrap_or(Value::Undefined),
-                    ],
-                    args.get(1).cloned(),
-                )?;
-                pin_count += vm.pin(&mapped);
-                result.push(mapped);
+                    &callback,
+                    &[value, Value::Number(index as f64), object.clone()],
+                    Some(this_arg.clone()),
+                );
+                vm.unpin(value_pin);
+                let mapped = mapped?;
+                let mapped_pin = vm.pin(&mapped);
+                let define = vm.define_own_property_or_throw(
+                    &result,
+                    PropertyKey::from(key),
+                    PropertyDescriptor::data(mapped),
+                );
+                vm.unpin(mapped_pin);
+                define?;
             }
-            let arr = HeapObj::Array(ArrayData::new(result, Some(vm.array_proto.clone())));
-            Ok(Value::Object(GcIdx(vm.heap.allocate(arr)?)))
-        })();
-        vm.unpin_many(pin_count);
-        return completion;
-    }
-    Ok(Value::Undefined)
+            index += 1;
+        }
+        Ok(result)
+    })();
+    vm.unpin_many(pin_count);
+    result
 }
 pub(crate) fn array_filter(
     vm: &mut Vm,

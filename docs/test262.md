@@ -9438,6 +9438,45 @@ reports Array join **23/23** and TypedArray join **32/32**.
 - 장점, 단점 및 영향: Direct join is 23/23 with seven attributable runtime transitions, future siblings remain gated, and TypedArray stays green. Updating Test262 requires an explicit metadata audit; methods-called-as-functions, map, and the complete Array prototype directory remain outside this unit.
 ```
 
+## Generic Array map
+
+`tools/test262_array_map_admission.txt` freezes exactly **9** direct
+`Array.prototype.map` files otherwise hidden by broad TypedArray, Proxy,
+`Symbol.species`, `Reflect.construct`, arrow-function, or resizable-buffer
+gates. Its exact feature map is shared by runner and analyzer. Tooling checks
+map/manifest equality, live features and includes, empty flags, absent negative
+metadata, disjointness, runner/analyzer symmetry, extra-feature rejection, and
+closure against future siblings.
+
+On fixed checkout `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the preceding
+binary under the preceding policy is **95 pass / 111 fail / 9 skip / 1
+timeout**. Applying the final exact policy to that binary produces **96 pass /
+119 fail / 0 skip / 1 timeout**. The repaired runtime under the preceding
+policy is **207 pass / 0 fail / 9 skip / 0 timeout**, and under the final policy
+is **216/216**. This proves **120** attributable runtime transitions to pass
+with no reverse transition. Adjacent `%TypedArray%.prototype.map` remains
+**85/85**.
+
+The broader `built-ins/Array/prototype/methods-called-as-functions.js`
+diagnostic remains outside admission. It now clears map and fails next at the
+independent detached `Array.prototype.reduce` behavior.
+
+Local verification passes all targets and features with **198/198** library
+tests, **529/529** builtins tests, and **15/15** arguments tests, plus
+**198/198** release library tests, **127/127** Python tooling tests, **1/1**
+doctest, rustfmt, warnings-denied Clippy, release build, generated
+documentation, and wasm32 checking.
+
+```text
+[Decision Log]
+- 목적과 의도: Admit complete direct Array map coverage without weakening broad feature gates or claiming the containing Array prototype directory.
+- 기존 구현 및 제약 조건: One hundred eleven ordinarily executed files failed, one huge sparse file timed out, nine feature-tagged paths were skipped, and the broader aggregate continues into independent reduce behavior.
+- 검토한 주요 대안: Remove TypedArray, Proxy, species, Reflect, arrow, or resizable-buffer gates globally; admit the map directory by prefix; list only former failures; combine this with TypedArray map; or freeze all nine metadata-bearing paths.
+- 선택한 방식: Keep broad gates, add one exact nine-path feature map shared by both tools, compare old and repaired binaries on one fixed checkout, and run TypedArray map as a separate compatibility cohort.
+- 다른 대안 대신 이 방식을 선택한 이유: Global and prefix admission silently overclaim unrelated or future behavior, failure-only lists hide existing passes, and combining TypedArray obscures its distinct integer-indexed and target-conversion semantics. Exact paths keep every policy transition reviewable.
+- 장점, 단점 및 영향: Direct map is 216/216 with 120 attributable runtime transitions, the sparse timeout is removed, future siblings remain gated, and TypedArray stays green. Updating Test262 requires an explicit metadata audit; methods-called-as-functions, reduce, and the complete Array prototype directory remain outside this unit.
+```
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is
