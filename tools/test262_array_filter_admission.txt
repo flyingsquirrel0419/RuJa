@@ -1,0 +1,9 @@
+# Exact feature-gated Array.prototype.filter coverage.
+built-ins/Array/prototype/filter/callbackfn-resize-arraybuffer.js
+built-ins/Array/prototype/filter/create-proxy.js
+built-ins/Array/prototype/filter/create-revoked-proxy.js
+built-ins/Array/prototype/filter/create-species-non-ctor.js
+built-ins/Array/prototype/filter/not-a-constructor.js
+built-ins/Array/prototype/filter/resizable-buffer-grow-mid-iteration.js
+built-ins/Array/prototype/filter/resizable-buffer-shrink-mid-iteration.js
+built-ins/Array/prototype/filter/resizable-buffer.js

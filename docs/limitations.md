@@ -74,15 +74,16 @@ The following resource limits are enforced:
   cannot create, is rejected as soon as a directed edge repeats.
 - **Remaining Array generic-method gap**: `%Array.prototype%` is a real
   `ArrayData` exotic, and `push`, `pop`, `shift`, `unshift`, `splice`, `slice`,
-  `concat`, `copyWithin`, `fill`, and `with` now use generic internal property
-  operations and logical lengths. Slice, Splice, and Concat implement
-  `ArraySpeciesCreate`; Concat also implements `Symbol.isConcatSpreadable`,
+  `concat`, `copyWithin`, `fill`, `filter`, and `with` now use generic internal
+  property operations and logical lengths. Slice, Splice, Concat, and Filter
+  implement `ArraySpeciesCreate`; Concat also implements
+  `Symbol.isConcatSpreadable`,
   while CopyWithin, Fill, and With intentionally do not consult species. Older
   implementations such as `reverse` still contain represented-Array shortcuts
   and need separate generic-receiver, observable-order, sparse, fuel, and
   rooting audits. The direct Test262 `methods-called-as-functions.js` aggregate
   remains outside exact admission because its next failure is the unrelated
-  detached-receiver behavior of `filter`.
+  detached-receiver behavior of `flat`.
 - **Test262 result enforcement and pinning gap**: the Python runner reports
   fail, timeout, and error counts but still exits with status zero, so a matrix
   job can be green while semantic failures remain. Full-matrix shards also
@@ -355,7 +356,7 @@ guarantees are required.
   native temporary-root, collected-list, and merge-buffer storage is bounded
   by the same limit but still uses infallible Rust vector allocation.
 - Older snapshot-based methods still need separate observable-semantics and
-  rooting passes: `join`, `filter`, `reduce`, `reduceRight`, `forEach`, and
+  rooting passes: `join`, `reduce`, `reduceRight`, `forEach`, and
   `toSpliced`. A callback or coercion can remove the original source edge and
   force host GC while a future value exists only in a Rust snapshot. Several
   also require live property access rather than merely pinning the current

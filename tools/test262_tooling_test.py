@@ -124,6 +124,7 @@ from test262_array_copy_within_admission import (
     ARRAY_COPY_WITHIN_FILES,
 )
 from test262_array_fill_admission import ARRAY_FILL_FEATURES, ARRAY_FILL_FILES
+from test262_array_filter_admission import ARRAY_FILTER_FEATURES, ARRAY_FILTER_FILES
 from test262_array_iterator_admission import (
     ARRAY_ITERATOR_FEATURES,
     ARRAY_ITERATOR_FILES,
@@ -3417,6 +3418,81 @@ class ArrayFillAdmissionTests(unittest.TestCase):
                     for path in (future, outside):
                         self.assertFalse(tool.array_fill_path(path))
                         self.assertTrue(tool.should_skip({"features": ["Symbol"]}, path))
+                finally:
+                    tool.TEST262 = original_root
+
+
+class ArrayFilterAdmissionTests(unittest.TestCase):
+    def test_manifest_is_exact_live_disjoint_and_shared(self):
+        names = {
+            "callbackfn-resize-arraybuffer.js",
+            "create-proxy.js",
+            "create-revoked-proxy.js",
+            "create-species-non-ctor.js",
+            "not-a-constructor.js",
+            "resizable-buffer-grow-mid-iteration.js",
+            "resizable-buffer-shrink-mid-iteration.js",
+            "resizable-buffer.js",
+        }
+        expected = frozenset(
+            f"built-ins/Array/prototype/filter/{name}" for name in names
+        )
+        self.assertEqual(ARRAY_FILTER_FILES, expected)
+        self.assertEqual(frozenset(ARRAY_FILTER_FEATURES), ARRAY_FILTER_FILES)
+
+        tools_dir = Path(__file__).resolve().parent
+        for manifest in tools_dir.glob("test262_*_admission.txt"):
+            if manifest.name == "test262_array_filter_admission.txt":
+                continue
+            existing = {
+                line
+                for raw_line in manifest.read_text().splitlines()
+                if (line := raw_line.strip()) and not line.startswith("#")
+            }
+            self.assertFalse(ARRAY_FILTER_FILES & existing, manifest.name)
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        try:
+            test_root_available = test_root.is_dir()
+        except OSError:
+            test_root_available = False
+        if test_root_available:
+            for relative, features in ARRAY_FILTER_FEATURES.items():
+                path = test_root / relative
+                self.assertTrue(path.is_file(), relative)
+                metadata = test262_runner.parse_meta(path.read_text())
+                self.assertEqual(
+                    frozenset(metadata.get("features", [])), features, relative
+                )
+                self.assertEqual(metadata.get("flags", []), [], relative)
+                self.assertIsNone(metadata.get("negative"), relative)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            future = root / "test/built-ins/Array/prototype/filter/future-proxy.js"
+            outside = root / "test/built-ins/Array/prototype/map/future-proxy.js"
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for relative, features in ARRAY_FILTER_FEATURES.items():
+                        path = root / "test" / relative
+                        self.assertTrue(tool.array_filter_path(path), relative)
+                        self.assertEqual(tool.array_filter_features(path), features)
+                        self.assertFalse(
+                            tool.should_skip({"features": sorted(features)}, path),
+                            relative,
+                        )
+                        self.assertTrue(
+                            tool.should_skip(
+                                {"features": sorted(features | {"decorators"})},
+                                path,
+                            ),
+                            relative,
+                        )
+                    for path in (future, outside):
+                        self.assertFalse(tool.array_filter_path(path))
+                        self.assertTrue(tool.should_skip({"features": ["Proxy"]}, path))
                 finally:
                     tool.TEST262 = original_root
 

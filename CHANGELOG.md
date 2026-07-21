@@ -11,6 +11,37 @@
 
 ### Fixed
 
+- `Array.prototype.filter` now follows the generic, species-aware ECMAScript
+  algorithm instead of filtering a represented-Array snapshot. It boxes
+  primitive receivers, snapshots `LengthOfArrayLike`, validates the callback
+  before `ArraySpeciesCreate(source, 0)`, and performs live `HasProperty`,
+  `Get`, callback, and `CreateDataPropertyOrThrow` operations. Holes, inherited
+  values, generic and Proxy receivers, callback mutation, custom species,
+  dense selected indices, descriptor failures, and partial results now retain
+  observable order.
+
+  Receiver, arguments, boxed source, species result, and each present value
+  remain rooted across getters, constructors, callbacks, Proxy traps,
+  collection, and exact-cap allocation. Every logical source index consumes
+  one fuel unit before property work, and all normal, semantic, callback,
+  property-definition, allocation, and fuel exits restore the incoming pin
+  depth.
+
+  Exact admission freezes eight feature-gated files. On fixed Test262 checkout
+  `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the preceding policy and binary
+  are **120 pass / 113 fail / 8 skip / 1 timeout**; applying the new policy to
+  that binary is **121/120/0/1**; and the repaired runtime is **242/242**. The
+  adjacent TypedArray filter directory remains **85/85**, and the broader
+  diagnostic now reaches the independent generic `flat` gap.
+
+  Local all-target/all-feature tests pass with **191/191** library tests,
+  **522/522** builtins tests, **15/15** arguments tests, **190/190** release
+  library tests, **123/123** Test262 tooling tests, **1/1** documentation tests,
+  rustfmt, warnings-denied Clippy, and wasm32 all-features checking. Final
+  GPT-5.6 runtime and admission/documentation reviews report `CLEAN`; both
+  sessions are closed, and coder and Umans routes were not used. Final CI,
+  matrix, and artifact evidence is recorded after delivery.
+
 - `Array.prototype.fill` now follows the generic ECMAScript algorithm instead
   of rewriting represented-Array backing storage. It boxes primitive receivers,
   snapshots `LengthOfArrayLike` once, coerces start and end in order, retains
@@ -29,8 +60,9 @@
   `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the preceding policy and binary
   are **8 pass / 8 fail / 6 skip**; applying the new policy to that binary is
   **9/13/0**; and the repaired runtime is **22/22**. The adjacent TypedArray
-  fill directory remains **52/52**, and the broader diagnostic now reaches the
-  independent generic `filter` gap.
+  fill directory remains **52/52**. At this fill unit boundary the broader
+  diagnostic reached the independent generic `filter` gap; the later filter
+  entry above records its progression to `flat`.
 
   Local all-target/all-feature tests pass with **188/188** library tests,
   **521/521** builtins tests, **15/15** arguments tests, **187/187** release

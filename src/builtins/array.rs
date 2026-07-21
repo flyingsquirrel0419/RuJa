@@ -899,34 +899,64 @@ pub(crate) fn array_filter(
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    let cb = args.first().cloned().unwrap_or(Value::Undefined);
-    if let Some(Value::Object(idx)) = this {
-        let items = vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Array(a) = obj {
-                a.items.lock().clone()
-            } else {
-                Vec::new()
-            }
-        });
-        let mut result = Vec::new();
-        for (i, item) in items.iter().enumerate() {
-            let keep = vm.call_function(
-                &cb,
-                &[
-                    item.clone(),
-                    Value::Number(i as f64),
-                    this.clone().unwrap_or(Value::Undefined),
-                ],
-                args.get(1).cloned(),
-            )?;
-            if keep.is_truthy() {
-                result.push(item.clone());
-            }
+    let receiver = this.unwrap_or(Value::Undefined);
+    let mut pin_count = vm.pin(&receiver);
+    pin_count += vm.pin_many(args);
+    let result = (|| {
+        let object = array_method_to_object(vm, &receiver)?;
+        pin_count += vm.pin(&object);
+        let len = length_of_array_like_u64(vm, &object)?;
+        let callback = get_arg(args, 0);
+        if !is_callable(&callback, &vm.heap) {
+            return Err(Error::type_err("Array predicate is not callable"));
         }
-        let arr = HeapObj::Array(ArrayData::new(result, Some(vm.array_proto.clone())));
-        return Ok(Value::Object(GcIdx(vm.heap.allocate(arr)?)));
-    }
-    Ok(Value::Undefined)
+        let this_arg = get_arg(args, 1);
+        let result = array_species_create(vm, &object, 0)?;
+        pin_count += vm.pin(&result);
+
+        let mut source_index = 0u64;
+        let mut target_index = 0u64;
+        while source_index < len {
+            vm.consume_fuel()?;
+            let source_key = source_index.to_string();
+            if vm.has_property(&object, &source_key)? {
+                let value = vm.get_property(&object, &source_key)?;
+                let value_pin = vm.pin(&value);
+                let selected = vm.call_function(
+                    &callback,
+                    &[
+                        value.clone(),
+                        Value::Number(source_index as f64),
+                        object.clone(),
+                    ],
+                    Some(this_arg.clone()),
+                );
+                let selected = match selected {
+                    Ok(selected) => selected,
+                    Err(error) => {
+                        vm.unpin(value_pin);
+                        return Err(error);
+                    }
+                };
+                if selected.is_truthy() {
+                    let define = vm.define_own_property_or_throw(
+                        &result,
+                        PropertyKey::from(target_index.to_string()),
+                        PropertyDescriptor::data(value),
+                    );
+                    vm.unpin(value_pin);
+                    define?;
+                    target_index += 1;
+                } else {
+                    vm.unpin(value_pin);
+                }
+            }
+            source_index += 1;
+        }
+        Ok(result)
+    })();
+    vm.unpin_many(pin_count);
+    result
 }
 pub(crate) fn array_reduce(
     vm: &mut Vm,

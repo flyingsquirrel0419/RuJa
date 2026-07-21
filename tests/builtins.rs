@@ -4450,6 +4450,161 @@ fn array_fill_is_generic_ordered_live_and_realm_aware() {
 }
 
 #[test]
+fn array_filter_is_generic_species_aware_live_and_realm_aware() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            var resultTarget = {};
+            var resultProxy = new Proxy(resultTarget, {
+              defineProperty: function(target, key, descriptor) {
+                log.push("define:" + key + ":" + descriptor.value);
+                return Reflect.defineProperty(target, key, descriptor);
+              }
+            });
+            function Species(length) {
+              log.push("species:" + length);
+              return resultProxy;
+            }
+
+            var sourceTarget = ["a", , "c", "d"];
+            sourceTarget.constructor = {};
+            Object.defineProperty(sourceTarget.constructor, Symbol.species, {
+              get: function() {
+                log.push("species-get");
+                return Species;
+              }
+            });
+            var source = new Proxy(sourceTarget, {
+              get: function(target, key, receiver) {
+                log.push("get:" + String(key));
+                return Reflect.get(target, key, receiver);
+              },
+              has: function(target, key) {
+                log.push("has:" + String(key));
+                return Reflect.has(target, key);
+              }
+            });
+            var thisArg = { marker: 1 };
+            var returned = Array.prototype.filter.call(source, function(value, index, object) {
+              log.push("callback:" + index + ":" + value + ":" +
+                       (this === thisArg) + ":" + (object === source));
+              if (index === 0) {
+                delete sourceTarget[2];
+                sourceTarget[3] = "d2";
+                sourceTarget[4] = "late";
+              }
+              return { valueOf: function() { throw new Error("unused"); } };
+            }, thisArg);
+
+            var inheritedSource = Object.create({ 1: "inherited" });
+            inheritedSource.length = 3;
+            inheritedSource[0] = "own";
+            inheritedSource[2] = "deleted";
+            Object.defineProperty(inheritedSource, "constructor", {
+              get: function() { throw new Error("non-Array constructor lookup"); }
+            });
+            var inheritedResult = Array.prototype.filter.call(
+              inheritedSource,
+              function(value, index) {
+                if (index === 0) delete inheritedSource[2];
+                return true;
+              }
+            );
+
+            var setterCalls = 0;
+            var defineTarget = Object.create({
+              set 0(value) { setterCalls += 1; }
+            });
+            var defineSource = [41];
+            defineSource.constructor = {};
+            defineSource.constructor[Symbol.species] = function() {
+              return defineTarget;
+            };
+            var defineResult = defineSource.filter(function() { return true; });
+            var descriptor = Object.getOwnPropertyDescriptor(defineTarget, "0");
+
+            var partialTarget = {};
+            var partialSource = [1, 2, 3];
+            partialSource.constructor = {};
+            partialSource.constructor[Symbol.species] = function() {
+              return new Proxy(partialTarget, {
+                defineProperty: function(target, key, desc) {
+                  if (key === "1") return false;
+                  return Reflect.defineProperty(target, key, desc);
+                }
+              });
+            };
+            var partialError;
+            try { partialSource.filter(function() { return true; }); }
+            catch (error) { partialError = error; }
+
+            var validationOrder = 0;
+            var invalidCallbackSource = [];
+            Object.defineProperty(invalidCallbackSource, "constructor", {
+              get: function() { validationOrder += 1; throw new Error("late"); }
+            });
+            var validationError;
+            try { invalidCallbackSource.filter(null); }
+            catch (error) { validationError = error instanceof TypeError; }
+
+            var stringResult = Array.prototype.filter.call(
+              "ab",
+              function(value, index) { return index === 0 && value === "a"; }
+            );
+            var booleanResult = Array.prototype.filter.call(false, function() {
+              throw new Error("empty Boolean callback");
+            });
+
+            var other = $262.createRealm().global;
+            var foreignFilter = other.Array.prototype.filter;
+            var foreignResult = foreignFilter.call(
+              { 0: 7, length: 1 },
+              function() { return true; }
+            );
+            var foreignNullError;
+            var foreignCallbackError;
+            try { foreignFilter.call(null, function() {}); }
+            catch (error) {
+              foreignNullError = Object.getPrototypeOf(error) === other.TypeError.prototype;
+            }
+            try { foreignFilter.call([], null); }
+            catch (error) {
+              foreignCallbackError = Object.getPrototypeOf(error) === other.TypeError.prototype;
+            }
+
+            [
+              returned === resultProxy,
+              log.join("|") === [
+                "get:length", "get:constructor", "species-get", "species:0",
+                "has:0", "get:0", "callback:0:a:true:true", "define:0:a",
+                "has:1", "has:2", "has:3", "get:3",
+                "callback:3:d2:true:true", "define:1:d2"
+              ].join("|"),
+              resultTarget[0] === "a" && resultTarget[1] === "d2" &&
+                !Object.hasOwn(resultTarget, "length"),
+              inheritedResult.join(",") === "own,inherited" &&
+                Object.getPrototypeOf(inheritedResult) === Array.prototype,
+              defineResult === defineTarget && setterCalls === 0 &&
+                descriptor.value === 41 && descriptor.writable &&
+                descriptor.enumerable && descriptor.configurable,
+              partialError instanceof TypeError && partialTarget[0] === 1 &&
+                !Object.hasOwn(partialTarget, "1") && !Object.hasOwn(partialTarget, "2"),
+              validationError && validationOrder === 0,
+              stringResult.length === 1 && stringResult[0] === "a",
+              booleanResult.length === 0,
+              Object.getPrototypeOf(foreignResult) === other.Array.prototype &&
+                foreignResult[0] === 7,
+              foreignNullError,
+              foreignCallbackError
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "true|true|true|true|true|true|true|true|true|true|true|true"
+        ))
+    );
+}
+
+#[test]
 fn array_reverse() {
     assert_eq!(
         run("[1,2,3].reverse().join(',');"),

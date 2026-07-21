@@ -9118,9 +9118,11 @@ repaired runtime is **22 pass / 0 fail / 0 skip**, proving **13 fail-to-pass**
 runtime transitions and no reverse transition under the final policy. A
 separate forced sweep of `%TypedArray%.prototype.fill` remains **52/52**.
 
-The broader `built-ins/Array/prototype/methods-called-as-functions.js`
-aggregate remains outside admission. It now clears fill and fails next at the
-independent generic `filter` gap.
+At this fill unit boundary, the broader
+`built-ins/Array/prototype/methods-called-as-functions.js` aggregate remained
+outside admission: it cleared fill and failed next at the independent generic
+`filter` gap. The later filter section below records that repair and the
+aggregate's current progression to `flat`.
 
 Local verification passes all targets and features with **188/188** library
 tests, **15/15** arguments tests, and **521/521** builtins tests, plus
@@ -9152,6 +9154,48 @@ fill **52/52** on the fixed checkout.
 - 선택한 방식: Keep broad gates, add one exact six-path manifest and feature map shared by both tools, compare old and repaired binaries on one pinned checkout, and run the TypedArray fill directory as a separate compatibility cohort.
 - 다른 대안 대신 이 방식을 선택한 이유: Global and prefix admission silently overclaim unrelated or future behavior, failure-only lists hide existing passes, and the aggregate would claim filter prematurely. Exact paths make each support transition and corpus metadata change reviewable.
 - 장점, 단점 및 영향: Direct fill is 22/22 with 13 attributable runtime transitions, both tools remain symmetric, and future siblings stay gated while TypedArray fill remains green. Updating Test262 requires an explicit metadata audit, and this unit does not claim methods-called-as-functions, filter, reverse, or the full Array prototype directory.
+```
+
+## Generic Array filter
+
+`tools/test262_array_filter_admission.txt` freezes exactly the **8** direct
+filter files otherwise hidden by broad Proxy, `Symbol.species`,
+`Reflect.construct`, TypedArray, arrow-function, or resizable-ArrayBuffer gates.
+Its exact feature map is shared by the runner and analyzer. Tooling requires
+map/manifest equality, live metadata, disjointness from every other admission,
+runner/analyzer symmetry, rejection of extra unsupported features, and closure
+against future siblings. The other 234 files retain ordinary policy handling.
+
+On fixed checkout `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the preceding
+binary under the preceding policy is **120 pass / 113 fail / 8 skip / 1
+timeout**. Applying the new exact policy to that binary produces **121 pass /
+120 fail / 0 skip / 1 timeout**. The repaired runtime is **242 pass / 0 fail /
+0 skip / 0 timeout**, proving **120 fail-to-pass** and one timeout-to-pass
+runtime transition under the final policy, with no reverse transition. The
+separate `%TypedArray%.prototype.filter` directory remains **85/85**.
+
+The broader `built-ins/Array/prototype/methods-called-as-functions.js`
+aggregate remains outside admission. It now clears filter and fails next at
+the independent generic `flat` gap.
+
+Local verification passes all targets and features with **191/191** library
+tests, **15/15** arguments tests, and **522/522** builtins tests, plus
+**190/190** release library tests, **123/123** Python tooling tests, **1/1**
+documentation tests, rustfmt, warnings-denied Clippy, and wasm32 all-features
+checking. GPT-5.6 runtime reviewer Faraday
+(`019f8308-e874-7c31-a99f-36f3ef2875d4`) and admission/documentation reviewer
+Ampere (`019f8308-ea22-7a92-b7c7-8d9dcd94706b`) both report `CLEAN` after the
+final diff; both sessions are closed, and coder and Umans routes were not used.
+Final CI and matrix evidence is recorded after delivery.
+
+```text
+[Decision Log]
+- 목적과 의도: Admit the complete current direct Array filter surface without weakening broad feature gates or claiming unrelated Array methods.
+- 기존 구현 및 제약 조건: 113 ordinarily executed files failed, one million-index sparse file timed out, eight feature-tagged paths were skipped, forced execution exposed 120 runtime failures, and the containing Array aggregate proceeds immediately into independent flat behavior.
+- 검토한 주요 대안: Remove Proxy, Symbol, Reflect, TypedArray, arrow, and resizable-buffer gates globally; admit the filter directory by prefix; fold paths into an older Array manifest; list only former failures; include methods-called-as-functions; or freeze the eight current metadata-bearing paths separately.
+- 선택한 방식: Keep broad gates, add one exact eight-path manifest and feature map shared by both tools, compare old and repaired binaries on one pinned checkout, and run the TypedArray filter directory as a separate compatibility cohort.
+- 다른 대안 대신 이 방식을 선택한 이유: Global and prefix admission silently overclaim unrelated or future behavior, failure-only lists hide existing passes, and the aggregate would claim flat prematurely. Exact paths make each support and metadata transition reviewable.
+- 장점, 단점 및 영향: Direct filter is 242/242 with 122 total policy pass gains, both tools remain symmetric, the sparse timeout is removed, and future siblings stay gated while TypedArray filter remains green. Updating Test262 requires an explicit metadata audit, and this unit does not claim methods-called-as-functions, flat, reverse, or the full Array prototype directory.
 ```
 
 ## Generic Array iterator and arguments admission

@@ -145,16 +145,18 @@
   `flat`, `flatMap`, `at`, `sort`, `reverse`, `copyWithin`, `reduceRight`,
   `toReversed`, `toSorted`, `toSpliced`, `with`; `Array.from`/`fromAsync`/`of`/
   `isArray`. `%Array.prototype%` is a real Array exotic. Push, Pop, Shift,
-  Unshift, Splice, Slice, Concat, CopyWithin, Fill, and With use generic indexed
-  operations and logical lengths. Slice, Splice, and Concat honor species;
+  Unshift, Splice, Slice, Concat, CopyWithin, Fill, Filter, and With use generic
+  indexed operations and logical lengths. Slice, Splice, Concat, and Filter
+  honor species;
   Concat also applies `Symbol.isConcatSpreadable` to each input, preserves
   holes through `HasProperty`, and performs strict result definitions and a
   final length update. CopyWithin performs live `HasProperty` plus
   `Get`/strict `Set` or deletion without consulting species. Fill performs a
-  live strict `Set` for each selected index after one length snapshot; Fill and
-  With deliberately ignore species. The Array constructor, Slice, and Concat can
-  create sparse results above the dense cap. With reads through holes and
-  retains a 1,048,576-element sandbox cap. `entries`, `keys`, and `values`
+  live strict `Set` for each selected index after one length snapshot. Filter
+  performs live `HasProperty`/`Get`, callback calls, and dense result property
+  creation; Fill and With deliberately ignore species. The Array constructor,
+  Slice, and Concat can create sparse results above the dense cap. With reads
+  through holes and retains a 1,048,576-element sandbox cap. `entries`, `keys`, and `values`
   are generic lazy iterators: they box primitive receivers once, re-read the
   live array-like length for every `next`, preserve inherited and Proxy index
   access, and use the iterator method Realm for result and entry arrays.

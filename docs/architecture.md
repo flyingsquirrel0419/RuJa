@@ -1304,6 +1304,36 @@ retain the active method Realm.
 - 장점, 단점 및 영향: Direct Array fill is 22/22 and adjacent TypedArray fill remains 52/52; safe-integer tails need constant native state; every observable exit restores roots; and configured fuel bounds the logical scan. Unbounded hosts can still request a specification-required linear scan, and native index-string plus property-traversal allocations remain governed by broader process-memory policy.
 ```
 
+### Generic Array filter pipeline
+
+`Array.prototype.filter` now boxes its receiver, snapshots
+`LengthOfArrayLike` once as a safe-integer `u64`, validates the callback, and
+performs `ArraySpeciesCreate(source, 0)` before indexed traversal. Each logical
+index consumes one fuel unit, then runs live `HasProperty`; present values are
+read with `Get` and passed to the callback with the captured index and source.
+Truthy selections are compacted into ascending result indices through
+`CreateDataPropertyOrThrow`. The path therefore preserves holes, inherited
+values, Proxy order, callback mutation, custom species, descriptor failures,
+and partial result definitions without snapshotting source values.
+
+The receiver and all arguments are rooted before boxing. The source and species
+result remain roots for the entire operation, and each present source value is
+temporarily rooted across callback execution and a selected result's observable
+Proxy define trap. One cleanup boundary restores the incoming pin depth after
+length, constructor, species, `HasProperty`, `Get`, callback, property-definition,
+heap-cap, or fuel failures. Default arrays and native errors use the active
+method Realm; custom species objects retain their constructor semantics.
+
+```text
+[Decision Log]
+- 목적과 의도: Replace the represented-Array filter snapshot with the complete generic, species-aware, live-property algorithm while preserving Realm, GC, fuel, and abrupt-completion behavior.
+- 기존 구현 및 제약 조건: Filter cloned dense ArrayData.items, called the predicate for holes, ignored observable length, prototypes, Proxies, primitives, generic receivers, species, and result descriptors, allocated through a raw heap path, and performed no loop fuel or operation-wide rooting.
+- 검토한 주요 대안: Patch only direct failures, retain a dense fast path, collect selected values before constructing the result, reuse the specialized TypedArray filter, cap traversal at the dense-array limit, or implement the abstract-operation sequence directly.
+- 선택한 방식: Reuse ToObject, u64 LengthOfArrayLike, callable validation, ArraySpeciesCreate, Proxy-aware HasProperty/Get, callback dispatch, and CreateDataPropertyOrThrow; root all observable state; and charge one fuel unit before each logical source index.
+- 다른 대안 대신 이 방식을 선택한 이유: Dense and preselected snapshots change holes, mutation, species timing, and abrupt partial results; TypedArray filter has different validation and species timing; and a dense cap rejects legal sparse array-like lengths. One generic path keeps represented Arrays, arguments, primitives, Proxies, and borrowed receivers observably aligned.
+- 장점, 단점 및 영향: All 242 direct fixed Test262 files pass, the prior million-index sparse timeout becomes a pass, TypedArray filter remains 85/85, and exact fuel, Realm, GC, heap-cap, descriptor, and cleanup behavior is regression-tested. Unconfigured hosts can still request a specification-required linear scan through a huge sparse length, while native index strings and property traversal remain governed by broader process-memory policy.
+```
+
 ### Generic live Array iterator records
 
 `entries`, `keys`, and `values` all create the same lazy
