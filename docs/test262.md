@@ -9332,6 +9332,48 @@ flatMap **43/43** on fixed checkout
 - 장점, 단점 및 영향: Both direct directories are 43/43 with 23 attributable runtime transitions, both tools remain symmetric, and future siblings stay gated. Updating Test262 requires an explicit metadata audit; methods-called-as-functions, forEach, and the complete Array prototype directory remain outside this unit.
 ```
 
+## Generic Array forEach
+
+`tools/test262_array_for_each_admission.txt` freezes exactly **5** direct
+`Array.prototype.forEach` files otherwise hidden by broad TypedArray,
+resizable-buffer, `Reflect.construct`, or arrow-function gates. Its exact
+feature map is shared by the runner and analyzer. Tooling checks
+map/manifest equality, live metadata, disjointness from every existing
+admission, runner/analyzer symmetry, extra-feature rejection, and closure
+against future siblings.
+
+On fixed checkout `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the preceding
+binary under the preceding policy is **90 pass / 94 fail / 5 skip / 1
+timeout**. Applying the final exact policy to that binary produces **91 pass /
+98 fail / 0 skip / 1 timeout**. The repaired runtime under the preceding
+policy is **185 pass / 0 fail / 5 skip / 0 timeout**, and under the final policy
+is **190 pass / 0 fail / 0 skip / 0 timeout**. This proves **99** attributable
+runtime nonpass-to-pass transitions with no reverse transition. A separate
+adjacent `%TypedArray%.prototype.forEach` sweep remains **42/42**.
+
+The broader `built-ins/Array/prototype/methods-called-as-functions.js`
+diagnostic remains outside admission. It now clears forEach and fails next at
+the independent detached `Array.prototype.join` behavior.
+
+Local verification passes all targets and features with **195/195** library
+tests, **526/526** builtins tests, and **15/15** arguments tests, plus
+**194/194** release library tests, **125/125** Python tooling tests, **1/1**
+doctest, rustfmt, warnings-denied Clippy, release build, generated
+documentation, and wasm32 checking. GPT-5.6 runtime reviewer McClintock
+(`019f83a7-5428-7442-b062-92f1b5a9c781`) and admission reviewer Raman
+(`019f83a7-55e4-7680-944c-4114e05d91fe`) both report `CLEAN`; both sessions
+are closed.
+
+```text
+[Decision Log]
+- 목적과 의도: Admit complete direct Array forEach coverage without weakening broad feature gates or claiming the containing Array prototype directory.
+- 기존 구현 및 제약 조건: Ninety-four ordinarily executed files failed, one huge sparse file timed out, five feature-tagged paths were skipped, and the broader aggregate continues into independent join behavior.
+- 검토한 주요 대안: Remove TypedArray, resizable-buffer, Reflect, or arrow gates globally; admit the forEach directory by prefix; list only former failures; combine this with TypedArray forEach; or freeze the five metadata-bearing paths.
+- 선택한 방식: Keep broad gates, add one exact five-path feature map shared by both tools, compare old and repaired binaries on one fixed checkout, and run TypedArray forEach as a separate compatibility cohort.
+- 다른 대안 대신 이 방식을 선택한 이유: Global and prefix admission silently overclaim unrelated or future behavior, failure-only lists hide existing passes, and combining TypedArray obscures its distinct receiver semantics. Exact paths keep every policy transition reviewable.
+- 장점, 단점 및 영향: Direct forEach is 190/190 with 99 attributable runtime transitions, the sparse timeout is removed, future siblings remain gated, and TypedArray stays green. Updating Test262 requires an explicit metadata audit; methods-called-as-functions, join, and the complete Array prototype directory remain outside this unit.
+```
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is

@@ -1408,28 +1408,40 @@ pub(crate) fn array_for_each(
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    let cb = args.first().cloned().unwrap_or(Value::Undefined);
-    if let Some(Value::Object(idx)) = this {
-        let items = vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Array(a) = obj {
-                a.items.lock().clone()
-            } else {
-                Vec::new()
-            }
-        });
-        for (i, item) in items.iter().enumerate() {
-            vm.call_function(
-                &cb,
-                &[
-                    item.clone(),
-                    Value::Number(i as f64),
-                    this.clone().unwrap_or(Value::Undefined),
-                ],
-                args.get(1).cloned(),
-            )?;
+    let receiver = this.unwrap_or(Value::Undefined);
+    let mut pin_count = vm.pin(&receiver);
+    pin_count += vm.pin_many(args);
+    let result = (|| {
+        let object = array_method_to_object(vm, &receiver)?;
+        pin_count += vm.pin(&object);
+        let len = length_of_array_like_u64(vm, &object)?;
+        let callback = get_arg(args, 0);
+        if !is_callable(&callback, &vm.heap) {
+            return Err(Error::type_err("Array callback is not callable"));
         }
-    }
-    Ok(Value::Undefined)
+        let this_arg = get_arg(args, 1);
+
+        let mut index = 0u64;
+        while index < len {
+            vm.consume_fuel()?;
+            let key = index.to_string();
+            if vm.has_property(&object, &key)? {
+                let value = vm.get_property(&object, &key)?;
+                let value_pin = vm.pin(&value);
+                let callback_result = vm.call_function(
+                    &callback,
+                    &[value.clone(), Value::Number(index as f64), object.clone()],
+                    Some(this_arg.clone()),
+                );
+                vm.unpin(value_pin);
+                callback_result?;
+            }
+            index += 1;
+        }
+        Ok(Value::Undefined)
+    })();
+    vm.unpin_many(pin_count);
+    result
 }
 /// Resolve a `fromIndex`-style argument (ToInteger, default 0) to a starting
 /// position clamped into `[0, len]`. Negative wraps from the end.

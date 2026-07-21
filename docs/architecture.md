@@ -1410,6 +1410,34 @@ work. Acyclic nesting has no fixed depth cutoff.
 - 장점, 단점 및 영향: Direct flat and flatMap Test262 are 43/43, cyclic Infinity inputs terminate by fuel or RangeError, and all abrupt paths restore pin depth. Frame storage and retained roots grow linearly with active acyclic nesting depth; a cycle that would mutate only after more than 512 replays is intentionally terminated by the sandbox guard. Reverse, forEach, map, reduce, and other independent Array methods remain separate conformance units.
 ```
 
+## Generic Array forEach
+
+`Array.prototype.forEach` now boxes its receiver, snapshots
+`LengthOfArrayLike` once, validates the callback after that observable length
+read, and scans the captured index range with live `HasProperty` and `Get`
+operations. A callback therefore observes inherited values and mutations to
+unvisited indices, skips deleted indices, and never visits indices added beyond
+the captured length. The callback receives `(value, index, object)` with the
+supplied `thisArg`; its result is discarded.
+
+The receiver and argument slice are pinned before boxing or length access, and
+the boxed object plus each fetched value remain pinned across Proxy traps,
+getters, and callback execution. A single outer cleanup restores all persistent
+pins on normal or abrupt completion, while each temporary value pin is released
+immediately after its callback. One fuel unit is charged per logical index,
+including holes, so huge sparse array-like inputs remain bounded by the
+embedder's cooperative budget.
+
+```text
+[Decision Log]
+- 목적과 의도: Replace represented-Array snapshot iteration with specification-shaped generic, live, GC-safe, and fuel-bounded forEach traversal.
+- 기존 구현 및 제약 조건: The old method accepted only represented Arrays, cloned dense storage, invoked callbacks for holes, ignored inheritance and Proxy operations, observed no later mutation, accepted invalid detached receivers, and had no explicit fuel or pin discipline.
+- 검토한 주요 대안: Patch only detached calls, retain a dense Array fast path, share filter through a discarded result, precompute present values, or implement the direct indexed traversal.
+- 선택한 방식: Perform ToObject, one LengthOfArrayLike snapshot, callback validation, then live HasProperty/Get/callback work while pinning all native-frame roots and charging every logical index.
+- 다른 대안 대신 이 방식을 선택한 이유: Snapshot and fast paths change observable holes, inheritance, mutation, and Proxy order; reusing filter would incorrectly allocate and consult species. The direct loop mirrors the specification and existing generic Array runtime contracts.
+- 장점, 단점 및 영향: Direct Array forEach is 190/190 and adjacent TypedArray forEach remains 42/42 on the fixed corpus; callback and fuel failures restore pin depth. Sparse scans remain linear in captured length as required, but configured fuel bounds their sandbox cost. Join, map, reduce, and other independent snapshot methods remain separate units.
+```
+
 ---
 
 **Next:** [Features](features.md) · [Known limitations](limitations.md) · [Back to README](../README.md)

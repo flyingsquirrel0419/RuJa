@@ -1,0 +1,6 @@
+# Exact feature-gated Array.prototype.forEach coverage.
+built-ins/Array/prototype/forEach/callbackfn-resize-arraybuffer.js
+built-ins/Array/prototype/forEach/not-a-constructor.js
+built-ins/Array/prototype/forEach/resizable-buffer-grow-mid-iteration.js
+built-ins/Array/prototype/forEach/resizable-buffer-shrink-mid-iteration.js
+built-ins/Array/prototype/forEach/resizable-buffer.js

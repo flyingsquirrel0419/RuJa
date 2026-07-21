@@ -345,6 +345,14 @@ fn array_callback_builtins_restore_gc_pin_depth_after_abrupt_completion() {
         "#,
         r#"
         var error = {};
+        var expected = {};
+        Array.prototype.forEach.call({ 0: expected, 1: {}, length: 2 }, function(value) {
+          forceGc();
+          if (value === this.expected) throw error;
+        }, { expected: expected });
+        "#,
+        r#"
+        var error = {};
         function C() {
           return new Proxy({}, {
             defineProperty: function(target, key, descriptor) {
@@ -873,6 +881,7 @@ fn generic_array_method_loops_restore_pin_depth_after_fuel_abort() {
         "Array.prototype.slice.call(source);",
         "Array.prototype.flat.call(source);",
         "Array.prototype.flatMap.call(source, function(value) { return [value]; });",
+        "Array.prototype.forEach.call(source, function() {});",
         "Array.prototype.with.call(source, 0, replacement);",
         "Array.prototype.splice.call(source, 0, 0, replacement);",
     ] {
@@ -1387,6 +1396,156 @@ fn array_filter_consumes_exact_per_index_fuel() {
     vm.set_fuel(None);
     vm.unpin(callback_pin);
     vm.unpin(source_pin);
+}
+
+#[test]
+fn array_for_each_consumes_exact_per_index_fuel() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn("visit", |_, _, _| Ok(Value::Undefined), 3)
+        .expect("native callback should register");
+    let callback = vm.run("visit").expect("callback should be readable");
+    let source = vm
+        .run("Object.assign(Object.create(null), { 0: 1, 2: 3, length: 3 })")
+        .expect("forEach source should initialize");
+    let source_pin = vm.pin(&source);
+    let callback_pin = vm.pin(&callback);
+    let baseline = vm.gc_pins.len();
+
+    vm.set_fuel(Some(2));
+    let error = crate::builtins::array_for_each(
+        &mut vm,
+        std::slice::from_ref(&callback),
+        Some(source.clone()),
+    )
+    .expect_err("N-1 fuel must abort the logical forEach scan");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    vm.set_fuel(Some(3));
+    let result =
+        crate::builtins::array_for_each(&mut vm, std::slice::from_ref(&callback), Some(source))
+            .expect("exact logical-index fuel should complete forEach");
+    assert_eq!(result, Value::Undefined);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+    vm.set_fuel(None);
+
+    let empty = vm
+        .run("({ length: 0 })")
+        .expect("empty source should initialize");
+    vm.set_fuel(Some(0));
+    crate::builtins::array_for_each(&mut vm, &[callback], Some(empty))
+        .expect("empty forEach should consume no loop fuel");
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+    vm.set_fuel(None);
+    vm.unpin(callback_pin);
+    vm.unpin(source_pin);
+}
+
+#[test]
+fn array_for_each_roots_observable_state_and_restores_pin_depth() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("GC test hook should register");
+    let baseline = vm.gc_pins.len();
+    let result = vm.run(
+        r#"
+        (function () {
+          var value = { marker: 41 };
+          var context = { marker: 7 };
+          var target = { 0: value };
+          Object.defineProperty(target, "length", {
+            get: function () { forceGc(); return 1; }
+          });
+          var source = new Proxy(target, {
+            has: function (object, key) {
+              forceGc();
+              return Reflect.has(object, key);
+            },
+            get: function (object, key, receiver) {
+              forceGc();
+              return Reflect.get(object, key, receiver);
+            }
+          });
+          var observed = false;
+          Array.prototype.forEach.call(source, function (selected, index, receiver) {
+            target[0] = null;
+            source = null;
+            value = null;
+            context = null;
+            forceGc();
+            observed = selected.marker === 41 && index === 0 &&
+                       receiver.length === 1 && this.marker === 7;
+          }, context);
+          forceGc();
+          return observed;
+        })();
+        "#,
+    );
+    assert_eq!(
+        result.expect("forEach native-frame roots should survive observable GC"),
+        Value::Bool(true)
+    );
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    for source in [
+        r#"
+        var error = {};
+        Array.prototype.forEach.call(new Proxy({}, {
+          get: function () { forceGc(); throw error; }
+        }), function () {});
+        "#,
+        r#"
+        var error = {};
+        Array.prototype.forEach.call(new Proxy({ length: 1 }, {
+          has: function () { forceGc(); throw error; }
+        }), function () {});
+        "#,
+        r#"
+        var error = {};
+        Array.prototype.forEach.call(new Proxy({ 0: 1, length: 1 }, {
+          get: function (target, key, receiver) {
+            if (key === "0") { forceGc(); throw error; }
+            return Reflect.get(target, key, receiver);
+          }
+        }), function () {});
+        "#,
+        r#"
+        var error = {};
+        Array.prototype.forEach.call({ 0: 1, length: 1 }, function () {
+          forceGc();
+          throw error;
+        });
+        "#,
+    ] {
+        let mut vm = Vm::new().expect("VM should initialize");
+        vm.register_fn(
+            "forceGc",
+            |vm, _, _| {
+                vm.gc();
+                Ok(Value::Undefined)
+            },
+            0,
+        )
+        .expect("GC test hook should register");
+        let baseline = vm.gc_pins.len();
+        vm.run(source)
+            .expect_err("the observable forEach step should complete abruptly");
+        assert_eq!(vm.gc_pins.len(), baseline);
+        assert_eq!(
+            vm.run("1 + 1").expect("VM should remain reusable"),
+            Value::Number(2.0)
+        );
+    }
 }
 
 #[test]

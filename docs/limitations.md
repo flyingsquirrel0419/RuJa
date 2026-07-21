@@ -74,17 +74,18 @@ The following resource limits are enforced:
   cannot create, is rejected as soon as a directed edge repeats.
 - **Remaining Array generic-method gap**: `%Array.prototype%` is a real
   `ArrayData` exotic, and `push`, `pop`, `shift`, `unshift`, `splice`, `slice`,
-  `concat`, `copyWithin`, `fill`, `filter`, `flat`, `flatMap`, and `with` now
+  `concat`, `copyWithin`, `fill`, `filter`, `flat`, `flatMap`, `forEach`, and
+  `with` now
   use generic internal property operations and logical lengths. Slice, Splice,
   Concat, and Filter implement `ArraySpeciesCreate`; Concat also implements
   `Symbol.isConcatSpreadable`. Flat and FlatMap share an iterative,
   fuel-metered `FlattenIntoArray`, while
   CopyWithin, Fill, and With intentionally do not consult species. Older
-  implementations such as `reverse` still contain represented-Array shortcuts
+  implementations such as `join` and `reverse` still contain represented-Array shortcuts
   and need separate generic-receiver, observable-order, sparse, fuel, and
   rooting audits. The direct Test262 `methods-called-as-functions.js` aggregate
   remains outside exact admission because its next failure is the unrelated
-  detached-receiver behavior of `forEach`.
+  detached-receiver behavior of `join`.
   Infinite-depth flattening permits 512 repeated active-path source visits so
   observable getters can break a cycle, then raises `RangeError`; finite and
   acyclic nesting has no fixed depth cutoff.
@@ -360,14 +361,14 @@ guarantees are required.
   native temporary-root, collected-list, and merge-buffer storage is bounded
   by the same limit but still uses infallible Rust vector allocation.
 - Older snapshot-based methods still need separate observable-semantics and
-  rooting passes: `join`, `reduce`, `reduceRight`, `forEach`, and
-  `toSpliced`. A callback or coercion can remove the original source edge and
+  rooting passes: `join`, `reduce`, `reduceRight`, and `toSpliced`. A callback
+  or coercion can remove the original source edge and
   force host GC while a future value exists only in a Rust snapshot. Several
   also require live property access rather than merely pinning the current
   snapshot, so they remain independent algorithm units. Push, Pop, Shift,
-  Unshift, Splice, Slice, Concat, Flat, FlatMap, and With now use live generic indexed
-  operations with operation-wide roots; the remaining method-specific gaps
-  are tracked above.
+  Unshift, Splice, Slice, Concat, Flat, FlatMap, ForEach, and With now use live
+  generic indexed operations with operation-wide roots; the remaining
+  method-specific gaps are tracked above.
 - Private methods are stored per-instance as private fields (each instance
   gets its own closure copy); behavior is spec-correct, but this is more
   memory-heavy than a shared per-class method table would be

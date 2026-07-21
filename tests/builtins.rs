@@ -4605,6 +4605,98 @@ fn array_filter_is_generic_species_aware_live_and_realm_aware() {
 }
 
 #[test]
+fn array_for_each_is_generic_ordered_live_and_realm_aware() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            var target = Object.create({ 1: "inherited" });
+            target.length = 4;
+            target[0] = "a";
+            target[2] = "c";
+            target[3] = "d";
+            var source = new Proxy(target, {
+              get: function(object, key, receiver) {
+                log.push("get:" + String(key));
+                return Reflect.get(object, key, receiver);
+              },
+              has: function(object, key) {
+                log.push("has:" + String(key));
+                return Reflect.has(object, key);
+              }
+            });
+            var thisArg = { marker: 41 };
+            var returned = Array.prototype.forEach.call(
+              source,
+              function(value, index, object) {
+                log.push(
+                  "callback:" + index + ":" + value + ":" +
+                  (this === thisArg) + ":" + (object === source)
+                );
+                if (index === 0) {
+                  delete target[2];
+                  target[3] = "d2";
+                  target[4] = "late";
+                }
+                return { ignored: true };
+              },
+              thisArg
+            );
+
+            var validationLog = [];
+            var invalid = {};
+            Object.defineProperty(invalid, "length", {
+              get: function() { validationLog.push("length"); return 0; }
+            });
+            var validationError;
+            try { Array.prototype.forEach.call(invalid, null); }
+            catch (error) {
+              validationLog.push("callback");
+              validationError = error instanceof TypeError;
+            }
+
+            var stringSeen = [];
+            Array.prototype.forEach.call("ab", function(value, index, object) {
+              stringSeen.push(value + ":" + index + ":" +
+                              (Object.getPrototypeOf(object) === String.prototype));
+            });
+            var booleanCalls = 0;
+            Array.prototype.forEach.call(false, function() { booleanCalls += 1; });
+
+            var nullish = 0;
+            try { Array.prototype.forEach.call(null, function() {}); }
+            catch (error) { nullish += error instanceof TypeError; }
+            try { Array.prototype.forEach.call(undefined, function() {}); }
+            catch (error) { nullish += error instanceof TypeError; }
+
+            var other = $262.createRealm().global;
+            var foreignError;
+            try { other.Array.prototype.forEach.call([], null); }
+            catch (error) {
+              foreignError = Object.getPrototypeOf(error) === other.TypeError.prototype;
+            }
+
+            [
+              returned === undefined,
+              log.join("|") === [
+                "get:length",
+                "has:0", "get:0", "callback:0:a:true:true",
+                "has:1", "get:1", "callback:1:inherited:true:true",
+                "has:2",
+                "has:3", "get:3", "callback:3:d2:true:true"
+              ].join("|"),
+              validationLog.join(",") === "length,callback",
+              validationError,
+              stringSeen.join(",") === "a:0:true,b:1:true",
+              booleanCalls === 0,
+              nullish === 2,
+              foreignError
+            ].join("|");
+        "#),
+        Value::String(Arc::from("true|true|true|true|true|true|true|true"))
+    );
+}
+
+#[test]
 fn array_reverse() {
     assert_eq!(
         run("[1,2,3].reverse().join(',');"),
@@ -7379,6 +7471,34 @@ fn typed_array_for_each_ignores_results_and_visits_snapshot_length() {
             [result === undefined, seen.join(",")].join("|");
             "#),
         Value::String(Arc::from("true|1:0:true,undefined:1:true,undefined:2:true"))
+    );
+}
+
+#[test]
+fn array_for_each_on_resizable_typed_arrays_uses_generic_presence() {
+    assert_eq!(
+        run(r#"
+            var growBuffer = new ArrayBuffer(3, { maxByteLength: 6 });
+            var growing = new Int8Array(growBuffer);
+            growing.set([1, 2, 3]);
+            var growSeen = [];
+            Array.prototype.forEach.call(growing, function(value, index) {
+              growSeen.push(value);
+              if (index === 0) growBuffer.resize(6);
+            });
+
+            var shrinkBuffer = new ArrayBuffer(3, { maxByteLength: 6 });
+            var shrinking = new Int8Array(shrinkBuffer);
+            shrinking.set([1, 2, 3]);
+            var shrinkSeen = [];
+            Array.prototype.forEach.call(shrinking, function(value, index) {
+              shrinkSeen.push(value);
+              if (index === 0) shrinkBuffer.resize(1);
+            });
+
+            [growSeen.join(","), shrinkSeen.join(",")].join("|");
+            "#),
+        Value::String(Arc::from("1,2,3|1"))
     );
 }
 

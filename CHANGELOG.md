@@ -11,6 +11,37 @@
 
 ### Fixed
 
+- `Array.prototype.forEach` now follows the generic ECMAScript algorithm
+  instead of iterating a copied represented-Array backing vector. It performs
+  `ToObject`, one `LengthOfArrayLike` snapshot, callback validation, and live
+  `HasProperty`/`Get` operations in specification order. Generic and primitive
+  receivers, holes, inherited indices, Proxy traps, callback mutation,
+  `thisArg`, callback arguments, abrupt completion, and method-Realm errors are
+  therefore observable correctly.
+
+  The receiver, callback arguments, boxed object, and current value remain GC
+  roots across property operations and callback execution. Every logical
+  index, including a hole, consumes one fuel unit, and every normal, callback,
+  property, or fuel exit restores the incoming pin depth.
+
+  Exact admission freezes only the five direct forEach files hidden by broad
+  feature gates. On fixed Test262 checkout
+  `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the preceding binary under the
+  final policy is **91 pass / 98 fail / 0 skip / 1 timeout**; the repaired
+  runtime is **190 pass / 0 fail / 0 skip / 0 timeout**. Adjacent
+  `%TypedArray%.prototype.forEach` remains **42/42**. The broader detached
+  method diagnostic now clears forEach and reaches the independent generic
+  `join` gap.
+
+  Local verification passes all targets and features with **195/195** library
+  tests, **526/526** builtins tests, and **15/15** arguments tests, plus
+  **194/194** release library tests, **125/125** Python tooling tests, **1/1**
+  doctest, rustfmt, warnings-denied Clippy, release build, generated
+  documentation, and wasm32 checking. GPT-5.6 runtime reviewer McClintock
+  (`019f83a7-5428-7442-b062-92f1b5a9c781`) and admission reviewer Raman
+  (`019f83a7-55e4-7680-944c-4114e05d91fe`) report `CLEAN` after the stale
+  limitations entry was corrected; both sessions are closed.
+
 - `Array.prototype.flat` and `flatMap` now share a generic, species-aware
   `FlattenIntoArray` implementation instead of copying represented-Array
   backing vectors. Both methods box receivers, snapshot `LengthOfArrayLike`,
