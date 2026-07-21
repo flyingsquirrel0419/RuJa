@@ -9600,9 +9600,9 @@ fail-to-pass transitions with no reverse transition. Adjacent
 The broader `built-ins/Array/prototype/methods-called-as-functions.js`
 diagnostic passes when forced through its broad `Symbol` feature gates. It
 remains skipped by normal policy and outside exact admission because its single
-file spans otherwise independent Array method families. The next tracked
-represented-Array shortcut is `Array.prototype.toReversed`, which is an
-independent copy-by-value algorithm rather than an in-place mutation.
+file spans otherwise independent Array method families. The following section
+tracks `Array.prototype.toReversed` as an independent copy-by-value algorithm
+rather than an in-place mutation.
 
 Local verification passes all targets/features with **204/204** library
 tests, **532/532** builtins tests, and **15/15** arguments tests, plus
@@ -9628,6 +9628,53 @@ byte-identical. The downloaded release binary again reports Array reverse
 - 선택한 방식: Keep broad gates, add one exact two-path feature map shared by both tools, compare old and repaired binaries on one fixed checkout, and run TypedArray reverse as a separate compatibility cohort.
 - 다른 대안 대신 이 방식을 선택한 이유: Global and prefix admission silently overclaim unrelated or future behavior, failure-only lists hide existing passes, and combining TypedArray or toReversed obscures distinct integer-indexed or copy-by-value semantics. Exact paths keep every policy transition reviewable.
 - 장점, 단점 및 영향: Direct reverse is 18/18 with 10 attributable runtime transitions, future siblings remain gated, TypedArray stays green, and the forced-gate detached-method diagnostic closes. Updating Test262 requires an explicit metadata audit; the diagnostic's broad Symbol gates, toReversed, and the complete Array prototype directory remain outside this unit.
+```
+
+## Generic Array toReversed
+
+`tools/test262_array_to_reversed_admission.txt` freezes exactly the direct
+`Array.prototype.toReversed/not-a-constructor.js` file otherwise hidden by the
+broad `Reflect.construct` gate. Its exact feature map is shared by runner and
+analyzer. Tooling checks map/manifest equality, live features and includes,
+empty flags, absent negative metadata, disjointness, runner/analyzer symmetry,
+extra-feature rejection, and closure against future or outside siblings.
+
+On fixed checkout `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the preceding
+binary under the preceding policy is **8 pass / 8 fail / 1 skip**. Applying the
+final exact policy to that binary produces **9 pass / 8 fail / 0 skip**. The
+repaired runtime under the preceding policy is **16 pass / 0 fail / 1 skip**,
+and under the final policy is **17/17**. This proves **8** attributable runtime
+fail-to-pass transitions with no reverse transition; the policy-only change
+admits one already-passing constructor-shape test. Adjacent
+`%TypedArray%.prototype.toReversed` remains **9/9**.
+
+Local verification passes all targets/features with **207/207** library
+tests, **533/533** builtins tests, and **15/15** arguments tests, plus
+**206/206** release library tests, **131/131** Python tooling tests, **1/1**
+doctest, rustfmt, warnings-denied Clippy, release build, generated
+documentation, and wasm32 checking. Rustdoc retains the 13 pre-existing broken
+intra-doc-link warnings. Runtime review is CLEAN after adding its suggested
+allocation-failure and GC-retry regression; admission review confirms exact
+metadata and policy isolation.
+
+CI `29845649747` and full matrix `29845649723` pass all jobs. Downloaded
+artifacts aggregate to **31850 pass / 5143 fail / 11471 skip / 3 timeout / 0
+error / 48467 total / 36993 run**. Against reverse run `29833297271`, this is
+exactly **+9 pass / -8 fail / -1 skip**. The built-ins shard moves from
+**16231/4340/3094/3/0** to **16240/4332/3093/3/0**; every other result file is
+byte-identical. The downloaded release binary again reports Array toReversed
+**17/17** and TypedArray toReversed **9/9**. The next tracked represented-Array
+shortcut is `Array.prototype.toSpliced`, currently **17 pass / 12 fail / 1
+skip** on the same fixed checkout.
+
+```text
+[Decision Log]
+- 목적과 의도: Complete generic Array toReversed semantics and admit its full direct Test262 cohort without weakening shared feature gates.
+- 기존 구현 및 제약 조건: The old method only reversed represented-Array backing storage, returned an empty Array for other objects, returned undefined for primitives, preserved holes incorrectly, and hid one constructor-shape test behind a broad Reflect gate.
+- 검토한 주요 대안: Keep a represented-Array fast path plus generic fallback; snapshot values before allocation; use ArraySpeciesCreate; remove the Reflect gate globally; admit the whole directory by prefix; or combine this unit with toSpliced.
+- 선택한 방식: Use one generic live descending Get loop, create a method-Realm intrinsic Array before indexed access, define every result index, root all observable state, meter loop and property work, and admit exactly one frozen metadata-bearing path.
+- 다른 대안 대신 이 방식을 선택한 이유: One path avoids semantic drift between arrays and array-likes; snapshots break live getter ordering and GC ownership; species is forbidden by the algorithm; global or prefix admission overclaims unrelated and future behavior; and toSpliced has independent argument-coercion and copy-range semantics.
+- 장점, 단점 및 영향: Direct toReversed is 17/17 with eight runtime fail-to-pass transitions, holes become dense undefined values, foreign Realms and allocation retries are covered, future siblings remain gated, and TypedArray stays green. The loop may still traverse up to the Array length limit under embedder fuel control, and updating Test262 requires an explicit metadata audit.
 ```
 
 ## Why the full-suite rate is not higher

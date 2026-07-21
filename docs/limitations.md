@@ -75,16 +75,15 @@ The following resource limits are enforced:
 - **Remaining Array generic-method gap**: `%Array.prototype%` is a real
   `ArrayData` exotic, and `push`, `pop`, `shift`, `unshift`, `splice`, `slice`,
   `concat`, `copyWithin`, `fill`, `filter`, `flat`, `flatMap`, `forEach`,
-  `join`, `map`, `reduce`, `reduceRight`, `reverse`, and `with` now
+  `join`, `map`, `reduce`, `reduceRight`, `reverse`, `toReversed`, and `with` now
   use generic internal property operations and logical lengths. Slice, Splice,
   Concat, and Filter implement `ArraySpeciesCreate`; Concat also implements
   `Symbol.isConcatSpreadable`. Flat and FlatMap share an iterative,
   fuel-metered `FlattenIntoArray`, while
-  CopyWithin, Fill, and With intentionally do not consult species. Older
-  copy-by-value implementations such as `toReversed` and `toSpliced` still
-  contain represented-Array shortcuts
-  and need separate generic-receiver, observable-order, sparse, fuel, and
-  rooting audits. The direct Test262 `methods-called-as-functions.js` aggregate
+  CopyWithin, Fill, ToReversed, and With intentionally do not consult species.
+  `toSpliced` still contains a represented-Array shortcut and needs a separate
+  generic-receiver, observable-order, sparse, fuel, and rooting audit. The
+  direct Test262 `methods-called-as-functions.js` aggregate
   passes when forced through broad feature gates, but remains skipped by normal
   policy and outside exact admission because it spans otherwise independent
   Array method families.
@@ -368,14 +367,13 @@ guarantees are required.
   intentionally stricter than ECMAScript for very large sparse receivers;
   native temporary-root, collected-list, and merge-buffer storage is bounded
   by the same limit but still uses infallible Rust vector allocation.
-- Older snapshot-based methods still need separate observable-semantics and
-  rooting passes: `toReversed` and `toSpliced`. A callback
-  or coercion can remove the original source edge and
-  force host GC while a future value exists only in a Rust snapshot. Several
-  also require live property access rather than merely pinning the current
-  snapshot, so they remain independent algorithm units. Push, Pop, Shift,
+- The remaining older snapshot-based Array method is `toSpliced`; it still
+  needs a separate observable-semantics and rooting pass. A coercion can remove
+  the original source edge and force host GC while a future value exists only
+  in a Rust snapshot. It also requires live property access rather than merely
+  pinning the current snapshot. Push, Pop, Shift,
   Unshift, Splice, Slice, Concat, Flat, FlatMap, ForEach, Join, Map, Reduce,
-  ReduceRight, Reverse, and With now use
+  ReduceRight, Reverse, ToReversed, and With now use
   live generic indexed operations with operation-wide roots; the remaining
   method-specific gaps are tracked above.
 - Private methods are stored per-instance as private fields (each instance

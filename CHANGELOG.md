@@ -11,6 +11,39 @@
 
 ### Fixed
 
+- `Array.prototype.toReversed` now follows the generic ECMAScript
+  change-array-by-copy algorithm instead of reversing represented-Array
+  storage. It performs `ToObject`, captures `LengthOfArrayLike` once, creates a
+  fresh intrinsic Array in the method Realm without reading `constructor` or
+  `Symbol.species`, then performs live descending `Get` operations. Holes and
+  missing inherited indices become own `undefined` data properties, source
+  mutation by getters is observed by later reads, and the source itself is not
+  mutated by the method. Primitive receivers, abrupt completions, the
+  `2^32 - 1` Array length boundary, and method-Realm results and errors are
+  handled in specification order.
+
+  Receiver, boxed source, fresh result, and current values remain rooted across
+  allocation, Proxy traps, property definition, and forced GC. Result
+  allocation retries after collecting garbage, an exact-cap failure happens
+  before indexed access, and every copied index consumes one loop plus one
+  property-definition fuel unit. Exact admission freezes only the direct
+  `not-a-constructor.js` path hidden by the broad `Reflect.construct` gate. On
+  fixed Test262 checkout `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the
+  preceding policy and binary are **8 pass / 8 fail / 1 skip**; applying the
+  final policy to that binary is **9/8/0**; the repaired runtime under the
+  preceding policy is **16/0/1**; and the final cohort is **17/17**. Adjacent
+  `%TypedArray%.prototype.toReversed` remains **9/9**. Local verification
+  passes all targets/features with **207/207** library tests, **533/533**
+  builtins tests, and **15/15** arguments tests, plus **206/206** release
+  library tests, **131/131** Python tooling tests, **1/1** doctest, rustfmt,
+  warnings-denied Clippy, release build, generated documentation, and wasm32
+  checking. Feature commit `0e90184` passes CI `29845649747` and full matrix
+  `29845649723`. Downloaded artifacts aggregate to **31850 pass / 5143 fail /
+  11471 skip / 3 timeout / 0 error / 48467 total / 36993 run**; only the
+  built-ins result changes from the preceding matrix, by exactly **+9 pass /
+  -8 fail / -1 skip**. The downloaded release binary independently reproduces
+  Array toReversed **17/17** and TypedArray toReversed **9/9**.
+
 - `Array.prototype.reverse` now follows the generic in-place ECMAScript
   algorithm instead of directly reversing represented-Array storage. It
   performs `ToObject`, one `LengthOfArrayLike` snapshot, and ordered lower/
