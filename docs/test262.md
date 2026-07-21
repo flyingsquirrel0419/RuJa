@@ -9467,6 +9467,14 @@ tests, **529/529** builtins tests, and **15/15** arguments tests, plus
 doctest, rustfmt, warnings-denied Clippy, release build, generated
 documentation, and wasm32 checking.
 
+CI `29821941785` and full matrix `29821941873` pass all jobs. Downloaded
+artifacts aggregate to **31493 pass / 5487 fail / 11484 skip / 3 timeout / 0
+error / 48467 total / 36980 run**. Against join run `29817687917`, this is
+exactly **+121 pass / -111 fail / -9 skip / -1 timeout**. The built-ins shard
+moves from **15762/4787/3115/4/0** to **15883/4676/3106/3/0**; every other
+result file is byte-identical. The downloaded release binary again reports
+Array map **216/216** and TypedArray map **85/85**.
+
 ```text
 [Decision Log]
 - 목적과 의도: Admit complete direct Array map coverage without weakening broad feature gates or claiming the containing Array prototype directory.

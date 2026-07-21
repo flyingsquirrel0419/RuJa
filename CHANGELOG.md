@@ -39,6 +39,13 @@
   doctest, rustfmt, warnings-denied Clippy, release build, generated
   documentation, and wasm32 checking.
 
+  CI `29821941785` and full Test262 `29821941873` pass. Downloaded full-run
+  artifacts aggregate to **31493 pass / 5487 fail / 11484 skip / 3 timeout /
+  0 error / 48467 total / 36980 run**, exactly **+121 pass / -111 fail / -9
+  skip / -1 timeout** from the preceding join run. Only the `built-ins` shard
+  changes; all other 29 result files are byte-identical. The downloaded binary
+  independently reproduces Array map **216/216** and TypedArray map **85/85**.
+
 - `Array.prototype.join` now follows the generic ECMAScript algorithm instead
   of joining a copied represented-Array backing vector. It performs
   `ToObject`, one `LengthOfArrayLike` snapshot, separator coercion, and live
