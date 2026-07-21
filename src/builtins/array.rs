@@ -1939,16 +1939,63 @@ pub(crate) fn array_reverse(
     _args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    if let Some(Value::Object(idx)) = this {
-        vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Array(a) = obj {
-                a.items.lock().reverse();
-                a.present.lock().reverse();
-            }
-        });
-        return Ok(Value::Object(idx));
-    }
-    Ok(Value::Undefined)
+    let receiver = this.unwrap_or(Value::Undefined);
+    let mut pin_count = vm.pin(&receiver);
+    let result = (|| {
+        let object = array_method_to_object(vm, &receiver)?;
+        pin_count += vm.pin(&object);
+        let len = length_of_array_like_u64(vm, &object)?;
+        let middle = len / 2;
+
+        for lower in 0..middle {
+            vm.consume_fuel()?;
+            let upper = len - lower - 1;
+            let lower_key = lower.to_string();
+            let upper_key = upper.to_string();
+            let mut pair_pins = 0;
+            let pair_result: error::Result<()> = (|| {
+                let lower_exists = vm.has_property(&object, &lower_key)?;
+                let lower_value = if lower_exists {
+                    let value = vm.get_property(&object, &lower_key)?;
+                    pair_pins += vm.pin(&value);
+                    Some(value)
+                } else {
+                    None
+                };
+
+                let upper_exists = vm.has_property(&object, &upper_key)?;
+                let upper_value = if upper_exists {
+                    let value = vm.get_property(&object, &upper_key)?;
+                    pair_pins += vm.pin(&value);
+                    Some(value)
+                } else {
+                    None
+                };
+
+                match (lower_value, upper_value) {
+                    (Some(lower_value), Some(upper_value)) => {
+                        vm.set_property_strict(&object, &lower_key, upper_value)?;
+                        vm.set_property_strict(&object, &upper_key, lower_value)?;
+                    }
+                    (None, Some(upper_value)) => {
+                        vm.set_property_strict(&object, &lower_key, upper_value)?;
+                        delete_property_or_throw(vm, &object, &upper_key)?;
+                    }
+                    (Some(lower_value), None) => {
+                        delete_property_or_throw(vm, &object, &lower_key)?;
+                        vm.set_property_strict(&object, &upper_key, lower_value)?;
+                    }
+                    (None, None) => {}
+                }
+                Ok(())
+            })();
+            vm.unpin_many(pair_pins);
+            pair_result?;
+        }
+        Ok(object)
+    })();
+    vm.unpin_many(pin_count);
+    result
 }
 
 pub(crate) fn array_sort(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {

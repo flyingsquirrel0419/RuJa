@@ -1,0 +1,3 @@
+# Exact feature-gated Array.prototype.reverse coverage.
+built-ins/Array/prototype/reverse/not-a-constructor.js
+built-ins/Array/prototype/reverse/resizable-buffer.js

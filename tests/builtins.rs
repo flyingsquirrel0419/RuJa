@@ -5105,6 +5105,64 @@ fn array_reverse() {
 }
 
 #[test]
+fn array_reverse_is_generic_sparse_ordered_and_realm_aware() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            var target = { 0: "a", 2: "c", 4: "e", 5: "f", length: 6 };
+            var source = new Proxy(target, {
+              has: function(object, key) {
+                log.push("has:" + key);
+                return Reflect.has(object, key);
+              },
+              get: function(object, key, receiver) {
+                log.push("get:" + key);
+                return Reflect.get(object, key, receiver);
+              },
+              set: function(object, key, value) {
+                log.push("set:" + key + ":" + value);
+                return Reflect.set(object, key, value);
+              },
+              deleteProperty: function(object, key) {
+                log.push("delete:" + key);
+                return Reflect.deleteProperty(object, key);
+              }
+            });
+            var result = Array.prototype.reverse.call(source);
+
+            var booleanResult = Array.prototype.reverse.call(false);
+            var stringError = false;
+            try { Array.prototype.reverse.call("ab"); }
+            catch (error) { stringError = error instanceof TypeError; }
+
+            var other = $262.createRealm().global;
+            var foreignError = false;
+            try { other.Array.prototype.reverse.call(null); }
+            catch (error) {
+              foreignError = Object.getPrototypeOf(error) === other.TypeError.prototype;
+            }
+
+            [
+              result === source,
+              target[0] === "f" && target[1] === "e" && !(2 in target) &&
+                target[3] === "c" && !(4 in target) && target[5] === "a" &&
+                target.length === 6,
+              log.join(",") === [
+                "get:length",
+                "has:0", "get:0", "has:5", "get:5", "set:0:f", "set:5:a",
+                "has:1", "has:4", "get:4", "set:1:e", "delete:4",
+                "has:2", "get:2", "has:3", "delete:2", "set:3:c"
+              ].join(","),
+              Object.prototype.toString.call(booleanResult) === "[object Boolean]",
+              stringError,
+              foreignError
+            ].join("|");
+        "#),
+        Value::String(Arc::from("true|true|true|true|true|true"))
+    );
+}
+
+#[test]
 fn string_methods() {
     assert_eq!(
         run("'hello'.toUpperCase();"),

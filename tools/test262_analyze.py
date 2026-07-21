@@ -108,6 +108,9 @@ try:
     from test262_array_reduce_right_admission import (
         ARRAY_REDUCE_RIGHT_FEATURES, ARRAY_REDUCE_RIGHT_FILES,
     )
+    from test262_array_reverse_admission import (
+        ARRAY_REVERSE_FEATURES, ARRAY_REVERSE_FILES,
+    )
     from test262_array_join_admission import ARRAY_JOIN_FEATURES, ARRAY_JOIN_FILES
     from test262_array_flat_admission import (
         ARRAY_FLAT_FEATURES, ARRAY_FLAT_FILES,
@@ -241,6 +244,9 @@ except ModuleNotFoundError:
     )
     from tools.test262_array_reduce_right_admission import (
         ARRAY_REDUCE_RIGHT_FEATURES, ARRAY_REDUCE_RIGHT_FILES,
+    )
+    from tools.test262_array_reverse_admission import (
+        ARRAY_REVERSE_FEATURES, ARRAY_REVERSE_FILES,
     )
     from tools.test262_array_join_admission import ARRAY_JOIN_FEATURES, ARRAY_JOIN_FILES
     from tools.test262_array_flat_admission import (
@@ -2600,6 +2606,24 @@ def array_reduce_right_features(path):
         return frozenset()
     return ARRAY_REDUCE_RIGHT_FEATURES.get(rel.as_posix(), frozenset())
 
+def array_reverse_path(path):
+    if path is None:
+        return False
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except (OSError, ValueError, TypeError):
+        return False
+    return rel.as_posix() in ARRAY_REVERSE_FILES
+
+def array_reverse_features(path):
+    if path is None:
+        return frozenset()
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except (OSError, ValueError, TypeError):
+        return frozenset()
+    return ARRAY_REVERSE_FEATURES.get(rel.as_posix(), frozenset())
+
 def array_join_path(path):
     try:
         rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
@@ -3038,6 +3062,8 @@ def should_skip(meta, path=None):
         feats.difference_update(array_reduce_features(path))
     if path is not None and array_reduce_right_path(path):
         feats.difference_update(array_reduce_right_features(path))
+    if path is not None and array_reverse_path(path):
+        feats.difference_update(array_reverse_features(path))
     if path is not None and array_join_path(path):
         feats.difference_update(array_join_features(path))
     if path is not None and array_flat_path(path):

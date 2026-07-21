@@ -11,6 +11,34 @@
 
 ### Fixed
 
+- `Array.prototype.reverse` now follows the generic in-place ECMAScript
+  algorithm instead of directly reversing represented-Array storage. It
+  performs `ToObject`, one `LengthOfArrayLike` snapshot, and ordered lower/
+  upper `HasProperty` and conditional `Get` operations before applying the
+  specified `Set`/`Set`, `Set`/`Delete`, or `Delete`/`Set` mutation for each
+  pair. Generic and primitive receivers, holes, inherited properties, live
+  Proxy traps, strict mutation failures, partial abrupt effects, method-Realm
+  errors, and the original receiver return value are observable correctly.
+
+  Receiver and boxed object remain operation roots, while both fetched pair
+  values remain rooted across opposite-side traps and mutations. Pair-local
+  roots are released after every normal or abrupt pair, and every pair consumes
+  one cooperative fuel unit without imposing a source-length materialization
+  cap. Exact admission freezes only the two direct reverse files hidden by
+  broad feature gates. On fixed Test262 checkout
+  `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the preceding policy and binary
+  are **7 pass / 9 fail / 2 skip**; applying the final policy to that binary is
+  **8/10/0**; the repaired runtime under the preceding policy is **16/0/2**;
+  and the final cohort is **18/18**. Adjacent
+  `%TypedArray%.prototype.reverse` remains **22/22**, and the broader
+  forced-gate detached Array-method diagnostic now passes completely while the
+  file remains skipped by normal broad feature policy. Local verification
+  passes all targets/features with **204/204** library tests, **532/532**
+  builtins tests, and **15/15** arguments tests, plus **204/204** release
+  library tests, **130/130** Python tooling tests, **1/1** doctest, rustfmt,
+  warnings-denied Clippy, release build, generated documentation, and wasm32
+  checking.
+
 - `Array.prototype.reduceRight` now follows the generic ECMAScript algorithm
   instead of reducing a reversed copy of represented-Array storage. It performs
   `ToObject`, one `LengthOfArrayLike` snapshot, callback validation, live

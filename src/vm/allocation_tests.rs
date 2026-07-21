@@ -1764,6 +1764,129 @@ fn array_reduce_right_roots_accumulator_and_restores_pin_depth() {
 }
 
 #[test]
+fn array_reverse_consumes_exact_per_pair_fuel() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    let source = vm
+        .run("Object.assign(Object.create(null), { 0: 1, 3: 4, length: 4 })")
+        .expect("reverse source should initialize");
+    let source_pin = vm.pin(&source);
+    let baseline = vm.gc_pins.len();
+
+    vm.set_fuel(Some(1));
+    let error = crate::builtins::array_reverse(&mut vm, &[], Some(source.clone()))
+        .expect_err("N-1 pair fuel must abort reverse");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    vm.set_fuel(None);
+    let source = vm
+        .run("Object.assign(Object.create(null), { 0: 1, 3: 4, length: 4 })")
+        .expect("fresh reverse source should initialize");
+    vm.set_fuel(Some(2));
+    crate::builtins::array_reverse(&mut vm, &[], Some(source))
+        .expect("exact pair fuel should complete reverse");
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    for expression in [
+        "Object.assign(Object.create(null), { length: 0 })",
+        "Object.assign(Object.create(null), { 0: 1, length: 1 })",
+    ] {
+        vm.set_fuel(None);
+        let source = vm.run(expression).expect("short source should initialize");
+        vm.set_fuel(Some(0));
+        crate::builtins::array_reverse(&mut vm, &[], Some(source))
+            .expect("zero-pair reverse should consume no loop fuel");
+        assert_eq!(vm.fuel_remaining(), Some(0));
+        assert_eq!(vm.gc_pins.len(), baseline);
+    }
+    vm.set_fuel(None);
+    vm.unpin(source_pin);
+}
+
+#[test]
+fn array_reverse_roots_pair_values_and_restores_pin_depth() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("GC test hook should register");
+    let baseline = vm.gc_pins.len();
+
+    let result = vm
+        .run(
+            r#"
+            (function () {
+              var retained = { marker: 42 };
+              var target = { 0: retained, length: 2 };
+              var source = new Proxy(target, {
+                has: function (object, key) {
+                  if (key === "1") {
+                    delete object[0];
+                    retained = null;
+                    forceGc();
+                  }
+                  return Reflect.has(object, key);
+                }
+              });
+              Array.prototype.reverse.call(source);
+              return target[1].marker;
+            })();
+            "#,
+        )
+        .expect("lower value should survive the observable upper HasProperty");
+    assert_eq!(result, Value::Number(42.0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    let result = vm
+        .run(
+            r#"
+            (function () {
+              var retained = { marker: 43 };
+              var target = { 1: retained, length: 2 };
+              var source = new Proxy(target, {
+                set: function (object, key, value) {
+                  if (key === "0") {
+                    delete object[1];
+                    retained = null;
+                    forceGc();
+                  }
+                  return Reflect.set(object, key, value);
+                }
+              });
+              Array.prototype.reverse.call(source);
+              return target[0].marker;
+            })();
+            "#,
+        )
+        .expect("upper value should survive the observable lower Set");
+    assert_eq!(result, Value::Number(43.0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    for source in [
+        "Array.prototype.reverse.call(new Proxy({ length: 2 }, { has: function () { throw 'has'; } }));",
+        "Array.prototype.reverse.call(new Proxy({ 0: 1, length: 2 }, { get: function (target, key, receiver) { if (key === '0') throw 'get'; return Reflect.get(target, key, receiver); } }));",
+        "Array.prototype.reverse.call(new Proxy({ 0: 1, 1: 2, length: 2 }, { set: function () { throw 'set'; } }));",
+        "Array.prototype.reverse.call(new Proxy({ 1: 2, length: 2 }, { deleteProperty: function () { return false; } }));",
+        "Array.prototype.reverse.call(null);",
+    ] {
+        vm.run(source)
+            .expect_err("the observable reverse step should complete abruptly");
+        assert_eq!(vm.gc_pins.len(), baseline);
+        assert_eq!(
+            vm.run("1 + 1").expect("VM should remain reusable"),
+            Value::Number(2.0)
+        );
+    }
+}
+
+#[test]
 fn array_for_each_consumes_exact_per_index_fuel() {
     let mut vm = Vm::new().expect("VM should initialize");
     vm.register_fn("visit", |_, _, _| Ok(Value::Undefined), 3)

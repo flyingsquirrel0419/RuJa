@@ -9579,6 +9579,48 @@ byte-identical. The downloaded release binary again reports Array reduceRight
 - 장점, 단점 및 영향: Direct reduceRight is 260/260 with 165 attributable runtime transitions, future siblings remain gated, and TypedArray stays green. Updating Test262 requires an explicit metadata audit; methods-called-as-functions, reverse, and the complete Array prototype directory remain outside this unit.
 ```
 
+## Generic Array reverse
+
+`tools/test262_array_reverse_admission.txt` freezes exactly **2** direct
+`Array.prototype.reverse` files otherwise hidden by resizable-buffer,
+`Reflect.construct`, or arrow-function gates. Its exact feature map is shared
+by runner and analyzer. Tooling checks map/manifest equality, live features and
+includes, empty flags, absent negative metadata, disjointness,
+runner/analyzer symmetry, extra-feature rejection, and closure against future
+siblings.
+
+On fixed checkout `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the preceding
+binary under the preceding policy is **7 pass / 9 fail / 2 skip**. Applying the
+final exact policy to that binary produces **8 pass / 10 fail / 0 skip**. The
+repaired runtime under the preceding policy is **16 pass / 0 fail / 2 skip**,
+and under the final policy is **18/18**. This proves **10** attributable runtime
+fail-to-pass transitions with no reverse transition. Adjacent
+`%TypedArray%.prototype.reverse` remains **22/22**.
+
+The broader `built-ins/Array/prototype/methods-called-as-functions.js`
+diagnostic passes when forced through its broad `Symbol` feature gates. It
+remains skipped by normal policy and outside exact admission because its single
+file spans otherwise independent Array method families. The next tracked
+represented-Array shortcut is `Array.prototype.toReversed`, which is an
+independent copy-by-value algorithm rather than an in-place mutation.
+
+Local verification passes all targets/features with **204/204** library
+tests, **532/532** builtins tests, and **15/15** arguments tests, plus
+**204/204** release library tests, **130/130** Python tooling tests, **1/1**
+doctest, rustfmt, warnings-denied Clippy, release build, generated
+documentation, and wasm32 checking. Rustdoc retains the 13 pre-existing broken
+intra-doc-link warnings.
+
+```text
+[Decision Log]
+- 목적과 의도: Admit complete direct Array reverse coverage without weakening broad feature gates or claiming the containing Array prototype directory.
+- 기존 구현 및 제약 조건: Nine ordinarily executed files failed, two feature-tagged paths were skipped, and the broader detached-method diagnostic still stopped at reverse.
+- 검토한 주요 대안: Remove resizable-buffer, Reflect, or arrow gates globally; admit the reverse directory by prefix; list only former failures; combine this with TypedArray reverse or toReversed; or freeze both metadata-bearing paths.
+- 선택한 방식: Keep broad gates, add one exact two-path feature map shared by both tools, compare old and repaired binaries on one fixed checkout, and run TypedArray reverse as a separate compatibility cohort.
+- 다른 대안 대신 이 방식을 선택한 이유: Global and prefix admission silently overclaim unrelated or future behavior, failure-only lists hide existing passes, and combining TypedArray or toReversed obscures distinct integer-indexed or copy-by-value semantics. Exact paths keep every policy transition reviewable.
+- 장점, 단점 및 영향: Direct reverse is 18/18 with 10 attributable runtime transitions, future siblings remain gated, TypedArray stays green, and the forced-gate detached-method diagnostic closes. Updating Test262 requires an explicit metadata audit; the diagnostic's broad Symbol gates, toReversed, and the complete Array prototype directory remain outside this unit.
+```
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is
