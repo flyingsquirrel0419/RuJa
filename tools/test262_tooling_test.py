@@ -3542,7 +3542,11 @@ class ArrayFlatAdmissionTests(unittest.TestCase):
 
         feature_maps = (ARRAY_FLAT_FEATURES, ARRAY_FLAT_MAP_FEATURES)
         test_root = Path(test262_runner.TEST262) / "test"
-        if test_root.is_dir():
+        try:
+            test_root_available = test_root.is_dir()
+        except OSError:
+            test_root_available = False
+        if test_root_available:
             for feature_map in feature_maps:
                 for relative, features in feature_map.items():
                     path = test_root / relative
