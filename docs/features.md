@@ -160,7 +160,9 @@
   definitions. ForEach snapshots only length, then performs live
   `HasProperty`/`Get` and callback calls for each present index. Join snapshots
   length before separator coercion and performs live `Get`/`ToString` work for
-  every index. Flat and FlatMap share an iterative `FlattenIntoArray` path with
+  every index. Reduce discovers an omitted initial accumulator and visits later
+  values through live `HasProperty`/`Get` operations. Flat and FlatMap share an
+  iterative `FlattenIntoArray` path with
   live nested array access, species-created targets, mapper ordering, GC roots,
   and per-index fuel; cyclic infinite-depth inputs exhaust configured fuel or
   reach the bounded cycle-replay guard without native recursion. Fill and With deliberately ignore species. The Array constructor,

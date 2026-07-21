@@ -11,6 +11,33 @@
 
 ### Fixed
 
+- `Array.prototype.reduce` now follows the generic ECMAScript algorithm
+  instead of reducing a copied represented-Array backing vector. It performs
+  `ToObject`, one `LengthOfArrayLike` snapshot, callback validation, live
+  `HasProperty`/`Get` accumulator discovery when the initial value is omitted,
+  and ascending live indexed callback traversal. Generic and primitive
+  receivers, holes, inheritance, mutation, Proxy traps, explicit `undefined`
+  initial values, callback arguments, abrupt completion, and method-Realm
+  errors are observable correctly.
+
+  Receiver, arguments, boxed object, current value, and accumulator are rooted
+  across every observable operation. Callback result roots replace prior
+  accumulator roots in LIFO order without growing with iteration count. Every
+  logical index, including holes examined during initial discovery, consumes
+  one fuel unit, and all exits restore pin depth. Exact admission freezes only
+  the five direct reduce files hidden by broad feature gates. On fixed Test262
+  checkout `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the preceding policy and
+  binary are **89 pass / 166 fail / 5 skip**; applying the final policy to that
+  binary is **90/170/0**; the repaired runtime under the preceding policy is
+  **255/0/5**; and the final cohort is **260/260**. Adjacent
+  `%TypedArray%.prototype.reduce` remains **50/50**. The detached-method
+  diagnostic now clears reduce and reaches the independent generic
+  `reduceRight` gap. Local verification passes all targets/features with
+  **200/200** library tests, **530/530** builtins tests, and **15/15**
+  arguments tests, plus **200/200** release library tests, **128/128** Python
+  tooling tests, **1/1** doctest, rustfmt, warnings-denied Clippy, release
+  build, generated documentation, and wasm32 checking.
+
 - `Array.prototype.map` now follows the generic ECMAScript algorithm instead
   of mapping a copied represented-Array backing vector. It performs
   `ToObject`, one `LengthOfArrayLike` snapshot, callback validation,
