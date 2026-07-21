@@ -40,7 +40,25 @@
   rustfmt, warnings-denied Clippy, and wasm32 all-features checking. Final
   GPT-5.6 runtime and admission/documentation reviews report `CLEAN`; both
   sessions are closed, and coder and Umans routes were not used. Final CI,
-  matrix, and artifact evidence is recorded after delivery.
+  matrix, and artifact evidence follows below.
+
+  Feature commit `55cc204801028ab7be2b79f90c6fcb7b8638215f` is pushed to
+  `main`. Ordinary CI `29804173132` passes both jobs, and full matrix
+  `29804173104` passes all **33/33** jobs. The initial annexB artifact contained
+  two unrelated transient timeouts; both the preceding and feature binaries
+  reproduced annexB at **201/811/74/0/0** locally, and annexB job rerun
+  `88556448007` restored that exact result.
+
+  The 30 canonical result files at
+  `/tmp/ruja-array-filter.29804173104.rerun` aggregate to **31237 pass / 5713
+  fail / 11512 skip / 5 timeout / 0 error / 48467 total / 36950 pass-or-fail
+  executed**. Against the preceding fill matrix, 29 files are byte-for-byte
+  identical. Only `test262_built-ins_result.txt` changes from
+  **15505/5015/3142/6/0** to **15627/4902/3134/5/0**, exactly **+122 pass /
+  -113 fail / -8 skip / -1 timeout**, with no error, total, or unrelated-shard
+  drift. The downloaded release binary independently reproduces direct Array
+  filter **242/242** and TypedArray filter **85/85** on fixed checkout
+  `9e61c12835c5e4a3bdba93850427e6742c4f64c4`.
 
 - `Array.prototype.fill` now follows the generic ECMAScript algorithm instead
   of rewriting represented-Array backing storage. It boxes primitive receivers,

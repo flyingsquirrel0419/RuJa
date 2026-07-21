@@ -9186,7 +9186,26 @@ checking. GPT-5.6 runtime reviewer Faraday
 (`019f8308-e874-7c31-a99f-36f3ef2875d4`) and admission/documentation reviewer
 Ampere (`019f8308-ea22-7a92-b7c7-8d9dcd94706b`) both report `CLEAN` after the
 final diff; both sessions are closed, and coder and Umans routes were not used.
-Final CI and matrix evidence is recorded after delivery.
+Feature commit `55cc204801028ab7be2b79f90c6fcb7b8638215f`, ordinary CI
+`29804173132`, and full matrix `29804173104` are green; the matrix passes all
+**33/33** jobs.
+
+The initial annexB artifact recorded two unrelated pass-to-timeout movements.
+Both the preceding and feature downloaded binaries independently reproduced
+the complete annexB shard at **201 pass / 811 fail / 74 skip / 0 timeout / 0
+error** on the fixed checkout. Rerunning only annexB job `88556448007` restored
+that exact result without changing code or the other artifacts.
+
+The 30 canonical result files at
+`/tmp/ruja-array-filter.29804173104.rerun` aggregate to **31237 pass / 5713
+fail / 11512 skip / 5 timeout / 0 error / 48467 total / 36950 pass-or-fail
+executed**. Against `/tmp/ruja-array-fill.29759957873`, 29 result files are
+byte-identical. Only `test262_built-ins_result.txt` changes from
+**15505/5015/3142/6/0** to **15627/4902/3134/5/0**, exactly **+122 pass / -113
+fail / -8 skip / -1 timeout**; error, total, and every unrelated shard remain
+unchanged. The downloaded release binary independently passes direct Array
+filter **242/242** and TypedArray filter **85/85** on fixed checkout
+`9e61c12835c5e4a3bdba93850427e6742c4f64c4`.
 
 ```text
 [Decision Log]
