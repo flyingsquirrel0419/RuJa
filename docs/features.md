@@ -146,8 +146,8 @@
   `toReversed`, `toSorted`, `toSpliced`, `with`; `Array.from`/`fromAsync`/`of`/
   `isArray`. `%Array.prototype%` is a real Array exotic. Push, Pop, Shift,
   Unshift, Splice, Slice, Concat, CopyWithin, Fill, Filter, Flat, FlatMap,
-  ForEach, and With use generic indexed operations and logical lengths. Slice,
-  Splice, Concat, and Filter
+  ForEach, Join, and With use generic indexed operations and logical lengths.
+  Slice, Splice, Concat, and Filter
   honor species;
   Concat also applies `Symbol.isConcatSpreadable` to each input, preserves
   holes through `HasProperty`, and performs strict result definitions and a
@@ -156,8 +156,9 @@
   live strict `Set` for each selected index after one length snapshot. Filter
   performs live `HasProperty`/`Get`, callback calls, and dense result property
   creation. ForEach snapshots only length, then performs live
-  `HasProperty`/`Get` and callback calls for each present index. Flat and
-  FlatMap share an iterative `FlattenIntoArray` path with
+  `HasProperty`/`Get` and callback calls for each present index. Join snapshots
+  length before separator coercion and performs live `Get`/`ToString` work for
+  every index. Flat and FlatMap share an iterative `FlattenIntoArray` path with
   live nested array access, species-created targets, mapper ordering, GC roots,
   and per-index fuel; cyclic infinite-depth inputs exhaust configured fuel or
   reach the bounded cycle-replay guard without native recursion. Fill and With deliberately ignore species. The Array constructor,

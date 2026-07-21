@@ -4697,6 +4697,151 @@ fn array_for_each_is_generic_ordered_live_and_realm_aware() {
 }
 
 #[test]
+fn array_join_is_generic_ordered_live_and_realm_aware() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            var prototype = {
+              1: { toString: function() { log.push("string:1"); return "inherited"; } }
+            };
+            var target = Object.create(prototype);
+            Object.defineProperty(target, "length", {
+              get: function() { log.push("length"); return 4; }
+            });
+            target[0] = null;
+            target[2] = {
+              toString: function() {
+                log.push("string:2");
+                target[3] = "changed";
+                target[4] = "late";
+                return "two";
+              }
+            };
+            target[3] = "initial";
+            var source = new Proxy(target, {
+              get: function(object, key, receiver) {
+                log.push("get:" + String(key));
+                return Reflect.get(object, key, receiver);
+              }
+            });
+            var separator = {
+              toString: function() {
+                log.push("separator");
+                target[0] = "zero";
+                return "|";
+              }
+            };
+            var result = Array.prototype.join.call(source, separator);
+
+            var emptySeparatorCalls = 0;
+            var empty = Array.prototype.join.call({ length: 0 }, {
+              toString: function() { emptySeparatorCalls += 1; return "/"; }
+            });
+            var nullish = Array.prototype.join.call(
+              { 0: null, 2: undefined, length: 3 },
+              "-"
+            );
+            var stringResult = Array.prototype.join.call("ab", ":");
+            var booleanResult = Array.prototype.join.call(false, ":");
+
+            var abruptLog = [];
+            var separatorError;
+            var elementError;
+            var symbolError;
+            try {
+              Array.prototype.join.call({
+                get length() { abruptLog.push("length"); return 0; }
+              }, {
+                toString: function() { abruptLog.push("separator"); throw "sep"; }
+              });
+            } catch (error) { separatorError = error === "sep"; }
+            try {
+              Array.prototype.join.call({
+                0: { toString: function() { throw "element"; } }, length: 1
+              });
+            } catch (error) { elementError = error === "element"; }
+            try { Array.prototype.join.call({ 0: Symbol(), length: 1 }); }
+            catch (error) { symbolError = error instanceof TypeError; }
+
+            var detachedErrors = 0;
+            try { Array.prototype.join.call(null); }
+            catch (error) { detachedErrors += error instanceof TypeError; }
+            try { Array.prototype.join.call(undefined); }
+            catch (error) { detachedErrors += error instanceof TypeError; }
+
+            var other = $262.createRealm().global;
+            var foreignError;
+            try { other.Array.prototype.join.call(null); }
+            catch (error) {
+              foreignError = Object.getPrototypeOf(error) === other.TypeError.prototype;
+            }
+
+            var directCycle = [];
+            directCycle[0] = directCycle;
+            var indirectLeft = [];
+            var indirectRight = [indirectLeft];
+            indirectLeft[0] = indirectRight;
+            var cycleLog = [];
+            var observableCycle = [];
+            var innerSeparator = {
+              toString: function() { cycleLog.push("inner-separator"); return ":"; }
+            };
+            observableCycle[0] = {
+              toString: function() {
+                cycleLog.push("element");
+                return observableCycle.join(innerSeparator);
+              }
+            };
+            var observableCycleResult = observableCycle.join({
+              toString: function() { cycleLog.push("outer-separator"); return "|"; }
+            });
+
+            var finiteReentryArray = [1, 2];
+            var finiteReentryCalls = 0;
+            var finiteReentrySeparator = {
+              toString: function() {
+                finiteReentryCalls += 1;
+                return finiteReentryArray.join("-");
+              }
+            };
+            var finiteReentryResult =
+              finiteReentryArray.join(finiteReentrySeparator);
+
+            var cleanup = [{ toString: function() { throw "cleanup"; } }];
+            try { cleanup.join(); } catch (error) {}
+            cleanup[0] = "ready";
+
+            [
+              result === "zero|inherited|two|changed",
+              log.join(",") === [
+                "get:length", "length", "separator", "get:0", "get:1",
+                "string:1", "get:2", "string:2", "get:3"
+              ].join(","),
+              empty === "" && emptySeparatorCalls === 1,
+              nullish === "--",
+              stringResult === "a:b",
+              booleanResult === "",
+              abruptLog.join(",") === "length,separator" && separatorError,
+              elementError,
+              symbolError,
+              detachedErrors === 2,
+              foreignError,
+              directCycle.join("|") === "",
+              indirectLeft.join("|") === "",
+              observableCycleResult === "" &&
+                cycleLog.join(",") ===
+                  "outer-separator,element,inner-separator",
+              finiteReentryResult === "11-22" && finiteReentryCalls === 1,
+              cleanup.join() === "ready"
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "true|true|true|true|true|true|true|true|true|true|true|true|true|true|true|true"
+        ))
+    );
+}
+
+#[test]
 fn array_reverse() {
     assert_eq!(
         run("[1,2,3].reverse().join(',');"),
@@ -7144,6 +7289,28 @@ fn typed_array_join_snapshots_length_before_separator_coercion() {
             [grown, grow.length, shrunk, separatorCalled, oobTypeError].join("|");
             "#,),
         Value::String(Arc::from("0.0.0.0|6|---|false|true"))
+    );
+}
+
+#[test]
+fn array_join_on_resizable_typed_arrays_uses_generic_gets() {
+    assert_eq!(
+        run(r#"
+            var growBuffer = new ArrayBuffer(4, { maxByteLength: 8 });
+            var growing = new Int8Array(growBuffer);
+            var grown = Array.prototype.join.call(growing, {
+              toString: function() { growBuffer.resize(6); return "."; }
+            });
+
+            var shrinkBuffer = new ArrayBuffer(4, { maxByteLength: 8 });
+            var shrinking = new Int8Array(shrinkBuffer);
+            var shrunk = Array.prototype.join.call(shrinking, {
+              toString: function() { shrinkBuffer.resize(2); return "."; }
+            });
+
+            [grown, growing.length, shrunk, shrinking.length].join("|");
+            "#),
+        Value::String(Arc::from("0.0.0.0|6|0.0..|2"))
     );
 }
 

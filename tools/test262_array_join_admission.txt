@@ -1,0 +1,5 @@
+# Exact feature-gated Array.prototype.join coverage.
+built-ins/Array/prototype/join/coerced-separator-grow.js
+built-ins/Array/prototype/join/coerced-separator-shrink.js
+built-ins/Array/prototype/join/not-a-constructor.js
+built-ins/Array/prototype/join/resizable-buffer.js

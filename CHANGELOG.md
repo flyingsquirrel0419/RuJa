@@ -11,6 +11,39 @@
 
 ### Fixed
 
+- `Array.prototype.join` now follows the generic ECMAScript algorithm instead
+  of joining a copied represented-Array backing vector. It performs
+  `ToObject`, one `LengthOfArrayLike` snapshot, separator coercion, and live
+  indexed `Get` plus element `ToString` operations in specification order.
+  Generic and primitive receivers, holes, inherited indices, Proxy traps,
+  separator mutation, element mutation, resizable TypedArrays, nullish
+  elements, abrupt conversions, and method-Realm errors are observable
+  correctly.
+
+  Receiver and arguments are pinned before boxing; the boxed object and each
+  current element remain roots across getters, Proxy traps, separator or
+  element coercion, and forced collection. Every logical index consumes one
+  fuel unit, all exits restore pin depth, and incremental string growth uses
+  checked reservation that reports `RangeError` instead of panicking on an
+  impossible result capacity. Active receiver tracking starts only after
+  separator coercion, so valid finite separator re-entry remains observable
+  while direct and indirect cyclic element conversion produces an empty field
+  without overflowing the Rust stack.
+
+  Exact admission freezes only the four direct join files hidden by broad
+  feature gates. On fixed Test262 checkout
+  `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the preceding binary and policy
+  are **15 pass / 4 fail / 4 skip**; applying the final policy to that binary
+  is **16/7/0**; and the repaired runtime is **23/23**. Adjacent
+  `%TypedArray%.prototype.join` remains **32/32**. The broader detached-method
+  diagnostic now clears join and reaches the independent generic `map` gap.
+
+  Local verification passes all targets and features with **197/197** library
+  tests, **528/528** builtins tests, and **15/15** arguments tests, plus
+  **196/196** release library tests, **126/126** Python tooling tests, **1/1**
+  doctest, rustfmt, warnings-denied Clippy, release build, generated
+  documentation, and wasm32 checking.
+
 - `Array.prototype.forEach` now follows the generic ECMAScript algorithm
   instead of iterating a copied represented-Array backing vector. It performs
   `ToObject`, one `LengthOfArrayLike` snapshot, callback validation, and live

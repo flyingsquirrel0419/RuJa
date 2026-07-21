@@ -825,32 +825,60 @@ pub(crate) fn array_to_string(
 }
 
 pub(crate) fn array_join(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let sep = match args.first() {
-        Some(Value::String(s)) => s.to_string(),
-        Some(v) if !v.is_undefined() => vm.to_string(v)?.to_string(),
-        _ => ",".to_string(),
-    };
-    if let Some(Value::Object(idx)) = this {
-        let items = vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Array(a) = obj {
-                a.items.lock().clone()
-            } else {
-                Vec::new()
-            }
-        });
-        let parts: Vec<String> = items
-            .iter()
-            .map(|i| {
-                if i.is_nullish() {
-                    String::new()
-                } else {
-                    vm.to_string(i).map(|s| s.to_string()).unwrap_or_default()
-                }
-            })
-            .collect();
-        return Ok(Value::String(Arc::from(parts.join(&sep).as_str())));
+    fn append(result: &mut String, value: &str) -> error::Result<()> {
+        result
+            .try_reserve(value.len())
+            .map_err(|_| Error::range("Array join result too large"))?;
+        result.push_str(value);
+        Ok(())
     }
-    Ok(Value::String(Arc::from("")))
+
+    let receiver = this.unwrap_or(Value::Undefined);
+    let mut pin_count = vm.pin(&receiver);
+    pin_count += vm.pin_many(args);
+    let completion = (|| {
+        let object = array_method_to_object(vm, &receiver)?;
+        pin_count += vm.pin(&object);
+        let len = length_of_array_like_u64(vm, &object)?;
+        let separator = match args.first() {
+            Some(value) if !value.is_undefined() => vm.to_string(value)?.to_string(),
+            _ => ",".to_string(),
+        };
+        let Value::Object(object_idx) = object else {
+            unreachable!("ToObject must return an object")
+        };
+        if vm.active_array_joins.contains(&object_idx) {
+            return Ok(Value::String(Arc::from("")));
+        }
+        vm.active_array_joins.push(object_idx);
+        let join_result = (|| {
+            let mut result = String::new();
+            let mut index = 0u64;
+            while index < len {
+                vm.consume_fuel()?;
+                if index > 0 {
+                    append(&mut result, &separator)?;
+                }
+                let element = vm.get_property(&object, &index.to_string())?;
+                if !element.is_nullish() {
+                    let element_pin = vm.pin(&element);
+                    let element_string = vm.to_string(&element);
+                    vm.unpin(element_pin);
+                    append(&mut result, element_string?.as_ref())?;
+                }
+                index += 1;
+            }
+            Ok(Value::String(Arc::from(result)))
+        })();
+        let active = vm
+            .active_array_joins
+            .pop()
+            .expect("active Array join marker must be balanced");
+        debug_assert_eq!(active, object_idx);
+        join_result
+    })();
+    vm.unpin_many(pin_count);
+    completion
 }
 pub(crate) fn array_map(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let cb = args.first().cloned().unwrap_or(Value::Undefined);

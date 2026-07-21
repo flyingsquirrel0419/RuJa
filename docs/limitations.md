@@ -81,11 +81,11 @@ The following resource limits are enforced:
   `Symbol.isConcatSpreadable`. Flat and FlatMap share an iterative,
   fuel-metered `FlattenIntoArray`, while
   CopyWithin, Fill, and With intentionally do not consult species. Older
-  implementations such as `join` and `reverse` still contain represented-Array shortcuts
+  implementations such as `map`, `reduce`, and `reverse` still contain represented-Array shortcuts
   and need separate generic-receiver, observable-order, sparse, fuel, and
   rooting audits. The direct Test262 `methods-called-as-functions.js` aggregate
   remains outside exact admission because its next failure is the unrelated
-  detached-receiver behavior of `join`.
+  detached-receiver behavior of `map`.
   Infinite-depth flattening permits 512 repeated active-path source visits so
   observable getters can break a cycle, then raises `RangeError`; finite and
   acyclic nesting has no fixed depth cutoff.
@@ -350,6 +350,11 @@ guarantees are required.
 - GC runs at safe points only (after a run settles, and throttled at frame
   boundaries). Incremental marking is supported via `collect_incremental(roots, budget)`,
   but there is no generational collector yet
+- Generic Array `join` grows its Rust `String` through fallible reservation,
+  but publishing the completed value as `Arc<str>` still uses the runtime-wide
+  infallible allocation path. Hard host OOM isolation therefore remains an
+  embedder responsibility even though capacity overflow is reported as
+  `RangeError`.
 - Native snapshot rooting is complete for `Array.prototype.map`, `Array.of`,
   `sort`, and `toSorted`; `flatMap` no longer uses a snapshot. The sorting methods implement generic
   `ToObject`/`LengthOfArrayLike`, inherited and accessor-backed indices, live
@@ -361,13 +366,13 @@ guarantees are required.
   native temporary-root, collected-list, and merge-buffer storage is bounded
   by the same limit but still uses infallible Rust vector allocation.
 - Older snapshot-based methods still need separate observable-semantics and
-  rooting passes: `join`, `reduce`, `reduceRight`, and `toSpliced`. A callback
+  rooting passes: `reduce`, `reduceRight`, and `toSpliced`. A callback
   or coercion can remove the original source edge and
   force host GC while a future value exists only in a Rust snapshot. Several
   also require live property access rather than merely pinning the current
   snapshot, so they remain independent algorithm units. Push, Pop, Shift,
-  Unshift, Splice, Slice, Concat, Flat, FlatMap, ForEach, and With now use live
-  generic indexed operations with operation-wide roots; the remaining
+  Unshift, Splice, Slice, Concat, Flat, FlatMap, ForEach, Join, and With now use
+  live generic indexed operations with operation-wide roots; the remaining
   method-specific gaps are tracked above.
 - Private methods are stored per-instance as private fields (each instance
   gets its own closure copy); behavior is spec-correct, but this is more

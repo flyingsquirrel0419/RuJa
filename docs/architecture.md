@@ -1438,6 +1438,37 @@ embedder's cooperative budget.
 - 장점, 단점 및 영향: Direct Array forEach is 190/190 and adjacent TypedArray forEach remains 42/42 on the fixed corpus; callback and fuel failures restore pin depth. Sparse scans remain linear in captured length as required, but configured fuel bounds their sandbox cost. Join, map, reduce, and other independent snapshot methods remain separate units.
 ```
 
+## Generic Array join
+
+`Array.prototype.join` now boxes its receiver, snapshots
+`LengthOfArrayLike` once, coerces the separator, and then performs a live `Get`
+for every captured index. Missing and explicitly nullish elements both append
+only the separator, while every other fetched value is converted immediately.
+Separator coercion can therefore mutate values before the first indexed read,
+and an element conversion can mutate later values without extending the
+captured range.
+
+The receiver and argument slice are pinned before any observable operation.
+The boxed object remains pinned for the whole scan, and each fetched element is
+pinned across `ToString`; one outer cleanup restores persistent roots after
+normal, property, conversion, allocation, or fuel completion. One fuel unit is
+charged per logical index. The Rust string builder uses `try_reserve` before
+each separator and element append so capacity overflow or allocation refusal
+becomes a catchable `RangeError` rather than a host panic. Active receiver
+identities bound cyclic element `toString`/`join` re-entry only after each
+call's separator coercion. This preserves valid finite re-entry from a
+separator while direct or indirect element cycles contribute an empty field.
+
+```text
+[Decision Log]
+- 목적과 의도: Replace represented-Array snapshot joining with a specification-shaped generic, live, GC-safe, fuel-bounded, and allocation-aware traversal.
+- 기존 구현 및 제약 조건: The old method coerced the separator before the receiver and length, accepted only represented Arrays, cloned dense storage, ignored inheritance and Proxy reads, swallowed element conversion errors, observed no later mutation, and had no explicit fuel or pin discipline.
+- 검토한 주요 대안: Patch only detached calls, retain a dense fast path, collect all element strings before joining, reuse TypedArray join, impose a fixed source-length cap, or build the result incrementally from generic indexed reads.
+- 선택한 방식: Perform ToObject, one LengthOfArrayLike snapshot, separator ToString, then live Get and immediate element ToString while pinning native-frame roots, charging every index, reserving each string append fallibly, and tracking active receiver identities to suppress cyclic native re-entry.
+- 다른 대안 대신 이 방식을 선택한 이유: Snapshot and fast paths change observable mutation, inheritance, Proxy, and abrupt order; TypedArray join has distinct receiver validation; and a fixed index cap rejects valid sparse programs that cooperative fuel can bound. Incremental construction follows the specification without retaining a second element snapshot.
+- 장점, 단점 및 영향: Direct Array join is 23/23 and adjacent TypedArray join remains 32/32 on the fixed corpus; abrupt and fuel exits restore pin depth, finite separator re-entry remains observable, and direct or indirect element cycles cannot overflow the native stack. Runtime and output work remain linear in captured length and produced bytes, while configured fuel and checked reservation prevent unbounded native traversal or String capacity panic. Final conversion of the completed Rust String into Arc<str> still follows the runtime-wide infallible allocation model. Map, reduce, reverse, and other independent snapshot methods remain separate units.
+```
+
 ---
 
 **Next:** [Features](features.md) · [Known limitations](limitations.md) · [Back to README](../README.md)

@@ -1549,6 +1549,168 @@ fn array_for_each_roots_observable_state_and_restores_pin_depth() {
 }
 
 #[test]
+fn array_join_consumes_exact_per_index_fuel() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    let source = vm
+        .run("Object.assign(Object.create(null), { 0: 'a', 2: 'c', length: 3 })")
+        .expect("join source should initialize");
+    let source_pin = vm.pin(&source);
+    let baseline = vm.gc_pins.len();
+
+    vm.set_fuel(Some(2));
+    let error = crate::builtins::array_join(&mut vm, &[], Some(source.clone()))
+        .expect_err("N-1 fuel must abort the logical join scan");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    vm.set_fuel(Some(3));
+    let result = crate::builtins::array_join(&mut vm, &[], Some(source))
+        .expect("exact logical-index fuel should complete join");
+    assert_eq!(result, Value::String(Arc::from("a,,c")));
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+    vm.set_fuel(None);
+
+    let empty = vm
+        .run("({ length: 0 })")
+        .expect("empty source should initialize");
+    vm.set_fuel(Some(0));
+    crate::builtins::array_join(&mut vm, &[], Some(empty))
+        .expect("empty join should consume no loop fuel");
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+    vm.set_fuel(None);
+    vm.unpin(source_pin);
+}
+
+#[test]
+fn array_join_roots_observable_state_and_restores_pin_depth() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("GC test hook should register");
+    let baseline = vm.gc_pins.len();
+    let result = vm.run(
+        r#"
+        (function () {
+          var value = {
+            marker: 41,
+            toString: function () { forceGc(); return String(this.marker); }
+          };
+          var target = { 0: value };
+          Object.defineProperty(target, "length", {
+            get: function () { source = null; forceGc(); return 1; }
+          });
+          var source = new Proxy(target, {
+            get: function (object, key, receiver) {
+              forceGc();
+              var selected = Reflect.get(object, key, receiver);
+              if (key === "0") {
+                target[0] = null;
+                value = null;
+                forceGc();
+              }
+              return selected;
+            }
+          });
+          var separator = {
+            marker: "|",
+            toString: function () { separator = null; forceGc(); return this.marker; }
+          };
+          return Array.prototype.join.call(source, separator);
+        })();
+        "#,
+    );
+    assert_eq!(
+        result.expect("join native-frame roots should survive observable GC"),
+        Value::String(Arc::from("41"))
+    );
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    let thrown = vm.run(
+        r#"
+        (function () {
+          var source = { length: 1 };
+          var thrown = { marker: 73 };
+          source[0] = {
+            toString: function () {
+              var selected = thrown;
+              thrown = null;
+              source[0] = null;
+              forceGc();
+              throw selected;
+            }
+          };
+          try { Array.prototype.join.call(source); }
+          catch (error) { forceGc(); return error.marker; }
+        })();
+        "#,
+    );
+    assert_eq!(
+        thrown.expect("thrown join conversion object should survive forced GC"),
+        Value::Number(73.0)
+    );
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    for source in [
+        r#"
+        var error = {};
+        Array.prototype.join.call(new Proxy({}, {
+          get: function () { forceGc(); throw error; }
+        }));
+        "#,
+        r#"
+        var error = {};
+        Array.prototype.join.call({ length: 0 }, {
+          toString: function () { forceGc(); throw error; }
+        });
+        "#,
+        r#"
+        var error = {};
+        Array.prototype.join.call(new Proxy({ 0: 1, length: 1 }, {
+          get: function (target, key, receiver) {
+            if (key === "0") { forceGc(); throw error; }
+            return Reflect.get(target, key, receiver);
+          }
+        }));
+        "#,
+        r#"
+        var error = {};
+        Array.prototype.join.call({
+          0: { toString: function () { forceGc(); throw error; } },
+          length: 1
+        });
+        "#,
+    ] {
+        let mut vm = Vm::new().expect("VM should initialize");
+        vm.register_fn(
+            "forceGc",
+            |vm, _, _| {
+                vm.gc();
+                Ok(Value::Undefined)
+            },
+            0,
+        )
+        .expect("GC test hook should register");
+        let baseline = vm.gc_pins.len();
+        vm.run(source)
+            .expect_err("the observable join step should complete abruptly");
+        assert_eq!(vm.gc_pins.len(), baseline);
+        assert_eq!(
+            vm.run("1 + 1").expect("VM should remain reusable"),
+            Value::Number(2.0)
+        );
+    }
+}
+
+#[test]
 fn array_filter_roots_observable_state_and_restores_pin_depth() {
     let mut vm = Vm::new().expect("VM should initialize");
     vm.register_fn(

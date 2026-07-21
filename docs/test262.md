@@ -9389,6 +9389,44 @@ forEach **190/190** and TypedArray forEach **42/42** on fixed checkout
 - 장점, 단점 및 영향: Direct forEach is 190/190 with 99 attributable runtime transitions, the sparse timeout is removed, future siblings remain gated, and TypedArray stays green. Updating Test262 requires an explicit metadata audit; methods-called-as-functions, join, and the complete Array prototype directory remain outside this unit.
 ```
 
+## Generic Array join
+
+`tools/test262_array_join_admission.txt` freezes exactly **4** direct
+`Array.prototype.join` files otherwise hidden by broad resizable-buffer,
+`Reflect.construct`, or arrow-function gates. Its exact feature map is shared
+by the runner and analyzer. Tooling checks map/manifest equality, live
+metadata, disjointness from every existing admission, runner/analyzer
+symmetry, extra-feature rejection, and closure against future siblings.
+
+On fixed checkout `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the preceding
+binary under the preceding policy is **15 pass / 4 fail / 4 skip**. Applying
+the final exact policy to that binary produces **16 pass / 7 fail / 0 skip**.
+The repaired runtime under the preceding policy is **19 pass / 0 fail / 4
+skip**, and under the final policy is **23 pass / 0 fail / 0 skip**. This proves
+**7** attributable runtime fail-to-pass transitions with no reverse
+transition. A separate adjacent `%TypedArray%.prototype.join` sweep remains
+**32/32**.
+
+The broader `built-ins/Array/prototype/methods-called-as-functions.js`
+diagnostic remains outside admission. It now clears join and fails next at the
+independent detached `Array.prototype.map` behavior.
+
+Local verification passes all targets and features with **197/197** library
+tests, **528/528** builtins tests, and **15/15** arguments tests, plus
+**196/196** release library tests, **126/126** Python tooling tests, **1/1**
+doctest, rustfmt, warnings-denied Clippy, release build, generated
+documentation, and wasm32 checking.
+
+```text
+[Decision Log]
+- 목적과 의도: Admit complete direct Array join coverage without weakening broad feature gates or claiming the containing Array prototype directory.
+- 기존 구현 및 제약 조건: Four ordinarily executed files failed, four feature-tagged paths were skipped, forced execution exposed seven runtime failures, and the broader aggregate continues into independent map behavior.
+- 검토한 주요 대안: Remove resizable-buffer, Reflect, or arrow gates globally; admit the join directory by prefix; list only former failures; combine this with TypedArray join; or freeze the four metadata-bearing paths.
+- 선택한 방식: Keep broad gates, add one exact four-path feature map shared by both tools, compare old and repaired binaries on one fixed checkout, and run TypedArray join as a separate compatibility cohort.
+- 다른 대안 대신 이 방식을 선택한 이유: Global and prefix admission silently overclaim unrelated or future behavior, failure-only lists hide existing passes, and combining TypedArray obscures its distinct receiver semantics. Exact paths keep every policy transition reviewable.
+- 장점, 단점 및 영향: Direct join is 23/23 with seven attributable runtime transitions, future siblings remain gated, and TypedArray stays green. Updating Test262 requires an explicit metadata audit; methods-called-as-functions, map, and the complete Array prototype directory remain outside this unit.
+```
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is

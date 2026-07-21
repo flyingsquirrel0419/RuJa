@@ -101,6 +101,7 @@ try:
     from test262_array_for_each_admission import (
         ARRAY_FOR_EACH_FEATURES, ARRAY_FOR_EACH_FILES,
     )
+    from test262_array_join_admission import ARRAY_JOIN_FEATURES, ARRAY_JOIN_FILES
     from test262_array_flat_admission import (
         ARRAY_FLAT_FEATURES, ARRAY_FLAT_FILES,
         ARRAY_FLAT_MAP_FEATURES, ARRAY_FLAT_MAP_FILES,
@@ -227,6 +228,7 @@ except ModuleNotFoundError:
     from tools.test262_array_for_each_admission import (
         ARRAY_FOR_EACH_FEATURES, ARRAY_FOR_EACH_FILES,
     )
+    from tools.test262_array_join_admission import ARRAY_JOIN_FEATURES, ARRAY_JOIN_FILES
     from tools.test262_array_flat_admission import (
         ARRAY_FLAT_FEATURES, ARRAY_FLAT_FILES,
         ARRAY_FLAT_MAP_FEATURES, ARRAY_FLAT_MAP_FILES,
@@ -2530,6 +2532,20 @@ def array_for_each_features(path):
         return frozenset()
     return ARRAY_FOR_EACH_FEATURES.get(rel.as_posix(), frozenset())
 
+def array_join_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except (OSError, ValueError, TypeError):
+        return False
+    return rel.as_posix() in ARRAY_JOIN_FILES
+
+def array_join_features(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except (OSError, ValueError, TypeError):
+        return frozenset()
+    return ARRAY_JOIN_FEATURES.get(rel.as_posix(), frozenset())
+
 def array_flat_path(path):
     if path is None:
         return False
@@ -2948,6 +2964,8 @@ def should_skip(meta, path=None):
         feats.difference_update(array_filter_features(path))
     if path is not None and array_for_each_path(path):
         feats.difference_update(array_for_each_features(path))
+    if path is not None and array_join_path(path):
+        feats.difference_update(array_join_features(path))
     if path is not None and array_flat_path(path):
         feats.difference_update(array_flat_features(path))
     if path is not None and array_flat_map_path(path):

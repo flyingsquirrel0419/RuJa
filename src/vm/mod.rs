@@ -147,6 +147,10 @@ pub struct Vm {
     /// Rust locals (e.g. a Promise handler while `call_function` runs, which
     /// may itself trigger a GC). Push indices on entry, pop on exit.
     pub(crate) gc_pins: Vec<usize>,
+    /// Receiver identities currently traversing Array.prototype.join elements.
+    /// Re-entry still coerces its separator before cyclic element recursion is
+    /// suppressed, matching the observable algorithm order.
+    pub(crate) active_array_joins: Vec<GcIdx>,
     /// WeakRef targets kept alive until the current ECMAScript job finishes.
     pub(crate) kept_objects: Vec<usize>,
     /// Collected yield values while running a generator function body (eager,
@@ -656,6 +660,7 @@ impl Vm {
             microtask_queue: std::collections::VecDeque::new(),
             ic: std::collections::HashMap::new(),
             gc_pins: Vec::new(),
+            active_array_joins: Vec::new(),
             kept_objects: Vec::new(),
             current_yields: Vec::new(),
             next_symbol_id: 16,
