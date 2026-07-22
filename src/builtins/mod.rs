@@ -6418,7 +6418,26 @@ pub(crate) fn own_property_keys_or_throw(
                     seen,
                     extensible_target,
                 } => {
-                    pending_pins += vm.pin_many(&[current.clone(), target.clone()]);
+                    #[cfg(test)]
+                    if take_proxy_own_keys_reservation_failure(
+                        vm,
+                        crate::vm::ProxyOwnKeysReservationSite::PendingFrame,
+                    ) {
+                        return Err(Error::range("Proxy ownKeys validation chain is too large"));
+                    }
+                    pending
+                        .try_reserve(1)
+                        .map_err(|_| Error::range("Proxy ownKeys validation chain is too large"))?;
+                    let frame_roots = [current.clone(), target.clone()];
+                    #[cfg(test)]
+                    if take_proxy_own_keys_reservation_failure(
+                        vm,
+                        crate::vm::ProxyOwnKeysReservationSite::FrameRoots,
+                    ) {
+                        return Err(Error::range("temporary root set is too large"));
+                    }
+                    vm.try_reserve_value_roots(&frame_roots)?;
+                    pending_pins += vm.pin_many(&frame_roots);
                     pending.push(PendingProxyKeys {
                         object: current,
                         target: target.clone(),

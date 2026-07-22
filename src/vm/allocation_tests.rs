@@ -10994,6 +10994,357 @@ fn proxy_own_keys_entry_reservations_are_fallible_ordered_and_retryable() {
 }
 
 #[test]
+fn proxy_own_keys_pending_frames_are_fallible_atomic_and_rooted() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "failProxyOwnKeysPendingFrame",
+        |vm, _, _| {
+            vm.fail_proxy_own_keys_reservation =
+                Some((ProxyOwnKeysReservationSite::PendingFrame, 0));
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("pending-frame failure hook should register");
+    vm.register_fn(
+        "failProxyOwnKeysFrameRoots",
+        |vm, _, _| {
+            vm.fail_proxy_own_keys_reservation = Some((ProxyOwnKeysReservationSite::FrameRoots, 0));
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("frame-root failure hook should register");
+    vm.register_fn(
+        "failNextGcPinReservation",
+        |vm, _, _| {
+            vm.fail_next_gc_pin_reservation = true;
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("GC-pin failure hook should register");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.clear_kept_objects();
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("GC hook should register");
+    vm.run(
+        r#"
+        var frameBase = { key: 1 };
+        var frameInnerOwnKeysCalls = 0;
+        var frameIsExtensibleCalls = 0;
+        var armActualFrameRootFailure = false;
+        var forceFrameGc = false;
+        var frameInner = new Proxy(frameBase, {
+          ownKeys: function () {
+            frameInnerOwnKeysCalls += 1;
+            if (forceFrameGc) {
+              forceFrameGc = false;
+              forceGc();
+            }
+            return ["key"];
+          },
+          isExtensible: function (target) {
+            frameIsExtensibleCalls += 1;
+            var result = Reflect.isExtensible(target);
+            if (armActualFrameRootFailure) {
+              armActualFrameRootFailure = false;
+              failNextGcPinReservation();
+            }
+            return result;
+          }
+        });
+        var frameOuterCalls = 0;
+        var frameOuterReads = [];
+        var frameOuter = new Proxy(frameInner, {
+          ownKeys: function () {
+            frameOuterCalls += 1;
+            var call = frameOuterCalls;
+            return {
+              get length() { frameOuterReads.push("length:" + call); return 1; },
+              get 0() { frameOuterReads.push("0:" + call); return "key"; }
+            };
+          }
+        });
+
+        var transparentFrameProxy = new Proxy({ transparent: 1 }, {});
+        var emptyTrappedFrameProxy = new Proxy({}, {
+          ownKeys: function () { return []; }
+        });
+        var duplicateFrameProxy = new Proxy({}, {
+          ownKeys: function () { return ["duplicate", "duplicate"]; }
+        });
+        var publicationMarker = {};
+        var throwingExtensibleTarget = new Proxy({}, {
+          isExtensible: function () { throw publicationMarker; }
+        });
+        var throwingExtensibleOuter = new Proxy(throwingExtensibleTarget, {
+          ownKeys: function () { return []; }
+        });
+
+        var chainBase = { chain: 1 };
+        var chainInnerCalls = 0;
+        var chainInner = new Proxy(chainBase, {
+          ownKeys: function () { chainInnerCalls += 1; return ["chain"]; }
+        });
+        var chainOuterCalls = 0;
+        var chainOuter = new Proxy(chainInner, {
+          ownKeys: function () { chainOuterCalls += 1; return ["chain"]; }
+        });
+
+        var deepFrameProxy = { marker: 1 };
+        function deepFrameOwnKeys() { return ["marker"]; }
+        for (var deepFrameIndex = 0; deepFrameIndex < 1024; deepFrameIndex += 1) {
+          deepFrameProxy = new Proxy(deepFrameProxy, { ownKeys: deepFrameOwnKeys });
+        }
+
+        var frameForInCalls = 0;
+        var frameForInTarget = Object.create(null);
+        frameForInTarget.visible = 1;
+        var frameForInProxy = new Proxy(frameForInTarget, {
+          ownKeys: function () {
+            frameForInCalls += 1;
+            if (frameForInCalls === 1) failProxyOwnKeysPendingFrame();
+            return ["visible"];
+          }
+        });
+
+        var frameReservationRealm = $262.createRealm().global;
+        var foreignPendingFrameProxy = new Proxy({}, {
+          ownKeys: function () {
+            failProxyOwnKeysPendingFrame();
+            return [];
+          }
+        });
+        var foreignPendingFrameError = frameReservationRealm.Function(
+          "proxy",
+          "try { Reflect.ownKeys(proxy); } catch (error) { return error; }"
+        )(foreignPendingFrameProxy);
+        var foreignPendingFrameRange =
+          foreignPendingFrameError instanceof frameReservationRealm.RangeError &&
+          !(foreignPendingFrameError instanceof RangeError);
+
+        var foreignFrameRootsProxy = new Proxy({}, {
+          ownKeys: function () {
+            failProxyOwnKeysFrameRoots();
+            return [];
+          }
+        });
+        var foreignFrameRootsError = frameReservationRealm.Function(
+          "proxy",
+          "try { Reflect.ownKeys(proxy); } catch (error) { return error; }"
+        )(foreignFrameRootsProxy);
+        var foreignFrameRootsRange =
+          foreignFrameRootsError instanceof frameReservationRealm.RangeError &&
+          !(foreignFrameRootsError instanceof RangeError);
+        "#,
+    )
+    .expect("Proxy ownKeys pending-frame fixtures should initialize");
+    let baseline_pins = vm.gc_pins.len();
+    let baseline_contexts = vm.execution_contexts.len();
+    let baseline_native_depth = vm.active_native_call_depth;
+    assert_eq!(vm.get_global("foreignPendingFrameRange"), Value::Bool(true));
+    assert_eq!(vm.get_global("foreignFrameRootsRange"), Value::Bool(true));
+
+    let frame_outer = vm.get_global("frameOuter");
+    vm.fail_proxy_own_keys_reservation = Some((ProxyOwnKeysReservationSite::PendingFrame, 0));
+    let error =
+        crate::builtins::own_property_keys_or_throw(&mut vm, &frame_outer, false, true, true)
+            .expect_err("pending-frame growth must be fallible");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.get_global("frameOuterCalls"), Value::Number(1.0));
+    assert_eq!(vm.get_global("frameIsExtensibleCalls"), Value::Number(1.0));
+    assert_eq!(vm.get_global("frameInnerOwnKeysCalls"), Value::Number(0.0));
+    assert_eq!(
+        vm.run("frameOuterReads.join('|')")
+            .expect("frame publication reads should be inspectable"),
+        Value::String(Arc::from("length:1|0:1"))
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.execution_contexts.len(), baseline_contexts);
+    assert_eq!(vm.active_native_call_depth, baseline_native_depth);
+
+    vm.fail_proxy_own_keys_reservation = Some((ProxyOwnKeysReservationSite::FrameRoots, 0));
+    let error =
+        crate::builtins::own_property_keys_or_throw(&mut vm, &frame_outer, false, true, true)
+            .expect_err("pending-frame roots must reserve before pinning");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.get_global("frameOuterCalls"), Value::Number(2.0));
+    assert_eq!(vm.get_global("frameIsExtensibleCalls"), Value::Number(2.0));
+    assert_eq!(vm.get_global("frameInnerOwnKeysCalls"), Value::Number(0.0));
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    vm.run("armActualFrameRootFailure = true")
+        .expect("actual frame-root failpoint should arm");
+    let error =
+        crate::builtins::own_property_keys_or_throw(&mut vm, &frame_outer, false, true, true)
+            .expect_err("the real GC-pin reservation path must remain fallible");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert!(!vm.fail_next_gc_pin_reservation);
+    assert_eq!(vm.get_global("frameOuterCalls"), Value::Number(3.0));
+    assert_eq!(vm.get_global("frameIsExtensibleCalls"), Value::Number(3.0));
+    assert_eq!(vm.get_global("frameInnerOwnKeysCalls"), Value::Number(0.0));
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    vm.run("forceFrameGc = true")
+        .expect("nested success GC should arm");
+    let keys =
+        crate::builtins::own_property_keys_or_throw(&mut vm, &frame_outer, false, true, true)
+            .expect("caller retry should restart at the outer ownKeys trap");
+    assert_eq!(keys, vec![crate::value::PropertyKey::from("key")]);
+    assert_eq!(vm.get_global("frameOuterCalls"), Value::Number(4.0));
+    assert_eq!(vm.get_global("frameIsExtensibleCalls"), Value::Number(4.0));
+    assert_eq!(vm.get_global("frameInnerOwnKeysCalls"), Value::Number(1.0));
+    assert_eq!(
+        vm.run("frameOuterReads.join('|')")
+            .expect("frame retries should be inspectable"),
+        Value::String(Arc::from(
+            "length:1|0:1|length:2|0:2|length:3|0:3|length:4|0:4"
+        ))
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.execution_contexts.len(), baseline_contexts);
+    assert_eq!(vm.active_native_call_depth, baseline_native_depth);
+
+    let transparent = vm.get_global("transparentFrameProxy");
+    for site in [
+        ProxyOwnKeysReservationSite::PendingFrame,
+        ProxyOwnKeysReservationSite::FrameRoots,
+    ] {
+        vm.fail_proxy_own_keys_reservation = Some((site, 0));
+        assert_eq!(
+            crate::builtins::own_property_keys_or_throw(&mut vm, &transparent, false, true, true)
+                .expect("transparent forwarding needs no pending frame"),
+            vec![crate::value::PropertyKey::from("transparent")]
+        );
+        assert_eq!(vm.fail_proxy_own_keys_reservation, Some((site, 0)));
+    }
+
+    let empty_trapped = vm.get_global("emptyTrappedFrameProxy");
+    for site in [
+        ProxyOwnKeysReservationSite::PendingFrame,
+        ProxyOwnKeysReservationSite::FrameRoots,
+    ] {
+        vm.fail_proxy_own_keys_reservation = Some((site, 0));
+        let error =
+            crate::builtins::own_property_keys_or_throw(&mut vm, &empty_trapped, false, true, true)
+                .expect_err("an empty trapped result still needs invariant state");
+        assert_eq!(error.kind, crate::error::ErrorKind::Range);
+        assert_eq!(vm.fail_proxy_own_keys_reservation, None);
+    }
+
+    let duplicate = vm.get_global("duplicateFrameProxy");
+    vm.fail_proxy_own_keys_reservation = Some((ProxyOwnKeysReservationSite::PendingFrame, 0));
+    let error = crate::builtins::own_property_keys_or_throw(&mut vm, &duplicate, false, true, true)
+        .expect_err("duplicate validation must precede frame reservation");
+    assert_eq!(error.kind, crate::error::ErrorKind::Type);
+    assert_eq!(
+        vm.fail_proxy_own_keys_reservation,
+        Some((ProxyOwnKeysReservationSite::PendingFrame, 0))
+    );
+
+    let throwing_extensible = vm.get_global("throwingExtensibleOuter");
+    let error = crate::builtins::own_property_keys_or_throw(
+        &mut vm,
+        &throwing_extensible,
+        false,
+        true,
+        true,
+    )
+    .expect_err("IsExtensible abrupt completion must precede frame reservation");
+    assert_ne!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(
+        vm.fail_proxy_own_keys_reservation,
+        Some((ProxyOwnKeysReservationSite::PendingFrame, 0))
+    );
+
+    vm.set_fuel(Some(0));
+    let error =
+        crate::builtins::own_property_keys_or_throw(&mut vm, &empty_trapped, false, true, true)
+            .expect_err("Proxy-layer fuel must precede frame reservation");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(
+        vm.fail_proxy_own_keys_reservation,
+        Some((ProxyOwnKeysReservationSite::PendingFrame, 0))
+    );
+    vm.set_fuel(None);
+    vm.fail_proxy_own_keys_reservation = None;
+
+    let chain_outer = vm.get_global("chainOuter");
+    for site in [
+        ProxyOwnKeysReservationSite::PendingFrame,
+        ProxyOwnKeysReservationSite::FrameRoots,
+    ] {
+        vm.fail_proxy_own_keys_reservation = Some((site, 1));
+        let error =
+            crate::builtins::own_property_keys_or_throw(&mut vm, &chain_outer, false, true, true)
+                .expect_err("the second pending frame should fail after the first is rooted");
+        assert_eq!(error.kind, crate::error::ErrorKind::Range);
+        assert_eq!(vm.fail_proxy_own_keys_reservation, None);
+        assert_eq!(vm.gc_pins.len(), baseline_pins);
+        assert_eq!(vm.execution_contexts.len(), baseline_contexts);
+        assert_eq!(vm.active_native_call_depth, baseline_native_depth);
+    }
+    assert_eq!(vm.get_global("chainOuterCalls"), Value::Number(2.0));
+    assert_eq!(vm.get_global("chainInnerCalls"), Value::Number(2.0));
+    assert_eq!(
+        crate::builtins::own_property_keys_or_throw(&mut vm, &chain_outer, false, true, true)
+            .expect("nested frame chain should remain retryable"),
+        vec![crate::value::PropertyKey::from("chain")]
+    );
+
+    let deep = vm.get_global("deepFrameProxy");
+    assert_eq!(
+        crate::builtins::own_property_keys_or_throw(&mut vm, &deep, false, true, true)
+            .expect("deep trapped Proxy frames should remain iterative and rooted"),
+        vec![crate::value::PropertyKey::from("marker")]
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    let for_in_proxy = vm.get_global("frameForInProxy");
+    let iterator = vm
+        .make_for_in_keys(&for_in_proxy)
+        .expect("for-in frame iterator should initialize");
+    let error = vm
+        .iterator_next(&iterator)
+        .expect_err("frame reservation must precede for-in snapshot publication");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    let Value::Object(iterator_idx) = &iterator else {
+        panic!("for-in iterator must be an object");
+    };
+    let snapshot = vm.heap.with_obj(iterator_idx.0, |object| {
+        let HeapObj::Iterator(iterator) = object else {
+            panic!("expected for-in iterator");
+        };
+        let state = iterator.for_in.lock();
+        let state = state.as_ref().expect("for-in state should exist");
+        (
+            state.object_was_visited,
+            state.remaining_keys.len(),
+            state.remaining_index,
+        )
+    });
+    assert_eq!(snapshot, (false, 0, 0));
+    assert_eq!(
+        vm.iterator_next(&iterator)
+            .expect("for-in should retry ownKeys after frame reservation failure"),
+        (Value::String(Arc::from("visible")), false)
+    );
+    assert_eq!(vm.get_global("frameForInCalls"), Value::Number(2.0));
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.execution_contexts.len(), baseline_contexts);
+    assert_eq!(vm.active_native_call_depth, baseline_native_depth);
+    assert_eq!(vm.fail_proxy_own_keys_reservation, None);
+}
+
+#[test]
 fn proxy_own_keys_walk_is_iterative_metered_and_restores_pin_depth() {
     let mut vm = Vm::new().expect("VM should initialize");
     vm.run(

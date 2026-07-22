@@ -37,6 +37,8 @@ pub(crate) enum ForInKeyReservationSite {
 pub(crate) enum ProxyOwnKeysReservationSite {
     TrapResultKey,
     SeenKey,
+    PendingFrame,
+    FrameRoots,
 }
 
 pub(crate) use conversions::{to_int32, to_uint32};
