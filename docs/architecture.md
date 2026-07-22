@@ -1732,6 +1732,36 @@ Proxy prototype trap rather than caching its prior result across the error.
 - 장점, 단점 및 영향: Get, HasProperty, Set, inherited Proxy GetMethod, and for-in edge growth now fail through ordinary Result cleanup with retryable state, exact fuel and cycle ordering, Realm-correct errors, and stable GC identities. Persistent for-in state uses O(depth) memory while active and releases that capacity when done. Key snapshots, visited-key growth, trap-call internals, PropertyKey/Error strings, GC root enumeration, and mark worklists remain explicitly outside this unit.
 ```
 
+## Fallible lazy for-in key state
+
+After `OwnPropertyKeys` completes, lazy `for...in` counts only string keys and
+reserves the iterator-owned snapshot before replacing any prior state. The
+snapshot is published by consuming the returned key vector directly, so there
+is no second infallible temporary collection. A symbol-only result requires no
+reservation. Snapshot failure leaves the iterator unvisited and causes the
+next pull to re-observe `OwnPropertyKeys`.
+
+For each consumed candidate, `[[GetOwnProperty]]` runs before visited-key
+growth. An absent descriptor does not mark the name, while an existing
+descriptor reserves the visited set before insertion. Reservation failure
+leaves the mark uncommitted but retains the consumed candidate cursor, because
+the specification removes the candidate before descriptor lookup and the
+existing fuel and descriptor abrupt paths have the same progression. A retry
+can therefore observe a same-name prototype property. Already visited names
+skip both descriptor lookup and reservation. Terminal completion releases the
+snapshot and visited-set capacities; prototype transitions retain capacity for
+reuse during the active traversal.
+
+```text
+[Decision Log]
+- 목적과 의도: Make the two key collections directly owned by a lazy for-in iterator allocator-fallible without changing observation, shadowing, fuel, or retry order.
+- 기존 구현 및 제약 조건: OwnPropertyKeys results were filtered through an infallible temporary Vec and assigned to remaining_keys without reservation, while every existing descriptor inserted into visited_keys through infallible IndexSet growth. Iterator pulls deliberately preserve consumed-candidate progression across fuel and descriptor abrupt completions.
+- 검토한 주요 대안: Reserve for all returned keys, build a second filtered vector, roll back the cursor on visited reservation failure, mark absent descriptors, reserve on duplicate prototype names, or combine Proxy own-key frames and GC worklists into the same patch.
+- 선택한 방식: Count string keys without allocation, reserve the snapshot immediately before publication, consume the returned PropertyKey vector directly, and reserve a new visited entry only after an existing descriptor is observed. Keep the already consumed cursor on failure and release both capacities only at terminal completion.
+- 다른 대안 대신 이 방식을 선택한 이유: Reserving symbols changes failure behavior for discarded data; a second vector retains an infallible allocation; cursor rollback repeats a key that the specification already removed and disagrees with existing abrupt progression; absent and duplicate keys need no new state; and broader allocator ownership would obscure this exact boundary.
+- 장점, 단점 및 영향: Snapshot and visited growth now produce catchable, Realm-correct errors with atomic collection publication, exact no-op boundaries, stable Proxy and fuel ordering, and terminal capacity release. A failed child visited mark intentionally permits a same-name prototype key on retry. Proxy own-key trap-result vectors and duplicate sets, pending validation frames, filtered results, PropertyKey/Error strings, GC root enumeration, and mark worklists remain separate units.
+```
+
 ---
 
 **Next:** [Features](features.md) · [Known limitations](limitations.md) · [Back to README](../README.md)

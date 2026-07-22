@@ -10361,6 +10361,46 @@ cohort at **190/0/37**.
 - 장점, 단점 및 영향: The unit has exact zero-delta evidence plus direct allocation, fuel, Realm, GC, cycle, cleanup, and capacity-release coverage. Per-key for-in collection growth and broader runtime allocator fallibility remain separate work.
 ```
 
+## Fallible lazy for-in key state
+
+Commit `0686d0e` changes no Test262 admission. Lazy `for...in` now reserves its
+string-key snapshot before publication and reserves its visited-key set only
+after an existing descriptor is observed. Reservation failures are catchable
+and Realm-correct; snapshot state and visited marks remain atomic, while the
+already consumed candidate cursor preserves the same progression as fuel and
+descriptor abrupt completions. Completed iterators release both capacities.
+
+Focused regressions inject both reservation sites and cover symbol-only
+snapshots, absent descriptors, prototype duplicates, shadowing, Proxy retry
+observation, exact fuel priority, foreign Realms, terminal release, and pin and
+execution-context restoration. Local fixed-corpus coverage over direct Proxy
+Get, Has, Set, GetPrototypeOf, GetOwnPropertyDescriptor, and language `for-in`
+is **190 pass / 0 fail / 37 skip / 227 total**.
+
+Local gates pass all targets/features with **226/226** library tests,
+**539/539** builtins tests, and **15/15** arguments tests, plus **225/225**
+release library tests, **135/135** tooling tests, rustfmt, warnings-denied
+Clippy, release build, generated documentation, and wasm32 checking. Two
+GPT-5.6 reviews are clean after exact no-reservation and retry-progression
+coverage was settled. CI `29951588373` and all 33 jobs in full run
+`29951587187` pass.
+
+Artifacts at `/tmp/ruja-for-in-key-state-29951587187-final` aggregate to
+unchanged **31890 pass / 5115 fail / 11459 skip / 3 timeout / 0 error / 48467
+total / 37005 run**. All 30 result files are byte-identical to run
+`29947430421`, and the downloaded release binary reproduces the affected
+cohort at **190/0/37**.
+
+```text
+[Decision Log]
+- 목적과 의도: Prove the lazy for-in key-state allocator correction without widening Test262 admission or masking a conformance regression.
+- 기존 구현 및 제약 조건: The affected Test262 cohort already passed despite infallible snapshot and visited-set growth, while ordinary aggregate equality could conceal offsetting shard changes and Test262 has no host allocation-failure interface.
+- 검토한 주요 대안: Admit unrelated files, rely only on injected Rust failpoints, compare aggregate totals only, or infer allocation safety from normal for-in semantic tests.
+- 선택한 방식: Keep admission unchanged, test every reservation and no-reservation boundary locally, run the pinned full matrix, compare all 30 artifacts byte-for-byte, and reproduce the affected cohort with the downloaded CI binary.
+- 다른 대안 대신 이 방식을 선택한 이유: Admission changes would not prove allocator behavior, normal Test262 execution cannot force native reserve failures, and equal totals do not prove that each shard is unchanged.
+- 장점, 단점 및 영향: The unit has exact zero-delta evidence plus direct atomicity, retry, fuel, Realm, Proxy-order, shadowing, cleanup, and capacity-release coverage. Proxy own-key trap collection and broader runtime allocator fallibility remain separate work.
+```
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is

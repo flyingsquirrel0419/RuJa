@@ -62,6 +62,39 @@
 
 ### Fixed
 
+- Lazy `for...in` now reserves the iterator-owned key snapshot before
+  publishing it and reserves the visited-key set before marking an existing
+  descriptor. Native allocation failure therefore becomes a catchable
+  `RangeError` without exposing a partial snapshot or a visited mark that was
+  never committed. Symbol-only snapshots, absent descriptors, and already
+  visited prototype duplicates do not consume these reservations.
+
+  A visited-key reservation failure retains the already consumed candidate
+  cursor. This preserves the specification order in which the candidate is
+  removed before `[[GetOwnProperty]]`, matches the existing fuel and descriptor
+  abrupt-completion policy, and lets a same-name prototype property be
+  observed on retry when the failed child mark was not committed. Completed
+  iterators release both key collection capacities. Exact-site regressions
+  cover retry behavior, shadowing, duplicates, fuel priority, Proxy observation
+  order, foreign-Realm errors, terminal cleanup, and balanced pins and
+  execution contexts.
+
+  Local verification passes all targets/features with **226/226** library
+  tests, **539/539** builtins tests, and **15/15** arguments tests, plus
+  **225/225** release library tests, **135/135** Python tooling tests, rustfmt,
+  warnings-denied Clippy, release build, generated documentation, and wasm32
+  checking. Rustdoc retains only the 13 pre-existing broken-link warnings. Two
+  GPT-5.6 reviews are clean after retry semantics and exact no-reservation
+  boundaries were resolved. Implementation commit `0686d0e` passes CI
+  `29951588373` and all 33 jobs in full run `29951587187`. Downloaded artifacts
+  at `/tmp/ruja-for-in-key-state-29951587187-final` aggregate to unchanged
+  **31890 pass / 5115 fail / 11459 skip / 3 timeout / 0 error / 48467 total /
+  37005 run**; all 30 result files are byte-identical to run `29947430421`.
+  The downloaded binary reproduces the affected Proxy and `for-in` cohort at
+  **190 pass / 0 fail / 37 skip**. Proxy own-key trap collection,
+  PropertyKey/Error strings, GC root enumeration, and mark worklists remain
+  separate allocator-safety scopes.
+
 - Shared ordinary property traversal now reserves its initial node set, each
   new directed edge and node, and every newly owned GC root before publishing
   state. Get, HasProperty, receiver-aware Set, ordinary Set, and inherited
