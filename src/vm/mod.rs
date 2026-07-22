@@ -16,6 +16,15 @@ pub(crate) enum GetPrototypeReservationSite {
     ExpectedRoot,
 }
 
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PropertyTraversalReservationSite {
+    InitialNodes,
+    FollowedEdge,
+    RootedNode,
+    ReachedRoot,
+}
+
 pub(crate) use conversions::{to_int32, to_uint32};
 pub(crate) use property::{
     ProxyDefinePropertyDescriptor, ProxyDefinePropertyOutcome, TypedArrayDefineDescriptor,
@@ -174,6 +183,8 @@ pub struct Vm {
     pub(crate) fail_next_get_prototype_scratch_reservation: bool,
     #[cfg(test)]
     pub(crate) fail_get_prototype_reservation_site: Option<GetPrototypeReservationSite>,
+    #[cfg(test)]
+    pub(crate) fail_property_traversal_reservation_site: Option<PropertyTraversalReservationSite>,
     /// Receiver identities currently traversing Array stringification methods.
     /// Join checks after separator coercion and toLocaleString checks after its
     /// length snapshot, so recursive suppression preserves observable ordering.
@@ -698,6 +709,8 @@ impl Vm {
             fail_next_get_prototype_scratch_reservation: false,
             #[cfg(test)]
             fail_get_prototype_reservation_site: None,
+            #[cfg(test)]
+            fail_property_traversal_reservation_site: None,
             active_array_joins: Vec::new(),
             kept_objects: Vec::new(),
             current_yields: Vec::new(),

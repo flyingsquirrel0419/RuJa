@@ -1085,13 +1085,21 @@ pub struct LazyGeneratorData {
 }
 
 /// State for the lazy `for...in` iterator described by CreateForInIterator.
-/// String keys are ordinary Rust data; only `object` needs GC tracing.
 pub struct ForInIteratorState {
     pub object: Option<Value>,
     pub object_was_visited: bool,
     pub visited_keys: IndexSet<Arc<str>>,
     pub remaining_keys: Vec<Arc<str>>,
     pub remaining_index: usize,
+    /// Directed prototype edges persist across `next()` calls so a Proxy cycle
+    /// cannot reset its replay budget by yielding one key per pull.
+    pub followed_edges: std::collections::HashSet<(usize, usize)>,
+    pub rooted_nodes: std::collections::HashSet<usize>,
+    /// Values corresponding to `rooted_nodes`; traced by the GC to prevent
+    /// heap-slot reuse from changing persistent edge identities.
+    pub traversal_roots: Vec<Value>,
+    pub proxy_seen: bool,
+    pub cycle_replays: usize,
 }
 
 /// Internal iterator state used by `for...of` / `for...in` and the spread operator.

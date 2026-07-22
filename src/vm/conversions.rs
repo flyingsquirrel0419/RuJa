@@ -591,11 +591,9 @@ impl Vm {
         key: &crate::value::PropertyKey,
         ordinary_edge_credit: usize,
     ) -> error::Result<bool> {
+        let mut traversal =
+            self.try_new_property_traversal(std::slice::from_ref(obj), ordinary_edge_credit)?;
         let root_pin = self.pin(obj);
-        let mut traversal = super::property::PropertyTraversal::new(
-            std::slice::from_ref(obj),
-            ordinary_edge_credit,
-        );
         let result = (|| {
             let mut current = obj.clone();
             loop {

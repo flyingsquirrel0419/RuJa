@@ -8,7 +8,7 @@ use crate::value::HeapObj;
 use crate::value::{GcIdx, PromiseStatus, TypedArrayKind, Value};
 use std::sync::Arc;
 
-const MAX_PROXY_CYCLE_REPLAYS: usize = 512;
+pub(crate) const MAX_PROXY_CYCLE_REPLAYS: usize = 512;
 
 struct TypedArrayNumericSlots {
     kind: TypedArrayKind,
@@ -29,22 +29,28 @@ pub(crate) struct PropertyTraversal {
 }
 
 impl PropertyTraversal {
-    pub(crate) fn new(initial_roots: &[Value], ordinary_edge_credit: usize) -> Self {
-        let rooted_nodes = initial_roots
+    fn try_new(initial_roots: &[Value], ordinary_edge_credit: usize) -> error::Result<Self> {
+        let object_count = initial_roots
             .iter()
-            .filter_map(|value| match value {
-                Value::Object(idx) => Some(idx.0),
-                _ => None,
-            })
-            .collect();
-        Self {
+            .filter(|value| matches!(value, Value::Object(_)))
+            .count();
+        let mut rooted_nodes = std::collections::HashSet::new();
+        rooted_nodes
+            .try_reserve(object_count)
+            .map_err(|_| Error::range("property traversal state is too large"))?;
+        for value in initial_roots {
+            if let Value::Object(idx) = value {
+                rooted_nodes.insert(idx.0);
+            }
+        }
+        Ok(Self {
             followed_edges: std::collections::HashSet::new(),
             rooted_nodes,
             pin_count: 0,
             ordinary_edge_credit,
             proxy_seen: false,
             cycle_replays: 0,
-        }
+        })
     }
 
     pub(crate) fn pin_count(&self) -> usize {
@@ -425,7 +431,7 @@ impl Vm {
             .map_err(|_| Error::range("temporary root set is too large"))
     }
 
-    fn try_reserve_value_roots(&mut self, values: &[Value]) -> error::Result<()> {
+    pub(crate) fn try_reserve_value_roots(&mut self, values: &[Value]) -> error::Result<()> {
         let required = values.iter().try_fold(0usize, |total, value| {
             total
                 .checked_add(Self::value_root_count(value))
@@ -486,6 +492,38 @@ impl Vm {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn fail_property_traversal_reservation(
+        &mut self,
+        site: PropertyTraversalReservationSite,
+    ) -> error::Result<()> {
+        if self.fail_property_traversal_reservation_site == Some(site) {
+            self.fail_property_traversal_reservation_site = None;
+            return Err(Error::range("property traversal state is too large"));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn try_new_property_traversal(
+        &mut self,
+        initial_roots: &[Value],
+        ordinary_edge_credit: usize,
+    ) -> error::Result<PropertyTraversal> {
+        let object_count = initial_roots
+            .iter()
+            .filter(|value| matches!(value, Value::Object(_)))
+            .count();
+        #[cfg(test)]
+        if object_count != 0 {
+            self.fail_property_traversal_reservation(
+                PropertyTraversalReservationSite::InitialNodes,
+            )?;
+        }
+        let traversal = PropertyTraversal::try_new(initial_roots, ordinary_edge_credit)?;
+        self.try_reserve_value_roots(initial_roots)?;
+        Ok(traversal)
+    }
+
     pub(crate) fn advance_property_edge(
         &mut self,
         traversal: &mut PropertyTraversal,
@@ -503,7 +541,8 @@ impl Vm {
                 traversal.ordinary_edge_credit -= 1;
             }
         }
-        if !traversal.followed_edges.insert((from.0, next_idx.0)) {
+        let edge = (from.0, next_idx.0);
+        if traversal.followed_edges.contains(&edge) {
             if !traversal.proxy_seen {
                 return Err(Error::type_err("Prototype chain cycle"));
             }
@@ -518,9 +557,153 @@ impl Vm {
             }
             return Ok(());
         }
-        if traversal.rooted_nodes.insert(next_idx.0) {
+
+        let needs_root = !traversal.rooted_nodes.contains(&next_idx.0);
+        #[cfg(test)]
+        self.fail_property_traversal_reservation(PropertyTraversalReservationSite::FollowedEdge)?;
+        traversal
+            .followed_edges
+            .try_reserve(1)
+            .map_err(|_| Error::range("property traversal state is too large"))?;
+        if needs_root {
+            #[cfg(test)]
+            self.fail_property_traversal_reservation(PropertyTraversalReservationSite::RootedNode)?;
+            traversal
+                .rooted_nodes
+                .try_reserve(1)
+                .map_err(|_| Error::range("property traversal state is too large"))?;
+            #[cfg(test)]
+            self.fail_property_traversal_reservation(
+                PropertyTraversalReservationSite::ReachedRoot,
+            )?;
+            self.try_reserve_value_roots(std::slice::from_ref(next))?;
+        }
+
+        traversal.followed_edges.insert(edge);
+        if needs_root {
+            traversal.rooted_nodes.insert(next_idx.0);
             traversal.pin_count += self.pin(next);
         }
+        Ok(())
+    }
+
+    pub(crate) fn advance_for_in_property_edge(
+        &mut self,
+        iterator: GcIdx,
+        from: GcIdx,
+        next: &Value,
+        charge_ordinary_edge: bool,
+    ) -> error::Result<()> {
+        let Value::Object(next_idx) = next else {
+            return Ok(());
+        };
+        if charge_ordinary_edge {
+            self.consume_fuel()?;
+        }
+
+        let edge = (from.0, next_idx.0);
+        let edge_state = self.heap.with_obj(iterator.0, |object| {
+            let HeapObj::Iterator(iterator) = object else {
+                return None;
+            };
+            let state = iterator.for_in.lock();
+            let state = state.as_ref()?;
+            Some((
+                state.followed_edges.contains(&edge),
+                state.proxy_seen,
+                !state.rooted_nodes.contains(&next_idx.0),
+            ))
+        });
+        let (duplicate, proxy_seen, needs_root) =
+            edge_state.ok_or_else(|| Error::internal("for-in traversal state missing"))?;
+        if duplicate {
+            if !proxy_seen {
+                return Err(Error::type_err("Prototype chain cycle"));
+            }
+            let replay_count = self.heap.with_obj(iterator.0, |object| {
+                let HeapObj::Iterator(iterator) = object else {
+                    return None;
+                };
+                let mut state = iterator.for_in.lock();
+                let state = state.as_mut()?;
+                state.cycle_replays += 1;
+                Some(state.cycle_replays)
+            });
+            let replay_count =
+                replay_count.ok_or_else(|| Error::internal("for-in traversal state missing"))?;
+            if replay_count > MAX_PROXY_CYCLE_REPLAYS {
+                return Err(Error::range(
+                    "Maximum cyclic property traversal depth exceeded",
+                ));
+            }
+            return Ok(());
+        }
+
+        #[cfg(test)]
+        self.fail_property_traversal_reservation(PropertyTraversalReservationSite::FollowedEdge)?;
+        self.heap.with_obj(iterator.0, |object| {
+            let HeapObj::Iterator(iterator) = object else {
+                return Err(Error::internal("for-in traversal iterator missing"));
+            };
+            let mut state = iterator.for_in.lock();
+            let state = state
+                .as_mut()
+                .ok_or_else(|| Error::internal("for-in traversal state missing"))?;
+            state
+                .followed_edges
+                .try_reserve(1)
+                .map_err(|_| Error::range("property traversal state is too large"))
+        })?;
+        if needs_root {
+            #[cfg(test)]
+            self.fail_property_traversal_reservation(PropertyTraversalReservationSite::RootedNode)?;
+            self.heap.with_obj(iterator.0, |object| {
+                let HeapObj::Iterator(iterator) = object else {
+                    return Err(Error::internal("for-in traversal iterator missing"));
+                };
+                let mut state = iterator.for_in.lock();
+                let state = state
+                    .as_mut()
+                    .ok_or_else(|| Error::internal("for-in traversal state missing"))?;
+                state
+                    .rooted_nodes
+                    .try_reserve(1)
+                    .map_err(|_| Error::range("property traversal state is too large"))
+            })?;
+            #[cfg(test)]
+            self.fail_property_traversal_reservation(
+                PropertyTraversalReservationSite::ReachedRoot,
+            )?;
+            self.heap.with_obj(iterator.0, |object| {
+                let HeapObj::Iterator(iterator) = object else {
+                    return Err(Error::internal("for-in traversal iterator missing"));
+                };
+                let mut state = iterator.for_in.lock();
+                let state = state
+                    .as_mut()
+                    .ok_or_else(|| Error::internal("for-in traversal state missing"))?;
+                state
+                    .traversal_roots
+                    .try_reserve(1)
+                    .map_err(|_| Error::range("property traversal state is too large"))
+            })?;
+        }
+
+        self.heap.with_obj(iterator.0, |object| {
+            let HeapObj::Iterator(iterator) = object else {
+                return Err(Error::internal("for-in traversal iterator missing"));
+            };
+            let mut state = iterator.for_in.lock();
+            let state = state
+                .as_mut()
+                .ok_or_else(|| Error::internal("for-in traversal state missing"))?;
+            state.followed_edges.insert(edge);
+            if needs_root {
+                state.rooted_nodes.insert(next_idx.0);
+                state.traversal_roots.push(next.clone());
+            }
+            Ok(())
+        })?;
         Ok(())
     }
 
@@ -890,9 +1073,10 @@ impl Vm {
         mut include_direct_exotics: bool,
         ordinary_edge_credit: usize,
     ) -> error::Result<Value> {
-        let root_pins = self.pin_many(&[obj.clone(), receiver.clone()]);
+        let traversal_roots = [obj.clone(), receiver.clone()];
         let mut traversal =
-            PropertyTraversal::new(&[obj.clone(), receiver.clone()], ordinary_edge_credit);
+            self.try_new_property_traversal(&traversal_roots, ordinary_edge_credit)?;
+        let root_pins = self.pin_many(&traversal_roots);
         let result = (|| {
             let mut current = obj.clone();
             loop {
@@ -2103,8 +2287,8 @@ impl Vm {
         value: Value,
         receiver: &Value,
     ) -> error::Result<bool> {
-        let mut traversal =
-            PropertyTraversal::new(&[base.clone(), value.clone(), receiver.clone()], 0);
+        let traversal_roots = [base.clone(), value.clone(), receiver.clone()];
+        let mut traversal = self.try_new_property_traversal(&traversal_roots, 0)?;
         self.try_set_property_key_with_receiver_tracked(base, key, value, receiver, &mut traversal)
     }
 
@@ -2233,8 +2417,8 @@ impl Vm {
         receiver: &Value,
     ) -> error::Result<bool> {
         let base = Value::Object(base_idx);
-        let mut traversal =
-            PropertyTraversal::new(&[base.clone(), value.clone(), receiver.clone()], 0);
+        let traversal_roots = [base.clone(), value.clone(), receiver.clone()];
+        let mut traversal = self.try_new_property_traversal(&traversal_roots, 0)?;
         self.try_set_property_key_with_receiver_tracked(
             &base,
             pkey,

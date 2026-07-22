@@ -1,4 +1,8 @@
-use super::{ExternalPromiseJob, GetPrototypeReservationSite, Microtask, Vm};
+use super::property::MAX_PROXY_CYCLE_REPLAYS;
+use super::{
+    ExternalPromiseJob, GetPrototypeReservationSite, Microtask, PropertyTraversalReservationSite,
+    Vm,
+};
 use crate::value::{FunctionData, FunctionKind, HeapObj, NativeConstructMode, PromiseStatus};
 use crate::Value;
 use std::fs;
@@ -9625,6 +9629,518 @@ fn iterative_property_walks_root_values_across_gc_and_reject_ordinary_cycles() {
         .expect_err("an all-ordinary malformed cycle must not loop forever in Set");
     assert_eq!(error.kind, crate::error::ErrorKind::Type);
     assert_eq!(vm.gc_pins.len(), baseline);
+}
+
+#[test]
+fn property_traversal_reservations_are_fallible_atomic_and_persistent() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "failTraversalFollowedEdge",
+        |vm, _, _| {
+            vm.fail_property_traversal_reservation_site =
+                Some(PropertyTraversalReservationSite::FollowedEdge);
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("traversal failure hook should register");
+    vm.register_fn(
+        "propertyTraversalNativeGet",
+        |_, _, _| Ok(Value::Number(73.0)),
+        3,
+    )
+    .expect("native traversal trap should register");
+    vm.run(
+        r#"
+        var traversalBase = { marker: 41, sink: 0 };
+        var traversalLeaf = Object.create(traversalBase);
+        var traversalOrdinarySetLeaf = Object.create({ ordinarySink: 0 });
+        var traversalTransparentHandler = {
+          get: null,
+          has: null,
+          set: null
+        };
+        var traversalTransparentProxy = new Proxy(
+          traversalBase,
+          traversalTransparentHandler
+        );
+
+        var inheritedTraversalHandlerRoot = {
+          get: propertyTraversalNativeGet
+        };
+        var inheritedTraversalProxy = new Proxy(
+          {},
+          Object.create(inheritedTraversalHandlerRoot)
+        );
+
+        var traversalOtherRealm = $262.createRealm().global;
+        var foreignTraversalHandler = {};
+        Object.defineProperty(foreignTraversalHandler, "get", {
+          get: function () {
+            failTraversalFollowedEdge();
+            return null;
+          }
+        });
+        var foreignTraversalProxy = new Proxy({}, foreignTraversalHandler);
+        var foreignTraversalRangeError = false;
+        try {
+          traversalOtherRealm.Reflect.get(foreignTraversalProxy, "x");
+        } catch (error) {
+          foreignTraversalRangeError =
+            error instanceof traversalOtherRealm.RangeError &&
+            !(error instanceof RangeError);
+        }
+
+        var persistentCycleOwnKeys = 0;
+        var persistentCyclePrototypeCalls = 0;
+        var persistentTraversalCycle;
+        persistentTraversalCycle = new Proxy({}, {
+          ownKeys: function () {
+            return ["cycle" + persistentCycleOwnKeys++];
+          },
+          getOwnPropertyDescriptor: function () {
+            return {
+              value: 1,
+              writable: true,
+              enumerable: true,
+              configurable: true
+            };
+          },
+          getPrototypeOf: function () {
+            persistentCyclePrototypeCalls += 1;
+            return persistentTraversalCycle;
+          }
+        });
+        "#,
+    )
+    .expect("property traversal fixtures should initialize");
+
+    let baseline_pins = vm.gc_pins.len();
+    let baseline_contexts = vm.execution_contexts.len();
+    assert_eq!(
+        vm.get_global("foreignTraversalRangeError"),
+        Value::Bool(true)
+    );
+
+    let leaf = vm.get_global("traversalLeaf");
+    let key = crate::value::PropertyKey::from("marker");
+    vm.fail_property_traversal_reservation_site =
+        Some(PropertyTraversalReservationSite::InitialNodes);
+    let error = vm
+        .get_property(&leaf, "marker")
+        .expect_err("Get traversal construction must be fallible");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.execution_contexts.len(), baseline_contexts);
+    assert_eq!(
+        vm.get_property(&leaf, "marker")
+            .expect("Get must remain retryable"),
+        Value::Number(41.0)
+    );
+
+    vm.fail_property_traversal_reservation_site =
+        Some(PropertyTraversalReservationSite::InitialNodes);
+    let error = vm
+        .has_property_key(&leaf, &key)
+        .expect_err("HasProperty traversal construction must be fallible");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert!(vm
+        .has_property_key(&leaf, &key)
+        .expect("HasProperty must remain retryable"));
+
+    vm.fail_property_traversal_reservation_site =
+        Some(PropertyTraversalReservationSite::InitialNodes);
+    let error = vm
+        .try_set_property_with_receiver(&leaf, "sink", Value::Number(11.0), &leaf)
+        .expect_err("receiver-aware Set traversal construction must be fallible");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert!(vm
+        .try_set_property_with_receiver(&leaf, "sink", Value::Number(12.0), &leaf)
+        .expect("receiver-aware Set must remain retryable"));
+
+    vm.fail_property_traversal_reservation_site =
+        Some(PropertyTraversalReservationSite::InitialNodes);
+    let ordinary_set_leaf = vm.get_global("traversalOrdinarySetLeaf");
+    let error = vm
+        .set_property(&ordinary_set_leaf, "ordinarySink", Value::Number(13.0))
+        .expect_err("ordinary Set traversal construction must be fallible");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    vm.set_property(&ordinary_set_leaf, "ordinarySink", Value::Number(14.0))
+        .expect("ordinary Set must remain retryable");
+
+    vm.fail_next_gc_pin_reservation = true;
+    assert!(!vm
+        .has_property_key(&Value::Undefined, &key)
+        .expect("primitive traversal must not reserve roots"));
+    assert!(vm.fail_next_gc_pin_reservation);
+    let error = vm
+        .get_property(&leaf, "marker")
+        .expect_err("caller-owned initial roots must reserve fallibly");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert!(!vm.fail_next_gc_pin_reservation);
+
+    for site in [
+        PropertyTraversalReservationSite::FollowedEdge,
+        PropertyTraversalReservationSite::RootedNode,
+        PropertyTraversalReservationSite::ReachedRoot,
+    ] {
+        vm.fail_property_traversal_reservation_site = Some(site);
+        vm.set_fuel(Some(1));
+        let error = vm
+            .get_property(&leaf, "marker")
+            .expect_err("each new-edge reservation site must be fallible");
+        assert_eq!(error.kind, crate::error::ErrorKind::Range);
+        assert_eq!(vm.fuel_remaining(), Some(0));
+        assert_eq!(vm.fail_property_traversal_reservation_site, None);
+        assert_eq!(vm.gc_pins.len(), baseline_pins);
+        assert_eq!(vm.execution_contexts.len(), baseline_contexts);
+
+        vm.set_fuel(Some(1));
+        assert_eq!(
+            vm.get_property(&leaf, "marker")
+                .expect("a failed new edge must remain retryable"),
+            Value::Number(41.0)
+        );
+        assert_eq!(vm.fuel_remaining(), Some(0));
+    }
+
+    vm.fail_property_traversal_reservation_site =
+        Some(PropertyTraversalReservationSite::FollowedEdge);
+    vm.set_fuel(Some(0));
+    let error = vm
+        .get_property(&leaf, "marker")
+        .expect_err("fuel must precede edge reservation");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(
+        vm.fail_property_traversal_reservation_site,
+        Some(PropertyTraversalReservationSite::FollowedEdge)
+    );
+    vm.fail_property_traversal_reservation_site = None;
+
+    vm.gc_pin_reservation_failure_countdown = Some(1);
+    vm.set_fuel(Some(1));
+    let error = vm
+        .get_property(&leaf, "marker")
+        .expect_err("reached-node GC root capacity must be fallible");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    vm.set_fuel(None);
+
+    let inherited_proxy = vm.get_global("inheritedTraversalProxy");
+    vm.fail_property_traversal_reservation_site =
+        Some(PropertyTraversalReservationSite::FollowedEdge);
+    vm.set_fuel(Some(1));
+    let error = vm
+        .get_property(&inherited_proxy, "value")
+        .expect_err("inherited GetMethod traversal growth must be fallible");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    vm.set_fuel(Some(1));
+    assert_eq!(
+        vm.get_property(&inherited_proxy, "value")
+            .expect("inherited GetMethod must remain retryable"),
+        Value::Number(73.0)
+    );
+    vm.set_fuel(None);
+
+    let first = vm.new_object().expect("first cycle object should allocate");
+    let second = vm
+        .new_object()
+        .expect("second cycle object should allocate");
+    let first_value = Value::Object(first);
+    let second_value = Value::Object(second);
+    let traversal_roots = [first_value.clone()];
+    let mut traversal = vm
+        .try_new_property_traversal(&traversal_roots, 0)
+        .expect("direct traversal should initialize");
+    let root_pin = vm.pin_many(&traversal_roots);
+    vm.advance_property_edge(&mut traversal, first, &second_value, false)
+        .expect("first directed edge should commit");
+    vm.advance_property_edge(&mut traversal, second, &first_value, false)
+        .expect("second directed edge should commit");
+    vm.fail_property_traversal_reservation_site =
+        Some(PropertyTraversalReservationSite::FollowedEdge);
+    let error = vm
+        .advance_property_edge(&mut traversal, first, &second_value, false)
+        .expect_err("an ordinary duplicate must reject before reservation");
+    assert_eq!(error.kind, crate::error::ErrorKind::Type);
+    assert_eq!(
+        vm.fail_property_traversal_reservation_site,
+        Some(PropertyTraversalReservationSite::FollowedEdge)
+    );
+    vm.fail_property_traversal_reservation_site = None;
+    vm.unpin_many(root_pin + traversal.pin_count());
+
+    let mut proxy_traversal = vm
+        .try_new_property_traversal(&traversal_roots, 0)
+        .expect("Proxy traversal should initialize");
+    let root_pin = vm.pin_many(&traversal_roots);
+    proxy_traversal.note_proxy();
+    vm.advance_property_edge(&mut proxy_traversal, first, &second_value, false)
+        .expect("first Proxy-observable edge should commit");
+    vm.fail_property_traversal_reservation_site =
+        Some(PropertyTraversalReservationSite::RootedNode);
+    for _ in 0..MAX_PROXY_CYCLE_REPLAYS {
+        vm.advance_property_edge(&mut proxy_traversal, first, &second_value, false)
+            .expect("the documented replay budget should remain available");
+    }
+    let error = vm
+        .advance_property_edge(&mut proxy_traversal, first, &second_value, false)
+        .expect_err("the replay after the documented budget must fail");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(
+        vm.fail_property_traversal_reservation_site,
+        Some(PropertyTraversalReservationSite::RootedNode)
+    );
+    vm.fail_property_traversal_reservation_site = None;
+    vm.unpin_many(root_pin + proxy_traversal.pin_count());
+
+    let for_in_prototype = vm.new_object().expect("for-in prototype should allocate");
+    let for_in_prototype_value = Value::Object(for_in_prototype);
+    vm.heap.with_obj(for_in_prototype.0, |object| {
+        *object.proto().lock() = None;
+        object.props().lock().insert(
+            crate::value::PropertyKey::from("protoKey"),
+            crate::value::PropertyDescriptor::data(Value::Number(2.0)),
+        );
+    });
+    let for_in_prototype_pin = vm.pin(&for_in_prototype_value);
+    let for_in_source = vm.new_object().expect("for-in source should allocate");
+    let for_in_source_value = Value::Object(for_in_source);
+    vm.heap.with_obj(for_in_source.0, |object| {
+        *object.proto().lock() = Some(for_in_prototype_value.clone());
+        object.props().lock().insert(
+            crate::value::PropertyKey::from("ownKey"),
+            crate::value::PropertyDescriptor::data(Value::Number(1.0)),
+        );
+    });
+    vm.unpin(for_in_prototype_pin);
+    for site in [
+        PropertyTraversalReservationSite::FollowedEdge,
+        PropertyTraversalReservationSite::RootedNode,
+        PropertyTraversalReservationSite::ReachedRoot,
+    ] {
+        let iterator = vm
+            .make_for_in_keys(&for_in_source_value)
+            .expect("for-in edge fixture should initialize");
+        assert_eq!(
+            vm.iterator_next(&iterator)
+                .expect("the own key should be yielded before prototype work"),
+            (Value::String(Arc::from("ownKey")), false)
+        );
+        vm.fail_property_traversal_reservation_site = Some(site);
+        let error = vm
+            .iterator_next(&iterator)
+            .expect_err("each persistent edge reservation must be fallible");
+        assert_eq!(error.kind, crate::error::ErrorKind::Range);
+        assert_eq!(vm.gc_pins.len(), baseline_pins);
+        assert_eq!(vm.execution_contexts.len(), baseline_contexts);
+        assert_eq!(
+            vm.iterator_next(&iterator)
+                .expect("persistent prototype work must remain retryable"),
+            (Value::String(Arc::from("protoKey")), false)
+        );
+    }
+
+    let traced_iterator = vm
+        .make_for_in_keys(&for_in_source_value)
+        .expect("traced for-in fixture should initialize");
+    assert_eq!(
+        vm.iterator_next(&traced_iterator)
+            .expect("traced source key should be yielded"),
+        (Value::String(Arc::from("ownKey")), false)
+    );
+    assert_eq!(
+        vm.iterator_next(&traced_iterator)
+            .expect("traced prototype key should be yielded"),
+        (Value::String(Arc::from("protoKey")), false)
+    );
+    let Value::Object(traced_iterator_idx) = &traced_iterator else {
+        panic!("for-in iterator must be an object");
+    };
+    let roots_before_gc = vm.heap.with_obj(traced_iterator_idx.0, |object| {
+        let HeapObj::Iterator(iterator) = object else {
+            panic!("expected for-in iterator");
+        };
+        iterator
+            .for_in
+            .lock()
+            .as_ref()
+            .expect("for-in state should remain active")
+            .traversal_roots
+            .clone()
+    });
+    assert_eq!(roots_before_gc.len(), 2);
+    assert_eq!(
+        vm.get_property(&roots_before_gc[0], "ownKey")
+            .expect("the source should be readable before GC"),
+        Value::Number(1.0)
+    );
+    let iterator_pin = vm.pin(&traced_iterator);
+    vm.clear_kept_objects();
+    vm.gc();
+    for _ in 0..32 {
+        vm.new_object()
+            .expect("post-GC allocations should exercise slot reuse");
+    }
+    let persistent_roots = vm.heap.with_obj(traced_iterator_idx.0, |object| {
+        let HeapObj::Iterator(iterator) = object else {
+            panic!("expected for-in iterator");
+        };
+        iterator
+            .for_in
+            .lock()
+            .as_ref()
+            .expect("for-in state should remain active")
+            .traversal_roots
+            .clone()
+    });
+    assert_eq!(persistent_roots.len(), 2);
+    assert_eq!(
+        vm.get_property(&persistent_roots[0], "ownKey")
+            .expect("the prior source identity must remain live"),
+        Value::Number(1.0)
+    );
+    assert_eq!(
+        vm.get_property(&persistent_roots[1], "protoKey")
+            .expect("the current prototype identity must remain live"),
+        Value::Number(2.0)
+    );
+    assert_eq!(
+        vm.iterator_next(&traced_iterator)
+            .expect("traced iteration should complete"),
+        (Value::Undefined, true)
+    );
+    let retained_capacity_after_completion = vm.heap.with_obj(traced_iterator_idx.0, |object| {
+        let HeapObj::Iterator(iterator) = object else {
+            panic!("expected for-in iterator");
+        };
+        let state = iterator.for_in.lock();
+        let state = state
+            .as_ref()
+            .expect("for-in state should remain inspectable");
+        (
+            state.followed_edges.capacity(),
+            state.rooted_nodes.capacity(),
+            state.traversal_roots.capacity(),
+        )
+    });
+    assert_eq!(retained_capacity_after_completion, (0, 0, 0));
+    vm.unpin(iterator_pin);
+
+    let cycle = vm.get_global("persistentTraversalCycle");
+    vm.fail_property_traversal_reservation_site =
+        Some(PropertyTraversalReservationSite::InitialNodes);
+    let null_iterator = vm
+        .make_for_in_keys(&Value::Null)
+        .expect("null for-in must not allocate traversal nodes");
+    assert_eq!(
+        vm.fail_property_traversal_reservation_site,
+        Some(PropertyTraversalReservationSite::InitialNodes)
+    );
+    assert_eq!(
+        vm.iterator_next(&null_iterator)
+            .expect("null for-in should already be complete"),
+        (Value::Undefined, true)
+    );
+    vm.fail_property_traversal_reservation_site = None;
+
+    vm.fail_property_traversal_reservation_site =
+        Some(PropertyTraversalReservationSite::InitialNodes);
+    let error = vm
+        .make_for_in_keys(&cycle)
+        .expect_err("for-in persistent traversal construction must be fallible");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    let iterator = vm
+        .make_for_in_keys(&cycle)
+        .expect("for-in traversal must remain constructible");
+    assert_eq!(
+        vm.iterator_next(&iterator)
+            .expect("the first fresh key should be yielded"),
+        (Value::String(Arc::from("cycle0")), false)
+    );
+    vm.fail_property_traversal_reservation_site =
+        Some(PropertyTraversalReservationSite::FollowedEdge);
+    let error = vm
+        .iterator_next(&iterator)
+        .expect_err("for-in edge growth must fail after getPrototypeOf");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(
+        vm.get_global("persistentCyclePrototypeCalls"),
+        Value::Number(1.0)
+    );
+    assert_eq!(
+        vm.iterator_next(&iterator)
+            .expect("for-in edge failure must retry the same prototype step"),
+        (Value::String(Arc::from("cycle1")), false)
+    );
+    for index in 2..514 {
+        assert_eq!(
+            vm.iterator_next(&iterator)
+                .expect("the persistent replay budget should permit this pull"),
+            (Value::String(Arc::from(format!("cycle{index}"))), false)
+        );
+    }
+    vm.fail_property_traversal_reservation_site =
+        Some(PropertyTraversalReservationSite::RootedNode);
+    let error = vm
+        .iterator_next(&iterator)
+        .expect_err("fresh-key Proxy cycles must not reset the replay budget");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(
+        vm.get_global("persistentCyclePrototypeCalls"),
+        Value::Number(515.0)
+    );
+    assert_eq!(
+        vm.fail_property_traversal_reservation_site,
+        Some(PropertyTraversalReservationSite::RootedNode)
+    );
+    vm.fail_property_traversal_reservation_site = None;
+
+    let ordinary_cycle_first = vm
+        .new_object()
+        .expect("persistent ordinary-cycle root should allocate");
+    let ordinary_cycle_first_value = Value::Object(ordinary_cycle_first);
+    let ordinary_cycle_first_pin = vm.pin(&ordinary_cycle_first_value);
+    let ordinary_cycle_second = vm
+        .new_object()
+        .expect("persistent ordinary-cycle leaf should allocate");
+    let ordinary_cycle_second_value = Value::Object(ordinary_cycle_second);
+    vm.heap.with_obj(ordinary_cycle_first.0, |object| {
+        *object.proto().lock() = Some(ordinary_cycle_second_value.clone());
+        object.props().lock().insert(
+            crate::value::PropertyKey::from("firstKey"),
+            crate::value::PropertyDescriptor::data(Value::Number(1.0)),
+        );
+    });
+    vm.heap.with_obj(ordinary_cycle_second.0, |object| {
+        *object.proto().lock() = Some(ordinary_cycle_first_value.clone());
+        object.props().lock().insert(
+            crate::value::PropertyKey::from("secondKey"),
+            crate::value::PropertyDescriptor::data(Value::Number(2.0)),
+        );
+    });
+    let ordinary_cycle_iterator = vm
+        .make_for_in_keys(&ordinary_cycle_first_value)
+        .expect("persistent ordinary-cycle iterator should initialize");
+    vm.unpin(ordinary_cycle_first_pin);
+    assert_eq!(
+        vm.iterator_next(&ordinary_cycle_iterator)
+            .expect("ordinary cycle first key should be yielded"),
+        (Value::String(Arc::from("firstKey")), false)
+    );
+    assert_eq!(
+        vm.iterator_next(&ordinary_cycle_iterator)
+            .expect("ordinary cycle second key should be yielded"),
+        (Value::String(Arc::from("secondKey")), false)
+    );
+    let error = vm
+        .iterator_next(&ordinary_cycle_iterator)
+        .expect_err("ordinary cross-pull duplicate edges must reject");
+    assert_eq!(error.kind, crate::error::ErrorKind::Type);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.execution_contexts.len(), baseline_contexts);
 }
 
 #[test]

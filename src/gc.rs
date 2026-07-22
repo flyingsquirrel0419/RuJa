@@ -109,6 +109,9 @@ pub fn trace_obj(obj: &HeapObj, marked: &[bool], worklist: &mut Vec<usize>) {
             if let Some(object) = state.object.as_ref() {
                 push_value(object, worklist);
             }
+            for root in &state.traversal_roots {
+                push_value(root, worklist);
+            }
         }
         return;
     }
@@ -400,6 +403,9 @@ pub fn trace_obj(obj: &HeapObj, marked: &[bool], worklist: &mut Vec<usize>) {
             if let Some(state) = it.for_in.lock().as_ref() {
                 if let Some(object) = state.object.as_ref() {
                     push_value(object, worklist);
+                }
+                for root in &state.traversal_roots {
+                    push_value(root, worklist);
                 }
             }
         }

@@ -1,7 +1,6 @@
 //! Promise microtask, generator, and async runtime helpers split
 //! from vm/mod.rs for readability.
 
-use super::property::PropertyTraversal;
 use super::*;
 use crate::error::{self, Error};
 use crate::value::{
@@ -2488,6 +2487,26 @@ impl Vm {
     }
 
     pub(crate) fn new_for_in_iterator(&mut self, source: Option<Value>) -> error::Result<Value> {
+        let followed_edges = std::collections::HashSet::new();
+        let mut rooted_nodes = std::collections::HashSet::new();
+        let mut traversal_roots = Vec::new();
+        if let Some(Value::Object(source_idx)) = &source {
+            #[cfg(test)]
+            self.fail_property_traversal_reservation(
+                PropertyTraversalReservationSite::InitialNodes,
+            )?;
+            rooted_nodes
+                .try_reserve(1)
+                .map_err(|_| Error::range("property traversal state is too large"))?;
+            traversal_roots
+                .try_reserve(1)
+                .map_err(|_| Error::range("property traversal state is too large"))?;
+            rooted_nodes.insert(source_idx.0);
+            traversal_roots.push(Value::Object(*source_idx));
+        }
+        if let Some(source) = &source {
+            self.try_reserve_value_roots(std::slice::from_ref(source))?;
+        }
         let source_pin = source.as_ref().map(|source| self.pin(source)).unwrap_or(0);
         let it = HeapObj::Iterator(crate::value::IteratorData {
             items: Mutex::new(Vec::new()),
@@ -2501,6 +2520,11 @@ impl Vm {
                 visited_keys: indexmap::IndexSet::new(),
                 remaining_keys: Vec::new(),
                 remaining_index: 0,
+                followed_edges,
+                rooted_nodes,
+                traversal_roots,
+                proxy_seen: false,
+                cycle_replays: 0,
             })),
             async_from_sync: AtomicBool::new(false),
             done: std::sync::atomic::AtomicBool::new(false),
@@ -2871,12 +2895,12 @@ impl Vm {
                     None
                 }
             });
-            let iterator_pin = self.pin(it);
-            let initial_object_pin = initial_object
-                .as_ref()
-                .map(|object| self.pin(object))
-                .unwrap_or(0);
-            let mut traversal = PropertyTraversal::new(std::slice::from_ref(it), 0);
+            let operation_roots = [
+                it.clone(),
+                initial_object.clone().unwrap_or(Value::Undefined),
+            ];
+            self.try_reserve_value_roots(&operation_roots)?;
+            let operation_pins = self.pin_many(&operation_roots);
             let result = (|| loop {
                 let action = self.heap.with_obj(idx, |o| {
                     let HeapObj::Iterator(iterator) = o else {
@@ -2965,12 +2989,18 @@ impl Vm {
                             .heap
                             .with_obj(object_idx.0, |o| matches!(o, HeapObj::Proxy(_)));
                         if is_proxy {
-                            traversal.note_proxy();
+                            self.heap.with_obj(idx, |o| {
+                                if let HeapObj::Iterator(iterator) = o {
+                                    if let Some(state) = iterator.for_in.lock().as_mut() {
+                                        state.proxy_seen = true;
+                                    }
+                                }
+                            });
                         }
                         let prototype = self.get_prototype_of(&Value::Object(object_idx))?;
                         if let Some(prototype) = prototype {
-                            self.advance_property_edge(
-                                &mut traversal,
+                            self.advance_for_in_property_edge(
+                                GcIdx(idx),
                                 object_idx,
                                 &prototype,
                                 !is_proxy,
@@ -2992,6 +3022,9 @@ impl Vm {
                                         state.object = None;
                                         state.remaining_keys.clear();
                                         state.remaining_index = 0;
+                                        std::mem::take(&mut state.followed_edges);
+                                        std::mem::take(&mut state.rooted_nodes);
+                                        std::mem::take(&mut state.traversal_roots);
                                     }
                                     iterator.done.store(true, Ordering::Relaxed);
                                 }
@@ -3002,6 +3035,11 @@ impl Vm {
                     ForInAction::Complete => {
                         self.heap.with_obj(idx, |o| {
                             if let HeapObj::Iterator(iterator) = o {
+                                if let Some(state) = iterator.for_in.lock().as_mut() {
+                                    std::mem::take(&mut state.followed_edges);
+                                    std::mem::take(&mut state.rooted_nodes);
+                                    std::mem::take(&mut state.traversal_roots);
+                                }
                                 iterator.done.store(true, Ordering::Relaxed);
                             }
                         });
@@ -3012,9 +3050,7 @@ impl Vm {
                     }
                 }
             })();
-            self.unpin_many(traversal.pin_count());
-            self.unpin(initial_object_pin);
-            self.unpin(iterator_pin);
+            self.unpin_many(operation_pins);
             return result;
         }
         if lazy {
