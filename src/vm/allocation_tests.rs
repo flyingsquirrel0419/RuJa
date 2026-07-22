@@ -11345,6 +11345,561 @@ fn proxy_own_keys_pending_frames_are_fallible_atomic_and_rooted() {
 }
 
 #[test]
+fn proxy_own_keys_direct_root_reservations_are_fallible_and_ordered() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "failProxyOwnKeysOperationRoot",
+        |vm, _, _| {
+            vm.fail_proxy_own_keys_reservation =
+                Some((ProxyOwnKeysReservationSite::OperationRoot, 0));
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("operation-root failure hook should register");
+    vm.register_fn(
+        "failProxyOwnKeysLayerRoots",
+        |vm, _, _| {
+            vm.fail_proxy_own_keys_reservation = Some((ProxyOwnKeysReservationSite::LayerRoots, 0));
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("layer-root failure hook should register");
+    vm.register_fn(
+        "failProxyOwnKeysTrapResultRoot",
+        |vm, _, _| {
+            vm.fail_proxy_own_keys_reservation =
+                Some((ProxyOwnKeysReservationSite::TrapResultRoot, 0));
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("trap-result root failure hook should register");
+    vm.register_fn(
+        "failProxyOwnKeysLengthValueRoot",
+        |vm, _, _| {
+            vm.fail_proxy_own_keys_reservation =
+                Some((ProxyOwnKeysReservationSite::LengthValueRoot, 0));
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("length-value root failure hook should register");
+    vm.register_fn(
+        "failNextGcPinReservation",
+        |vm, _, _| {
+            vm.fail_next_gc_pin_reservation = true;
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("GC-pin failure hook should register");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.clear_kept_objects();
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("GC hook should register");
+    vm.run(
+        r#"
+        var operationTrapGets = 0;
+        var operationProxy = new Proxy({}, {
+          get ownKeys() {
+            operationTrapGets += 1;
+            return function () { return []; };
+          }
+        });
+        var transparentRootProxy = new Proxy({ transparent: 1 }, {});
+        var nullOwnKeysRootProxy = new Proxy(
+          { forwarded: 1 },
+          { ownKeys: null }
+        );
+        var revokedRootRecord = Proxy.revocable({}, {});
+        var revokedRootProxy = revokedRootRecord.proxy;
+        revokedRootRecord.revoke();
+
+        var listTrapCalls = 0;
+        var listLengthGets = 0;
+        var armListGenericFailure = false;
+        var listProxy = new Proxy({}, {
+          ownKeys: function () {
+            listTrapCalls += 1;
+            if (armListGenericFailure) {
+              armListGenericFailure = false;
+              failNextGcPinReservation();
+            }
+            return {
+              get length() { listLengthGets += 1; return 0; }
+            };
+          }
+        });
+        var primitiveResultProxy = new Proxy({}, {
+          ownKeys: function () { return 1; }
+        });
+        var trapRootMarker = {};
+        var throwingTrapProxy = new Proxy({}, {
+          ownKeys: function () { throw trapRootMarker; }
+        });
+
+        var lengthTrapCalls = 0;
+        var lengthGets = 0;
+        var lengthValueOfCalls = 0;
+        var armLengthGenericFailure = false;
+        var lengthProxy = new Proxy({}, {
+          ownKeys: function () {
+            lengthTrapCalls += 1;
+            return {
+              get length() {
+                lengthGets += 1;
+                var value = {
+                  valueOf: function () { lengthValueOfCalls += 1; return 0; }
+                };
+                if (armLengthGenericFailure) {
+                  armLengthGenericFailure = false;
+                  failNextGcPinReservation();
+                }
+                return value;
+              }
+            };
+          }
+        });
+        var primitiveLengthProxy = new Proxy({}, {
+          ownKeys: function () { return { length: 0 }; }
+        });
+        var symbolLengthProxy = new Proxy({}, {
+          ownKeys: function () { return { length: Symbol.iterator }; }
+        });
+        var lengthMarker = {};
+        var throwingLengthProxy = new Proxy({}, {
+          ownKeys: function () {
+            return { get length() { throw lengthMarker; } };
+          }
+        });
+        var gcRootProxy = new Proxy({}, {
+          ownKeys: function () {
+            forceGc();
+            return {
+              get length() {
+                forceGc();
+                return {
+                  valueOf: function () { forceGc(); return 0; }
+                };
+              }
+            };
+          }
+        });
+
+        var nestedRootBase = { key: 1 };
+        var nestedRootInnerTrapGets = 0;
+        var nestedRootFailureSite = "";
+        var nestedRootInner = new Proxy(nestedRootBase, {
+          get ownKeys() {
+            nestedRootInnerTrapGets += 1;
+            return function () {
+              if (nestedRootFailureSite === "list") {
+                failProxyOwnKeysTrapResultRoot();
+                return { length: 0 };
+              }
+              if (nestedRootFailureSite === "length") {
+                failProxyOwnKeysLengthValueRoot();
+                return {
+                  length: { valueOf: function () { return 0; } }
+                };
+              }
+              return ["key"];
+            };
+          }
+        });
+        var nestedRootOuterCalls = 0;
+        var nestedRootOuter = new Proxy(nestedRootInner, {
+          ownKeys: function () { nestedRootOuterCalls += 1; return ["key"]; }
+        });
+
+        var rootForInPlainCalls = 0;
+        var rootForInPlainTarget = Object.create(null);
+        rootForInPlainTarget.visible = 1;
+        var rootForInPlainProxy = new Proxy(rootForInPlainTarget, {
+          ownKeys: function () {
+            rootForInPlainCalls += 1;
+            return {
+              0: "visible",
+              length: { valueOf: function () { return 1; } }
+            };
+          }
+        });
+
+        var rootReservationRealm = $262.createRealm().global;
+        var foreignLengthValue = { valueOf: function () { return 0; } };
+        var foreignRootProxy = new Proxy({}, {
+          ownKeys: function () { return { length: foreignLengthValue }; }
+        });
+        var foreignRootCall = rootReservationRealm.Function(
+          "proxy",
+          "try { Reflect.ownKeys(proxy); } catch (error) { return error; }"
+        );
+        var foreignRootError;
+        var foreignRootRange;
+        "#,
+    )
+    .expect("Proxy ownKeys direct-root fixtures should initialize");
+    let baseline_pins = vm.gc_pins.len();
+    let baseline_contexts = vm.execution_contexts.len();
+    let baseline_native_depth = vm.active_native_call_depth;
+
+    let operation_proxy = vm.get_global("operationProxy");
+    vm.fail_proxy_own_keys_reservation = Some((ProxyOwnKeysReservationSite::OperationRoot, 0));
+    let error =
+        crate::builtins::own_property_keys_or_throw(&mut vm, &operation_proxy, false, true, true)
+            .expect_err("operation input must reserve before its first pin");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.get_global("operationTrapGets"), Value::Number(0.0));
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    vm.fail_next_gc_pin_reservation = true;
+    let error =
+        crate::builtins::own_property_keys_or_throw(&mut vm, &operation_proxy, false, true, true)
+            .expect_err("the operation input must use the real GC-pin reserve path");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert!(!vm.fail_next_gc_pin_reservation);
+    assert_eq!(vm.get_global("operationTrapGets"), Value::Number(0.0));
+
+    vm.fail_proxy_own_keys_reservation = Some((ProxyOwnKeysReservationSite::OperationRoot, 0));
+    assert!(crate::builtins::own_property_keys_or_throw(
+        &mut vm,
+        &Value::Number(1.0),
+        false,
+        true,
+        true
+    )
+    .expect("a primitive operation input needs no GC root")
+    .is_empty());
+    assert_eq!(
+        vm.fail_proxy_own_keys_reservation,
+        Some((ProxyOwnKeysReservationSite::OperationRoot, 0))
+    );
+    vm.fail_proxy_own_keys_reservation = None;
+    vm.fail_next_gc_pin_reservation = true;
+    assert!(crate::builtins::own_property_keys_or_throw(
+        &mut vm,
+        &Value::Number(1.0),
+        false,
+        true,
+        true
+    )
+    .expect("a primitive operation input must bypass generic root reservation")
+    .is_empty());
+    assert!(vm.fail_next_gc_pin_reservation);
+    vm.fail_next_gc_pin_reservation = false;
+
+    let revoked = vm.get_global("revokedRootProxy");
+    vm.fail_proxy_own_keys_reservation = Some((ProxyOwnKeysReservationSite::OperationRoot, 0));
+    let error = crate::builtins::own_property_keys_or_throw(&mut vm, &revoked, false, true, true)
+        .expect_err("operation-root reservation must precede Proxy revocation");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fail_proxy_own_keys_reservation, None);
+
+    vm.set_fuel(Some(0));
+    vm.fail_proxy_own_keys_reservation = Some((ProxyOwnKeysReservationSite::OperationRoot, 0));
+    let error =
+        crate::builtins::own_property_keys_or_throw(&mut vm, &operation_proxy, false, true, true)
+            .expect_err("operation-root reservation must precede Proxy-edge fuel");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.fail_proxy_own_keys_reservation, None);
+    vm.set_fuel(None);
+
+    vm.fail_proxy_own_keys_reservation = Some((ProxyOwnKeysReservationSite::LayerRoots, 0));
+    let error =
+        crate::builtins::own_property_keys_or_throw(&mut vm, &operation_proxy, false, true, true)
+            .expect_err("Proxy target and handler must reserve after edge fuel");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.get_global("operationTrapGets"), Value::Number(0.0));
+
+    let transparent = vm.get_global("transparentRootProxy");
+    vm.fail_proxy_own_keys_reservation = Some((ProxyOwnKeysReservationSite::LayerRoots, 0));
+    let error =
+        crate::builtins::own_property_keys_or_throw(&mut vm, &transparent, false, true, true)
+            .expect_err("transparent Proxy forwarding still owns layer roots");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+
+    vm.fail_proxy_own_keys_reservation = Some((ProxyOwnKeysReservationSite::LayerRoots, 0));
+    let error = crate::builtins::own_property_keys_or_throw(&mut vm, &revoked, false, true, true)
+        .expect_err("revocation must precede layer-root reservation");
+    assert_eq!(error.kind, crate::error::ErrorKind::Type);
+    assert_eq!(
+        vm.fail_proxy_own_keys_reservation,
+        Some((ProxyOwnKeysReservationSite::LayerRoots, 0))
+    );
+    vm.set_fuel(Some(0));
+    let error =
+        crate::builtins::own_property_keys_or_throw(&mut vm, &operation_proxy, false, true, true)
+            .expect_err("Proxy edge fuel must precede layer-root reservation");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(
+        vm.fail_proxy_own_keys_reservation,
+        Some((ProxyOwnKeysReservationSite::LayerRoots, 0))
+    );
+    vm.set_fuel(None);
+    vm.fail_proxy_own_keys_reservation = None;
+
+    let nullish = vm.get_global("nullOwnKeysRootProxy");
+    vm.fail_proxy_own_keys_reservation = Some((ProxyOwnKeysReservationSite::TrapResultRoot, 0));
+    assert_eq!(
+        crate::builtins::own_property_keys_or_throw(&mut vm, &nullish, false, true, true)
+            .expect("a nullish ownKeys trap must forward without a trap-result root"),
+        vec![crate::value::PropertyKey::from("forwarded")]
+    );
+    assert_eq!(
+        vm.fail_proxy_own_keys_reservation,
+        Some((ProxyOwnKeysReservationSite::TrapResultRoot, 0))
+    );
+    vm.fail_proxy_own_keys_reservation = None;
+
+    vm.gc_pin_reservation_failure_countdown = Some(1);
+    let error =
+        crate::builtins::own_property_keys_or_throw(&mut vm, &operation_proxy, false, true, true)
+            .expect_err("the second real root reservation must be the Proxy layer");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.gc_pin_reservation_failure_countdown, None);
+    assert_eq!(vm.get_global("operationTrapGets"), Value::Number(0.0));
+    assert!(crate::builtins::own_property_keys_or_throw(
+        &mut vm,
+        &operation_proxy,
+        false,
+        true,
+        true
+    )
+    .expect("layer-root failure should be retryable")
+    .is_empty());
+    assert_eq!(vm.get_global("operationTrapGets"), Value::Number(1.0));
+
+    let list_proxy = vm.get_global("listProxy");
+    vm.fail_proxy_own_keys_reservation = Some((ProxyOwnKeysReservationSite::TrapResultRoot, 0));
+    let error =
+        crate::builtins::own_property_keys_or_throw(&mut vm, &list_proxy, false, true, true)
+            .expect_err("an object trap result must reserve before its length Get");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.get_global("listTrapCalls"), Value::Number(1.0));
+    assert_eq!(vm.get_global("listLengthGets"), Value::Number(0.0));
+
+    let primitive_result = vm.get_global("primitiveResultProxy");
+    vm.fail_proxy_own_keys_reservation = Some((ProxyOwnKeysReservationSite::TrapResultRoot, 0));
+    let error =
+        crate::builtins::own_property_keys_or_throw(&mut vm, &primitive_result, false, true, true)
+            .expect_err("a primitive trap result must fail before list-root reservation");
+    assert_eq!(error.kind, crate::error::ErrorKind::Type);
+    assert_eq!(
+        vm.fail_proxy_own_keys_reservation,
+        Some((ProxyOwnKeysReservationSite::TrapResultRoot, 0))
+    );
+    let throwing_trap = vm.get_global("throwingTrapProxy");
+    let error =
+        crate::builtins::own_property_keys_or_throw(&mut vm, &throwing_trap, false, true, true)
+            .expect_err("trap abrupt completion must precede list-root reservation");
+    assert_ne!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(
+        vm.fail_proxy_own_keys_reservation,
+        Some((ProxyOwnKeysReservationSite::TrapResultRoot, 0))
+    );
+    vm.fail_proxy_own_keys_reservation = None;
+    vm.run("armListGenericFailure = true")
+        .expect("generic list-root failure should arm");
+    let error =
+        crate::builtins::own_property_keys_or_throw(&mut vm, &list_proxy, false, true, true)
+            .expect_err("the trap-result list must use the real GC-pin reserve path");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert!(!vm.fail_next_gc_pin_reservation);
+    assert_eq!(vm.get_global("listLengthGets"), Value::Number(0.0));
+    assert!(
+        crate::builtins::own_property_keys_or_throw(&mut vm, &list_proxy, false, true, true)
+            .expect("list-root failure should retry from the trap")
+            .is_empty()
+    );
+    assert_eq!(vm.get_global("listTrapCalls"), Value::Number(3.0));
+    assert_eq!(vm.get_global("listLengthGets"), Value::Number(1.0));
+
+    let length_proxy = vm.get_global("lengthProxy");
+    vm.fail_proxy_own_keys_reservation = Some((ProxyOwnKeysReservationSite::LengthValueRoot, 0));
+    let error =
+        crate::builtins::own_property_keys_or_throw(&mut vm, &length_proxy, false, true, true)
+            .expect_err("an object length must reserve before ToNumber");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.get_global("lengthGets"), Value::Number(1.0));
+    assert_eq!(vm.get_global("lengthValueOfCalls"), Value::Number(0.0));
+
+    let primitive_length = vm.get_global("primitiveLengthProxy");
+    vm.fail_proxy_own_keys_reservation = Some((ProxyOwnKeysReservationSite::LengthValueRoot, 0));
+    assert!(crate::builtins::own_property_keys_or_throw(
+        &mut vm,
+        &primitive_length,
+        false,
+        true,
+        true
+    )
+    .expect("a primitive length needs no root reservation")
+    .is_empty());
+    assert_eq!(
+        vm.fail_proxy_own_keys_reservation,
+        Some((ProxyOwnKeysReservationSite::LengthValueRoot, 0))
+    );
+    let symbol_length = vm.get_global("symbolLengthProxy");
+    let error =
+        crate::builtins::own_property_keys_or_throw(&mut vm, &symbol_length, false, true, true)
+            .expect_err("a Symbol length must reach ToNumber without root reservation");
+    assert_eq!(error.kind, crate::error::ErrorKind::Type);
+    assert_eq!(
+        vm.fail_proxy_own_keys_reservation,
+        Some((ProxyOwnKeysReservationSite::LengthValueRoot, 0))
+    );
+    let throwing_length = vm.get_global("throwingLengthProxy");
+    let error =
+        crate::builtins::own_property_keys_or_throw(&mut vm, &throwing_length, false, true, true)
+            .expect_err("a throwing length getter must precede length-root reservation");
+    assert_ne!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(
+        vm.fail_proxy_own_keys_reservation,
+        Some((ProxyOwnKeysReservationSite::LengthValueRoot, 0))
+    );
+    vm.fail_proxy_own_keys_reservation = None;
+    vm.run("armLengthGenericFailure = true")
+        .expect("generic length-root failure should arm");
+    let error =
+        crate::builtins::own_property_keys_or_throw(&mut vm, &length_proxy, false, true, true)
+            .expect_err("the length value must use the real GC-pin reserve path");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert!(!vm.fail_next_gc_pin_reservation);
+    assert_eq!(vm.get_global("lengthValueOfCalls"), Value::Number(0.0));
+    assert!(
+        crate::builtins::own_property_keys_or_throw(&mut vm, &length_proxy, false, true, true)
+            .expect("length-root failure should retry from the trap")
+            .is_empty()
+    );
+    assert_eq!(vm.get_global("lengthValueOfCalls"), Value::Number(1.0));
+
+    let nested_outer = vm.get_global("nestedRootOuter");
+    vm.fail_proxy_own_keys_reservation = Some((ProxyOwnKeysReservationSite::LayerRoots, 1));
+    let error =
+        crate::builtins::own_property_keys_or_throw(&mut vm, &nested_outer, false, true, true)
+            .expect_err("the second layer-root failure must unwind the first frame");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.get_global("nestedRootOuterCalls"), Value::Number(1.0));
+    assert_eq!(vm.get_global("nestedRootInnerTrapGets"), Value::Number(0.0));
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.execution_contexts.len(), baseline_contexts);
+    assert_eq!(vm.active_native_call_depth, baseline_native_depth);
+    assert_eq!(
+        crate::builtins::own_property_keys_or_throw(&mut vm, &nested_outer, false, true, true)
+            .expect("nested layer-root failure should be retryable"),
+        vec![crate::value::PropertyKey::from("key")]
+    );
+    assert_eq!(vm.get_global("nestedRootInnerTrapGets"), Value::Number(1.0));
+
+    for (mode, site) in [
+        ("list", ProxyOwnKeysReservationSite::TrapResultRoot),
+        ("length", ProxyOwnKeysReservationSite::LengthValueRoot),
+    ] {
+        vm.run(&format!("nestedRootFailureSite = '{mode}'"))
+            .expect("nested direct-root failure mode should arm");
+        let error =
+            crate::builtins::own_property_keys_or_throw(&mut vm, &nested_outer, false, true, true)
+                .expect_err("an inner direct-root failure must unwind the published outer frame");
+        assert_eq!(error.kind, crate::error::ErrorKind::Range);
+        assert_eq!(vm.fail_proxy_own_keys_reservation, None);
+        assert_eq!(vm.gc_pins.len(), baseline_pins);
+        assert_eq!(vm.execution_contexts.len(), baseline_contexts);
+        assert_eq!(vm.active_native_call_depth, baseline_native_depth);
+
+        vm.run("nestedRootFailureSite = ''")
+            .expect("nested direct-root failure mode should clear");
+        assert_eq!(
+            crate::builtins::own_property_keys_or_throw(&mut vm, &nested_outer, false, true, true,)
+                .expect("nested direct-root failure should be retryable"),
+            vec![crate::value::PropertyKey::from("key")]
+        );
+        assert_eq!(vm.fail_proxy_own_keys_reservation, None, "site {site:?}");
+        assert_eq!(vm.gc_pins.len(), baseline_pins);
+    }
+
+    for site in [
+        ProxyOwnKeysReservationSite::OperationRoot,
+        ProxyOwnKeysReservationSite::LayerRoots,
+        ProxyOwnKeysReservationSite::TrapResultRoot,
+        ProxyOwnKeysReservationSite::LengthValueRoot,
+    ] {
+        vm.fail_proxy_own_keys_reservation = Some((site, 0));
+        vm.run(
+            r#"
+            foreignRootError = foreignRootCall(foreignRootProxy);
+            foreignRootRange =
+              foreignRootError instanceof rootReservationRealm.RangeError &&
+              !(foreignRootError instanceof RangeError);
+            "#,
+        )
+        .expect("foreign root error should materialize");
+        assert_eq!(vm.get_global("foreignRootRange"), Value::Bool(true));
+        assert_eq!(vm.fail_proxy_own_keys_reservation, None);
+        assert_eq!(vm.gc_pins.len(), baseline_pins);
+    }
+
+    let gc_proxy = vm.get_global("gcRootProxy");
+    assert!(
+        crate::builtins::own_property_keys_or_throw(&mut vm, &gc_proxy, false, true, true)
+            .expect("trap-result and length roots should survive forced GC")
+            .is_empty()
+    );
+
+    let for_in_proxy = vm.get_global("rootForInPlainProxy");
+    for site in [
+        ProxyOwnKeysReservationSite::OperationRoot,
+        ProxyOwnKeysReservationSite::LayerRoots,
+        ProxyOwnKeysReservationSite::TrapResultRoot,
+        ProxyOwnKeysReservationSite::LengthValueRoot,
+    ] {
+        let iterator = vm
+            .make_for_in_keys(&for_in_proxy)
+            .expect("for-in root iterator should initialize");
+        vm.fail_proxy_own_keys_reservation = Some((site, 0));
+        let error = vm
+            .iterator_next(&iterator)
+            .expect_err("direct-root failure must precede for-in snapshot publication");
+        assert_eq!(error.kind, crate::error::ErrorKind::Range);
+        let Value::Object(iterator_idx) = &iterator else {
+            panic!("for-in iterator must be an object");
+        };
+        let snapshot = vm.heap.with_obj(iterator_idx.0, |object| {
+            let HeapObj::Iterator(iterator) = object else {
+                panic!("expected for-in iterator");
+            };
+            let state = iterator.for_in.lock();
+            let state = state.as_ref().expect("for-in state should exist");
+            (
+                state.object_was_visited,
+                state.remaining_keys.len(),
+                state.remaining_index,
+            )
+        });
+        assert_eq!(snapshot, (false, 0, 0), "site {site:?}");
+        assert_eq!(
+            vm.iterator_next(&iterator)
+                .expect("for-in should retry after a direct-root failure"),
+            (Value::String(Arc::from("visible")), false),
+            "site {site:?}"
+        );
+        assert_eq!(vm.gc_pins.len(), baseline_pins);
+        assert_eq!(vm.execution_contexts.len(), baseline_contexts);
+        assert_eq!(vm.active_native_call_depth, baseline_native_depth);
+        assert_eq!(vm.fail_proxy_own_keys_reservation, None);
+    }
+    assert_eq!(vm.get_global("rootForInPlainCalls"), Value::Number(6.0));
+}
+
+#[test]
 fn proxy_own_keys_walk_is_iterative_metered_and_restores_pin_depth() {
     let mut vm = Vm::new().expect("VM should initialize");
     vm.run(

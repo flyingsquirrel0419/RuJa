@@ -6246,6 +6246,21 @@ fn take_proxy_own_keys_reservation_failure(
     true
 }
 
+fn try_reserve_proxy_own_keys_roots(
+    vm: &mut Vm,
+    values: &[Value],
+    #[cfg(test)] site: crate::vm::ProxyOwnKeysReservationSite,
+) -> error::Result<()> {
+    if !values.iter().any(|value| Vm::value_root_count(value) != 0) {
+        return Ok(());
+    }
+    #[cfg(test)]
+    if take_proxy_own_keys_reservation_failure(vm, site) {
+        return Err(Error::range("temporary root set is too large"));
+    }
+    vm.try_reserve_value_roots(values)
+}
+
 fn reserve_proxy_own_keys_trap_result_key(
     _vm: &mut Vm,
     keys: &mut Vec<PropertyKey>,
@@ -6285,9 +6300,21 @@ fn proxy_own_keys_from_array_like(
             "Proxy ownKeys trap result must be an object",
         ));
     }
+    try_reserve_proxy_own_keys_roots(
+        vm,
+        std::slice::from_ref(key_list),
+        #[cfg(test)]
+        crate::vm::ProxyOwnKeysReservationSite::TrapResultRoot,
+    )?;
     let list_pin = vm.pin(key_list);
     let result = (|| -> error::Result<Vec<PropertyKey>> {
         let length_value = vm.get_property(key_list, "length")?;
+        try_reserve_proxy_own_keys_roots(
+            vm,
+            std::slice::from_ref(&length_value),
+            #[cfg(test)]
+            crate::vm::ProxyOwnKeysReservationSite::LengthValueRoot,
+        )?;
         let length_pin = vm.pin(&length_value);
         let length_result = vm.to_number(&length_value);
         vm.unpin_many(length_pin);
@@ -6347,6 +6374,12 @@ pub(crate) fn own_property_keys_or_throw(
         },
     }
 
+    try_reserve_proxy_own_keys_roots(
+        vm,
+        std::slice::from_ref(obj),
+        #[cfg(test)]
+        crate::vm::ProxyOwnKeysReservationSite::OperationRoot,
+    )?;
     let root_pin = vm.pin(obj);
     let mut pending = Vec::new();
     let mut pending_pins = 0;
@@ -6381,7 +6414,14 @@ pub(crate) fn own_property_keys_or_throw(
 
             let (target, handler) = proxy_result?;
             vm.consume_fuel()?;
-            let proxy_pins = vm.pin_many(&[target.clone(), handler.clone()]);
+            let layer_roots = [target.clone(), handler.clone()];
+            try_reserve_proxy_own_keys_roots(
+                vm,
+                &layer_roots,
+                #[cfg(test)]
+                crate::vm::ProxyOwnKeysReservationSite::LayerRoots,
+            )?;
+            let proxy_pins = vm.pin_many(&layer_roots);
             let step = (|| {
                 let trap = vm.get_proxy_method(&handler, "ownKeys")?;
                 if trap.is_nullish() {
@@ -6429,14 +6469,12 @@ pub(crate) fn own_property_keys_or_throw(
                         .try_reserve(1)
                         .map_err(|_| Error::range("Proxy ownKeys validation chain is too large"))?;
                     let frame_roots = [current.clone(), target.clone()];
-                    #[cfg(test)]
-                    if take_proxy_own_keys_reservation_failure(
+                    try_reserve_proxy_own_keys_roots(
                         vm,
+                        &frame_roots,
+                        #[cfg(test)]
                         crate::vm::ProxyOwnKeysReservationSite::FrameRoots,
-                    ) {
-                        return Err(Error::range("temporary root set is too large"));
-                    }
-                    vm.try_reserve_value_roots(&frame_roots)?;
+                    )?;
                     pending_pins += vm.pin_many(&frame_roots);
                     pending.push(PendingProxyKeys {
                         object: current,

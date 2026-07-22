@@ -35,6 +35,10 @@ pub(crate) enum ForInKeyReservationSite {
 #[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ProxyOwnKeysReservationSite {
+    OperationRoot,
+    LayerRoots,
+    TrapResultRoot,
+    LengthValueRoot,
     TrapResultKey,
     SeenKey,
     PendingFrame,
