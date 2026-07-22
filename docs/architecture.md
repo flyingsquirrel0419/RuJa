@@ -1670,6 +1670,32 @@ operation roots are restored on normal and abrupt exits.
 - 장점, 단점 및 영향: Fifty-thousand-layer Bound chains complete without native recursion, self-prototype and Proxy ordering match the specification, hostile native re-entry becomes a catchable error, and exact fuel, GC, Realm, abrupt identity, and cleanup are covered. The 128 limit applies to all active native dispatch, so sufficiently deep valid native builtin/callback re-entry now throws before the 512 interpreted-frame boundary. Nested property and GetPrototypeOf scratch allocation is still only partially fallible and remains a separate runtime-wide allocation unit.
 ```
 
+## Fallible Proxy prototype validation state
+
+Proxy `[[GetPrototypeOf]]` remains iterative across transparent and validating
+targets. Each root it owns directly is now preceded by an exact
+`try_reserve_gc_pins`: the input after object validation, target/handler after
+the edge fuel debit, trap after `GetMethod`, returned object after type
+validation, and deferred expected prototype after nested `IsExtensible`.
+Deferred entries reserve scratch storage before publishing their root, then
+validate in reverse after the terminal target prototype is known.
+
+The nested Proxy `[[IsExtensible]]` walk applies the same fallible root rule.
+It records the first Boolean trap result and whether any later result differs,
+rather than retaining every Boolean in a vector. Validation still waits until
+the terminal target result is observed, so a deeper revoked proxy or abrupt
+trap completion outranks an already-known mismatch exactly as before.
+
+```text
+[Decision Log]
+- 목적과 의도: Turn directly owned Proxy prototype-validation scratch and root growth into catchable sandbox errors without changing ECMAScript observation order.
+- 기존 구현 및 제약 조건: GetPrototypeOf pinned five classes of values through infallible Vec pushes, appended deferred prototypes after pinning, and called an IsExtensible implementation that retained an unbounded Vec<bool> and used more infallible pins. Ordinary Result errors cleaned up correctly, but allocator failure could bypass that control flow.
+- 검토한 주요 대안: Reserve all capacity at entry, use one broad depth cap, make pin globally fallible in the same change, retain Vec<bool> with try_reserve, or stage exact reserves at the operations that acquire each value.
+- 선택한 방식: Reserve each root at its current semantic boundary, reserve deferred scratch before pin and push, use exact test-only site failpoints, and reduce IsExtensible trap-result storage to a delayed O(1) consistency summary.
+- 다른 대안 대신 이 방식을 선택한 이유: Entry preallocation can pre-empt revocation, fuel, getter, call, type, or invariant errors; a depth cap rejects valid chains; a global pin API migration crosses every VM subsystem; and retaining every Boolean allocates despite only equality with one terminal result mattering.
+- 장점, 단점 및 영향: Direct reserve failures are catchable, Realm-correct, ordered, and leak-free; later failures release earlier deferred roots; null continuations need no object root; and validating chains no longer allocate result Booleans per layer. This does not make the transitive path fully allocator-fallible: PropertyTraversal HashSets and pins, trap execution, PropertyKey and Error strings, GC root enumeration, and mark worklists remain separate units.
+```
+
 ---
 
 **Next:** [Features](features.md) · [Known limitations](limitations.md) · [Back to README](../README.md)

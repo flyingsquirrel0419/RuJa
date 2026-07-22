@@ -62,6 +62,38 @@
 
 ### Fixed
 
+- Proxy `[[GetPrototypeOf]]` and its nested `[[IsExtensible]]` validation now
+  reserve every directly owned temporary root fallibly at the existing
+  observable boundary. Input, target/handler, trap, returned prototype, and
+  deferred expected-prototype roots return a catchable `RangeError` instead of
+  reaching infallible `Vec` growth. The deferred validation vector uses
+  `try_reserve` before `pin -> push`, so allocation failure cannot leak a root.
+
+  Nested Proxy `[[IsExtensible]]` no longer stores an unbounded `Vec<bool>`;
+  one first result plus an inconsistency flag preserves delayed invariant
+  validation in O(1) space. Regressions inject failures at each exact reserve
+  site, verify fuel/getter/call ordering, clean up four already-deferred roots,
+  cover a deferred `null`, preserve a deeper sentinel throw over a known
+  mismatch, materialize foreign-Realm errors, and complete a 1,024-layer
+  validating chain with balanced roots and execution contexts.
+
+  Local verification passes all targets/features with **224/224** library
+  tests, **539/539** builtins tests, and **15/15** arguments tests, plus
+  **223/223** release library tests, **135/135** Python tooling tests, **1/1**
+  doctest, rustfmt, warnings-denied Clippy, release build, generated
+  documentation, Python bytecode compilation, workflow YAML parsing, and
+  wasm32 checking. Rustdoc retains only the 13 pre-existing broken-link
+  warnings. Two GPT-5.6 reviews are clean after exact-site failpoints,
+  delayed-abrupt priority, later deferred cleanup, and `null` continuation
+  coverage were added. Commit `cff25cc` passes CI `29927666067` and all 33 jobs
+  in full run `29927657329`. Downloaded artifacts at
+  `/tmp/ruja-proxy-prototype-roots-29927657329-final` aggregate to unchanged
+  **31890 pass / 5115 fail / 11459 skip / 3 timeout / 0 error / 48467 total /
+  37005 run**; all 30 result files are byte-identical to run `29922124267`.
+  The downloaded binary reproduces Proxy getPrototypeOf/isExtensible **31/31**
+  and adjacent `instanceof` **50/0/4**. Shared `PropertyTraversal`, trap-call,
+  GC-worklist, and error-representation allocation remain separate scopes.
+
 - `instanceof` and `OrdinaryHasInstance` now keep both operands rooted and
   traverse Bound Function targets iteratively. Each Bound edge consumes one
   fuel unit before observing the target; ordinary prototype edges consume one

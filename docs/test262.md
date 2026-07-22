@@ -10284,6 +10284,44 @@ four normally skipped files when forced **4/4**, Proxy `getPrototypeOf`
 - 장점, 단점 및 영향: The unit has exact zero-delta evidence plus direct stack, fuel, Realm, GC, and ordering coverage. The 128 limit applies to all active native dispatch rather than only Proxy traps, so sufficiently deep valid native builtin/callback re-entry throws earlier than the interpreted-frame cap. Broader fallible allocation in nested property and prototype traversal is explicitly not claimed by this milestone.
 ```
 
+## Fallible Proxy prototype root and scratch ownership
+
+Commit `cff25cc` makes the roots and deferred validation vector owned directly
+by Proxy `[[GetPrototypeOf]]` fallible. Its nested `[[IsExtensible]]` walk also
+reserves direct roots fallibly and replaces per-layer Boolean storage with an
+O(1) delayed consistency summary. Reservation remains staged after the same
+semantic observations: object validation, revocation, fuel, `GetMethod`, Call,
+trap-result type validation, and nested extensibility each retain their prior
+priority.
+
+The injected regressions distinguish every reserve site, assert getter/call
+logs and exact fuel, release multiple earlier deferred roots after a later
+failure, cover deferred `null`, preserve a deeper sentinel throw over a known
+Boolean mismatch, verify foreign intrinsic-Realm `RangeError`, and complete a
+1,024-layer validating chain. Local gates pass all targets/features with
+**224/224** library tests, **539/539** builtins tests, and **15/15** arguments
+tests, plus **223/223** release library tests, **135/135** tooling tests,
+**1/1** doctest, rustfmt, warnings-denied Clippy, release build, generated
+documentation, Python/YAML checks, and wasm32.
+
+Two GPT-5.6 reviews are clean after strengthening exact-site and delayed-error
+coverage. CI `29927666067` and all 33 jobs in full run `29927657329` pass.
+Artifacts at `/tmp/ruja-proxy-prototype-roots-29927657329-final` aggregate to
+unchanged **31890 pass / 5115 fail / 11459 skip / 3 timeout / 0 error / 48467
+total / 37005 run**, and all 30 result files are byte-identical to run
+`29922124267`. The downloaded binary reproduces Proxy getPrototypeOf plus
+isExtensible **31/31** and adjacent `instanceof` **50/0/4**.
+
+```text
+[Decision Log]
+- 목적과 의도: Prove a bounded allocator-safety correction while preserving Proxy semantics and the existing admission boundary.
+- 기존 구현 및 제약 조건: The Test262 cohorts already passed, but direct native root and deferred-vector growth could abort outside the VM's catchable error path; nested IsExtensible also allocated one Boolean per Proxy trap.
+- 검토한 주요 대안: Claim conformance gain, cite only unit failpoints, compare aggregate totals only, or combine the complete PropertyTraversal and GC allocator migration into this patch.
+- 선택한 방식: Keep admission unchanged, test exact failure stages and deep success directly, run the pinned full matrix, compare all 30 artifacts byte-for-byte, and reproduce the adjacent cohorts with the downloaded CI binary.
+- 다른 대안 대신 이 방식을 선택한 이유: Passing shallow corpus files do not prove allocation safety, aggregate equality can hide offsetting shard regressions, and a global traversal/GC migration would obscure this reviewable ownership boundary.
+- 장점, 단점 및 영향: The direct unit has exact zero-delta, ordering, Realm, cleanup, and deep-chain evidence. Shared PropertyTraversal, trap-call, PropertyKey/Error, and GC worklist allocation remain explicitly outside the claim and are the next safety layers.
+```
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is
