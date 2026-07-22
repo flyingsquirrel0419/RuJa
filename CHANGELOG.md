@@ -62,6 +62,39 @@
 
 ### Fixed
 
+- Shared ordinary property traversal now reserves its initial node set, each
+  new directed edge and node, and every newly owned GC root before publishing
+  state. Get, HasProperty, receiver-aware Set, ordinary Set, and inherited
+  Proxy `GetMethod` paths therefore return a catchable `RangeError` on native
+  traversal allocation failure without leaking pins or partially committing an
+  edge. Fuel, ordinary-cycle rejection, and the 512 observable Proxy replay
+  guard retain their prior ordering.
+
+  Lazy `for...in` now keeps directed edges, rooted node identities, Proxy
+  presence, and replay count in its GC-traced iterator state across separate
+  `next()` calls. A cyclic Proxy can no longer reset the replay guard by
+  yielding one fresh key per pull. Completed iterators release the retained
+  collection capacities. Exact-site regressions cover construction and all
+  edge reservations, retry behavior, foreign-Realm errors, zero-fuel priority,
+  ordinary and Proxy cycles, GC slot reuse, and balanced pins and execution
+  contexts.
+
+  Local verification passes all targets/features with **225/225** library
+  tests, **539/539** builtins tests, and **15/15** arguments tests, plus
+  **224/224** release library tests, **135/135** Python tooling tests, rustfmt,
+  warnings-denied Clippy, release build, generated documentation, and wasm32
+  checking. Rustdoc retains only the 13 pre-existing broken-link warnings. Two
+  GPT-5.6 reviews are clean after completed-iterator capacity retention and
+  retry-semantics follow-up. Commit `0bac2a2` passes CI `29947430510` and all
+  33 jobs in full run `29947430421`. Downloaded artifacts at
+  `/tmp/ruja-property-traversal-29947430421-final` aggregate to unchanged
+  **31890 pass / 5115 fail / 11459 skip / 3 timeout / 0 error / 48467 total /
+  37005 run**; all 30 result files are byte-identical to run `29927657329`.
+  The downloaded binary reproduces the affected Proxy and `for-in` cohort at
+  **190 pass / 0 fail / 37 skip**. Per-key `for-in` collections, trap-call
+  internals, PropertyKey/Error strings, GC root enumeration, and mark
+  worklists remain separate allocator-safety scopes.
+
 - Proxy `[[GetPrototypeOf]]` and its nested `[[IsExtensible]]` validation now
   reserve every directly owned temporary root fallibly at the existing
   observable boundary. Input, target/handler, trap, returned prototype, and

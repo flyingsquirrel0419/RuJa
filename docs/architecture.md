@@ -1112,7 +1112,10 @@ each pass can run an observable trap lookup, so repeated edges are replayed.
 An inert cycle is stopped after 512 replays with a catchable RangeError rather
 than a native stack overflow; configured fuel can stop it earlier. This guard
 does not limit acyclic chain depth. Traversal memory is O(depth) because both
-the edge set and persistent GC roots grow with reached objects.
+the edge set and persistent GC roots grow with reached objects. Construction
+and new-edge growth reserve HashSet and GC-root capacity before committing the
+edge or pin, so allocation failure is catchable and leaves traversal state
+retryable.
 
 The same intrinsic audit installs the required own `Array.prototype.length`
 descriptor in every Realm: value 0, writable, non-enumerable, and
@@ -1144,11 +1147,13 @@ boundary existed; it is not the current Array architecture.
 
 `ForInIteratorState` mirrors the state described by `CreateForInIterator`: it
 retains the current object, whether that object has been snapshotted, the
-visited string keys, and the current own-key snapshot plus cursor. The state
-lives in `IteratorData` and GC tracing follows its current object. Creating an
+visited string keys, and the current own-key snapshot plus cursor. It also
+retains directed prototype edges, rooted node identities, Proxy presence, and
+the cycle-replay count across pulls. The state lives in `IteratorData`, and GC
+tracing follows both its current object and every traversal root. Creating an
 iterator first boxes a non-nullish primitive and pins that wrapper across the
 GC-retrying iterator allocation; `null` and `undefined` produce an already
-empty iteration without boxing.
+empty iteration without traversal nodes.
 
 Each `iterator_next_resume` advances only far enough to yield one key or reach
 completion. It obtains a current object's keys through `[[OwnPropertyKeys]]`,
@@ -1176,9 +1181,12 @@ materializing vectors or sets: typed-array indices, dense Array presence,
 boxed or primitive String indices, module namespace exports, and stored
 properties. String byte length is a conservative upper bound for UTF-16 key
 count. Candidate processing and ordinary prototype edges are separately
-metered. Reached prototypes remain pinned for one advancement. Ordinary cycles
-fail when an edge repeats; observable Proxy cycles may replay and are bounded
-by configured fuel or the shared 512-replay host guard.
+metered. Newly reached prototypes are reserved and installed transactionally
+in the iterator's traced state. Ordinary cycles fail when an edge repeats;
+observable Proxy cycles may replay and are bounded by configured fuel or the
+shared 512-replay host guard even when a Proxy yields one fresh key per pull.
+Terminal completion replaces the traversal collections so a reachable
+completed iterator does not retain capacity proportional to its former depth.
 
 `Object.hasOwn` and `Object.prototype.hasOwnProperty` now use the same complete
 Proxy `[[GetOwnProperty]]` path as `propertyIsEnumerable`, so virtual
@@ -1694,6 +1702,34 @@ trap completion outranks an already-known mismatch exactly as before.
 - 선택한 방식: Reserve each root at its current semantic boundary, reserve deferred scratch before pin and push, use exact test-only site failpoints, and reduce IsExtensible trap-result storage to a delayed O(1) consistency summary.
 - 다른 대안 대신 이 방식을 선택한 이유: Entry preallocation can pre-empt revocation, fuel, getter, call, type, or invariant errors; a depth cap rejects valid chains; a global pin API migration crosses every VM subsystem; and retaining every Boolean allocates despite only equality with one terminal result mattering.
 - 장점, 단점 및 영향: Direct reserve failures are catchable, Realm-correct, ordered, and leak-free; later failures release earlier deferred roots; null continuations need no object root; and validating chains no longer allocate result Booleans per layer. This does not make the transitive path fully allocator-fallible: PropertyTraversal HashSets and pins, trap execution, PropertyKey and Error strings, GC root enumeration, and mark worklists remain separate units.
+```
+
+## Fallible shared property traversal state
+
+`PropertyTraversal` construction reserves its initial object-identity set and
+the caller-owned GC root suffix before callers publish pins. Advancing a new
+edge preserves semantic priority: ordinary fuel or credit is consumed first,
+duplicate ordinary or Proxy replay handling runs next, and only a genuinely
+new edge reserves the edge set. A newly reached node additionally reserves the
+node set and GC root storage before the edge, node, or pin is committed.
+Reservation failure therefore cannot leave a half-visible edge or leak a root.
+
+Lazy `for...in` cannot use operation-local traversal state because each public
+`next()` returns after one key. Its iterator-owned edge set, rooted-node set,
+traced root vector, Proxy marker, and replay count persist across calls. This
+closes the case where a cyclic Proxy returned itself while producing a fresh
+key on every pull and previously obtained a new 512-replay budget each time.
+An abrupt `next()` remains a completed operation: a later call re-observes the
+Proxy prototype trap rather than caching its prior result across the error.
+
+```text
+[Decision Log]
+- 목적과 의도: Make shared property-chain state allocation catchable and atomic, and enforce one cycle-replay budget across the complete lifetime of a lazy for-in traversal.
+- 기존 구현 및 제약 조건: PropertyTraversal collected initial nodes and inserted edges and roots through infallible HashSet/Vec growth. Lazy for-in recreated that traversal on every next call, so a self-returning Proxy with one fresh key per pull could bypass the documented replay guard. Persisting raw heap indices without traced Values would allow GC slot reuse to change their identity.
+- 검토한 주요 대안: Reserve a large fixed capacity at entry, impose a prototype depth cap, make every VM pin globally fallible in one patch, keep operation-local for-in traversal, cache a successful Proxy prototype result across a thrown allocation error, or persist only numeric heap indices.
+- 선택한 방식: Reserve exact local capacity immediately before each state publication, keep caller initial roots in the existing pin suffix, store lazy for-in traversal state and corresponding Values in IteratorData, trace those Values in both GC iterator paths, and release collection capacity at terminal completion.
+- 다른 대안 대신 이 방식을 선택한 이유: Entry preallocation changes failure priority and can over-allocate; a depth cap rejects legal acyclic chains; a global pin migration crosses unrelated subsystems; operation-local state resets cycle protection; caching across an abrupt operation suppresses later Proxy observations; and untraced indices become stale after collection.
+- 장점, 단점 및 영향: Get, HasProperty, Set, inherited Proxy GetMethod, and for-in edge growth now fail through ordinary Result cleanup with retryable state, exact fuel and cycle ordering, Realm-correct errors, and stable GC identities. Persistent for-in state uses O(depth) memory while active and releases that capacity when done. Key snapshots, visited-key growth, trap-call internals, PropertyKey/Error strings, GC root enumeration, and mark worklists remain explicitly outside this unit.
 ```
 
 ---

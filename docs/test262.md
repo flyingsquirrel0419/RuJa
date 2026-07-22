@@ -10322,6 +10322,45 @@ isExtensible **31/31** and adjacent `instanceof` **50/0/4**.
 - 장점, 단점 및 영향: The direct unit has exact zero-delta, ordering, Realm, cleanup, and deep-chain evidence. Shared PropertyTraversal, trap-call, PropertyKey/Error, and GC worklist allocation remain explicitly outside the claim and are the next safety layers.
 ```
 
+## Fallible and persistent shared property traversal
+
+Commit `0bac2a2` changes no Test262 admission. Shared Get, HasProperty, Set,
+and inherited Proxy `GetMethod` traversal now reserves construction, directed
+edge, newly reached node, and GC-root capacity before publishing state. Lazy
+`for...in` retains the same edge identities, roots, Proxy marker, and replay
+count across separate pulls, so a cyclic Proxy that yields a fresh key per
+pull cannot reset the 512-replay sandbox guard.
+
+Focused allocation regressions inject each reservation failure, verify
+foreign-Realm `RangeError`, fuel and duplicate priority, retry observation,
+ordinary and Proxy cycles, GC slot reuse, terminal capacity release, and pin
+and execution-context restoration. Local fixed-corpus coverage over direct
+Proxy Get, Has, Set, GetPrototypeOf, GetOwnPropertyDescriptor, and language
+`for-in` is **190 pass / 0 fail / 37 skip / 227 total**.
+
+Local gates pass all targets/features with **225/225** library tests,
+**539/539** builtins tests, and **15/15** arguments tests, plus **224/224**
+release library tests, **135/135** tooling tests, rustfmt, warnings-denied
+Clippy, release build, generated documentation, and wasm32 checking. Two
+GPT-5.6 reviews are clean after capacity-retention and retry-semantics
+follow-up. CI `29947430510` and all 33 jobs in full run `29947430421` pass.
+
+Artifacts at `/tmp/ruja-property-traversal-29947430421-final` aggregate to
+unchanged **31890 pass / 5115 fail / 11459 skip / 3 timeout / 0 error / 48467
+total / 37005 run**. All 30 result files are byte-identical to run
+`29927657329`, and the downloaded release binary reproduces the affected
+cohort at **190/0/37**.
+
+```text
+[Decision Log]
+- 목적과 의도: Prove the traversal allocator-safety and cross-pull cycle correction without widening admission or hiding an unrelated conformance change.
+- 기존 구현 및 제약 조건: Existing shallow Test262 files passed despite infallible native collection growth and a lazy for-in replay budget that restarted on every pull; aggregate equality alone could hide offsetting shard changes.
+- 검토한 주요 대안: Admit additional files, rely only on injected Rust failpoints, compare only aggregate totals, or treat allocation safety as implied by ordinary semantic coverage.
+- 선택한 방식: Keep admission unchanged, test exact failure and retry boundaries locally, run the pinned full matrix, compare all 30 artifacts byte-for-byte, and reproduce the affected directories with the downloaded CI binary.
+- 다른 대안 대신 이 방식을 선택한 이유: Admission changes would not prove resource safety, Test262 has no host allocation-failure interface, and equal totals do not prove that every shard is unchanged.
+- 장점, 단점 및 영향: The unit has exact zero-delta evidence plus direct allocation, fuel, Realm, GC, cycle, cleanup, and capacity-release coverage. Per-key for-in collection growth and broader runtime allocator fallibility remain separate work.
+```
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is
