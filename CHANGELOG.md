@@ -62,6 +62,43 @@
 
 ### Fixed
 
+- Ordinary Bound Function `[[Call]]` forwarding is now one iterative,
+  fuel-metered state machine shared with Proxy apply dispatch. Every Bound or
+  Proxy edge consumes fuel, layered bound arguments are collected once and
+  materialized in linear order, the innermost bound `this` wins, and Proxy
+  apply traps receive an argument Array from the current operation Realm. The
+  cumulative argument limit is checked before an apply getter can observe an
+  oversized call.
+
+  The call inputs, wrappers, handlers, traps, and materialized arguments remain
+  rooted across observable operations and collecting allocations. Native root
+  and trap-argument reservations are fallible, all normal and abrupt exits
+  restore the incoming pin depth, and Promise settlement/reaction exact-fuel
+  behavior remains transactional. Regressions cover 20,000 Bound layers,
+  Bound-Proxy-Bound ordering, exact fuel, forced GC, abrupt identity, foreign
+  Realms, exact argument caps, and impossible root reservations. Local
+  verification passes all targets/features with **222/222** library tests,
+  **539/539** builtins tests, and **15/15** arguments tests, plus **221/221**
+  release library tests, **135/135** Python tooling tests, **1/1** doctest,
+  rustfmt, warnings-denied Clippy, release build, generated documentation,
+  Python bytecode compilation, workflow YAML parsing, and wasm32 checking.
+  Rustdoc retains only the 13 pre-existing broken-link warnings. Semantic
+  review was clean, while resource review raised and closed infallible native
+  reservation paths in the feature commit. Later documentation review found
+  one remaining infallible root-vector growth inside the shared trap-array
+  allocator. Follow-up commit `c64076f` pre-reserves its exact item and
+  prototype roots and adds a test-only one-shot reservation failure proving a
+  catchable `RangeError` before pin mutation. GPT-5.6 re-review is clean.
+  Feature commit `026ea21` passes CI `29912648216` and full run `29912648078`;
+  follow-up `c64076f` passes CI `29916090205` and all 33 jobs in full run
+  `29916090227`. Final downloaded artifacts at
+  `/tmp/ruja-value-array-roots-29916090227-final` aggregate to the unchanged
+  **31890 pass / 5115 fail / 11459 skip / 3 timeout / 0 error / 48467 total /
+  37005 run**. All 30 result files are byte-identical to feature run
+  `29912648078`, and the downloaded release binary reproduces
+  Function.prototype **223/40/46** and Promise **442/0/287**. Bound forwarding
+  in `OrdinaryHasInstance` remains a separate `instanceof` unit.
+
 - `Function.prototype.bind` now creates Bound Function exotic objects with
   specification-shaped own `length` and `name` properties. The target's own
   `length` is observed through `[[GetOwnProperty]]` before an optional `Get`,

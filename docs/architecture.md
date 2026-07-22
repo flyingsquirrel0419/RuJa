@@ -229,6 +229,40 @@ replacement exotic property.
 - 장점, 단점 및 영향: Exact metadata, abrupt completion identity, inherited-name behavior, forced GC, and exact-cap allocation now share one path. Ordinary and internal native functions retain their existing fallback behavior. Bound call-chain iteration, fuel, and argument materialization remain a separate dispatch concern.
 ```
 
+Ordinary Bound Function `[[Call]]` and Proxy apply forwarding now use one
+iterative call traversal. Each Bound or Proxy edge consumes fuel before it is
+followed. Bound wrapper IDs are retained outer-to-inner, then their arguments
+are materialized once in reverse wrapper order before the original call
+arguments. This preserves `innerArgs, outerArgs, callArgs` and the innermost
+bound `this` without repeated vector prepending.
+
+A Proxy apply boundary materializes pending Bound arguments exactly once,
+creates the trap argument Array with the current operation Realm's intrinsic,
+and resets traversal so a Bound apply trap can itself be dispatched normally.
+The cumulative 1,048,576-entry argument limit is checked before the apply
+getter runs. Entry arguments, current targets, Bound wrappers, handlers,
+traps, and arrays are rooted for every observable operation. Root-vector and
+trap-call reservations are fallible, and every normal, thrown, allocation, or
+host-abort exit restores the incoming pin depth.
+
+The shared Realm-aware value-Array allocator computes the exact roots for its
+items and prototype and reserves that capacity before publishing either. This
+last reservation was added in follow-up commit `c64076f` after documentation
+review found that the original call dispatcher still reached an infallible
+`pin_many` inside trap-array construction. A test-only one-shot reservation
+failure exercises the real helper and proves that it returns a catchable
+`RangeError` without changing pin depth.
+
+```text
+[Decision Log]
+- 목적과 의도: Make legal deep Bound calls stack-safe and linear while preserving exact Call, Proxy, Realm, fuel, argument-limit, and GC behavior.
+- 기존 구현 및 제약 조건: Ordinary Bound calls recursed once per wrapper, prepended the complete argument vector at every layer, charged no traversal fuel, checked only the original call arguments, and depended on infallible native vector growth around observable Proxy work.
+- 검토한 주요 대안: Raise the call-stack cap, impose a Bound-depth limit, flatten every time a Proxy is reached, retain recursive dispatch with a guard, or carry one rooted traversal and materialization plan through Bound and Proxy edges.
+- 선택한 방식: Traverse Bound and Proxy call edges iteratively, meter each edge, retain wrapper IDs, materialize once at a Proxy trap or final target, enforce the cumulative cap before trap lookup, and reserve every native root or trap-call vector fallibly before mutation.
+- 다른 대안 대신 이 방식을 선택한 이유: Fixed depth limits reject valid ECMAScript; recursive guards still consume the Rust stack; intermediate flattening remains quadratic; and infallible growth can abort the host instead of producing the sandbox's catchable RangeError.
+- 장점, 단점 및 영향: A 20,000-layer ordinary call is stack-safe, argument work is linear, Bound apply traps and foreign Realms preserve identity, exact fuel bounds wrapper traversal, and all tested abrupt paths restore roots. The shared value-Array path now turns root-capacity failure into RangeError before publishing roots. Unbounded hosts can still request linear work across arbitrarily deep legal chains, and Bound forwarding in OrdinaryHasInstance remains a separate state machine because it re-enters InstanceofOperator rather than Call.
+```
+
 ```text
 [Decision Log]
 - 목적과 의도: Implement one specification-shaped CreateDynamicFunction path for all four dynamic constructors without weakening Realm identity or the exact heap cap.

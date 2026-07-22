@@ -31,7 +31,7 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 65.8% of all matrix files; 86.2% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (12752 pass / 0 fail / 7687 skip / 20439 total on the current pinned checkout) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (12757 pass / 0 fail / 7682 skip / 20439 total on the current pinned checkout) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
@@ -10191,6 +10191,53 @@ reproduces exact **9/9** and bind-directory **93/0/7**.
 - 선택한 방식: Share one exact nine-file manifest and per-file feature map, verify complete live metadata in tooling and CI setup, and retain every unrelated bind skip.
 - 다른 대안 대신 이 방식을 선택한 이유: Broad admission overclaims unsupported behavior, leaving passing tagged files hidden understates coverage, and duplicated policy implementations drift.
 - 장점, 단점 및 영향: All nine confirmed failures become admitted passes with a provable +9/-7/-2 full-matrix delta, while seven unrelated files remain gated. Deep Bound call-chain resource safety is explicitly outside this metadata admission and is the next runtime unit.
+```
+
+## Iterative and fuel-bounded Bound calls
+
+Feature commit `026ea21` replaces recursive ordinary Bound Function `[[Call]]`
+forwarding with one iterative Bound/Proxy traversal and one linear argument
+materialization. It does not change Test262 admission policy: the unit hardens
+stack, fuel, argument-cap, GC, Realm, and abrupt-completion behavior around
+already admitted calls.
+
+Focused native regressions cover 20,000 Bound layers, Bound-Proxy-Bound
+argument and `this` order, a Bound Proxy apply trap, current-Realm trap arrays,
+foreign target Realms, sentinel identity, exact per-edge fuel, forced GC,
+cumulative and input argument caps, impossible root reservation, and balanced
+pins. Promise exact-fuel regressions prove that internal Bound resolve/reject
+functions and reactions retain transactional host-abort behavior.
+
+Local gates pass all targets/features with **222/222** library tests,
+**539/539** builtins tests, and **15/15** arguments tests, plus **221/221**
+release library tests, **135/135** tooling tests, **1/1** doctest, rustfmt,
+warnings-denied Clippy, release build, generated documentation, Python
+bytecode compilation, workflow YAML parsing, and wasm32 checking. Rustdoc
+retains only the 13 pre-existing broken intra-doc-link warnings. Semantic
+review was clean, while resource review raised and closed infallible native
+reservation paths in the feature commit. Later documentation review found one
+remaining infallible item/prototype pin batch in shared trap-array allocation;
+follow-up commit `c64076f` reserves it exactly and adds direct injected-failure
+coverage. GPT-5.6 re-review is clean.
+
+Feature CI `29912648216` and full matrix `29912648078` pass. Follow-up
+`c64076f` passes CI `29916090205` and all 33 jobs in full matrix
+`29916090227`. Final downloaded artifacts at
+`/tmp/ruja-value-array-roots-29916090227-final` aggregate to **31890 pass /
+5115 fail / 11459 skip / 3 timeout / 0 error / 48467 total / 37005 run**. All
+30 result files are byte-identical to feature run `29912648078`, proving the
+expected zero Test262 delta after the reviewed correction. The final
+downloaded release binary reproduces Function.prototype **223/40/46** and
+Promise **442/0/287**.
+
+```text
+[Decision Log]
+- 목적과 의도: Record resource-safety completion without claiming a conformance admission or hiding an accidental matrix change.
+- 기존 구현 및 제약 조건: The affected shallow calls already passed Test262, while deep wrapper recursion, quadratic argument copying, missing fuel, and GC/native-allocation hazards were not represented by the corpus.
+- 검토한 주요 대안: Omit Test262 evidence, add synthetic admission paths, cite only local tests, or compare aggregate totals without comparing individual shard outputs.
+- 선택한 방식: Keep admission unchanged, require focused adversarial regressions, run the full pinned matrix, compare all 30 result files byte-for-byte, and reproduce adjacent Function and Promise cohorts with the downloaded CI binary.
+- 다른 대안 대신 이 방식을 선택한 이유: New admission would overstate semantic coverage, local-only evidence cannot detect runner or build drift, and equal aggregates can conceal offsetting regressions between shards.
+- 장점, 단점 및 영향: The unit has direct resource-safety evidence, including an injected root-reservation failure through the real Array helper, and an exact zero-delta proof while preserving the existing support boundary. OrdinaryHasInstance still recursively forwards Bound targets and is tracked as the next independent runtime unit.
 ```
 
 ## Why the full-suite rate is not higher
