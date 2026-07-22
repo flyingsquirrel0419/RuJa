@@ -6227,6 +6227,53 @@ fn uses_specialized_integrity_path(vm: &Vm, obj: &Value) -> bool {
     )
 }
 
+#[cfg(test)]
+fn take_proxy_own_keys_reservation_failure(
+    vm: &mut Vm,
+    site: crate::vm::ProxyOwnKeysReservationSite,
+) -> bool {
+    let Some((configured_site, remaining)) = vm.fail_proxy_own_keys_reservation else {
+        return false;
+    };
+    if configured_site != site {
+        return false;
+    }
+    if remaining != 0 {
+        vm.fail_proxy_own_keys_reservation = Some((configured_site, remaining - 1));
+        return false;
+    }
+    vm.fail_proxy_own_keys_reservation = None;
+    true
+}
+
+fn reserve_proxy_own_keys_trap_result_key(
+    _vm: &mut Vm,
+    keys: &mut Vec<PropertyKey>,
+) -> error::Result<()> {
+    #[cfg(test)]
+    if take_proxy_own_keys_reservation_failure(
+        _vm,
+        crate::vm::ProxyOwnKeysReservationSite::TrapResultKey,
+    ) {
+        return Err(Error::range("Proxy ownKeys trap result is too large"));
+    }
+    keys.try_reserve(1)
+        .map_err(|_| Error::range("Proxy ownKeys trap result is too large"))
+}
+
+fn reserve_proxy_own_keys_seen_key(
+    _vm: &mut Vm,
+    seen: &mut IndexSet<PropertyKey>,
+) -> error::Result<()> {
+    #[cfg(test)]
+    if take_proxy_own_keys_reservation_failure(_vm, crate::vm::ProxyOwnKeysReservationSite::SeenKey)
+    {
+        return Err(Error::range("Proxy ownKeys duplicate set is too large"));
+    }
+    seen.try_reserve(1)
+        .map_err(|_| Error::range("Proxy ownKeys duplicate set is too large"))
+}
+
 fn proxy_own_keys_from_array_like(
     vm: &mut Vm,
     key_list: &Value,
@@ -6263,6 +6310,7 @@ fn proxy_own_keys_from_array_like(
                     ));
                 }
             };
+            reserve_proxy_own_keys_trap_result_key(vm, &mut keys)?;
             keys.push(key);
         }
         Ok(keys)
@@ -6344,11 +6392,13 @@ pub(crate) fn own_property_keys_or_throw(
                 let trap_keys = proxy_own_keys_from_array_like(vm, &key_list)?;
                 let mut seen = IndexSet::new();
                 for key in &trap_keys {
-                    if !seen.insert(key.clone()) {
+                    if seen.contains(key) {
                         return Err(Error::type_err(
                             "Proxy ownKeys trap returned duplicate entries",
                         ));
                     }
+                    reserve_proxy_own_keys_seen_key(vm, &mut seen)?;
+                    seen.insert(key.clone());
                 }
                 let extensible_target = vm.is_extensible(&target)?;
                 Ok(ProxyKeysStep::Validate {

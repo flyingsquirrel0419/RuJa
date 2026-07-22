@@ -1,7 +1,7 @@
 use super::property::MAX_PROXY_CYCLE_REPLAYS;
 use super::{
     ExternalPromiseJob, ForInKeyReservationSite, GetPrototypeReservationSite, Microtask,
-    PropertyTraversalReservationSite, Vm,
+    PropertyTraversalReservationSite, ProxyOwnKeysReservationSite, Vm,
 };
 use crate::value::{FunctionData, FunctionKind, HeapObj, NativeConstructMode, PromiseStatus};
 use crate::Value;
@@ -10570,6 +10570,427 @@ fn for_in_key_collection_reservations_are_fallible_atomic_and_released() {
     vm.fail_for_in_key_reservation_site = None;
     assert_eq!(vm.gc_pins.len(), baseline_pins);
     assert_eq!(vm.execution_contexts.len(), baseline_contexts);
+}
+
+#[test]
+fn proxy_own_keys_entry_reservations_are_fallible_ordered_and_retryable() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "failProxyOwnKeysTrapResultKey",
+        |vm, _, _| {
+            vm.fail_proxy_own_keys_reservation =
+                Some((ProxyOwnKeysReservationSite::TrapResultKey, 0));
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("trap-result key failure hook should register");
+    vm.register_fn(
+        "failProxyOwnKeysSeenKey",
+        |vm, _, _| {
+            vm.fail_proxy_own_keys_reservation = Some((ProxyOwnKeysReservationSite::SeenKey, 0));
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("seen-key failure hook should register");
+    vm.register_fn(
+        "returnFuelOwnKeysList",
+        |vm, _, _| Ok(vm.get_global("fuelKeyList")),
+        0,
+    )
+    .expect("native ownKeys fuel fixture should register");
+    vm.run(
+        r#"
+        var trapResultInvariantCalls = 0;
+        var trapResultTarget = new Proxy({}, {
+          isExtensible: function (target) {
+            trapResultInvariantCalls += 1;
+            return Reflect.isExtensible(target);
+          }
+        });
+        var trapResultCalls = 0;
+        var trapResultReads = [];
+        var trapResultProxy = new Proxy(trapResultTarget, {
+          ownKeys: function () {
+            trapResultCalls += 1;
+            if (trapResultCalls === 1) {
+              return {
+                get length() { trapResultReads.push("length:first"); return 3; },
+                get 0() { trapResultReads.push("0:first"); return "first"; },
+                get 1() {
+                  trapResultReads.push("1:first");
+                  failProxyOwnKeysTrapResultKey();
+                  return "second";
+                },
+                get 2() { trapResultReads.push("2:first"); return "unreached"; }
+              };
+            }
+            return {
+              get length() { trapResultReads.push("length:retry"); return 1; },
+              get 0() { trapResultReads.push("0:retry"); return "retry"; }
+            };
+          }
+        });
+
+        var seenInvariantCalls = 0;
+        var seenTarget = new Proxy({}, {
+          isExtensible: function (target) {
+            seenInvariantCalls += 1;
+            return Reflect.isExtensible(target);
+          }
+        });
+        var seenCalls = 0;
+        var seenReads = [];
+        var seenProxy = new Proxy(seenTarget, {
+          ownKeys: function () {
+            seenCalls += 1;
+            var call = seenCalls;
+            return {
+              get length() { seenReads.push("length:" + call); return 2; },
+              get 0() { seenReads.push("0:" + call); return "alpha"; },
+              get 1() { seenReads.push("1:" + call); return "beta"; }
+            };
+          }
+        });
+
+        var emptyProxy = new Proxy({}, { ownKeys: function () { return []; } });
+        var invalidProxy = new Proxy({}, { ownKeys: function () { return [1]; } });
+        var abruptMarker = {};
+        var abruptReads = 0;
+        var abruptProxy = new Proxy({}, {
+          ownKeys: function () {
+            return {
+              length: 1,
+              get 0() { abruptReads += 1; throw abruptMarker; }
+            };
+          }
+        });
+        var fuelKeyList = { 0: "fuel", length: 1 };
+        var fuelProxy = new Proxy({}, { ownKeys: returnFuelOwnKeysList });
+
+        var duplicateProxy = new Proxy({}, {
+          ownKeys: function () { return ["duplicate", "duplicate"]; }
+        });
+        var uniqueProxy = new Proxy({}, {
+          ownKeys: function () { return ["unique"]; }
+        });
+        var sharedOwnKeySymbol = Symbol("shared");
+        var duplicateSymbolProxy = new Proxy({}, {
+          ownKeys: function () { return [sharedOwnKeySymbol, sharedOwnKeySymbol]; }
+        });
+        var distinctSymbolProxy = new Proxy({}, {
+          ownKeys: function () { return [Symbol("same"), Symbol("same")]; }
+        });
+
+        var nestedBase = {};
+        var nestedInnerCalls = 0;
+        var nestedInner = new Proxy(nestedBase, {
+          ownKeys: function () {
+            nestedInnerCalls += 1;
+            failProxyOwnKeysSeenKey();
+            return ["inner"];
+          }
+        });
+        var nestedOuter = new Proxy(nestedInner, {
+          ownKeys: function () { return ["outer"]; }
+        });
+
+        var forInOwnKeysCalls = 0;
+        var forInTarget = Object.create(null);
+        forInTarget.visible = 1;
+        var forInProxy = new Proxy(forInTarget, {
+          ownKeys: function () {
+            forInOwnKeysCalls += 1;
+            if (forInOwnKeysCalls === 1) {
+              return {
+                length: 1,
+                get 0() {
+                  failProxyOwnKeysTrapResultKey();
+                  return "discarded";
+                }
+              };
+            }
+            return ["visible"];
+          }
+        });
+
+        var ownKeysReservationRealm = $262.createRealm().global;
+        var foreignTrapResultProxy = new Proxy({}, {
+          ownKeys: function () {
+            return {
+              length: 1,
+              get 0() {
+                failProxyOwnKeysTrapResultKey();
+                return "foreign";
+              }
+            };
+          }
+        });
+        var foreignTrapResultError = ownKeysReservationRealm.Function(
+          "proxy",
+          "try { Reflect.ownKeys(proxy); } catch (error) { return error; }"
+        )(foreignTrapResultProxy);
+        var foreignTrapResultRange =
+          foreignTrapResultError instanceof ownKeysReservationRealm.RangeError &&
+          !(foreignTrapResultError instanceof RangeError);
+
+        var foreignSeenProxy = new Proxy({}, {
+          ownKeys: function () {
+            failProxyOwnKeysSeenKey();
+            return ["foreign"];
+          }
+        });
+        var foreignSeenError = ownKeysReservationRealm.Function(
+          "proxy",
+          "try { Reflect.ownKeys(proxy); } catch (error) { return error; }"
+        )(foreignSeenProxy);
+        var foreignSeenRange =
+          foreignSeenError instanceof ownKeysReservationRealm.RangeError &&
+          !(foreignSeenError instanceof RangeError);
+        "#,
+    )
+    .expect("Proxy ownKeys reservation fixtures should initialize");
+    let baseline_pins = vm.gc_pins.len();
+    let baseline_contexts = vm.execution_contexts.len();
+    assert_eq!(vm.get_global("foreignTrapResultRange"), Value::Bool(true));
+    assert_eq!(vm.get_global("foreignSeenRange"), Value::Bool(true));
+
+    let trap_result_proxy = vm.get_global("trapResultProxy");
+    let error =
+        crate::builtins::own_property_keys_or_throw(&mut vm, &trap_result_proxy, false, true, true)
+            .expect_err("a partially collected trap-result key vector must fail fallibly");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.get_global("trapResultCalls"), Value::Number(1.0));
+    assert_eq!(
+        vm.get_global("trapResultInvariantCalls"),
+        Value::Number(0.0)
+    );
+    assert_eq!(
+        vm.run("trapResultReads.join('|')")
+            .expect("trap-result reads should be inspectable"),
+        Value::String(Arc::from("length:first|0:first|1:first"))
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.execution_contexts.len(), baseline_contexts);
+    let keys =
+        crate::builtins::own_property_keys_or_throw(&mut vm, &trap_result_proxy, false, true, true)
+            .expect("trap-result collection should retry from ownKeys");
+    assert_eq!(keys, vec![crate::value::PropertyKey::from("retry")]);
+    assert_eq!(vm.get_global("trapResultCalls"), Value::Number(2.0));
+    assert_eq!(
+        vm.get_global("trapResultInvariantCalls"),
+        Value::Number(1.0)
+    );
+    assert_eq!(
+        vm.run("trapResultReads.join('|')")
+            .expect("retry reads should be inspectable"),
+        Value::String(Arc::from(
+            "length:first|0:first|1:first|length:retry|0:retry"
+        ))
+    );
+
+    let seen_proxy = vm.get_global("seenProxy");
+    vm.fail_proxy_own_keys_reservation = Some((ProxyOwnKeysReservationSite::SeenKey, 0));
+    let error =
+        crate::builtins::own_property_keys_or_throw(&mut vm, &seen_proxy, false, true, true)
+            .expect_err("the duplicate-detection set must reserve fallibly");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.get_global("seenCalls"), Value::Number(1.0));
+    assert_eq!(vm.get_global("seenInvariantCalls"), Value::Number(0.0));
+    assert_eq!(
+        vm.run("seenReads.join('|')")
+            .expect("seen reads should be inspectable"),
+        Value::String(Arc::from("length:1|0:1|1:1"))
+    );
+    let keys = crate::builtins::own_property_keys_or_throw(&mut vm, &seen_proxy, false, true, true)
+        .expect("seen-key collection should retry from ownKeys");
+    assert_eq!(
+        keys,
+        vec![
+            crate::value::PropertyKey::from("alpha"),
+            crate::value::PropertyKey::from("beta")
+        ]
+    );
+    assert_eq!(vm.get_global("seenCalls"), Value::Number(2.0));
+    assert_eq!(vm.get_global("seenInvariantCalls"), Value::Number(1.0));
+
+    let empty_proxy = vm.get_global("emptyProxy");
+    vm.fail_proxy_own_keys_reservation = Some((ProxyOwnKeysReservationSite::TrapResultKey, 0));
+    assert!(
+        crate::builtins::own_property_keys_or_throw(&mut vm, &empty_proxy, false, true, true)
+            .expect("an empty result needs no trap-key reservation")
+            .is_empty()
+    );
+    assert_eq!(
+        vm.fail_proxy_own_keys_reservation,
+        Some((ProxyOwnKeysReservationSite::TrapResultKey, 0))
+    );
+    vm.fail_proxy_own_keys_reservation = Some((ProxyOwnKeysReservationSite::SeenKey, 0));
+    assert!(
+        crate::builtins::own_property_keys_or_throw(&mut vm, &empty_proxy, false, true, true)
+            .expect("an empty result needs no seen-key reservation")
+            .is_empty()
+    );
+    assert_eq!(
+        vm.fail_proxy_own_keys_reservation,
+        Some((ProxyOwnKeysReservationSite::SeenKey, 0))
+    );
+
+    let invalid_proxy = vm.get_global("invalidProxy");
+    vm.fail_proxy_own_keys_reservation = Some((ProxyOwnKeysReservationSite::TrapResultKey, 0));
+    let error =
+        crate::builtins::own_property_keys_or_throw(&mut vm, &invalid_proxy, false, true, true)
+            .expect_err("invalid entries must fail before trap-key reservation");
+    assert_eq!(error.kind, crate::error::ErrorKind::Type);
+    assert_eq!(
+        vm.fail_proxy_own_keys_reservation,
+        Some((ProxyOwnKeysReservationSite::TrapResultKey, 0))
+    );
+
+    let abrupt_proxy = vm.get_global("abruptProxy");
+    let error =
+        crate::builtins::own_property_keys_or_throw(&mut vm, &abrupt_proxy, false, true, true)
+            .expect_err("an index getter throw must precede trap-key reservation");
+    assert_ne!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.get_global("abruptReads"), Value::Number(1.0));
+    assert_eq!(
+        vm.fail_proxy_own_keys_reservation,
+        Some((ProxyOwnKeysReservationSite::TrapResultKey, 0))
+    );
+
+    let fuel_proxy = vm.get_global("fuelProxy");
+    vm.set_fuel(Some(1));
+    let error =
+        crate::builtins::own_property_keys_or_throw(&mut vm, &fuel_proxy, false, true, true)
+            .expect_err("per-index fuel must precede trap-key reservation");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(
+        vm.fail_proxy_own_keys_reservation,
+        Some((ProxyOwnKeysReservationSite::TrapResultKey, 0))
+    );
+    vm.set_fuel(Some(2));
+    let error =
+        crate::builtins::own_property_keys_or_throw(&mut vm, &fuel_proxy, false, true, true)
+            .expect_err("trap-key reservation should follow exact index fuel and Get");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    vm.set_fuel(None);
+    assert_eq!(
+        crate::builtins::own_property_keys_or_throw(&mut vm, &fuel_proxy, false, true, true)
+            .expect("fuel-aborted collection should retry from ownKeys"),
+        vec![crate::value::PropertyKey::from("fuel")]
+    );
+
+    let duplicate_proxy = vm.get_global("duplicateProxy");
+    vm.fail_proxy_own_keys_reservation = Some((ProxyOwnKeysReservationSite::SeenKey, 1));
+    let error =
+        crate::builtins::own_property_keys_or_throw(&mut vm, &duplicate_proxy, false, true, true)
+            .expect_err("a duplicate must fail without reserving another seen entry");
+    assert_eq!(error.kind, crate::error::ErrorKind::Type);
+    assert_eq!(
+        vm.fail_proxy_own_keys_reservation,
+        Some((ProxyOwnKeysReservationSite::SeenKey, 0))
+    );
+    let unique_proxy = vm.get_global("uniqueProxy");
+    let error =
+        crate::builtins::own_property_keys_or_throw(&mut vm, &unique_proxy, false, true, true)
+            .expect_err("the preserved seen-key failpoint should reach the next unique key");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+
+    let duplicate_symbol_proxy = vm.get_global("duplicateSymbolProxy");
+    let error = crate::builtins::own_property_keys_or_throw(
+        &mut vm,
+        &duplicate_symbol_proxy,
+        false,
+        true,
+        true,
+    )
+    .expect_err("the same Symbol must be rejected as a duplicate");
+    assert_eq!(error.kind, crate::error::ErrorKind::Type);
+    let distinct_symbol_proxy = vm.get_global("distinctSymbolProxy");
+    vm.fail_proxy_own_keys_reservation = Some((ProxyOwnKeysReservationSite::TrapResultKey, 0));
+    let error = crate::builtins::own_property_keys_or_throw(
+        &mut vm,
+        &distinct_symbol_proxy,
+        false,
+        true,
+        false,
+    )
+    .expect_err("Symbol trap results must be collected before consumer filtering");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    vm.fail_proxy_own_keys_reservation = Some((ProxyOwnKeysReservationSite::SeenKey, 0));
+    let error = crate::builtins::own_property_keys_or_throw(
+        &mut vm,
+        &distinct_symbol_proxy,
+        false,
+        true,
+        false,
+    )
+    .expect_err("Symbol trap results must be duplicate-checked before filtering");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    let distinct_symbols = crate::builtins::own_property_keys_or_throw(
+        &mut vm,
+        &distinct_symbol_proxy,
+        false,
+        true,
+        true,
+    )
+    .expect("distinct Symbols with equal descriptions are distinct keys");
+    assert_eq!(distinct_symbols.len(), 2);
+    assert!(matches!(
+        distinct_symbols[0],
+        crate::value::PropertyKey::Symbol(_)
+    ));
+    assert!(matches!(
+        distinct_symbols[1],
+        crate::value::PropertyKey::Symbol(_)
+    ));
+    assert_ne!(distinct_symbols[0], distinct_symbols[1]);
+
+    let nested_outer = vm.get_global("nestedOuter");
+    let error =
+        crate::builtins::own_property_keys_or_throw(&mut vm, &nested_outer, false, true, true)
+            .expect_err("an inner seen-key failure must unwind outer pending frames");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.get_global("nestedInnerCalls"), Value::Number(1.0));
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.execution_contexts.len(), baseline_contexts);
+
+    let for_in_proxy = vm.get_global("forInProxy");
+    let for_in_iterator = vm
+        .make_for_in_keys(&for_in_proxy)
+        .expect("for-in iterator should initialize");
+    let error = vm
+        .iterator_next(&for_in_iterator)
+        .expect_err("trap-result failure must precede for-in snapshot publication");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    let Value::Object(for_in_iterator_idx) = &for_in_iterator else {
+        panic!("for-in iterator must be an object");
+    };
+    let for_in_snapshot = vm.heap.with_obj(for_in_iterator_idx.0, |object| {
+        let HeapObj::Iterator(iterator) = object else {
+            panic!("expected for-in iterator");
+        };
+        let state = iterator.for_in.lock();
+        let state = state.as_ref().expect("for-in state should exist");
+        (
+            state.object_was_visited,
+            state.remaining_keys.len(),
+            state.remaining_index,
+        )
+    });
+    assert_eq!(for_in_snapshot, (false, 0, 0));
+    assert_eq!(
+        vm.iterator_next(&for_in_iterator)
+            .expect("for-in should retry ownKeys after trap-result failure"),
+        (Value::String(Arc::from("visible")), false)
+    );
+    assert_eq!(vm.get_global("forInOwnKeysCalls"), Value::Number(2.0));
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.execution_contexts.len(), baseline_contexts);
+    assert_eq!(vm.fail_proxy_own_keys_reservation, None);
 }
 
 #[test]
