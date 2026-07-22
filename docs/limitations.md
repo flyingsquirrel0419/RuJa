@@ -93,9 +93,9 @@ The following resource limits are enforced:
   fail, timeout, and error counts but still exits with status zero, so a matrix
   job can be green while semantic failures remain. Ordinary CI and all
   full-matrix jobs consume the same repository-pinned Test262 revision, and
-  full-matrix setup validates the exact TypedArray locale admission against
-  that checkout before scheduling shards. Aggregate totals can still hide
-  pass-to-fail swaps, so until the runner exits nonzero under an explicit
+  full-matrix setup validates the exact TypedArray join and locale admissions
+  against that checkout before scheduling shards. Aggregate totals can still
+  hide pass-to-fail swaps, so until the runner exits nonzero under an explicit
   policy, release audits must download all 30 artifacts, compare each file to
   a known baseline, and investigate every changed shard.
 - **Regex execution bounds**: ordinary matching uses the RE2-style,

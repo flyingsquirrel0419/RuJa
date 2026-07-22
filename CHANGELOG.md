@@ -34,6 +34,35 @@
 
 ### Fixed
 
+- `%TypedArray%.prototype.join` now retains its receiver and observed separator
+  across separator coercion, performs one cooperative fuel charge for every
+  captured index, and grows its intermediate result through checked
+  reservation instead of an infallible `Vec<String>` plus concatenation. The
+  existing ValidateTypedArray, internal-length snapshot, separator coercion,
+  live integer-indexed `Get`, and element `ToString` order is preserved for
+  Number and BigInt views, including resize, detach, foreign-Realm errors,
+  abrupt completion, and forced GC.
+
+  Test262 admission now freezes the complete **32-file** join directory and
+  each file's exact feature metadata. Runner and analyzer share that closed
+  boundary; tooling verifies the live directory, includes, flags, negative
+  metadata, disjointness, invalid paths, extra features, and future siblings.
+  The full-matrix setup verifies both exact TypedArray string admissions before
+  scheduling shards. Direct join remains **32/32**, and adjacent TypedArray
+  join, Array join, and TypedArray `toLocaleString` remain **94/94**. Local
+  verification passes all targets/features with **216/216** library tests,
+  **536/536** builtins tests, and **15/15** arguments tests, plus **215/215**
+  release library tests, **133/133** Python tooling tests, **1/1** doctest,
+  rustfmt, warnings-denied Clippy, release build, generated documentation, and
+  wasm32 checking. Two independent GPT-5.6 reviews found no runtime or
+  admission defect. Final `Arc<str>` publication retains the runtime-wide
+  infallible-allocation limitation. Feature commit `7605669` passes CI
+  `29890470545` and all 33 full-matrix jobs in `29890470558`. Downloaded
+  artifacts aggregate to the unchanged **31872 pass / 5126 fail / 11466 skip /
+  3 timeout / 0 error / 48467 total / 36998 run**; all 30 result files are
+  byte-identical to full run `29888462280`. The downloaded release binary also
+  reproduces direct join **32/32** and adjacent combined coverage **94/94**.
+
 - `%TypedArray%.prototype.toLocaleString` now keeps TypedArray-specific
   validation and internal-length snapshot semantics while performing primitive
   `GetV` lookup for every current element. The selected `toLocaleString` is

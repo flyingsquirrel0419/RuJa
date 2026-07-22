@@ -9872,6 +9872,58 @@ and shared corpus pin introduce no status transition.
 - 장점, 단점 및 영향: The support claim is closed under the audited 39 files, metadata and corpus drift fail before matrix scheduling, current coverage remains 39/39 with no policy-only admission, and historical aggregate comparisons become reproducible. Updating Test262 now requires an explicit revision and metadata audit; the runner's zero exit status for semantic failures remains a separate enforcement limitation.
 ```
 
+## TypedArray join resource hardening and exact admission
+
+Feature commit `7605669` preserves `%TypedArray%.prototype.join`'s existing
+ValidateTypedArray, internal-length snapshot, separator `ToString`, and live
+integer-indexed `Get` order. The receiver and only the observed first argument
+remain roots across separator coercion; ignored extra arguments are untouched.
+Every captured index consumes one fuel unit, separator insertion precedes that
+index's `Get`, Number and BigInt values follow ordinary `ToString`, and checked
+reservation replaces the prior infallible per-element `String` vector and final
+concatenation. All normal, validation, separator, indexed access, conversion,
+and fuel exits restore pin depth. Final `Arc<str>` publication remains the
+documented runtime-wide infallible allocation boundary.
+
+`tools/test262_typed_array_join_admission.txt` freezes all **32** direct files
+from pinned Test262 revision
+`9e61c12835c5e4a3bdba93850427e6742c4f64c4`. Its shared per-file feature map
+replaces the former directory-prefix and seven-feature union. Tooling checks
+the exact live directory, features, includes, flags, negative metadata,
+disjoint manifests, runner/analyzer symmetry, invalid paths, extra features,
+and future or outside siblings. Full-matrix setup verifies this class together
+with the exact TypedArray `toLocaleString` class before constructing the shard
+matrix.
+
+Direct join remains **32/32**; combined TypedArray join, Array join, and
+TypedArray `toLocaleString` remain **94/94**. Local verification passes all
+targets/features with **216/216** library tests, **536/536** builtins tests,
+and **15/15** arguments tests, plus **215/215** release library tests,
+**133/133** Python tooling tests, **1/1** doctest, rustfmt, warnings-denied
+Clippy, release build, generated documentation, wasm32 checking, YAML parsing,
+and Python bytecode compilation. Rustdoc retains only the 13 pre-existing
+broken intra-doc-link warnings. Independent GPT-5.6 runtime and admission
+reviews are CLEAN.
+
+CI `29890470545` passes both jobs, and full matrix `29890470558` passes all 33
+jobs. Downloaded artifacts at
+`/tmp/ruja-typed-array-join-29890470558-final` aggregate to the unchanged
+**31872 pass / 5126 fail / 11466 skip / 3 timeout / 0 error / 48467 total /
+36998 run**. All 30 result files are byte-identical to exact-locale-admission
+run `29888462280`, proving that the runtime and closed admission boundary cause
+no current Test262 status transition. The downloaded release binary again
+reports direct join **32/32** and adjacent combined coverage **94/94**.
+
+```text
+[Decision Log]
+- 목적과 의도: Preserve the already-green TypedArray join semantics while closing observable GC, cooperative fuel, intermediate allocation, and future Test262 admission risks.
+- 기존 구현 및 제약 조건: The method validated and snapshotted correctly and its 32 direct tests passed, but it did not root the source across separator coercion, charged no native-loop fuel, built one infallible String per element before infallible concatenation, and removed the same seven feature gates from every current or future directory sibling through one broad prefix rule.
+- 검토한 주요 대안: Leave the green implementation unchanged; reuse generic Array join; pin every argument; preconvert all elements; remove TypedArray feature gates globally; retain prefix admission; or combine this with another TypedArray method.
+- 선택한 방식: Keep the TypedArray-specific validation and length capture, root only the receiver and observed separator, stream separator and live element conversions into one checked String with one fuel charge per index, and freeze the complete 32-file directory with exact per-file metadata shared by runner and analyzer.
+- 다른 대안 대신 이 방식을 선택한 이유: Existing tests did not cover sandbox resource invariants; generic Array join observes LengthOfArrayLike instead of TypedArray internals; ignored arguments must remain unobserved and need no root; eager conversion changes observable ordering; broad gates or prefixes overclaim unrelated and future semantics; and a bounded standalone unit keeps its evidence attributable.
+- 장점, 단점 및 영향: Number and BigInt direct-native forced-GC paths, exact fuel, abrupt cleanup, resize and detach ordering, foreign method Realms, and future-sibling closure are covered while direct and adjacent Test262 remain green. The policy admits no new current file; primitive ToString and final Arc publication retain existing runtime-wide infallible allocation limits.
+```
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is
