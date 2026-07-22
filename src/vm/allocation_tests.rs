@@ -1,7 +1,7 @@
 use super::property::MAX_PROXY_CYCLE_REPLAYS;
 use super::{
-    ExternalPromiseJob, GetPrototypeReservationSite, Microtask, PropertyTraversalReservationSite,
-    Vm,
+    ExternalPromiseJob, ForInKeyReservationSite, GetPrototypeReservationSite, Microtask,
+    PropertyTraversalReservationSite, Vm,
 };
 use crate::value::{FunctionData, FunctionKind, HeapObj, NativeConstructMode, PromiseStatus};
 use crate::Value;
@@ -10139,6 +10139,435 @@ fn property_traversal_reservations_are_fallible_atomic_and_persistent() {
         .iterator_next(&ordinary_cycle_iterator)
         .expect_err("ordinary cross-pull duplicate edges must reject");
     assert_eq!(error.kind, crate::error::ErrorKind::Type);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.execution_contexts.len(), baseline_contexts);
+}
+
+#[test]
+fn for_in_key_collection_reservations_are_fallible_atomic_and_released() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "failForInSnapshotKeys",
+        |vm, _, _| {
+            vm.fail_for_in_key_reservation_site = Some(ForInKeyReservationSite::SnapshotKeys);
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("snapshot failure hook should register");
+    vm.register_fn(
+        "failForInVisitedKey",
+        |vm, _, _| {
+            vm.fail_for_in_key_reservation_site = Some(ForInKeyReservationSite::VisitedKey);
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("visited-key failure hook should register");
+    vm.run(
+        r#"
+        var snapshotOwnKeysCalls = 0;
+        var snapshotDescriptorCalls = 0;
+        var snapshotTarget = Object.create(null);
+        Object.defineProperty(snapshotTarget, "visible", {
+          value: 1,
+          enumerable: true,
+          configurable: true
+        });
+        var snapshotProxy = new Proxy(snapshotTarget, {
+          ownKeys: function () {
+            snapshotOwnKeysCalls += 1;
+            return [snapshotOwnKeysCalls === 1 ? "first" : "visible", Symbol.iterator];
+          },
+          getOwnPropertyDescriptor: function (target, key) {
+            snapshotDescriptorCalls += 1;
+            return Reflect.getOwnPropertyDescriptor(target, key);
+          }
+        });
+
+        var symbolOnlyOwnKeysCalls = 0;
+        var symbolOnlyProxy = new Proxy(Object.create(null), {
+          ownKeys: function () {
+            symbolOnlyOwnKeysCalls += 1;
+            return [Symbol.iterator];
+          }
+        });
+
+        var absentDescriptorCalls = 0;
+        var absentProxy = new Proxy(Object.create(null), {
+          ownKeys: function () { return ["gone"]; },
+          getOwnPropertyDescriptor: function () {
+            absentDescriptorCalls += 1;
+            return undefined;
+          }
+        });
+
+        var absentPrototype = Object.create(null);
+        absentPrototype.gone = 9;
+        var absentPrototypeProxy = new Proxy(Object.create(absentPrototype), {
+          ownKeys: function () { return ["gone"]; },
+          getOwnPropertyDescriptor: function () { return undefined; }
+        });
+
+        var abruptDescriptorCalls = 0;
+        var abruptDescriptorProxy = new Proxy(Object.create(null), {
+          ownKeys: function () { return ["abrupt"]; },
+          getOwnPropertyDescriptor: function () {
+            abruptDescriptorCalls += 1;
+            throw new Error("for-in-key-descriptor-abrupt");
+          }
+        });
+
+        var visitedDescriptorCalls = 0;
+        var visitedPrototype = Object.create(null);
+        visitedPrototype.visited = 2;
+        var visitedTarget = Object.create(visitedPrototype);
+        visitedTarget.visited = 1;
+        var visitedProxy = new Proxy(visitedTarget, {
+          ownKeys: function () { return ["visited"]; },
+          getOwnPropertyDescriptor: function (target, key) {
+            visitedDescriptorCalls += 1;
+            return Reflect.getOwnPropertyDescriptor(target, key);
+          }
+        });
+
+        var shadowDescriptorCalls = 0;
+        var shadowPrototype = Object.create(null);
+        shadowPrototype.shadow = 1;
+        var shadowTarget = Object.create(shadowPrototype);
+        Object.defineProperty(shadowTarget, "shadow", {
+          value: 2,
+          enumerable: false,
+          configurable: true
+        });
+        var shadowProxy = new Proxy(shadowTarget, {
+          ownKeys: function () { return ["shadow"]; },
+          getOwnPropertyDescriptor: function (target, key) {
+            shadowDescriptorCalls += 1;
+            return Reflect.getOwnPropertyDescriptor(target, key);
+          }
+        });
+
+        var duplicatePrototype = Object.create(null);
+        duplicatePrototype.duplicate = 1;
+        var duplicateSource = Object.create(duplicatePrototype);
+        duplicateSource.duplicate = 2;
+
+        var keyReservationOtherRealm = $262.createRealm().global;
+        var foreignSnapshotTarget = Object.create(null);
+        foreignSnapshotTarget.key = 1;
+        var foreignSnapshotProxy = new Proxy(foreignSnapshotTarget, {
+          ownKeys: function () {
+            failForInSnapshotKeys();
+            return ["key"];
+          }
+        });
+        var foreignSnapshotError = keyReservationOtherRealm.Function(
+          "proxy",
+          "try { for (var key in proxy) {} } catch (error) { return error; }"
+        )(foreignSnapshotProxy);
+        var foreignSnapshotRange =
+          foreignSnapshotError instanceof keyReservationOtherRealm.RangeError &&
+          !(foreignSnapshotError instanceof RangeError);
+
+        var foreignVisitedTarget = Object.create(null);
+        foreignVisitedTarget.key = 1;
+        var foreignVisitedProxy = new Proxy(foreignVisitedTarget, {
+          ownKeys: function () { return ["key"]; },
+          getOwnPropertyDescriptor: function (target, key) {
+            failForInVisitedKey();
+            return Reflect.getOwnPropertyDescriptor(target, key);
+          }
+        });
+        var foreignVisitedError = keyReservationOtherRealm.Function(
+          "proxy",
+          "try { for (var key in proxy) {} } catch (error) { return error; }"
+        )(foreignVisitedProxy);
+        var foreignVisitedRange =
+          foreignVisitedError instanceof keyReservationOtherRealm.RangeError &&
+          !(foreignVisitedError instanceof RangeError);
+        "#,
+    )
+    .expect("for-in key reservation fixtures should initialize");
+    let baseline_pins = vm.gc_pins.len();
+    let baseline_contexts = vm.execution_contexts.len();
+    assert_eq!(vm.get_global("foreignSnapshotRange"), Value::Bool(true));
+    assert_eq!(vm.get_global("foreignVisitedRange"), Value::Bool(true));
+
+    let snapshot_proxy = vm.get_global("snapshotProxy");
+    let snapshot_iterator = vm
+        .make_for_in_keys(&snapshot_proxy)
+        .expect("snapshot iterator should initialize");
+    vm.fail_for_in_key_reservation_site = Some(ForInKeyReservationSite::SnapshotKeys);
+    let error = vm
+        .iterator_next(&snapshot_iterator)
+        .expect_err("string-key snapshot growth must be fallible");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.get_global("snapshotOwnKeysCalls"), Value::Number(1.0));
+    assert_eq!(vm.get_global("snapshotDescriptorCalls"), Value::Number(0.0));
+    let Value::Object(snapshot_iterator_idx) = &snapshot_iterator else {
+        panic!("for-in iterator must be an object");
+    };
+    let snapshot_state = vm.heap.with_obj(snapshot_iterator_idx.0, |object| {
+        let HeapObj::Iterator(iterator) = object else {
+            panic!("expected for-in iterator");
+        };
+        let state = iterator.for_in.lock();
+        let state = state.as_ref().expect("for-in state should exist");
+        (
+            state.object_was_visited,
+            state.remaining_keys.len(),
+            state.remaining_index,
+        )
+    });
+    assert_eq!(snapshot_state, (false, 0, 0));
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.execution_contexts.len(), baseline_contexts);
+    assert_eq!(
+        vm.iterator_next(&snapshot_iterator)
+            .expect("snapshot failure must remain retryable"),
+        (Value::String(Arc::from("visible")), false)
+    );
+    assert_eq!(vm.get_global("snapshotOwnKeysCalls"), Value::Number(2.0));
+    assert_eq!(vm.get_global("snapshotDescriptorCalls"), Value::Number(1.0));
+    assert_eq!(
+        vm.iterator_next(&snapshot_iterator)
+            .expect("snapshot iterator should complete"),
+        (Value::Undefined, true)
+    );
+    let released_snapshot_capacity = vm.heap.with_obj(snapshot_iterator_idx.0, |object| {
+        let HeapObj::Iterator(iterator) = object else {
+            panic!("expected for-in iterator");
+        };
+        let state = iterator.for_in.lock();
+        let state = state
+            .as_ref()
+            .expect("for-in state should remain inspectable");
+        (
+            state.remaining_keys.capacity(),
+            state.visited_keys.capacity(),
+        )
+    });
+    assert_eq!(released_snapshot_capacity, (0, 0));
+
+    let symbol_only_proxy = vm.get_global("symbolOnlyProxy");
+    let symbol_only_iterator = vm
+        .make_for_in_keys(&symbol_only_proxy)
+        .expect("symbol-only iterator should initialize");
+    vm.fail_for_in_key_reservation_site = Some(ForInKeyReservationSite::SnapshotKeys);
+    assert_eq!(
+        vm.iterator_next(&symbol_only_iterator)
+            .expect("a symbol-only snapshot needs no string-key capacity"),
+        (Value::Undefined, true)
+    );
+    assert_eq!(
+        vm.fail_for_in_key_reservation_site,
+        Some(ForInKeyReservationSite::SnapshotKeys)
+    );
+    assert_eq!(vm.get_global("symbolOnlyOwnKeysCalls"), Value::Number(1.0));
+    vm.fail_for_in_key_reservation_site = None;
+
+    let absent_prototype_proxy = vm.get_global("absentPrototypeProxy");
+    let absent_prototype_iterator = vm
+        .make_for_in_keys(&absent_prototype_proxy)
+        .expect("absent-shadow iterator should initialize");
+    assert_eq!(
+        vm.iterator_next(&absent_prototype_iterator)
+            .expect("an absent own descriptor must expose the prototype key"),
+        (Value::String(Arc::from("gone")), false)
+    );
+
+    let abrupt_descriptor_proxy = vm.get_global("abruptDescriptorProxy");
+    let abrupt_descriptor_iterator = vm
+        .make_for_in_keys(&abrupt_descriptor_proxy)
+        .expect("abrupt-descriptor iterator should initialize");
+    vm.fail_for_in_key_reservation_site = Some(ForInKeyReservationSite::VisitedKey);
+    let error = vm
+        .iterator_next(&abrupt_descriptor_iterator)
+        .expect_err("descriptor abrupt completion should propagate");
+    assert!(error.to_string().contains("for-in-key-descriptor-abrupt"));
+    assert_eq!(
+        vm.fail_for_in_key_reservation_site,
+        Some(ForInKeyReservationSite::VisitedKey)
+    );
+    assert_eq!(vm.get_global("abruptDescriptorCalls"), Value::Number(1.0));
+    assert_eq!(
+        vm.iterator_next(&abrupt_descriptor_iterator)
+            .expect("descriptor abrupt completion must retain the consumed cursor"),
+        (Value::Undefined, true)
+    );
+    assert_eq!(vm.get_global("abruptDescriptorCalls"), Value::Number(1.0));
+    assert_eq!(
+        vm.fail_for_in_key_reservation_site,
+        Some(ForInKeyReservationSite::VisitedKey)
+    );
+    vm.fail_for_in_key_reservation_site = None;
+
+    let absent_proxy = vm.get_global("absentProxy");
+    let absent_iterator = vm
+        .make_for_in_keys(&absent_proxy)
+        .expect("absent-descriptor iterator should initialize");
+    vm.fail_for_in_key_reservation_site = Some(ForInKeyReservationSite::VisitedKey);
+    assert_eq!(
+        vm.iterator_next(&absent_iterator)
+            .expect("an absent descriptor must not reserve visited-key capacity"),
+        (Value::Undefined, true)
+    );
+    assert_eq!(
+        vm.fail_for_in_key_reservation_site,
+        Some(ForInKeyReservationSite::VisitedKey)
+    );
+    assert_eq!(vm.get_global("absentDescriptorCalls"), Value::Number(1.0));
+    vm.fail_for_in_key_reservation_site = None;
+
+    let visited_proxy = vm.get_global("visitedProxy");
+    let visited_iterator = vm
+        .make_for_in_keys(&visited_proxy)
+        .expect("visited-key iterator should initialize");
+    vm.fail_for_in_key_reservation_site = Some(ForInKeyReservationSite::VisitedKey);
+    let error = vm
+        .iterator_next(&visited_iterator)
+        .expect_err("visited-key growth must be fallible after descriptor lookup");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.get_global("visitedDescriptorCalls"), Value::Number(1.0));
+    let Value::Object(visited_iterator_idx) = &visited_iterator else {
+        panic!("for-in iterator must be an object");
+    };
+    let visited_state = vm.heap.with_obj(visited_iterator_idx.0, |object| {
+        let HeapObj::Iterator(iterator) = object else {
+            panic!("expected for-in iterator");
+        };
+        let state = iterator.for_in.lock();
+        let state = state.as_ref().expect("for-in state should exist");
+        (
+            state.object_was_visited,
+            state.remaining_index,
+            state.visited_keys.len(),
+        )
+    });
+    assert_eq!(visited_state, (true, 1, 0));
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.execution_contexts.len(), baseline_contexts);
+    assert_eq!(
+        vm.iterator_next(&visited_iterator)
+            .expect("an uncommitted visited mark must expose the prototype key"),
+        (Value::String(Arc::from("visited")), false)
+    );
+    assert_eq!(vm.get_global("visitedDescriptorCalls"), Value::Number(1.0));
+    assert_eq!(
+        vm.iterator_next(&visited_iterator)
+            .expect("visited-key iterator should complete after the prototype key"),
+        (Value::Undefined, true)
+    );
+    let released_visited_capacity = vm.heap.with_obj(visited_iterator_idx.0, |object| {
+        let HeapObj::Iterator(iterator) = object else {
+            panic!("expected for-in iterator");
+        };
+        let state = iterator.for_in.lock();
+        let state = state
+            .as_ref()
+            .expect("for-in state should remain inspectable");
+        (
+            state.remaining_keys.capacity(),
+            state.visited_keys.capacity(),
+        )
+    });
+    assert_eq!(released_visited_capacity, (0, 0));
+
+    let shadow_proxy = vm.get_global("shadowProxy");
+    let shadow_iterator = vm
+        .make_for_in_keys(&shadow_proxy)
+        .expect("shadow iterator should initialize");
+    assert_eq!(
+        vm.iterator_next(&shadow_iterator)
+            .expect("a non-enumerable own key must shadow its prototype"),
+        (Value::Undefined, true)
+    );
+    assert_eq!(vm.get_global("shadowDescriptorCalls"), Value::Number(1.0));
+
+    let duplicate_source = vm.get_global("duplicateSource");
+    let duplicate_iterator = vm
+        .make_for_in_keys(&duplicate_source)
+        .expect("duplicate-key iterator should initialize");
+    assert_eq!(
+        vm.iterator_next(&duplicate_iterator)
+            .expect("the own duplicate should be yielded"),
+        (Value::String(Arc::from("duplicate")), false)
+    );
+    vm.fail_for_in_key_reservation_site = Some(ForInKeyReservationSite::VisitedKey);
+    assert_eq!(
+        vm.iterator_next(&duplicate_iterator)
+            .expect("an already visited prototype key needs no descriptor or reserve"),
+        (Value::Undefined, true)
+    );
+    assert_eq!(
+        vm.fail_for_in_key_reservation_site,
+        Some(ForInKeyReservationSite::VisitedKey)
+    );
+    vm.fail_for_in_key_reservation_site = None;
+
+    let fuel_source = vm.new_object().expect("fuel source should allocate");
+    let fuel_source_value = Value::Object(fuel_source);
+    vm.heap.with_obj(fuel_source.0, |object| {
+        *object.proto().lock() = None;
+        object.props().lock().insert(
+            crate::value::PropertyKey::from("fuelKey"),
+            crate::value::PropertyDescriptor::data(Value::Number(1.0)),
+        );
+    });
+    let fuel_iterator = vm
+        .make_for_in_keys(&fuel_source_value)
+        .expect("fuel iterator should initialize");
+    vm.fail_for_in_key_reservation_site = Some(ForInKeyReservationSite::SnapshotKeys);
+    vm.set_fuel(Some(0));
+    let error = vm
+        .iterator_next(&fuel_iterator)
+        .expect_err("snapshot fuel must precede snapshot reservation");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(
+        vm.fail_for_in_key_reservation_site,
+        Some(ForInKeyReservationSite::SnapshotKeys)
+    );
+    vm.set_fuel(Some(1));
+    let error = vm
+        .iterator_next(&fuel_iterator)
+        .expect_err("snapshot reservation should follow exact snapshot fuel");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    vm.set_fuel(Some(2));
+    assert_eq!(
+        vm.iterator_next(&fuel_iterator)
+            .expect("fuel iterator should remain retryable"),
+        (Value::String(Arc::from("fuelKey")), false)
+    );
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    vm.set_fuel(None);
+
+    let candidate_fuel_iterator = vm
+        .make_for_in_keys(&fuel_source_value)
+        .expect("candidate-fuel iterator should initialize");
+    vm.fail_for_in_key_reservation_site = Some(ForInKeyReservationSite::VisitedKey);
+    vm.set_fuel(Some(1));
+    let error = vm
+        .iterator_next(&candidate_fuel_iterator)
+        .expect_err("candidate fuel must precede visited-key reservation");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(
+        vm.fail_for_in_key_reservation_site,
+        Some(ForInKeyReservationSite::VisitedKey)
+    );
+    vm.set_fuel(None);
+    assert_eq!(
+        vm.iterator_next(&candidate_fuel_iterator)
+            .expect("fuel abort retains the existing consumed-candidate policy"),
+        (Value::Undefined, true)
+    );
+    assert_eq!(
+        vm.fail_for_in_key_reservation_site,
+        Some(ForInKeyReservationSite::VisitedKey)
+    );
+    vm.fail_for_in_key_reservation_site = None;
     assert_eq!(vm.gc_pins.len(), baseline_pins);
     assert_eq!(vm.execution_contexts.len(), baseline_contexts);
 }

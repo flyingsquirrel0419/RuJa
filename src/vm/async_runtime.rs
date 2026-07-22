@@ -2534,6 +2534,125 @@ impl Vm {
         result
     }
 
+    fn publish_for_in_key_snapshot(
+        &mut self,
+        iterator: GcIdx,
+        snapshot_object: &Value,
+        keys: Vec<PropertyKey>,
+    ) -> error::Result<()> {
+        let string_count = keys
+            .iter()
+            .filter(|key| matches!(key, PropertyKey::Str(_)))
+            .count();
+        self.heap.with_obj(iterator.0, |object| {
+            let HeapObj::Iterator(iterator) = object else {
+                return Err(Error::internal("for-in snapshot iterator missing"));
+            };
+            let state = iterator.for_in.lock();
+            let state = state
+                .as_ref()
+                .ok_or_else(|| Error::internal("for-in snapshot state missing"))?;
+            if state.object.as_ref() != Some(snapshot_object)
+                || state.object_was_visited
+                || state.remaining_index != 0
+                || !state.remaining_keys.is_empty()
+            {
+                return Err(Error::internal("for-in snapshot state changed"));
+            }
+            Ok(())
+        })?;
+        #[cfg(test)]
+        let fail_reservation = string_count != 0
+            && self.fail_for_in_key_reservation_site == Some(ForInKeyReservationSite::SnapshotKeys);
+        #[cfg(test)]
+        if fail_reservation {
+            self.fail_for_in_key_reservation_site = None;
+        }
+        #[cfg(not(test))]
+        let fail_reservation = false;
+
+        self.heap.with_obj(iterator.0, |object| {
+            let HeapObj::Iterator(iterator) = object else {
+                return Err(Error::internal("for-in snapshot iterator missing"));
+            };
+            let mut state = iterator.for_in.lock();
+            let state = state
+                .as_mut()
+                .ok_or_else(|| Error::internal("for-in snapshot state missing"))?;
+            if fail_reservation {
+                return Err(Error::range("for-in key snapshot is too large"));
+            }
+            state
+                .remaining_keys
+                .try_reserve(string_count)
+                .map_err(|_| Error::range("for-in key snapshot is too large"))?;
+            state.remaining_keys.clear();
+            state
+                .remaining_keys
+                .extend(keys.into_iter().filter_map(|key| match key {
+                    PropertyKey::Str(name) => Some(name),
+                    PropertyKey::Symbol(_) => None,
+                }));
+            state.remaining_index = 0;
+            state.object_was_visited = true;
+            Ok(())
+        })
+    }
+
+    fn record_for_in_visited_key(
+        &mut self,
+        iterator: GcIdx,
+        candidate_object: &Value,
+        candidate_index: usize,
+        key: &Arc<str>,
+    ) -> error::Result<()> {
+        self.heap.with_obj(iterator.0, |object| {
+            let HeapObj::Iterator(iterator) = object else {
+                return Err(Error::internal("for-in visited-key iterator missing"));
+            };
+            let state = iterator.for_in.lock();
+            let state = state
+                .as_ref()
+                .ok_or_else(|| Error::internal("for-in visited-key state missing"))?;
+            if state.object.as_ref() != Some(candidate_object)
+                || !state.object_was_visited
+                || state.remaining_index != candidate_index.saturating_add(1)
+                || state.remaining_keys.get(candidate_index) != Some(key)
+                || state.visited_keys.contains(key)
+            {
+                return Err(Error::internal("for-in candidate cursor changed"));
+            }
+            Ok(())
+        })?;
+        #[cfg(test)]
+        let fail_reservation =
+            self.fail_for_in_key_reservation_site == Some(ForInKeyReservationSite::VisitedKey);
+        #[cfg(test)]
+        if fail_reservation {
+            self.fail_for_in_key_reservation_site = None;
+        }
+        #[cfg(not(test))]
+        let fail_reservation = false;
+
+        self.heap.with_obj(iterator.0, |object| {
+            let HeapObj::Iterator(iterator) = object else {
+                return Err(Error::internal("for-in visited-key iterator missing"));
+            };
+            let mut state = iterator.for_in.lock();
+            let state = state
+                .as_mut()
+                .ok_or_else(|| Error::internal("for-in visited-key state missing"))?;
+            if fail_reservation {
+                return Err(Error::range("for-in visited-key set is too large"));
+            }
+            if let Err(_error) = state.visited_keys.try_reserve(1) {
+                return Err(Error::range("for-in visited-key set is too large"));
+            }
+            state.visited_keys.insert(key.clone());
+            Ok(())
+        })
+    }
+
     pub(crate) fn iterator_close(&mut self, it: &Value) -> error::Result<()> {
         let iter_obj = match it {
             Value::Object(idx) => self.heap.with_obj(idx.0, |o| {
@@ -2876,6 +2995,7 @@ impl Vm {
                 Snapshot(Value),
                 Candidate {
                     object: Value,
+                    candidate_index: usize,
                     key: Arc<str>,
                     already_visited: bool,
                 },
@@ -2917,10 +3037,12 @@ impl Vm {
                         return ForInAction::Snapshot(object);
                     }
                     if let Some(key) = state.remaining_keys.get(state.remaining_index).cloned() {
+                        let candidate_index = state.remaining_index;
                         state.remaining_index += 1;
                         let already_visited = state.visited_keys.contains(&key);
                         return ForInAction::Candidate {
                             object,
+                            candidate_index,
                             key,
                             already_visited,
                         };
@@ -2933,25 +3055,11 @@ impl Vm {
                         let keys = crate::builtins::own_property_keys_or_throw(
                             self, &object, false, true, true,
                         )?;
-                        let strings = keys
-                            .into_iter()
-                            .filter_map(|key| match key {
-                                PropertyKey::Str(name) => Some(name),
-                                PropertyKey::Symbol(_) => None,
-                            })
-                            .collect();
-                        self.heap.with_obj(idx, |o| {
-                            if let HeapObj::Iterator(iterator) = o {
-                                if let Some(state) = iterator.for_in.lock().as_mut() {
-                                    state.remaining_keys = strings;
-                                    state.remaining_index = 0;
-                                    state.object_was_visited = true;
-                                }
-                            }
-                        });
+                        self.publish_for_in_key_snapshot(GcIdx(idx), &object, keys)?;
                     }
                     ForInAction::Candidate {
                         object,
+                        candidate_index,
                         key,
                         already_visited,
                     } => {
@@ -2968,13 +3076,7 @@ impl Vm {
                         let Some(descriptor) = descriptor else {
                             continue;
                         };
-                        self.heap.with_obj(idx, |o| {
-                            if let HeapObj::Iterator(iterator) = o {
-                                if let Some(state) = iterator.for_in.lock().as_mut() {
-                                    state.visited_keys.insert(key.clone());
-                                }
-                            }
-                        });
+                        self.record_for_in_visited_key(GcIdx(idx), &object, candidate_index, &key)?;
                         if descriptor.enumerable {
                             return Ok((Value::String(key), false));
                         }
@@ -3020,7 +3122,8 @@ impl Vm {
                                 if let HeapObj::Iterator(iterator) = o {
                                     if let Some(state) = iterator.for_in.lock().as_mut() {
                                         state.object = None;
-                                        state.remaining_keys.clear();
+                                        std::mem::take(&mut state.remaining_keys);
+                                        std::mem::take(&mut state.visited_keys);
                                         state.remaining_index = 0;
                                         std::mem::take(&mut state.followed_edges);
                                         std::mem::take(&mut state.rooted_nodes);
@@ -3036,6 +3139,9 @@ impl Vm {
                         self.heap.with_obj(idx, |o| {
                             if let HeapObj::Iterator(iterator) = o {
                                 if let Some(state) = iterator.for_in.lock().as_mut() {
+                                    state.remaining_index = 0;
+                                    std::mem::take(&mut state.remaining_keys);
+                                    std::mem::take(&mut state.visited_keys);
                                     std::mem::take(&mut state.followed_edges);
                                     std::mem::take(&mut state.rooted_nodes);
                                     std::mem::take(&mut state.traversal_roots);
