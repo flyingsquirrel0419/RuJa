@@ -2662,6 +2662,205 @@ fn array_to_locale_string_roots_observable_state_and_restores_pin_depth() {
 }
 
 #[test]
+fn typed_array_to_locale_string_consumes_exact_per_index_fuel() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    let source = vm
+        .run("new Uint8Array([1, 2, 3])")
+        .expect("TypedArray locale source should initialize");
+    let source_pin = vm.pin(&source);
+    let baseline = vm.gc_pins.len();
+
+    vm.set_fuel(Some(2));
+    let error = crate::builtins::typed_array_to_locale_string(&mut vm, &[], Some(source.clone()))
+        .expect_err("N-1 fuel must abort the TypedArray locale scan");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    vm.set_fuel(Some(3));
+    let result = crate::builtins::typed_array_to_locale_string(&mut vm, &[], Some(source))
+        .expect("exact logical-index fuel should complete TypedArray locale conversion");
+    assert_eq!(result, Value::String(Arc::from("1,2,3")));
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+    vm.set_fuel(None);
+
+    let empty = vm
+        .run("new Uint8Array(0)")
+        .expect("empty TypedArray should initialize");
+    vm.set_fuel(Some(0));
+    crate::builtins::typed_array_to_locale_string(&mut vm, &[], Some(empty))
+        .expect("empty TypedArray locale conversion should consume no loop fuel");
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+    vm.set_fuel(None);
+    vm.unpin(source_pin);
+}
+
+#[test]
+fn typed_array_to_locale_string_roots_state_and_restores_pin_depth() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("GC test hook should register");
+    let baseline = vm.gc_pins.len();
+    let result = vm.run(
+        r#"
+        (function () {
+          var localized = {
+            marker: 41,
+            toString: function () { forceGc(); return String(this.marker); }
+          };
+          Object.defineProperty(Number.prototype, "toLocaleString", {
+            configurable: true,
+            get: function () {
+              forceGc();
+              return function () {
+                source = null;
+                forceGc();
+                var selected = localized;
+                localized = null;
+                forceGc();
+                return selected;
+              };
+            }
+          });
+          var source = new Uint8Array([1]);
+          return source.toLocaleString();
+        })();
+        "#,
+    );
+    assert_eq!(
+        result.expect("TypedArray locale roots should survive observable GC"),
+        Value::String(Arc::from("41"))
+    );
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    for (source, expected) in [
+        (
+            r#"
+            (function () {
+              var thrown = { marker: 73 };
+              Object.defineProperty(Number.prototype, "toLocaleString", {
+                configurable: true,
+                value: function () {
+                  var selected = thrown;
+                  thrown = null;
+                  source = null;
+                  forceGc();
+                  throw selected;
+                }
+              });
+              var source = new Uint8Array([1]);
+              try { source.toLocaleString(); }
+              catch (error) { forceGc(); return error.marker; }
+            })();
+            "#,
+            73.0,
+        ),
+        (
+            r#"
+            (function () {
+              var thrown = { marker: 89 };
+              Object.defineProperty(Number.prototype, "toLocaleString", {
+                configurable: true,
+                value: function () {
+                  return {
+                    toString: function () {
+                      var selected = thrown;
+                      thrown = null;
+                      source = null;
+                      forceGc();
+                      throw selected;
+                    }
+                  };
+                }
+              });
+              var source = new Uint8Array([1]);
+              try { source.toLocaleString(); }
+              catch (error) { forceGc(); return error.marker; }
+            })();
+            "#,
+            89.0,
+        ),
+    ] {
+        let mut vm = Vm::new().expect("VM should initialize");
+        vm.register_fn(
+            "forceGc",
+            |vm, _, _| {
+                vm.gc();
+                Ok(Value::Undefined)
+            },
+            0,
+        )
+        .expect("GC test hook should register");
+        let baseline = vm.gc_pins.len();
+        assert_eq!(
+            vm.run(source)
+                .expect("thrown TypedArray locale value should survive GC"),
+            Value::Number(expected)
+        );
+        assert_eq!(vm.gc_pins.len(), baseline);
+    }
+
+    for source in [
+        "Uint8Array.prototype.toLocaleString.call({});",
+        r#"
+        var buffer = new ArrayBuffer(4, { maxByteLength: 8 });
+        var fixed = new Uint8Array(buffer, 0, 4);
+        buffer.resize(0);
+        fixed.toLocaleString();
+        "#,
+        r#"
+        Object.defineProperty(Number.prototype, "toLocaleString", {
+          configurable: true,
+          get: function () { forceGc(); throw {}; }
+        });
+        new Uint8Array([1]).toLocaleString();
+        "#,
+        r#"
+        Number.prototype.toLocaleString = null;
+        new Uint8Array([1]).toLocaleString();
+        "#,
+        r#"
+        Number.prototype.toLocaleString = function () { forceGc(); throw {}; };
+        new Uint8Array([1]).toLocaleString();
+        "#,
+        r#"
+        Number.prototype.toLocaleString = function () {
+          return { toString: function () { forceGc(); throw {}; } };
+        };
+        new Uint8Array([1]).toLocaleString();
+        "#,
+    ] {
+        let mut vm = Vm::new().expect("VM should initialize");
+        vm.register_fn(
+            "forceGc",
+            |vm, _, _| {
+                vm.gc();
+                Ok(Value::Undefined)
+            },
+            0,
+        )
+        .expect("GC test hook should register");
+        let baseline = vm.gc_pins.len();
+        vm.run(source)
+            .expect_err("the TypedArray locale step should complete abruptly");
+        assert_eq!(vm.gc_pins.len(), baseline);
+        assert_eq!(
+            vm.run("1 + 1").expect("VM should remain reusable"),
+            Value::Number(2.0)
+        );
+    }
+}
+
+#[test]
 fn array_join_consumes_exact_per_index_fuel() {
     let mut vm = Vm::new().expect("VM should initialize");
     let source = vm

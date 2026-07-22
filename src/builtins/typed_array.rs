@@ -4535,52 +4535,55 @@ pub(crate) fn typed_array_join(
 
 pub(crate) fn typed_array_to_locale_string(
     vm: &mut Vm,
-    args: &[Value],
+    _args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
+    fn append(result: &mut String, value: &str) -> error::Result<()> {
+        result
+            .try_reserve(value.len())
+            .map_err(|_| Error::range("TypedArray toLocaleString result too large"))?;
+        result.push_str(value);
+        Ok(())
+    }
+
     let this =
         this.ok_or_else(|| Error::type_err("TypedArray toLocaleString called without this"))?;
-    let Value::Object(array_idx) = &this else {
-        return Err(Error::type_err(
-            "TypedArray toLocaleString called on non-object",
-        ));
-    };
-    let slots = vm.heap.with_obj(array_idx.0, |obj| {
-        let HeapObj::TypedArray(array) = obj else {
-            return None;
-        };
-        Some((
-            array.kind,
-            array.viewed_array_buffer.clone(),
-            array.byte_offset,
-            array.byte_length,
-            array.length_tracking,
-        ))
-    });
-    let (kind, buffer, byte_offset, fixed_byte_length, length_tracking) = slots
-        .ok_or_else(|| Error::type_err("TypedArray toLocaleString called on non-TypedArray"))?;
-    let byte_length = effective_view_byte_length(
-        vm,
-        buffer.as_ref(),
-        byte_offset,
-        fixed_byte_length,
-        length_tracking,
-        kind.element_size(),
-    )
-    .ok_or_else(|| Error::type_err("TypedArray toLocaleString called on out-of-bounds view"))?;
-    let length = typed_array_element_count(kind, byte_length);
-    let locale_args = [
-        args.first().cloned().unwrap_or(Value::Undefined),
-        args.get(1).cloned().unwrap_or(Value::Undefined),
-    ];
-    let realm_env = vm.native_callee_closure().unwrap_or(vm.global);
-
-    let source_pin_count = vm.pin(&this) + vm.pin_many(&locale_args);
+    let source_pin_count = vm.pin(&this);
     let result: error::Result<Value> = (|| {
+        let Value::Object(array_idx) = &this else {
+            return Err(Error::type_err(
+                "TypedArray toLocaleString called on non-object",
+            ));
+        };
+        let slots = vm.heap.with_obj(array_idx.0, |obj| {
+            let HeapObj::TypedArray(array) = obj else {
+                return None;
+            };
+            Some((
+                array.kind,
+                array.viewed_array_buffer.clone(),
+                array.byte_offset,
+                array.byte_length,
+                array.length_tracking,
+            ))
+        });
+        let (kind, buffer, byte_offset, fixed_byte_length, length_tracking) = slots
+            .ok_or_else(|| Error::type_err("TypedArray toLocaleString called on non-TypedArray"))?;
+        let byte_length = effective_view_byte_length(
+            vm,
+            buffer.as_ref(),
+            byte_offset,
+            fixed_byte_length,
+            length_tracking,
+            kind.element_size(),
+        )
+        .ok_or_else(|| Error::type_err("TypedArray toLocaleString called on out-of-bounds view"))?;
+        let length = typed_array_element_count(kind, byte_length);
         let mut output = String::new();
         for index in 0..length {
+            vm.consume_fuel()?;
             if index > 0 {
-                output.push(',');
+                append(&mut output, ",")?;
             }
             let value = vm.get_property(&this, &index.to_string())?;
             if value.is_nullish() {
@@ -4588,33 +4591,24 @@ pub(crate) fn typed_array_to_locale_string(
             }
 
             let value_pin_count = vm.pin(&value);
-            let element_result: error::Result<String> = (|| {
-                let intrinsic_name = if matches!(value, Value::BigInt(_)) {
-                    "BigInt"
-                } else {
-                    "Number"
-                };
-                let constructor = crate::environment::get(&vm.heap, realm_env, intrinsic_name)
-                    .ok_or_else(|| {
-                        Error::type_err(format!("Missing {intrinsic_name} intrinsic"))
-                    })?;
-                let prototype = vm.get_property(&constructor, "prototype")?;
-                let method = vm.get_property_rx(&prototype, "toLocaleString", value.clone())?;
+            let element_result: error::Result<Arc<str>> = (|| {
+                let method = vm.get_property(&value, "toLocaleString")?;
                 if !is_callable(&method, &vm.heap) {
                     return Err(Error::type_err("toLocaleString is not callable"));
                 }
                 let method_pin_count = vm.pin(&method);
-                let localized = vm.call_function(&method, &locale_args, Some(value.clone()));
+                let localized = vm.call_function(&method, &[], Some(value.clone()));
                 vm.unpin_many(method_pin_count);
                 let localized = localized?;
 
                 let localized_pin_count = vm.pin(&localized);
-                let string = vm.to_string(&localized).map(|value| value.to_string());
+                let string = vm.to_string(&localized);
                 vm.unpin_many(localized_pin_count);
                 string
             })();
             vm.unpin_many(value_pin_count);
-            output.push_str(&element_result?);
+            let element_string = element_result?;
+            append(&mut output, element_string.as_ref())?;
         }
         Ok(Value::String(Arc::from(output)))
     })();

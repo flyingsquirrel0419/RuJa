@@ -8532,15 +8532,18 @@ fn typed_array_to_locale_string_invokes_each_current_value() {
         run(r#"
             var calls = [];
             var original = Number.prototype.toLocaleString;
-            Number.prototype.toLocaleString = function(locales, options) {
-                calls.push(this.valueOf() + ":" + locales + ":" + options.marker);
+            Number.prototype.toLocaleString = function() {
+                calls.push(this.valueOf() + ":" + arguments.length);
                 return { toString: function() { return "v" + calls.length; } };
             };
-            var result = new Uint8Array([4, 5]).toLocaleString("xx", { marker: 7 });
+            var result = new Uint8Array([4, 5]).toLocaleString(
+              { toString: function() { throw "unused locale"; } },
+              { get marker() { throw "unused options"; } }
+            );
             Number.prototype.toLocaleString = original;
             [result, calls.join("|")].join(";");
         "#),
-        Value::String(Arc::from("v1,v2;4:xx:7|5:xx:7"))
+        Value::String(Arc::from("v1,v2;4:0|5:0"))
     );
 }
 
@@ -8582,19 +8585,18 @@ fn typed_array_to_locale_string_uses_locale_methods_without_radix_coercion() {
 }
 
 #[test]
-fn typed_array_to_locale_string_passes_two_arguments() {
+fn typed_array_to_locale_string_ignores_locale_arguments() {
     assert_eq!(
         run(r#"
             var original = Number.prototype.toLocaleString;
             Number.prototype.toLocaleString = function() {
-                return arguments.length + ":" + String(arguments[0]) + ":" +
-                    String(arguments[1]);
+                return String(arguments.length);
             };
-            var result = new Uint8Array([1]).toLocaleString();
+            var result = new Uint8Array([1]).toLocaleString("ignored", "ignored");
             Number.prototype.toLocaleString = original;
             result;
         "#),
-        Value::String(Arc::from("2:undefined:undefined"))
+        Value::String(Arc::from("0"))
     );
 }
 
@@ -8605,9 +8607,40 @@ fn typed_array_to_locale_string_uses_method_realm_primitive_prototype() {
             var other = $262.createRealm().global;
             Number.prototype.toLocaleString = function() { return "main"; };
             other.eval("Number.prototype.toLocaleString = function() { return 'other'; }");
-            other.Uint8Array.prototype.toLocaleString.call(new Uint8Array([1]));
+            var first = other.Uint8Array.prototype.toLocaleString.call(
+              new Uint8Array([1])
+            );
+            var originalNumber = other.Number;
+            other.Number = {
+              prototype: { toLocaleString: function() { return "bad"; } }
+            };
+            var second = other.Uint8Array.prototype.toLocaleString.call(
+              new Uint8Array([1])
+            );
+            other.Number = originalNumber;
+            other.Number.prototype.toLocaleString = null;
+            var foreignError = false;
+            try {
+              other.Uint8Array.prototype.toLocaleString.call(new Uint8Array([1]));
+            } catch (error) {
+              foreignError = Object.getPrototypeOf(error) === other.TypeError.prototype;
+            }
+
+            other.eval("BigInt.prototype.toLocaleString = function() { return 'big'; }");
+            var bigintFirst = other.BigInt64Array.prototype.toLocaleString.call(
+              new BigInt64Array([1n])
+            );
+            var originalBigInt = other.BigInt;
+            other.BigInt = {
+              prototype: { toLocaleString: function() { return "bad-big"; } }
+            };
+            var bigintSecond = other.BigInt64Array.prototype.toLocaleString.call(
+              new BigInt64Array([1n])
+            );
+            other.BigInt = originalBigInt;
+            [first, second, foreignError, bigintFirst, bigintSecond].join("|");
         "#),
-        Value::String(Arc::from("other"))
+        Value::String(Arc::from("other|other|true|big|big"))
     );
 }
 
