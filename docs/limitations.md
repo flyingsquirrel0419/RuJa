@@ -30,6 +30,9 @@ The following resource limits are enforced:
   remain pending after that host abort.
   `Array.prototype.concat` charges each outer input, including an empty
   spreadable value, and every scanned logical source index, including holes.
+  TypedArray `includes`, `indexOf`, and `lastIndexOf` charge every visited
+  logical index after `fromIndex` coercion; an empty search range consumes no
+  loop fuel.
   Ordinary `[[SetPrototypeOf]]` cycle detection also consumes one unit per
   visited candidate object. Exhaustion throws a `RangeError("fuel exhausted")`
   that is *not catchable* by user `try/catch` (a host-level abort). `None` =

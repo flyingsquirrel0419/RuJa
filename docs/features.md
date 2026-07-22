@@ -197,7 +197,9 @@
   resolves `toLocaleString` through primitive `GetV` in the method Realm,
   receives no locale arguments in the non-ECMA-402 runtime, and converts the
   returned value with `ToString`. Both paths meter every captured index and use
-  fallible intermediate output growth.
+  fallible intermediate output growth. `includes`, `indexOf`, and
+  `lastIndexOf` preserve their internal-length and `fromIndex` semantics while
+  consuming one fuel unit for every logical index they actually visit.
 - **String**: `charAt`, `charCodeAt`, `slice`, `split`, `replace` (regex
   supported), `replaceAll`, `includes`, `startsWith`, `endsWith`, `repeat`,
   `padStart`/`padEnd`, `at`, `trim`/`trimStart`/`trimEnd`, `substring`, case

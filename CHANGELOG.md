@@ -62,6 +62,30 @@
 
 ### Fixed
 
+- TypedArray `includes`, `indexOf`, and `lastIndexOf` now consume one
+  cooperative fuel unit before every visited logical index. Validation,
+  internal-length snapshot, `fromIndex` coercion, empty-range returns,
+  SameValueZero for `includes`, strict equality for the index methods, and
+  resize behavior retain their existing order. Immediate matches charge only
+  the indices actually visited, while empty and out-of-range searches consume
+  no loop fuel.
+
+  Direct-native tests cover N-1 exhaustion, exact completion, early matches,
+  zero-length views, nonempty empty ranges, Number and BigInt values, fuel
+  remainder, and pin balance. Current pinned Test262 remains **45/45** for
+  `includes`, **43/43** for `indexOf`, and **42/42** for `lastIndexOf`, or
+  **130/130** combined. Local verification passes all targets/features with
+  **218/218** library tests, **537/537** builtins tests, and **15/15** arguments
+  tests, plus **217/217** release library tests, **133/133** Python tooling
+  tests, **1/1** doctest, rustfmt, warnings-denied Clippy, release build,
+  generated documentation, and wasm32 checking. Two independent GPT-5.6
+  reviews found no remaining runtime or test defect. Feature commit `147f2b2`
+  passes CI `29895173924` and all 33 full-matrix jobs in `29895173852`.
+  Downloaded artifacts aggregate to the unchanged **31872 pass / 5126 fail /
+  11466 skip / 3 timeout / 0 error / 48467 total / 36998 run**; all 30 result
+  files are byte-identical to full run `29892602512`. The downloaded release
+  binary reproduces the combined search cohort **130/130**.
+
 - `%TypedArray%.prototype.join` now retains its receiver and observed separator
   across separator coercion, performs one cooperative fuel charge for every
   captured index, and grows its intermediate result through checked

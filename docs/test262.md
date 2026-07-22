@@ -9985,6 +9985,51 @@ TypedArray string coverage **75/75**.
 - 장점, 단점 및 영향: Metadata drift and feature over-admission fail early, direct and adjacent Test262 remain green, and observable GC, boxing, pin balance, and method-Realm behavior are locked down without production-code churn. Updating the pinned corpus requires an explicit four-file metadata audit; the shared Object toString final publication limit remains unchanged.
 ```
 
+## TypedArray search loop fuel
+
+Feature commit `147f2b2` adds one cooperative fuel debit before every logical
+index visited by `%TypedArray%.prototype.includes`, `indexOf`, and
+`lastIndexOf`. Validation and the internal length snapshot still precede
+`fromIndex` coercion. An out-of-range or zero-length search returns without loop
+fuel; an immediate match charges one index; a complete unsuccessful scan
+charges every index in its captured forward or reverse range. The debit occurs
+before `Get` for `includes` and before `HasProperty`/`Get` for the index methods,
+so fuel exhaustion aborts before work on the next index.
+
+Direct-native tests verify N-1 failure and exact completion for all three
+methods, immediate-match accounting, nonempty empty ranges, all three distinct
+zero-length paths, Number and BigInt values, exact remaining fuel, and balanced
+pins after both success and host abort. SameValueZero, strict equality,
+resize/detach behavior, and existing abrupt completion semantics are unchanged.
+
+Pinned Test262 remains **45/45** for `includes`, **43/43** for `indexOf`, and
+**42/42** for `lastIndexOf`, or **130/130** combined. Local verification passes
+all targets/features with **218/218** library tests, **537/537** builtins tests,
+and **15/15** arguments tests, plus **217/217** release library tests,
+**133/133** Python tooling tests, **1/1** doctest, rustfmt, warnings-denied
+Clippy, release build, generated documentation, and wasm32 checking. Rustdoc
+retains only the 13 pre-existing broken intra-doc-link warnings. Independent
+GPT-5.6 runtime and test reviews are CLEAN after zero-length coverage was moved
+into the focused search test and exact BigInt exhaustion was asserted.
+
+CI `29895173924` passes both jobs, and full matrix `29895173852` passes all 33
+jobs. Downloaded artifacts at
+`/tmp/ruja-typed-array-search-fuel-29895173852-final` aggregate to the unchanged
+**31872 pass / 5126 fail / 11466 skip / 3 timeout / 0 error / 48467 total /
+36998 run**. All 30 result files are byte-identical to exact-toString run
+`29892602512`, proving no current Test262 status transition. The downloaded
+release binary again reports the combined search cohort **130/130**.
+
+```text
+[Decision Log]
+- 목적과 의도: Make the three TypedArray search scans obey RuJa's cooperative execution budget without altering already-correct ECMAScript search semantics.
+- 기존 구현 및 제약 조건: All three methods validated and snapshotted correctly and passed 130/130 direct Test262 files, but their native loops could scan an arbitrarily large view with zero fuel; their directory-prefix Test262 admission also remains broad but is an independent 130-file metadata task.
+- 검토한 주요 대안: Leave green semantics unchanged; charge once per method call; charge HasProperty and Get separately; precharge the whole captured range; add exact admission in the same commit; or meter only forward searches.
+- 선택한 방식: Consume one fuel unit immediately before each visited index in all three loops and add direct-native exact-budget tests, while leaving admission policy and every semantic operation in place.
+- 다른 대안 대신 이 방식을 선택한 이유: Green conformance does not cover host resource contracts; call-level charging does not bound length-dependent work; separate property charges would make indexOf cost topology-dependent; precharging would reject early matches too soon; combining 130 metadata files obscures the runtime fix; and reverse scans have the same resource risk.
+- 장점, 단점 및 영향: Fuel now scales exactly with visited indices across forward, reverse, early-return, empty, Number, and BigInt paths, with no Test262 regression and balanced pins. Hosts using finite fuel observe a new intended abort boundary; exact admission for the three directories remains the next separate policy milestone.
+```
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is
