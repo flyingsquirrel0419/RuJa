@@ -10237,7 +10237,51 @@ Promise **442/0/287**.
 - 검토한 주요 대안: Omit Test262 evidence, add synthetic admission paths, cite only local tests, or compare aggregate totals without comparing individual shard outputs.
 - 선택한 방식: Keep admission unchanged, require focused adversarial regressions, run the full pinned matrix, compare all 30 result files byte-for-byte, and reproduce adjacent Function and Promise cohorts with the downloaded CI binary.
 - 다른 대안 대신 이 방식을 선택한 이유: New admission would overstate semantic coverage, local-only evidence cannot detect runner or build drift, and equal aggregates can conceal offsetting regressions between shards.
-- 장점, 단점 및 영향: The unit has direct resource-safety evidence, including an injected root-reservation failure through the real Array helper, and an exact zero-delta proof while preserving the existing support boundary. OrdinaryHasInstance still recursively forwards Bound targets and is tracked as the next independent runtime unit.
+- 장점, 단점 및 영향: The unit has direct resource-safety evidence, including an injected root-reservation failure through the real Array helper, and an exact zero-delta proof while preserving the existing support boundary. OrdinaryHasInstance remained recursive at this historical boundary and is completed by the iterative instanceof unit below.
+```
+
+## Iterative and rooted instanceof traversal
+
+Feature commit `419501e` makes `InstanceofOperator` and
+`OrdinaryHasInstance` iterative across Bound targets and transparent wrappers
+of the exact default `@@hasInstance` intrinsic. It roots both operands and the
+constructor prototype, consumes fuel before every Bound or ordinary prototype
+edge, preserves Proxy trap ordering and revocation priority, and performs
+`[[GetPrototypeOf]]` before prototype comparison. Observable Proxy apply traps
+remain on the normal call path. Every native dispatch participates in a
+separate 128-frame active-native guard, independently of the 512 interpreted-
+frame limit; this bounds hostile apply recursion but can also reject valid
+builtin/callback native re-entry deeper than 128.
+
+Focused regressions cover 50,000 direct Bound layers, 10,000 transparent Proxy
+default handlers, 10,000 Bound-wrapped default handlers, actual recursive
+apply traps, exact fuel, zero-fuel observation order, revocation, forced GC,
+fresh constructor prototypes, abrupt identity, foreign error Realms, injected
+continuation reservation failure, and pin/depth restoration. Local gates pass
+all targets/features with **223/223** library tests, **539/539** builtins tests,
+and **15/15** arguments tests, plus **222/222** release library tests,
+**135/135** tooling tests, **1/1** doctest, rustfmt, warnings-denied Clippy,
+release build, generated documentation, Python/YAML checks, and wasm32.
+
+Two GPT-5.6 reviews are clean after fixes for wrapped-default recursion, actual
+apply-trap native recursion, fixture cleanup, primitive reservation, and the
+Realm of an injected allocation failure. CI `29922123540` and all 33 jobs in
+full run `29922124267` pass. Downloaded artifacts at
+`/tmp/ruja-instanceof-29922124267-final` aggregate to unchanged **31890 pass /
+5115 fail / 11459 skip / 3 timeout / 0 error / 48467 total / 37005 run**. All
+30 result files are byte-identical to run `29916090227`. The downloaded binary
+reproduces direct `@@hasInstance` plus language `instanceof` **50/0/4**, all
+four normally skipped files when forced **4/4**, Proxy `getPrototypeOf`
+**19/19**, and Function.prototype **223/40/46**.
+
+```text
+[Decision Log]
+- 목적과 의도: Prove the instanceof resource-safety correction without changing admission or masking a conformance regression.
+- 기존 구현 및 제약 조건: The existing shallow corpus passed while deep Bound forwarding could overflow Rust, self-prototype ordering was wrong, prototype work was not uniformly metered, and native Proxy apply re-entry remained unbounded.
+- 검토한 주요 대안: Admit additional unrelated paths, cite only focused Rust tests, compare only aggregate totals, or suppress native Proxy apply recursion by treating every wrapper as transparent.
+- 선택한 방식: Keep admission unchanged, test adversarial depth and exact observation boundaries directly, run and compare every full-matrix shard byte-for-byte, reproduce adjacent Test262 cohorts with the downloaded binary, and preserve observable apply traps behind an independent native depth guard.
+- 다른 대안 대신 이 방식을 선택한 이유: Admission changes would not prove resource safety, local tests cannot detect broad drift, equal totals can conceal offsetting shard changes, and bypassing apply traps violates Proxy semantics.
+- 장점, 단점 및 영향: The unit has exact zero-delta evidence plus direct stack, fuel, Realm, GC, and ordering coverage. The 128 limit applies to all active native dispatch rather than only Proxy traps, so sufficiently deep valid native builtin/callback re-entry throws earlier than the interpreted-frame cap. Broader fallible allocation in nested property and prototype traversal is explicitly not claimed by this milestone.
 ```
 
 ## Why the full-suite rate is not higher

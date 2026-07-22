@@ -260,7 +260,7 @@ failure exercises the real helper and proves that it returns a catchable
 - 검토한 주요 대안: Raise the call-stack cap, impose a Bound-depth limit, flatten every time a Proxy is reached, retain recursive dispatch with a guard, or carry one rooted traversal and materialization plan through Bound and Proxy edges.
 - 선택한 방식: Traverse Bound and Proxy call edges iteratively, meter each edge, retain wrapper IDs, materialize once at a Proxy trap or final target, enforce the cumulative cap before trap lookup, and reserve every native root or trap-call vector fallibly before mutation.
 - 다른 대안 대신 이 방식을 선택한 이유: Fixed depth limits reject valid ECMAScript; recursive guards still consume the Rust stack; intermediate flattening remains quadratic; and infallible growth can abort the host instead of producing the sandbox's catchable RangeError.
-- 장점, 단점 및 영향: A 20,000-layer ordinary call is stack-safe, argument work is linear, Bound apply traps and foreign Realms preserve identity, exact fuel bounds wrapper traversal, and all tested abrupt paths restore roots. The shared value-Array path now turns root-capacity failure into RangeError before publishing roots. Unbounded hosts can still request linear work across arbitrarily deep legal chains, and Bound forwarding in OrdinaryHasInstance remains a separate state machine because it re-enters InstanceofOperator rather than Call.
+- 장점, 단점 및 영향: A 20,000-layer ordinary call is stack-safe, argument work is linear, Bound apply traps and foreign Realms preserve identity, exact fuel bounds wrapper traversal, and all tested abrupt paths restore roots. The shared value-Array path now turns root-capacity failure into RangeError before publishing roots. Unbounded hosts can still request linear work across arbitrarily deep legal chains. Bound forwarding in OrdinaryHasInstance was intentionally left as a separate state machine at this boundary and is completed by the iterative instanceof unit below.
 ```
 
 ```text
@@ -1635,6 +1635,39 @@ cooperative fuel rather than an implementation-only length cap.
 - 선택한 방식: Perform ToObject and one length snapshot, then for each pair execute ordered HasProperty/Get observations and the exact Set/Delete branch while rooting fetched values and charging one pair fuel unit.
 - 다른 대안 대신 이 방식을 선택한 이유: Snapshot, dense, and sorting paths reorder Proxy effects, erase holes or inheritance, and prevent specification-required partial mutations. The direct pair state machine is allocation-free and maps each observable step to the normative algorithm.
 - 장점, 단점 및 영향: Direct Array reverse is 18/18 and adjacent TypedArray reverse remains 22/22 on the fixed corpus; forced GC and abrupt Has/Get/Set/Delete paths restore pin depth. Runtime is linear in half the captured length and can partially mutate before an error as required. ToReversed, toSpliced, and other copy-by-value methods remain independent units.
+```
+
+## Iterative OrdinaryHasInstance traversal
+
+`InstanceofOperator` roots its left and right operands before any
+`@@hasInstance` lookup can re-enter JavaScript. `OrdinaryHasInstance` then
+uses one iterative state machine for Bound Function forwarding and prototype
+walking. Bound targets are observed only after an edge fuel debit. Ordinary
+prototype edges are debited before `[[GetPrototypeOf]]`; Proxy edges retain
+the traversal helper's internal debit so one logical edge is never charged
+twice. The walk performs `[[GetPrototypeOf]]`, tests for `null`, and only then
+applies `SameValue` to the constructor prototype.
+
+Calls that reach the exact default
+`%Function.prototype%[@@hasInstance]` through transparent Bound or Proxy
+wrappers trampoline back into the state machine with their transformed
+`this`, first argument, and intrinsic Realm. Observable Proxy `apply` traps
+remain ordinary calls. Interpreted calls retain the 512-frame VM limit;
+every native dispatch participates in an independent 128-frame active-native
+limit, so an apply trap that recursively calls `Reflect.apply` produces a
+catchable `RangeError` instead of exhausting the Rust stack. This broader
+guard can also reject otherwise valid builtin/callback native re-entry deeper
+than 128 even when interpreted depth remains available. Both counters and all
+operation roots are restored on normal and abrupt exits.
+
+```text
+[Decision Log]
+- 목적과 의도: Make instanceof specification-ordered, stack-safe, fuel-bounded, Realm-correct, and GC-safe across deep Bound and Proxy wrapper graphs.
+- 기존 구현 및 제약 조건: OrdinaryHasInstance recursively followed Bound targets, operands and the constructor prototype could become stale across observable work, ordinary prototype edges were unmetered, comparison before GetPrototypeOf accepted a constructor prototype as its own instance, and recursive native Proxy apply traps could still overflow the host stack.
+- 검토한 주요 대안: Add only a recursion cap, flatten Bound targets at bind creation, bypass every Proxy wrapper, charge both the caller and shared property traversal, or reuse the interpreted frame counter for native calls.
+- 선택한 방식: Root the operation state, iterate Bound/default-handler forwarding and prototype traversal, preserve observable Proxy apply behavior, debit each edge exactly once, order GetPrototypeOf before SameValue, and cap native re-entry independently from interpreted frames.
+- 다른 대안 대신 이 방식을 선택한 이유: A depth cap rejects valid deep wrapper chains, eager flattening changes observable target identity and metadata, broad Proxy bypass skips apply traps, duplicate debits make fuel depend on implementation layering, and one shared depth counter would reduce valid interpreted recursion to protect a different host-stack boundary.
+- 장점, 단점 및 영향: Fifty-thousand-layer Bound chains complete without native recursion, self-prototype and Proxy ordering match the specification, hostile native re-entry becomes a catchable error, and exact fuel, GC, Realm, abrupt identity, and cleanup are covered. The 128 limit applies to all active native dispatch, so sufficiently deep valid native builtin/callback re-entry now throws before the 512 interpreted-frame boundary. Nested property and GetPrototypeOf scratch allocation is still only partially fallible and remains a separate runtime-wide allocation unit.
 ```
 
 ---

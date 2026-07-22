@@ -62,6 +62,45 @@
 
 ### Fixed
 
+- `instanceof` and `OrdinaryHasInstance` now keep both operands rooted and
+  traverse Bound Function targets iteratively. Each Bound edge consumes one
+  fuel unit before observing the target; ordinary prototype edges consume one
+  unit before `[[GetPrototypeOf]]`, while Proxy prototype traversal retains its
+  existing internal debit. The prototype walk now performs
+  `[[GetPrototypeOf]]` before `SameValue`, so `F.prototype instanceof F` is
+  false instead of accepting a constructor's prototype object as its own
+  instance.
+
+  Direct and Bound/Proxy-wrapped uses of the default
+  `%Function.prototype%[@@hasInstance]` share the iterative state machine,
+  while observable Proxy `apply` traps still execute normally. Every native
+  dispatch participates in a separate 128-frame active-native guard, making
+  deep re-entrant native Proxy traps throw a catchable `RangeError` without
+  weakening the existing 512-frame interpreted limit. The broader guard can
+  also reject otherwise valid builtin/callback native re-entry deeper than
+  128. Regressions cover 50,000 Bound layers, 10,000 transparent Proxy
+  handlers, actual apply-trap recursion, exact fuel and revocation order,
+  forced GC, stale prototype slots, abrupt identity, foreign Realms, injected
+  reservation failure, and pin/depth restoration.
+
+  Local verification passes all targets/features with **223/223** library
+  tests, **539/539** builtins tests, and **15/15** arguments tests, plus
+  **222/222** release library tests, **135/135** Python tooling tests, **1/1**
+  doctest, rustfmt, warnings-denied Clippy, release build, generated
+  documentation, Python bytecode compilation, workflow YAML parsing, and
+  wasm32 checking. Rustdoc retains only the 13 pre-existing broken-link
+  warnings. Two GPT-5.6 reviews are clean after wrapped-default recursion,
+  actual apply-trap native recursion, fixture cleanup, primitive reservation,
+  and foreign-Realm allocation-error findings were fixed. Feature commit
+  `419501e` passes CI `29922123540` and all 33 jobs in full run `29922124267`.
+  Downloaded artifacts at `/tmp/ruja-instanceof-29922124267-final` aggregate
+  to the unchanged **31890 pass / 5115 fail / 11459 skip / 3 timeout / 0 error
+  / 48467 total / 37005 run** and all 30 result files are byte-identical to
+  run `29916090227`. The downloaded binary reproduces `instanceof` **50/0/4**,
+  the four forced skipped tests **4/4**, Proxy `getPrototypeOf` **19/19**, and
+  Function.prototype **223/40/46**. Fallible allocation inside broader nested
+  property and prototype traversal remains a separate runtime-wide unit.
+
 - Ordinary Bound Function `[[Call]]` forwarding is now one iterative,
   fuel-metered state machine shared with Proxy apply dispatch. Every Bound or
   Proxy edge consumes fuel, layered bound arguments are collected once and
