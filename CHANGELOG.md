@@ -62,6 +62,44 @@
 
 ### Fixed
 
+- Proxy `ownKeys` trap-result collection now requests capacity for an
+  additional native key only after the corresponding array-like `Get` succeeds
+  and returns a String or Symbol. Duplicate validation remains a separate pass
+  and reserves the `IndexSet` only after proving the current key is new. Native
+  allocation failure therefore becomes a catchable `RangeError`. Trap-result
+  reservation is reached only after the current index's fuel, `Get`, and
+  successful type validation; `IndexSet` reservation is reached only after the
+  current duplicate check. An abrupt earlier step returns first.
+
+  A reservation failure discards every initialized operation-local collection
+  and restores roots; a subsequent caller-initiated retry starts from the
+  `ownKeys` trap. Empty lists require no entry reservation, and a duplicate
+  requires no additional `IndexSet` reservation after its earlier trap-result
+  collection. Symbol keys are still collected and duplicate-checked before
+  consumer filtering. Exact-site regressions cover partial collection, retry
+  observation, invalid and abrupt entries, exact fuel, duplicate countdown,
+  Symbol identity, foreign Realms, nested pending-frame cleanup, and lazy
+  `for...in` snapshot atomicity.
+
+  Local verification passes all targets/features with **227/227** library
+  tests, **539/539** builtins tests, and **15/15** arguments tests, plus
+  **226/226** release library tests, **135/135** Python tooling tests, rustfmt,
+  warnings-denied Clippy, release build, generated documentation, and wasm32
+  checking. Rustdoc retains only the 13 pre-existing broken-link warnings. Two
+  GPT-5.6 reviews are clean after exact ordering, duplicate no-reservation,
+  Symbol filtering, Realm, and retry checks. Implementation commit `fe14b77`
+  passes CI `29955284791` and all 33 jobs in full run `29955284788`.
+  Downloaded artifacts at
+  `/tmp/ruja-proxy-ownkeys-entry-state-29955284788-final` aggregate to unchanged
+  **31890 pass / 5115 fail / 11459 skip / 3 timeout / 0 error / 48467 total /
+  37005 run**; all 30 result files are byte-identical to run `29951587187`.
+  The downloaded binary reproduces the selected Proxy, Reflect, Object, and
+  `for-in` cohort at **211 pass / 0 fail / 60 skip**. Operation input,
+  target/handler, trap-result list, and length-value roots, pending validation
+  frames and roots, filtered results, non-extensible target sets,
+  PropertyKey/Error strings, GC root enumeration, and mark worklists remain
+  separate allocator-safety scopes.
+
 - Lazy `for...in` now reserves the iterator-owned key snapshot before
   publishing it and reserves the visited-key set before marking an existing
   descriptor. Native allocation failure therefore becomes a catchable

@@ -10401,6 +10401,46 @@ cohort at **190/0/37**.
 - 장점, 단점 및 영향: The unit has exact zero-delta evidence plus direct atomicity, retry, fuel, Realm, Proxy-order, shadowing, cleanup, and capacity-release coverage. Proxy own-key trap collection and broader runtime allocator fallibility remain separate work.
 ```
 
+## Fallible Proxy ownKeys entry collection
+
+Commit `fe14b77` changes no Test262 admission. Proxy `ownKeys` array-like
+results now request key-vector capacity after each successful indexed `Get`
+and String/Symbol validation. The complete-list duplicate pass checks
+membership before requesting `IndexSet` capacity for a new key. Empty results
+and duplicate seen entries skip the corresponding growth, while Symbols remain
+subject to collection and duplicate validation before consumer filtering.
+
+Focused regressions inject both reservation sites and cover partial collection,
+caller-initiated retry from the trap, invalid and abrupt entries, exact fuel,
+duplicate no-reservation, equal-description Symbol identity, foreign operation
+Realms, nested pending-frame cleanup, and lazy `for...in` snapshot atomicity.
+Local fixed-corpus coverage over Proxy and Reflect `ownKeys`, Object keys and
+own-name/Symbol consumers, and language `for-in` is **211 pass / 0 fail / 60
+skip / 271 total**.
+
+Local gates pass all targets/features with **227/227** library tests,
+**539/539** builtins tests, and **15/15** arguments tests, plus **226/226**
+release library tests, **135/135** tooling tests, rustfmt, warnings-denied
+Clippy, release build, generated documentation, and wasm32 checking. Two
+GPT-5.6 implementation reviews and the corrected documentation review are
+clean. CI `29955284791` and all 33 jobs in full run `29955284788` pass.
+
+Artifacts at `/tmp/ruja-proxy-ownkeys-entry-state-29955284788-final` aggregate
+to unchanged **31890 pass / 5115 fail / 11459 skip / 3 timeout / 0 error /
+48467 total / 37005 run**. All 30 result files are byte-identical to run
+`29951587187`, and the downloaded release binary reproduces the affected
+cohort at **211/0/60**.
+
+```text
+[Decision Log]
+- 목적과 의도: Prove the Proxy ownKeys per-entry allocator correction without changing Test262 admission or hiding a conformance regression.
+- 기존 구현 및 제약 조건: The affected Test262 corpus already passed despite infallible Vec and IndexSet growth, allocation failure cannot be injected through ECMAScript, and aggregate equality alone can hide offsetting shard changes.
+- 검토한 주요 대안: Admit unrelated files, rely only on failpoint unit tests, compare only aggregate totals, or infer allocator safety from ordinary Proxy invariant coverage.
+- 선택한 방식: Keep admission unchanged, test each reservation and no-reservation boundary locally, run the pinned full matrix, compare all 30 artifacts byte-for-byte, and reproduce the selected six-directory affected cohort with the downloaded CI binary.
+- 다른 대안 대신 이 방식을 선택한 이유: Admission changes do not prove host allocation behavior, ordinary Test262 cannot force native reserve failures, and equal totals do not prove every shard is unchanged.
+- 장점, 단점 및 영향: The unit has exact zero-delta evidence plus direct ordering, retry, duplicate, Symbol, fuel, Realm, cleanup, and for-in atomicity coverage. Pending ownKeys frames and roots, filtered and target-key collections, and broader runtime allocator fallibility remain separate work.
+```
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is
