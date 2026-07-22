@@ -9810,7 +9810,7 @@ wasm32 checking. Rustdoc retains the 13 pre-existing broken intra-doc-link
 warnings. Independent GPT-5.6 runtime and verification reviews found no code
 defect. The verification review separately identified that this older
 TypedArray directory-prefix admission can grow with future Test262 siblings;
-freezing the current 39-file metadata set remains a narrow tooling follow-up.
+the following exact-admission unit closes that tooling gap.
 
 CI `29886017567` and full matrix `29886017568` pass all jobs. Downloaded
 artifacts aggregate to **31872 pass / 5126 fail / 11466 skip / 3 timeout / 0
@@ -9827,7 +9827,49 @@ locale plus TypedArray-constructor inheritance **14/14**.
 - 검토한 주요 대안: Leave the green 39/39 implementation unchanged; delegate to generic Array toLocaleString; add ECMA-402 argument forwarding; retain mutable constructor lookup; or combine the repair with admission-policy changes.
 - 선택한 방식: Preserve TypedArray validation and internal-length capture, then use current indexed Get, primitive GetV in the method Realm, zero-argument calls, returned-value ToString, operation roots, one fuel charge per captured index, and fallible intermediate growth.
 - 다른 대안 대신 이 방식을 선택한 이유: Green tests did not prove the uncovered observable semantics; generic Array handling would use LengthOfArrayLike instead of ValidateTypedArray and TypedArrayLength; forwarding locales without ECMA-402 is incorrect; global constructor bindings are not primitive intrinsic lookup; and keeping admission hardening separate makes the runtime change independently measurable.
-- 장점, 단점 및 영향: Custom diagnostics now distinguish and pass zero arguments, immutable primitive lookup, foreign Realms, Number and BigInt, forced GC, abrupt completion, and exact fuel while all direct and adjacent Test262 files stay green. The full matrix has no status transition, final Arc publication remains infallible, and the pre-existing directory-prefix admission still needs a frozen-manifest follow-up.
+- 장점, 단점 및 영향: Custom diagnostics now distinguish and pass zero arguments, immutable primitive lookup, foreign Realms, Number and BigInt, forced GC, abrupt completion, and exact fuel while all direct and adjacent Test262 files stay green. The full matrix has no status transition, final Arc publication remains infallible, and the following exact-admission unit closes the pre-existing directory-prefix drift risk.
+```
+
+## Exact TypedArray toLocaleString admission and pinned corpus
+
+`tools/test262_typed_array_to_locale_string_admission.txt` freezes all **39**
+direct files from Test262 revision
+`9e61c12835c5e4a3bdba93850427e6742c4f64c4`. A shared admission module maps
+each path to its exact feature metadata; runner and analyzer remove only that
+file's audited features. A file newly added under the same directory receives
+no exception and remains skipped until an explicit audit updates the manifest.
+
+Tooling checks manifest/map equality, the live directory's exact file set,
+features, includes, flags, negative metadata, disjointness from every other
+manifest, runner/analyzer symmetry, invalid paths, extra-feature rejection,
+and future/outside siblings. The full-matrix setup job runs this focused check
+against its checkout before emitting the shard matrix. Ordinary CI, setup, and
+all full shards now use the same `TEST262_REV`, replacing independent unpinned
+clones with one repository-declared corpus revision.
+
+The policy transition has no current-corpus status effect: direct TypedArray
+locale remains **39/39**, and combined Array locale plus
+TypedArray-constructor inheritance remains **14/14**. Local verification passes
+**133/133** tooling tests, all targets/features with **214/214** library tests,
+**535/535** builtins tests, and **15/15** arguments tests, plus **213/213**
+release library tests, rustfmt, warnings-denied Clippy, wasm32 checking, YAML
+parsing, and Python bytecode compilation. Three GPT-5.6 reviews are clean after
+their CI live-metadata and corpus-pinning findings were resolved. Tooling commit
+`3f31c29` passes CI `29888462270`; its full-matrix setup job also passes the new
+pinned admission check. Full matrix `29888462280` passes all 33 jobs.
+Downloaded artifacts aggregate to **31872 pass / 5126 fail / 11466 skip / 3
+timeout / 0 error / 48467 total / 36998 run**. All 30 result files are
+byte-identical to pre-policy run `29886017568`, proving that the exact boundary
+and shared corpus pin introduce no status transition.
+
+```text
+[Decision Log]
+- 목적과 의도: Prevent future Test262 siblings or metadata drift from silently expanding the claimed TypedArray toLocaleString support boundary, and make every CI shard measure one reproducible corpus.
+- 기존 구현 및 제약 조건: Runner and analyzer admitted any path below the directory prefix by subtracting one union of seven features; tooling checked only an arbitrary inside/outside path, CI tooling had no live Test262 checkout, and each workflow job independently cloned an unpinned upstream revision.
+- 검토한 주요 대안: Keep prefix admission because all current files pass; freeze paths without metadata; validate only locally; run another CI clone solely for tooling; pin only setup while shards use upstream HEAD; or pin every workflow consumer to the documented revision.
+- 선택한 방식: Store a 39-file manifest and per-file feature map shared by runner and analyzer, assert live directory and metadata equality plus future-sibling rejection, reuse the full setup checkout for focused validation, and declare one TEST262_REV consumed by ordinary CI and every full-matrix checkout.
+- 다른 대안 대신 이 방식을 선택한 이유: Passing current files does not authorize unknown future semantics; path-only lists can over-remove new feature gates; local-only checks do not protect merges; another clone wastes time and can drift; and setup-only pinning would still compare unrelated corpora across shards.
+- 장점, 단점 및 영향: The support claim is closed under the audited 39 files, metadata and corpus drift fail before matrix scheduling, current coverage remains 39/39 with no policy-only admission, and historical aggregate comparisons become reproducible. Updating Test262 now requires an explicit revision and metadata audit; the runner's zero exit status for semantic failures remains a separate enforcement limitation.
 ```
 
 ## Why the full-suite rate is not higher

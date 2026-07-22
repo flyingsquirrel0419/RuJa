@@ -4,6 +4,29 @@
 
 ### Changed
 
+- TypedArray `toLocaleString` Test262 admission now freezes the complete
+  **39-file** directory and each file's exact feature metadata instead of
+  removing one broad feature set for every present or future sibling. Runner
+  and analyzer share the same manifest and per-file map; tooling verifies live
+  files, includes, flags, negative metadata, disjointness, invalid paths, and
+  future-sibling closure. The full-matrix setup job runs that verification
+  against the corpus it will schedule.
+
+  Ordinary CI and every full-matrix shard now use the same pinned Test262
+  revision, `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, eliminating
+  cross-job corpus drift. Current direct coverage remains **39/39**, adjacent
+  Array locale plus TypedArray-constructor inheritance remains **14/14**, and
+  the exact policy admits no new test. Local verification passes **133/133**
+  tooling tests, all targets/features with **214/214** library tests,
+  **535/535** builtins tests, and **15/15** arguments tests, plus **213/213**
+  release library tests, rustfmt, warnings-denied Clippy, wasm32 checking, YAML
+  parsing, and Python bytecode compilation. Three GPT-5.6 admission/workflow
+  reviews are clean after adding CI corpus pinning and directory equality.
+  Tooling commit `3f31c29` passes CI `29888462270` and full matrix
+  `29888462280`. Downloaded artifacts aggregate to the unchanged **31872 pass /
+  5126 fail / 11466 skip / 3 timeout / 0 error / 48467 total / 36998 run**;
+  all 30 result files are byte-identical to full run `29886017568`.
+
 - The embedding methods `Vm::promise_resolve` and `Vm::promise_reject` now
   return `error::Result<()>` instead of `()`. This 0.4.0-alpha API change lets
   embedders observe non-catchable host aborts before Promise settlement becomes

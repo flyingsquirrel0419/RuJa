@@ -89,14 +89,15 @@ The following resource limits are enforced:
   Infinite-depth flattening permits 512 repeated active-path source visits so
   observable getters can break a cycle, then raises `RangeError`; finite and
   acyclic nesting has no fixed depth cutoff.
-- **Test262 result enforcement and pinning gap**: the Python runner reports
+- **Test262 result enforcement gap**: the Python runner reports
   fail, timeout, and error counts but still exits with status zero, so a matrix
-  job can be green while semantic failures remain. Full-matrix shards also
-  clone upstream Test262 independently without a shared commit pin. Aggregate
-  totals can therefore hide pass-to-fail swaps or include corpus drift. Until
-  the runner exits nonzero under an explicit policy and every shard consumes
-  one pinned checkout, release audits must download all 30 artifacts, compare
-  each file to a known baseline, and investigate every changed shard.
+  job can be green while semantic failures remain. Ordinary CI and all
+  full-matrix jobs consume the same repository-pinned Test262 revision, and
+  full-matrix setup validates the exact TypedArray locale admission against
+  that checkout before scheduling shards. Aggregate totals can still hide
+  pass-to-fail swaps, so until the runner exits nonzero under an explicit
+  policy, release audits must download all 30 artifacts, compare each file to
+  a known baseline, and investigate every changed shard.
 - **Regex execution bounds**: ordinary matching uses the RE2-style,
   linear-time Rust `regex` backend. Backreferences use the vendored
   `fancy-regex` backend; that path has a finite work limit and reports an
