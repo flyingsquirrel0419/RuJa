@@ -7892,6 +7892,33 @@ fn typed_array_join_snapshots_length_before_separator_coercion() {
 }
 
 #[test]
+fn typed_array_join_uses_method_realm_for_generated_errors() {
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var receiverError = false;
+            var separatorError = false;
+            try {
+                other.Uint8Array.prototype.join.call({}, ",");
+            } catch (error) {
+                receiverError = Object.getPrototypeOf(error) ===
+                    other.TypeError.prototype;
+            }
+            try {
+                other.Uint8Array.prototype.join.call(
+                    new Uint8Array([1]), Symbol("separator")
+                );
+            } catch (error) {
+                separatorError = Object.getPrototypeOf(error) ===
+                    other.TypeError.prototype;
+            }
+            receiverError + "|" + separatorError;
+        "#),
+        Value::String(Arc::from("true|true"))
+    );
+}
+
+#[test]
 fn array_join_on_resizable_typed_arrays_uses_generic_gets() {
     assert_eq!(
         run(r#"

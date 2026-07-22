@@ -41,10 +41,11 @@ jobs:
           repository: tc39/test262
           ref: ${{ env.TEST262_REV }}
           path: test262
-      - name: Verify exact TypedArray locale admission
+      - name: Verify exact TypedArray string admissions
         working-directory: tools
         run: >-
           TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
+          test262_tooling_test.TypedArrayJoinAdmissionTests
           test262_tooling_test.TypedArrayToLocaleStringAdmissionTests -v
       - name: Build directory matrix
         id: dirs

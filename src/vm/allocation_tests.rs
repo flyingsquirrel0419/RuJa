@@ -2662,6 +2662,192 @@ fn array_to_locale_string_roots_observable_state_and_restores_pin_depth() {
 }
 
 #[test]
+fn typed_array_join_consumes_exact_per_index_fuel() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    let source = vm
+        .run("new Uint8Array([1, 2, 3])")
+        .expect("TypedArray join source should initialize");
+    let source_pin = vm.pin(&source);
+    let baseline = vm.gc_pins.len();
+
+    vm.set_fuel(Some(2));
+    let error = crate::builtins::typed_array_join(&mut vm, &[], Some(source.clone()))
+        .expect_err("N-1 fuel must abort the TypedArray join scan");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    vm.set_fuel(Some(3));
+    let result = crate::builtins::typed_array_join(&mut vm, &[], Some(source))
+        .expect("exact logical-index fuel should complete TypedArray join");
+    assert_eq!(result, Value::String(Arc::from("1,2,3")));
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+    vm.set_fuel(None);
+
+    let empty = vm
+        .run("new Uint8Array(0)")
+        .expect("empty TypedArray should initialize");
+    vm.set_fuel(Some(0));
+    crate::builtins::typed_array_join(&mut vm, &[], Some(empty))
+        .expect("empty TypedArray join should consume no loop fuel");
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+    vm.set_fuel(None);
+    vm.unpin(source_pin);
+
+    let bigint = vm
+        .run("new BigInt64Array([1n, 2n])")
+        .expect("BigInt TypedArray should initialize");
+    let bigint_pin = vm.pin(&bigint);
+    let baseline = vm.gc_pins.len();
+    vm.set_fuel(Some(1));
+    let error = crate::builtins::typed_array_join(&mut vm, &[], Some(bigint.clone()))
+        .expect_err("BigInt N-1 fuel must abort the TypedArray join scan");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.gc_pins.len(), baseline);
+    vm.set_fuel(Some(2));
+    assert_eq!(
+        crate::builtins::typed_array_join(&mut vm, &[], Some(bigint))
+            .expect("BigInt TypedArray join should complete with exact fuel"),
+        Value::String(Arc::from("1,2"))
+    );
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+    vm.set_fuel(None);
+    vm.unpin(bigint_pin);
+}
+
+#[test]
+fn typed_array_join_roots_observable_state_and_restores_pin_depth() {
+    for (source, expected) in [
+        ("new Uint8Array([1, 2])", "1.2"),
+        ("new BigInt64Array([1n, 2n])", "1.2"),
+    ] {
+        let mut vm = Vm::new().expect("VM should initialize");
+        vm.register_fn(
+            "forceGc",
+            |vm, _, _| {
+                vm.gc();
+                Ok(Value::Undefined)
+            },
+            0,
+        )
+        .expect("GC test hook should register");
+        let source = vm
+            .run(source)
+            .expect("direct join source should initialize");
+        let source_pin = vm.pin(&source);
+        let separator = vm
+            .run("({ toString: function () { forceGc(); return '.'; } })")
+            .expect("direct join separator should initialize");
+        vm.unpin(source_pin);
+        let baseline = vm.gc_pins.len();
+        assert_eq!(
+            crate::builtins::typed_array_join(&mut vm, &[separator], Some(source))
+                .expect("direct native join roots should survive forced GC"),
+            Value::String(Arc::from(expected))
+        );
+        assert_eq!(vm.gc_pins.len(), baseline);
+    }
+
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("GC test hook should register");
+    let baseline = vm.gc_pins.len();
+    assert_eq!(
+        vm.run(
+            r#"
+            (function () {
+              var source = new Uint8Array([1, 2]);
+              var separator = {
+                toString: function () {
+                  source = null;
+                  separator = null;
+                  forceGc();
+                  return ".";
+                }
+              };
+              return source.join(separator);
+            })();
+            "#,
+        )
+        .expect("TypedArray join roots should survive separator coercion GC"),
+        Value::String(Arc::from("1.2"))
+    );
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    assert_eq!(
+        vm.run(
+            r#"
+            (function () {
+              var source = new Uint8Array([1]);
+              var thrown = { marker: 97 };
+              try {
+                source.join({
+                  toString: function () {
+                    var selected = thrown;
+                    source = null;
+                    thrown = null;
+                    forceGc();
+                    throw selected;
+                  }
+                });
+              } catch (error) {
+                forceGc();
+                return error.marker;
+              }
+            })();
+            "#,
+        )
+        .expect("thrown separator value should survive TypedArray join GC"),
+        Value::Number(97.0)
+    );
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    for source in [
+        "Uint8Array.prototype.join.call({});",
+        r#"
+        var buffer = new ArrayBuffer(4, { maxByteLength: 8 });
+        var fixed = new Uint8Array(buffer, 0, 4);
+        buffer.resize(0);
+        fixed.join({ toString: function () { throw "unreachable"; } });
+        "#,
+        r#"
+        new Uint8Array([1]).join({
+          toString: function () { forceGc(); throw {}; }
+        });
+        "#,
+    ] {
+        let mut vm = Vm::new().expect("VM should initialize");
+        vm.register_fn(
+            "forceGc",
+            |vm, _, _| {
+                vm.gc();
+                Ok(Value::Undefined)
+            },
+            0,
+        )
+        .expect("GC test hook should register");
+        let baseline = vm.gc_pins.len();
+        vm.run(source)
+            .expect_err("the TypedArray join step should complete abruptly");
+        assert_eq!(vm.gc_pins.len(), baseline);
+        assert_eq!(
+            vm.run("1 + 1").expect("VM should remain reusable"),
+            Value::Number(2.0)
+        );
+    }
+}
+
+#[test]
 fn typed_array_to_locale_string_consumes_exact_per_index_fuel() {
     let mut vm = Vm::new().expect("VM should initialize");
     let source = vm

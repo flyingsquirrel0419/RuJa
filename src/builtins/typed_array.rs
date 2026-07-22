@@ -4489,48 +4489,67 @@ pub(crate) fn typed_array_join(
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    let this = this.ok_or_else(|| Error::type_err("TypedArray join called without this"))?;
-    let Value::Object(array_idx) = &this else {
-        return Err(Error::type_err("TypedArray join called on non-object"));
-    };
-    let slots = vm.heap.with_obj(array_idx.0, |obj| {
-        let HeapObj::TypedArray(array) = obj else {
-            return None;
-        };
-        Some((
-            array.kind,
-            array.viewed_array_buffer.clone(),
-            array.byte_offset,
-            array.byte_length,
-            array.length_tracking,
-        ))
-    });
-    let (kind, buffer, byte_offset, fixed_byte_length, length_tracking) =
-        slots.ok_or_else(|| Error::type_err("TypedArray join called on non-TypedArray"))?;
-    let byte_length = effective_view_byte_length(
-        vm,
-        buffer.as_ref(),
-        byte_offset,
-        fixed_byte_length,
-        length_tracking,
-        kind.element_size(),
-    )
-    .ok_or_else(|| Error::type_err("TypedArray join called on out-of-bounds view"))?;
-    let length = typed_array_element_count(kind, byte_length);
-    let separator = match args.first() {
-        Some(value) if !value.is_undefined() => vm.to_string(value)?.to_string(),
-        _ => ",".to_string(),
-    };
-    let mut parts = Vec::with_capacity(length);
-    for index in 0..length {
-        let value = vm.get_property(&this, &index.to_string())?;
-        parts.push(if value.is_nullish() {
-            String::new()
-        } else {
-            vm.to_string(&value)?.to_string()
-        });
+    fn append(result: &mut String, value: &str) -> error::Result<()> {
+        result
+            .try_reserve(value.len())
+            .map_err(|_| Error::range("TypedArray join result too large"))?;
+        result.push_str(value);
+        Ok(())
     }
-    Ok(Value::String(Arc::from(parts.join(&separator))))
+
+    let this = this.ok_or_else(|| Error::type_err("TypedArray join called without this"))?;
+    let pin_count = vm.pin(&this) + args.first().map_or(0, |value| vm.pin(value));
+    let operation = (|| {
+        let Value::Object(array_idx) = &this else {
+            return Err(Error::type_err("TypedArray join called on non-object"));
+        };
+        let slots = vm.heap.with_obj(array_idx.0, |obj| {
+            let HeapObj::TypedArray(array) = obj else {
+                return None;
+            };
+            Some((
+                array.kind,
+                array.viewed_array_buffer.clone(),
+                array.byte_offset,
+                array.byte_length,
+                array.length_tracking,
+            ))
+        });
+        let (kind, buffer, byte_offset, fixed_byte_length, length_tracking) =
+            slots.ok_or_else(|| Error::type_err("TypedArray join called on non-TypedArray"))?;
+        let byte_length = effective_view_byte_length(
+            vm,
+            buffer.as_ref(),
+            byte_offset,
+            fixed_byte_length,
+            length_tracking,
+            kind.element_size(),
+        )
+        .ok_or_else(|| Error::type_err("TypedArray join called on out-of-bounds view"))?;
+        let length = typed_array_element_count(kind, byte_length);
+        let separator = match args.first() {
+            Some(value) if !value.is_undefined() => vm.to_string(value)?,
+            _ => Arc::from(","),
+        };
+
+        let mut result = String::new();
+        for index in 0..length {
+            vm.consume_fuel()?;
+            if index > 0 {
+                append(&mut result, separator.as_ref())?;
+            }
+            let value = vm.get_property(&this, &index.to_string())?;
+            if !value.is_nullish() {
+                let value_pin = vm.pin(&value);
+                let element = vm.to_string(&value);
+                vm.unpin(value_pin);
+                append(&mut result, element?.as_ref())?;
+            }
+        }
+        Ok(Value::String(Arc::from(result)))
+    })();
+    vm.unpin_many(pin_count);
+    operation
 }
 
 pub(crate) fn typed_array_to_locale_string(

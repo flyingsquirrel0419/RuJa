@@ -128,6 +128,9 @@ try:
         TYPED_ARRAY_TO_LOCALE_STRING_FEATURES,
         TYPED_ARRAY_TO_LOCALE_STRING_FILES,
     )
+    from test262_typed_array_join_admission import (
+        TYPED_ARRAY_JOIN_FEATURES, TYPED_ARRAY_JOIN_FILES,
+    )
     from test262_array_join_admission import ARRAY_JOIN_FEATURES, ARRAY_JOIN_FILES
     from test262_array_flat_admission import (
         ARRAY_FLAT_FEATURES, ARRAY_FLAT_FILES,
@@ -277,6 +280,9 @@ except ModuleNotFoundError:
     from tools.test262_typed_array_to_locale_string_admission import (
         TYPED_ARRAY_TO_LOCALE_STRING_FEATURES,
         TYPED_ARRAY_TO_LOCALE_STRING_FILES,
+    )
+    from tools.test262_typed_array_join_admission import (
+        TYPED_ARRAY_JOIN_FEATURES, TYPED_ARRAY_JOIN_FILES,
     )
     from tools.test262_array_join_admission import ARRAY_JOIN_FEATURES, ARRAY_JOIN_FILES
     from tools.test262_array_flat_admission import (
@@ -735,20 +741,6 @@ TYPED_ARRAY_SET_FEATURES = {
     "TypedArray",
     "arrow-function",
     "immutable-arraybuffer",
-    "resizable-arraybuffer",
-}
-
-TYPED_ARRAY_JOIN_PREFIXES = (
-    "built-ins/TypedArray/prototype/join/",
-)
-
-TYPED_ARRAY_JOIN_FEATURES = {
-    "ArrayBuffer",
-    "BigInt",
-    "Reflect.construct",
-    "Symbol",
-    "TypedArray",
-    "arrow-function",
     "resizable-arraybuffer",
 }
 
@@ -1721,11 +1713,22 @@ def typed_array_set_path(path):
     return rel.as_posix().startswith(TYPED_ARRAY_SET_PREFIXES)
 
 def typed_array_join_path(path):
+    if path is None:
+        return False
     try:
         rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
-    except ValueError:
+    except (OSError, ValueError, TypeError):
         return False
-    return rel.as_posix().startswith(TYPED_ARRAY_JOIN_PREFIXES)
+    return rel.as_posix() in TYPED_ARRAY_JOIN_FILES
+
+def typed_array_join_features(path):
+    if path is None:
+        return frozenset()
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except (OSError, ValueError, TypeError):
+        return frozenset()
+    return TYPED_ARRAY_JOIN_FEATURES.get(rel.as_posix(), frozenset())
 
 def typed_array_values_path(path):
     try:
@@ -3231,7 +3234,7 @@ def should_skip(meta, path=None):
     if path is not None and typed_array_set_path(path):
         feats.difference_update(TYPED_ARRAY_SET_FEATURES)
     if path is not None and typed_array_join_path(path):
-        feats.difference_update(TYPED_ARRAY_JOIN_FEATURES)
+        feats.difference_update(typed_array_join_features(path))
     if path is not None and typed_array_values_path(path):
         feats.difference_update(TYPED_ARRAY_VALUES_FEATURES)
     if path is not None and typed_array_keys_entries_path(path):
