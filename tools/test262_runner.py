@@ -121,6 +121,9 @@ try:
     from test262_array_to_spliced_admission import (
         ARRAY_TO_SPLICED_FEATURES, ARRAY_TO_SPLICED_FILES,
     )
+    from test262_array_to_locale_string_admission import (
+        ARRAY_TO_LOCALE_STRING_FEATURES, ARRAY_TO_LOCALE_STRING_FILES,
+    )
     from test262_array_join_admission import ARRAY_JOIN_FEATURES, ARRAY_JOIN_FILES
     from test262_array_flat_admission import (
         ARRAY_FLAT_FEATURES, ARRAY_FLAT_FILES,
@@ -263,6 +266,9 @@ except ModuleNotFoundError:
     )
     from tools.test262_array_to_spliced_admission import (
         ARRAY_TO_SPLICED_FEATURES, ARRAY_TO_SPLICED_FILES,
+    )
+    from tools.test262_array_to_locale_string_admission import (
+        ARRAY_TO_LOCALE_STRING_FEATURES, ARRAY_TO_LOCALE_STRING_FILES,
     )
     from tools.test262_array_join_admission import ARRAY_JOIN_FEATURES, ARRAY_JOIN_FILES
     from tools.test262_array_flat_admission import (
@@ -2680,6 +2686,24 @@ def array_to_spliced_features(path):
         return frozenset()
     return ARRAY_TO_SPLICED_FEATURES.get(rel.as_posix(), frozenset())
 
+def array_to_locale_string_path(path):
+    if path is None:
+        return False
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except (OSError, ValueError, TypeError):
+        return False
+    return rel.as_posix() in ARRAY_TO_LOCALE_STRING_FILES
+
+def array_to_locale_string_features(path):
+    if path is None:
+        return frozenset()
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except (OSError, ValueError, TypeError):
+        return frozenset()
+    return ARRAY_TO_LOCALE_STRING_FEATURES.get(rel.as_posix(), frozenset())
+
 def array_join_path(path):
     try:
         rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
@@ -3116,6 +3140,8 @@ def should_skip(meta, path=None):
         feats.difference_update(array_to_reversed_features(path))
     if path is not None and array_to_spliced_path(path):
         feats.difference_update(array_to_spliced_features(path))
+    if path is not None and array_to_locale_string_path(path):
+        feats.difference_update(array_to_locale_string_features(path))
     if path is not None and array_join_path(path):
         feats.difference_update(array_join_features(path))
     if path is not None and array_flat_path(path):

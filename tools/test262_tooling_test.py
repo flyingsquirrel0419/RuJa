@@ -144,6 +144,10 @@ from test262_array_to_spliced_admission import (
     ARRAY_TO_SPLICED_FEATURES,
     ARRAY_TO_SPLICED_FILES,
 )
+from test262_array_to_locale_string_admission import (
+    ARRAY_TO_LOCALE_STRING_FEATURES,
+    ARRAY_TO_LOCALE_STRING_FILES,
+)
 from test262_array_join_admission import ARRAY_JOIN_FEATURES, ARRAY_JOIN_FILES
 from test262_array_flat_admission import (
     ARRAY_FLAT_FEATURES,
@@ -4147,6 +4151,125 @@ class ArrayToSplicedAdmissionTests(unittest.TestCase):
                         self.assertTrue(
                             tool.should_skip(
                                 {"flags": [], "features": ["Reflect.construct"]},
+                                path,
+                            )
+                        )
+                finally:
+                    tool.TEST262 = original_root
+
+
+class ArrayToLocaleStringAdmissionTests(unittest.TestCase):
+    def test_manifest_is_exact_live_disjoint_and_shared(self):
+        base = "built-ins/Array/prototype/toLocaleString"
+        expected_features = {
+            f"{base}/not-a-constructor.js": frozenset(
+                {"Reflect.construct", "arrow-function"}
+            ),
+            f"{base}/resizable-buffer.js": frozenset({"resizable-arraybuffer"}),
+            f"{base}/user-provided-tolocalestring-grow.js": frozenset(
+                {"resizable-arraybuffer"}
+            ),
+            f"{base}/user-provided-tolocalestring-shrink.js": frozenset(
+                {"resizable-arraybuffer"}
+            ),
+        }
+        self.assertEqual(
+            ARRAY_TO_LOCALE_STRING_FILES, frozenset(expected_features)
+        )
+        self.assertEqual(ARRAY_TO_LOCALE_STRING_FEATURES, expected_features)
+
+        tools_dir = Path(__file__).resolve().parent
+        for manifest in tools_dir.glob("test262_*_admission.txt"):
+            if manifest.name == "test262_array_to_locale_string_admission.txt":
+                continue
+            existing = {
+                line
+                for raw_line in manifest.read_text().splitlines()
+                if (line := raw_line.strip()) and not line.startswith("#")
+            }
+            self.assertTrue(
+                ARRAY_TO_LOCALE_STRING_FILES.isdisjoint(existing), manifest.name
+            )
+
+        expected_includes = {
+            f"{base}/not-a-constructor.js": ["isConstructor.js"],
+            f"{base}/resizable-buffer.js": ["resizableArrayBufferUtils.js"],
+            f"{base}/user-provided-tolocalestring-grow.js": [
+                "resizableArrayBufferUtils.js"
+            ],
+            f"{base}/user-provided-tolocalestring-shrink.js": [
+                "resizableArrayBufferUtils.js"
+            ],
+        }
+        test_root = Path(test262_runner.TEST262) / "test"
+        try:
+            test_root_available = test_root.is_dir()
+        except OSError:
+            test_root_available = False
+        if test_root_available:
+            for relative, features in expected_features.items():
+                path = test_root / relative
+                self.assertTrue(path.is_file(), relative)
+                metadata = test262_runner.parse_meta(path.read_text())
+                self.assertEqual(
+                    frozenset(metadata.get("features", [])), features, relative
+                )
+                self.assertEqual(
+                    metadata.get("includes", []), expected_includes[relative], relative
+                )
+                self.assertEqual(metadata.get("flags", []), [], relative)
+                self.assertIsNone(metadata.get("negative"), relative)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            future = root / f"test/{base}/future.js"
+            outside = (
+                root
+                / "test/built-ins/Array/prototype/unrelatedLocale/not-a-constructor.js"
+            )
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    self.assertFalse(tool.array_to_locale_string_path(None))
+                    self.assertEqual(
+                        tool.array_to_locale_string_features(None), frozenset()
+                    )
+                    for relative, features in expected_features.items():
+                        path = root / "test" / relative
+                        self.assertTrue(
+                            tool.array_to_locale_string_path(path), relative
+                        )
+                        self.assertEqual(
+                            tool.array_to_locale_string_features(path), features
+                        )
+                        self.assertFalse(
+                            tool.should_skip(
+                                {"flags": [], "features": sorted(features)}, path
+                            ),
+                            relative,
+                        )
+                        self.assertTrue(
+                            tool.should_skip(
+                                {
+                                    "flags": [],
+                                    "features": sorted(features | {"decorators"}),
+                                },
+                                path,
+                            ),
+                            relative,
+                        )
+                    for path in (future, outside):
+                        self.assertFalse(tool.array_to_locale_string_path(path))
+                        self.assertEqual(
+                            tool.array_to_locale_string_features(path), frozenset()
+                        )
+                        self.assertTrue(
+                            tool.should_skip(
+                                {
+                                    "flags": [],
+                                    "features": ["resizable-arraybuffer"],
+                                },
                                 path,
                             )
                         )

@@ -2448,6 +2448,220 @@ fn array_for_each_roots_observable_state_and_restores_pin_depth() {
 }
 
 #[test]
+fn array_to_locale_string_consumes_exact_per_index_fuel() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    let source = vm
+        .run("({ 0: null, 1: undefined, 2: null, length: 3 })")
+        .expect("toLocaleString source should initialize");
+    let source_pin = vm.pin(&source);
+    let baseline = vm.gc_pins.len();
+
+    vm.set_fuel(Some(2));
+    let error = crate::builtins::array_to_locale_string(&mut vm, &[], Some(source.clone()))
+        .expect_err("N-1 fuel must abort the logical locale scan");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+    assert!(vm.active_array_joins.is_empty());
+
+    vm.set_fuel(Some(3));
+    let result = crate::builtins::array_to_locale_string(&mut vm, &[], Some(source))
+        .expect("exact logical-index fuel should complete locale conversion");
+    assert_eq!(result, Value::String(Arc::from(",,")));
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+    assert!(vm.active_array_joins.is_empty());
+    vm.set_fuel(None);
+
+    let empty = vm
+        .run("({ length: 0 })")
+        .expect("empty source should initialize");
+    vm.set_fuel(Some(0));
+    crate::builtins::array_to_locale_string(&mut vm, &[], Some(empty))
+        .expect("empty locale conversion should consume no loop fuel");
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+    assert!(vm.active_array_joins.is_empty());
+    vm.set_fuel(None);
+    vm.unpin(source_pin);
+}
+
+#[test]
+fn array_to_locale_string_roots_observable_state_and_restores_pin_depth() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("GC test hook should register");
+    let baseline = vm.gc_pins.len();
+    let result = vm.run(
+        r#"
+        (function () {
+          var localized = {
+            marker: 41,
+            toString: function () { forceGc(); return String(this.marker); }
+          };
+          var value = {};
+          Object.defineProperty(value, "toLocaleString", {
+            get: function () {
+              forceGc();
+              return function () {
+                target[0] = null;
+                value = null;
+                forceGc();
+                var selected = localized;
+                localized = null;
+                forceGc();
+                return selected;
+              };
+            }
+          });
+          var target = { 0: value };
+          Object.defineProperty(target, "length", {
+            get: function () { source = null; forceGc(); return 1; }
+          });
+          var source = new Proxy(target, {
+            get: function (object, key, receiver) {
+              forceGc();
+              return Reflect.get(object, key, receiver);
+            }
+          });
+          return Array.prototype.toLocaleString.call(source);
+        })();
+        "#,
+    );
+    assert_eq!(
+        result.expect("locale native-frame roots should survive observable GC"),
+        Value::String(Arc::from("41"))
+    );
+    assert_eq!(vm.gc_pins.len(), baseline);
+    assert!(vm.active_array_joins.is_empty());
+
+    let invocation_throw = vm.run(
+        r#"
+        (function () {
+          var thrown = { marker: 73 };
+          var source = { length: 1 };
+          source[0] = {
+            toLocaleString: function () {
+              var selected = thrown;
+              thrown = null;
+              source[0] = null;
+              forceGc();
+              throw selected;
+            }
+          };
+          try { Array.prototype.toLocaleString.call(source); }
+          catch (error) { forceGc(); return error.marker; }
+        })();
+        "#,
+    );
+    assert_eq!(
+        invocation_throw.expect("thrown locale value should survive forced GC"),
+        Value::Number(73.0)
+    );
+    assert_eq!(vm.gc_pins.len(), baseline);
+    assert!(vm.active_array_joins.is_empty());
+
+    let conversion_throw = vm.run(
+        r#"
+        (function () {
+          var thrown = { marker: 89 };
+          var source = { length: 1 };
+          source[0] = {
+            toLocaleString: function () {
+              return {
+                toString: function () {
+                  var selected = thrown;
+                  thrown = null;
+                  source[0] = null;
+                  forceGc();
+                  throw selected;
+                }
+              };
+            }
+          };
+          try { Array.prototype.toLocaleString.call(source); }
+          catch (error) { forceGc(); return error.marker; }
+        })();
+        "#,
+    );
+    assert_eq!(
+        conversion_throw.expect("thrown localized conversion should survive forced GC"),
+        Value::Number(89.0)
+    );
+    assert_eq!(vm.gc_pins.len(), baseline);
+    assert!(vm.active_array_joins.is_empty());
+
+    for source in [
+        r#"
+        var error = {};
+        Array.prototype.toLocaleString.call(new Proxy({}, {
+          get: function () { forceGc(); throw error; }
+        }));
+        "#,
+        r#"
+        var error = {};
+        Array.prototype.toLocaleString.call(new Proxy({ length: 1 }, {
+          get: function (target, key, receiver) {
+            if (key === "0") { forceGc(); throw error; }
+            return Reflect.get(target, key, receiver);
+          }
+        }));
+        "#,
+        r#"
+        var error = {};
+        var value = {};
+        Object.defineProperty(value, "toLocaleString", {
+          get: function () { forceGc(); throw error; }
+        });
+        Array.prototype.toLocaleString.call({ 0: value, length: 1 });
+        "#,
+        r#"
+        var error = {};
+        Array.prototype.toLocaleString.call({
+          0: { toLocaleString: function () { forceGc(); throw error; } },
+          length: 1
+        });
+        "#,
+        r#"
+        var error = {};
+        Array.prototype.toLocaleString.call({
+          0: { toLocaleString: function () {
+            return { toString: function () { forceGc(); throw error; } };
+          } },
+          length: 1
+        });
+        "#,
+    ] {
+        let mut vm = Vm::new().expect("VM should initialize");
+        vm.register_fn(
+            "forceGc",
+            |vm, _, _| {
+                vm.gc();
+                Ok(Value::Undefined)
+            },
+            0,
+        )
+        .expect("GC test hook should register");
+        let baseline = vm.gc_pins.len();
+        vm.run(source)
+            .expect_err("the observable locale step should complete abruptly");
+        assert_eq!(vm.gc_pins.len(), baseline);
+        assert!(vm.active_array_joins.is_empty());
+        assert_eq!(
+            vm.run("1 + 1").expect("VM should remain reusable"),
+            Value::Number(2.0)
+        );
+    }
+}
+
+#[test]
 fn array_join_consumes_exact_per_index_fuel() {
     let mut vm = Vm::new().expect("VM should initialize");
     let source = vm

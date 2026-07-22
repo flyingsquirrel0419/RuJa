@@ -824,6 +824,78 @@ pub(crate) fn array_to_string(
     }
 }
 
+pub(crate) fn array_to_locale_string(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    fn append(result: &mut String, value: &str) -> error::Result<()> {
+        result
+            .try_reserve(value.len())
+            .map_err(|_| Error::range("Array toLocaleString result too large"))?;
+        result.push_str(value);
+        Ok(())
+    }
+
+    let receiver = this.unwrap_or(Value::Undefined);
+    let mut pin_count = vm.pin(&receiver);
+    let completion = (|| {
+        let object = array_method_to_object(vm, &receiver)?;
+        pin_count += vm.pin(&object);
+        let len = length_of_array_like_u64(vm, &object)?;
+        let Value::Object(object_idx) = object else {
+            unreachable!("ToObject must return an object")
+        };
+        if vm.active_array_joins.contains(&object_idx) {
+            return Ok(Value::String(Arc::from("")));
+        }
+        vm.active_array_joins.push(object_idx);
+        let locale_result = (|| {
+            let mut result = String::new();
+            let mut index = 0u64;
+            while index < len {
+                vm.consume_fuel()?;
+                if index > 0 {
+                    append(&mut result, ",")?;
+                }
+
+                let element = vm.get_property(&object, &index.to_string())?;
+                if !element.is_nullish() {
+                    let element_pin = vm.pin(&element);
+                    let element_result: error::Result<Arc<str>> = (|| {
+                        let method = vm.get_property(&element, "toLocaleString")?;
+                        if !is_callable(&method, &vm.heap) {
+                            return Err(Error::type_err("toLocaleString is not callable"));
+                        }
+                        let method_pin = vm.pin(&method);
+                        let localized = vm.call_function(&method, &[], Some(element.clone()));
+                        vm.unpin(method_pin);
+                        let localized = localized?;
+
+                        let localized_pin = vm.pin(&localized);
+                        let string = vm.to_string(&localized);
+                        vm.unpin(localized_pin);
+                        string
+                    })();
+                    vm.unpin(element_pin);
+                    let element_string = element_result?;
+                    append(&mut result, element_string.as_ref())?;
+                }
+                index += 1;
+            }
+            Ok(Value::String(Arc::from(result)))
+        })();
+        let active = vm
+            .active_array_joins
+            .pop()
+            .expect("active Array stringification marker must be balanced");
+        debug_assert_eq!(active, object_idx);
+        locale_result
+    })();
+    vm.unpin_many(pin_count);
+    completion
+}
+
 pub(crate) fn array_join(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     fn append(result: &mut String, value: &str) -> error::Result<()> {
         result

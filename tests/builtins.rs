@@ -4697,6 +4697,173 @@ fn array_for_each_is_generic_ordered_live_and_realm_aware() {
 }
 
 #[test]
+fn array_to_locale_string_is_generic_live_and_realm_aware() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            var first = {};
+            Object.defineProperty(first, "toLocaleString", {
+              get: function() {
+                log.push("method:1");
+                return function() {
+                  "use strict";
+                  log.push("call:1:" + arguments.length + ":" + (this === first));
+                  target[4] = {
+                    toLocaleString: function() { log.push("call:4"); return "changed"; }
+                  };
+                  return {
+                    toString: function() { log.push("string:1"); return "one"; }
+                  };
+                };
+              }
+            });
+            var inherited = {
+              toLocaleString: function() { log.push("call:3"); return "three"; }
+            };
+            var prototype = { 3: inherited };
+            var target = Object.create(prototype);
+            Object.defineProperty(target, "length", {
+              get: function() { log.push("length"); return 5; }
+            });
+            target[0] = null;
+            target[1] = first;
+            target[2] = undefined;
+            target[4] = {
+              toLocaleString: function() { log.push("old:4"); return "old"; }
+            };
+            var source = new Proxy(target, {
+              get: function(object, key, receiver) {
+                log.push("get:" + String(key));
+                return Reflect.get(object, key, receiver);
+              }
+            });
+            var result = Array.prototype.toLocaleString.call(
+              source,
+              { toString: function() { throw "unused locale"; } },
+              { get style() { throw "unused options"; } }
+            );
+
+            var primitiveLog = [];
+            Object.defineProperty(Boolean.prototype, "toLocaleString", {
+              configurable: true,
+              get: function() {
+                primitiveLog.push("get:" + String(this));
+                return function() {
+                  "use strict";
+                  primitiveLog.push("call:" + String(this) + ":" + arguments.length);
+                  return this ? "T" : "F";
+                };
+              }
+            });
+            var primitiveResult = [true, false].toLocaleString("ignored", "ignored");
+            delete Boolean.prototype.toLocaleString;
+
+            var stringResult = Array.prototype.toLocaleString.call("ab");
+            var booleanResult = Array.prototype.toLocaleString.call(false);
+
+            var abruptLog = [];
+            var nonCallable = false;
+            try {
+              Array.prototype.toLocaleString.call({
+                0: { toLocaleString: 1 },
+                get 1() { abruptLog.push("late"); return 2; },
+                length: 2
+              });
+            } catch (error) { nonCallable = error instanceof TypeError; }
+
+            var nullish = 0;
+            try { Array.prototype.toLocaleString.call(null); }
+            catch (error) { nullish += error instanceof TypeError; }
+            try { Array.prototype.toLocaleString.call(undefined); }
+            catch (error) { nullish += error instanceof TypeError; }
+
+            var other = $262.createRealm().global;
+            other.Number.prototype.toLocaleString = function() { return "foreign"; };
+            var foreignPrimitive = other.Array.prototype.toLocaleString.call([1]);
+            var foreignErrors = 0;
+            try {
+              other.Array.prototype.toLocaleString.call({
+                0: { toLocaleString: null }, length: 1
+              });
+            } catch (error) {
+              foreignErrors += Object.getPrototypeOf(error) === other.TypeError.prototype;
+            }
+            try { other.Array.prototype.toLocaleString.call(null); }
+            catch (error) {
+              foreignErrors += Object.getPrototypeOf(error) === other.TypeError.prototype;
+            }
+            try {
+              other.Array.prototype.toLocaleString.call({
+                0: { toLocaleString: function() { return Symbol(); } }, length: 1
+              });
+            } catch (error) {
+              foreignErrors += Object.getPrototypeOf(error) === other.TypeError.prototype;
+            }
+
+            var directCycle = [];
+            directCycle[0] = directCycle;
+            var indirectLeft = [];
+            var indirectRight = [indirectLeft];
+            indirectLeft[0] = indirectRight;
+            var joinReentry = [{
+              toLocaleString: function() { return joinReentry.join(); }
+            }];
+            var localeReentry = [{
+              toString: function() { return localeReentry.toLocaleString(); }
+            }];
+
+            var growBuffer = new ArrayBuffer(4, { maxByteLength: 8 });
+            var growing = new Int8Array(growBuffer);
+            var originalNumberLocale = Number.prototype.toLocaleString;
+            var growCalls = 0;
+            Number.prototype.toLocaleString = function() {
+              growCalls += 1;
+              if (growCalls === 2) growBuffer.resize(6);
+              return originalNumberLocale.call(this);
+            };
+            var grown = Array.prototype.toLocaleString.call(growing);
+            Number.prototype.toLocaleString = originalNumberLocale;
+
+            var shrinkBuffer = new ArrayBuffer(4, { maxByteLength: 8 });
+            var shrinking = new Int8Array(shrinkBuffer);
+            var shrinkCalls = 0;
+            Number.prototype.toLocaleString = function() {
+              shrinkCalls += 1;
+              if (shrinkCalls === 2) shrinkBuffer.resize(2);
+              return originalNumberLocale.call(this);
+            };
+            var shrunk = Array.prototype.toLocaleString.call(shrinking);
+            Number.prototype.toLocaleString = originalNumberLocale;
+
+            [
+              result === ",one,,three,changed",
+              log.join("|") === [
+                "get:length", "length", "get:0", "get:1", "method:1",
+                "call:1:0:true", "string:1", "get:2", "get:3", "call:3",
+                "get:4", "call:4"
+              ].join("|"),
+              primitiveResult === "T,F",
+              primitiveLog.join("|") === [
+                "get:true", "call:true:0", "get:false", "call:false:0"
+              ].join("|"),
+              stringResult === "a,b", booleanResult === "",
+              nonCallable, abruptLog.length === 0, nullish === 2,
+              foreignPrimitive === "foreign", foreignErrors === 3,
+              directCycle.toLocaleString() === "",
+              indirectLeft.toLocaleString() === "",
+              joinReentry.toLocaleString() === "",
+              localeReentry.join() === "",
+              grown === "0,0,0,0", growing.length === 6,
+              shrunk === "0,0,,", shrinking.length === 2
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "true|true|true|true|true|true|true|true|true|true|true|true|true|true|true|true|true|true|true"
+        ))
+    );
+}
+
+#[test]
 fn array_join_is_generic_ordered_live_and_realm_aware() {
     assert_eq!(
         run(r#"

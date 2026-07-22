@@ -3342,7 +3342,7 @@ const ARRAY_PROTOTYPE_METHODS: &[(&str, NativeFn, usize)] = &[
     ("values", array_values, 0),
     ("entries", array_entries, 0),
     ("toString", array_to_string, 0),
-    ("toLocaleString", array_to_string, 0),
+    ("toLocaleString", array_to_locale_string, 0),
 ];
 
 fn install_array_intrinsic_in_env(

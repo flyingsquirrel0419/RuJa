@@ -1,0 +1,5 @@
+# Exact feature-gated Array.prototype.toLocaleString coverage.
+built-ins/Array/prototype/toLocaleString/not-a-constructor.js
+built-ins/Array/prototype/toLocaleString/resizable-buffer.js
+built-ins/Array/prototype/toLocaleString/user-provided-tolocalestring-grow.js
+built-ins/Array/prototype/toLocaleString/user-provided-tolocalestring-shrink.js

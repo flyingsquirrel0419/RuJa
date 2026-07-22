@@ -147,9 +147,9 @@ pub struct Vm {
     /// Rust locals (e.g. a Promise handler while `call_function` runs, which
     /// may itself trigger a GC). Push indices on entry, pop on exit.
     pub(crate) gc_pins: Vec<usize>,
-    /// Receiver identities currently traversing Array.prototype.join elements.
-    /// Re-entry still coerces its separator before cyclic element recursion is
-    /// suppressed, matching the observable algorithm order.
+    /// Receiver identities currently traversing Array stringification methods.
+    /// Join checks after separator coercion and toLocaleString checks after its
+    /// length snapshot, so recursive suppression preserves observable ordering.
     pub(crate) active_array_joins: Vec<GcIdx>,
     /// WeakRef targets kept alive until the current ECMAScript job finishes.
     pub(crate) kept_objects: Vec<usize>,
