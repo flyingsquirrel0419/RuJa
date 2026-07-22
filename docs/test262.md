@@ -9924,6 +9924,67 @@ reports direct join **32/32** and adjacent combined coverage **94/94**.
 - 장점, 단점 및 영향: Number and BigInt direct-native forced-GC paths, exact fuel, abrupt cleanup, resize and detach ordering, foreign method Realms, and future-sibling closure are covered while direct and adjacent Test262 remain green. The policy admits no new current file; primitive ToString and final Arc publication retain existing runtime-wide infallible allocation limits.
 ```
 
+## Exact TypedArray toString admission
+
+Tooling commit `739e3ff` leaves the runtime algorithm unchanged and freezes the
+four already-audited `%TypedArray%.prototype.toString` paths from pinned
+Test262 revision `9e61c12835c5e4a3bdba93850427e6742c4f64c4`. The manifest
+contains the parent `built-ins/TypedArray/prototype/toString.js` file plus the
+three files below its sibling `toString/` directory. A shared feature map lets
+runner and analyzer subtract only each file's declared `TypedArray`, `BigInt`,
+`Reflect.construct`, and arrow-function features instead of applying their
+union to all four paths.
+
+Tooling checks the exact live file set, features, includes, flags, negative
+metadata, disjointness from every other manifest, runner/analyzer symmetry,
+invalid paths, extra-feature rejection, and future or outside siblings. The
+full-matrix setup preflight now runs this class together with the exact
+TypedArray `join` and `toLocaleString` classes against the checkout it will
+schedule.
+
+Direct-native regression tests exercise the generic alias through an own join
+method and the non-callable-join `Object.prototype.toString` fallback. Both
+paths remove the final JavaScript variable reference, force GC during the
+observable step, retain the receiver, and restore pin depth. Builtins coverage
+also fixes primitive boxing and foreign method-Realm TypeError behavior as a
+regression contract. No production runtime code changes. Direct Test262 remains
+**4/4**, and combined TypedArray `toString`, `join`, and `toLocaleString`
+coverage remains **75/75**.
+
+Local verification passes all targets/features with **217/217** library tests,
+**537/537** builtins tests, and **15/15** arguments tests, plus **216/216**
+release library tests, **133/133** Python tooling tests, **1/1** doctest,
+rustfmt, warnings-denied Clippy, release build, generated documentation, wasm32
+checking, YAML parsing, and Python bytecode compilation. Rustdoc retains only
+the 13 pre-existing broken intra-doc-link warnings. Independent GPT-5.6 runtime
+and admission reviews are CLEAN.
+
+CI `29892602601` passes both jobs, and full matrix `29892602512` passes all 33
+jobs. The initial full artifact moved two `annexB` passes to timeouts while all
+other counts and all 29 other result files remained unchanged. Running that
+same downloaded binary against a sparse checkout of the pinned corpus restored
+the exact baseline `annexB` result, **201 pass / 811 fail / 74 skip / 0 timeout /
+0 error**. Rerunning only that GitHub shard produced a clean replacement
+artifact.
+
+Final downloaded artifacts at
+`/tmp/ruja-typed-array-to-string-admission-29892602512-rerun` aggregate to the
+unchanged **31872 pass / 5126 fail / 11466 skip / 3 timeout / 0 error / 48467
+total / 36998 run**. All 30 result files are byte-identical to join run
+`29890470558`, proving no current policy or runtime status transition. The
+downloaded release binary again reports direct coverage **4/4** and combined
+TypedArray string coverage **75/75**.
+
+```text
+[Decision Log]
+- 목적과 의도: Close the remaining TypedArray string-admission metadata gap and preserve uncovered generic alias behavior without changing an already-correct runtime algorithm.
+- 기존 구현 및 제약 조건: The four exact paths excluded future siblings and passed 4/4, but runner and analyzer duplicated the path set and removed the same four-feature union from every file; full-matrix preflight checked only join and toLocaleString, while direct-native GC, primitive boxing, and foreign-Realm behavior lacked focused regression tests.
+- 검토한 주요 대안: Leave the small green boundary unchanged; remove the four broad feature gates globally; keep paths duplicated and add only metadata assertions; combine this with the confirmed TypedArray search-loop fuel repair; or modify Array toString's common fallback allocation behavior here.
+- 선택한 방식: Store one four-file manifest and exact per-file feature map shared by runner and analyzer, validate it against the pinned live checkout before matrix scheduling, and add direct-native and builtins tests around the existing generic Array toString alias.
+- 다른 대안 대신 이 방식을 선택한 이유: Green current files do not justify over-removing metadata gates; global removal overclaims unrelated surfaces; duplicated declarations can drift; search-loop fuel spans three separate methods and 130 files; and fallible Object toString publication is a runtime-wide allocation concern rather than a TypedArray alias defect.
+- 장점, 단점 및 영향: Metadata drift and feature over-admission fail early, direct and adjacent Test262 remain green, and observable GC, boxing, pin balance, and method-Realm behavior are locked down without production-code churn. Updating the pinned corpus requires an explicit four-file metadata audit; the shared Object toString final publication limit remains unchanged.
+```
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is

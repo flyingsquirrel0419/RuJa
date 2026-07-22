@@ -4,6 +4,34 @@
 
 ### Changed
 
+- TypedArray `toString` Test262 admission now maps its four audited files to
+  exact per-file feature metadata instead of subtracting one four-feature union
+  from every listed path. The shared manifest covers the parent `toString.js`
+  and three nested files; tooling verifies the live file set, features,
+  includes, flags, negative metadata, disjointness, invalid paths, extra
+  features, and future siblings. Full-matrix setup now validates exact
+  TypedArray `toString`, `join`, and `toLocaleString` admission before scheduling
+  shards.
+
+  The runtime algorithm is unchanged. New direct-native tests retain custom
+  join and fallback-tag receivers across forced GC, verify balanced pins,
+  primitive boxing, and foreign method-Realm errors. Direct Test262 remains
+  **4/4**, and combined TypedArray string coverage remains **75/75**. Local
+  verification passes all targets/features with **217/217** library tests,
+  **537/537** builtins tests, and **15/15** arguments tests, plus **216/216**
+  release library tests, **133/133** Python tooling tests, **1/1** doctest,
+  rustfmt, warnings-denied Clippy, release build, generated documentation, and
+  wasm32 checking. Two independent GPT-5.6 reviews found no runtime or
+  admission defect. Tooling commit `739e3ff` passes CI `29892602601` and all 33
+  full-matrix jobs in `29892602512`. The initial `annexB` artifact had two
+  runner-contention timeouts; the same downloaded binary and pinned corpus
+  reproduced the baseline **201/811/74/0/0**, and the rerun artifact is clean.
+  Final downloaded artifacts aggregate to the unchanged **31872 pass / 5126
+  fail / 11466 skip / 3 timeout / 0 error / 48467 total / 36998 run**; all 30
+  result files are byte-identical to full run `29890470558`. The downloaded
+  release binary reproduces direct coverage **4/4** and adjacent coverage
+  **75/75**.
+
 - TypedArray `toLocaleString` Test262 admission now freezes the complete
   **39-file** directory and each file's exact feature metadata instead of
   removing one broad feature set for every present or future sibling. Runner
