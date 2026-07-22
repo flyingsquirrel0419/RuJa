@@ -219,7 +219,12 @@
   forwarding is also iterative, rooted, and fuel-metered; ordinary prototype
   cycle detection has no fixed depth cap. Every Realm's original
   `%Object.prototype%` implements immutable-prototype semantics while remaining
-  extensible
+  extensible. Shared `ToObject` coercion rejects `null` and `undefined`; the
+  ordinary `Object(nullish)` and `new Object(nullish)` calls still create a
+  fresh ordinary object in the active function Realm, construction with a
+  distinct `NewTarget` keeps its constructor-derived prototype path, and
+  algorithms such as `Object.assign` keep their own specified nullish
+  exceptions
 - **Number**: `parseInt`/`parseFloat`, `isNaN`, `isFinite`; `Number` statics
   (`isInteger`, `isFinite`, `isNaN`, `isSafeInteger`, constants) and
   `toString(radix)`/`toFixed`/`toPrecision`/`toExponential`

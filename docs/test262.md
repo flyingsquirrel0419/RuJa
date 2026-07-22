@@ -10030,6 +10030,62 @@ release binary again reports the combined search cohort **130/130**.
 - 장점, 단점 및 영향: Fuel now scales exactly with visited indices across forward, reverse, early-return, empty, Number, and BigInt paths, with no Test262 regression and balanced pins. Hosts using finite fuel observe a new intended abort boundary; exact admission for the three directories remains the next separate policy milestone.
 ```
 
+## Nullish ToObject semantics
+
+Feature commit `401a73a` changes the shared `Vm::to_object` abstract-operation
+boundary to reject `null` and `undefined`. The previous helper boxed every
+non-object, which was not an `Object(value)` constructor stub in practice: it
+is shared by specification algorithms that require the ordinary `ToObject`
+failure. `Object.defineProperties({}, null)`,
+`Object.defineProperties({}, undefined)`, and the two pinned
+`Object.create({}, null)` cases therefore returned normally instead of throwing
+`TypeError`.
+
+The `Object` constructor remains intentionally separate. Ordinary
+`Object(nullish)` and `new Object(nullish)` detect the argument before the
+helper and allocate a fresh ordinary object using the active function Realm;
+construction with a distinct `NewTarget` keeps its existing constructor-derived
+prototype path. Likewise, sloppy `this`, `for...in`, nullish `Object.assign`
+sources, and `Object.prototype.toString` retain their explicit pre-coercion
+exceptions. Regression tests cover the three failing behaviors represented by
+four Test262 files, `Object.create(proto, undefined)` success and prototype
+identity, nullish `Object` call/construct success in a foreign Realm, and the
+existing `Object.assign({}, null, undefined)` no-op path.
+
+On pinned Test262 revision
+`9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the focused
+`Object.create` plus `Object.defineProperties` directories move from **942 pass
+/ 4 fail / 6 skip** to **946 pass / 0 fail / 6 skip**. The complete
+`built-ins/Object` subtree moves from **3295 pass / 4 fail / 112 skip** to
+**3299 pass / 0 fail / 112 skip**. Local verification passes all
+targets/features with **218/218** library tests, **537/537** builtins tests,
+and **15/15** arguments tests, plus **217/217** release library tests,
+**133/133** Python tooling tests, **1/1** doctest, rustfmt, warnings-denied
+Clippy, release build, generated documentation, and wasm32 checking. Rustdoc
+retains only the 13 pre-existing broken intra-doc-link warnings. Two GPT-5.6
+reviews are clean after one reviewer corrected the prototype expectation in a
+new non-regression test. CI `29899362133` passes both jobs.
+
+Full matrix `29899362112` passes all 33 jobs. Downloaded artifacts at
+`/tmp/ruja-nullish-to-object-29899362112-final` aggregate to **31876 pass /
+5122 fail / 11466 skip / 3 timeout / 0 error / 48467 total / 36998 run**.
+Compared with TypedArray search-fuel run `29895173852`, all 29 non-built-ins
+result files are byte-identical; `built-ins` alone moves by **+4 pass / -4
+fail**, with no skip, timeout, error, total, or executed-count change. Running
+the downloaded release binary against the pinned sparse corpus reproduces the
+focused **946 pass / 0 fail / 6 skip** and complete Object **3299 pass / 0 fail
+/ 112 skip** results.
+
+```text
+[Decision Log]
+- 목적과 의도: Make the VM's shared ToObject helper enforce the ECMAScript nullish rejection while preserving algorithms whose specifications intentionally handle nullish values before coercion.
+- 기존 구현 및 제약 조건: The helper was documented as an Object(value) stub but was shared broadly across the runtime and boxed every non-object, so four current Object tests returned normally; the Object constructor, sloppy this, for-in, Object.assign sources, and Object.prototype.toString already owned distinct nullish branches.
+- 검토한 주요 대안: Fix only Object.create and Object.defineProperties; make every caller reject nullish independently; keep boxing for compatibility; or change the Object constructor together with the helper.
+- 선택한 방식: Reject Null and Undefined centrally in Vm::to_object, retain each specification-defined pre-coercion exception, add direct regressions for the rejection boundary, and preserve foreign-Realm Object-constructor success coverage.
+- 다른 대안 대신 이 방식을 선택한 이유: Call-site patches would leave the abstract operation incorrect and invite more drift; duplicated checks are incomplete; compatibility with nonstandard nullish wrappers is not desirable; and Object(null) has deliberately different specification behavior that must not be collapsed into ToObject.
+- 장점, 단점 및 영향: The four confirmed failures close with one small semantic correction, generated errors keep the calling method Realm, and all audited exception paths remain stable. Other callers now correctly throw when they accidentally receive nullish input, so the full matrix and broad Rust suite are required evidence for the shared-helper change.
+```
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is

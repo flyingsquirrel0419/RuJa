@@ -62,6 +62,34 @@
 
 ### Fixed
 
+- Generic `ToObject` coercion now throws a method-Realm `TypeError` for
+  `null` and `undefined` instead of manufacturing wrapper objects. The
+  `Object` constructor keeps its distinct specification path: ordinary
+  `Object(nullish)` and `new Object(nullish)` create a fresh ordinary object in
+  the active function Realm, while construction with a distinct `NewTarget`
+  keeps its constructor-derived prototype path. Nullish `Object.assign`
+  sources and the other algorithms with explicit nullish exceptions continue
+  to branch before the shared coercion helper.
+
+  The four previously failing pinned Test262 cases in `Object.create` and
+  `Object.defineProperties` now pass. Their focused directories move from
+  **942 pass / 4 fail / 6 skip** to **946 pass / 0 fail / 6 skip**, and the
+  complete `built-ins/Object` subtree moves from **3295 pass / 4 fail / 112
+  skip** to **3299 pass / 0 fail / 112 skip**. Local verification passes all
+  targets/features with **218/218** library tests, **537/537** builtins tests,
+  and **15/15** arguments tests, plus **217/217** release library tests,
+  **133/133** Python tooling tests, **1/1** doctest, rustfmt, warnings-denied
+  Clippy, release build, generated documentation, and wasm32 checking. Rustdoc
+  retains only the 13 pre-existing broken intra-doc-link warnings. Two
+  independent GPT-5.6 reviews found no runtime defect after correcting one
+  newly added `Object.create` test expectation. Feature commit `401a73a`
+  passes CI `29899362133` and all 33 jobs in full run `29899362112`.
+  Downloaded artifacts aggregate to **31876 pass / 5122 fail / 11466 skip / 3
+  timeout / 0 error / 48467 total / 36998 run**. Against full run
+  `29895173852`, 29 result files are byte-identical and only `built-ins` moves
+  by **+4 pass / -4 fail**. The downloaded release binary reproduces focused
+  coverage **946/946** and complete `built-ins/Object` coverage **3299/3299**.
+
 - TypedArray `includes`, `indexOf`, and `lastIndexOf` now consume one
   cooperative fuel unit before every visited logical index. Validation,
   internal-length snapshot, `fromIndex` coercion, empty-range returns,
