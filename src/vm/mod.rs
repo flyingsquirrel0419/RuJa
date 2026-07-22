@@ -87,6 +87,15 @@ pub(crate) enum ExecutionContextKind {
     },
 }
 
+pub(crate) enum HasInstanceHandlerCall {
+    Value(Value),
+    Default {
+        constructor: Value,
+        object: Value,
+        realm: GcIdx,
+    },
+}
+
 #[derive(Clone)]
 pub(crate) struct ExecutionContext {
     /// The lexical environment whose global root owns this call's intrinsics.
@@ -109,6 +118,7 @@ pub struct Vm {
     pub(crate) execution_contexts: Vec<ExecutionContext>,
     pub(crate) stack: Vec<Value>,
     pub(crate) frames: Vec<CallFrame>,
+    pub(crate) active_native_call_depth: usize,
     pub(crate) object_proto: Value,
     pub(crate) array_proto: Value,
     pub(crate) array_to_string_fn: Value,
@@ -149,6 +159,8 @@ pub struct Vm {
     pub(crate) gc_pins: Vec<usize>,
     #[cfg(test)]
     pub(crate) fail_next_gc_pin_reservation: bool,
+    #[cfg(test)]
+    pub(crate) fail_has_instance_continuation_reservation: bool,
     /// Receiver identities currently traversing Array stringification methods.
     /// Join checks after separator coercion and toLocaleString checks after its
     /// length snapshot, so recursive suppression preserves observable ordering.
@@ -631,6 +643,7 @@ impl Vm {
             execution_contexts: Vec::new(),
             stack: Vec::new(),
             frames: Vec::new(),
+            active_native_call_depth: 0,
             object_proto: Value::Undefined,
             array_proto: Value::Undefined,
             array_to_string_fn: Value::Undefined,
@@ -664,6 +677,8 @@ impl Vm {
             gc_pins: Vec::new(),
             #[cfg(test)]
             fail_next_gc_pin_reservation: false,
+            #[cfg(test)]
+            fail_has_instance_continuation_reservation: false,
             active_array_joins: Vec::new(),
             kept_objects: Vec::new(),
             current_yields: Vec::new(),
@@ -1607,29 +1622,38 @@ impl Vm {
             ));
         }
 
-        let has_instance_key = PropertyKey::Symbol(self.well_known_symbols.has_instance);
-        let has_instance = self.get_property_by_key(constructor, &has_instance_key)?;
-        if !has_instance.is_undefined() && !has_instance.is_null() {
-            if !crate::builtins::is_callable(&has_instance, &self.heap) {
+        let required_roots = Self::value_root_count(object)
+            .checked_add(Self::value_root_count(constructor))
+            .ok_or_else(|| Error::range("temporary root set is too large"))?;
+        self.try_reserve_gc_pins(required_roots)?;
+        let pin_count = self.pin_many(&[object.clone(), constructor.clone()]);
+        let result = (|| {
+            let has_instance_key = PropertyKey::Symbol(self.well_known_symbols.has_instance);
+            let has_instance = self.get_property_by_key(constructor, &has_instance_key)?;
+            if !has_instance.is_undefined() && !has_instance.is_null() {
+                if !crate::builtins::is_callable(&has_instance, &self.heap) {
+                    return Err(Error::type_err(
+                        "Symbol.hasInstance method is not callable".to_string(),
+                    ));
+                }
+                let result = self.call_function(
+                    &has_instance,
+                    std::slice::from_ref(object),
+                    Some(constructor.clone()),
+                )?;
+                return Ok(self.to_boolean(&result));
+            }
+
+            if !crate::builtins::is_callable(constructor, &self.heap) {
                 return Err(Error::type_err(
-                    "Symbol.hasInstance method is not callable".to_string(),
+                    "Right-hand side of 'instanceof' is not callable".to_string(),
                 ));
             }
-            let result = self.call_function(
-                &has_instance,
-                std::slice::from_ref(object),
-                Some(constructor.clone()),
-            )?;
-            return Ok(self.to_boolean(&result));
-        }
 
-        if !crate::builtins::is_callable(constructor, &self.heap) {
-            return Err(Error::type_err(
-                "Right-hand side of 'instanceof' is not callable".to_string(),
-            ));
-        }
-
-        self.ordinary_has_instance(constructor, object)
+            self.ordinary_has_instance(constructor, object)
+        })();
+        self.unpin_many(pin_count);
+        result
     }
 
     pub(crate) fn ordinary_has_instance(
@@ -1640,44 +1664,166 @@ impl Vm {
         if !crate::builtins::is_callable(constructor, &self.heap) {
             return Ok(false);
         }
-
-        if let Value::Object(idx) = constructor {
-            let bound_target = self.heap.with_obj(idx.0, |obj| {
-                if let HeapObj::Function(function) = obj {
-                    if let crate::value::FunctionKind::Bound { target, .. } = &function.kind {
-                        return Some(*target);
-                    }
-                }
-                None
-            });
-            if let Some(target) = bound_target {
-                return self.instanceof_operator(object, &Value::Object(target));
-            }
-        }
-
-        if !matches!(object, Value::Object(_)) {
+        let initial_bound_target = self.bound_function_target(constructor);
+        if initial_bound_target.is_none() && !matches!(object, Value::Object(_)) {
             return Ok(false);
         }
 
-        let constructor_proto =
-            self.get_property_by_key(constructor, &PropertyKey::from("prototype"))?;
-        if !matches!(constructor_proto, Value::Object(_)) {
-            return Err(Error::type_err(
-                "Function has non-object prototype 'undefined' in instanceof check".to_string(),
-            ));
-        }
+        let required_roots = Self::value_root_count(constructor)
+            .checked_add(Self::value_root_count(object))
+            .ok_or_else(|| Error::range("temporary root set is too large"))?;
+        self.try_reserve_gc_pins(required_roots)?;
+        let mut pin_count = self.pin_many(&[constructor.clone(), object.clone()]);
+        let mut operation_realm = self.current_realm_global_env();
+        let result = (|| {
+            let mut active_constructor = constructor.clone();
+            let mut active_object = object.clone();
+            loop {
+                if !crate::builtins::is_callable(&active_constructor, &self.heap) {
+                    return Ok(false);
+                }
 
-        let mut current = object.clone();
-        while let Value::Object(object_idx) = &current {
-            if Value::Object(*object_idx) == constructor_proto {
-                return Ok(true);
+                let bound_target = self.bound_function_target(&active_constructor);
+                if let Some(target) = bound_target {
+                    self.consume_fuel()?;
+                    let target = Value::Object(target);
+                    let has_instance_key =
+                        PropertyKey::Symbol(self.well_known_symbols.has_instance);
+                    let has_instance = self.get_property_by_key(&target, &has_instance_key)?;
+                    if !has_instance.is_nullish() {
+                        if !crate::builtins::is_callable(&has_instance, &self.heap) {
+                            return Err(Error::type_err(
+                                "Symbol.hasInstance method is not callable".to_string(),
+                            ));
+                        }
+                        if let Some(realm) = self.default_has_instance_realm(&has_instance) {
+                            operation_realm = realm;
+                            active_constructor = target;
+                            continue;
+                        }
+                        match self.call_has_instance_handler(
+                            &has_instance,
+                            &active_object,
+                            target,
+                        )? {
+                            HasInstanceHandlerCall::Value(result) => {
+                                return Ok(self.to_boolean(&result));
+                            }
+                            HasInstanceHandlerCall::Default {
+                                constructor,
+                                object,
+                                realm,
+                            } => {
+                                operation_realm = realm;
+                                let continuation_roots = Self::value_root_count(&constructor)
+                                    .checked_add(Self::value_root_count(&object))
+                                    .ok_or_else(|| {
+                                        Error::range("temporary root set is too large")
+                                    })?;
+                                self.try_reserve_gc_pins(continuation_roots)?;
+                                pin_count += self.pin_many(&[constructor.clone(), object.clone()]);
+                                active_constructor = constructor;
+                                active_object = object;
+                                continue;
+                            }
+                        }
+                    }
+                    if !crate::builtins::is_callable(&target, &self.heap) {
+                        return Err(Error::type_err(
+                            "Right-hand side of 'instanceof' is not callable".to_string(),
+                        ));
+                    }
+                    active_constructor = target;
+                    continue;
+                }
+
+                if !matches!(active_object, Value::Object(_)) {
+                    return Ok(false);
+                }
+
+                let constructor_proto =
+                    self.get_property_by_key(&active_constructor, &PropertyKey::from("prototype"))?;
+                if !matches!(constructor_proto, Value::Object(_)) {
+                    return Err(Error::type_err(
+                        "Function has non-object prototype 'undefined' in instanceof check"
+                            .to_string(),
+                    ));
+                }
+
+                let prototype_roots = Self::value_root_count(&constructor_proto)
+                    .checked_add(1)
+                    .ok_or_else(|| Error::range("temporary root set is too large"))?;
+                self.try_reserve_gc_pins(prototype_roots)?;
+                let prototype_pin = self.pin(&constructor_proto);
+                let walk_result = (|| {
+                    let mut current = active_object.clone();
+                    loop {
+                        let current_is_proxy = match &current {
+                            Value::Object(idx) => self.heap.with_obj(idx.0, |heap_object| {
+                                matches!(heap_object, HeapObj::Proxy(_))
+                            }),
+                            _ => false,
+                        };
+                        if !current_is_proxy {
+                            self.consume_fuel()?;
+                        }
+                        let Some(next) = self.get_prototype_of(&current)? else {
+                            return Ok(false);
+                        };
+                        if next == constructor_proto {
+                            return Ok(true);
+                        }
+                        current = next;
+                    }
+                })();
+                self.unpin(prototype_pin);
+                return walk_result;
             }
-            current = self.get_prototype_of(&current)?.unwrap_or(Value::Undefined);
-            if current.is_undefined() {
-                break;
+        })();
+        let result =
+            result.map_err(|error| self.materialize_error_in_realm(error, operation_realm));
+        self.unpin_many(pin_count);
+        result
+    }
+
+    fn default_has_instance_realm(&self, value: &Value) -> Option<GcIdx> {
+        let Value::Object(function) = value else {
+            return None;
+        };
+        self.heap.with_obj(function.0, |heap_object| {
+            let HeapObj::Function(function) = heap_object else {
+                return None;
+            };
+            let crate::value::FunctionKind::Native { func, .. } = &function.kind else {
+                return None;
+            };
+            if std::ptr::fn_addr_eq(
+                *func,
+                crate::builtins::function_symbol_has_instance as NativeFn,
+            ) {
+                Some(crate::environment::global_env_root(
+                    &self.heap,
+                    function.closure,
+                ))
+            } else {
+                None
             }
-        }
-        Ok(false)
+        })
+    }
+
+    fn bound_function_target(&self, value: &Value) -> Option<GcIdx> {
+        let Value::Object(function) = value else {
+            return None;
+        };
+        self.heap.with_obj(function.0, |heap_object| {
+            let HeapObj::Function(function) = heap_object else {
+                return None;
+            };
+            let crate::value::FunctionKind::Bound { target, .. } = &function.kind else {
+                return None;
+            };
+            Some(*target)
+        })
     }
 
     /// Resume (or start) a lazy generator, running until the next `yield` or

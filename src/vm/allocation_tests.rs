@@ -1,5 +1,5 @@
 use super::{ExternalPromiseJob, Microtask, Vm};
-use crate::value::{HeapObj, NativeConstructMode, PromiseStatus};
+use crate::value::{FunctionData, FunctionKind, HeapObj, NativeConstructMode, PromiseStatus};
 use crate::Value;
 use std::fs;
 use std::sync::Arc;
@@ -67,6 +67,64 @@ fn native_construct_mode(vm: &Vm, value: &Value) -> Option<NativeConstructMode> 
         };
         *construct_mode
     })
+}
+
+fn direct_bound_function(vm: &mut Vm, target: &Value) -> Value {
+    direct_bound_function_with_this(vm, target, Value::Undefined)
+}
+
+fn direct_bound_function_with_this(vm: &mut Vm, target: &Value, this_value: Value) -> Value {
+    let Value::Object(target_index) = target else {
+        panic!("direct Bound target must be an object");
+    };
+    let constructable = vm.is_constructor_value(target);
+    let (closure, prototype) = vm.heap.with_obj(target_index.0, |object| {
+        let HeapObj::Function(function) = object else {
+            panic!("direct Bound target must be a function");
+        };
+        (function.closure, function.proto.lock().clone())
+    });
+    let function = HeapObj::Function(FunctionData {
+        name: Some(Arc::from("bound direct")),
+        kind: FunctionKind::Bound {
+            target: *target_index,
+            this_val: this_value.clone(),
+            bound_args: Vec::new(),
+            constructable,
+        },
+        closure,
+        lexical_new_target: Value::Undefined,
+        home_object: parking_lot::Mutex::new(None),
+        is_class_ctor: std::sync::atomic::AtomicBool::new(false),
+        prototype: parking_lot::Mutex::new(None),
+        proto: parking_lot::Mutex::new(prototype),
+        props: parking_lot::Mutex::new(indexmap::IndexMap::new()),
+        extensible: std::sync::atomic::AtomicBool::new(true),
+        private_fields: parking_lot::Mutex::new(std::collections::HashMap::new()),
+    });
+    vm.try_reserve_gc_pins(Vm::value_root_count(target) + Vm::value_root_count(&this_value))
+        .expect("direct Bound roots should reserve");
+    let target_pin = vm.pin_many(&[target.clone(), this_value]);
+    let result = vm
+        .alloc(function)
+        .expect("direct Bound function should allocate");
+    vm.unpin(target_pin);
+    Value::Object(result)
+}
+
+fn set_direct_has_instance(vm: &Vm, function: &Value, handler: Value) {
+    let Value::Object(function) = function else {
+        panic!("direct hasInstance target must be an object");
+    };
+    vm.heap.with_obj(function.0, |object| {
+        let HeapObj::Function(function) = object else {
+            panic!("direct hasInstance target must be a function");
+        };
+        function.props.lock().insert(
+            crate::value::PropertyKey::Symbol(vm.well_known_symbols.has_instance),
+            crate::value::PropertyDescriptor::data(handler),
+        );
+    });
 }
 
 const EAGER_NATIVE_CONSTRUCTOR_SOURCES: &[&str] = &[
@@ -5011,6 +5069,310 @@ fn bound_call_dispatch_is_metered_linear_and_roots_arguments() {
         Value::Bool(true)
     );
     assert_eq!(vm.gc_pins.len(), baseline_pins);
+}
+
+#[test]
+fn instanceof_is_iterative_rooted_metered_and_realm_correct() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("GC test hook should register");
+    vm.register_fn(
+        "failHasInstanceContinuationReserve",
+        |vm, _, _| {
+            vm.fail_has_instance_continuation_reservation = true;
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("root-reservation failure hook should register");
+    let initial_pins = vm.gc_pins.len();
+    let initial_contexts = vm.execution_contexts.len();
+    let initial_call_depth = vm.active_native_call_depth;
+    vm.run(
+        r#"
+        function InstanceofTarget() {}
+        var instanceofValue = Object.create(InstanceofTarget.prototype);
+        var instanceofProxyValue = new Proxy(instanceofValue, {});
+        var revokedInstanceofValue = Proxy.revocable(instanceofValue, {});
+        var instanceofRevokedValue = revokedInstanceofValue.proxy;
+        revokedInstanceofValue.revoke();
+        var fuelBoundInstanceof = InstanceofTarget.bind(null).bind(null).bind(null);
+        var fuelGetterCalls = 0;
+        function FuelGetterTarget() {}
+        Object.defineProperty(FuelGetterTarget, Symbol.hasInstance, {
+          get: function () {
+            fuelGetterCalls += 1;
+            return function () { return true; };
+          }
+        });
+        var fuelGetterBound = FuelGetterTarget.bind(null);
+        var transparentDefaultHandler = new Proxy(
+          Function.prototype[Symbol.hasInstance], {}
+        );
+        var defaultHasInstanceIntrinsic =
+          Function.prototype[Symbol.hasInstance];
+        var gcTransparentDefaultHandler = new Proxy(
+          defaultHasInstanceIntrinsic,
+          new Proxy({}, {
+            get: function () {
+              forceGc();
+              return undefined;
+            }
+          })
+        );
+        var trappedDefaultHandler = new Proxy(
+          defaultHasInstanceIntrinsic,
+          { apply: Reflect.apply }
+        );
+        var realDeepBoundInstanceof = InstanceofTarget;
+        for (var i = 0; i < 4096; i += 1) {
+          realDeepBoundInstanceof = realDeepBoundInstanceof.bind(null);
+        }
+        forceGc();
+        var realDeepBoundResult =
+          instanceofValue instanceof realDeepBoundInstanceof;
+
+        var gcHasInstanceTarget = {};
+        Object.defineProperty(gcHasInstanceTarget, Symbol.hasInstance, {
+          get: function () {
+            forceGc();
+            return function (value) {
+              forceGc();
+              return value.marker === 41;
+            };
+          }
+        });
+        var gcHasInstanceResult = { marker: 41 } instanceof gcHasInstanceTarget;
+
+        function FreshPrototypeBase() {}
+        var FreshPrototypeTarget = new Proxy(FreshPrototypeBase, {
+          get: function (target, key, receiver) {
+            if (key === "prototype") return {};
+            return Reflect.get(target, key, receiver);
+          }
+        });
+        var freshPrototypeValue = new Proxy({}, {
+          getPrototypeOf: function () {
+            forceGc();
+            return {};
+          }
+        });
+        var freshPrototypeResult = freshPrototypeValue instanceof FreshPrototypeTarget;
+
+        var instanceofSentinel = {};
+        var abruptHasInstanceTarget = {};
+        Object.defineProperty(abruptHasInstanceTarget, Symbol.hasInstance, {
+          get: function () {
+            forceGc();
+            throw instanceofSentinel;
+          }
+        });
+        var abruptHasInstanceIdentity = false;
+        try { ({} instanceof abruptHasInstanceTarget); }
+        catch (error) { abruptHasInstanceIdentity = error === instanceofSentinel; }
+
+        var other = $262.createRealm().global;
+        other.eval("globalThis.ForeignTarget = function () {}; ForeignTarget.prototype = 1;");
+        var realmBoundInstanceof = other.ForeignTarget.bind(null);
+        Object.setPrototypeOf(realmBoundInstanceof, Function.prototype);
+        var foreignInstanceofError = false;
+        try { ({} instanceof realmBoundInstanceof); }
+        catch (error) {
+          foreignInstanceofError =
+            error instanceof other.TypeError && !(error instanceof TypeError);
+        }
+
+        var foreignDefaultHasInstance = other.eval(
+          "Function.prototype[Symbol.hasInstance]"
+        );
+        var reserveFailureHandler = new Proxy(foreignDefaultHasInstance, {});
+        function ReserveFailureTarget() {}
+        Object.defineProperty(ReserveFailureTarget, Symbol.hasInstance, {
+          value: reserveFailureHandler
+        });
+        var ReserveFailureBound = ReserveFailureTarget.bind(null);
+        var foreignReserveError = false;
+        failHasInstanceContinuationReserve();
+        try { ({} instanceof ReserveFailureBound); }
+        catch (error) {
+          foreignReserveError =
+            error instanceof other.RangeError && !(error instanceof RangeError);
+        }
+        "#,
+    )
+    .expect("instanceof fixtures should initialize");
+    assert_eq!(vm.gc_pins.len(), initial_pins);
+    assert_eq!(vm.execution_contexts.len(), initial_contexts);
+    assert_eq!(vm.active_native_call_depth, initial_call_depth);
+    assert_eq!(vm.get_global("gcHasInstanceResult"), Value::Bool(true));
+    assert_eq!(vm.get_global("freshPrototypeResult"), Value::Bool(false));
+    assert_eq!(
+        vm.get_global("abruptHasInstanceIdentity"),
+        Value::Bool(true)
+    );
+    assert_eq!(vm.get_global("foreignInstanceofError"), Value::Bool(true));
+    assert_eq!(vm.get_global("foreignReserveError"), Value::Bool(true));
+    assert_eq!(vm.get_global("realDeepBoundResult"), Value::Bool(true));
+
+    let constructor = vm.get_global("InstanceofTarget");
+    let object = vm.get_global("instanceofValue");
+    let baseline_pins = initial_pins;
+    let baseline_contexts = initial_contexts;
+    let baseline_call_depth = initial_call_depth;
+
+    vm.fail_next_gc_pin_reservation = true;
+    assert!(!vm
+        .ordinary_has_instance(&constructor, &Value::Null)
+        .expect("an ordinary callable with a primitive value must not reserve roots"));
+    assert!(vm.fail_next_gc_pin_reservation);
+    let error = vm
+        .instanceof_operator(&object, &constructor)
+        .expect_err("input root reservation failure must remain catchable");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert!(!vm.fail_next_gc_pin_reservation);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.execution_contexts.len(), baseline_contexts);
+    assert_eq!(vm.active_native_call_depth, baseline_call_depth);
+
+    vm.set_fuel(Some(0));
+    let error = vm
+        .ordinary_has_instance(&constructor, &object)
+        .expect_err("an ordinary prototype edge must consume fuel");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    vm.set_fuel(Some(1));
+    assert!(vm
+        .ordinary_has_instance(&constructor, &object)
+        .expect("one ordinary edge should complete instanceof"));
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    let proxy_object = vm.get_global("instanceofProxyValue");
+    vm.set_fuel(Some(1));
+    assert!(vm
+        .ordinary_has_instance(&constructor, &proxy_object)
+        .expect("one Proxy edge must not receive a duplicate outer debit"));
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    let revoked_object = vm.get_global("instanceofRevokedValue");
+    vm.set_fuel(Some(0));
+    let error = vm
+        .ordinary_has_instance(&constructor, &revoked_object)
+        .expect_err("revocation must precede Proxy edge fuel");
+    assert_eq!(error.kind, crate::error::ErrorKind::Type);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    let getter_bound = vm.get_global("fuelGetterBound");
+    vm.set_fuel(Some(0));
+    let error = vm
+        .ordinary_has_instance(&getter_bound, &object)
+        .expect_err("Bound fuel must precede target @@hasInstance lookup");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.get_global("fuelGetterCalls"), Value::Number(0.0));
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    vm.set_fuel(None);
+    assert!(vm
+        .ordinary_has_instance(&getter_bound, &object)
+        .expect("Bound forwarding should reach an own custom handler"));
+    assert_eq!(vm.get_global("fuelGetterCalls"), Value::Number(1.0));
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    let bound = vm.get_global("fuelBoundInstanceof");
+    vm.set_fuel(Some(5));
+    let error = vm
+        .ordinary_has_instance(&bound, &Value::Null)
+        .expect_err("three Bound and inherited-method edges require six fuel units");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    vm.set_fuel(Some(6));
+    assert!(!vm
+        .ordinary_has_instance(&bound, &Value::Null)
+        .expect("exact Bound and method-lookup fuel should complete"));
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    vm.set_fuel(None);
+    let mut deep_bound = constructor.clone();
+    for _ in 0..50_000 {
+        deep_bound = direct_bound_function(&mut vm, &deep_bound);
+    }
+    assert!(vm.is_constructor_value(&deep_bound));
+    assert!(vm
+        .ordinary_has_instance(&deep_bound, &object)
+        .expect("deep Bound instanceof must remain stack-safe and true"));
+    let unrelated_object =
+        Value::Object(vm.new_object().expect("unrelated object should allocate"));
+    assert!(!vm
+        .ordinary_has_instance(&deep_bound, &unrelated_object)
+        .expect("deep Bound instanceof must remain stack-safe and false"));
+
+    let transparent_handler = vm.get_global("transparentDefaultHandler");
+    let mut wrapped_default_bound = constructor.clone();
+    for _ in 0..10_000 {
+        wrapped_default_bound = direct_bound_function(&mut vm, &wrapped_default_bound);
+        set_direct_has_instance(&vm, &wrapped_default_bound, transparent_handler.clone());
+    }
+    assert!(vm
+        .instanceof_operator(&object, &wrapped_default_bound)
+        .expect("transparent wrapped default handlers must remain stack-safe"));
+
+    let default_intrinsic = vm.get_global("defaultHasInstanceIntrinsic");
+    let mut bound_default_bound = constructor.clone();
+    for _ in 0..10_000 {
+        bound_default_bound = direct_bound_function(&mut vm, &bound_default_bound);
+        let handler = direct_bound_function_with_this(
+            &mut vm,
+            &default_intrinsic,
+            bound_default_bound.clone(),
+        );
+        set_direct_has_instance(&vm, &bound_default_bound, handler);
+    }
+    assert!(vm
+        .instanceof_operator(&object, &bound_default_bound)
+        .expect("Bound-wrapped default handlers must remain stack-safe"));
+
+    let gc_transparent_handler = vm.get_global("gcTransparentDefaultHandler");
+    let mut gc_wrapped_default_bound = constructor;
+    for _ in 0..128 {
+        gc_wrapped_default_bound = direct_bound_function(&mut vm, &gc_wrapped_default_bound);
+        set_direct_has_instance(
+            &vm,
+            &gc_wrapped_default_bound,
+            gc_transparent_handler.clone(),
+        );
+    }
+    assert!(vm
+        .instanceof_operator(&object, &gc_wrapped_default_bound)
+        .expect("wrapped default handler state must survive observable GC"));
+
+    let trapped_handler = vm.get_global("trappedDefaultHandler");
+    let mut trapped_default_bound = vm.get_global("InstanceofTarget");
+    for _ in 0..2_000 {
+        trapped_default_bound = direct_bound_function(&mut vm, &trapped_default_bound);
+        set_direct_has_instance(&vm, &trapped_default_bound, trapped_handler.clone());
+    }
+    let error = vm
+        .instanceof_operator(&object, &trapped_default_bound)
+        .expect_err("re-entrant native apply traps must hit the VM call-depth guard");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.execution_contexts.len(), baseline_contexts);
+    assert_eq!(vm.active_native_call_depth, baseline_call_depth);
 }
 
 #[test]

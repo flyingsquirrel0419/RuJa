@@ -14,6 +14,7 @@ use std::borrow::Cow;
 use std::sync::Arc;
 
 const MAX_CALL_STACK_DEPTH: usize = 512;
+const MAX_NATIVE_CALL_DEPTH: usize = 128;
 
 #[derive(Clone, Copy)]
 enum AsyncFromSyncMethod {
@@ -1278,6 +1279,32 @@ impl Vm {
         args: &[Value],
         this: Option<Value>,
     ) -> error::Result<Value> {
+        self.call_function_dispatch(func, args, this, None)
+    }
+
+    pub(crate) fn call_has_instance_handler(
+        &mut self,
+        func: &Value,
+        object: &Value,
+        this: Value,
+    ) -> error::Result<HasInstanceHandlerCall> {
+        let mut continuation = None;
+        let value = self.call_function_dispatch(
+            func,
+            std::slice::from_ref(object),
+            Some(this),
+            Some(&mut continuation),
+        )?;
+        Ok(continuation.unwrap_or(HasInstanceHandlerCall::Value(value)))
+    }
+
+    fn call_function_dispatch(
+        &mut self,
+        func: &Value,
+        args: &[Value],
+        this: Option<Value>,
+        default_has_instance: Option<&mut Option<HasInstanceHandlerCall>>,
+    ) -> error::Result<Value> {
         if self.frames.len() >= MAX_CALL_STACK_DEPTH {
             return Err(Error::range("Maximum call stack size exceeded"));
         }
@@ -1316,7 +1343,8 @@ impl Vm {
             }
             n
         };
-        let result = self.call_function_inner(func, args, this, &mut pin_count);
+        let result =
+            self.call_function_inner(func, args, this, &mut pin_count, default_has_instance);
         self.unpin_many(pin_count);
         result
     }
@@ -1327,6 +1355,7 @@ impl Vm {
         args: &[Value],
         this: Option<Value>,
         pin_count: &mut usize,
+        default_has_instance: Option<&mut Option<HasInstanceHandlerCall>>,
     ) -> error::Result<Value> {
         // Cap the call-stack depth before pushing another frame. Without this
         // an unbounded JS recursion would overflow the Rust stack (each JS
@@ -1353,6 +1382,7 @@ impl Vm {
         let mut active_this = this;
         let mut bound_functions = Vec::new();
         let mut materialized_argument_count = args.len();
+        let mut transparent_call = true;
         let idx = loop {
             match self.call_traversal_step(&active_func) {
                 CallTraversalStep::Bound {
@@ -1451,6 +1481,7 @@ impl Vm {
                     active_this = Some(handler);
                     bound_functions.clear();
                     materialized_argument_count = 3;
+                    transparent_call = false;
                 }
                 CallTraversalStep::Function { function } => break function,
                 CallTraversalStep::Other => {
@@ -1497,6 +1528,28 @@ impl Vm {
         });
         match kind_info {
             Some(FuncCallInfo::Native { func: f, closure }) => {
+                if transparent_call
+                    && std::ptr::fn_addr_eq(
+                        f,
+                        crate::builtins::function_symbol_has_instance as NativeFn,
+                    )
+                {
+                    if let Some(continuation) = default_has_instance {
+                        #[cfg(test)]
+                        if std::mem::take(&mut self.fail_has_instance_continuation_reservation) {
+                            self.fail_next_gc_pin_reservation = true;
+                        }
+                        *continuation = Some(HasInstanceHandlerCall::Default {
+                            constructor: this.unwrap_or(Value::Undefined),
+                            object: args.first().cloned().unwrap_or(Value::Undefined),
+                            realm: crate::environment::global_env_root(&self.heap, closure),
+                        });
+                        return Ok(Value::Undefined);
+                    }
+                }
+                if self.active_native_call_depth >= MAX_NATIVE_CALL_DEPTH {
+                    return Err(Error::range("Maximum call stack size exceeded"));
+                }
                 let context = ExecutionContext {
                     realm_env: closure,
                     kind: ExecutionContextKind::Native {
@@ -1505,7 +1558,8 @@ impl Vm {
                         new_target_prototype: self.pending_new_target_prototype.take(),
                     },
                 };
-                self.with_execution_context(context, |vm| match f(vm, args, this) {
+                self.active_native_call_depth += 1;
+                let result = self.with_execution_context(context, |vm| match f(vm, args, this) {
                     Err(err) if err.catchable() && err.thrown_value.is_none() => {
                         match vm.make_error_value(&err) {
                             Ok(thrown) => Err(Error::thrown(thrown, &vm.heap)),
@@ -1513,7 +1567,9 @@ impl Vm {
                         }
                     }
                     result => result,
-                })
+                });
+                self.active_native_call_depth -= 1;
+                result
             }
             Some(FuncCallInfo::Interpreted {
                 func,

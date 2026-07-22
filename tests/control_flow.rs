@@ -402,6 +402,88 @@ fn instanceof_uses_symbol_has_instance() {
 }
 
 #[test]
+fn instanceof_gets_the_prototype_before_comparing_and_forwards_bound_handlers() {
+    assert_eq!(
+        run(r#"
+            function F() {}
+            var selfPrototype = F.prototype instanceof F;
+
+            var sentinel = {};
+            var calls = 0;
+            var throwingPrototype = new Proxy({}, {
+              getPrototypeOf: function () {
+                calls += 1;
+                throw sentinel;
+              }
+            });
+            F.prototype = throwingPrototype;
+            var sameSentinel = false;
+            try { throwingPrototype instanceof F; }
+            catch (error) { sameSentinel = error === sentinel; }
+
+            var log = [];
+            function Target() {}
+            Object.defineProperty(Target, Symbol.hasInstance, {
+              get: function () {
+                log.push("get");
+                return function (value) {
+                  log.push(this === Target ? "this" : "bad-this");
+                  log.push(value.marker);
+                  return "truthy";
+                };
+              }
+            });
+            var Bound = Target.bind(null);
+            var customResult = { marker: "value" } instanceof Bound;
+
+            function WrappedDefault() {}
+            var wrappedValue = Object.create(WrappedDefault.prototype);
+            var defaultHandler = Function.prototype[Symbol.hasInstance];
+            Object.defineProperty(WrappedDefault, Symbol.hasInstance, {
+              value: defaultHandler.bind(WrappedDefault)
+            });
+            var boundDefaultResult = wrappedValue instanceof WrappedDefault;
+
+            function ReboundDefault() {}
+            var reboundValue = Object.create(ReboundDefault.prototype);
+            function ReboundHost() {}
+            Object.defineProperty(ReboundHost, Symbol.hasInstance, {
+              value: defaultHandler.bind(ReboundDefault, reboundValue)
+            });
+            var reboundDefaultResult = ({} instanceof ReboundHost);
+
+            function ProxiedDefault() {}
+            var proxyCalls = 0;
+            var proxiedValue = Object.create(ProxiedDefault.prototype);
+            Object.defineProperty(ProxiedDefault, Symbol.hasInstance, {
+              value: new Proxy(defaultHandler, {
+                apply: function (target, thisArg, args) {
+                  proxyCalls += 1;
+                  return Reflect.apply(target, thisArg, args);
+                }
+              })
+            });
+            var proxiedDefaultResult = proxiedValue instanceof ProxiedDefault;
+
+            [
+              selfPrototype,
+              sameSentinel,
+              calls,
+              customResult,
+              log.join(","),
+              boundDefaultResult,
+              reboundDefaultResult,
+              proxiedDefaultResult,
+              proxyCalls
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "false|true|1|true|get,this,value|true|true|true|1"
+        ))
+    );
+}
+
+#[test]
 fn string_gt_comparison() {
     assert_eq!(run(r#""b" > "a";"#), Value::Bool(true));
     assert_eq!(run(r#""ab" >= "a";"#), Value::Bool(true));
