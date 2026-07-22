@@ -184,6 +184,10 @@ from test262_function_apply_admission import (
     FUNCTION_APPLY_FEATURES,
     FUNCTION_APPLY_FILES,
 )
+from test262_function_bind_admission import (
+    FUNCTION_BIND_FEATURES,
+    FUNCTION_BIND_FILES,
+)
 from test262_language_early_error_admission import (
     LANGUAGE_EARLY_ERROR_FEATURES,
     LANGUAGE_EARLY_ERROR_FILES,
@@ -3165,6 +3169,110 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                 self.assertEqual(
                     frozenset(metadata.get("features", [])), features, relative
                 )
+
+    def test_function_bind_admission_is_exact_live_disjoint_and_shared(self):
+        base = "built-ins/Function/prototype/bind"
+        expected = {
+            f"{base}/instance-length-default-value.js": frozenset({"Symbol"}),
+            f"{base}/instance-length-exceeds-int32.js": frozenset(),
+            f"{base}/instance-length-prop-desc.js": frozenset(),
+            f"{base}/instance-length-remaining-args.js": frozenset(),
+            f"{base}/instance-length-tointeger.js": frozenset(),
+            f"{base}/instance-name-chained.js": frozenset(),
+            f"{base}/instance-name-error.js": frozenset(),
+            f"{base}/instance-name-non-string.js": frozenset({"Symbol"}),
+            f"{base}/instance-name.js": frozenset(),
+        }
+        manifest = Path(__file__).with_name("test262_function_bind_admission.txt")
+        manifest_entries = tuple(
+            line
+            for raw_line in manifest.read_text().splitlines()
+            if (line := raw_line.strip()) and not line.startswith("#")
+        )
+        self.assertEqual(manifest_entries, tuple(expected))
+        self.assertEqual(FUNCTION_BIND_FILES, frozenset(expected))
+        self.assertEqual(FUNCTION_BIND_FEATURES, expected)
+
+        tools_dir = Path(__file__).resolve().parent
+        for other_manifest in tools_dir.glob("test262_*_admission.txt"):
+            if other_manifest.name == "test262_function_bind_admission.txt":
+                continue
+            other_files = {
+                line
+                for raw_line in other_manifest.read_text().splitlines()
+                if (line := raw_line.strip()) and not line.startswith("#")
+            }
+            self.assertTrue(
+                FUNCTION_BIND_FILES.isdisjoint(other_files), other_manifest.name
+            )
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        try:
+            test_root_available = test_root.is_dir()
+        except OSError:
+            test_root_available = False
+        if test_root_available:
+            property_helper_files = {
+                f"{base}/instance-length-prop-desc.js",
+                f"{base}/instance-name-chained.js",
+                f"{base}/instance-name-non-string.js",
+                f"{base}/instance-name.js",
+            }
+            for relative, features in expected.items():
+                path = test_root / relative
+                self.assertTrue(path.is_file(), relative)
+                metadata = test262_runner.parse_meta(path.read_text())
+                self.assertEqual(
+                    frozenset(metadata.get("features", [])), features, relative
+                )
+                self.assertEqual(
+                    metadata.get("includes", []),
+                    ["propertyHelper.js"] if relative in property_helper_files else [],
+                    relative,
+                )
+                self.assertEqual(metadata.get("flags", []), [], relative)
+                self.assertIsNone(metadata.get("negative"), relative)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            future = root / f"test/{base}/instance-name-future.js"
+            outside = root / "test/built-ins/Function/prototype/call/instance-name.js"
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    self.assertIs(tool.FUNCTION_BIND_FEATURES, FUNCTION_BIND_FEATURES)
+                    self.assertIs(tool.FUNCTION_BIND_FILES, FUNCTION_BIND_FILES)
+                    for relative, features in expected.items():
+                        path = root / "test" / relative
+                        self.assertTrue(tool.function_bind_path(path), relative)
+                        self.assertEqual(tool.function_bind_features(path), features)
+                        self.assertFalse(
+                            tool.should_skip({"features": sorted(features)}, path),
+                            relative,
+                        )
+                        self.assertTrue(
+                            tool.should_skip(
+                                {"features": sorted(features | {"decorators"})},
+                                path,
+                            ),
+                            relative,
+                        )
+                    for rejected in (future, outside, root / "outside.js"):
+                        self.assertFalse(tool.function_bind_path(rejected))
+                        self.assertEqual(
+                            tool.function_bind_features(rejected), frozenset()
+                        )
+                        self.assertTrue(
+                            tool.should_skip({"features": ["Symbol"]}, rejected)
+                        )
+                    for invalid in (None, object()):
+                        self.assertFalse(tool.function_bind_path(invalid))
+                        self.assertEqual(
+                            tool.function_bind_features(invalid), frozenset()
+                        )
+                finally:
+                    tool.TEST262 = original_root
 
     def test_proxy_own_keys_manifest_is_exact_live_and_shared(self):
         self.assertEqual(len(PROXY_OWN_KEYS_FILES), 40)

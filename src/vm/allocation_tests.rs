@@ -11389,3 +11389,120 @@ fn async_generator_reaction_does_not_replay_after_catchable_heap_error() {
     );
     vm.unpin_many(request_pins);
 }
+
+#[test]
+fn bound_function_metadata_abrupt_paths_restore_gc_pin_depth() {
+    let cases = [
+        r#"
+        var sentinel = { marker: "prototype" };
+        var target = new Proxy(function () {}, {
+          getPrototypeOf: function () { forceGc(); throw sentinel; }
+        });
+        var same = false;
+        try { Function.prototype.bind.call(target); }
+        catch (error) { same = error === sentinel; }
+        same;
+        "#,
+        r#"
+        var sentinel = { marker: "has-length" };
+        var target = new Proxy(function () {}, {
+          getOwnPropertyDescriptor: function (_, key) {
+            if (key === "length") { forceGc(); throw sentinel; }
+          }
+        });
+        var same = false;
+        try { Function.prototype.bind.call(target); }
+        catch (error) { same = error === sentinel; }
+        same;
+        "#,
+        r#"
+        var sentinel = { marker: "get-length" };
+        function target() {}
+        Object.defineProperty(target, "length", {
+          get: function () { forceGc(); throw sentinel; }
+        });
+        var same = false;
+        try { target.bind(); }
+        catch (error) { same = error === sentinel; }
+        same;
+        "#,
+        r#"
+        var sentinel = { marker: "get-name" };
+        function target() {}
+        Object.defineProperty(target, "name", {
+          get: function () { forceGc(); throw sentinel; }
+        });
+        var same = false;
+        try { target.bind(); }
+        catch (error) { same = error === sentinel; }
+        same;
+        "#,
+    ];
+
+    for source in cases {
+        let mut vm = Vm::new().expect("VM should initialize");
+        vm.register_fn(
+            "forceGc",
+            |vm, _, _| {
+                vm.gc();
+                Ok(Value::Undefined)
+            },
+            0,
+        )
+        .expect("GC hook should register");
+        let baseline_pins = vm.gc_pins.len();
+        assert_eq!(
+            vm.run(source)
+                .expect("bound metadata abrupt completion should stay catchable"),
+            Value::Bool(true)
+        );
+        assert_eq!(vm.gc_pins.len(), baseline_pins, "pin leak after {source}");
+    }
+}
+
+#[test]
+fn bound_function_metadata_allocation_obeys_the_exact_heap_cap() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.run("function target(a, b) {}")
+        .expect("bound target should initialize");
+    let target = vm.get_global("target");
+    let bind = vm
+        .get_property(&target, "bind")
+        .expect("Function.prototype.bind should be readable");
+    let retained_pins = vm.pin_many(&[target.clone(), bind.clone()]);
+
+    vm.gc();
+    let baseline_pins = vm.gc_pins.len();
+    let exact_success_limit = vm.heap.live_count() + 1;
+    vm.set_max_heap_objects(Some(exact_success_limit));
+    let bound = vm
+        .call_function(&bind, &[], Some(target.clone()))
+        .expect("one available slot should hold the bound function");
+    assert_eq!(
+        vm.get_property(&bound, "length")
+            .expect("bound length should be readable"),
+        Value::Number(2.0)
+    );
+    assert_eq!(
+        vm.get_property(&bound, "name")
+            .expect("bound name should be readable"),
+        Value::String(Arc::from("bound target"))
+    );
+    assert_eq!(vm.heap.live_count(), exact_success_limit);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    vm.set_max_heap_objects(None);
+    drop(bound);
+    vm.gc();
+    let exact_failure_limit = vm.heap.live_count();
+    vm.set_max_heap_objects(Some(exact_failure_limit));
+    let error = vm
+        .call_function(&bind, &[], Some(target))
+        .expect_err("a full heap must reject the bound allocation");
+    vm.set_max_heap_objects(None);
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.heap.live_count(), exact_failure_limit);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    vm.unpin_many(retained_pins);
+}

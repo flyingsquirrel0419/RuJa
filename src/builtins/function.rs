@@ -107,6 +107,7 @@ pub(crate) fn function_bind(
     } else {
         Vec::new()
     };
+    let bound_arg_count = bound_args.len();
     let target_idx = match &target {
         Value::Object(i) => *i,
         _ => return Err(error::Error::type_err("not a function")),
@@ -135,13 +136,75 @@ pub(crate) fn function_bind(
         is_class_ctor: std::sync::atomic::AtomicBool::new(false),
         prototype: Mutex::new(None),
         proto: Mutex::new(function_proto),
-        props: Mutex::new(IndexMap::new()),
+        // Reserve metadata slots before the object becomes the root that keeps
+        // target, thisArg, bound arguments, and [[Prototype]] alive across the
+        // observable target length/name operations below.
+        props: Mutex::new(IndexMap::with_capacity(2)),
         extensible: std::sync::atomic::AtomicBool::new(true),
         private_fields: Mutex::new(std::collections::HashMap::new()),
     };
-    let result = vm.alloc(HeapObj::Function(bound)).map(Value::Object);
+    let result = vm.alloc(HeapObj::Function(bound));
     vm.unpin_many(proto_pin);
+    let bound_idx = result?;
+    let bound_value = Value::Object(bound_idx);
+    let bound_pin = vm.pin(&bound_value);
+    let result = (|| {
+        let length_key = PropertyKey::from("length");
+        let target_has_length =
+            own_property_descriptor_for_key_or_throw(vm, &target, &length_key)?.is_some();
+        let length = if target_has_length {
+            match vm.get_property(&target, "length")? {
+                Value::Number(target_length) => {
+                    bound_function_length(target_length, bound_arg_count)
+                }
+                _ => 0.0,
+            }
+        } else {
+            0.0
+        };
+
+        let target_name = match vm.get_property(&target, "name")? {
+            Value::String(name) => name,
+            _ => Arc::from(""),
+        };
+        let bound_name = Arc::from(format!("bound {target_name}").as_str());
+
+        let mut length_desc = PropertyDescriptor::data(Value::Number(length));
+        length_desc.writable = false;
+        length_desc.enumerable = false;
+        length_desc.configurable = true;
+        let mut name_desc = PropertyDescriptor::data(Value::String(bound_name));
+        name_desc.writable = false;
+        name_desc.enumerable = false;
+        name_desc.configurable = true;
+        vm.heap.with_obj(bound_idx.0, |object| {
+            let HeapObj::Function(function) = object else {
+                unreachable!("newly allocated bound function changed heap kind")
+            };
+            let mut props = function.props.lock();
+            props.insert(length_key, length_desc);
+            props.insert(PropertyKey::from("name"), name_desc);
+        });
+        Ok(bound_value)
+    })();
+    vm.unpin_many(bound_pin);
     result
+}
+
+fn bound_function_length(target_length: f64, bound_arg_count: usize) -> f64 {
+    if target_length == f64::INFINITY {
+        return f64::INFINITY;
+    }
+    if !target_length.is_finite() {
+        return 0.0;
+    }
+    let integer = target_length.trunc();
+    let bound_arg_count = bound_arg_count as f64;
+    if integer > bound_arg_count {
+        integer - bound_arg_count
+    } else {
+        0.0
+    }
 }
 
 /// `Function.prototype[Symbol.hasInstance](value)`: expose

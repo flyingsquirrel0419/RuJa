@@ -12669,6 +12669,173 @@ fn native_constructor_new_target_does_not_leak_to_next_call() {
 }
 
 #[test]
+fn bound_function_name_and_length_follow_target_metadata() {
+    assert_eq!(
+        run(r#"
+            function target(a, b, c) {}
+            var bound = target.bind(null, 1);
+            var lengthDesc = Object.getOwnPropertyDescriptor(bound, "length");
+            var nameDesc = Object.getOwnPropertyDescriptor(bound, "name");
+            var chained = bound.bind(null);
+
+            function numeric() {}
+            Object.defineProperty(numeric, "length", { value: 3.66 });
+            var fractional = numeric.bind(null, 1).length;
+            Object.defineProperty(numeric, "length", { value: Infinity });
+            var positiveInfinity = numeric.bind(null, 1).length;
+            Object.defineProperty(numeric, "length", { value: -Infinity });
+            var negativeInfinity = numeric.bind().length;
+            Object.defineProperty(numeric, "length", { value: NaN });
+            var nan = numeric.bind().length;
+            Object.defineProperty(numeric, "length", { value: -0 });
+            var negativeZeroNormalized = Object.is(numeric.bind().length, -0);
+            var coerced = false;
+            Object.defineProperty(numeric, "length", {
+              value: { valueOf: function() { coerced = true; throw new Error("coerced"); } }
+            });
+            var nonNumberLength = numeric.bind().length;
+            Object.defineProperty(numeric, "name", { value: 23 });
+            var nonStringName = numeric.bind().name;
+
+            function inherited() {}
+            delete inherited.length;
+            Object.setPrototypeOf(inherited, { length: 42, name: "inherited" });
+            var inheritedBound = Function.prototype.bind.call(inherited);
+
+            var proxyLog = [];
+            var noOwnLength = new Proxy(function () {}, {
+              getOwnPropertyDescriptor: function(target, key) {
+                if (key === "length") { proxyLog.push("own:length"); return undefined; }
+                return Reflect.getOwnPropertyDescriptor(target, key);
+              },
+              get: function(target, key, receiver) {
+                if (key === "length" || key === "name") proxyLog.push("get:" + key);
+                return Reflect.get(target, key, receiver);
+              }
+            });
+            var noOwnLengthBound = noOwnLength.bind();
+
+            var deleted = target.bind();
+            Object.setPrototypeOf(deleted, { name: "prototype-name" });
+            delete deleted.name;
+            var reboundDeleted = Function.prototype.bind.call(deleted);
+            var ownKeys = Reflect.ownKeys(bound).join(",");
+
+            [
+              bound.name,
+              bound.length,
+              chained.name,
+              lengthDesc.writable,
+              lengthDesc.enumerable,
+              lengthDesc.configurable,
+              nameDesc.writable,
+              nameDesc.enumerable,
+              nameDesc.configurable,
+              fractional,
+              positiveInfinity,
+              negativeInfinity,
+              nan,
+              negativeZeroNormalized,
+              nonNumberLength,
+              coerced,
+              nonStringName,
+              inheritedBound.length,
+              inheritedBound.name,
+              noOwnLengthBound.length,
+              proxyLog.join(","),
+              deleted.name,
+              reboundDeleted.name,
+              ownKeys,
+              Object.hasOwn(bound, "prototype"),
+              Object.hasOwn(bound, "caller"),
+              Object.hasOwn(bound, "arguments")
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "bound target|2|bound bound target|false|false|true|false|false|true|2|Infinity|0|0|false|0|false|bound |0|bound inherited|0|own:length,get:name|prototype-name|bound prototype-name|length,name|false|false|false"
+        ))
+    );
+
+    assert_eq!(
+        run(r#"
+            var sentinel = {};
+            var log = [];
+            function target() {}
+            Object.defineProperty(target, "length", {
+              get: function() { log.push("length"); throw sentinel; }
+            });
+            Object.defineProperty(target, "name", {
+              get: function() { log.push("name"); return "target"; }
+            });
+            var same = false;
+            try { target.bind(); } catch (error) { same = error === sentinel; }
+            [same, log.join(",")].join("|");
+        "#),
+        Value::String(Arc::from("true|length"))
+    );
+}
+
+#[test]
+fn bound_function_metadata_observation_order_survives_gc() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+
+    assert_eq!(
+        vm.run(r#"
+            var log = [];
+            function target(a, b) {}
+            Object.defineProperty(target, "length", {
+              configurable: true,
+              get: function() { log.push("get:length"); forceGc(); return 2.9; }
+            });
+            Object.defineProperty(target, "name", {
+              configurable: true,
+              get: function() { log.push("get:name"); forceGc(); return "target"; }
+            });
+            var proxy = new Proxy(target, {
+              getPrototypeOf: function(inner) {
+                log.push("prototype");
+                forceGc();
+                return Reflect.getPrototypeOf(inner);
+              },
+              getOwnPropertyDescriptor: function(inner, key) {
+                if (key === "length") log.push("own:length");
+                forceGc();
+                return Reflect.getOwnPropertyDescriptor(inner, key);
+              },
+              get: function(inner, key, receiver) {
+                if (key === "length" || key === "name") log.push("proxy:" + key);
+                forceGc();
+                return Reflect.get(inner, key, receiver);
+              }
+            });
+            var bound = proxy.bind({ kept: true }, { argument: true });
+            forceGc();
+            [
+              log.join(","),
+              bound.length,
+              bound.name,
+              Object.getPrototypeOf(bound) === Function.prototype,
+              Object.getOwnPropertyDescriptor(bound, "length").configurable,
+              Object.getOwnPropertyDescriptor(bound, "name").configurable
+            ].join("|");
+        "#)
+        .expect("bound metadata observation and GC path should succeed"),
+        Value::String(Arc::from(
+            "prototype,own:length,proxy:length,get:length,proxy:name,get:name|1|bound target|true|true|true"
+        ))
+    );
+}
+
+#[test]
 fn bound_functions_inherit_restricted_caller_arguments_accessors() {
     assert_eq!(
         run("function target() {}\

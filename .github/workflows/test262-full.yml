@@ -54,6 +54,12 @@ jobs:
           TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
           test262_tooling_test.ModuleCoreAdmissionTests.test_language_early_error_admission_is_exact_and_shared
           -v
+      - name: Verify exact Function.prototype.bind admission
+        working-directory: tools
+        run: >-
+          TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
+          test262_tooling_test.ModuleCoreAdmissionTests.test_function_bind_admission_is_exact_live_disjoint_and_shared
+          -v
       - name: Build directory matrix
         id: dirs
         run: |

@@ -154,6 +154,9 @@ try:
     from test262_function_apply_admission import (
         FUNCTION_APPLY_FEATURES, FUNCTION_APPLY_FILES,
     )
+    from test262_function_bind_admission import (
+        FUNCTION_BIND_FEATURES, FUNCTION_BIND_FILES,
+    )
     from test262_language_early_error_admission import (
         LANGUAGE_EARLY_ERROR_FEATURES,
         LANGUAGE_EARLY_ERROR_FILES,
@@ -314,6 +317,9 @@ except ModuleNotFoundError:
     )
     from tools.test262_function_apply_admission import (
         FUNCTION_APPLY_FEATURES, FUNCTION_APPLY_FILES,
+    )
+    from tools.test262_function_bind_admission import (
+        FUNCTION_BIND_FEATURES, FUNCTION_BIND_FILES,
     )
     from tools.test262_language_early_error_admission import (
         LANGUAGE_EARLY_ERROR_FEATURES,
@@ -2859,6 +2865,21 @@ def function_apply_features(path):
         return frozenset()
     return FUNCTION_APPLY_FEATURES.get(rel.as_posix(), frozenset())
 
+def function_bind_path(path):
+    if path is None:
+        return False
+    try:
+        rel = Path(path).resolve().relative_to(Path(TEST262).resolve() / "test")
+    except (OSError, TypeError, ValueError):
+        return False
+    return rel.as_posix() in FUNCTION_BIND_FILES
+
+def function_bind_features(path):
+    if not function_bind_path(path):
+        return frozenset()
+    rel = Path(path).resolve().relative_to(Path(TEST262).resolve() / "test")
+    return FUNCTION_BIND_FEATURES[rel.as_posix()]
+
 def language_early_error_path(path):
     if path is None:
         return False
@@ -3202,6 +3223,8 @@ def should_skip(meta, path=None):
         feats.difference_update(reflect_call_features(path))
     if path is not None and function_apply_path(path):
         feats.difference_update(function_apply_features(path))
+    if path is not None and function_bind_path(path):
+        feats.difference_update(function_bind_features(path))
     if path is not None and language_early_error_path(path):
         feats.difference_update(language_early_error_features(path))
     if path is not None and reference_primitive_path(path):

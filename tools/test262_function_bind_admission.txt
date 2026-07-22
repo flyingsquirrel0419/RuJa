@@ -1,0 +1,10 @@
+# Frozen Function.prototype.bind bound-function name and length files.
+built-ins/Function/prototype/bind/instance-length-default-value.js
+built-ins/Function/prototype/bind/instance-length-exceeds-int32.js
+built-ins/Function/prototype/bind/instance-length-prop-desc.js
+built-ins/Function/prototype/bind/instance-length-remaining-args.js
+built-ins/Function/prototype/bind/instance-length-tointeger.js
+built-ins/Function/prototype/bind/instance-name-chained.js
+built-ins/Function/prototype/bind/instance-name-error.js
+built-ins/Function/prototype/bind/instance-name-non-string.js
+built-ins/Function/prototype/bind/instance-name.js
