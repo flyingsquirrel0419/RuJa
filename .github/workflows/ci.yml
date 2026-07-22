@@ -7,6 +7,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  TEST262_REV: 9e61c12835c5e4a3bdba93850427e6742c4f64c4
 
 jobs:
   test:
@@ -37,14 +38,26 @@ jobs:
           cargo test --release --lib
           vm::allocation_tests::failed_realm_construction_rolls_back_every_heap_boundary
           -- --exact
-      - name: Checkout test262 (sparse)
-        run: |
-          git clone --depth 1 --filter=blob:none --sparse https://github.com/tc39/test262.git ~/test262
-          cd ~/test262
-          git sparse-checkout set harness test/language/expressions/arrow-function test/language/expressions/function test/language/expressions/object test/language/identifiers test/language/keywords test/language/types test/language/comments test/language/white-space test/language/punctuators
+      - name: Checkout pinned test262 (sparse)
+        uses: actions/checkout@v4
+        with:
+          repository: tc39/test262
+          ref: ${{ env.TEST262_REV }}
+          path: test262
+          sparse-checkout: |
+            harness
+            test/language/expressions/arrow-function
+            test/language/expressions/function
+            test/language/expressions/object
+            test/language/identifiers
+            test/language/keywords
+            test/language/types
+            test/language/comments
+            test/language/white-space
+            test/language/punctuators
       - name: Run test262 subset
         run: |
-          TEST262=~/test262 python3 tools/test262_runner.py \
+          TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
             language/expressions/arrow-function \
             language/expressions/function \
             language/expressions/object \

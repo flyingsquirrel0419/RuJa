@@ -148,6 +148,10 @@ from test262_array_to_locale_string_admission import (
     ARRAY_TO_LOCALE_STRING_FEATURES,
     ARRAY_TO_LOCALE_STRING_FILES,
 )
+from test262_typed_array_to_locale_string_admission import (
+    TYPED_ARRAY_TO_LOCALE_STRING_FEATURES,
+    TYPED_ARRAY_TO_LOCALE_STRING_FILES,
+)
 from test262_array_join_admission import ARRAY_JOIN_FEATURES, ARRAY_JOIN_FILES
 from test262_array_flat_admission import (
     ARRAY_FLAT_FEATURES,
@@ -4277,6 +4281,211 @@ class ArrayToLocaleStringAdmissionTests(unittest.TestCase):
                     tool.TEST262 = original_root
 
 
+class TypedArrayToLocaleStringAdmissionTests(unittest.TestCase):
+    def test_manifest_is_exact_live_disjoint_and_shared(self):
+        base = "built-ins/TypedArray/prototype/toLocaleString"
+        bigint_names = {
+            "calls-tolocalestring-from-each-value.js",
+            "calls-tostring-from-each-value.js",
+            "calls-valueof-from-each-value.js",
+            "detached-buffer.js",
+            "empty-instance-returns-empty-string.js",
+            "get-length-uses-internal-arraylength.js",
+            "return-abrupt-from-firstelement-tolocalestring.js",
+            "return-abrupt-from-firstelement-tostring.js",
+            "return-abrupt-from-firstelement-valueof.js",
+            "return-abrupt-from-nextelement-tolocalestring.js",
+            "return-abrupt-from-nextelement-tostring.js",
+            "return-abrupt-from-nextelement-valueof.js",
+            "return-abrupt-from-this-out-of-bounds.js",
+            "return-result.js",
+        }
+        number_names = {
+            "calls-tolocalestring-from-each-value.js",
+            "calls-tostring-from-each-value.js",
+            "calls-valueof-from-each-value.js",
+            "detached-buffer.js",
+            "empty-instance-returns-empty-string.js",
+            "get-length-uses-internal-arraylength.js",
+            "invoked-as-func.js",
+            "invoked-as-method.js",
+            "length.js",
+            "name.js",
+            "not-a-constructor.js",
+            "prop-desc.js",
+            "return-abrupt-from-firstelement-tolocalestring.js",
+            "return-abrupt-from-firstelement-tostring.js",
+            "return-abrupt-from-firstelement-valueof.js",
+            "return-abrupt-from-nextelement-tolocalestring.js",
+            "return-abrupt-from-nextelement-tostring.js",
+            "return-abrupt-from-nextelement-valueof.js",
+            "return-abrupt-from-this-out-of-bounds.js",
+            "return-result.js",
+            "this-is-not-object.js",
+            "this-is-not-typedarray-instance.js",
+        }
+        rab_names = {
+            "resizable-buffer.js",
+            "user-provided-tolocalestring-grow.js",
+            "user-provided-tolocalestring-shrink.js",
+        }
+
+        expected_features = {
+            f"{base}/BigInt/{name}": frozenset({"BigInt", "TypedArray"})
+            for name in bigint_names
+        }
+        expected_features.update(
+            {
+                f"{base}/{name}": frozenset({"TypedArray"})
+                for name in number_names
+            }
+        )
+        expected_features.update(
+            {
+                f"{base}/{name}": frozenset({"resizable-arraybuffer"})
+                for name in rab_names
+            }
+        )
+        for prefix in ("", "BigInt/"):
+            relative = f"{base}/{prefix}return-abrupt-from-this-out-of-bounds.js"
+            expected_features[relative] |= {
+                "ArrayBuffer",
+                "arrow-function",
+                "resizable-arraybuffer",
+            }
+        expected_features[f"{base}/not-a-constructor.js"] |= {
+            "Reflect.construct",
+            "arrow-function",
+        }
+        expected_features[f"{base}/this-is-not-object.js"] |= {"Symbol"}
+
+        self.assertEqual(
+            TYPED_ARRAY_TO_LOCALE_STRING_FILES, frozenset(expected_features)
+        )
+        self.assertEqual(
+            TYPED_ARRAY_TO_LOCALE_STRING_FEATURES, expected_features
+        )
+
+        tools_dir = Path(__file__).resolve().parent
+        for manifest in tools_dir.glob("test262_*_admission.txt"):
+            if manifest.name == "test262_typed_array_to_locale_string_admission.txt":
+                continue
+            existing = {
+                line
+                for raw_line in manifest.read_text().splitlines()
+                if (line := raw_line.strip()) and not line.startswith("#")
+            }
+            self.assertTrue(
+                TYPED_ARRAY_TO_LOCALE_STRING_FILES.isdisjoint(existing),
+                manifest.name,
+            )
+
+        expected_includes = {
+            relative: ["testTypedArray.js"] for relative in expected_features
+        }
+        expected_includes[f"{base}/calls-tolocalestring-from-each-value.js"] = [
+            "testTypedArray.js",
+            "compareArray.js",
+        ]
+        expected_includes[
+            f"{base}/BigInt/calls-tolocalestring-from-each-value.js"
+        ] = ["testTypedArray.js", "compareArray.js"]
+        for prefix in ("", "BigInt/"):
+            expected_includes[f"{base}/{prefix}detached-buffer.js"] = [
+                "testTypedArray.js",
+                "detachArrayBuffer.js",
+            ]
+        for name in ("length.js", "name.js", "prop-desc.js"):
+            expected_includes[f"{base}/{name}"] = [
+                "propertyHelper.js",
+                "testTypedArray.js",
+            ]
+        expected_includes[f"{base}/not-a-constructor.js"] = [
+            "isConstructor.js",
+            "testTypedArray.js",
+        ]
+        for name in rab_names:
+            expected_includes[f"{base}/{name}"] = ["resizableArrayBufferUtils.js"]
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        try:
+            test_root_available = test_root.is_dir()
+        except OSError:
+            test_root_available = False
+        if test_root_available:
+            actual_files = frozenset(
+                path.relative_to(test_root).as_posix()
+                for path in (test_root / base).rglob("*.js")
+                if "_FIXTURE" not in path.name
+            )
+            self.assertEqual(
+                actual_files, TYPED_ARRAY_TO_LOCALE_STRING_FILES
+            )
+            for relative, features in expected_features.items():
+                path = test_root / relative
+                self.assertTrue(path.is_file(), relative)
+                metadata = test262_runner.parse_meta(path.read_text())
+                self.assertEqual(
+                    frozenset(metadata.get("features", [])), features, relative
+                )
+                self.assertEqual(
+                    metadata.get("includes", []), expected_includes[relative], relative
+                )
+                self.assertEqual(metadata.get("flags", []), [], relative)
+                self.assertIsNone(metadata.get("negative"), relative)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            future = root / f"test/{base}/future.js"
+            outside = root / "test/built-ins/TypedArray/prototype/unsupported/future.js"
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    self.assertFalse(tool.typed_array_to_locale_string_path(None))
+                    self.assertEqual(
+                        tool.typed_array_to_locale_string_features(None), frozenset()
+                    )
+                    for relative, features in expected_features.items():
+                        path = root / "test" / relative
+                        self.assertTrue(
+                            tool.typed_array_to_locale_string_path(path), relative
+                        )
+                        self.assertEqual(
+                            tool.typed_array_to_locale_string_features(path), features
+                        )
+                        self.assertFalse(
+                            tool.should_skip(
+                                {"flags": [], "features": sorted(features)}, path
+                            ),
+                            relative,
+                        )
+                        self.assertTrue(
+                            tool.should_skip(
+                                {
+                                    "flags": [],
+                                    "features": sorted(features | {"decorators"}),
+                                },
+                                path,
+                            ),
+                            relative,
+                        )
+                    for path in (future, outside):
+                        self.assertFalse(tool.typed_array_to_locale_string_path(path))
+                        self.assertEqual(
+                            tool.typed_array_to_locale_string_features(path),
+                            frozenset(),
+                        )
+                        self.assertTrue(
+                            tool.should_skip(
+                                {"flags": [], "features": ["resizable-arraybuffer"]},
+                                path,
+                            )
+                        )
+                finally:
+                    tool.TEST262 = original_root
+
+
 class ArrayForEachAdmissionTests(unittest.TestCase):
     def test_manifest_is_exact_live_disjoint_and_shared(self):
         names = {
@@ -6676,32 +6885,6 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
                     "Symbol",
                     "TypedArray",
                     "align-detached-buffer-semantics-with-web-reality",
-                    "arrow-function",
-                    "resizable-arraybuffer",
-                ],
-            }
-            for tool in (test262_runner, test262_analyze):
-                original_root = tool.TEST262
-                tool.TEST262 = str(root)
-                try:
-                    self.assertFalse(tool.should_skip(meta, inside))
-                    self.assertTrue(tool.should_skip(meta, outside))
-                finally:
-                    tool.TEST262 = original_root
-
-    def test_to_locale_string_features_are_admitted_only_on_its_path(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            root = Path(temp_dir)
-            inside = root / "test/built-ins/TypedArray/prototype/toLocaleString/case.js"
-            outside = root / "test/built-ins/TypedArray/prototype/unsupported/case.js"
-            meta = {
-                "flags": [],
-                "features": [
-                    "ArrayBuffer",
-                    "BigInt",
-                    "Reflect.construct",
-                    "Symbol",
-                    "TypedArray",
                     "arrow-function",
                     "resizable-arraybuffer",
                 ],

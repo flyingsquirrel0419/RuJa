@@ -13,6 +13,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  TEST262_REV: 9e61c12835c5e4a3bdba93850427e6742c4f64c4
 
 jobs:
   build:
@@ -33,14 +34,24 @@ jobs:
     outputs:
       dirs: ${{ steps.dirs.outputs.dirs }}
     steps:
-      - name: Checkout full test262
-        run: git clone --depth 1 https://github.com/tc39/test262.git ~/test262
+      - uses: actions/checkout@v4
+      - name: Checkout pinned test262
+        uses: actions/checkout@v4
+        with:
+          repository: tc39/test262
+          ref: ${{ env.TEST262_REV }}
+          path: test262
+      - name: Verify exact TypedArray locale admission
+        working-directory: tools
+        run: >-
+          TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
+          test262_tooling_test.TypedArrayToLocaleStringAdmissionTests -v
       - name: Build directory matrix
         id: dirs
         run: |
           # Enumerate test262/test children. language/ is expanded into its
           # subdirectories; do not also include language/ itself.
-          dirs=$(cd ~/test262/test && {
+          dirs=$(cd test262/test && {
             find . -maxdepth 1 -mindepth 1 -type d | sed 's|^\./||' | grep -vxE 'harness|language|intl402|staging'
             find ./language -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sed 's|^\./||'
           } | sort -u | jq -R . | jq -s -c .)
@@ -64,13 +75,17 @@ jobs:
           path: target/release/
       - name: Make RuJa executable
         run: chmod +x target/release/ruja
-      - name: Checkout full test262
-        run: git clone --depth 1 https://github.com/tc39/test262.git ~/test262
+      - name: Checkout pinned test262
+        uses: actions/checkout@v4
+        with:
+          repository: tc39/test262
+          ref: ${{ env.TEST262_REV }}
+          path: test262
       - name: Run test262 /${{ matrix.dir }}
         run: |
           DIR="${{ matrix.dir }}"
           SAFE_DIR="${DIR//\//_}"
-          TEST262=~/test262 python3 tools/test262_runner.py "$DIR" > "test262_${SAFE_DIR}_result.txt" 2>&1
+          TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py "$DIR" > "test262_${SAFE_DIR}_result.txt" 2>&1
           cat "test262_${SAFE_DIR}_result.txt"
       - name: Publish /${{ matrix.dir }} pass rate
         if: always()
