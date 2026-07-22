@@ -1772,13 +1772,18 @@ of the matrix. Against the preceding identical matrix, exactly 42 focused
 files moved from skip to pass.
 
 Focused TypedArray `toLocaleString` coverage check:
+The following paragraph records the implementation and admission state at that
+historical milestone. Its two-argument and mutable-global lookup details are
+superseded by the later semantic-hardening section near the end of this file.
 `%TypedArray%.prototype.toLocaleString` validates its receiver and snapshots
 the view length, then reads each current element and invokes its
 `toLocaleString` method with exactly two locale arguments, including explicit
 `undefined` values when omitted. Primitive method lookup uses the TypedArray
-method's Realm; Number locale conversion ignores radix semantics and BigInt
-uses its own intrinsic locale method. Each returned value is converted with
-`ToString`, preserving observable `toString`/`valueOf` hooks and abrupt
+method's Realm but passes through that Realm's mutable global `Number` or
+`BigInt` binding and its prototype; Number locale conversion ignores radix
+semantics and BigInt uses the selected BigInt prototype method. Each returned
+value is converted with `ToString`, preserving observable `toString`/`valueOf`
+hooks and abrupt
 completions. Detach and shrink produce empty fields at invalidated snapshot
 indexes, while growth does not extend the visit range. The exact path improves
 from **6 pass / 33 fail / 0 skip** to **39 pass / 0 fail / 0 skip / 39 total**.
@@ -9771,6 +9776,58 @@ diagnostic.
 - 선택한 방식: Add one generic ToObject/LengthOfArrayLike path with the implementation-defined comma separator, live Get and zero-argument Invoke per non-nullish element, returned-value ToString, operation-wide roots, shared cycle suppression, per-index fuel, fallible intermediate growth, and one exact four-path admission map.
 - 다른 대안 대신 이 방식을 선택한 이유: Join performs ordinary ToString rather than element locale invocation; the TypedArray method has separate validation and internal-length semantics plus independent known gaps; non-ECMA-402 parameters must be ignored; global or prefix admission overclaims unrelated and future behavior; and separate units keep both contracts measurable.
 - 장점, 단점 및 영향: Direct Array toLocaleString is 12/12 with seven runtime fail-to-pass transitions, generic and resizable TypedArray receivers follow live property semantics, primitive Invoke and method-Realm errors are covered, and adjacent cohorts stay green. Final Arc publication remains infallible, while the distinct TypedArray locale implementation still requires its own zero-argument GetV, fuel, and fallible-growth pass.
+```
+
+## TypedArray toLocaleString semantic hardening
+
+Feature commit `0a5d7ea` repairs behavior that the already-admitted direct
+cohort did not distinguish. `%TypedArray%.prototype.toLocaleString` still
+validates the receiver and snapshots its internal TypedArray length before
+indexed work. For every captured index it consumes one fuel unit, performs the
+current integer-indexed `Get`, resolves `toLocaleString` through primitive
+`GetV` in the method Realm, calls the selected method with the primitive value
+as `this` and no arguments, then applies `ToString` to the result. Caller
+locale/options arguments are deliberately ignored because RuJa does not yet
+implement ECMA-402. Replacing a Realm's global `Number` or `BigInt` binding no
+longer redirects primitive method lookup.
+
+Source, element, method, result, and thrown values remain rooted across
+observable lookup, call, conversion, and forced GC. Abrupt validation, lookup,
+call, conversion, and fuel exits restore pin depth. Intermediate string growth
+uses checked fallible reservation, while final `Arc<str>` publication retains
+the documented runtime-wide infallible-allocation limitation.
+
+On fixed checkout `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, direct TypedArray
+`toLocaleString` remains **39/39** because the existing files do not assert the
+correct zero-argument and immutable-intrinsic lookup details. Array
+`toLocaleString` remains **12/12**, and TypedArray-constructor inheritance is
+**2/2**. A release-binary diagnostic moves from `1|2|bad` to `1|0|1`.
+Local verification passes all targets/features with **214/214** library tests,
+**535/535** builtins tests, and **15/15** arguments tests, plus **213/213**
+release library tests, **133/133** Python tooling tests, **1/1** doctest,
+rustfmt, warnings-denied Clippy, release build, generated documentation, and
+wasm32 checking. Rustdoc retains the 13 pre-existing broken intra-doc-link
+warnings. Independent GPT-5.6 runtime and verification reviews found no code
+defect. The verification review separately identified that this older
+TypedArray directory-prefix admission can grow with future Test262 siblings;
+freezing the current 39-file metadata set remains a narrow tooling follow-up.
+
+CI `29886017567` and full matrix `29886017568` pass all jobs. Downloaded
+artifacts aggregate to **31872 pass / 5126 fail / 11466 skip / 3 timeout / 0
+error / 48467 total / 36998 run**. All 30 result files, including `built-ins`,
+are byte-identical to Array locale full run `29883661759`, proving no Test262
+status transition. The downloaded release binary independently reports
+diagnostic `1|0|1`, direct TypedArray locale **39/39**, and combined Array
+locale plus TypedArray-constructor inheritance **14/14**.
+
+```text
+[Decision Log]
+- 목적과 의도: Correct TypedArray element locale invocation and resource behavior even though the existing direct Test262 cohort was already green.
+- 기존 구현 및 제약 조건: The method correctly validated and snapshotted a TypedArray, but forwarded two locale arguments, resolved Number or BigInt through mutable global bindings, performed unchecked intermediate string growth, and charged no per-index fuel; RuJa has no ECMA-402 implementation.
+- 검토한 주요 대안: Leave the green 39/39 implementation unchanged; delegate to generic Array toLocaleString; add ECMA-402 argument forwarding; retain mutable constructor lookup; or combine the repair with admission-policy changes.
+- 선택한 방식: Preserve TypedArray validation and internal-length capture, then use current indexed Get, primitive GetV in the method Realm, zero-argument calls, returned-value ToString, operation roots, one fuel charge per captured index, and fallible intermediate growth.
+- 다른 대안 대신 이 방식을 선택한 이유: Green tests did not prove the uncovered observable semantics; generic Array handling would use LengthOfArrayLike instead of ValidateTypedArray and TypedArrayLength; forwarding locales without ECMA-402 is incorrect; global constructor bindings are not primitive intrinsic lookup; and keeping admission hardening separate makes the runtime change independently measurable.
+- 장점, 단점 및 영향: Custom diagnostics now distinguish and pass zero arguments, immutable primitive lookup, foreign Realms, Number and BigInt, forced GC, abrupt completion, and exact fuel while all direct and adjacent Test262 files stay green. The full matrix has no status transition, final Arc publication remains infallible, and the pre-existing directory-prefix admission still needs a frozen-manifest follow-up.
 ```
 
 ## Why the full-suite rate is not higher

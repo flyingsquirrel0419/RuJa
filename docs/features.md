@@ -189,6 +189,12 @@
   `%Array.prototype.values%` as their own writable, non-enumerable
   `Symbol.iterator`, while iteration still observes later deletion or
   replacement of that own property
+- **TypedArray**: `%TypedArray%.prototype.toLocaleString` validates the receiver,
+  snapshots the internal view length, and reads each current integer index in
+  order. Every non-nullish Number or BigInt resolves `toLocaleString` through
+  primitive `GetV` in the method Realm, receives no locale arguments in the
+  non-ECMA-402 runtime, and converts the returned value with `ToString`.
+  Per-index work is fuel-metered and intermediate output growth is fallible.
 - **String**: `charAt`, `charCodeAt`, `slice`, `split`, `replace` (regex
   supported), `replaceAll`, `includes`, `startsWith`, `endsWith`, `repeat`,
   `padStart`/`padEnd`, `at`, `trim`/`trimStart`/`trimEnd`, `substring`, case

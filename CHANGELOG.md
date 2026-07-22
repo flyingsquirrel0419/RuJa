@@ -11,6 +11,32 @@
 
 ### Fixed
 
+- `%TypedArray%.prototype.toLocaleString` now keeps TypedArray-specific
+  validation and internal-length snapshot semantics while performing primitive
+  `GetV` lookup for every current element. The selected `toLocaleString` is
+  called with the element as `this` and no arguments, so the non-ECMA-402
+  runtime ignores caller locale/options values and mutable global `Number` or
+  `BigInt` replacement no longer changes intrinsic primitive lookup.
+
+  The source, current value, selected method, returned value, and abrupt
+  completions remain rooted across observable getters, calls, conversion, and
+  forced GC. Every captured index consumes one fuel unit and intermediate
+  output growth uses fallible reservation; final `Arc<str>` publication retains
+  the runtime-wide infallible-allocation limitation. The existing fixed-checkout
+  Test262 cohort remains **39/39**, Array `toLocaleString` remains **12/12**,
+  and TypedArray-constructor inheritance remains **2/2**. Local verification
+  passes all targets/features with **214/214** library tests, **535/535**
+  builtins tests, and **15/15** arguments tests, plus **213/213** release
+  library tests, **133/133** Python tooling tests, **1/1** doctest, rustfmt,
+  warnings-denied Clippy, release build, generated documentation, and wasm32
+  checking. Two independent GPT-5.6 reviews found no runtime defect.
+  Feature commit `0a5d7ea` passes CI `29886017567` and full matrix
+  `29886017568`. Downloaded artifacts aggregate to the unchanged **31872 pass /
+  5126 fail / 11466 skip / 3 timeout / 0 error / 48467 total / 36998 run**;
+  all 30 result files are byte-identical to full run `29883661759`. The
+  downloaded release binary independently reproduces diagnostic `1|0|1`,
+  direct TypedArray locale **39/39**, and the adjacent combined **14/14**.
+
 - `Array.prototype.toLocaleString` now has its own generic ECMAScript
   algorithm instead of aliasing `Array.prototype.toString`. It performs
   `ToObject`, captures `LengthOfArrayLike` once, uses RuJa's

@@ -350,18 +350,12 @@ guarantees are required.
 - GC runs at safe points only (after a run settles, and throttled at frame
   boundaries). Incremental marking is supported via `collect_incremental(roots, budget)`,
   but there is no generational collector yet
-- Generic Array `join` and `toLocaleString` grow their Rust `String` through
-  fallible reservation, but publishing the completed value as `Arc<str>` still
-  uses the runtime-wide infallible allocation path. Hard host OOM isolation
-  therefore remains an embedder responsibility even though capacity overflow
-  is reported as `RangeError`.
-- `%TypedArray%.prototype.toLocaleString` remains a separate conformance and
-  resource-hardening unit. Its current non-ECMA-402 path forwards two explicit
-  locale arguments, resolves mutable Realm globals instead of primitive
-  `GetV`, and does not yet meter each element or reserve output fallibly. The
-  direct **39/39** cohort does not distinguish those behaviors. Generic
-  `Array.prototype.toLocaleString` applied to TypedArrays is covered separately
-  and follows live property access correctly.
+- Generic Array `join` and `toLocaleString`, plus TypedArray
+  `toLocaleString`, grow their Rust `String` through fallible reservation, but
+  publishing the completed value as `Arc<str>` still uses the runtime-wide
+  infallible allocation path. Hard host OOM isolation therefore remains an
+  embedder responsibility even though capacity overflow is reported as
+  `RangeError`.
 - Native operation rooting is complete for `Array.of`, `sort`, `toSorted`, and
   `toSpliced`; `map` and `flatMap` no longer use snapshots. The sorting methods
   implement generic
