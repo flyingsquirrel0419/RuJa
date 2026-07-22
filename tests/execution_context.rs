@@ -51,6 +51,63 @@ fn native_to_interpreted_calls_use_the_callee_realm() {
 }
 
 #[test]
+fn iterative_bound_calls_preserve_realms_this_arguments_and_throw_identity() {
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            other.mainArrayPrototype = Array.prototype;
+
+            var orderedTarget = other.eval(`(function(first, second, third) {
+              return this.label + "|" + first + "," + second + "," + third;
+            })`);
+            var inner = orderedTarget.bind({ label: "inner-this" }, "inner");
+            var transparent = new Proxy(inner, {});
+            var outer = transparent.bind({ label: "outer-this" }, "outer");
+
+            var sentinel = {};
+            var throwing = other.eval("(function(value) { throw value; })")
+              .bind(null, sentinel);
+            var sameSentinel = false;
+            try { throwing(); }
+            catch (error) { sameSentinel = error === sentinel; }
+
+            var foreignTypeErrorTarget = other.eval(
+              "(function() { null.value; })"
+            ).bind(null);
+            var foreignTypeError = false;
+            try { foreignTypeErrorTarget(); }
+            catch (error) {
+              foreignTypeError = error instanceof other.TypeError &&
+                !(error instanceof TypeError);
+            }
+
+            var trap = other.eval(`(function(prefix, target, thisArg, args) {
+              return [
+                this.label,
+                prefix,
+                Object.getPrototypeOf(args) === mainArrayPrototype,
+                Object.getPrototypeOf(args) === Array.prototype,
+                thisArg.label,
+                args.join(",")
+              ].join("|");
+            })`).bind({ label: "trap-this" }, "trap-bound");
+            var applyProxy = new Proxy(function () {}, { apply: trap });
+            var trapped = applyProxy.bind({ label: "bound-this" }, "bound");
+
+            [
+              outer("call"),
+              sameSentinel,
+              foreignTypeError,
+              trapped("call")
+            ].join(";");
+        "#),
+        Value::String(Arc::from(
+            "inner-this|inner,outer,call;true;true;trap-this|trap-bound|true|false|bound-this|bound,call"
+        ))
+    );
+}
+
+#[test]
 fn nested_native_calls_restore_the_interpreted_context() {
     assert_eq!(
         run(r#"

@@ -2311,11 +2311,6 @@ enum FuncCallInfo {
         is_async: bool,
         is_class_ctor: bool,
     },
-    Bound {
-        target: GcIdx,
-        this_val: Value,
-        bound_args: Vec<Value>,
-    },
 }
 
 impl Vm {

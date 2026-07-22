@@ -379,6 +379,40 @@ impl Vm {
         })
     }
 
+    /// Count the exact temporary heap roots `pin` will publish for a value.
+    pub(crate) fn value_root_count(value: &Value) -> usize {
+        match value {
+            Value::Object(_) => 1,
+            Value::Reference(reference) => {
+                let base = match &reference.base {
+                    crate::value::ReferenceBase::Unresolvable => 0,
+                    crate::value::ReferenceBase::Environment(_) => 1,
+                    crate::value::ReferenceBase::ObjectEnvironment(base)
+                    | crate::value::ReferenceBase::Value(base) => Self::value_root_count(base),
+                };
+                let this_value = reference
+                    .this_value
+                    .as_ref()
+                    .map_or(0, |value| Self::value_root_count(value));
+                let name = match &reference.name {
+                    crate::value::ReferencedName::UncoercedProperty(name) => {
+                        Self::value_root_count(name)
+                    }
+                    _ => 0,
+                };
+                base.saturating_add(this_value).saturating_add(name)
+            }
+            _ => 0,
+        }
+    }
+
+    /// Make a following known-size pin batch allocator-failure-safe.
+    pub(crate) fn try_reserve_gc_pins(&mut self, additional: usize) -> error::Result<()> {
+        self.gc_pins
+            .try_reserve(additional)
+            .map_err(|_| Error::range("temporary root set is too large"))
+    }
+
     fn push_value_roots(roots: &mut Vec<usize>, value: &Value) {
         match value {
             Value::Object(idx) => roots.push(idx.0),

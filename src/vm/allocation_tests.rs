@@ -4480,6 +4480,7 @@ fn constructor_checks_follow_deep_proxy_and_bound_chains_iteratively() {
         var deepBoundResult = Reflect.construct(
           deepBoundConstructor, [], ShallowNewTarget
         );
+        var deepBoundCalled = deepBoundConstructor() === undefined;
         var invariantBase = {};
         Object.defineProperty(invariantBase, "fixed", {
           value: 1,
@@ -4552,6 +4553,7 @@ fn constructor_checks_follow_deep_proxy_and_bound_chains_iteratively() {
         Value::Bool(true)
     );
     assert_eq!(vm.get_global("deepBoundConstructed"), Value::Bool(true));
+    assert_eq!(vm.get_global("deepBoundCalled"), Value::Bool(true));
     assert_eq!(vm.get_global("deepInvariantRead"), Value::Bool(true));
     assert_eq!(vm.get_global("deepDescriptorRead"), Value::Bool(true));
     assert_eq!(vm.get_global("deepTrapExtensible"), Value::Bool(true));
@@ -4629,10 +4631,15 @@ fn constructor_dispatch_is_metered_linear_and_roots_bound_arguments() {
         var dispatchBoundConstructor = Object.bind(null).bind(null).bind(null);
         var dispatchProxyConstructor = new Proxy(new Proxy(new Proxy(Object, {}), {}), {});
         var dispatchGetterCalls = 0;
+        var dispatchApplyGetterCalls = 0;
         var dispatchThrowingGetterProxy = new Proxy(Object, {
           get construct() {
             dispatchGetterCalls += 1;
             throw new Error("construct getter should not run");
+          },
+          get apply() {
+            dispatchApplyGetterCalls += 1;
+            throw new Error("apply getter should not run");
           }
         });
         var dispatchEagerNewTarget = Object.bind(null).bind(null).bind(null);
@@ -4742,8 +4749,10 @@ fn constructor_dispatch_is_metered_linear_and_roots_bound_arguments() {
         vm.new_object()
             .expect("oversized argument fixture should allocate"),
     );
-    let oversized_args =
-        vec![oversized_value; crate::builtins::call_arguments::MAX_MATERIALIZED_CALL_ARGUMENTS + 1];
+    let oversized_args = vec![
+        oversized_value.clone();
+        crate::builtins::call_arguments::MAX_MATERIALIZED_CALL_ARGUMENTS + 1
+    ];
     let pin_capacity_before_cap_checks = vm.gc_pins.capacity();
     let error = vm
         .construct_with_new_target(&Value::Undefined, &oversized_args, &object_constructor)
@@ -4761,17 +4770,32 @@ fn constructor_dispatch_is_metered_linear_and_roots_bound_arguments() {
     assert_eq!(error.kind, crate::error::ErrorKind::Range);
     assert_eq!(vm.gc_pins.len(), baseline_pins);
     assert_eq!(vm.gc_pins.capacity(), pin_capacity_before_cap_checks);
+    let error = vm
+        .call_function(&Value::Undefined, &oversized_args, None)
+        .expect_err("callability validation must precede the argument cap");
+    assert_eq!(error.kind, crate::error::ErrorKind::Type);
+    assert_eq!(vm.gc_pins.capacity(), pin_capacity_before_cap_checks);
+    let error = vm
+        .call_function(&object_constructor, &oversized_args, None)
+        .expect_err("direct call arguments must enforce the sandbox cap before pin growth");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.gc_pins.capacity(), pin_capacity_before_cap_checks);
 
     let bind = vm
         .get_property(&throwing_getter, "bind")
         .expect("Proxy constructor should inherit Function.prototype.bind");
-    let mut oversized_bind_args = Vec::with_capacity(oversized_args.len() + 1);
-    oversized_bind_args.push(Value::Undefined);
-    oversized_bind_args.extend(oversized_args);
+    let layer_len = crate::builtins::call_arguments::MAX_MATERIALIZED_CALL_ARGUMENTS / 2 + 1;
+    let mut layer_bind_args = Vec::with_capacity(layer_len + 1);
+    layer_bind_args.push(Value::Undefined);
+    layer_bind_args.extend(std::iter::repeat_n(oversized_value, layer_len));
+    let inner_bound = vm
+        .call_function(&bind, &layer_bind_args, Some(throwing_getter.clone()))
+        .expect("one bounded argument layer should fit the call cap");
     let oversized_bound = vm
-        .call_function(&bind, &oversized_bind_args, Some(throwing_getter.clone()))
-        .expect("host call should create an oversized Bound argument fixture");
-    vm.set_fuel(Some(1));
+        .call_function(&bind, &layer_bind_args, Some(inner_bound))
+        .expect("a second bounded layer should defer the combined cap check");
+    vm.set_fuel(Some(2));
     let error = vm
         .construct_with_new_target(&oversized_bound, &[], &object_constructor)
         .expect_err("Bound argument overflow must precede the target Proxy getter");
@@ -4779,8 +4803,19 @@ fn constructor_dispatch_is_metered_linear_and_roots_bound_arguments() {
     assert_eq!(vm.fuel_remaining(), Some(0));
     assert_eq!(vm.get_global("dispatchGetterCalls"), Value::Number(0.0));
     assert_eq!(vm.gc_pins.len(), baseline_pins);
+    vm.set_fuel(Some(2));
+    let error = vm
+        .call_function(&oversized_bound, &[], None)
+        .expect_err("Bound call argument overflow must precede the target Proxy getter");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(
+        vm.get_global("dispatchApplyGetterCalls"),
+        Value::Number(0.0)
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
     drop(oversized_bound);
-    drop(oversized_bind_args);
+    drop(layer_bind_args);
     vm.clear_kept_objects();
     vm.gc();
     vm.set_fuel(None);
@@ -4843,6 +4878,109 @@ fn constructor_dispatch_is_metered_linear_and_roots_bound_arguments() {
         Value::String(Arc::from(
             "inner,outer,call:true|inner,outer,call:true|get,trap:3|true"
         ))
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+}
+
+#[test]
+fn bound_call_dispatch_is_metered_linear_and_roots_arguments() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("GC test hook should register");
+    vm.register_fn(
+        "boundCallTarget",
+        |vm, args, this| {
+            vm.gc();
+            let mut labels = Vec::with_capacity(4);
+            labels.push(vm.get_property(&this.unwrap_or(Value::Undefined), "label")?);
+            for argument in args {
+                labels.push(vm.get_property(argument, "label")?);
+            }
+            let labels = labels
+                .into_iter()
+                .map(|value| match value {
+                    Value::String(label) => Ok(label),
+                    _ => Err(crate::error::Error::type_err("missing test label")),
+                })
+                .collect::<crate::error::Result<Vec<_>>>()?;
+            Ok(Value::String(Arc::from(
+                format!("{}|{},{},{}", labels[0], labels[1], labels[2], labels[3]).as_str(),
+            )))
+        },
+        3,
+    )
+    .expect("Bound call target should register");
+    vm.run(
+        r#"
+        var boundCallInner = boundCallTarget.bind(
+          { label: "inner-this" }, { label: "inner" }
+        );
+        var boundCallProxy = new Proxy(boundCallInner, {});
+        var boundCallOuter = boundCallProxy.bind(
+          { label: "outer-this" }, { label: "outer" }
+        );
+        var boundCallSentinel = {};
+        var boundCallAbruptHandler = {};
+        Object.defineProperty(boundCallAbruptHandler, "apply", {
+          get: function () { forceGc(); throw boundCallSentinel; }
+        });
+        var boundCallAbrupt = new Proxy(function () {}, boundCallAbruptHandler)
+          .bind(null, { kept: true });
+        "#,
+    )
+    .expect("Bound call fixtures should initialize");
+    let baseline_pins = vm.gc_pins.len();
+    let baseline_pin_capacity = vm.gc_pins.capacity();
+    let error = vm
+        .try_reserve_gc_pins(usize::MAX)
+        .expect_err("impossible root reservations must remain catchable");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.gc_pins.capacity(), baseline_pin_capacity);
+    let outer = vm.get_global("boundCallOuter");
+    let call_arg = Value::Object(
+        vm.new_object()
+            .expect("temporary call argument should allocate"),
+    );
+    vm.set_property(&call_arg, "label", Value::String(Arc::from("call")))
+        .expect("temporary call argument should be labelled");
+
+    vm.set_fuel(Some(2));
+    let error = vm
+        .call_function(&outer, std::slice::from_ref(&call_arg), None)
+        .expect_err("Bound, Proxy, Bound call should require three fuel units");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    vm.set_fuel(Some(3));
+    assert_eq!(
+        vm.call_function(&outer, &[call_arg], None)
+            .expect("exact wrapper fuel should complete the call"),
+        Value::String(Arc::from("inner-this|inner,outer,call"))
+    );
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    vm.set_fuel(None);
+    assert_eq!(
+        vm.run(
+            r#"
+            var boundCallSameError = false;
+            try { boundCallAbrupt(); }
+            catch (error) { boundCallSameError = error === boundCallSentinel; }
+            boundCallSameError;
+            "#,
+        )
+        .expect("abrupt apply getter should remain catchable"),
+        Value::Bool(true)
     );
     assert_eq!(vm.gc_pins.len(), baseline_pins);
 }
@@ -4919,12 +5057,14 @@ fn promise_settlement_precomputes_metered_handler_realms_transactionally() {
             if *promise == fulfilled_idx && *value == Value::Number(7.0)
     ));
     assert_eq!(vm.microtask_queue.len(), baseline_jobs + 1);
+    vm.set_fuel(Some(1));
     vm.call_function(
         &fulfilled_resolve,
         &[Value::Number(70.0)],
         Some(Value::Undefined),
     )
-    .expect("the original resolving function should remain one-shot");
+    .expect("the original resolving function should remain one-shot after its Bound edge");
+    assert_eq!(vm.fuel_remaining(), Some(0));
     assert_eq!(vm.microtask_queue.len(), baseline_jobs + 1);
 
     vm.set_fuel(Some(3));
@@ -5013,13 +5153,15 @@ fn promise_settlement_precomputes_metered_handler_realms_transactionally() {
         panic!("fallbackPromise should be a Promise object");
     };
     let fallback_resolve = vm.get_global("fallbackResolve");
-    vm.set_fuel(Some(0));
+    vm.set_fuel(Some(1));
     vm.call_function(
         &fallback_resolve,
         &[Value::Number(9.0)],
         Some(Value::Undefined),
     )
-    .expect("revoked handler Realm lookup should use the current Realm fallback");
+    .expect(
+        "revoked handler Realm lookup should use the current Realm fallback after its Bound edge",
+    );
     assert_eq!(vm.fuel_remaining(), Some(0));
     let (status, handler_count) =
         promise_state_and_handler_count(&vm, &Value::Object(fallback_idx));
@@ -5264,10 +5406,11 @@ fn promise_settlement_jobs_requeue_after_noncatchable_fuel_abort() {
     let (status, result) = promise_state_and_result(&vm, Value::Object(external_tick_idx));
     assert!(status == PromiseStatus::Fulfilled);
     assert_eq!(result, Value::Number(12.0));
-    vm.set_fuel(Some(0));
+    vm.set_fuel(Some(3));
     assert!(vm
         .tick()
-        .expect("native external tick reaction should run without fuel"));
+        .expect("native reaction and its capability resolver should consume three Bound edges"));
+    assert_eq!(vm.fuel_remaining(), Some(0));
 
     let microtask_drain = vm.get_global("microtaskDrainPromise");
     let Value::Object(microtask_drain_idx) = microtask_drain else {
@@ -5304,9 +5447,10 @@ fn promise_settlement_jobs_requeue_after_noncatchable_fuel_abort() {
         promise_state_and_result(&vm, Value::Object(microtask_drain_idx)).1,
         Value::Undefined
     );
-    vm.set_fuel(Some(2));
+    vm.set_fuel(Some(5));
     vm.run_microtasks()
         .expect("refilled Resolve microtask should settle and drain reactions");
+    assert_eq!(vm.fuel_remaining(), Some(0));
     let (status, result) = promise_state_and_result(&vm, Value::Object(microtask_drain_idx));
     assert!(status == PromiseStatus::Fulfilled);
     assert_eq!(result, Value::Number(13.0));
@@ -5337,10 +5481,11 @@ fn promise_settlement_jobs_requeue_after_noncatchable_fuel_abort() {
     let (status, result) = promise_state_and_result(&vm, Value::Object(microtask_tick_idx));
     assert!(status == PromiseStatus::Rejected);
     assert_eq!(result, Value::Number(14.0));
-    vm.set_fuel(Some(0));
+    vm.set_fuel(Some(3));
     assert!(vm
         .tick()
-        .expect("native rejection handler should run without additional fuel"));
+        .expect("native rejection reaction and resolver should consume three Bound edges"));
+    assert_eq!(vm.fuel_remaining(), Some(0));
 
     let getter_resolve = vm.get_global("getterResolve");
     let getter_resolution = vm.get_global("getterResolution");
@@ -5591,7 +5736,7 @@ fn promise_settlement_jobs_requeue_after_noncatchable_fuel_abort() {
         Value::Undefined
     );
 
-    vm.set_fuel(Some(2));
+    vm.set_fuel(Some(5));
     vm.run_microtasks()
         .expect("refilled post-handler settlement should complete without replay");
     let (status, result) = promise_state_and_result(&vm, reaction_derived);
@@ -5873,14 +6018,14 @@ fn staged_promise_settlement_preserves_selected_realms() {
     let revoked_resolver = vm
         .get_property(&revoked_data, "resolve")
         .expect("revoked-handler resolver should be readable");
-    vm.set_fuel(Some(0));
+    vm.set_fuel(Some(1));
     let error = vm
         .call_function(
             &revoked_resolver,
             &[Value::Number(24.0)],
             Some(Value::Undefined),
         )
-        .expect_err("foreign handler preflight should transfer on Fuel");
+        .expect_err("foreign handler preflight should transfer after the resolver Bound edge");
     assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
     assert!(matches!(
         vm.microtask_queue.front(),

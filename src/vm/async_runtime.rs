@@ -13,6 +13,8 @@ use parking_lot::Mutex;
 use std::borrow::Cow;
 use std::sync::Arc;
 
+const MAX_CALL_STACK_DEPTH: usize = 512;
+
 #[derive(Clone, Copy)]
 enum AsyncFromSyncMethod {
     Next,
@@ -37,6 +39,24 @@ enum ConstructorTraversalStep {
         function: GcIdx,
         closure: GcIdx,
         constructable: bool,
+    },
+    Other,
+}
+
+enum CallTraversalStep {
+    Bound {
+        function: GcIdx,
+        target: GcIdx,
+        this_val: Value,
+        bound_len: usize,
+    },
+    Proxy {
+        target: Value,
+        handler: Value,
+        revoked: bool,
+    },
+    Function {
+        function: GcIdx,
     },
     Other,
 }
@@ -1003,6 +1023,36 @@ impl Vm {
         })
     }
 
+    fn call_traversal_step(&self, value: &Value) -> CallTraversalStep {
+        let Value::Object(index) = value else {
+            return CallTraversalStep::Other;
+        };
+        self.heap.with_obj(index.0, |object| match object {
+            HeapObj::Function(function) => match &function.kind {
+                FunctionKind::Bound {
+                    target,
+                    this_val,
+                    bound_args,
+                    ..
+                } => CallTraversalStep::Bound {
+                    function: *index,
+                    target: *target,
+                    this_val: this_val.clone(),
+                    bound_len: bound_args.len(),
+                },
+                FunctionKind::Interpreted { .. } | FunctionKind::Native { .. } => {
+                    CallTraversalStep::Function { function: *index }
+                }
+            },
+            HeapObj::Proxy(proxy) => CallTraversalStep::Proxy {
+                target: proxy.target.clone(),
+                handler: proxy.handler.clone(),
+                revoked: *proxy.revoked.lock(),
+            },
+            _ => CallTraversalStep::Other,
+        })
+    }
+
     pub(crate) fn constructor_realm(&mut self, constructor: &Value) -> error::Result<GcIdx> {
         let mut current = constructor.clone();
         loop {
@@ -1228,6 +1278,30 @@ impl Vm {
         args: &[Value],
         this: Option<Value>,
     ) -> error::Result<Value> {
+        if self.frames.len() >= MAX_CALL_STACK_DEPTH {
+            return Err(Error::range("Maximum call stack size exceeded"));
+        }
+        if !crate::builtins::is_callable(func, &self.heap) {
+            return Err(Error::type_err(format!(
+                "{} is not a function",
+                func.type_of()
+            )));
+        }
+        if args.len() > crate::builtins::call_arguments::MAX_MATERIALIZED_CALL_ARGUMENTS {
+            return Err(Error::range("argument list too large"));
+        }
+        let mut required_roots = Self::value_root_count(func);
+        for argument in args {
+            required_roots = required_roots
+                .checked_add(Self::value_root_count(argument))
+                .ok_or_else(|| Error::range("temporary root set is too large"))?;
+        }
+        if let Some(this_value) = &this {
+            required_roots = required_roots
+                .checked_add(Self::value_root_count(this_value))
+                .ok_or_else(|| Error::range("temporary root set is too large"))?;
+        }
+        self.try_reserve_gc_pins(required_roots)?;
         // Pin the callee, args, and receiver as GC roots for the duration of this call:
         // reading the function kind and building the call frame involve heap
         // allocations that can trigger a GC, which would otherwise collect
@@ -1261,7 +1335,6 @@ impl Vm {
         // overflow instead of a catchable RangeError. Keep the limit
         // conservative for debug builds on small CI stacks while still
         // allowing ordinary recursive code to run.
-        const MAX_CALL_STACK_DEPTH: usize = 512;
         if self.frames.len() >= MAX_CALL_STACK_DEPTH {
             return Err(Error::range("Maximum call stack size exceeded"));
         }
@@ -1272,70 +1345,124 @@ impl Vm {
             )));
         }
 
-        // Both transparent forwarding and calling a Proxy-valued apply trap
-        // are tail operations, so one rooted state machine avoids native recursion.
+        // Bound and Proxy forwarding are tail operations. Keep both in one
+        // rooted state machine so legal wrapper chains do not consume the Rust
+        // stack or repeatedly copy the accumulated argument list.
         let mut active_func = func.clone();
         let mut active_args = Cow::Borrowed(args);
         let mut active_this = this;
+        let mut bound_functions = Vec::new();
+        let mut materialized_argument_count = args.len();
         let idx = loop {
-            let Value::Object(idx) = &active_func else {
-                unreachable!("callable metadata must resolve to an object")
-            };
-            let idx = *idx;
-            let proxy_call = self.heap.with_obj(idx.0, |object| {
-                let HeapObj::Proxy(proxy) = object else {
-                    return None;
-                };
-                if *proxy.revoked.lock() {
-                    return Some(Err(Error::type_err(
-                        "Cannot perform 'apply' on a proxy that has been revoked",
-                    )));
+            match self.call_traversal_step(&active_func) {
+                CallTraversalStep::Bound {
+                    function,
+                    target,
+                    this_val,
+                    bound_len,
+                } => {
+                    self.consume_fuel()?;
+                    materialized_argument_count = materialized_argument_count
+                        .checked_add(bound_len)
+                        .ok_or_else(|| Error::range("argument list too large"))?;
+                    if materialized_argument_count
+                        > crate::builtins::call_arguments::MAX_MATERIALIZED_CALL_ARGUMENTS
+                    {
+                        return Err(Error::range("argument list too large"));
+                    }
+                    bound_functions
+                        .try_reserve(1)
+                        .map_err(|_| Error::range("call wrapper chain is too large"))?;
+                    self.try_reserve_gc_pins(1)?;
+                    bound_functions.push(function);
+                    *pin_count += self.pin(&Value::Object(function));
+                    active_func = Value::Object(target);
+                    active_this = Some(this_val);
                 }
-                Some(Ok((proxy.target.clone(), proxy.handler.clone())))
-            });
-            let Some(proxy_call) = proxy_call else {
-                break idx;
-            };
+                CallTraversalStep::Proxy {
+                    target,
+                    handler,
+                    revoked,
+                } => {
+                    if revoked {
+                        return Err(Error::type_err(
+                            "Cannot perform 'apply' on a proxy that has been revoked",
+                        ));
+                    }
+                    self.consume_fuel()?;
+                    self.try_reserve_gc_pins(2)?;
+                    let proxy_pins = self.pin_many(&[target.clone(), handler.clone()]);
+                    let trap = match self.get_proxy_method(&handler, "apply") {
+                        Ok(trap) => trap,
+                        Err(error) => {
+                            self.unpin_many(proxy_pins);
+                            return Err(error);
+                        }
+                    };
+                    if trap.is_nullish() {
+                        self.unpin_many(proxy_pins);
+                        active_func = target;
+                        continue;
+                    }
+                    if !crate::builtins::is_callable(&trap, &self.heap) {
+                        self.unpin_many(proxy_pins);
+                        return Err(Error::type_err("Proxy apply trap is not callable"));
+                    }
 
-            let (target, handler) = proxy_call?;
-            self.consume_fuel()?;
-            let proxy_pins = self.pin_many(&[target.clone(), handler.clone()]);
-            let trap = match self.get_proxy_method(&handler, "apply") {
-                Ok(trap) => trap,
-                Err(error) => {
-                    self.unpin_many(proxy_pins);
-                    return Err(error);
+                    if let Err(error) = self.try_reserve_gc_pins(1) {
+                        self.unpin_many(proxy_pins);
+                        return Err(error);
+                    }
+                    let trap_pin = self.pin(&trap);
+                    let trap_args = match self
+                        .materialize_bound_arguments(&bound_functions, active_args.as_ref())
+                    {
+                        Ok(arguments) => arguments,
+                        Err(error) => {
+                            self.unpin(trap_pin);
+                            self.unpin_many(proxy_pins);
+                            return Err(error);
+                        }
+                    };
+                    let arg_array =
+                        match crate::builtins::make_value_array_in_current_realm(self, trap_args) {
+                            Ok(arg_array) => arg_array,
+                            Err(error) => {
+                                self.unpin(trap_pin);
+                                self.unpin_many(proxy_pins);
+                                return Err(error);
+                            }
+                        };
+                    if let Err(error) = self.try_reserve_gc_pins(1) {
+                        self.unpin(trap_pin);
+                        self.unpin_many(proxy_pins);
+                        return Err(error);
+                    }
+                    let arg_array_pin = self.pin(&arg_array);
+                    *pin_count += proxy_pins + trap_pin + arg_array_pin;
+                    let this_arg = active_this.take().unwrap_or(Value::Undefined);
+                    let mut trap_call_args = Vec::new();
+                    if trap_call_args.try_reserve_exact(3).is_err() {
+                        return Err(Error::range("argument list too large"));
+                    }
+                    trap_call_args.extend([target, this_arg, arg_array]);
+                    active_func = trap;
+                    active_args = Cow::Owned(trap_call_args);
+                    active_this = Some(handler);
+                    bound_functions.clear();
+                    materialized_argument_count = 3;
                 }
-            };
-            if trap.is_nullish() {
-                self.unpin_many(proxy_pins);
-                active_func = target;
-                continue;
-            }
-            if !crate::builtins::is_callable(&trap, &self.heap) {
-                self.unpin_many(proxy_pins);
-                return Err(Error::type_err("Proxy apply trap is not callable"));
-            }
-
-            let trap_pin = self.pin(&trap);
-            let arg_array = match crate::builtins::make_value_array_in_current_realm(
-                self,
-                active_args.as_ref().to_vec(),
-            ) {
-                Ok(arg_array) => arg_array,
-                Err(error) => {
-                    self.unpin(trap_pin);
-                    self.unpin_many(proxy_pins);
-                    return Err(error);
+                CallTraversalStep::Function { function } => break function,
+                CallTraversalStep::Other => {
+                    return Err(Error::type_err("not a function".to_string()))
                 }
-            };
-            let arg_array_pin = self.pin(&arg_array);
-            *pin_count += proxy_pins + trap_pin + arg_array_pin;
-            let this_arg = active_this.take().unwrap_or(Value::Undefined);
-            active_func = trap;
-            active_args = Cow::Owned(vec![target, this_arg, arg_array]);
-            active_this = Some(handler);
+            }
         };
+        if !bound_functions.is_empty() {
+            active_args = Cow::Owned(
+                self.materialize_bound_arguments(&bound_functions, active_args.as_ref())?,
+            );
+        }
         let args = active_args.as_ref();
         let this = active_this;
 
@@ -1360,16 +1487,9 @@ impl Vm {
                             is_async: func.is_async,
                         })
                     }
-                    crate::value::FunctionKind::Bound {
-                        target,
-                        this_val,
-                        bound_args,
-                        ..
-                    } => Some(FuncCallInfo::Bound {
-                        target: *target,
-                        this_val: this_val.clone(),
-                        bound_args: bound_args.clone(),
-                    }),
+                    crate::value::FunctionKind::Bound { .. } => {
+                        unreachable!("Bound call escaped iterative traversal")
+                    }
                 }
             } else {
                 None
@@ -1774,15 +1894,6 @@ impl Vm {
                 self.execution_contexts.truncate(context_depth);
                 call_result
             }
-            Some(FuncCallInfo::Bound {
-                target,
-                this_val,
-                bound_args,
-            }) => {
-                let mut all = bound_args;
-                all.extend_from_slice(args);
-                self.call_function(&Value::Object(target), &all, Some(this_val))
-            }
             None => Err(Error::type_err("not a function".to_string())),
         }
     }
@@ -1803,7 +1914,7 @@ impl Vm {
         })
     }
 
-    fn materialize_bound_constructor_arguments(
+    fn materialize_bound_arguments(
         &self,
         bound_functions: &[GcIdx],
         args: &[Value],
@@ -1832,9 +1943,12 @@ impl Vm {
             }
         }
 
-        let mut materialized = Vec::with_capacity(total_len);
+        let mut materialized = Vec::new();
+        materialized
+            .try_reserve_exact(total_len)
+            .map_err(|_| Error::range("argument list too large"))?;
         // The outermost bound function is visited first, but its arguments
-        // follow every inner bound layer in the eventual [[Construct]] call.
+        // follow every inner bound layer in the eventual Call or Construct.
         for function in bound_functions.iter().rev() {
             let appended = self.heap.with_obj(function.0, |object| {
                 let HeapObj::Function(data) = object else {
@@ -1965,8 +2079,7 @@ impl Vm {
                         return Err(Error::type_err("Proxy construct trap is not callable"));
                     }
                     *pin_count += self.pin(&trap);
-                    let active_args =
-                        self.materialize_bound_constructor_arguments(&bound_functions, args)?;
+                    let active_args = self.materialize_bound_arguments(&bound_functions, args)?;
                     let arg_array =
                         crate::builtins::make_value_array_in_current_realm(self, active_args)?;
                     *pin_count += self.pin(&arg_array);
@@ -1999,7 +2112,7 @@ impl Vm {
             }
         };
         let constructor = &active_constructor;
-        let active_args = self.materialize_bound_constructor_arguments(&bound_functions, args)?;
+        let active_args = self.materialize_bound_arguments(&bound_functions, args)?;
         let args = active_args.as_slice();
         let new_target = &active_new_target;
         match self.native_construct_mode(idx) {
