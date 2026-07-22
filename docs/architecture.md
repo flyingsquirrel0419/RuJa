@@ -208,6 +208,27 @@ Proxy `getPrototypeOf` trap, instead of hardcoding the main Realm
 non-extensible-target invariant checks, and the selected result stays pinned
 through bound-function allocation.
 
+The allocated Bound Function is then rooted before its observable metadata
+steps. `length` uses `HasOwnProperty` semantics through the target's
+`[[GetOwnProperty]]`; only an own property triggers `Get(target, "length")`,
+and only a Number value participates in truncation and bound-argument
+subtraction. `name` is always read with `Get`, accepts only a String value, and
+is prefixed with `"bound "`. The resulting own properties are configurable,
+non-writable, non-enumerable data properties inserted in `length`, `name`
+order. Because these are real properties, deleting bound `name` resumes
+ordinary prototype lookup; the internal FunctionData name is not exposed as a
+replacement exotic property.
+
+```text
+[Decision Log]
+- 목적과 의도: Make BoundFunctionCreate expose specification-shaped name and length metadata without weakening observable order, Proxy semantics, Realm behavior, or sandbox GC limits.
+- 기존 구현 및 제약 조건: Bound functions exposed a synthetic internal name and had no real own metadata descriptors; adding the required target getters also required the newly allocated wrapper and captured state to survive re-entrant collection.
+- 검토한 주요 대안: Synthesize metadata in generic property lookup, eagerly copy target fields without abstract operations, coerce every target length, or install properties before allocating the bound object.
+- 선택한 방식: Allocate and pin the Bound Function first, run exact HasOwnProperty/Get steps against the live target, compute length only for Number values, install ordered configurable data descriptors, and suppress the internal-name fallback only for Bound functions after deletion.
+- 다른 대안 대신 이 방식을 선택한 이유: Synthetic lookup cannot model deletion or descriptors; direct field reads bypass Proxies and accessors; ToNumber is forbidden here; and observable metadata work before allocation would not match BoundFunctionCreate and would leave no wrapper root for captured state.
+- 장점, 단점 및 영향: Exact metadata, abrupt completion identity, inherited-name behavior, forced GC, and exact-cap allocation now share one path. Ordinary and internal native functions retain their existing fallback behavior. Bound call-chain iteration, fuel, and argument materialization remain a separate dispatch concern.
+```
+
 ```text
 [Decision Log]
 - 목적과 의도: Implement one specification-shaped CreateDynamicFunction path for all four dynamic constructors without weakening Realm identity or the exact heap cap.

@@ -62,6 +62,40 @@
 
 ### Fixed
 
+- `Function.prototype.bind` now creates Bound Function exotic objects with
+  specification-shaped own `length` and `name` properties. The target's own
+  `length` is observed through `[[GetOwnProperty]]` before an optional `Get`,
+  numeric lengths are truncated and reduced by the bound argument count
+  without coercing non-numbers, and `name` is read unconditionally and
+  prefixed with `"bound "`. Both properties are non-writable,
+  non-enumerable, configurable data properties in `length`, `name` order.
+  Deleting the configurable bound `name` now resumes ordinary prototype lookup
+  instead of reviving an internal diagnostic name.
+
+  The bound object is allocated and rooted before the observable length and
+  name operations. Regressions cover Proxy order, abrupt completion identity,
+  forced GC, exact heap caps, signed zero, non-number no-coercion, inherited
+  metadata, deletion and rebinding, own-key shape, and pin restoration. Exact
+  Test262 admission freezes the nine previously failing files and their live
+  feature, include, flag, and negative metadata; the cohort is **9/9**, the
+  complete bind directory moves from **84 pass / 7 fail / 9 skip** to **93
+  pass / 0 fail / 7 skip**, and `Function.prototype` is **223 pass / 40 fail /
+  46 skip**. Local verification passes all targets/features with **221/221**
+  library tests, **539/539** builtins tests, and **15/15** arguments tests,
+  plus **220/220** release library tests, **135/135** Python tooling tests,
+  **1/1** doctest, rustfmt, warnings-denied Clippy, release build, generated
+  documentation, Python bytecode compilation, workflow YAML parsing, and
+  wasm32 checking. Rustdoc retains only the 13 pre-existing broken-link
+  warnings. GPT-5.6 review is clean after fixing deleted-name inheritance and
+  expanding abrupt GC/cap coverage. Feature commit `75c030a` passes CI
+  `29907748052` and all 33 jobs in full run `29907748376`. Downloaded artifacts
+  aggregate to **31890 pass / 5115 fail / 11459 skip / 3 timeout / 0 error /
+  48467 total / 37005 run**. Against full run `29903293969`, 29 result files
+  are byte-identical and `built-ins` alone changes by **+9 pass / -7 fail / -2
+  skip**. The downloaded release binary reproduces exact **9/9** and complete
+  bind-directory **93/0/7**. Iterative, fuel-bounded Bound `[[Call]]` dispatch
+  remains a separate resource-safety unit.
+
 - Labelled statements now reject generator, async-function, and
   async-generator declarations in sloppy as well as strict code. The Annex B
   exception remains limited to ordinary sloppy `label: function f() {}`;
