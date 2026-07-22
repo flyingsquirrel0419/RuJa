@@ -2906,6 +2906,170 @@ fn typed_array_to_string_alias_roots_direct_native_state() {
 }
 
 #[test]
+fn typed_array_search_methods_consume_exact_per_index_fuel() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    let source = vm
+        .run("new Uint8Array([1, 2, 3])")
+        .expect("TypedArray search source should initialize");
+    let source_pin = vm.pin(&source);
+    let baseline = vm.gc_pins.len();
+
+    for (search, target) in [
+        (
+            crate::builtins::typed_array_includes
+                as fn(&mut Vm, &[Value], Option<Value>) -> crate::error::Result<Value>,
+            Value::Number(3.0),
+        ),
+        (crate::builtins::typed_array_index_of, Value::Number(3.0)),
+        (
+            crate::builtins::typed_array_last_index_of,
+            Value::Number(1.0),
+        ),
+    ] {
+        vm.set_fuel(Some(2));
+        let error = search(&mut vm, &[target], Some(source.clone()))
+            .expect_err("N-1 fuel must abort a three-index search");
+        assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+        assert_eq!(vm.fuel_remaining(), Some(0));
+        assert_eq!(vm.gc_pins.len(), baseline);
+    }
+
+    vm.set_fuel(Some(3));
+    assert_eq!(
+        crate::builtins::typed_array_includes(
+            &mut vm,
+            &[Value::Number(3.0)],
+            Some(source.clone()),
+        )
+        .expect("includes should complete with exact fuel"),
+        Value::Bool(true)
+    );
+    assert_eq!(vm.fuel_remaining(), Some(0));
+
+    vm.set_fuel(Some(3));
+    assert_eq!(
+        crate::builtins::typed_array_index_of(
+            &mut vm,
+            &[Value::Number(3.0)],
+            Some(source.clone()),
+        )
+        .expect("indexOf should complete with exact fuel"),
+        Value::Number(2.0)
+    );
+    assert_eq!(vm.fuel_remaining(), Some(0));
+
+    vm.set_fuel(Some(3));
+    assert_eq!(
+        crate::builtins::typed_array_last_index_of(
+            &mut vm,
+            &[Value::Number(1.0)],
+            Some(source.clone()),
+        )
+        .expect("lastIndexOf should complete with exact fuel"),
+        Value::Number(0.0)
+    );
+    assert_eq!(vm.fuel_remaining(), Some(0));
+
+    vm.set_fuel(Some(1));
+    assert_eq!(
+        crate::builtins::typed_array_includes(
+            &mut vm,
+            &[Value::Number(1.0)],
+            Some(source.clone()),
+        )
+        .expect("an immediate match should consume one index"),
+        Value::Bool(true)
+    );
+    assert_eq!(vm.fuel_remaining(), Some(0));
+
+    vm.set_fuel(Some(0));
+    assert_eq!(
+        crate::builtins::typed_array_index_of(
+            &mut vm,
+            &[Value::Number(1.0), Value::Number(3.0)],
+            Some(source.clone()),
+        )
+        .expect("an empty forward range should consume no index fuel"),
+        Value::Number(-1.0)
+    );
+    assert_eq!(
+        crate::builtins::typed_array_last_index_of(
+            &mut vm,
+            &[Value::Number(1.0), Value::Number(-4.0)],
+            Some(source),
+        )
+        .expect("an empty reverse range should consume no index fuel"),
+        Value::Number(-1.0)
+    );
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+    vm.set_fuel(None);
+    vm.unpin(source_pin);
+
+    let empty = vm
+        .run("new Uint8Array(0)")
+        .expect("empty search source should initialize");
+    let empty_pin = vm.pin(&empty);
+    let baseline = vm.gc_pins.len();
+    for (search, expected) in [
+        (
+            crate::builtins::typed_array_includes
+                as fn(&mut Vm, &[Value], Option<Value>) -> crate::error::Result<Value>,
+            Value::Bool(false),
+        ),
+        (crate::builtins::typed_array_index_of, Value::Number(-1.0)),
+        (
+            crate::builtins::typed_array_last_index_of,
+            Value::Number(-1.0),
+        ),
+    ] {
+        vm.set_fuel(Some(0));
+        assert_eq!(
+            search(&mut vm, &[Value::Number(1.0)], Some(empty.clone()))
+                .expect("an empty TypedArray search should consume no index fuel"),
+            expected
+        );
+        assert_eq!(vm.fuel_remaining(), Some(0));
+        assert_eq!(vm.gc_pins.len(), baseline);
+    }
+    vm.set_fuel(None);
+    vm.unpin(empty_pin);
+
+    let bigint = vm
+        .run("new BigInt64Array([1n, 2n])")
+        .expect("BigInt search source should initialize");
+    let target = vm.run("2n").expect("BigInt target should initialize");
+    let bigint_pin = vm.pin(&bigint);
+    let target_pin = vm.pin(&target);
+    let baseline = vm.gc_pins.len();
+    vm.set_fuel(Some(1));
+    let error = crate::builtins::typed_array_includes(
+        &mut vm,
+        std::slice::from_ref(&target),
+        Some(bigint.clone()),
+    )
+    .expect_err("BigInt N-1 fuel must abort the search");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+    vm.set_fuel(Some(2));
+    assert_eq!(
+        crate::builtins::typed_array_includes(
+            &mut vm,
+            std::slice::from_ref(&target),
+            Some(bigint),
+        )
+        .expect("BigInt includes should complete with exact fuel"),
+        Value::Bool(true)
+    );
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline);
+    vm.set_fuel(None);
+    vm.unpin(target_pin);
+    vm.unpin(bigint_pin);
+}
+
+#[test]
 fn typed_array_to_locale_string_consumes_exact_per_index_fuel() {
     let mut vm = Vm::new().expect("VM should initialize");
     let source = vm

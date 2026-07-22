@@ -3746,6 +3746,7 @@ pub(crate) fn typed_array_includes(
             return Ok(Value::Bool(false));
         };
         for index in start..length {
+            vm.consume_fuel()?;
             let value = vm.get_property(&this, &index.to_string())?;
             if value.same_value_zero(&target) {
                 return Ok(Value::Bool(true));
@@ -3798,6 +3799,7 @@ pub(crate) fn typed_array_index_of(
             return Ok(Value::Number(-1.0));
         };
         for index in start..length {
+            vm.consume_fuel()?;
             let key = index.to_string();
             if vm.has_property(&this, &key)? {
                 let value = vm.get_property(&this, &key)?;
@@ -3878,6 +3880,7 @@ pub(crate) fn typed_array_last_index_of(
             }
         };
         for index in (0..=start).rev() {
+            vm.consume_fuel()?;
             let key = index.to_string();
             if vm.has_property(&this, &key)? {
                 let value = vm.get_property(&this, &key)?;
