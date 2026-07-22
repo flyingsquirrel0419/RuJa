@@ -142,12 +142,13 @@
 - **Array**: `push`, `pop`, `shift`, `unshift`, `splice`, `map`, `filter`,
   `reduce`, `forEach`, `find`, `findIndex`, `findLast`, `fill`, `some`,
   `every`, `includes`, `indexOf`, `lastIndexOf`, `slice`, `concat`, `join`,
-  `flat`, `flatMap`, `at`, `sort`, `reverse`, `copyWithin`, `reduceRight`,
-  `toReversed`, `toSorted`, `toSpliced`, `with`; `Array.from`/`fromAsync`/`of`/
-  `isArray`. `%Array.prototype%` is a real Array exotic. Push, Pop, Shift,
-  Unshift, Splice, Slice, Concat, CopyWithin, Fill, Filter, Flat, FlatMap,
-  ForEach, Join, Reduce, ReduceRight, Reverse, ToReversed, ToSpliced, and With
-  use generic indexed operations and logical lengths.
+  `toLocaleString`, `flat`, `flatMap`, `at`, `sort`, `reverse`, `copyWithin`,
+  `reduceRight`, `toReversed`, `toSorted`, `toSpliced`, `with`; `Array.from`/
+  `fromAsync`/`of`/`isArray`. `%Array.prototype%` is a real Array exotic. Push,
+  Pop, Shift, Unshift, Splice, Slice, Concat, CopyWithin, Fill, Filter, Flat,
+  FlatMap, ForEach, Join, ToLocaleString, Reduce, ReduceRight, Reverse,
+  ToReversed, ToSpliced, and With use generic indexed operations and logical
+  lengths.
   Slice, Splice, Concat, and Filter
   honor species;
   Concat also applies `Symbol.isConcatSpreadable` to each input, preserves
@@ -161,7 +162,10 @@
   definitions. ForEach snapshots only length, then performs live
   `HasProperty`/`Get` and callback calls for each present index. Join snapshots
   length before separator coercion and performs live `Get`/`ToString` work for
-  every index. Reduce and ReduceRight discover an omitted initial accumulator
+  every index. ToLocaleString snapshots length, then performs live `Get` and
+  invokes each non-nullish element's `toLocaleString` with no arguments. It
+  uses `,` as RuJa's implementation-defined list separator. Reduce and
+  ReduceRight discover an omitted initial accumulator
   and visit remaining values through live `HasProperty`/`Get` operations in
   ascending and descending order respectively. Reverse performs ordered live
   lower/upper existence checks, reads, strict writes, and deletions for each

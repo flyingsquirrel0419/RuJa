@@ -75,8 +75,9 @@ The following resource limits are enforced:
 - **Array generic-method coverage**: `%Array.prototype%` is a real
   `ArrayData` exotic, and `push`, `pop`, `shift`, `unshift`, `splice`, `slice`,
   `concat`, `copyWithin`, `fill`, `filter`, `flat`, `flatMap`, `forEach`,
-  `join`, `map`, `reduce`, `reduceRight`, `reverse`, `toReversed`, `toSpliced`,
-  and `with` now use generic internal property operations and logical lengths.
+  `join`, `toLocaleString`, `map`, `reduce`, `reduceRight`, `reverse`,
+  `toReversed`, `toSpliced`, and `with` now use generic internal property
+  operations and logical lengths.
   Slice, Splice, Concat, and Filter implement `ArraySpeciesCreate`; Concat also
   implements `Symbol.isConcatSpreadable`. Flat and FlatMap share an iterative,
   fuel-metered `FlattenIntoArray`, while CopyWithin, Fill, ToReversed,
@@ -349,11 +350,18 @@ guarantees are required.
 - GC runs at safe points only (after a run settles, and throttled at frame
   boundaries). Incremental marking is supported via `collect_incremental(roots, budget)`,
   but there is no generational collector yet
-- Generic Array `join` grows its Rust `String` through fallible reservation,
-  but publishing the completed value as `Arc<str>` still uses the runtime-wide
-  infallible allocation path. Hard host OOM isolation therefore remains an
-  embedder responsibility even though capacity overflow is reported as
-  `RangeError`.
+- Generic Array `join` and `toLocaleString` grow their Rust `String` through
+  fallible reservation, but publishing the completed value as `Arc<str>` still
+  uses the runtime-wide infallible allocation path. Hard host OOM isolation
+  therefore remains an embedder responsibility even though capacity overflow
+  is reported as `RangeError`.
+- `%TypedArray%.prototype.toLocaleString` remains a separate conformance and
+  resource-hardening unit. Its current non-ECMA-402 path forwards two explicit
+  locale arguments, resolves mutable Realm globals instead of primitive
+  `GetV`, and does not yet meter each element or reserve output fallibly. The
+  direct **39/39** cohort does not distinguish those behaviors. Generic
+  `Array.prototype.toLocaleString` applied to TypedArrays is covered separately
+  and follows live property access correctly.
 - Native operation rooting is complete for `Array.of`, `sort`, `toSorted`, and
   `toSpliced`; `map` and `flatMap` no longer use snapshots. The sorting methods
   implement generic
@@ -366,11 +374,11 @@ guarantees are required.
   native temporary-root, collected-list, and merge-buffer storage is bounded
   by the same limit but still uses infallible Rust vector allocation.
 - Push, Pop, Shift, Unshift, Splice, Slice, Concat, Flat, FlatMap, ForEach,
-  Join, Map, Reduce, ReduceRight, Reverse, ToReversed, ToSpliced, and With use
-  live generic indexed operations with operation-wide roots. ToSpliced retains
-  only the captured length and coerced splice bounds before copying; it does not
-  retain source elements in a Rust snapshot. Remaining method-specific gaps are
-  tracked above.
+  Join, ToLocaleString, Map, Reduce, ReduceRight, Reverse, ToReversed,
+  ToSpliced, and With use live generic indexed operations with operation-wide
+  roots. ToSpliced retains only the captured length and coerced splice bounds
+  before copying; it does not retain source elements in a Rust snapshot.
+  Remaining method-specific gaps are tracked above.
 - Private methods are stored per-instance as private fields (each instance
   gets its own closure copy); behavior is spec-correct, but this is more
   memory-heavy than a shared per-class method table would be

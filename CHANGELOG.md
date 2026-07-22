@@ -11,6 +11,42 @@
 
 ### Fixed
 
+- `Array.prototype.toLocaleString` now has its own generic ECMAScript
+  algorithm instead of aliasing `Array.prototype.toString`. It performs
+  `ToObject`, captures `LengthOfArrayLike` once, uses RuJa's
+  implementation-defined `","` list separator, and performs a live `Get` for
+  every index without `HasProperty`. Null and undefined produce empty fields;
+  every other element receives an observable `toLocaleString` lookup and call
+  with the original element as `this` and no arguments, followed by `ToString`
+  of the returned value. Locale/options arguments are deliberately ignored in
+  the current non-ECMA-402 runtime.
+
+  Receiver, boxed source, current element, selected method, and returned value
+  remain rooted across length coercion, Proxy traps, invocation, conversion,
+  and forced GC. Direct, indirect, and join/toLocaleString cross-recursion use
+  one balanced stringification stack; every captured index consumes one fuel
+  unit. Output growth uses fallible reservation without an intermediate
+  `Arc<str>` copy, although final `Arc<str>` publication retains the existing
+  runtime-wide allocation limitation. Exact admission freezes only the four
+  direct files hidden by broad `Reflect.construct`, arrow-function, or
+  resizable-buffer gates. On fixed Test262 checkout
+  `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the preceding policy and binary
+  are **3 pass / 5 fail / 4 skip**; applying the final policy to that binary is
+  **5/7/0**; the repaired runtime under the preceding policy is **8/0/4**; and
+  the final cohort is **12/12**. Adjacent Array join remains **23/23**,
+  `%TypedArray%.prototype.toLocaleString` remains **39/39**, and
+  `Object.prototype.toLocaleString` remains **12/12**. Local verification
+  passes all targets/features with **212/212** library tests, **535/535**
+  builtins tests, and **15/15** arguments tests, plus **211/211** release
+  library tests, **133/133** Python tooling tests, **1/1** doctest, rustfmt,
+  warnings-denied Clippy, release build, generated documentation, and wasm32
+  checking. Feature commit `2dd3041` passes CI `29883661773` and full matrix
+  `29883661759`. Downloaded artifacts aggregate to **31872 pass / 5126 fail /
+  11466 skip / 3 timeout / 0 error / 48467 total / 36998 run**; only the
+  built-ins result changes from the preceding matrix, by exactly **+9 pass /
+  -5 fail / -4 skip**. The downloaded release binary independently reproduces
+  every focused and adjacent cohort plus the forced detached-method diagnostic.
+
 - `Array.prototype.toSpliced` now follows the generic ECMAScript
   change-array-by-copy algorithm instead of splicing a represented-Array
   snapshot. It performs `ToObject`, captures `LengthOfArrayLike` once,

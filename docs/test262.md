@@ -9722,6 +9722,57 @@ byte-identical. The downloaded release binary again reports Array toSpliced
 - 장점, 단점 및 영향: Direct toSpliced is 30/30 with twelve runtime fail-to-pass transitions, discarded indices are never read, holes become dense undefined values, foreign Realms and allocation retries are covered, future siblings remain gated, and splice stays green. The result loop may still traverse up to the Array length limit under embedder fuel control, and updating Test262 requires an explicit metadata audit.
 ```
 
+## Generic Array toLocaleString
+
+`tools/test262_array_to_locale_string_admission.txt` freezes exactly **4**
+direct `Array.prototype.toLocaleString` files otherwise hidden by broad
+`Reflect.construct`, arrow-function, or resizable-buffer gates. Its exact
+feature map is shared by runner and analyzer. Tooling checks map/manifest
+equality, live features and includes, empty flags, absent negative metadata,
+disjointness, runner/analyzer symmetry, extra-feature rejection, and closure
+against future or outside siblings.
+
+On fixed checkout `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the preceding
+binary under the preceding policy is **3 pass / 5 fail / 4 skip**. Applying the
+final exact policy to that binary produces **5 pass / 7 fail / 0 skip**. The
+repaired runtime under the preceding policy is **8 pass / 0 fail / 4 skip**,
+and under the final policy is **12/12**. This proves **7** attributable runtime
+fail-to-pass transitions with no reverse transition; the remaining two net
+passes admit already-passing feature-gated files. Adjacent Array join remains
+**23/23**, `%TypedArray%.prototype.toLocaleString` remains **39/39**, and
+`Object.prototype.toLocaleString` remains **12/12**. The forced
+`methods-called-as-functions.js` diagnostic also remains passing outside exact
+admission.
+
+Local verification passes all targets/features with **212/212** library tests,
+**535/535** builtins tests, and **15/15** arguments tests, plus **211/211**
+release library tests, **133/133** Python tooling tests, **1/1** doctest,
+rustfmt, warnings-denied Clippy, release build, generated documentation, and
+wasm32 checking. Rustdoc retains the 13 pre-existing broken intra-doc-link
+warnings. Runtime review is CLEAN after removing an unchecked intermediate
+string allocation and adding thrown-object GC survival; admission review
+confirms exact metadata and policy isolation.
+
+CI `29883661773` and full matrix `29883661759` pass all jobs. Downloaded
+artifacts aggregate to **31872 pass / 5126 fail / 11466 skip / 3 timeout / 0
+error / 48467 total / 36998 run**. Against toSpliced run `29850160482`, this is
+exactly **+9 pass / -5 fail / -4 skip**. The built-ins shard moves from
+**16253/4320/3092/3/0** to **16262/4315/3088/3/0**; every other result file is
+byte-identical. The downloaded release binary again reports Array
+toLocaleString **12/12**, Array join **23/23**, TypedArray toLocaleString
+**39/39**, Object toLocaleString **12/12**, and a passing forced detached-method
+diagnostic.
+
+```text
+[Decision Log]
+- 목적과 의도: Replace the incorrect Array toString alias with generic Array toLocaleString semantics and admit the complete direct Test262 cohort without weakening shared feature gates.
+- 기존 구현 및 제약 조건: The old registration performed an observable join lookup instead of LengthOfArrayLike and per-element locale invocation, so five normally executed files failed; four metadata-bearing files remained skipped, and the runtime has no ECMA-402 implementation.
+- 검토한 주요 대안: Keep the alias and modify join; delegate to the TypedArray locale method; implement ECMA-402 locale/options forwarding now; remove broad feature gates; admit the whole directory by prefix; or combine Array and TypedArray repairs.
+- 선택한 방식: Add one generic ToObject/LengthOfArrayLike path with the implementation-defined comma separator, live Get and zero-argument Invoke per non-nullish element, returned-value ToString, operation-wide roots, shared cycle suppression, per-index fuel, fallible intermediate growth, and one exact four-path admission map.
+- 다른 대안 대신 이 방식을 선택한 이유: Join performs ordinary ToString rather than element locale invocation; the TypedArray method has separate validation and internal-length semantics plus independent known gaps; non-ECMA-402 parameters must be ignored; global or prefix admission overclaims unrelated and future behavior; and separate units keep both contracts measurable.
+- 장점, 단점 및 영향: Direct Array toLocaleString is 12/12 with seven runtime fail-to-pass transitions, generic and resizable TypedArray receivers follow live property semantics, primitive Invoke and method-Realm errors are covered, and adjacent cohorts stay green. Final Arc publication remains infallible, while the distinct TypedArray locale implementation still requires its own zero-argument GetV, fuel, and fallible-growth pass.
+```
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is
