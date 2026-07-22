@@ -412,9 +412,55 @@ impl Vm {
         if std::mem::take(&mut self.fail_next_gc_pin_reservation) {
             return Err(Error::range("temporary root set is too large"));
         }
+        #[cfg(test)]
+        if let Some(remaining) = &mut self.gc_pin_reservation_failure_countdown {
+            if *remaining == 0 {
+                self.gc_pin_reservation_failure_countdown = None;
+                return Err(Error::range("temporary root set is too large"));
+            }
+            *remaining -= 1;
+        }
         self.gc_pins
             .try_reserve(additional)
             .map_err(|_| Error::range("temporary root set is too large"))
+    }
+
+    fn try_reserve_value_roots(&mut self, values: &[Value]) -> error::Result<()> {
+        let required = values.iter().try_fold(0usize, |total, value| {
+            total
+                .checked_add(Self::value_root_count(value))
+                .ok_or_else(|| Error::range("temporary root set is too large"))
+        })?;
+        if required != 0 {
+            self.try_reserve_gc_pins(required)?;
+        }
+        Ok(())
+    }
+
+    fn try_reserve_get_prototype_scratch(
+        &mut self,
+        expected: &mut Vec<Option<Value>>,
+    ) -> error::Result<()> {
+        #[cfg(test)]
+        if std::mem::take(&mut self.fail_next_get_prototype_scratch_reservation) {
+            return Err(Error::range("getPrototypeOf validation chain is too large"));
+        }
+        expected
+            .try_reserve(1)
+            .map_err(|_| Error::range("getPrototypeOf validation chain is too large"))
+    }
+
+    fn try_reserve_get_prototype_root(
+        &mut self,
+        value: &Value,
+        #[cfg(test)] site: GetPrototypeReservationSite,
+    ) -> error::Result<()> {
+        #[cfg(test)]
+        if self.fail_get_prototype_reservation_site == Some(site) {
+            self.fail_get_prototype_reservation_site = None;
+            return Err(Error::range("temporary root set is too large"));
+        }
+        self.try_reserve_value_roots(std::slice::from_ref(value))
     }
 
     fn push_value_roots(roots: &mut Vec<usize>, value: &Value) {
@@ -1600,9 +1646,11 @@ impl Vm {
     }
 
     pub(crate) fn is_extensible(&mut self, obj: &Value) -> error::Result<bool> {
+        self.try_reserve_value_roots(std::slice::from_ref(obj))?;
         let root_pin = self.pin(obj);
         let mut current = obj.clone();
-        let mut trap_results = Vec::new();
+        let mut first_trap_result = None;
+        let mut inconsistent_trap_results = false;
         let result = (|| loop {
             let Value::Object(idx) = &current else {
                 return Ok(false);
@@ -1621,18 +1669,20 @@ impl Vm {
             });
             let Some(proxy_info) = proxy_info else {
                 let target_result = self.heap.with_obj(idx.0, |o| o.is_extensible());
-                for trap_result in trap_results.iter().rev() {
-                    if *trap_result != target_result {
-                        return Err(Error::type_err(
-                            "Proxy isExtensible trap result must match target extensibility",
-                        ));
-                    }
+                if inconsistent_trap_results
+                    || first_trap_result.is_some_and(|result| result != target_result)
+                {
+                    return Err(Error::type_err(
+                        "Proxy isExtensible trap result must match target extensibility",
+                    ));
                 }
                 return Ok(target_result);
             };
             let (target, handler) = proxy_info?;
             self.consume_fuel()?;
-            let proxy_pins = self.pin_many(&[target.clone(), handler.clone()]);
+            let proxy_roots = [target.clone(), handler.clone()];
+            self.try_reserve_value_roots(&proxy_roots)?;
+            let proxy_pins = self.pin_many(&proxy_roots);
             let trap = match self.get_proxy_method(&handler, "isExtensible") {
                 Ok(trap) => trap,
                 Err(error) => {
@@ -1644,6 +1694,10 @@ impl Vm {
                 self.unpin_many(proxy_pins);
                 current = target;
                 continue;
+            }
+            if let Err(error) = self.try_reserve_value_roots(std::slice::from_ref(&trap)) {
+                self.unpin_many(proxy_pins);
+                return Err(error);
             }
             let trap_pin = self.pin(&trap);
             let trap_result =
@@ -1657,7 +1711,11 @@ impl Vm {
                 }
             };
             let boolean_trap_result = self.to_boolean(&trap_result);
-            trap_results.push(boolean_trap_result);
+            if let Some(first) = first_trap_result {
+                inconsistent_trap_results |= first != boolean_trap_result;
+            } else {
+                first_trap_result = Some(boolean_trap_result);
+            }
             self.unpin_many(proxy_pins);
             current = target;
         })();
@@ -2943,6 +3001,7 @@ impl Vm {
             Return(Option<Value>),
         }
 
+        self.try_reserve_value_roots(std::slice::from_ref(object))?;
         let root_pin = self.pin(object);
         let mut current = object.clone();
         let mut expected_prototypes = Vec::new();
@@ -2974,7 +3033,9 @@ impl Vm {
 
                 let (target, handler) = proxy_info?;
                 self.consume_fuel()?;
-                let proxy_pins = self.pin_many(&[target.clone(), handler.clone()]);
+                let proxy_roots = [target.clone(), handler.clone()];
+                self.try_reserve_value_roots(&proxy_roots)?;
+                let proxy_pins = self.pin_many(&proxy_roots);
                 let step = (|| {
                     let trap = self.get_proxy_method(&handler, "getPrototypeOf")?;
                     if trap.is_nullish() {
@@ -2983,6 +3044,7 @@ impl Vm {
                     if !crate::builtins::is_callable(&trap, &self.heap) {
                         return Err(Error::type_err("getPrototypeOf trap is not callable"));
                     }
+                    self.try_reserve_value_roots(std::slice::from_ref(&trap))?;
                     let trap_pin = self.pin(&trap);
                     let handler_proto = self.call_function(
                         &trap,
@@ -3003,6 +3065,13 @@ impl Vm {
 
                     // The trap may return the only reference to this object.
                     // Root it while nested [[IsExtensible]] runs observable JS.
+                    if let Some(prototype) = &proto {
+                        self.try_reserve_get_prototype_root(
+                            prototype,
+                            #[cfg(test)]
+                            GetPrototypeReservationSite::ResultRoot,
+                        )?;
+                    }
                     let proto_pin = proto
                         .as_ref()
                         .map(|prototype| self.pin(prototype))
@@ -3024,6 +3093,14 @@ impl Vm {
                     Step::Validate { target, expected } => {
                         // Keep each deferred expected prototype alive until the
                         // innermost target result can be checked in reverse.
+                        self.try_reserve_get_prototype_scratch(&mut expected_prototypes)?;
+                        if let Some(prototype) = &expected {
+                            self.try_reserve_get_prototype_root(
+                                prototype,
+                                #[cfg(test)]
+                                GetPrototypeReservationSite::ExpectedRoot,
+                            )?;
+                        }
                         expected_pins += expected
                             .as_ref()
                             .map(|prototype| self.pin(prototype))

@@ -1,4 +1,4 @@
-use super::{ExternalPromiseJob, Microtask, Vm};
+use super::{ExternalPromiseJob, GetPrototypeReservationSite, Microtask, Vm};
 use crate::value::{FunctionData, FunctionKind, HeapObj, NativeConstructMode, PromiseStatus};
 use crate::Value;
 use std::fs;
@@ -8102,6 +8102,389 @@ fn proxy_prototype_internal_methods_root_intermediates_and_restore_pin_depth() {
             .expect_err("setPrototypeOf should preserve abrupt completion");
         assert_eq!(vm.gc_pins.len(), baseline);
     }
+}
+
+#[test]
+fn proxy_get_prototype_reservations_are_fallible_ordered_and_balanced() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "failNextRootReservation",
+        |vm, _, _| {
+            vm.fail_next_gc_pin_reservation = true;
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("root-reservation failure hook should register");
+    vm.register_fn(
+        "failNextGetPrototypeScratchReservation",
+        |vm, _, _| {
+            vm.fail_next_get_prototype_scratch_reservation = true;
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("scratch-reservation failure hook should register");
+    vm.register_fn(
+        "failGetPrototypeResultRootReservation",
+        |vm, _, _| {
+            vm.fail_get_prototype_reservation_site = Some(GetPrototypeReservationSite::ResultRoot);
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("result-root reservation failure hook should register");
+    vm.register_fn(
+        "failGetPrototypeExpectedRootReservation",
+        |vm, _, _| {
+            vm.fail_get_prototype_reservation_site =
+                Some(GetPrototypeReservationSite::ExpectedRoot);
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("expected-root reservation failure hook should register");
+    vm.register_fn(
+        "deepExpectedPrototype",
+        |vm, _, _| Ok(vm.object_proto.clone()),
+        1,
+    )
+    .expect("deep getPrototypeOf trap should register");
+    vm.run(
+        r#"
+        var reserveOrder = [];
+
+        var targetReserveProxy = new Proxy({}, {
+          get getPrototypeOf() {
+            reserveOrder.push("target:get");
+            return function () { return null; };
+          }
+        });
+
+        var trapReserveHandler = {};
+        Object.defineProperty(trapReserveHandler, "getPrototypeOf", {
+          get: function () {
+            reserveOrder.push("trap:get");
+            failNextRootReservation();
+            return function () {
+              reserveOrder.push("trap:call");
+              return null;
+            };
+          }
+        });
+        var trapReserveProxy = new Proxy({}, trapReserveHandler);
+
+        var resultReserveTarget = new Proxy({}, {
+          get isExtensible() {
+            reserveOrder.push("result:isExtensible");
+            return Reflect.isExtensible;
+          }
+        });
+        var resultReserveProxy = new Proxy(resultReserveTarget, {
+          getPrototypeOf: function () {
+            reserveOrder.push("result:call");
+            failGetPrototypeResultRootReservation();
+            return {};
+          }
+        });
+
+        var nestedReserveBase = Object.preventExtensions({});
+        var nestedReserveTarget = new Proxy(nestedReserveBase, {
+          get isExtensible() {
+            reserveOrder.push("nested:isExtensible:get");
+            failNextRootReservation();
+            return function () {
+              reserveOrder.push("nested:isExtensible:call");
+              return false;
+            };
+          }
+        });
+        var nestedReserveProxy = new Proxy(nestedReserveTarget, {
+          getPrototypeOf: function () {
+            reserveOrder.push("nested:getPrototypeOf:call");
+            return Object.getPrototypeOf(nestedReserveBase);
+          }
+        });
+
+        var scratchBase = Object.preventExtensions({});
+        var scratchTarget = new Proxy(scratchBase, {
+          isExtensible: function () {
+            reserveOrder.push("scratch:isExtensible");
+            failNextGetPrototypeScratchReservation();
+            return false;
+          },
+          getPrototypeOf: function () {
+            reserveOrder.push("scratch:targetGetPrototypeOf");
+            return Object.getPrototypeOf(scratchBase);
+          }
+        });
+        var scratchProxy = new Proxy(scratchTarget, {
+          getPrototypeOf: function () {
+            reserveOrder.push("scratch:outerGetPrototypeOf");
+            return Object.getPrototypeOf(scratchBase);
+          }
+        });
+
+        var continuationBase = Object.preventExtensions({});
+        var continuationTarget = new Proxy(continuationBase, {
+          isExtensible: function () {
+            reserveOrder.push("continuation:isExtensible");
+            failGetPrototypeExpectedRootReservation();
+            return false;
+          },
+          getPrototypeOf: function () {
+            reserveOrder.push("continuation:targetGetPrototypeOf");
+            return Object.getPrototypeOf(continuationBase);
+          }
+        });
+        var continuationProxy = new Proxy(continuationTarget, {
+          getPrototypeOf: function () {
+            reserveOrder.push("continuation:outerGetPrototypeOf");
+            return Object.getPrototypeOf(continuationBase);
+          }
+        });
+
+        var lateExpectedBase = Object.preventExtensions({});
+        var lateExpectedPrototype = Object.getPrototypeOf(lateExpectedBase);
+        var lateExpectedCalls = 0;
+        var lateExpectedProxy = lateExpectedBase;
+        for (var lateIndex = 0; lateIndex < 8; lateIndex += 1) {
+          lateExpectedProxy = new Proxy(lateExpectedProxy, {
+            getPrototypeOf: function () {
+              lateExpectedCalls += 1;
+              if (lateExpectedCalls === 5) {
+                failGetPrototypeExpectedRootReservation();
+              }
+              return lateExpectedPrototype;
+            }
+          });
+        }
+
+        var nullExpectedBase = Object.preventExtensions(Object.create(null));
+        var nullExpectedProxy = new Proxy(nullExpectedBase, {
+          getPrototypeOf: function () { return null; }
+        });
+
+        var getPrototypeOtherRealm = $262.createRealm().global;
+        var foreignReserveHandler = {};
+        Object.defineProperty(foreignReserveHandler, "getPrototypeOf", {
+          get: function () {
+            failNextRootReservation();
+            return function () { return null; };
+          }
+        });
+        var foreignReserveProxy = new Proxy({}, foreignReserveHandler);
+        var foreignGetPrototypeReserveError = false;
+        try {
+          getPrototypeOtherRealm.Object.getPrototypeOf(foreignReserveProxy);
+        } catch (error) {
+          foreignGetPrototypeReserveError =
+            error instanceof getPrototypeOtherRealm.RangeError &&
+            !(error instanceof RangeError);
+        }
+
+        var deepGetPrototypeBase = Object.preventExtensions({});
+        var deepGetPrototypeProxy = deepGetPrototypeBase;
+        var deepGetPrototypeHandler = {
+          getPrototypeOf: deepExpectedPrototype
+        };
+        for (var i = 0; i < 1024; i += 1) {
+          deepGetPrototypeProxy = new Proxy(
+            deepGetPrototypeProxy,
+            deepGetPrototypeHandler
+          );
+        }
+
+        var extensibleOrder = [];
+        var inconsistentExtensible = new Proxy(
+          new Proxy({}, {
+            isExtensible: function () {
+              extensibleOrder.push("inner");
+              return true;
+            }
+          }),
+          {
+            isExtensible: function () {
+              extensibleOrder.push("outer");
+              return false;
+            }
+          }
+        );
+
+        var delayedExtensibleSentinel = {};
+        var delayedExtensibleOrder = [];
+        var delayedExtensible = new Proxy(
+          new Proxy(
+            new Proxy({}, {
+              isExtensible: function () {
+                delayedExtensibleOrder.push("throw");
+                throw delayedExtensibleSentinel;
+              }
+            }),
+            {
+              isExtensible: function () {
+                delayedExtensibleOrder.push("middle");
+                return true;
+              }
+            }
+          ),
+          {
+            isExtensible: function () {
+              delayedExtensibleOrder.push("outer");
+              return false;
+            }
+          }
+        );
+        var delayedExtensibleSentinelWins = false;
+        try { Object.isExtensible(delayedExtensible); }
+        catch (error) {
+          delayedExtensibleSentinelWins = error === delayedExtensibleSentinel;
+        }
+        "#,
+    )
+    .expect("getPrototypeOf reservation fixtures should initialize");
+
+    let baseline_pins = vm.gc_pins.len();
+    let baseline_contexts = vm.execution_contexts.len();
+    assert_eq!(
+        vm.get_global("foreignGetPrototypeReserveError"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        vm.get_global("delayedExtensibleSentinelWins"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        vm.run("delayedExtensibleOrder.join('|')")
+            .expect("delayed extensibility order should remain readable"),
+        Value::String(Arc::from("outer|middle|throw"))
+    );
+
+    let target_reserve_proxy = vm.get_global("targetReserveProxy");
+    vm.fail_next_gc_pin_reservation = true;
+    assert!(!vm
+        .is_extensible(&Value::Undefined)
+        .expect("primitive IsExtensible must not reserve roots"));
+    assert!(vm.fail_next_gc_pin_reservation);
+    let error = vm
+        .is_extensible(&target_reserve_proxy)
+        .expect_err("IsExtensible input-root reservation must be fallible");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert!(!vm.fail_next_gc_pin_reservation);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.execution_contexts.len(), baseline_contexts);
+
+    vm.gc_pin_reservation_failure_countdown = Some(1);
+    vm.set_fuel(Some(1));
+    let error = vm
+        .is_extensible(&target_reserve_proxy)
+        .expect_err("IsExtensible target/handler reservation must follow fuel");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.execution_contexts.len(), baseline_contexts);
+    vm.set_fuel(None);
+
+    vm.fail_next_gc_pin_reservation = true;
+    let error = vm
+        .get_prototype_of(&target_reserve_proxy)
+        .expect_err("input-root reservation must be fallible");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.execution_contexts.len(), baseline_contexts);
+    assert_eq!(
+        vm.run("reserveOrder.join('|')")
+            .expect("input failure order should remain readable"),
+        Value::String(Arc::from(""))
+    );
+
+    vm.gc_pin_reservation_failure_countdown = Some(1);
+    vm.set_fuel(Some(1));
+    let error = vm
+        .get_prototype_of(&target_reserve_proxy)
+        .expect_err("target/handler reservation must follow the edge debit");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.execution_contexts.len(), baseline_contexts);
+    vm.set_fuel(None);
+    assert_eq!(
+        vm.run("reserveOrder.join('|')")
+            .expect("target reservation order should remain readable"),
+        Value::String(Arc::from(""))
+    );
+
+    for (name, expected_log) in [
+        ("trapReserveProxy", "trap:get"),
+        ("resultReserveProxy", "trap:get|result:call"),
+        (
+            "nestedReserveProxy",
+            "trap:get|result:call|nested:getPrototypeOf:call|nested:isExtensible:get",
+        ),
+        (
+            "scratchProxy",
+            "trap:get|result:call|nested:getPrototypeOf:call|nested:isExtensible:get|scratch:outerGetPrototypeOf|scratch:isExtensible",
+        ),
+        (
+            "continuationProxy",
+            "trap:get|result:call|nested:getPrototypeOf:call|nested:isExtensible:get|scratch:outerGetPrototypeOf|scratch:isExtensible|continuation:outerGetPrototypeOf|continuation:isExtensible",
+        ),
+    ] {
+        let proxy = vm.get_global(name);
+        let error = match vm.get_prototype_of(&proxy) {
+            Err(error) => error,
+            Ok(value) => panic!("{name} unexpectedly returned {value:?}"),
+        };
+        assert_eq!(error.kind, crate::error::ErrorKind::Range, "{name}");
+        assert_eq!(vm.gc_pins.len(), baseline_pins, "{name}");
+        assert_eq!(vm.execution_contexts.len(), baseline_contexts, "{name}");
+        assert_eq!(
+            vm.run("reserveOrder.join('|')")
+                .expect("reservation order should remain readable"),
+            Value::String(Arc::from(expected_log)),
+            "{name}"
+        );
+    }
+
+    let late_expected = vm.get_global("lateExpectedProxy");
+    let error = vm
+        .get_prototype_of(&late_expected)
+        .expect_err("a later expected-root failure must release earlier deferred roots");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.get_global("lateExpectedCalls"), Value::Number(5.0));
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.execution_contexts.len(), baseline_contexts);
+
+    let null_expected = vm.get_global("nullExpectedProxy");
+    assert_eq!(
+        vm.get_prototype_of(&null_expected)
+            .expect("a deferred null prototype should not require an object root"),
+        None
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.execution_contexts.len(), baseline_contexts);
+
+    let deep = vm.get_global("deepGetPrototypeProxy");
+    assert_eq!(
+        vm.get_prototype_of(&deep)
+            .expect("deep validating chain should grow scratch fallibly"),
+        Some(vm.object_proto.clone())
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.execution_contexts.len(), baseline_contexts);
+
+    let inconsistent = vm.get_global("inconsistentExtensible");
+    let error = vm
+        .is_extensible(&inconsistent)
+        .expect_err("all nested trap results must be observed before validation");
+    assert_eq!(error.kind, crate::error::ErrorKind::Type);
+    assert_eq!(
+        vm.run("extensibleOrder.join('|')")
+            .expect("extensibility order should remain readable"),
+        Value::String(Arc::from("outer|inner"))
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.execution_contexts.len(), baseline_contexts);
 }
 
 #[test]

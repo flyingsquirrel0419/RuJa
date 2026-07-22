@@ -9,6 +9,13 @@ mod execution_context_tests;
 pub(crate) mod ops;
 mod property;
 
+#[cfg(test)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum GetPrototypeReservationSite {
+    ResultRoot,
+    ExpectedRoot,
+}
+
 pub(crate) use conversions::{to_int32, to_uint32};
 pub(crate) use property::{
     ProxyDefinePropertyDescriptor, ProxyDefinePropertyOutcome, TypedArrayDefineDescriptor,
@@ -160,7 +167,13 @@ pub struct Vm {
     #[cfg(test)]
     pub(crate) fail_next_gc_pin_reservation: bool,
     #[cfg(test)]
+    pub(crate) gc_pin_reservation_failure_countdown: Option<usize>,
+    #[cfg(test)]
     pub(crate) fail_has_instance_continuation_reservation: bool,
+    #[cfg(test)]
+    pub(crate) fail_next_get_prototype_scratch_reservation: bool,
+    #[cfg(test)]
+    pub(crate) fail_get_prototype_reservation_site: Option<GetPrototypeReservationSite>,
     /// Receiver identities currently traversing Array stringification methods.
     /// Join checks after separator coercion and toLocaleString checks after its
     /// length snapshot, so recursive suppression preserves observable ordering.
@@ -678,7 +691,13 @@ impl Vm {
             #[cfg(test)]
             fail_next_gc_pin_reservation: false,
             #[cfg(test)]
+            gc_pin_reservation_failure_countdown: None,
+            #[cfg(test)]
             fail_has_instance_continuation_reservation: false,
+            #[cfg(test)]
+            fail_next_get_prototype_scratch_reservation: false,
+            #[cfg(test)]
+            fail_get_prototype_reservation_site: None,
             active_array_joins: Vec::new(),
             kept_objects: Vec::new(),
             current_yields: Vec::new(),
