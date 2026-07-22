@@ -11900,6 +11900,588 @@ fn proxy_own_keys_direct_root_reservations_are_fallible_and_ordered() {
 }
 
 #[test]
+fn proxy_own_keys_post_validation_collections_are_fallible_and_atomic() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "failProxyOwnKeysTargetKeySet",
+        |vm, _, _| {
+            vm.fail_proxy_own_keys_reservation =
+                Some((ProxyOwnKeysReservationSite::TargetKeySet, 0));
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("target-key-set failure hook should register");
+    vm.register_fn(
+        "failProxyOwnKeysFilteredKey",
+        |vm, _, _| {
+            vm.fail_proxy_own_keys_reservation =
+                Some((ProxyOwnKeysReservationSite::FilteredKey, 0));
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("filtered-key failure hook should register");
+    vm.run(
+        r#"
+        var targetSetCalls = 0;
+        var targetSetTarget = { fixed: 1 };
+        Object.preventExtensions(targetSetTarget);
+        var targetSetProxy = new Proxy(targetSetTarget, {
+          ownKeys: function () { targetSetCalls += 1; return ["fixed"]; }
+        });
+
+        var targetSetOpenTarget = { open: 1 };
+        var targetSetOpenProxy = new Proxy(targetSetOpenTarget, {
+          ownKeys: function () { return ["open"]; }
+        });
+        var targetSetEmptyTarget = {};
+        Object.preventExtensions(targetSetEmptyTarget);
+        var targetSetEmptyProxy = new Proxy(targetSetEmptyTarget, {
+          ownKeys: function () { return []; }
+        });
+        var targetSetExtraProxy = new Proxy(targetSetEmptyTarget, {
+          ownKeys: function () { return ["extra"]; }
+        });
+        var targetSetMismatchTarget = { fixed: 1 };
+        Object.preventExtensions(targetSetMismatchTarget);
+        var targetSetMismatchProxy = new Proxy(targetSetMismatchTarget, {
+          ownKeys: function () { return ["extra"]; }
+        });
+        var targetSetFuelTarget = { fuelKey: 1 };
+        Object.preventExtensions(targetSetFuelTarget);
+        var targetSetFuelProxy = new Proxy(targetSetFuelTarget, {
+          ownKeys: function () { return ["fuelKey"]; }
+        });
+
+        var observedSetDescriptorLog = "";
+        var observedSetBase = { first: 1, second: 2 };
+        Object.preventExtensions(observedSetBase);
+        var observedSetTarget = new Proxy(observedSetBase, {
+          ownKeys: function () { return ["first", "second"]; },
+          getOwnPropertyDescriptor: function (target, key) {
+            observedSetDescriptorLog += key + ",";
+            return Reflect.getOwnPropertyDescriptor(target, key);
+          }
+        });
+        var observedSetOuter = new Proxy(observedSetTarget, {
+          ownKeys: function () { return ["first", "second"]; }
+        });
+
+        var omittedTarget = {};
+        Object.defineProperty(omittedTarget, "fixed", {
+          value: 1, configurable: false
+        });
+        Object.preventExtensions(omittedTarget);
+        var omittedProxy = new Proxy(omittedTarget, {
+          ownKeys: function () { return []; }
+        });
+
+        var targetDescriptorMarker = {};
+        var abruptTargetBase = { fixed: 1 };
+        Object.preventExtensions(abruptTargetBase);
+        var abruptObservedTarget = new Proxy(abruptTargetBase, {
+          getOwnPropertyDescriptor: function () { throw targetDescriptorMarker; }
+        });
+        var abruptTargetSetProxy = new Proxy(abruptObservedTarget, {
+          ownKeys: function () { return ["fixed"]; }
+        });
+
+        var filteredCalls = 0;
+        var filteredTarget = {};
+        var filteredTrapKeys = [];
+        for (var filteredIndex = 0; filteredIndex < 16; filteredIndex += 1) {
+          var filteredName = "key" + filteredIndex;
+          filteredTarget[filteredName] = filteredIndex;
+          filteredTrapKeys.push(filteredName);
+        }
+        var filteredMiddleSymbol = Symbol("middle");
+        filteredTarget[filteredMiddleSymbol] = 3;
+        filteredTrapKeys.splice(2, 0, filteredMiddleSymbol);
+        var filteredProxy = new Proxy(filteredTarget, {
+          ownKeys: function () {
+            filteredCalls += 1;
+            return filteredTrapKeys;
+          }
+        });
+        var filteredSymbol = Symbol("filtered");
+        var symbolOnlyTarget = {};
+        symbolOnlyTarget[filteredSymbol] = 1;
+        var symbolOnlyProxy = new Proxy(symbolOnlyTarget, {
+          ownKeys: function () { return [filteredSymbol]; }
+        });
+        var hiddenTarget = {};
+        Object.defineProperty(hiddenTarget, "hidden", {
+          value: 1, enumerable: false, configurable: true
+        });
+        var hiddenProxy = new Proxy(hiddenTarget, {
+          ownKeys: function () { return ["hidden"]; }
+        });
+        var filteredEmptyProxy = new Proxy({}, {
+          ownKeys: function () { return []; }
+        });
+        var filteredAbsentProxy = new Proxy({}, {
+          ownKeys: function () { return ["absent"]; }
+        });
+        var filteredFuelProxy = new Proxy({ fuelKey: 1 }, {
+          ownKeys: function () { return ["fuelKey"]; }
+        });
+        var filteredDescriptorMarker = {};
+        var filteredAbruptProxy = new Proxy({ key: 1 }, {
+          ownKeys: function () { return ["key"]; },
+          getOwnPropertyDescriptor: function () { throw filteredDescriptorMarker; }
+        });
+
+        var nestedPostBase = { nested: 1 };
+        Object.preventExtensions(nestedPostBase);
+        var nestedPostTargetDescriptorLog = "";
+        var nestedPostFilterDescriptorLog = "";
+        var nestedPostInnerCalls = 0;
+        var nestedPostInner = new Proxy(nestedPostBase, {
+          ownKeys: function () {
+            nestedPostInnerCalls += 1;
+            return ["nested"];
+          },
+          getOwnPropertyDescriptor: function (target, key) {
+            nestedPostTargetDescriptorLog += key + ",";
+            return Reflect.getOwnPropertyDescriptor(target, key);
+          }
+        });
+        var nestedPostOuterCalls = 0;
+        var nestedPostOuter = new Proxy(nestedPostInner, {
+          ownKeys: function () {
+            nestedPostOuterCalls += 1;
+            return ["nested"];
+          },
+          getOwnPropertyDescriptor: function (target, key) {
+            nestedPostFilterDescriptorLog += key + ",";
+            return Reflect.getOwnPropertyDescriptor(target, key);
+          }
+        });
+
+        var postCollectionRealm = $262.createRealm().global;
+        var foreignPostCall = postCollectionRealm.Function(
+          "proxy", "keysOnly",
+          "try { return keysOnly ? Object.keys(proxy) : Reflect.ownKeys(proxy); } " +
+          "catch (error) { return error; }"
+        );
+        var foreignPostError;
+        var foreignPostRange;
+        "#,
+    )
+    .expect("Proxy ownKeys post-validation fixtures should initialize");
+    let baseline_pins = vm.gc_pins.len();
+    let baseline_contexts = vm.execution_contexts.len();
+    let baseline_native_depth = vm.active_native_call_depth;
+
+    let target_set = vm.get_global("targetSetProxy");
+    vm.fail_proxy_own_keys_reservation = Some((ProxyOwnKeysReservationSite::TargetKeySet, 0));
+    let error =
+        crate::builtins::own_property_keys_or_throw(&mut vm, &target_set, false, true, true)
+            .expect_err("a non-empty non-extensible target set must reserve before collection");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.get_global("targetSetCalls"), Value::Number(1.0));
+    assert_eq!(vm.fail_proxy_own_keys_reservation, None);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(
+        crate::builtins::own_property_keys_or_throw(&mut vm, &target_set, false, true, true)
+            .expect("target-key-set failure should retry from the trap"),
+        vec![crate::value::PropertyKey::from("fixed")]
+    );
+    assert_eq!(vm.get_global("targetSetCalls"), Value::Number(2.0));
+
+    let open = vm.get_global("targetSetOpenProxy");
+    vm.fail_proxy_own_keys_reservation = Some((ProxyOwnKeysReservationSite::TargetKeySet, 0));
+    assert_eq!(
+        crate::builtins::own_property_keys_or_throw(&mut vm, &open, false, true, true)
+            .expect("an extensible target needs no exact target-key set"),
+        vec![crate::value::PropertyKey::from("open")]
+    );
+    assert_eq!(
+        vm.fail_proxy_own_keys_reservation,
+        Some((ProxyOwnKeysReservationSite::TargetKeySet, 0))
+    );
+
+    let empty = vm.get_global("targetSetEmptyProxy");
+    assert!(
+        crate::builtins::own_property_keys_or_throw(&mut vm, &empty, false, true, true)
+            .expect("an empty non-extensible target set needs no capacity")
+            .is_empty()
+    );
+    assert_eq!(
+        vm.fail_proxy_own_keys_reservation,
+        Some((ProxyOwnKeysReservationSite::TargetKeySet, 0))
+    );
+    let extra = vm.get_global("targetSetExtraProxy");
+    let error = crate::builtins::own_property_keys_or_throw(&mut vm, &extra, false, true, true)
+        .expect_err("an empty target must report an extra trap key without reserving");
+    assert_eq!(error.kind, crate::error::ErrorKind::Type);
+    assert_eq!(
+        vm.fail_proxy_own_keys_reservation,
+        Some((ProxyOwnKeysReservationSite::TargetKeySet, 0))
+    );
+    vm.fail_proxy_own_keys_reservation = None;
+    let mismatch = vm.get_global("targetSetMismatchProxy");
+    vm.fail_proxy_own_keys_reservation = Some((ProxyOwnKeysReservationSite::TargetKeySet, 0));
+    let error = crate::builtins::own_property_keys_or_throw(&mut vm, &mismatch, false, true, true)
+        .expect_err("target-set reservation must precede non-empty exact-set mismatch");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fail_proxy_own_keys_reservation, None);
+    let error = crate::builtins::own_property_keys_or_throw(&mut vm, &mismatch, false, true, true)
+        .expect_err("retry must reach the non-extensible exact-set mismatch");
+    assert_eq!(error.kind, crate::error::ErrorKind::Type);
+
+    let observed_set = vm.get_global("observedSetOuter");
+    vm.fail_proxy_own_keys_reservation = Some((ProxyOwnKeysReservationSite::TargetKeySet, 1));
+    let error =
+        crate::builtins::own_property_keys_or_throw(&mut vm, &observed_set, false, true, true)
+            .expect_err("outer target-set reservation must follow every target descriptor");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(
+        vm.get_global("observedSetDescriptorLog"),
+        Value::String(Arc::from("first,second,"))
+    );
+    assert_eq!(vm.fail_proxy_own_keys_reservation, None);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(
+        crate::builtins::own_property_keys_or_throw(&mut vm, &observed_set, false, true, true)
+            .expect("observed target-set failure should retry from both traps"),
+        vec![
+            crate::value::PropertyKey::from("first"),
+            crate::value::PropertyKey::from("second"),
+        ]
+    );
+    assert_eq!(
+        vm.get_global("observedSetDescriptorLog"),
+        Value::String(Arc::from("first,second,first,second,"))
+    );
+
+    let omitted = vm.get_global("omittedProxy");
+    vm.fail_proxy_own_keys_reservation = Some((ProxyOwnKeysReservationSite::TargetKeySet, 0));
+    let error = crate::builtins::own_property_keys_or_throw(&mut vm, &omitted, false, true, true)
+        .expect_err("an omitted non-configurable key must fail before target-set reservation");
+    assert_eq!(error.kind, crate::error::ErrorKind::Type);
+    assert_eq!(
+        vm.fail_proxy_own_keys_reservation,
+        Some((ProxyOwnKeysReservationSite::TargetKeySet, 0))
+    );
+    let abrupt_target = vm.get_global("abruptTargetSetProxy");
+    let error =
+        crate::builtins::own_property_keys_or_throw(&mut vm, &abrupt_target, false, true, true)
+            .expect_err("target descriptor abrupt completion must precede target-set reservation");
+    assert_eq!(error.kind, crate::error::ErrorKind::User);
+    assert_eq!(
+        error.thrown_value,
+        Some(vm.get_global("targetDescriptorMarker"))
+    );
+    assert_eq!(
+        vm.fail_proxy_own_keys_reservation,
+        Some((ProxyOwnKeysReservationSite::TargetKeySet, 0))
+    );
+    vm.fail_proxy_own_keys_reservation = None;
+
+    let fuel_target_set = vm.get_global("targetSetFuelProxy");
+    let fuel_budget = 10_000;
+    vm.set_fuel(Some(fuel_budget));
+    vm.fail_proxy_own_keys_reservation = Some((ProxyOwnKeysReservationSite::TargetKeySet, 0));
+    let error =
+        crate::builtins::own_property_keys_or_throw(&mut vm, &fuel_target_set, false, true, true)
+            .expect_err("a large fuel budget should reach target-set reservation");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    let consumed_to_target_set = fuel_budget
+        - vm.fuel_remaining()
+            .expect("measured target-set run should retain fuel accounting");
+    assert!(consumed_to_target_set > 0);
+    vm.set_fuel(Some(consumed_to_target_set - 1));
+    vm.fail_proxy_own_keys_reservation = Some((ProxyOwnKeysReservationSite::TargetKeySet, 0));
+    let error =
+        crate::builtins::own_property_keys_or_throw(&mut vm, &fuel_target_set, false, true, true)
+            .expect_err("the last pre-reservation fuel unit must fail first");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(
+        vm.fail_proxy_own_keys_reservation,
+        Some((ProxyOwnKeysReservationSite::TargetKeySet, 0))
+    );
+    vm.set_fuel(Some(consumed_to_target_set));
+    let error =
+        crate::builtins::own_property_keys_or_throw(&mut vm, &fuel_target_set, false, true, true)
+            .expect_err("exact pre-reservation fuel must reach target-set growth");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.fail_proxy_own_keys_reservation, None);
+    vm.set_fuel(None);
+
+    let fuel_filtered = vm.get_global("filteredFuelProxy");
+    vm.set_fuel(Some(fuel_budget));
+    vm.fail_proxy_own_keys_reservation = Some((ProxyOwnKeysReservationSite::FilteredKey, 0));
+    let error =
+        crate::builtins::own_property_keys_or_throw(&mut vm, &fuel_filtered, true, true, false)
+            .expect_err("a large fuel budget should reach filtered-result reservation");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    let consumed_to_filtered = fuel_budget
+        - vm.fuel_remaining()
+            .expect("measured filtered run should retain fuel accounting");
+    assert!(consumed_to_filtered > 0);
+    vm.set_fuel(Some(consumed_to_filtered - 1));
+    vm.fail_proxy_own_keys_reservation = Some((ProxyOwnKeysReservationSite::FilteredKey, 0));
+    let error =
+        crate::builtins::own_property_keys_or_throw(&mut vm, &fuel_filtered, true, true, false)
+            .expect_err("the final filtered-key fuel unit must fail before reservation");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(
+        vm.fail_proxy_own_keys_reservation,
+        Some((ProxyOwnKeysReservationSite::FilteredKey, 0))
+    );
+    vm.set_fuel(Some(consumed_to_filtered));
+    let error =
+        crate::builtins::own_property_keys_or_throw(&mut vm, &fuel_filtered, true, true, false)
+            .expect_err("exact filtered-key fuel must reach result growth");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    assert_eq!(vm.fail_proxy_own_keys_reservation, None);
+    vm.set_fuel(None);
+
+    let filtered = vm.get_global("filteredProxy");
+    vm.fail_proxy_own_keys_reservation = Some((ProxyOwnKeysReservationSite::FilteredKey, 1));
+    let error = crate::builtins::own_property_keys_or_throw(&mut vm, &filtered, true, true, false)
+        .expect_err("the second filtered vector growth must reserve before publication");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.get_global("filteredCalls"), Value::Number(1.0));
+    assert_eq!(vm.fail_proxy_own_keys_reservation, None);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    let retried_filtered =
+        crate::builtins::own_property_keys_or_throw(&mut vm, &filtered, true, true, false)
+            .expect("a partial filtered result must be discarded and retryable");
+    assert_eq!(retried_filtered.len(), 16);
+    assert_eq!(
+        retried_filtered.first(),
+        Some(&crate::value::PropertyKey::from("key0"))
+    );
+    assert_eq!(
+        retried_filtered.last(),
+        Some(&crate::value::PropertyKey::from("key15"))
+    );
+    assert_eq!(vm.get_global("filteredCalls"), Value::Number(2.0));
+
+    let symbol_only = vm.get_global("symbolOnlyProxy");
+    vm.fail_proxy_own_keys_reservation = Some((ProxyOwnKeysReservationSite::FilteredKey, 0));
+    assert!(
+        crate::builtins::own_property_keys_or_throw(&mut vm, &symbol_only, false, true, false,)
+            .expect("an excluded Symbol needs no filtered-result capacity")
+            .is_empty()
+    );
+    assert_eq!(
+        vm.fail_proxy_own_keys_reservation,
+        Some((ProxyOwnKeysReservationSite::FilteredKey, 0))
+    );
+    let hidden = vm.get_global("hiddenProxy");
+    assert!(
+        crate::builtins::own_property_keys_or_throw(&mut vm, &hidden, true, true, false)
+            .expect("a non-enumerable key needs no filtered-result capacity")
+            .is_empty()
+    );
+    assert_eq!(
+        vm.fail_proxy_own_keys_reservation,
+        Some((ProxyOwnKeysReservationSite::FilteredKey, 0))
+    );
+    let filtered_empty = vm.get_global("filteredEmptyProxy");
+    assert!(crate::builtins::own_property_keys_or_throw(
+        &mut vm,
+        &filtered_empty,
+        false,
+        true,
+        false,
+    )
+    .expect("an empty trap result needs no filtered-result capacity")
+    .is_empty());
+    assert_eq!(
+        vm.fail_proxy_own_keys_reservation,
+        Some((ProxyOwnKeysReservationSite::FilteredKey, 0))
+    );
+    let filtered_absent = vm.get_global("filteredAbsentProxy");
+    assert!(crate::builtins::own_property_keys_or_throw(
+        &mut vm,
+        &filtered_absent,
+        true,
+        true,
+        false,
+    )
+    .expect("an absent descriptor needs no filtered-result capacity")
+    .is_empty());
+    assert_eq!(
+        vm.fail_proxy_own_keys_reservation,
+        Some((ProxyOwnKeysReservationSite::FilteredKey, 0))
+    );
+    let filtered_abrupt = vm.get_global("filteredAbruptProxy");
+    let error =
+        crate::builtins::own_property_keys_or_throw(&mut vm, &filtered_abrupt, true, true, false)
+            .expect_err("enumerability abrupt completion must precede filtered reservation");
+    assert_eq!(error.kind, crate::error::ErrorKind::User);
+    assert_eq!(
+        error.thrown_value,
+        Some(vm.get_global("filteredDescriptorMarker"))
+    );
+    assert_eq!(
+        vm.fail_proxy_own_keys_reservation,
+        Some((ProxyOwnKeysReservationSite::FilteredKey, 0))
+    );
+    vm.fail_proxy_own_keys_reservation = None;
+
+    vm.set_fuel(Some(0));
+    for site in [
+        ProxyOwnKeysReservationSite::TargetKeySet,
+        ProxyOwnKeysReservationSite::FilteredKey,
+    ] {
+        vm.fail_proxy_own_keys_reservation = Some((site, 0));
+        let error =
+            crate::builtins::own_property_keys_or_throw(&mut vm, &target_set, false, true, true)
+                .expect_err("Proxy-edge fuel must precede post-validation collection growth");
+        assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+        assert_eq!(vm.fail_proxy_own_keys_reservation, Some((site, 0)));
+    }
+    vm.set_fuel(None);
+    vm.fail_proxy_own_keys_reservation = None;
+
+    let nested = vm.get_global("nestedPostOuter");
+    for site in [
+        ProxyOwnKeysReservationSite::TargetKeySet,
+        ProxyOwnKeysReservationSite::FilteredKey,
+    ] {
+        vm.run("nestedPostTargetDescriptorLog = ''; nestedPostFilterDescriptorLog = '';")
+            .expect("nested observation logs should reset");
+        vm.fail_proxy_own_keys_reservation = Some((site, 1));
+        let error = crate::builtins::own_property_keys_or_throw(&mut vm, &nested, true, true, true)
+            .expect_err("an outer collection failure must unwind earlier validated frames");
+        assert_eq!(error.kind, crate::error::ErrorKind::Range);
+        assert_eq!(
+            vm.get_global("nestedPostTargetDescriptorLog"),
+            if site == ProxyOwnKeysReservationSite::FilteredKey {
+                Value::String(Arc::from("nested,nested,nested,"))
+            } else {
+                Value::String(Arc::from("nested,"))
+            },
+            "site {site:?}"
+        );
+        assert_eq!(
+            vm.get_global("nestedPostFilterDescriptorLog"),
+            if site == ProxyOwnKeysReservationSite::FilteredKey {
+                Value::String(Arc::from("nested,"))
+            } else {
+                Value::String(Arc::from(""))
+            },
+            "site {site:?}"
+        );
+        assert_eq!(vm.fail_proxy_own_keys_reservation, None);
+        assert_eq!(vm.gc_pins.len(), baseline_pins);
+        assert_eq!(vm.execution_contexts.len(), baseline_contexts);
+        assert_eq!(vm.active_native_call_depth, baseline_native_depth);
+        assert_eq!(
+            crate::builtins::own_property_keys_or_throw(&mut vm, &nested, true, true, true)
+                .expect("nested post-validation failure should be retryable"),
+            vec![crate::value::PropertyKey::from("nested")]
+        );
+    }
+
+    for (site, keys_only) in [
+        (ProxyOwnKeysReservationSite::TargetKeySet, false),
+        (ProxyOwnKeysReservationSite::FilteredKey, true),
+    ] {
+        vm.fail_proxy_own_keys_reservation = Some((site, 0));
+        vm.run(&format!(
+            "foreignPostError = foreignPostCall({}, {});\n\
+             foreignPostRange = foreignPostError instanceof postCollectionRealm.RangeError &&\n\
+             !(foreignPostError instanceof RangeError);",
+            if keys_only {
+                "filteredProxy"
+            } else {
+                "targetSetProxy"
+            },
+            keys_only
+        ))
+        .expect("foreign post-validation error should materialize");
+        assert_eq!(vm.get_global("foreignPostRange"), Value::Bool(true));
+        assert_eq!(vm.fail_proxy_own_keys_reservation, None);
+        assert_eq!(vm.gc_pins.len(), baseline_pins);
+    }
+
+    let assert_for_in_unpublished = |vm: &Vm, iterator: &Value| {
+        let Value::Object(iterator_idx) = iterator else {
+            panic!("for-in iterator must be an object");
+        };
+        vm.heap.with_obj(iterator_idx.0, |object| {
+            let HeapObj::Iterator(iterator) = object else {
+                panic!("expected for-in iterator");
+            };
+            let state = iterator.for_in.lock();
+            let state = state.as_ref().expect("for-in state should exist");
+            assert!(!state.object_was_visited);
+            assert!(state.remaining_keys.is_empty());
+            assert_eq!(state.remaining_index, 0);
+        });
+    };
+    for (site, proxy, expected) in [
+        (
+            ProxyOwnKeysReservationSite::TargetKeySet,
+            target_set.clone(),
+            "fixed",
+        ),
+        (
+            ProxyOwnKeysReservationSite::FilteredKey,
+            filtered.clone(),
+            "key0",
+        ),
+    ] {
+        let iterator = vm
+            .make_for_in_keys(&proxy)
+            .expect("for-in post-validation iterator should initialize");
+        vm.fail_proxy_own_keys_reservation = Some((site, 0));
+        let error = vm
+            .iterator_next(&iterator)
+            .expect_err("post-validation failure must precede for-in snapshot publication");
+        assert_eq!(error.kind, crate::error::ErrorKind::Range);
+        assert_for_in_unpublished(&vm, &iterator);
+        assert_eq!(
+            vm.iterator_next(&iterator)
+                .expect("for-in should retry after post-validation failure"),
+            (Value::String(Arc::from(expected)), false)
+        );
+        assert_eq!(vm.fail_proxy_own_keys_reservation, None);
+        assert_eq!(vm.gc_pins.len(), baseline_pins);
+        assert_eq!(vm.execution_contexts.len(), baseline_contexts);
+        assert_eq!(vm.active_native_call_depth, baseline_native_depth);
+    }
+
+    let layered_iterator = vm
+        .make_for_in_keys(&filtered)
+        .expect("layered for-in reservation iterator should initialize");
+    vm.fail_proxy_own_keys_reservation = Some((ProxyOwnKeysReservationSite::FilteredKey, 0));
+    vm.fail_for_in_key_reservation_site = Some(ForInKeyReservationSite::SnapshotKeys);
+    let error = vm
+        .iterator_next(&layered_iterator)
+        .expect_err("ownKeys filtered growth must precede for-in snapshot growth");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(
+        vm.fail_for_in_key_reservation_site,
+        Some(ForInKeyReservationSite::SnapshotKeys)
+    );
+    assert_for_in_unpublished(&vm, &layered_iterator);
+    let error = vm
+        .iterator_next(&layered_iterator)
+        .expect_err("for-in snapshot growth should fail on the caller retry");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fail_for_in_key_reservation_site, None);
+    assert_for_in_unpublished(&vm, &layered_iterator);
+    assert_eq!(
+        vm.iterator_next(&layered_iterator)
+            .expect("for-in should retry after both collection layers"),
+        (Value::String(Arc::from("key0")), false)
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.execution_contexts.len(), baseline_contexts);
+    assert_eq!(vm.active_native_call_depth, baseline_native_depth);
+}
+
+#[test]
 fn proxy_own_keys_walk_is_iterative_metered_and_restores_pin_depth() {
     let mut vm = Vm::new().expect("VM should initialize");
     vm.run(

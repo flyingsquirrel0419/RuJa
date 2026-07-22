@@ -6289,6 +6289,43 @@ fn reserve_proxy_own_keys_seen_key(
         .map_err(|_| Error::range("Proxy ownKeys duplicate set is too large"))
 }
 
+fn reserve_proxy_own_keys_target_key_set(
+    _vm: &mut Vm,
+    keys: &mut IndexSet<PropertyKey>,
+    additional: usize,
+) -> error::Result<()> {
+    if additional == 0 {
+        return Ok(());
+    }
+    #[cfg(test)]
+    if take_proxy_own_keys_reservation_failure(
+        _vm,
+        crate::vm::ProxyOwnKeysReservationSite::TargetKeySet,
+    ) {
+        return Err(Error::range("Proxy ownKeys target-key set is too large"));
+    }
+    keys.try_reserve(additional)
+        .map_err(|_| Error::range("Proxy ownKeys target-key set is too large"))
+}
+
+fn reserve_proxy_own_keys_filtered_key(
+    _vm: &mut Vm,
+    keys: &mut Vec<PropertyKey>,
+) -> error::Result<()> {
+    if keys.len() < keys.capacity() {
+        return Ok(());
+    }
+    #[cfg(test)]
+    if take_proxy_own_keys_reservation_failure(
+        _vm,
+        crate::vm::ProxyOwnKeysReservationSite::FilteredKey,
+    ) {
+        return Err(Error::range("Proxy ownKeys filtered result is too large"));
+    }
+    keys.try_reserve(1)
+        .map_err(|_| Error::range("Proxy ownKeys filtered result is too large"))
+}
+
 fn proxy_own_keys_from_array_like(
     vm: &mut Vm,
     key_list: &Value,
@@ -6510,7 +6547,9 @@ pub(crate) fn own_property_keys_or_throw(
                 ));
             }
             if !frame.extensible_target {
-                let target_key_set: IndexSet<_> = keys.iter().cloned().collect();
+                let mut target_key_set = IndexSet::new();
+                reserve_proxy_own_keys_target_key_set(vm, &mut target_key_set, keys.len())?;
+                target_key_set.extend(keys.iter().cloned());
                 if target_key_set != frame.seen {
                     return Err(Error::type_err(
                         "Proxy ownKeys trap does not match a non-extensible target",
@@ -6532,6 +6571,7 @@ pub(crate) fn own_property_keys_or_throw(
                 {
                     continue;
                 }
+                reserve_proxy_own_keys_filtered_key(vm, &mut filtered)?;
                 filtered.push(key);
             }
             keys = filtered;
