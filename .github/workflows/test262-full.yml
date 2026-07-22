@@ -46,6 +46,7 @@ jobs:
         run: >-
           TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
           test262_tooling_test.TypedArrayJoinAdmissionTests
+          test262_tooling_test.TypedArrayToStringAdmissionTests
           test262_tooling_test.TypedArrayToLocaleStringAdmissionTests -v
       - name: Build directory matrix
         id: dirs

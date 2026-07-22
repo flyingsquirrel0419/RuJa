@@ -127,6 +127,9 @@ try:
     from test262_typed_array_join_admission import (
         TYPED_ARRAY_JOIN_FEATURES, TYPED_ARRAY_JOIN_FILES,
     )
+    from test262_typed_array_to_string_admission import (
+        TYPED_ARRAY_TO_STRING_FEATURES, TYPED_ARRAY_TO_STRING_FILES,
+    )
     from test262_array_join_admission import ARRAY_JOIN_FEATURES, ARRAY_JOIN_FILES
     from test262_array_flat_admission import (
         ARRAY_FLAT_FEATURES, ARRAY_FLAT_FILES,
@@ -279,6 +282,9 @@ except ModuleNotFoundError:
     )
     from tools.test262_typed_array_join_admission import (
         TYPED_ARRAY_JOIN_FEATURES, TYPED_ARRAY_JOIN_FILES,
+    )
+    from tools.test262_typed_array_to_string_admission import (
+        TYPED_ARRAY_TO_STRING_FEATURES, TYPED_ARRAY_TO_STRING_FILES,
     )
     from tools.test262_array_join_admission import ARRAY_JOIN_FEATURES, ARRAY_JOIN_FILES
     from tools.test262_array_flat_admission import (
@@ -577,20 +583,6 @@ TYPED_ARRAY_ACCESSOR_FEATURES = {
     "Symbol",
     "TypedArray",
     "resizable-arraybuffer",
-}
-
-TYPED_ARRAY_TO_STRING_FILES = {
-    "built-ins/TypedArray/prototype/toString.js",
-    "built-ins/TypedArray/prototype/toString/BigInt/detached-buffer.js",
-    "built-ins/TypedArray/prototype/toString/detached-buffer.js",
-    "built-ins/TypedArray/prototype/toString/not-a-constructor.js",
-}
-
-TYPED_ARRAY_TO_STRING_FEATURES = {
-    "BigInt",
-    "Reflect.construct",
-    "TypedArray",
-    "arrow-function",
 }
 
 TYPED_ARRAY_PROTOTYPE_INTRINSIC_FILES = {
@@ -1638,11 +1630,22 @@ def typed_array_accessor_path(path):
     return rel.as_posix() in TYPED_ARRAY_ACCESSOR_FILES
 
 def typed_array_to_string_path(path):
+    if path is None:
+        return False
     try:
         rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
-    except ValueError:
+    except (OSError, ValueError, TypeError):
         return False
     return rel.as_posix() in TYPED_ARRAY_TO_STRING_FILES
+
+def typed_array_to_string_features(path):
+    if path is None:
+        return frozenset()
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except (OSError, ValueError, TypeError):
+        return frozenset()
+    return TYPED_ARRAY_TO_STRING_FEATURES.get(rel.as_posix(), frozenset())
 
 def typed_array_prototype_intrinsic_path(path):
     try:
@@ -3216,7 +3219,7 @@ def should_skip(meta, path=None):
     if path is not None and typed_array_accessor_path(path):
         feats.difference_update(TYPED_ARRAY_ACCESSOR_FEATURES)
     if path is not None and typed_array_to_string_path(path):
-        feats.difference_update(TYPED_ARRAY_TO_STRING_FEATURES)
+        feats.difference_update(typed_array_to_string_features(path))
     if path is not None and typed_array_prototype_intrinsic_path(path):
         feats.difference_update(TYPED_ARRAY_PROTOTYPE_INTRINSIC_FEATURES)
     if path is not None and typed_array_from_path(path):

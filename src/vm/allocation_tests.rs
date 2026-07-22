@@ -2848,6 +2848,64 @@ fn typed_array_join_roots_observable_state_and_restores_pin_depth() {
 }
 
 #[test]
+fn typed_array_to_string_alias_roots_direct_native_state() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("GC test hook should register");
+    let baseline = vm.gc_pins.len();
+
+    let source = vm
+        .run(
+            r#"
+            var source = new Uint8Array([1, 2]);
+            source.join = function () {
+              source = null;
+              forceGc();
+              return this[0] + "|" + this[1];
+            };
+            source;
+            "#,
+        )
+        .expect("direct TypedArray toString source should initialize");
+    assert_eq!(
+        crate::builtins::array::array_to_string(&mut vm, &[], Some(source))
+            .expect("call roots should preserve the direct-native receiver"),
+        Value::String(Arc::from("1|2"))
+    );
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    let fallback = vm
+        .run(
+            r#"
+            var fallback = new Uint8Array(0);
+            fallback.join = null;
+            Object.defineProperty(fallback, Symbol.toStringTag, {
+              get: function () {
+                fallback = null;
+                forceGc();
+                return "DirectTypedArray";
+              }
+            });
+            fallback;
+            "#,
+        )
+        .expect("direct fallback receiver should initialize");
+    assert_eq!(
+        crate::builtins::array::array_to_string(&mut vm, &[], Some(fallback))
+            .expect("fallback roots should survive observable tag lookup"),
+        Value::String(Arc::from("[object DirectTypedArray]"))
+    );
+    assert_eq!(vm.gc_pins.len(), baseline);
+}
+
+#[test]
 fn typed_array_to_locale_string_consumes_exact_per_index_fuel() {
     let mut vm = Vm::new().expect("VM should initialize");
     let source = vm

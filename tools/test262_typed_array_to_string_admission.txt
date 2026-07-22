@@ -1,0 +1,5 @@
+# Exact TypedArray.prototype.toString coverage on the pinned Test262 checkout.
+built-ins/TypedArray/prototype/toString.js
+built-ins/TypedArray/prototype/toString/BigInt/detached-buffer.js
+built-ins/TypedArray/prototype/toString/detached-buffer.js
+built-ins/TypedArray/prototype/toString/not-a-constructor.js

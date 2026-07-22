@@ -156,6 +156,10 @@ from test262_typed_array_join_admission import (
     TYPED_ARRAY_JOIN_FEATURES,
     TYPED_ARRAY_JOIN_FILES,
 )
+from test262_typed_array_to_string_admission import (
+    TYPED_ARRAY_TO_STRING_FEATURES,
+    TYPED_ARRAY_TO_STRING_FILES,
+)
 from test262_array_join_admission import ARRAY_JOIN_FEATURES, ARRAY_JOIN_FILES
 from test262_array_flat_admission import (
     ARRAY_FLAT_FEATURES,
@@ -5257,22 +5261,126 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
                 finally:
                     tool.TEST262 = original_root
 
-    def test_typed_array_to_string_features_are_frozen_to_audited_files(self):
+    def _assert_typed_array_to_string_features_are_frozen_to_audited_files(self):
+        expected_features = {
+            "built-ins/TypedArray/prototype/toString.js": frozenset({"TypedArray"}),
+            "built-ins/TypedArray/prototype/toString/BigInt/detached-buffer.js": frozenset(
+                {"BigInt", "TypedArray"}
+            ),
+            "built-ins/TypedArray/prototype/toString/detached-buffer.js": frozenset(
+                {"TypedArray"}
+            ),
+            "built-ins/TypedArray/prototype/toString/not-a-constructor.js": frozenset(
+                {"Reflect.construct", "TypedArray", "arrow-function"}
+            ),
+        }
+        expected_includes = {
+            "built-ins/TypedArray/prototype/toString.js": [
+                "propertyHelper.js",
+                "testTypedArray.js",
+            ],
+            "built-ins/TypedArray/prototype/toString/BigInt/detached-buffer.js": [
+                "testTypedArray.js",
+                "detachArrayBuffer.js",
+            ],
+            "built-ins/TypedArray/prototype/toString/detached-buffer.js": [
+                "testTypedArray.js",
+                "detachArrayBuffer.js",
+            ],
+            "built-ins/TypedArray/prototype/toString/not-a-constructor.js": [
+                "isConstructor.js",
+                "testTypedArray.js",
+            ],
+        }
+        self.assertEqual(TYPED_ARRAY_TO_STRING_FILES, frozenset(expected_features))
+        self.assertEqual(TYPED_ARRAY_TO_STRING_FEATURES, expected_features)
+
+        tools_dir = Path(__file__).resolve().parent
+        for manifest in tools_dir.glob("test262_*_admission.txt"):
+            if manifest.name == "test262_typed_array_to_string_admission.txt":
+                continue
+            existing = {
+                line
+                for raw_line in manifest.read_text().splitlines()
+                if (line := raw_line.strip()) and not line.startswith("#")
+            }
+            self.assertTrue(
+                TYPED_ARRAY_TO_STRING_FILES.isdisjoint(existing), manifest.name
+            )
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        try:
+            test_root_available = test_root.is_dir()
+        except OSError:
+            test_root_available = False
+        if test_root_available:
+            prototype = test_root / "built-ins/TypedArray/prototype"
+            actual_files = {
+                (prototype / "toString.js").relative_to(test_root).as_posix()
+            }
+            actual_files.update(
+                path.relative_to(test_root).as_posix()
+                for path in (prototype / "toString").rglob("*.js")
+                if "_FIXTURE" not in path.name
+            )
+            self.assertEqual(frozenset(actual_files), TYPED_ARRAY_TO_STRING_FILES)
+            for relative, features in expected_features.items():
+                path = test_root / relative
+                self.assertTrue(path.is_file(), relative)
+                metadata = test262_runner.parse_meta(path.read_text())
+                self.assertEqual(
+                    frozenset(metadata.get("features", [])), features, relative
+                )
+                self.assertEqual(
+                    metadata.get("includes", []), expected_includes[relative], relative
+                )
+                self.assertEqual(metadata.get("flags", []), [], relative)
+                self.assertIsNone(metadata.get("negative"), relative)
+
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            inside = root / "test/built-ins/TypedArray/prototype/toString.js"
-            detached = root / "test/built-ins/TypedArray/prototype/toString/detached-buffer.js"
             future = root / "test/built-ins/TypedArray/prototype/toString/future.js"
             outside = root / "test/built-ins/TypedArray/prototype/unsupported/detached-buffer.js"
-            meta = {"flags": [], "features": ["TypedArray"]}
             for tool in (test262_runner, test262_analyze):
                 original_root = tool.TEST262
                 tool.TEST262 = str(root)
                 try:
-                    self.assertFalse(tool.should_skip(meta, inside))
-                    self.assertFalse(tool.should_skip(meta, detached))
-                    self.assertTrue(tool.should_skip(meta, future))
-                    self.assertTrue(tool.should_skip(meta, outside))
+                    self.assertFalse(tool.typed_array_to_string_path(None))
+                    self.assertEqual(
+                        tool.typed_array_to_string_features(None), frozenset()
+                    )
+                    for relative, features in expected_features.items():
+                        path = root / "test" / relative
+                        self.assertTrue(tool.typed_array_to_string_path(path), relative)
+                        self.assertEqual(
+                            tool.typed_array_to_string_features(path), features, relative
+                        )
+                        self.assertFalse(
+                            tool.should_skip(
+                                {"flags": [], "features": sorted(features)}, path
+                            ),
+                            relative,
+                        )
+                        self.assertTrue(
+                            tool.should_skip(
+                                {
+                                    "flags": [],
+                                    "features": sorted(features | {"decorators"}),
+                                },
+                                path,
+                            ),
+                            relative,
+                        )
+                    for path in (future, outside):
+                        self.assertFalse(tool.typed_array_to_string_path(path))
+                        self.assertEqual(
+                            tool.typed_array_to_string_features(path), frozenset()
+                        )
+                        self.assertTrue(
+                            tool.should_skip(
+                                {"flags": [], "features": ["TypedArray"]}, path
+                            )
+                        )
                 finally:
                     tool.TEST262 = original_root
 
@@ -7184,6 +7292,13 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
                     self.assertTrue(tool.should_skip(meta, outside))
                 finally:
                     tool.TEST262 = original_root
+
+
+class TypedArrayToStringAdmissionTests(unittest.TestCase):
+    def test_manifest_is_exact_live_disjoint_and_shared(self):
+        TypedArrayResizableAdmissionTests._assert_typed_array_to_string_features_are_frozen_to_audited_files(
+            self
+        )
 
 
 class ArrayBufferAdmissionTests(unittest.TestCase):

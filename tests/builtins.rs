@@ -9113,6 +9113,34 @@ fn typed_array_to_string_uses_join_and_rejects_detached_views() {
 }
 
 #[test]
+fn typed_array_to_string_boxes_receivers_and_uses_the_method_realm() {
+    assert_eq!(
+        run(r#"
+            var original = Number.prototype.join;
+            Number.prototype.join = function () {
+              return Object.prototype.toString.call(this);
+            };
+            var boxed = Uint8Array.prototype.toString.call(7);
+            if (original === undefined) {
+              delete Number.prototype.join;
+            } else {
+              Number.prototype.join = original;
+            }
+
+            var other = $262.createRealm().global;
+            var foreignError = false;
+            try {
+              other.Uint8Array.prototype.toString.call(null);
+            } catch (error) {
+              foreignError = Object.getPrototypeOf(error) === other.TypeError.prototype;
+            }
+            boxed + "|" + foreignError;
+            "#,),
+        Value::String(Arc::from("[object Number]|true"))
+    );
+}
+
+#[test]
 fn object_to_string_observes_symbol_to_string_tag() {
     assert_eq!(
         run(r#"
