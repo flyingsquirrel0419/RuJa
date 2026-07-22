@@ -1192,10 +1192,16 @@ impl Vm {
         crate::environment::get(&self.heap, self.global, name).unwrap_or(Value::Undefined)
     }
 
-    /// Minimal stub for `Object(value)` coercion.
+    /// ECMAScript ToObject coercion. The Object constructor handles its
+    /// distinct nullish-create behavior before calling this helper.
     pub fn to_object(&mut self, value: &Value) -> error::Result<Value> {
         Ok(match value {
             Value::Object(idx) => Value::Object(*idx),
+            Value::Null | Value::Undefined => {
+                return Err(Error::type_err(
+                    "Cannot convert undefined or null to object",
+                ));
+            }
             _ => {
                 let idx = self.new_object()?;
                 let obj = Value::Object(idx);

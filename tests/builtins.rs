@@ -11407,6 +11407,20 @@ fn object_assign_roots_boxed_targets_across_proxy_callbacks() {
 fn object_define_properties_validates_and_converts_before_defining() {
     assert!(run_err("Object.defineProperties(1, {});").contains("TypeError"));
     assert_eq!(
+        run("var proto = {}; Object.getPrototypeOf(Object.create(proto, undefined)) === proto;"),
+        Value::Bool(true)
+    );
+    for source in [
+        "Object.defineProperties({}, null);",
+        "Object.defineProperties({}, undefined);",
+        "Object.create({}, null);",
+    ] {
+        assert!(
+            run_err(source).contains("TypeError"),
+            "nullish property descriptors must reject: {source}"
+        );
+    }
+    assert_eq!(
         run(r#"
             var emptyString = Object.defineProperties({}, "");
             var number = Object.defineProperties({}, 1);
@@ -14205,7 +14219,9 @@ fn object_constructor_uses_active_function_and_new_target_realms() {
             var receiver = { receiver: true };
             var called = other.Object.call(receiver);
             var calledNull = other.Object(null);
+            var calledUndefined = other.Object(undefined);
             var constructedNull = new other.Object(null);
+            var constructedUndefined = new other.Object(undefined);
             var boxed = other.Object(1);
             var constructedBoxed = new other.Object(1);
             var argument = { argument: true };
@@ -14246,7 +14262,9 @@ fn object_constructor_uses_active_function_and_new_target_realms() {
             [
               called !== receiver && Object.getPrototypeOf(called) === other.Object.prototype,
               Object.getPrototypeOf(calledNull) === other.Object.prototype,
+              Object.getPrototypeOf(calledUndefined) === other.Object.prototype,
               Object.getPrototypeOf(constructedNull) === other.Object.prototype,
+              Object.getPrototypeOf(constructedUndefined) === other.Object.prototype,
               Object.getPrototypeOf(boxed) === other.Number.prototype,
               Object.getPrototypeOf(constructedBoxed) === other.Number.prototype,
               other.Object(argument) === argument,
@@ -14265,7 +14283,7 @@ fn object_constructor_uses_active_function_and_new_target_realms() {
         )
         .expect("Object constructor Realm and NewTarget paths should succeed"),
         Value::String(Arc::from(
-            "true|true|true|true|true|true|true|true|true|true|true|true|true|true"
+            "true|true|true|true|true|true|true|true|true|true|true|true|true|true|true|true"
         ))
     );
 
