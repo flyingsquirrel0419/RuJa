@@ -1,0 +1,6 @@
+# Frozen residual language early-error files admitted after parser auditing.
+language/statements/labeled/decl-gen.js
+language/statements/labeled/decl-async-function.js
+language/statements/labeled/decl-async-generator.js
+language/expressions/class/class-name-ident-await-escaped-module.js
+language/statements/class/class-name-ident-await-escaped-module.js

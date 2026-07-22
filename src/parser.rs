@@ -1424,9 +1424,9 @@ impl Parser {
                             .to_string(),
                     ));
                 }
-                if self.is_strict_context && self.label_body_starts_with_function_decl() {
+                if self.label_body_starts_with_disallowed_function_decl() {
                     return Err(error::Error::syntax(
-                        "Function declaration cannot be the body of a labelled statement in strict mode"
+                        "Function declaration cannot be the body of this labelled statement"
                             .to_string(),
                     ));
                 }
@@ -1563,10 +1563,20 @@ impl Parser {
         }
     }
 
-    fn label_body_starts_with_function_decl(&self) -> bool {
-        matches!(self.peek(), TokenKind::Function)
-            || (matches!(self.peek(), TokenKind::Async)
-                && matches!(self.peek_at_tok(1).kind, TokenKind::Function))
+    fn label_body_starts_with_disallowed_function_decl(&self) -> bool {
+        match self.peek() {
+            // Annex B only permits an ordinary FunctionDeclaration here in
+            // sloppy code; generators remain declarations, not statements.
+            TokenKind::Function => {
+                self.is_strict_context || matches!(self.peek_at_tok(1).kind, TokenKind::Star)
+            }
+            // Async declarations have no Annex B labelled-statement exception.
+            TokenKind::Async => {
+                !self.peek_at_tok(1).preceded_by_newline
+                    && matches!(self.peek_at_tok(1).kind, TokenKind::Function)
+            }
+            _ => false,
+        }
     }
 
     fn parse_opt_label(&mut self) -> Option<Arc<str>> {
@@ -6452,6 +6462,9 @@ impl Parser {
             TokenKind::Ident(s) => {
                 if Self::is_reserved_identifier_reference_word(&s)
                     || Self::is_strict_identifier_reference_reserved(&s)
+                    || s == "await"
+                        && (self.source_type == SourceType::Module
+                            || !self.await_as_identifier_allowed())
                 {
                     return Err(error::Error::syntax(format!(
                         "'{}' is not allowed as a class name",
@@ -6461,7 +6474,9 @@ impl Parser {
                 self.advance();
                 Some(Arc::from(s.as_str()))
             }
-            TokenKind::Await if self.await_as_identifier_allowed() => {
+            TokenKind::Await
+                if self.source_type != SourceType::Module && self.await_as_identifier_allowed() =>
+            {
                 self.advance();
                 Some(Arc::from("await"))
             }
@@ -7753,6 +7768,34 @@ mod tests {
         assert!(Parser::parse("{ class A {} { class A {} } }").is_ok());
         assert!(Parser::parse("function f() {} var f;").is_ok());
         assert!(Parser::parse("class C { st\\u0061tic() {} }").is_ok());
+    }
+
+    #[test]
+    fn parse_residual_label_and_module_class_early_errors() {
+        for src in [
+            "label: function* g() {}",
+            "label: async function f() {}",
+            "label: async function* g() {}",
+            "outer: inner: async function f() {}",
+        ] {
+            assert!(Parser::parse(src).is_err(), "{src}");
+        }
+
+        // Annex B keeps only ordinary sloppy labelled function declarations.
+        assert!(Parser::parse("label: function f() {}").is_ok());
+        assert!(Parser::parse("label: async\nfunction f() {}").is_ok());
+
+        for src in [
+            "class aw\\u0061it {}",
+            "var C = class aw\\u0061it {};",
+            "function f() { class aw\\u0061it {} }",
+            "function f() { var C = class aw\\u0061it {}; }",
+            "function f() { class await {} }",
+            "function f() { var C = class await {}; }",
+        ] {
+            assert!(Parser::parse_module(src).is_err(), "{src}");
+            assert!(Parser::parse(src).is_ok(), "{src}");
+        }
     }
 
     #[test]

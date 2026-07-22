@@ -184,6 +184,11 @@ from test262_function_apply_admission import (
     FUNCTION_APPLY_FEATURES,
     FUNCTION_APPLY_FILES,
 )
+from test262_language_early_error_admission import (
+    LANGUAGE_EARLY_ERROR_FEATURES,
+    LANGUAGE_EARLY_ERROR_FILES,
+    LANGUAGE_EARLY_ERROR_MODULE_FILES,
+)
 from test262_reference_primitive_admission import REFERENCE_PRIMITIVE_FILES
 from test262_dynamic_import_admission import DYNAMIC_IMPORT_FILES
 from test262_import_meta_admission import IMPORT_META_FILES
@@ -547,6 +552,176 @@ class WeakRefAdmissionTests(unittest.TestCase):
 
 
 class ModuleCoreAdmissionTests(unittest.TestCase):
+    def test_language_early_error_admission_is_exact_and_shared(self):
+        expected = {
+            "language/statements/labeled/decl-gen.js": frozenset({"generators"}),
+            "language/statements/labeled/decl-async-function.js": frozenset(
+                {"async-functions"}
+            ),
+            "language/statements/labeled/decl-async-generator.js": frozenset(
+                {"async-iteration"}
+            ),
+            "language/expressions/class/class-name-ident-await-escaped-module.js": frozenset(),
+            "language/statements/class/class-name-ident-await-escaped-module.js": frozenset(),
+        }
+        expected_modules = frozenset(
+            {
+                "language/expressions/class/class-name-ident-await-escaped-module.js",
+                "language/statements/class/class-name-ident-await-escaped-module.js",
+            }
+        )
+        manifest = Path(__file__).with_name(
+            "test262_language_early_error_admission.txt"
+        )
+        manifest_entries = tuple(
+            line
+            for raw_line in manifest.read_text().splitlines()
+            if (line := raw_line.strip()) and not line.startswith("#")
+        )
+        self.assertEqual(manifest_entries, tuple(expected))
+        manifest_files = frozenset(manifest_entries)
+        self.assertEqual(manifest_files, frozenset(expected))
+        self.assertEqual(LANGUAGE_EARLY_ERROR_FILES, manifest_files)
+        self.assertEqual(LANGUAGE_EARLY_ERROR_FEATURES, expected)
+        self.assertEqual(LANGUAGE_EARLY_ERROR_MODULE_FILES, expected_modules)
+
+        admission_dir = Path(__file__).resolve().parent
+        for other_manifest in admission_dir.glob("test262_*_admission.txt"):
+            if other_manifest.name == "test262_language_early_error_admission.txt":
+                continue
+            other_files = {
+                line
+                for raw_line in other_manifest.read_text().splitlines()
+                if (line := raw_line.strip()) and not line.startswith("#")
+            }
+            self.assertTrue(
+                LANGUAGE_EARLY_ERROR_FILES.isdisjoint(other_files),
+                other_manifest.name,
+            )
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        try:
+            test_root_available = test_root.is_dir()
+        except OSError:
+            test_root_available = False
+        if test_root_available:
+            for relative, features in expected.items():
+                path = test_root / relative
+                self.assertTrue(path.is_file(), relative)
+                metadata = test262_runner.parse_meta(path.read_text())
+                self.assertEqual(
+                    frozenset(metadata.get("features", [])), features, relative
+                )
+                self.assertEqual(metadata.get("includes", []), [], relative)
+                self.assertEqual(
+                    metadata.get("flags", []),
+                    ["module"] if relative in expected_modules else [],
+                    relative,
+                )
+                self.assertEqual(
+                    metadata.get("negative"),
+                    {"phase": "parse", "type": "SyntaxError"},
+                    relative,
+                )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            future_siblings = (
+                root / "test/language/statements/labeled/decl-gen-future.js",
+                root
+                / "test/language/expressions/class/"
+                "class-name-ident-await-escaped-module-future.js",
+            )
+            outside = root / "test/language/statements/if/decl-gen.js"
+            for tool in (test262_runner, test262_analyze):
+                self.assertIs(
+                    tool.LANGUAGE_EARLY_ERROR_FILES, LANGUAGE_EARLY_ERROR_FILES
+                )
+                self.assertIs(
+                    tool.LANGUAGE_EARLY_ERROR_FEATURES,
+                    LANGUAGE_EARLY_ERROR_FEATURES,
+                )
+                self.assertIs(
+                    tool.LANGUAGE_EARLY_ERROR_MODULE_FILES,
+                    LANGUAGE_EARLY_ERROR_MODULE_FILES,
+                )
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for relative, features in expected.items():
+                        path = root / "test" / relative
+                        is_module = relative in expected_modules
+                        flags = ["module"] if is_module else []
+                        self.assertTrue(tool.language_early_error_path(path), relative)
+                        self.assertEqual(
+                            tool.language_early_error_features(path), features, relative
+                        )
+                        self.assertEqual(
+                            tool.language_early_error_module_path(path),
+                            is_module,
+                            relative,
+                        )
+                        self.assertFalse(
+                            tool.should_skip(
+                                {"flags": flags, "features": sorted(features)}, path
+                            ),
+                            relative,
+                        )
+                        self.assertTrue(
+                            tool.should_skip(
+                                {
+                                    "flags": flags,
+                                    "features": sorted(features | {"decorators"}),
+                                },
+                                path,
+                            ),
+                            relative,
+                        )
+                        if not is_module:
+                            self.assertTrue(
+                                tool.should_skip(
+                                    {
+                                        "flags": ["module"],
+                                        "features": sorted(features),
+                                    },
+                                    path,
+                                ),
+                                relative,
+                            )
+
+                    rejected = future_siblings + (outside, root / "outside.js")
+                    for path in rejected:
+                        self.assertFalse(tool.language_early_error_path(path))
+                        self.assertEqual(
+                            tool.language_early_error_features(path), frozenset()
+                        )
+                        self.assertFalse(tool.language_early_error_module_path(path))
+                    self.assertTrue(
+                        tool.should_skip(
+                            {"flags": [], "features": ["generators"]},
+                            future_siblings[0],
+                        )
+                    )
+                    self.assertTrue(
+                        tool.should_skip(
+                            {"flags": ["module"], "features": []},
+                            future_siblings[1],
+                        )
+                    )
+                    self.assertTrue(
+                        tool.should_skip(
+                            {"flags": [], "features": ["generators"]}, outside
+                        )
+                    )
+                    for invalid in (None, object()):
+                        self.assertFalse(tool.language_early_error_path(invalid))
+                        self.assertEqual(
+                            tool.language_early_error_features(invalid), frozenset()
+                        )
+                        self.assertFalse(tool.language_early_error_module_path(invalid))
+                finally:
+                    tool.TEST262 = original_root
+
     def test_module_core_is_frozen_to_the_audited_files(self):
         expected_names = {
             "comment-multi-line-html-close.js", "comment-single-line-html-close.js",

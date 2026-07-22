@@ -48,6 +48,12 @@ jobs:
           test262_tooling_test.TypedArrayJoinAdmissionTests
           test262_tooling_test.TypedArrayToStringAdmissionTests
           test262_tooling_test.TypedArrayToLocaleStringAdmissionTests -v
+      - name: Verify exact language early-error admission
+        working-directory: tools
+        run: >-
+          TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
+          test262_tooling_test.ModuleCoreAdmissionTests.test_language_early_error_admission_is_exact_and_shared
+          -v
       - name: Build directory matrix
         id: dirs
         run: |
