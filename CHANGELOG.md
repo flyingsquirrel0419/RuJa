@@ -62,6 +62,40 @@
 
 ### Fixed
 
+- Proxy `ownKeys` validation frames now reserve their operation-local vector
+  before reserving the `current` and `target` GC roots. Only after both
+  reservations succeed does the operation pin those values and publish the
+  frame, so allocation failure cannot expose a half-published frame or leak a
+  root. The boundary remains after trap-result collection, duplicate
+  validation, and `IsExtensible`, and before nested target key traversal.
+
+  Transparent forwarding creates no frame, while even an empty trapped result
+  retains invariant state. Exact-site regressions cover frame and root
+  failures, the real GC-pin reserve path, caller retry, duplicate,
+  `IsExtensible`, and fuel priority, foreign Realms, second-frame countdown
+  failures, forced GC, a 1,024-layer trapped chain, lazy `for...in` snapshot
+  atomicity, and balanced pins, execution contexts, and native-call depth.
+
+  Local verification passes all targets/features with **228/228** library
+  tests, **539/539** builtins tests, and **15/15** arguments tests, plus
+  **227/227** release library tests, **135/135** Python tooling tests, rustfmt,
+  warnings-denied Clippy, release build, generated documentation, and wasm32
+  checking. Rustdoc retains only the 13 pre-existing broken-link warnings. Two
+  GPT-5.6 reviews are clean after publication order, actual root reservation,
+  nested cleanup, Realm, and retry checks. Implementation commit `3903c54`
+  passes CI `29959362979` and all 33 jobs in full run `29959362973`. The initial
+  `annexB` artifact had two runner-contention timeouts; the same downloaded
+  binary and exact pinned corpus reproduced the baseline **201/811/74/0/0**
+  byte-for-byte. With that rerun substituted, artifacts at
+  `/tmp/ruja-proxy-ownkeys-frame-state-29959362973-final` aggregate to unchanged
+  **31890 pass / 5115 fail / 11459 skip / 3 timeout / 0 error / 48467 total /
+  37005 run**, and all 30 result files match run `29955284788`. The downloaded
+  binary reproduces the selected Proxy, Reflect, Object, and `for-in` cohort at
+  **211 pass / 0 fail / 60 skip**. Operation input, target/handler, trap-result
+  list, and length-value roots, filtered results, non-extensible target sets,
+  PropertyKey/Error strings, GC root enumeration, and mark worklists remain
+  separate allocator-safety scopes.
+
 - Proxy `ownKeys` trap-result collection now requests capacity for an
   additional native key only after the corresponding array-like `Get` succeeds
   and returns a String or Symbol. Duplicate validation remains a separate pass

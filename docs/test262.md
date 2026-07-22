@@ -10441,6 +10441,48 @@ cohort at **211/0/60**.
 - 장점, 단점 및 영향: The unit has exact zero-delta evidence plus direct ordering, retry, duplicate, Symbol, fuel, Realm, cleanup, and for-in atomicity coverage. Pending ownKeys frames and roots, filtered and target-key collections, and broader runtime allocator fallibility remain separate work.
 ```
 
+## Fallible Proxy ownKeys validation frames
+
+Commit `3903c54` changes no Test262 admission. A trapped Proxy `ownKeys` layer
+now requests pending-frame capacity and reserves the frame's `current` and
+`target` roots before `pin -> push`. Both reservations occur after trap-result
+collection, duplicate validation, and `IsExtensible`, but before nested target
+key traversal. Transparent forwarding publishes no frame; an empty trapped
+result still preserves invariant state.
+
+Focused regressions inject frame, site-specific root, and actual GC-pin reserve
+failures. They cover caller retry, duplicate, `IsExtensible`, and fuel priority,
+foreign operation Realms, second-frame countdown cleanup, forced GC, a
+1,024-layer trapped chain, lazy `for-in` snapshot atomicity, and balanced pins,
+execution contexts, and native-call depth. The selected six-directory local
+cohort remains **211 pass / 0 fail / 60 skip / 271 total**.
+
+Local gates pass all targets/features with **228/228** library tests,
+**539/539** builtins tests, and **15/15** arguments tests, plus **227/227**
+release library tests, **135/135** tooling tests, rustfmt, warnings-denied
+Clippy, release build, generated documentation, and wasm32 checking. Two
+GPT-5.6 implementation reviews and the documentation review are clean. CI
+`29959362979` and all 33 jobs in full run `29959362973` pass.
+
+The initial `annexB` artifact had two runner-contention timeouts. The same
+downloaded release binary against the exact pinned revision reproduces the
+baseline **201 pass / 811 fail / 74 skip / 0 timeout / 0 error** and is
+byte-identical to run `29955284788`. Substituting that rerun, artifacts at
+`/tmp/ruja-proxy-ownkeys-frame-state-29959362973-final` aggregate to unchanged
+**31890 pass / 5115 fail / 11459 skip / 3 timeout / 0 error / 48467 total /
+37005 run**; all 30 files match the preceding run. The downloaded binary
+reproduces the selected affected cohort at **211/0/60**.
+
+```text
+[Decision Log]
+- 목적과 의도: Prove atomic Proxy ownKeys validation-frame publication without widening admission or hiding conformance drift behind transient runner timeouts.
+- 기존 구현 및 제약 조건: The selected Test262 cohort already passed despite infallible pending-frame and root growth, Test262 cannot inject native reserve failure, and the initial full-run annexB artifact contained two timeouts while every other shard matched.
+- 검토한 주요 대안: Admit unrelated files, rely only on failpoint tests, accept the timeout-shifted aggregate, rerun the complete matrix, or verify the affected shard with a different corpus revision.
+- 선택한 방식: Keep admission unchanged, cover exact publication failures locally, compare every original shard, rerun only annexB with the downloaded CI binary and exact pinned corpus, compare that file byte-for-byte, and reproduce the selected affected cohort.
+- 다른 대안 대신 이 방식을 선택한 이유: Admission changes do not prove allocator behavior, local tests cannot establish broad zero-delta, accepting timeouts weakens evidence, a full rerun wastes unaffected shard work, and corpus drift invalidates comparison.
+- 장점, 단점 및 영향: The unit has exact ordering, root, retry, nesting, deep-chain, GC, Realm, cleanup, and zero-delta evidence. The final evidence set uses 29 original artifacts plus one exact pinned rerun; broader ownKeys roots and result collections remain separate work.
+```
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is

@@ -1789,6 +1789,32 @@ the `ownKeys` trap and cannot observe a partial list.
 - 장점, 단점 및 영향: Both directly owned per-entry collections now fail through ordinary Result cleanup with exact fuel, getter, type, duplicate, Symbol, Realm, retry, nested-frame, and for-in snapshot behavior. Reservation remains O(number of keys) and contains plus insert hashes each unique key twice. Operation input, target/handler, trap-result list, and length-value roots, pending validation frames and roots, filtered vectors, non-extensible target sets, index strings, PropertyKey/Error strings, GC root enumeration, and mark worklists remain separate units.
 ```
 
+## Fallible Proxy ownKeys validation frames
+
+A trapped `ownKeys` layer cannot validate target invariants until the innermost
+target key list is known. After that layer has collected and duplicate-checked
+its trap result and completed `IsExtensible(target)`, the VM first requests
+capacity for one additional pending frame. It then reserves the GC roots
+required by the frame's `object` and `target`, pins the same two values, and
+publishes the frame. No fallible operation remains between pinning and push.
+
+Frame or root reservation failure occurs before `current` advances to the
+target, so nested `[[OwnPropertyKeys]]` and later descriptor/invariant work do
+not begin. Every already published outer frame remains covered by
+`pending_pins` and is unwound with the operation root. Transparent forwarding
+does not create a frame; a trapped empty result still does because omission and
+non-extensible exact-set invariants remain applicable.
+
+```text
+[Decision Log]
+- 목적과 의도: Make Proxy ownKeys pending validation-frame publication allocator-fallible and atomic without changing trap, invariant, nested traversal, or retry order.
+- 기존 구현 및 제약 조건: Each validating Proxy layer pinned current and target through infallible gc_pins growth and then pushed a PendingProxyKeys frame through infallible Vec growth. Frames must survive later nested ownKeys calls, forced GC, and reverse invariant validation, while transparent layers require no frame.
+- 검토한 주요 대안: Reserve roots before frame capacity, pin before either reserve, preallocate a fixed maximum chain, store only heap indices, merge frame state into recursive calls, or combine every remaining ownKeys root and result collection in this patch.
+- 선택한 방식: After successful trap-list, duplicate, and IsExtensible work, request capacity for one additional frame, reserve roots from the exact current/target Value pair, pin that pair, push the frame, and only then advance current and filters.
+- 다른 대안 대신 이 방식을 선택한 이유: Reserving roots first can leave unnecessary global capacity after local frame failure; pinning before reserve can leak on allocation error; fixed caps reject valid chains; untraced indices can become stale after GC; recursion risks host-stack failure; and broader ownership would obscure this publication boundary.
+- 장점, 단점 및 영향: Frame and root failures are catchable, Realm-correct, retryable, and leak-free after all earlier observations but before nested target work. Nested countdown and 1,024-layer trapped-chain tests cover existing-frame cleanup and iterative growth. Operation input, target/handler, trap-result list, and length-value roots, filtered vectors, non-extensible target sets, index strings, PropertyKey/Error strings, GC root enumeration, and mark worklists remain separate units.
+```
+
 ---
 
 **Next:** [Features](features.md) · [Known limitations](limitations.md) · [Back to README](../README.md)
