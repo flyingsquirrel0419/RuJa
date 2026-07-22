@@ -4952,6 +4952,34 @@ fn bound_call_dispatch_is_metered_linear_and_roots_arguments() {
     vm.set_property(&call_arg, "label", Value::String(Arc::from("call")))
         .expect("temporary call argument should be labelled");
 
+    vm.fail_next_gc_pin_reservation = true;
+    let error = crate::builtins::make_value_array_in_current_realm(&mut vm, vec![call_arg.clone()])
+        .expect_err("argument-array root reservation failure must remain catchable");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert!(!vm.fail_next_gc_pin_reservation);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    let rooted_item_count = 4096;
+    let root_heavy_array = crate::builtins::make_value_array_in_current_realm(
+        &mut vm,
+        vec![call_arg.clone(); rooted_item_count],
+    )
+    .expect("argument-array root reservation should remain fallible and balanced");
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert!(vm.gc_pins.capacity() > baseline_pins + rooted_item_count);
+    let array_pin = vm.pin(&root_heavy_array);
+    vm.gc();
+    assert_eq!(
+        vm.get_property(
+            &root_heavy_array,
+            (rooted_item_count - 1).to_string().as_str()
+        )
+        .expect("rooted argument-array tail should survive collection"),
+        call_arg
+    );
+    vm.unpin(array_pin);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
     vm.set_fuel(Some(2));
     let error = vm
         .call_function(&outer, std::slice::from_ref(&call_arg), None)

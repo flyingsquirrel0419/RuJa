@@ -5588,6 +5588,15 @@ pub(crate) fn make_value_array_in_env(
     env: GcIdx,
 ) -> error::Result<Value> {
     let prototype = vm.array_prototype_for_env(env);
+    let required_roots =
+        items
+            .iter()
+            .try_fold(Vm::value_root_count(&prototype), |count, item| {
+                count
+                    .checked_add(Vm::value_root_count(item))
+                    .ok_or_else(|| Error::range("temporary root set is too large"))
+            })?;
+    vm.try_reserve_gc_pins(required_roots)?;
     let pin_count = vm.pin_many(&items) + vm.pin(&prototype);
     let arr = HeapObj::Array(ArrayData::new(items, Some(prototype)));
     let result = vm.alloc(arr).map(Value::Object);

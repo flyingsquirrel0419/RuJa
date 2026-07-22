@@ -147,6 +147,8 @@ pub struct Vm {
     /// Rust locals (e.g. a Promise handler while `call_function` runs, which
     /// may itself trigger a GC). Push indices on entry, pop on exit.
     pub(crate) gc_pins: Vec<usize>,
+    #[cfg(test)]
+    pub(crate) fail_next_gc_pin_reservation: bool,
     /// Receiver identities currently traversing Array stringification methods.
     /// Join checks after separator coercion and toLocaleString checks after its
     /// length snapshot, so recursive suppression preserves observable ordering.
@@ -660,6 +662,8 @@ impl Vm {
             microtask_queue: std::collections::VecDeque::new(),
             ic: std::collections::HashMap::new(),
             gc_pins: Vec::new(),
+            #[cfg(test)]
+            fail_next_gc_pin_reservation: false,
             active_array_joins: Vec::new(),
             kept_objects: Vec::new(),
             current_yields: Vec::new(),

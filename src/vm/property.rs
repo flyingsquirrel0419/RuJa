@@ -408,6 +408,10 @@ impl Vm {
 
     /// Make a following known-size pin batch allocator-failure-safe.
     pub(crate) fn try_reserve_gc_pins(&mut self, additional: usize) -> error::Result<()> {
+        #[cfg(test)]
+        if std::mem::take(&mut self.fail_next_gc_pin_reservation) {
+            return Err(Error::range("temporary root set is too large"));
+        }
         self.gc_pins
             .try_reserve(additional)
             .map_err(|_| Error::range("temporary root set is too large"))
