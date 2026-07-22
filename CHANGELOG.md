@@ -62,6 +62,35 @@
 
 ### Fixed
 
+- Proxy `ownKeys` now reserves every directly owned temporary GC root before
+  its corresponding pin: the operation input before dispatch, each Proxy
+  target/handler pair after the edge fuel debit, an object trap-result list
+  after list-type validation, and an object-valued `length` after `Get` but
+  before observable `ToNumber`. Values that contribute no GC roots bypass the
+  reservation, so primitive inputs and lengths and nullish trap forwarding do
+  not introduce allocation failures.
+
+  Exact-site and real GC-pin regressions cover revocation and fuel priority,
+  `GetMethod`/Call/list/length abrupt ordering, primitive no-op boundaries,
+  nullish forwarding, caller retry, foreign operation Realms, forced GC,
+  already-published outer-frame cleanup, and uncommitted lazy `for...in`
+  snapshots at all four sites. Local verification passes all targets/features
+  with **229/229** library tests, **539/539** builtins tests, and **15/15**
+  arguments tests, plus **228/228** release library tests, **135/135** Python
+  tooling tests, rustfmt, warnings-denied Clippy, release build, generated
+  documentation, and wasm32 checking. Rustdoc retains only the 13 pre-existing
+  broken-link warnings. Two GPT-5.6 final reviews are clean. Implementation
+  commit `633b3d8` passes CI `29963410587` and all 33 jobs in full run
+  `29963410566`. Artifacts at
+  `/tmp/ruja-proxy-ownkeys-direct-roots-29963410566-final` aggregate to unchanged
+  **31890 pass / 5115 fail / 11459 skip / 3 timeout / 0 error / 48467 total /
+  37005 run**; all 30 result files are byte-identical to the corrected
+  `29959362973` baseline. The downloaded binary reproduces the selected Proxy,
+  Reflect, Object, and `for-in` cohort at **211 pass / 0 fail / 60 skip**.
+  Post-validation filtered results, the non-extensible target-key set, index
+  and PropertyKey/Error strings, GC root enumeration, and mark worklists remain
+  separate allocator-safety scopes.
+
 - Proxy `ownKeys` validation frames now reserve their operation-local vector
   before reserving the `current` and `target` GC roots. Only after both
   reservations succeed does the operation pin those values and publish the

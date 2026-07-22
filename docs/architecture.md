@@ -1815,6 +1815,33 @@ non-extensible exact-set invariants remain applicable.
 - 장점, 단점 및 영향: Frame and root failures are catchable, Realm-correct, retryable, and leak-free after all earlier observations but before nested target work. Nested countdown and 1,024-layer trapped-chain tests cover existing-frame cleanup and iterative growth. Operation input, target/handler, trap-result list, and length-value roots, filtered vectors, non-extensible target sets, index strings, PropertyKey/Error strings, GC root enumeration, and mark worklists remain separate units.
 ```
 
+## Fallible Proxy ownKeys direct roots
+
+The iterative `[[OwnPropertyKeys]]` operation now reserves each root set at the
+boundary where it becomes owned. The input is reserved before its first pin.
+After a Proxy is proven live, its target and handler are reserved after the
+Proxy-edge fuel debit and before trap lookup. A trap result is first validated
+as an object and then reserved before reading `length`; an object-valued length
+is reserved after `Get` and before `ToNumber` can invoke user code.
+
+One shared helper counts the roots contributed by each `Value` before touching
+the GC-pin vector. Primitive inputs and lengths therefore perform no reserve,
+and a missing or nullish trap forwards without creating trap-result state.
+Operation-root failure precedes revocation and fuel because the operation must
+own its input before dispatch, while layer-root failure follows revocation and
+the edge fuel debit. Ordinary result cleanup unwinds every pin and previously
+published validation frame when any later reservation fails.
+
+```text
+[Decision Log]
+- 목적과 의도: Make every temporary GC root directly owned by Proxy ownKeys allocator-fallible at the exact point where the operation assumes ownership.
+- 기존 구현 및 제약 조건: The operation input, Proxy target/handler, trap-result object, and object-valued length were pinned through infallible gc_pins growth. Their observation boundaries differ, primitive Values contribute no roots, and nested Proxy validation may already have published outer frames when an inner list or length fails.
+- 검토한 주요 대안: Reserve a fixed root budget at entry, reserve every Value including primitives, move target/handler reservation before fuel, pin first and rely on cleanup, keep only injected site tests, or combine post-validation key collections and GC internals into this patch.
+- 선택한 방식: Use one root-count-aware reservation helper immediately before each pin, retain the existing observation order around revocation, fuel, Call, list validation, length Get, and ToNumber, and verify both exact sites and the real GC-pin reserve path.
+- 다른 대안 대신 이 방식을 선택한 이유: Entry preallocation over-reserves paths never taken and changes failure priority; reserving primitives creates spurious failures; moving layer reservation changes fuel order; pin-first can abort during vector growth; synthetic sites alone do not prove the production reserve path; and broader allocator ownership would obscure cleanup and retry evidence.
+- 장점, 단점 및 영향: All directly owned ownKeys roots now fail through catchable, Realm-correct RangeError paths with primitive/nullish no-op behavior, nested cleanup, caller retry, forced-GC survival, and for-in snapshot atomicity. Root counting adds a bounded scan over at most two Values per site. Filtered output growth, non-extensible target-key sets, index and PropertyKey/Error strings, GC root enumeration, and mark worklists remain independent units.
+```
+
 ---
 
 **Next:** [Features](features.md) · [Known limitations](limitations.md) · [Back to README](../README.md)

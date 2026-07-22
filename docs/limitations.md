@@ -371,6 +371,12 @@ guarantees are required.
   intentionally stricter than ECMAScript for very large sparse receivers;
   native temporary-root, collected-list, and merge-buffer storage is bounded
   by the same limit but still uses infallible Rust vector allocation.
+- Proxy `ownKeys` reserves its directly owned operation, target/handler,
+  trap-result, length-value, and pending-frame roots before pinning. Its
+  per-entry trap-result and duplicate collections are also fallible. The later
+  filtered-result vector and non-extensible target-key set, plus shared index
+  and PropertyKey/Error strings, GC root enumeration, and mark worklists still
+  use infallible native growth and remain separate hard-host-OOM scopes.
 - Push, Pop, Shift, Unshift, Splice, Slice, Concat, Flat, FlatMap, ForEach,
   Join, ToLocaleString, Map, Reduce, ReduceRight, Reverse, ToReversed,
   ToSpliced, and With use live generic indexed operations with operation-wide

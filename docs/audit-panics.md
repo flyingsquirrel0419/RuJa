@@ -84,8 +84,11 @@ converted to propagate the error via `?`.
 4. ✅ `frames.last().unwrap()` — all converted to safe propagation.
 5. Run longer fuzzing sessions (hours) to discover edge-case panics.
 6. Add IC for `GetElem` and `SetElem` opcodes.
-7. Implement remaining Proxy traps (`has`, `deleteProperty`, `ownKeys`, etc.).
-8. Add more TypedArray kinds (Int8, Uint16, etc.) and `set`/`subarray` methods.
+7. ✅ Proxy internal-method traps — `has`, `deleteProperty`, `ownKeys`, and the
+   remaining baseline traps are implemented and covered by conformance tests.
+8. ✅ TypedArray expansion — all standard numeric and BigInt element kinds plus
+   `set` and `subarray` are implemented; remaining semantic gaps are tracked in
+   [limitations](limitations.md).
 9. ✅ Heap limit enforcement — all allocation sites now return `Result` and
    propagate `HeapLimitExceeded` via `?`. Verified with tests for `JSON.parse`,
    `Array.map`, and `RegExp.exec` under heap limit.

@@ -10483,6 +10483,46 @@ reproduces the selected affected cohort at **211/0/60**.
 - 장점, 단점 및 영향: The unit has exact ordering, root, retry, nesting, deep-chain, GC, Realm, cleanup, and zero-delta evidence. The final evidence set uses 29 original artifacts plus one exact pinned rerun; broader ownKeys roots and result collections remain separate work.
 ```
 
+## Fallible Proxy ownKeys direct roots
+
+Commit `633b3d8` changes no Test262 admission. Proxy `ownKeys` now requests
+capacity for the operation input root before dispatch, target/handler roots
+after Proxy-edge fuel, an object trap-result root after type validation, and an
+object-valued length root after `Get` but before observable `ToNumber`.
+Primitive values contribute no roots and do not consume either exact or real
+GC-pin reservation failures; nullish trap forwarding creates no trap-result
+root.
+
+Focused regressions cover all four sites, the real GC-pin reserve path,
+revocation/fuel/Call/list/length priority, primitive and nullish exclusions,
+caller retry, foreign Realms, forced GC, inner failures after an outer frame is
+published, and lazy `for...in` snapshot non-publication and retry at every
+site. The selected six-directory local cohort remains **211 pass / 0 fail / 60
+skip / 271 total**.
+
+Local gates pass all targets/features with **229/229** library tests,
+**539/539** builtins tests, and **15/15** arguments tests, plus **228/228**
+release library tests, **135/135** tooling tests, rustfmt, warnings-denied
+Clippy, release build, generated documentation, and wasm32 checking. Two
+GPT-5.6 final reviews are clean. CI `29963410587` and all 33 jobs in full run
+`29963410566` pass.
+
+Artifacts at `/tmp/ruja-proxy-ownkeys-direct-roots-29963410566-final` aggregate
+to unchanged **31890 pass / 5115 fail / 11459 skip / 3 timeout / 0 error /
+48467 total / 37005 run**. All 30 result files are byte-identical to the
+corrected `29959362973` frame baseline, and the downloaded release binary
+reproduces the selected affected cohort at **211/0/60**.
+
+```text
+[Decision Log]
+- 목적과 의도: Prove the Proxy ownKeys direct-root allocator correction without widening Test262 admission or inferring host-allocation behavior from normal semantic tests.
+- 기존 구현 및 제약 조건: The selected corpus already passed, Test262 cannot inject native root-vector reservation failure, equal aggregate totals can hide shard swaps, and the preceding frame baseline required one exact annexB rerun.
+- 검토한 주요 대안: Admit unrelated files, cite only focused Rust failpoints, compare aggregate totals only, use the uncorrected preceding artifacts, or omit downloaded-binary reproduction.
+- 선택한 방식: Keep admission unchanged, test exact and production reservation paths locally, run the pinned full matrix, compare every result file against the corrected preceding evidence set, and rerun the affected cohort with the downloaded CI binary.
+- 다른 대안 대신 이 방식을 선택한 이유: Admission does not prove allocator safety, local tests do not detect broad build or runner regressions, aggregate equality is weaker than file equality, an uncorrected timeout artifact is not a stable baseline, and local binaries alone do not prove the shipped artifact.
+- 장점, 단점 및 영향: The unit has exact zero-delta evidence plus ordering, no-op, retry, Realm, GC, nested-cleanup, and for-in atomicity coverage. Post-validation filtered and target-key collections and broader runtime allocator fallibility remain separate work.
+```
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is
