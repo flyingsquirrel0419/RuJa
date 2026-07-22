@@ -10086,6 +10086,65 @@ focused **946 pass / 0 fail / 6 skip** and complete Object **3299 pass / 0 fail
 - 장점, 단점 및 영향: The four confirmed failures close with one small semantic correction, generated errors keep the calling method Realm, and all audited exception paths remain stable. Other callers now correctly throw when they accidentally receive nullish input, so the full matrix and broad Rust suite are required evidence for the shared-helper change.
 ```
 
+## Residual language early errors
+
+Feature commit `f1c421d` closes the five parse-negative failures found by
+forcing all **4,452** language parse-negative files through the parser. Three
+were labelled generator or async declarations. RuJa previously rejected a
+function-like labelled body only in strict code, which accidentally extended
+Annex B's ordinary sloppy `FunctionDeclaration` exception to `function*`,
+`async function`, and `async function*`. The parser now distinguishes the
+ordinary Annex B form from those declaration kinds while preserving the line
+terminator boundary after `async`.
+
+The other two files use `aw\u0061it` as a class declaration or expression
+name in Module code. The lexer already records the decoded StringValue and
+escape presence, but the class-name path did not apply the Module source-goal
+restriction. Both raw and escaped `await` are now rejected across the complete
+Module parse goal, including class names nested inside ordinary functions;
+Script parsing continues to allow those contextual names where specified.
+
+`tools/test262_language_early_error_admission.txt` freezes exactly the five
+files. A shared feature map removes `generators`, `async-functions`, or
+`async-iteration` only from the matching labelled file, and only the two exact
+class-name paths receive module admission. Tooling verifies manifest/map
+equality, disjointness, runner/analyzer symmetry, live pinned features, flags,
+includes, and parse-negative metadata, extra-feature rejection, invalid paths,
+and future or outside siblings. Full-matrix setup runs the live check before
+constructing the directory matrix.
+
+The exact cohort is **5/5**, and the complete labelled-statement directory is
+**21 pass / 0 fail / 3 skip**. Local verification passes all targets/features
+with **219/219** library tests, **537/537** builtins tests, and **15/15**
+arguments tests, plus **218/218** release library tests, **134/134** Python
+tooling tests, **1/1** doctest, rustfmt, warnings-denied Clippy, release build,
+generated documentation, Python bytecode compilation, workflow YAML parsing,
+and wasm32 checking. Rustdoc retains only the 13 pre-existing broken
+intra-doc-link warnings. Two GPT-5.6 reviews are clean after one review found
+and the implementation fixed the nested-function Module source-goal boundary.
+CI `29903293887` passes both jobs, and full-matrix setup passes the new live
+metadata preflight.
+
+Full matrix `29903293969` passes all 33 jobs. Downloaded artifacts at
+`/tmp/ruja-language-early-errors-29903293969-final` aggregate to **31881 pass /
+5122 fail / 11461 skip / 3 timeout / 0 error / 48467 total / 37003 run**.
+Compared with nullish-ToObject run `29899362112`, 28 result files are
+byte-identical. `language/expressions` alone moves from **7858/0/3244** to
+**7859/0/3243**, and `language/statements` moves from **4894/0/4443** to
+**4898/0/4439**, exactly **+5 pass / -5 skip** overall. The downloaded release
+binary reproduces the exact five-file **5/5** result and labelled-directory
+**21 pass / 0 fail / 3 skip** result.
+
+```text
+[Decision Log]
+- 목적과 의도: Close the last forced language parse-negative failures with grammar-correct parser behavior and a closed Test262 support boundary.
+- 기존 구현 및 제약 조건: Labelled function-like bodies were rejected only in strict code, so Annex B was overextended to generator and async declarations; escaped class names bypassed the Module-wide await restriction; broad generator, async, class, and module gates still protect unrelated unsupported combinations.
+- 검토한 주요 대안: Reject every labelled function declaration; patch only the five Test262 source strings; remove the broad feature and module gates; apply await rejection only at module top level; or admit the files without exact metadata checks.
+- 선택한 방식: Preserve ordinary sloppy Annex B functions, reject generator and async labelled declarations at parser lookahead, reject raw or decoded await class names throughout Module goals, and share one exact five-file metadata map between runner and analyzer with live CI preflight.
+- 다른 대안 대신 이 방식을 선택한 이유: Rejecting ordinary sloppy functions would regress Annex B; source-specific checks are not grammar fixes; broad gate removal overclaims thousands of unrelated files; top-level-only checks miss nested Module syntax; and path-only admission can silently drift when Test262 metadata changes.
+- 장점, 단점 및 영향: All five confirmed failures become admitted passes, nested labels and Module functions are covered, future siblings remain closed, and the change has no runtime execution effect. The separate 4,240-file class admission audit and Bound Function name/length failures remain independent follow-up units.
+```
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is

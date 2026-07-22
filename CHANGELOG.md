@@ -62,6 +62,38 @@
 
 ### Fixed
 
+- Labelled statements now reject generator, async-function, and
+  async-generator declarations in sloppy as well as strict code. The Annex B
+  exception remains limited to ordinary sloppy `label: function f() {}`;
+  `async` followed by a line terminator remains an expression statement rather
+  than an async declaration. Class declaration and expression names whose
+  decoded StringValue is `await` now also fail throughout a Module source goal,
+  including inside nested ordinary functions, whether the source spelling is
+  raw or escaped.
+
+  Exact Test262 admission freezes the three labelled-declaration parse-negative
+  files and the two module class-name files with per-file feature and module
+  metadata shared by runner and analyzer. Full-matrix setup validates the live
+  pinned files before scheduling shards; future siblings, extra features, and
+  unrelated module files remain gated. The exact cohort is **5/5**, and the
+  labelled-statement directory is **21 pass / 0 fail / 3 skip**. Local
+  verification passes all targets/features with **219/219** library tests,
+  **537/537** builtins tests, and **15/15** arguments tests, plus **218/218**
+  release library tests, **134/134** Python tooling tests, **1/1** doctest,
+  rustfmt, warnings-denied Clippy, release build, generated documentation,
+  Python bytecode compilation, workflow YAML parsing, and wasm32 checking.
+  Rustdoc retains only the 13 pre-existing broken intra-doc-link warnings. Two
+  GPT-5.6 reviews are clean after extending the class-name rule from module
+  top-level code to the complete Module parse goal. Feature commit `f1c421d`
+  passes CI `29903293887` and all 33 jobs in full run `29903293969`, including
+  the new live admission preflight. Downloaded artifacts aggregate to **31881
+  pass / 5122 fail / 11461 skip / 3 timeout / 0 error / 48467 total / 37003
+  run**. Against full run `29899362112`, 28 result files are byte-identical;
+  `language/expressions` moves by **+1 pass / -1 skip** and
+  `language/statements` by **+4 pass / -4 skip**. The downloaded release binary
+  reproduces exact coverage **5/5** and labelled coverage **21 pass / 0 fail /
+  3 skip**.
+
 - Generic `ToObject` coercion now throws a method-Realm `TypeError` for
   `null` and `undefined` instead of manufacturing wrapper objects. The
   `Object` constructor keeps its distinct specification path: ordinary

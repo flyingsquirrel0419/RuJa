@@ -8,7 +8,11 @@
   `for...of`, `switch`, `break`/`continue`
 - Functions, recursion, arrow functions, and closures (capture + mutation)
 - `throw`/`try`/`catch`/`finally` with the `Error` type hierarchy
-- Labeled statements (`label:`), `break label`, `continue label`
+- Labeled statements (`label:`), `break label`, `continue label`; Annex B
+  permits only ordinary sloppy labelled function declarations, while
+  generator and async declarations are early errors. In a Module source goal,
+  raw or escaped class binding names whose decoded value is `await` are early
+  errors at every nesting depth
 - Temporal Dead Zone (TDZ) for `let`/`const`; `const` reassignment is rejected
 - Logical operators with correct short-circuit: `&&`, `||`, nullish `??`
 - Logical assignment `&&=`/`||=`/`??=` and compound assignment on identifier,
