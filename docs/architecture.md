@@ -1766,16 +1766,18 @@ reuse during the active traversal.
 
 `CreateListFromArrayLike` for a Proxy `ownKeys` result remains incremental. Each
 logical index consumes fuel, performs `Get`, and validates that the value is a
-String or Symbol before the native key vector requests capacity for one
-additional entry and publishes the key. It does not preallocate from `length`,
-because doing so could fail before observable index access on a large
+String or Symbol before the native key vector checks whether the next push
+would exceed capacity. Only a full vector requests capacity and can fail;
+spare-capacity pushes publish directly. The operation does not preallocate from
+`length`, because doing so could fail before observable index access on a large
 array-like result.
 
 Duplicate validation remains a second pass after every index has been read.
 For each key, membership is checked before growth; an existing key therefore
-throws the required duplicate `TypeError` without reserving, while a new key
-reserves the `IndexSet` before insertion. String/Symbol consumer filtering and
-target invariant checks happen later. Any reservation failure discards the
+throws the required duplicate `TypeError` without reserving. A new key reserves
+the `IndexSet` before insertion only when the set is full; spare capacity does
+not create a failure boundary. String/Symbol consumer filtering and target
+invariant checks happen later. Any reservation failure discards the
 operation-local collections and unwinds all owned pins, so a retry starts from
 the `ownKeys` trap and cannot observe a partial list.
 
@@ -1784,9 +1786,9 @@ the `ownKeys` trap and cannot observe a partial list.
 - 목적과 의도: Make Proxy ownKeys trap-result keys and duplicate-detection entries allocator-fallible while preserving CreateListFromArrayLike and Proxy invariant observation order.
 - 기존 구현 및 제약 조건: The trap-result Vec pushed every validated String or Symbol through infallible growth, and the later IndexSet used infallible insert. The array-like length can reach MAX_SAFE_INTEGER, every index Get is observable and fuel-bounded, duplicate validation must wait until all entries are collected, and consumer filtering occurs only after Proxy invariants.
 - 검토한 주요 대안: Reserve the complete reported length, combine collection with duplicate validation, reserve before Get or type validation, reserve before checking membership, impose a fixed key limit, or include pending frames and target-key sets in the same patch.
-- 선택한 방식: Request Vec capacity for one additional entry after each successful Get and key-type validation, keep the complete-list duplicate pass, test membership before requesting capacity for one additional IndexSet entry, and translate either reserve failure into the current operation Realm's RangeError.
+- 선택한 방식: After each successful Get and key-type validation, request Vec capacity only if the next push would exceed current capacity; keep the complete-list duplicate pass, test membership first, and request IndexSet capacity only for a new key when the set is full. Translate either actual growth failure into the current operation Realm's RangeError.
 - 다른 대안 대신 이 방식을 선택한 이유: Length preallocation and early reservation change getter and error priority; fused duplicate detection can suppress later entry errors; reserving duplicates creates failures for state that will not grow; a fixed cap rejects valid programs; and broader ownership boundaries would make retry and cleanup evidence harder to isolate.
-- 장점, 단점 및 영향: Both directly owned per-entry collections now fail through ordinary Result cleanup with exact fuel, getter, type, duplicate, Symbol, Realm, retry, nested-frame, and for-in snapshot behavior. Reservation remains O(number of keys) and contains plus insert hashes each unique key twice. Operation input, target/handler, trap-result list, and length-value roots, pending validation frames and roots, filtered vectors, non-extensible target sets, index strings, PropertyKey/Error strings, GC root enumeration, and mark worklists remain separate units.
+- 장점, 단점 및 영향: Both directly owned entry collections now fail through ordinary Result cleanup only at real growth boundaries, with exact fuel, getter, type, duplicate, Symbol, Realm, retry, nested-frame, and for-in snapshot behavior. Helper-level tests fill the allocator-reported capacity and prove spare slots cannot consume a failure. Reservation remains amortized, and contains plus insert hashes each unique key twice. Operation input, target/handler, trap-result list, and length-value roots, pending validation frames and roots, filtered vectors, non-extensible target sets, index strings, PropertyKey/Error strings, GC root enumeration, and mark worklists remain separate units.
 ```
 
 ## Fallible Proxy ownKeys validation frames

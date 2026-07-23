@@ -10441,6 +10441,40 @@ cohort at **211/0/60**.
 - 장점, 단점 및 영향: The unit has exact zero-delta evidence plus direct ordering, retry, duplicate, Symbol, fuel, Realm, cleanup, and for-in atomicity coverage. Pending ownKeys frames and roots, filtered and target-key collections, and broader runtime allocator fallibility remain separate work.
 ```
 
+### Growth-only entry reservation evidence
+
+Commit `fbef166` changes no Test262 admission or successful runtime result. It
+corrects the two entry failpoints so they run only when `len == capacity`,
+matching the real `Vec::try_reserve` and `IndexSet::try_reserve` allocation
+boundary. Direct tests preallocate guaranteed spare capacity, traverse every
+reported slot without consuming the failure, and fail at the exact full
+boundary. Integration tests retain all prior ordering and retry coverage while
+adding actual second-growth and fresh-collection preservation checks.
+
+Local gates pass all targets/features with **231/231** library tests,
+**539/539** builtins tests, and **15/15** arguments tests, plus **230/230**
+release library tests, **135/135** tooling tests, **1/1** doctest, rustfmt,
+warnings-denied Clippy, release build, generated documentation, and wasm32
+checking. Rustdoc has only the 13 pre-existing broken-link warnings. The final
+GPT-5.6 review is clean. CI `29970600535` and all 33 jobs in full run
+`29970600531` pass.
+
+Artifacts at `/tmp/ruja-proxy-ownkeys-growth-only-29970600531-final` aggregate
+to unchanged **31890 pass / 5115 fail / 11459 skip / 3 timeout / 0 error /
+48467 total / 37005 run**. All 30 result files are byte-identical to run
+`29967042192`, and the downloaded release binary reproduces the affected cohort
+at **211/0/60**.
+
+```text
+[Decision Log]
+- 목적과 의도: Make Proxy ownKeys allocation-failure evidence correspond exactly to native collection growth without changing Test262 admission or successful ECMAScript behavior.
+- 기존 구현 및 제약 조건: Production try_reserve calls did not allocate when spare capacity existed, but the injected TrapResultKey and SeenKey failures ran before try_reserve and could report impossible per-entry OOM. Test262 cannot trigger this host-allocation boundary.
+- 검토한 주요 대안: Keep per-entry failpoints, reserve exact length up front, infer growth from a fixed key count, test only two-key spare capacity, or expose and fill the allocator-reported capacity directly.
+- 선택한 방식: Bypass reservation and failpoint consumption whenever len is below capacity, retain the existing just-before-publication reserve at a full boundary, and verify each spare slot plus the exact full boundary directly before running the unchanged pinned matrix.
+- 다른 대안 대신 이 방식을 선택한 이유: Impossible failures weaken safety evidence; length preallocation changes observable priority; fixed key counts depend on growth policy; two-key tests do not prove the full boundary; and direct capacity tests remain deterministic across allocator growth factors.
+- 장점, 단점 및 영향: Entry failure injection now matches real allocation, preserves all ordering, Realm, retry, cleanup, and for-in guarantees, and has byte-identical conformance evidence. Ordinary own-key collection growth and shared PropertyKey/Arc strings remain separate allocator-safety units.
+```
+
 ## Fallible Proxy ownKeys validation frames
 
 Commit `3903c54` changes no Test262 admission. A trapped Proxy `ownKeys` layer

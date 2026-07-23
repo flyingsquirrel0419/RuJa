@@ -62,6 +62,32 @@
 
 ### Fixed
 
+- Proxy `ownKeys` entry reservation now models native allocation only when the
+  trap-result `Vec` or duplicate `IndexSet` is full. Spare-capacity publication
+  bypasses both `try_reserve` and the injected failure, while the next actual
+  growth still reports the existing catchable `RangeError`. This removes
+  impossible per-entry OOM failures from the allocator-safety evidence without
+  changing successful ECMAScript behavior.
+
+  Helper-level regressions explicitly reserve spare capacity, check every slot
+  up to the collection's reported capacity, and fail exactly at the full
+  boundary. Integration coverage uses countdown failures across actual second
+  growth, proves a two-key collection preserves the pending failure for the
+  next fresh collection, and retains getter, type, duplicate, fuel, Symbol,
+  Realm, nested-frame, retry, and lazy `for...in` ordering. Local verification
+  passes all targets/features with **231/231** library tests, **539/539**
+  builtins tests, and **15/15** arguments tests, plus **230/230** release
+  library tests, **135/135** Python tooling tests, **1/1** doctest, rustfmt,
+  warnings-denied Clippy, release build, generated documentation, and wasm32
+  checking. Rustdoc retains only the 13 pre-existing broken-link warnings. The
+  final GPT-5.6 review is clean. Commit `fbef166` passes CI `29970600535` and
+  all 33 jobs in full run `29970600531`. Artifacts at
+  `/tmp/ruja-proxy-ownkeys-growth-only-29970600531-final` aggregate to unchanged
+  **31890 pass / 5115 fail / 11459 skip / 3 timeout / 0 error / 48467 total /
+  37005 run**; all 30 result files are byte-identical to run `29967042192`.
+  The downloaded binary reproduces the selected Proxy, Reflect, Object, and
+  `for-in` cohort at **211 pass / 0 fail / 60 skip**.
+
 - Proxy `ownKeys` now reserves both post-validation collections before native
   growth. A non-extensible target's complete key list is observed before the
   target-key `IndexSet` reserves once for exact-set comparison, while the
