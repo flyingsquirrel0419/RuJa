@@ -1842,6 +1842,33 @@ published validation frame when any later reservation fails.
 - 장점, 단점 및 영향: All directly owned ownKeys roots now fail through catchable, Realm-correct RangeError paths with primitive/nullish no-op behavior, nested cleanup, caller retry, forced-GC survival, and for-in snapshot atomicity. Root counting adds a bounded scan over at most two Values per site. Filtered output growth, non-extensible target-key sets, index and PropertyKey/Error strings, GC root enumeration, and mark worklists remain independent units.
 ```
 
+## Fallible Proxy ownKeys post-validation collections
+
+Reverse validation first observes every target descriptor and omission rule.
+Only after that work succeeds does a non-extensible frame reserve its complete
+target-key `IndexSet` and publish the keys used for exact-set comparison. This
+keeps descriptor throws and missing non-configurable-key errors ahead of any
+allocation failure while placing reservation before native set growth.
+
+Consumer filtering remains a later pass. Each candidate consumes its existing
+fuel, applies the String/Symbol filter, and optionally observes
+`[[GetOwnProperty]]` and enumerability before requesting capacity. The helper
+checks `len == capacity`, so an injected or real reserve failure is possible
+only when the next accepted key would actually grow the result vector. A
+failure discards the operation-local partial result; caller retry re-observes
+the complete Proxy operation and never publishes a partial `for...in`
+snapshot.
+
+```text
+[Decision Log]
+- 목적과 의도: Make the two post-validation collections directly owned by Proxy ownKeys allocator-fallible without changing invariant validation, consumer filtering, or retry semantics.
+- 기존 구현 및 제약 조건: The non-extensible target-key IndexSet collected a fully observed target list through infallible growth, and the filtered result Vec pushed accepted keys infallibly after per-key fuel and optional descriptor lookup. Reverse Proxy frames can re-enter descriptor traps, and for-in must not publish a partial key snapshot.
+- 검토한 주요 대안: Reserve target keys before descriptor traversal, reserve the trap-result length for every frame, reserve before filtering or descriptor lookup, request capacity before every accepted push even when spare capacity exists, impose a fixed key cap, or combine shared string and GC-worklist allocation in the same patch.
+- 선택한 방식: Reserve the target-key set once after all descriptor and omission validation but before insertion and exact-set comparison; reserve the filtered Vec only after a key passes every filter and only when its next push requires growth.
+- 다른 대안 대신 이 방식을 선택한 이유: Earlier reservation changes abrupt-completion priority and can over-allocate discarded keys; unconditional failpoints model failures where the allocator is never called; fixed caps reject valid programs; and broader allocation ownership would obscure the reverse-frame, Realm, and atomic-retry boundary.
+- 장점, 단점 및 영향: Both collections now report catchable, operation-Realm RangeError with exact no-growth exclusions, completed descriptor observations, reverse-frame cleanup, caller retry, and for-in snapshot atomicity. Target-set reservation is O(number of target keys), and filtered growth remains amortized. Shared index and PropertyKey/Error strings, ordinary own-key producers, GC root enumeration, and mark worklists remain independent units.
+```
+
 ---
 
 **Next:** [Features](features.md) · [Known limitations](limitations.md) · [Back to README](../README.md)

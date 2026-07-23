@@ -62,6 +62,34 @@
 
 ### Fixed
 
+- Proxy `ownKeys` now reserves both post-validation collections before native
+  growth. A non-extensible target's complete key list is observed before the
+  target-key `IndexSet` reserves once for exact-set comparison, while the
+  consumer-filtered `Vec` reserves only when an accepted String or Symbol
+  would exceed its current capacity. Excluded Symbols, absent and
+  non-enumerable descriptors, empty lists, and spare-capacity pushes therefore
+  introduce no allocation failure.
+
+  Exact-site regressions cover descriptor and omission priority, non-extensible
+  mismatch errors, actual second growth, partial filtered-state retry, exact
+  fuel boundaries, foreign operation Realms, nested reverse-frame observation,
+  thrown-value identity, lazy `for...in` snapshot atomicity, and layered retry
+  through both the filtered result and iterator snapshot. Local verification
+  passes all targets/features with **230/230** library tests, **539/539**
+  builtins tests, and **15/15** arguments tests, plus **229/229** release
+  library tests, **135/135** Python tooling tests, **1/1** doctest, rustfmt,
+  warnings-denied Clippy, release build, generated documentation, and wasm32
+  checking. Rustdoc retains only the 13 pre-existing broken-link warnings. The
+  final GPT-5.6 review found no code defect. Implementation commit `0740941`
+  passes CI `29967042158` and all 33 jobs in full run `29967042192`. Artifacts
+  at `/tmp/ruja-proxy-ownkeys-post-validation-29967042192-final` aggregate to
+  unchanged **31890 pass / 5115 fail / 11459 skip / 3 timeout / 0 error /
+  48467 total / 37005 run**; all 30 result files are byte-identical to run
+  `29963410566`. The downloaded binary reproduces the selected Proxy, Reflect,
+  Object, and `for-in` cohort at **211 pass / 0 fail / 60 skip**. Shared index
+  and PropertyKey/Error strings, ordinary own-key producers, GC root
+  enumeration, and mark worklists remain separate allocator-safety scopes.
+
 - Proxy `ownKeys` now reserves every directly owned temporary GC root before
   its corresponding pin: the operation input before dispatch, each Proxy
   target/handler pair after the edge fuel debit, an object trap-result list
