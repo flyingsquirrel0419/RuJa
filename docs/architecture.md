@@ -1899,6 +1899,35 @@ so caller retry re-runs the ordinary key snapshot.
 - 장점, 단점 및 영향: Ordinary objects, Arrays, primitive and boxed Strings, TypedArrays, Symbols, and Module Namespace exports now share catchable, Realm-correct growth failure with exact fuel, duplicate, no-op, Proxy-order, retry, and for-in atomicity evidence. The three staging vectors plus final Vec/IndexSet remain O(number of candidates). Numeric formatting, PropertyKey/Error Arc strings, caller result containers, GC root enumeration, and mark worklists remain independent scopes.
 ```
 
+## Fallible own-key consumer materialization
+
+The six public key-array consumers own a second publication layer after
+`[[OwnPropertyKeys]]`: `Object.keys`, `Object.values`, `Object.entries`,
+`Object.getOwnPropertyNames`, `Object.getOwnPropertySymbols`, and
+`Reflect.ownKeys`. Each accepted result now requests vector capacity only when
+full. Keys reserve after their enumerable descriptor succeeds; values reserve
+after `Get`, then reserve GC-pin capacity before `pin -> push`; entries reserve
+their two pair elements after `Get`, create the pair in the method Realm, then
+reserve the outer vector and pair root before publication.
+
+Names, Symbols, and Reflect conversion perform no descriptor or value access.
+Empty and filtered lists therefore create an empty Array without consuming a
+result or presence reservation. Non-empty result Arrays use
+`ArrayData::try_new`, which reserves the dense presence bitmap before resize.
+`make_value_array_in_env` computes and reserves every object root before
+pinning, and all Realm-explicit callers delegate to that path. Consequently a
+foreign `Reflect.ownKeys` now receives its own Realm's `%Array.prototype%`.
+
+```text
+[Decision Log]
+- 목적과 의도: Make the complete result-materialization layer of the six public own-key consumers catchable and Realm-correct without changing snapshot, descriptor, Get, ordering, or partial-observation semantics.
+- 기존 구현 및 제약 조건: The producer snapshot was fallible, but consumer Vec growth, Object.entries pair storage, some pins, a temporary root Vec, and ArrayData's presence bitmap were infallible. Reflect.ownKeys used the main Realm Array, while keys/values/entries must observe descriptors and Gets in snapshot order.
+- 검토한 주요 대안: Preallocate from snapshot length, reserve before descriptor/Get, share one bulk conversion for all consumers, leave Array presence as hard OOM, clone entry key strings, or rewrite every ArrayData constructor and own-key caller together.
+- 선택한 방식: Reserve each accepted consumer publication at its actual growth boundary; reserve object roots before pinning; treat entries pair elements and outer pairs independently; route Realm-explicit arrays through make_value_array_in_env; and add a fallible dense-presence constructor used by that shared Value-array path.
+- 다른 대안 대신 이 방식을 선택한 이유: Snapshot length overallocates filtered results and changes failure priority; early reservation precedes required observable work; values and entries need different root lifetimes; leaving the bitmap would preserve an end-to-end abort; key ownership removes an unnecessary Arc allocation; and a global Array/caller rewrite exceeds this reviewable boundary.
+- 장점, 단점 및 영향: All six APIs now have exact growth, presence, Realm, retry, fuel, GC, and cleanup evidence, and shared Value-array callers gain reserve-before-pin/presence safety. Descriptor traversal internals, JSON and descriptor-related own-key callers, unrelated direct ArrayData::new constructors, PropertyKey/Error strings, GC root enumeration, and mark worklists remain independent scopes.
+```
+
 ---
 
 **Next:** [Features](features.md) · [Known limitations](limitations.md) · [Back to README](../README.md)

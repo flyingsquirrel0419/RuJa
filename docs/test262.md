@@ -10638,6 +10638,50 @@ run `29970600531`.
 - 장점, 단점 및 영향: The five directly owned collections now have exact ordering, fuel, Realm, Proxy, retry, for-in, cleanup, and zero-delta evidence. Numeric key formatting, shared PropertyKey/Error strings, caller-owned result containers, GC root enumeration, and mark worklists remain separate scopes.
 ```
 
+## Fallible own-key consumer materialization
+
+Commit `2930f21` changes no Test262 admission. The result vectors for
+`Object.keys`, `Object.values`, `Object.entries`,
+`Object.getOwnPropertyNames`, `Object.getOwnPropertySymbols`, and
+`Reflect.ownKeys` now reserve only at actual growth. Object-valued results and
+entry pairs reserve roots before publication, and non-empty result Arrays
+reserve their dense presence bitmap fallibly. `Reflect.ownKeys` also creates
+the result with the native callee Realm's Array prototype.
+
+Rust regressions cover exact capacity, first and second growth, all six APIs,
+descriptor/Get priority, filtered and empty exclusions, entries inner/outer
+state, producer fuel, retry, foreign Array and RangeError Realms, injected root
+failure, exact-cap GC of ephemeral values and pairs, and depth cleanup. Local
+gates pass all targets/features with **235/235** library tests, **539/539**
+builtins tests, **15/15** arguments tests, and **31/31** module tests, plus
+**234/234** release library tests, **135/135** tooling tests, **1/1** doctest,
+rustfmt, warnings-denied Clippy, release build, generated documentation, and
+wasm32 checking. Rustdoc has only the 13 pre-existing broken-link warnings.
+The local eight-directory Object, Reflect, Proxy, and for-in cohort is **244
+pass / 0 fail / 68 skip / 312 total**.
+
+CI `29977240776` and all 33 jobs in full run `29977240759` pass. The
+original annexB artifact shifted one pass to a contention timeout. The
+downloaded CI binary against pinned Test262
+`020cb74075849d1e404bbcdb62feb7a02e6966db` reproduces the baseline
+**201 pass / 811 fail / 74 skip / 0 timeout / 0 error** byte-for-byte. Replacing
+only that file, evidence at
+`/tmp/ruja-ownkey-consumers-29977240759-corrected` aggregates to unchanged
+**31890 pass / 5115 fail / 11459 skip / 3 timeout / 0 error / 48467 total /
+37005 run**; all 30 result files match run `29973887424`. The downloaded
+binary reproduces the same focused cohort at **244/0/68**; its output is stored
+beside the corrected artifacts.
+
+```text
+[Decision Log]
+- 목적과 의도: Prove the consumer-result allocation and Reflect Realm correction without widening Test262 admission or treating a transient timeout as conformance drift.
+- 기존 구현 및 제약 조건: The affected corpus already passed, Test262 cannot inject native Vec, pin, or presence allocation failure, and the original annexB shard contained one extra timeout while the other 29 files matched.
+- 검토한 주요 대안: Admit unrelated files, rely only on Rust failpoints, accept the shifted aggregate, rerun the entire full matrix, omit artifact-binary reproduction, or combine every residual own-key caller in this patch.
+- 선택한 방식: Keep admission unchanged, run the eight-directory cohort, retain the successful 33-job matrix, rerun only annexB with the downloaded binary and exact pinned corpus, substitute its byte-identical baseline file, compare all 30 files, and persist the downloaded-binary focused output.
+- 다른 대안 대신 이 방식을 선택한 이유: Admission cannot prove host allocation behavior, local tests cannot establish broad zero-delta, accepting timeout noise weakens evidence, a full rerun wastes 29 proven shards, and the residual callers have independent ordering and ownership.
+- 장점, 단점 및 영향: The corrected set has exact zero-delta and focused 244/0/68 evidence plus deterministic growth, Realm, GC, retry, and cleanup coverage. It intentionally consists of 29 original artifacts and one exact-corpus downloaded-binary rerun; descriptor traversal and other own-key callers remain separate work.
+```
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is

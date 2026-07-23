@@ -62,6 +62,45 @@
 
 ### Fixed
 
+- `Object.keys`, `Object.values`, `Object.entries`,
+  `Object.getOwnPropertyNames`, `Object.getOwnPropertySymbols`, and
+  `Reflect.ownKeys` now reserve caller-owned result vectors only at actual
+  growth. `Object.values` reserves object roots before pinning returned values;
+  `Object.entries` separately reserves pair elements, pair/result roots, and
+  the outer result before publication. The shared Value-array path reserves GC
+  pins and its dense-presence bitmap fallibly, and the obsolete String-array
+  shortcut no longer bypasses rooted VM allocation.
+
+  Result reservation remains after the required descriptor check and, for
+  values/entries, after the successful `Get`. Empty and filtered results use no
+  capacity or presence allocation. `Object.entries` moves the owned string key
+  into its pair instead of allocating a second `Arc<str>`. `Reflect.ownKeys`
+  now creates its result Array in the native callee Realm rather than the main
+  Realm.
+
+  Deterministic regressions cover exact spare/full capacity, first and second
+  growth, all six APIs, filtered/empty paths, inner versus outer entries
+  failures, producer-fuel priority, retry, foreign Array and RangeError Realms,
+  root reservation, ephemeral getter values and pair survival through exact-cap
+  GC, and balanced pin/context/native depths. Local verification passes all
+  targets/features with **235/235** library tests, **539/539** builtins tests,
+  **15/15** arguments tests, and **31/31** module tests, plus **234/234** release
+  library tests, **135/135** Python tooling tests, **1/1** doctest, rustfmt,
+  warnings-denied Clippy, release build, generated documentation, and wasm32
+  checking. Rustdoc retains only the 13 pre-existing broken-link warnings.
+
+  Implementation commit `2930f21` passes CI `29977240776` and all 33 jobs in
+  full run `29977240759`. The original annexB artifact had one contention
+  timeout; the downloaded CI binary on pinned Test262
+  `020cb74075849d1e404bbcdb62feb7a02e6966db` reproduces the baseline
+  **201/811/74/0/0** byte-for-byte. The corrected evidence set at
+  `/tmp/ruja-ownkey-consumers-29977240759-corrected` aggregates to unchanged
+  **31890 pass / 5115 fail / 11459 skip / 3 timeout / 0 error / 48467 total /
+  37005 run** and all 30 result files match run `29973887424`. Its downloaded
+  binary reproduces the eight-directory consumer cohort at **244 pass / 0 fail
+  / 68 skip**. Descriptor traversal state, other own-key callers, unrelated
+  `ArrayData::new` sites, shared strings, and GC worklists remain separate.
+
 - Ordinary `[[OwnPropertyKeys]]` now reserves all five directly owned native
   collections only when their next publication requires growth: index, String,
   and Symbol staging vectors plus the final result `Vec` and duplicate
