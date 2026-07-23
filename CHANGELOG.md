@@ -62,6 +62,35 @@
 
 ### Fixed
 
+- Ordinary `[[OwnPropertyKeys]]` now reserves all five directly owned native
+  collections only when their next publication requires growth: index, String,
+  and Symbol staging vectors plus the final result `Vec` and duplicate
+  `IndexSet`. Final seen/result capacity is secured before either collection is
+  mutated, and a duplicate key bypasses both reservations. The existing
+  operation-wide fuel charge still completes before any collection
+  materialization.
+
+  Exact-capacity and integration regressions cover first and second actual
+  growth, spare reuse, producer-level Array `length` duplication, empty and
+  excluded paths, exact N-1/N fuel for all five sites, foreign operation Realms,
+  Proxy trap/extensibility versus reverse descriptor priority, unposted and
+  layered lazy `for...in` retry, balanced VM depths, and ordered success/retry
+  across ordinary objects, dense and holey Arrays, primitive and boxed UTF-16
+  Strings, attached and zero-length TypedArrays, Symbols, and Module Namespace
+  exports. Local verification passes all targets/features with **233/233**
+  library tests, **539/539** builtins tests, and **15/15** arguments tests,
+  plus **232/232** release library tests, **31/31** module tests, **135/135**
+  Python tooling tests, **1/1** doctest, rustfmt, warnings-denied Clippy,
+  release build, generated documentation, and wasm32 checking. Rustdoc retains
+  only the 13 pre-existing broken-link warnings. Implementation commit
+  `055b36e` passes CI `29973887440` and all 33 jobs in full run
+  `29973887424`. Artifacts at
+  `/tmp/ruja-ordinary-ownkeys-collections-29973887424-final` aggregate to
+  unchanged **31890 pass / 5115 fail / 11459 skip / 3 timeout / 0 error /
+  48467 total / 37005 run**; all 30 result files are byte-identical to run
+  `29970600531`. Numeric key formatting, shared PropertyKey/Error strings, and
+  caller-owned result containers remain separate allocator-safety scopes.
+
 - Proxy `ownKeys` entry reservation now models native allocation only when the
   trap-result `Vec` or duplicate `IndexSet` is full. Spare-capacity publication
   bypasses both `try_reserve` and the injected failure, while the next actual

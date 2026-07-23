@@ -374,9 +374,11 @@ guarantees are required.
 - Proxy `ownKeys` reserves its directly owned operation, target/handler,
   trap-result, length-value, and pending-frame roots before pinning. Its
   per-entry trap-result, duplicate, filtered-result, and non-extensible
-  target-key collections are also fallible. Shared index and PropertyKey/Error
-  strings, ordinary own-key producers, GC root enumeration, and mark worklists
-  still use infallible native growth and remain separate hard-host-OOM scopes.
+  target-key collections are also fallible. The five collections directly
+  owned by ordinary own-key production are fallible as well. Shared numeric
+  index formatting and PropertyKey/Error strings, caller-owned result
+  containers, GC root enumeration, and mark worklists still use infallible
+  native growth and remain separate hard-host-OOM scopes.
 - Push, Pop, Shift, Unshift, Splice, Slice, Concat, Flat, FlatMap, ForEach,
   Join, ToLocaleString, Map, Reduce, ReduceRight, Reverse, ToReversed,
   ToSpliced, and With use live generic indexed operations with operation-wide

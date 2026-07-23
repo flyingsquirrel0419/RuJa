@@ -1871,6 +1871,34 @@ snapshot.
 - 장점, 단점 및 영향: Both collections now report catchable, operation-Realm RangeError with exact no-growth exclusions, completed descriptor observations, reverse-frame cleanup, caller retry, and for-in snapshot atomicity. Target-set reservation is O(number of target keys), and filtered growth remains amortized. Shared index and PropertyKey/Error strings, ordinary own-key producers, GC root enumeration, and mark worklists remain independent units.
 ```
 
+## Fallible ordinary own-key collections
+
+`ordinary_own_property_keys` retains its up-front work charge: TypedArray
+indices, stored properties, Array presence slots, Module Namespace exports,
+and a String byte-length upper bound for UTF-16 keys contribute to the scan
+estimate. The full precomputed work charge is consumed before native key
+materialization starts. Each accepted candidate then checks the capacity of
+its type-specific index, String, or Symbol staging vector and requests one
+additional slot only when full.
+
+Sorted index keys, insertion-ordered strings, and symbols are published into a
+single final result. Membership is checked first; for a new key, both the
+duplicate `IndexSet` and result `Vec` reserve before either is mutated. A
+duplicate such as a materialized Array `length` alongside the synthetic length
+therefore consumes no final reservation. Any failure discards all local state,
+unwinds the operation root, and leaves a lazy `for...in` snapshot unpublished
+so caller retry re-runs the ordinary key snapshot.
+
+```text
+[Decision Log]
+- 목적과 의도: Make every native collection directly owned by ordinary [[OwnPropertyKeys]] allocator-fallible at its real growth boundary without changing fuel, key order, filtering, Proxy invariant, or retry semantics.
+- 기존 구현 및 제약 조건: Index, String, and Symbol candidates were pushed into three infallible staging Vecs, while final deduplication inserted into an infallible IndexSet and Vec. Fuel is intentionally prepaid before materialization; Array and boxed String synthesize length, Module Namespace exports have specified ordering, and a pending Proxy validates descriptors only after the ordinary target snapshot succeeds.
+- 검토한 주요 대안: Reserve from the precomputed work count, preallocate all five collections at entry, remove staging vectors in a broad rewrite, impose a key-count cap, combine numeric/Arc string allocation, or reserve seen and result after mutating one side.
+- 선택한 방식: Check len against capacity immediately before each accepted staging push; after sorting and filtering, check final membership, reserve both seen and result when needed, then publish to both collections. Keep all string construction and caller-owned conversion containers outside this unit.
+- 다른 대안 대신 이 방식을 선택한 이유: Work counts include holes, excluded keys, duplicates, and different key classes, so bulk reservation creates false failures and over-allocation; a broad rewrite obscures ordering; fixed caps reject valid programs; stable Rust has no fallible Arc<str> construction; and one-sided publication complicates atomic cleanup evidence.
+- 장점, 단점 및 영향: Ordinary objects, Arrays, primitive and boxed Strings, TypedArrays, Symbols, and Module Namespace exports now share catchable, Realm-correct growth failure with exact fuel, duplicate, no-op, Proxy-order, retry, and for-in atomicity evidence. The three staging vectors plus final Vec/IndexSet remain O(number of candidates). Numeric formatting, PropertyKey/Error Arc strings, caller result containers, GC root enumeration, and mark worklists remain independent scopes.
+```
+
 ---
 
 **Next:** [Features](features.md) · [Known limitations](limitations.md) · [Back to README](../README.md)

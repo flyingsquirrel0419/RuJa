@@ -10597,6 +10597,47 @@ cohort at **211/0/60**.
 - 장점, 단점 및 영향: The unit has exact zero-delta evidence plus descriptor, omission, filtering, growth, fuel, Realm, reverse-frame, retry, and for-in atomicity coverage. Shared strings, ordinary own-key producers, GC root enumeration, and mark worklists remain separate allocator-safety work.
 ```
 
+## Fallible ordinary own-key collections
+
+Commit `055b36e` changes no Test262 admission or successful ECMAScript
+result. Ordinary `[[OwnPropertyKeys]]` now requests capacity only at the real
+growth boundary of its index, String, and Symbol staging vectors and its final
+duplicate `IndexSet` and result `Vec`. Final membership is checked first; a
+new key reserves both collections before either is mutated, while a duplicate
+key reserves neither. The operation-wide fuel charge remains complete before
+native key materialization.
+
+Deterministic Rust regressions cover exact capacity, first and second actual
+growth, spare reuse, duplicate and empty exclusions, exact N-1/N fuel,
+foreign operation Realms, Proxy validation and reverse-descriptor priority,
+lazy `for...in` snapshot atomicity and retry, and balanced VM depth. The
+producer matrix includes ordinary objects, dense and holey Arrays, primitive
+and boxed UTF-16 Strings, attached and zero-length TypedArrays, Symbols, and
+Module Namespace exports.
+
+Local gates pass all targets/features with **233/233** library tests,
+**539/539** builtins tests, and **15/15** arguments tests, plus **232/232**
+release library tests, **31/31** module tests, **135/135** tooling tests,
+**1/1** doctest, rustfmt, warnings-denied Clippy, release build, generated
+documentation, and wasm32 checking. Rustdoc has only the 13 pre-existing
+broken-link warnings. CI `29973887440` and all 33 jobs in full run
+`29973887424` pass.
+
+Artifacts at `/tmp/ruja-ordinary-ownkeys-collections-29973887424-final`
+aggregate to unchanged **31890 pass / 5115 fail / 11459 skip / 3 timeout / 0
+error / 48467 total / 37005 run**. All 30 result files are byte-identical to
+run `29970600531`.
+
+```text
+[Decision Log]
+- 목적과 의도: Prove that ordinary own-key materialization reports native collection growth failure atomically without widening Test262 admission or hiding conformance drift.
+- 기존 구현 및 제약 조건: The affected Test262 corpus already passed, Test262 cannot inject host allocator failure, the producer prepays fuel before materialization, and equal aggregate totals can hide offsetting shard changes.
+- 검토한 주요 대안: Admit unrelated files, rely only on failpoint tests, compare aggregate totals only, preallocate from the work count, or combine caller containers and shared string allocation into this unit.
+- 선택한 방식: Keep admission unchanged, test every growth and no-growth boundary locally, run the pinned full matrix, and compare all 30 artifacts byte-for-byte with the preceding baseline.
+- 다른 대안 대신 이 방식을 선택한 이유: Admission changes do not prove allocator behavior, the work count includes holes and duplicates, ordinary Test262 cannot force reserve failures, and aggregate equality is weaker than per-file equality.
+- 장점, 단점 및 영향: The five directly owned collections now have exact ordering, fuel, Realm, Proxy, retry, for-in, cleanup, and zero-delta evidence. Numeric key formatting, shared PropertyKey/Error strings, caller-owned result containers, GC root enumeration, and mark worklists remain separate scopes.
+```
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is
