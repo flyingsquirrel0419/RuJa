@@ -1960,6 +1960,46 @@ completion unwinds operation-local roots and frames.
 - 장점, 단점 및 영향: All ten sites now have catchable Realm-correct failure, actual-growth, ordering, nested reverse-validation, GC, retry, and cleanup evidence while successful semantics and Test262 admission remain unchanged. Final FromPropertyDescriptor object construction, Object.getOwnPropertyDescriptors and defineProperties containers, Proxy defineProperty descriptor containers, shared strings, GC root enumeration, and mark worklists remain independent scopes.
 ```
 
+## Fallible descriptor materialization and definition publication
+
+`ToPropertyDescriptor` now produces a presence-aware internal descriptor
+record directly. It retains the input object while observing inherited
+`enumerable`, `configurable`, `value`, `writable`, `get`, and `set` fields in
+specification order, and roots each newly observed object-valued data or
+accessor field before a later callback can collect it. Getter and setter
+callability checks remain ahead of publication. This removes the temporary
+ordinary descriptor object that previously required a second property walk
+and could change observable results between conversion and definition.
+
+`Object.defineProperties` stores the converted records and their field roots
+in a fallibly grown operation-local vector, completing every descriptor
+conversion before the first target definition. `Object.defineProperty` and
+`Reflect.defineProperty` validate the target before reserving their argument
+roots, convert once, and pass the same record to ordinary, Array,
+TypedArray, Module Namespace, mapped-arguments, or Proxy definition. A Proxy
+creates its descriptor object only after revocation, fuel, trap lookup, and
+callability succeed; the exact present-property count is reserved before the
+object is allocated, and target descriptor fields remain rooted across
+invariant validation.
+
+`FromPropertyDescriptor` reserves its fixed four-property map and exact value,
+getter, setter, and Realm-prototype roots before allocation.
+`Object.getOwnPropertyDescriptors` obtains `[[OwnPropertyKeys]]` before
+allocating the result object, then reserves each accepted result property and
+materialized descriptor root before publication. Both paths require the
+current Realm's registered `%Object.prototype%` rather than silently falling
+back to the main Realm.
+
+```text
+[Decision Log]
+- 목적과 의도: Make descriptor conversion, object materialization, public Object/Reflect callers, and Proxy defineProperty publication allocator-fallible while preserving ECMAScript field observation, two-pass definition, invariant, Realm, and retry semantics.
+- 기존 구현 및 제약 조건: ToPropertyDescriptor first allocated a normalized JS object and later reread its own properties; Object.defineProperties retained those objects in an infallible Vec; FromPropertyDescriptor and getOwnPropertyDescriptors inserted through infallible maps; Proxy defineProperty eagerly reused or built descriptor objects through infallible property insertion. Every field Get, ownKeys trap, defineProperty trap, and invariant check can execute user code and trigger GC.
+- 검토한 주요 대안: Preallocate from own-key counts, keep the normalized object as the internal record, reserve all roots and properties at public-call entry, create Proxy descriptor objects before trap lookup, impose fixed descriptor or key limits, or combine ordinary property storage, JSON, shared strings, and GC worklists in the same patch.
+- 선택한 방식: Convert once into a presence-aware Rust record in specification field order; reserve and root observed object fields at ownership boundaries; retain records through the complete first defineProperties pass; reserve maps and vectors only at actual growth; materialize Realm-correct descriptor objects only when their caller requires them; and allocate getOwnPropertyDescriptors output only after ownKeys succeeds.
+- 다른 대안 대신 이 방식을 선택한 이유: Rereading a normalized object duplicates observable semantics and allocation; count-based entry reservation over-allocates filtered or absent fields and changes abrupt-completion priority; eager Proxy materialization runs before required trap errors; fixed limits reject valid programs; and broader container ownership would obscure the conversion/publication boundary.
+- 장점, 단점 및 영향: Descriptor fields now have one observable conversion, the defineProperties conversion pass completes before the first target mutation, public and Proxy output is Realm-correct, and every directly owned root or collection has exact growth, GC, cleanup, and retry evidence. Ordinary object property-map insertion, Array backing and length storage, ordinary Set/set_array_index, seal/freeze materialization, TypedArray byte conversion, JSON containers, unrelated ArrayData constructors, PropertyKey/Error and IC temporary strings, GC root enumeration, and mark worklists remain independent hard-host-OOM scopes.
+```
+
 ---
 
 **Next:** [Features](features.md) · [Known limitations](limitations.md) · [Back to README](../README.md)

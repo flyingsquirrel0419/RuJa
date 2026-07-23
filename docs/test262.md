@@ -10726,6 +10726,54 @@ artifacts.
 - 장점, 단점 및 영향: The unit has exact zero-delta plus focused 656/0/60 evidence and deterministic ordering, growth, Realm, GC, retry, and cleanup coverage. Final descriptor-object materialization, Object descriptor caller containers, Proxy defineProperty descriptor containers, shared strings, GC root enumeration, and mark worklists remain separate work.
 ```
 
+## Fallible descriptor materialization and definition publication
+
+Commit `ce280cb` changes no Test262 admission. `ToPropertyDescriptor` now
+creates one presence-aware internal record while observing inherited fields in
+specification order and rooting object-valued results. `Object.defineProperties`
+retains converted records through its complete first pass;
+`Object.defineProperty` and `Reflect.defineProperty` reuse the same record.
+`FromPropertyDescriptor`, `Object.getOwnPropertyDescriptors`, and trapped Proxy
+`defineProperty` reserve their direct maps, vectors, and roots before
+publication. The plural getter obtains own keys before result allocation, and
+all materialized descriptor objects use the current Realm's registered
+immutable-prototype `%Object.prototype%`.
+
+Rust regressions cover every reservation site, exact spare/full capacity, the
+real GC-pin reserve path, first and later failure, two-pass conversion,
+ownKeys-before-allocation, revocation/fuel/callability/trap/invariant priority,
+transparent and false Proxy paths, foreign Realms, cleanup, retry, and
+cap-triggered GC preserving freshly observed value/get/set objects. Local
+gates pass all targets/features with **246/246** library tests, **539/539**
+builtins tests, **15/15** arguments tests, and **31/31** module tests, plus
+**246/246** release library tests, **135/135** tooling tests, **1/1** doctest,
+rustfmt, warnings-denied Clippy, release build, generated documentation, and
+wasm32 checking. Rustdoc has only the 13 pre-existing broken-link warnings.
+Two GPT-5.6 final implementation reviews are clean. CI `29986403996` passes.
+The local release and downloaded CI binary on pinned Test262
+`020cb74075849d1e404bbcdb62feb7a02e6966db` both reproduce the nine-directory
+Object, Reflect, and Proxy descriptor cohort at **2457 pass / 0 fail / 24 skip
+/ 2481 total**; downloaded-binary output is persisted as
+`focused-descriptor-materialization.txt` beside the full artifacts.
+
+All 33 jobs in full run `29986403979` pass. The original annexB artifact
+shifted one pass to a runner-contention timeout; the downloaded CI binary and
+exact pinned corpus rerun restores the baseline **201 pass / 811 fail / 74 skip
+/ 0 timeout / 0 error**. The corrected 30-file evidence set at
+`/tmp/ruja-descriptor-materialization-29986403979-final` is byte-identical to
+run `29980403702` and aggregates to unchanged **31890 pass / 5115 fail / 11459
+skip / 3 timeout / 0 error / 48467 total / 37005 run**.
+
+```text
+[Decision Log]
+- 목적과 의도: Prove descriptor conversion and publication allocation safety without widening admission or confusing host-allocation failpoint coverage with ordinary conformance coverage.
+- 기존 구현 및 제약 조건: The selected Test262 directories already passed, Test262 cannot inject native map, vector, or GC-pin reservation failure, descriptor conversion and Proxy traps execute user code, and equal full-suite totals can hide offsetting shard changes.
+- 검토한 주요 대안: Admit unrelated files, rely only on Rust failpoints, compare aggregate totals only, run focused tests only with the local binary, or merge ordinary object/Array property-storage allocation into this unit.
+- 선택한 방식: Keep admission unchanged, cover every allocation and no-allocation boundary locally, run the nine directly affected Test262 directories with both local and downloaded CI binaries, run the pinned full matrix, and compare every result artifact byte-for-byte with the preceding baseline.
+- 다른 대안 대신 이 방식을 선택한 이유: Admission cannot demonstrate allocator behavior, failpoint tests cannot detect broad semantic or runner drift, aggregate equality is weaker than per-file equality, a local binary does not prove the shipped artifact, and ordinary target storage has independent publication and Array synchronization boundaries.
+- 장점, 단점 및 영향: The unit has focused 2457/0/24 evidence plus deterministic field-order, two-pass, growth, Realm, GC, cleanup, and retry coverage. Ordinary property-map and Array backing publication remain the next independent allocator-safety scope.
+```
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is

@@ -380,12 +380,16 @@ guarantees are required.
   values, entries, own names/Symbols, and Reflect ownKeys are fallible. Shared
   numeric index formatting and PropertyKey/Error strings remain infallible.
   Iterative Proxy `getOwnPropertyDescriptor` traversal now reserves its direct
-  roots and pending frames, but final descriptor-object materialization,
+  roots and pending frames. Final descriptor-object materialization,
   `Object.getOwnPropertyDescriptors` and `Object.defineProperties` containers,
-  Proxy `defineProperty` descriptor containers, JSON caller containers,
-  unrelated direct `ArrayData::new` constructors, GC root enumeration, and
-  mark worklists still use infallible native growth and remain separate
-  hard-host-OOM scopes.
+  and Proxy `defineProperty` descriptor containers now reserve their directly
+  owned maps, vectors, and roots before publication. The remaining nearby
+  hard-host-OOM scopes are ordinary object property-map insertion, Array
+  backing growth during property definition, Array length storage, ordinary
+  `Set`/`set_array_index`, seal/freeze descriptor materialization, TypedArray
+  byte conversion, JSON caller containers, unrelated direct `ArrayData::new`
+  constructors, PropertyKey/Error and inline-cache temporary strings, GC root
+  enumeration, and mark worklists.
 - Push, Pop, Shift, Unshift, Splice, Slice, Concat, Flat, FlatMap, ForEach,
   Join, ToLocaleString, Map, Reduce, ReduceRight, Reverse, ToReversed,
   ToSpliced, and With use live generic indexed operations with operation-wide

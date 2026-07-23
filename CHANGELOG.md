@@ -62,6 +62,44 @@
 
 ### Fixed
 
+- Property descriptor conversion and publication now use one presence-aware
+  internal record instead of allocating a normalized JS object and rereading
+  it. `ToPropertyDescriptor` observes inherited fields in specification order
+  and roots object-valued `value`, `get`, and `set` results before later
+  callbacks. `Object.defineProperties` retains those records through its
+  complete conversion pass before defining any target property, while
+  `Object.defineProperty` and `Reflect.defineProperty` convert exactly once.
+
+  `FromPropertyDescriptor`, `Object.getOwnPropertyDescriptors`, and Proxy
+  `defineProperty` descriptor objects reserve their directly owned maps and
+  roots before publication. `Object.getOwnPropertyDescriptors` now performs
+  `[[OwnPropertyKeys]]` before allocating its result, and descriptor objects
+  use the current Realm's registered `%Object.prototype%` without a main-Realm
+  fallback. Proxy definition delays descriptor-object materialization until
+  revocation, fuel, trap lookup, and callability have succeeded, and reserves
+  validation fields across observable target invariant checks.
+
+  Deterministic regressions cover all root and collection sites, spare versus
+  actual growth, first and later failures, two-pass conversion, ownKeys and
+  trap priority, false and transparent Proxy paths, foreign Realms, cleanup,
+  retry, exact-cap collection, and liveness of freshly observed value/get/set
+  objects through cap-triggered GC. Local verification passes all
+  targets/features with **246/246** library tests, **539/539** builtins tests,
+  **15/15** arguments tests, and **31/31** module tests, plus **246/246**
+  release library tests, **135/135** Python tooling tests, **1/1** doctest,
+  rustfmt, warnings-denied Clippy, release build, generated documentation, and
+  wasm32 checking. Rustdoc retains only the 13 pre-existing broken-link
+  warnings. Two GPT-5.6 final implementation reviews are clean. The local and
+  downloaded-CI-binary nine-directory descriptor cohort is **2457 pass / 0
+  fail / 24 skip**. Implementation commit `ce280cb` passes CI `29986403996`.
+  All 33 jobs in full run `29986403979` pass. Its original annexB artifact
+  shifted one baseline pass to a contention timeout; the downloaded binary and
+  exact pinned corpus restore **201/811/74/0/0**. Corrected artifacts at
+  `/tmp/ruja-descriptor-materialization-29986403979-final` aggregate to
+  unchanged **31890 pass / 5115 fail / 11459 skip / 3 timeout / 0 error /
+  48467 total / 37005 run**, and all 30 result files are byte-identical to run
+  `29980403702`.
+
 - Iterative Proxy `[[GetOwnProperty]]` descriptor traversal now reserves every
   directly owned operation, layer, trap, pending-frame, validation-descriptor,
   descriptor-object, and object-valued descriptor-field root before
