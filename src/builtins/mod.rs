@@ -5421,14 +5421,84 @@ fn array_index_key(name: &str) -> Option<u32> {
         .filter(|n| (*n as u64) < (1u64 << 32) - 1)
 }
 
-fn push_unique_key(
+#[cfg(test)]
+fn take_ordinary_own_keys_reservation_failure(
+    failure: &mut Option<(crate::vm::OrdinaryOwnKeysReservationSite, usize)>,
+    site: crate::vm::OrdinaryOwnKeysReservationSite,
+) -> bool {
+    let Some((configured_site, remaining)) = *failure else {
+        return false;
+    };
+    if configured_site != site {
+        return false;
+    }
+    if remaining != 0 {
+        *failure = Some((configured_site, remaining - 1));
+        return false;
+    }
+    *failure = None;
+    true
+}
+
+pub(crate) fn reserve_ordinary_own_keys_vec<T>(
+    keys: &mut Vec<T>,
+    #[cfg(test)] failure: &mut Option<(crate::vm::OrdinaryOwnKeysReservationSite, usize)>,
+    #[cfg(test)] site: crate::vm::OrdinaryOwnKeysReservationSite,
+    message: &'static str,
+) -> error::Result<()> {
+    if keys.len() < keys.capacity() {
+        return Ok(());
+    }
+    #[cfg(test)]
+    if take_ordinary_own_keys_reservation_failure(failure, site) {
+        return Err(Error::range(message));
+    }
+    keys.try_reserve(1).map_err(|_| Error::range(message))
+}
+
+pub(crate) fn reserve_ordinary_own_keys_seen(
+    seen: &mut IndexSet<PropertyKey>,
+    #[cfg(test)] failure: &mut Option<(crate::vm::OrdinaryOwnKeysReservationSite, usize)>,
+) -> error::Result<()> {
+    if seen.len() < seen.capacity() {
+        return Ok(());
+    }
+    #[cfg(test)]
+    if take_ordinary_own_keys_reservation_failure(
+        failure,
+        crate::vm::OrdinaryOwnKeysReservationSite::Seen,
+    ) {
+        return Err(Error::range("ordinary own-key duplicate set is too large"));
+    }
+    seen.try_reserve(1)
+        .map_err(|_| Error::range("ordinary own-key duplicate set is too large"))
+}
+
+pub(crate) fn push_unique_key(
     keys: &mut Vec<PropertyKey>,
     seen: &mut IndexSet<PropertyKey>,
     key: PropertyKey,
-) {
-    if seen.insert(key.clone()) {
-        keys.push(key);
+    #[cfg(test)] failure: &mut Option<(crate::vm::OrdinaryOwnKeysReservationSite, usize)>,
+) -> error::Result<()> {
+    if seen.contains(&key) {
+        return Ok(());
     }
+    reserve_ordinary_own_keys_seen(
+        seen,
+        #[cfg(test)]
+        failure,
+    )?;
+    reserve_ordinary_own_keys_vec(
+        keys,
+        #[cfg(test)]
+        failure,
+        #[cfg(test)]
+        crate::vm::OrdinaryOwnKeysReservationSite::Result,
+        "ordinary own-key result is too large",
+    )?;
+    seen.insert(key.clone());
+    keys.push(key);
+    Ok(())
 }
 
 fn ordinary_own_property_keys(
@@ -5478,8 +5548,13 @@ fn ordinary_own_property_keys(
         }
     }
 
+    #[cfg(test)]
+    let (heap, reservation_failure) = (&vm.heap, &mut vm.fail_ordinary_own_keys_reservation);
+    #[cfg(not(test))]
+    let heap = &vm.heap;
+
     match obj {
-        Value::Object(idx) => vm.heap.with_obj(idx.0, |o| {
+        Value::Object(idx) => heap.with_obj(idx.0, |o| -> error::Result<()> {
             let mut index_keys: Vec<u32> = Vec::new();
             let mut string_keys: Vec<PropertyKey> = Vec::new();
             let mut symbol_keys: Vec<PropertyKey> = Vec::new();
@@ -5487,6 +5562,14 @@ fn ordinary_own_property_keys(
             if let Some(count) = typed_array_index_count {
                 for i in 0..count {
                     if let Ok(index) = u32::try_from(i) {
+                        reserve_ordinary_own_keys_vec(
+                            &mut index_keys,
+                            #[cfg(test)]
+                            reservation_failure,
+                            #[cfg(test)]
+                            crate::vm::OrdinaryOwnKeysReservationSite::Index,
+                            "ordinary own-key index list is too large",
+                        )?;
                         index_keys.push(index);
                     }
                 }
@@ -5496,10 +5579,26 @@ fn ordinary_own_property_keys(
                 if include_strings {
                     for (i, present) in a.present.lock().iter().copied().enumerate() {
                         if present {
+                            reserve_ordinary_own_keys_vec(
+                                &mut index_keys,
+                                #[cfg(test)]
+                                reservation_failure,
+                                #[cfg(test)]
+                                crate::vm::OrdinaryOwnKeysReservationSite::Index,
+                                "ordinary own-key index list is too large",
+                            )?;
                             index_keys.push(i as u32);
                         }
                     }
                     if !enumerable_only {
+                        reserve_ordinary_own_keys_vec(
+                            &mut string_keys,
+                            #[cfg(test)]
+                            reservation_failure,
+                            #[cfg(test)]
+                            crate::vm::OrdinaryOwnKeysReservationSite::String,
+                            "ordinary own-key string list is too large",
+                        )?;
                         string_keys.push(PropertyKey::from("length"));
                     }
                 }
@@ -5509,9 +5608,25 @@ fn ordinary_own_property_keys(
                 if include_strings {
                     if let Some(Value::String(s)) = od.primitive.lock().clone() {
                         for i in 0..crate::value::utf16_len(&s) {
+                            reserve_ordinary_own_keys_vec(
+                                &mut index_keys,
+                                #[cfg(test)]
+                                reservation_failure,
+                                #[cfg(test)]
+                                crate::vm::OrdinaryOwnKeysReservationSite::Index,
+                                "ordinary own-key index list is too large",
+                            )?;
                             index_keys.push(i as u32);
                         }
                         if !enumerable_only {
+                            reserve_ordinary_own_keys_vec(
+                                &mut string_keys,
+                                #[cfg(test)]
+                                reservation_failure,
+                                #[cfg(test)]
+                                crate::vm::OrdinaryOwnKeysReservationSite::String,
+                                "ordinary own-key string list is too large",
+                            )?;
                             string_keys.push(PropertyKey::from("length"));
                         }
                     }
@@ -5521,6 +5636,14 @@ fn ordinary_own_property_keys(
             if let HeapObj::ModuleNamespace(namespace) = o {
                 if include_strings {
                     for name in namespace.exports.lock().keys() {
+                        reserve_ordinary_own_keys_vec(
+                            &mut string_keys,
+                            #[cfg(test)]
+                            reservation_failure,
+                            #[cfg(test)]
+                            crate::vm::OrdinaryOwnKeysReservationSite::String,
+                            "ordinary own-key string list is too large",
+                        )?;
                         string_keys.push(PropertyKey::from(name.clone()));
                     }
                 }
@@ -5533,12 +5656,36 @@ fn ordinary_own_property_keys(
                 match k {
                     PropertyKey::Str(s) if include_strings => {
                         if let Some(index) = array_index_key(s) {
+                            reserve_ordinary_own_keys_vec(
+                                &mut index_keys,
+                                #[cfg(test)]
+                                reservation_failure,
+                                #[cfg(test)]
+                                crate::vm::OrdinaryOwnKeysReservationSite::Index,
+                                "ordinary own-key index list is too large",
+                            )?;
                             index_keys.push(index);
                         } else {
+                            reserve_ordinary_own_keys_vec(
+                                &mut string_keys,
+                                #[cfg(test)]
+                                reservation_failure,
+                                #[cfg(test)]
+                                crate::vm::OrdinaryOwnKeysReservationSite::String,
+                                "ordinary own-key string list is too large",
+                            )?;
                             string_keys.push(PropertyKey::from(s.clone()));
                         }
                     }
                     PropertyKey::Symbol(id) if include_symbols => {
+                        reserve_ordinary_own_keys_vec(
+                            &mut symbol_keys,
+                            #[cfg(test)]
+                            reservation_failure,
+                            #[cfg(test)]
+                            crate::vm::OrdinaryOwnKeysReservationSite::Symbol,
+                            "ordinary own-key Symbol list is too large",
+                        )?;
                         symbol_keys.push(PropertyKey::Symbol(*id));
                     }
                     _ => {}
@@ -5552,25 +5699,48 @@ fn ordinary_own_property_keys(
                     &mut keys,
                     &mut seen,
                     PropertyKey::from(n.to_string().as_str()),
-                );
+                    #[cfg(test)]
+                    reservation_failure,
+                )?;
             }
             for key in string_keys {
-                push_unique_key(&mut keys, &mut seen, key);
+                push_unique_key(
+                    &mut keys,
+                    &mut seen,
+                    key,
+                    #[cfg(test)]
+                    reservation_failure,
+                )?;
             }
             for key in symbol_keys {
-                push_unique_key(&mut keys, &mut seen, key);
+                push_unique_key(
+                    &mut keys,
+                    &mut seen,
+                    key,
+                    #[cfg(test)]
+                    reservation_failure,
+                )?;
             }
-        }),
+            Ok(())
+        })?,
         Value::String(s) if include_strings => {
             for i in 0..crate::value::utf16_len(s) {
                 push_unique_key(
                     &mut keys,
                     &mut seen,
                     PropertyKey::from(i.to_string().as_str()),
-                );
+                    #[cfg(test)]
+                    reservation_failure,
+                )?;
             }
             if !enumerable_only {
-                push_unique_key(&mut keys, &mut seen, PropertyKey::from("length"));
+                push_unique_key(
+                    &mut keys,
+                    &mut seen,
+                    PropertyKey::from("length"),
+                    #[cfg(test)]
+                    reservation_failure,
+                )?;
             }
         }
         _ => {}

@@ -47,6 +47,16 @@ pub(crate) enum ProxyOwnKeysReservationSite {
     FilteredKey,
 }
 
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum OrdinaryOwnKeysReservationSite {
+    Index,
+    String,
+    Symbol,
+    Seen,
+    Result,
+}
+
 pub(crate) use conversions::{to_int32, to_uint32};
 pub(crate) use property::{
     ProxyDefinePropertyDescriptor, ProxyDefinePropertyOutcome, TypedArrayDefineDescriptor,
@@ -211,6 +221,8 @@ pub struct Vm {
     pub(crate) fail_for_in_key_reservation_site: Option<ForInKeyReservationSite>,
     #[cfg(test)]
     pub(crate) fail_proxy_own_keys_reservation: Option<(ProxyOwnKeysReservationSite, usize)>,
+    #[cfg(test)]
+    pub(crate) fail_ordinary_own_keys_reservation: Option<(OrdinaryOwnKeysReservationSite, usize)>,
     /// Receiver identities currently traversing Array stringification methods.
     /// Join checks after separator coercion and toLocaleString checks after its
     /// length snapshot, so recursive suppression preserves observable ordering.
@@ -741,6 +753,8 @@ impl Vm {
             fail_for_in_key_reservation_site: None,
             #[cfg(test)]
             fail_proxy_own_keys_reservation: None,
+            #[cfg(test)]
+            fail_ordinary_own_keys_reservation: None,
             active_array_joins: Vec::new(),
             kept_objects: Vec::new(),
             current_yields: Vec::new(),

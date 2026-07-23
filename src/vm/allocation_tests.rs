@@ -1,7 +1,8 @@
 use super::property::MAX_PROXY_CYCLE_REPLAYS;
 use super::{
     ExternalPromiseJob, ForInKeyReservationSite, GetPrototypeReservationSite, Microtask,
-    PropertyTraversalReservationSite, ProxyOwnKeysReservationSite, Vm,
+    OrdinaryOwnKeysReservationSite, PropertyTraversalReservationSite, ProxyOwnKeysReservationSite,
+    Vm,
 };
 use crate::value::{
     FunctionData, FunctionKind, HeapObj, NativeConstructMode, PromiseStatus, PropertyKey,
@@ -10573,6 +10574,594 @@ fn for_in_key_collection_reservations_are_fallible_atomic_and_released() {
     vm.fail_for_in_key_reservation_site = None;
     assert_eq!(vm.gc_pins.len(), baseline_pins);
     assert_eq!(vm.execution_contexts.len(), baseline_contexts);
+}
+
+#[test]
+fn ordinary_own_keys_failpoints_follow_actual_capacity() {
+    for site in [
+        OrdinaryOwnKeysReservationSite::Index,
+        OrdinaryOwnKeysReservationSite::String,
+        OrdinaryOwnKeysReservationSite::Symbol,
+        OrdinaryOwnKeysReservationSite::Result,
+    ] {
+        let mut keys = Vec::new();
+        keys.try_reserve(2)
+            .expect("test ordinary key vector should reserve spare capacity");
+        let capacity = keys.capacity();
+        assert!(capacity >= 2);
+        let mut failure = Some((site, 0));
+        while keys.len() < capacity {
+            crate::builtins::reserve_ordinary_own_keys_vec(
+                &mut keys,
+                &mut failure,
+                site,
+                "test ordinary own-key vector is too large",
+            )
+            .expect("spare ordinary key capacity must not consume the failure");
+            assert_eq!(failure, Some((site, 0)));
+            keys.push(keys.len());
+        }
+        let error = crate::builtins::reserve_ordinary_own_keys_vec(
+            &mut keys,
+            &mut failure,
+            site,
+            "test ordinary own-key vector is too large",
+        )
+        .expect_err("a full ordinary key vector must reach its growth failure");
+        assert_eq!(error.kind, crate::error::ErrorKind::Range);
+        assert_eq!(failure, None);
+    }
+
+    let mut seen = IndexSet::new();
+    seen.try_reserve(2)
+        .expect("test ordinary seen set should reserve spare capacity");
+    let capacity = seen.capacity();
+    assert!(capacity >= 2);
+    let mut failure = Some((OrdinaryOwnKeysReservationSite::Seen, 0));
+    while seen.len() < capacity {
+        crate::builtins::reserve_ordinary_own_keys_seen(&mut seen, &mut failure)
+            .expect("spare ordinary seen capacity must not consume the failure");
+        assert_eq!(failure, Some((OrdinaryOwnKeysReservationSite::Seen, 0)));
+        let index = seen.len();
+        seen.insert(PropertyKey::from_string(format!("ordinary-seen-{index}")));
+    }
+    let error = crate::builtins::reserve_ordinary_own_keys_seen(&mut seen, &mut failure)
+        .expect_err("a full ordinary seen set must reach its growth failure");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(failure, None);
+
+    let duplicate = seen
+        .first()
+        .cloned()
+        .expect("the full ordinary seen set should contain a key");
+    let mut result = seen.iter().cloned().collect::<Vec<_>>();
+    result
+        .try_reserve(1)
+        .expect("test ordinary result should have spare capacity");
+    for site in [
+        OrdinaryOwnKeysReservationSite::Seen,
+        OrdinaryOwnKeysReservationSite::Result,
+    ] {
+        let mut failure = Some((site, 0));
+        let result_len = result.len();
+        let seen_len = seen.len();
+        crate::builtins::push_unique_key(&mut result, &mut seen, duplicate.clone(), &mut failure)
+            .expect("an existing ordinary key must skip both final reservations");
+        assert_eq!(result.len(), result_len);
+        assert_eq!(seen.len(), seen_len);
+        assert_eq!(failure, Some((site, 0)));
+    }
+}
+
+#[test]
+fn ordinary_own_key_collections_are_fallible_ordered_and_atomic() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    let module_dir = std::env::temp_dir().join(format!(
+        "ruja-ordinary-own-keys-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock should follow epoch")
+            .as_nanos()
+    ));
+    fs::create_dir_all(&module_dir).expect("module fixture directory should be created");
+    fs::write(
+        module_dir.join("dependency.js"),
+        "export const zeta = 1; export const alpha = 2;",
+    )
+    .expect("ordinary own-key module dependency should be written");
+    fs::write(
+        module_dir.join("entry.js"),
+        "import * as namespace from './dependency.js'; \
+         globalThis.ordinaryNamespace = namespace;",
+    )
+    .expect("ordinary own-key module entry should be written");
+    vm.run_module_file(module_dir.join("entry.js"))
+        .expect("ordinary own-key module namespace should initialize");
+    vm.run(
+        r#"
+        var ordinaryIndexArray = [1, 2];
+        var ordinaryDuplicateArray = [1];
+        Object.defineProperty(ordinaryDuplicateArray, "length", {
+          value: 1, writable: true
+        });
+        var ordinaryBoxedString = Object("A\u{1F600}");
+        var ordinaryTypedArray = new Uint8Array([1, 2]);
+        var ordinaryHoleArray = Array(2);
+        var ordinaryZeroTypedArray = new Uint8Array(0);
+        var ordinaryEmptyBoxedString = Object("");
+        var ordinaryPrimitiveString = "AB";
+        var ordinaryStringObject = { alpha: 1, beta: 2 };
+        var ordinaryHiddenObject = {};
+        Object.defineProperty(ordinaryHiddenObject, "hidden", {
+          value: 1, enumerable: false, configurable: true
+        });
+        var ordinarySymbol = Symbol("ordinary");
+        var ordinarySymbolTwo = Symbol("ordinary-two");
+        var ordinarySymbolObject = {};
+        ordinarySymbolObject[ordinarySymbol] = 1;
+        ordinarySymbolObject[ordinarySymbolTwo] = 2;
+        var ordinaryEmpty = {};
+
+        var ordinaryGrowthIndex = [];
+        var ordinaryGrowthString = {};
+        var ordinaryGrowthSymbol = {};
+        for (var ordinaryGrowth = 0; ordinaryGrowth < 32; ordinaryGrowth += 1) {
+          ordinaryGrowthIndex.push(ordinaryGrowth);
+          ordinaryGrowthString["string" + ordinaryGrowth] = ordinaryGrowth;
+          ordinaryGrowthSymbol[Symbol("symbol" + ordinaryGrowth)] = ordinaryGrowth;
+        }
+
+        var ordinaryRealm = $262.createRealm().global;
+        var ordinaryRealmSource = { realmKey: 1 };
+        var callOrdinaryRealm = ordinaryRealm.Function(
+          "source",
+          "try { Reflect.ownKeys(source); } catch (error) { return error; }"
+        );
+
+        var ordinaryOrderLog = [];
+        var ordinaryOrderBase = {};
+        Object.defineProperty(ordinaryOrderBase, "targetKey", {
+          value: 1, enumerable: true, configurable: true
+        });
+        Object.preventExtensions(ordinaryOrderBase);
+        var ordinaryOrderInner = new Proxy(ordinaryOrderBase, {
+          isExtensible: function (target) {
+            ordinaryOrderLog.push("isExtensible");
+            return Reflect.isExtensible(target);
+          },
+          getOwnPropertyDescriptor: function (target, key) {
+            ordinaryOrderLog.push("descriptor:" + key);
+            return Reflect.getOwnPropertyDescriptor(target, key);
+          }
+        });
+        var ordinaryOrderOuter = new Proxy(ordinaryOrderInner, {
+          ownKeys: function () {
+            ordinaryOrderLog.push("ownKeys");
+            return ["wrong"];
+          }
+        });
+
+        var ordinaryForInSource = Object.create(null);
+        ordinaryForInSource.visible = 1;
+        "#,
+    )
+    .expect("ordinary own-key fixtures should initialize");
+    let baseline_pins = vm.gc_pins.len();
+    let baseline_contexts = vm.execution_contexts.len();
+    let baseline_native_depth = vm.active_native_call_depth;
+
+    for name in [
+        "ordinaryIndexArray",
+        "ordinaryBoxedString",
+        "ordinaryTypedArray",
+    ] {
+        let source = vm.get_global(name);
+        vm.fail_ordinary_own_keys_reservation = Some((OrdinaryOwnKeysReservationSite::Index, 0));
+        let error =
+            crate::builtins::own_property_keys_or_throw(&mut vm, &source, false, true, true)
+                .expect_err("index staging growth must fail fallibly");
+        assert_eq!(error.kind, crate::error::ErrorKind::Range);
+        assert_eq!(vm.fail_ordinary_own_keys_reservation, None);
+    }
+
+    for name in ["ordinaryIndexArray", "ordinaryBoxedString"] {
+        let source = vm.get_global(name);
+        vm.fail_ordinary_own_keys_reservation = Some((OrdinaryOwnKeysReservationSite::String, 0));
+        let error =
+            crate::builtins::own_property_keys_or_throw(&mut vm, &source, false, true, true)
+                .expect_err("Array and boxed String length staging must fail fallibly");
+        assert_eq!(error.kind, crate::error::ErrorKind::Range);
+        assert_eq!(vm.fail_ordinary_own_keys_reservation, None);
+    }
+
+    let global_this = vm.global_this.clone();
+    let namespace = vm
+        .get_property(&global_this, "ordinaryNamespace")
+        .expect("published Module Namespace should be readable");
+    vm.fail_ordinary_own_keys_reservation = Some((OrdinaryOwnKeysReservationSite::String, 0));
+    let error =
+        crate::builtins::own_property_keys_or_throw(&mut vm, &namespace, false, true, false)
+            .expect_err("Module Namespace export staging must fail fallibly");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fail_ordinary_own_keys_reservation, None);
+    let namespace_keys =
+        crate::builtins::own_property_keys_or_throw(&mut vm, &namespace, false, true, false)
+            .expect("Module Namespace key collection should retry");
+    assert_eq!(
+        namespace_keys
+            .iter()
+            .map(|key| key.as_str().expect("namespace export keys are strings"))
+            .collect::<Vec<_>>(),
+        ["alpha", "zeta"]
+    );
+
+    let string_source = vm.get_global("ordinaryStringObject");
+    vm.fail_ordinary_own_keys_reservation = Some((OrdinaryOwnKeysReservationSite::String, 0));
+    let error =
+        crate::builtins::own_property_keys_or_throw(&mut vm, &string_source, false, true, true)
+            .expect_err("string staging growth must fail fallibly");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fail_ordinary_own_keys_reservation, None);
+
+    let symbol_source = vm.get_global("ordinarySymbolObject");
+    vm.fail_ordinary_own_keys_reservation = Some((OrdinaryOwnKeysReservationSite::Symbol, 0));
+    let error =
+        crate::builtins::own_property_keys_or_throw(&mut vm, &symbol_source, false, true, true)
+            .expect_err("Symbol staging growth must fail fallibly");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fail_ordinary_own_keys_reservation, None);
+
+    let primitive_string = Value::String(Arc::from("A\u{1F600}"));
+    for site in [
+        OrdinaryOwnKeysReservationSite::Seen,
+        OrdinaryOwnKeysReservationSite::Result,
+    ] {
+        vm.fail_ordinary_own_keys_reservation = Some((site, 0));
+        let error = crate::builtins::own_property_keys_or_throw(
+            &mut vm,
+            &primitive_string,
+            false,
+            true,
+            true,
+        )
+        .expect_err("final ordinary key collection growth must fail fallibly");
+        assert_eq!(error.kind, crate::error::ErrorKind::Range);
+        assert_eq!(vm.fail_ordinary_own_keys_reservation, None);
+    }
+
+    let expected_string_keys = ["0", "1", "2", "length"];
+    let keys =
+        crate::builtins::own_property_keys_or_throw(&mut vm, &primitive_string, false, true, true)
+            .expect("primitive string key collection should retry");
+    assert_eq!(
+        keys.iter()
+            .map(|key| key.as_str().expect("primitive string keys are strings"))
+            .collect::<Vec<_>>(),
+        expected_string_keys
+    );
+
+    let growth_index = vm.get_global("ordinaryGrowthIndex");
+    let growth_string = vm.get_global("ordinaryGrowthString");
+    let growth_symbol = vm.get_global("ordinaryGrowthSymbol");
+    for (site, source) in [
+        (OrdinaryOwnKeysReservationSite::Index, growth_index),
+        (
+            OrdinaryOwnKeysReservationSite::String,
+            growth_string.clone(),
+        ),
+        (OrdinaryOwnKeysReservationSite::Symbol, growth_symbol),
+        (OrdinaryOwnKeysReservationSite::Seen, growth_string.clone()),
+        (OrdinaryOwnKeysReservationSite::Result, growth_string),
+    ] {
+        vm.fail_ordinary_own_keys_reservation = Some((site, 1));
+        let error =
+            crate::builtins::own_property_keys_or_throw(&mut vm, &source, false, true, true)
+                .expect_err("the second actual ordinary collection growth must fail");
+        assert_eq!(error.kind, crate::error::ErrorKind::Range);
+        assert_eq!(vm.fail_ordinary_own_keys_reservation, None);
+    }
+
+    let spare_index = vm.get_global("ordinaryIndexArray");
+    let spare_string = vm.get_global("ordinaryStringObject");
+    let spare_symbol = vm.get_global("ordinarySymbolObject");
+    let spare_primitive = vm.get_global("ordinaryPrimitiveString");
+    for (site, source) in [
+        (OrdinaryOwnKeysReservationSite::Index, spare_index),
+        (OrdinaryOwnKeysReservationSite::String, spare_string.clone()),
+        (OrdinaryOwnKeysReservationSite::Symbol, spare_symbol),
+        (
+            OrdinaryOwnKeysReservationSite::Seen,
+            spare_primitive.clone(),
+        ),
+        (OrdinaryOwnKeysReservationSite::Result, spare_primitive),
+    ] {
+        vm.fail_ordinary_own_keys_reservation = Some((site, 1));
+        crate::builtins::own_property_keys_or_throw(&mut vm, &source, false, true, true)
+            .expect("two-key ordinary collection should reuse spare capacity");
+        assert_eq!(vm.fail_ordinary_own_keys_reservation, Some((site, 0)));
+        vm.fail_ordinary_own_keys_reservation = None;
+    }
+
+    let duplicate_array = vm.get_global("ordinaryDuplicateArray");
+    let Value::Object(duplicate_array_index) = &duplicate_array else {
+        panic!("ordinary duplicate Array should be an object");
+    };
+    assert!(vm.heap.with_obj(duplicate_array_index.0, |object| {
+        let HeapObj::Array(array) = object else {
+            panic!("ordinary duplicate fixture should be an Array");
+        };
+        array
+            .props
+            .lock()
+            .contains_key(&PropertyKey::from("length"))
+    }));
+    for site in [
+        OrdinaryOwnKeysReservationSite::Seen,
+        OrdinaryOwnKeysReservationSite::Result,
+    ] {
+        vm.fail_ordinary_own_keys_reservation = Some((site, 1));
+        let keys = crate::builtins::own_property_keys_or_throw(
+            &mut vm,
+            &duplicate_array,
+            false,
+            true,
+            true,
+        )
+        .expect("ordinary producer duplicates must skip final reservation");
+        assert_eq!(
+            keys.iter()
+                .map(|key| key.as_str().expect("duplicate Array keys are strings"))
+                .collect::<Vec<_>>(),
+            ["0", "length"]
+        );
+        assert_eq!(vm.fail_ordinary_own_keys_reservation, Some((site, 0)));
+    }
+    vm.fail_ordinary_own_keys_reservation = None;
+
+    let empty = vm.get_global("ordinaryEmpty");
+    for site in [
+        OrdinaryOwnKeysReservationSite::Index,
+        OrdinaryOwnKeysReservationSite::String,
+        OrdinaryOwnKeysReservationSite::Symbol,
+        OrdinaryOwnKeysReservationSite::Seen,
+        OrdinaryOwnKeysReservationSite::Result,
+    ] {
+        vm.fail_ordinary_own_keys_reservation = Some((site, 0));
+        assert!(
+            crate::builtins::own_property_keys_or_throw(&mut vm, &empty, false, true, true,)
+                .expect("an empty ordinary object needs no key collection growth")
+                .is_empty()
+        );
+        assert_eq!(vm.fail_ordinary_own_keys_reservation, Some((site, 0)));
+    }
+    vm.fail_ordinary_own_keys_reservation = None;
+
+    let hidden = vm.get_global("ordinaryHiddenObject");
+    vm.fail_ordinary_own_keys_reservation = Some((OrdinaryOwnKeysReservationSite::String, 0));
+    assert!(
+        crate::builtins::own_property_keys_or_throw(&mut vm, &hidden, true, true, false,)
+            .expect("a filtered non-enumerable string needs no staging growth")
+            .is_empty()
+    );
+    assert_eq!(
+        vm.fail_ordinary_own_keys_reservation,
+        Some((OrdinaryOwnKeysReservationSite::String, 0))
+    );
+    vm.fail_ordinary_own_keys_reservation = None;
+
+    vm.fail_ordinary_own_keys_reservation = Some((OrdinaryOwnKeysReservationSite::Symbol, 0));
+    assert!(crate::builtins::own_property_keys_or_throw(
+        &mut vm,
+        &symbol_source,
+        false,
+        true,
+        false,
+    )
+    .expect("an excluded Symbol needs no staging growth")
+    .is_empty());
+    assert_eq!(
+        vm.fail_ordinary_own_keys_reservation,
+        Some((OrdinaryOwnKeysReservationSite::Symbol, 0))
+    );
+    vm.fail_ordinary_own_keys_reservation = None;
+
+    for name in ["ordinaryHoleArray", "ordinaryZeroTypedArray"] {
+        let source = vm.get_global(name);
+        vm.fail_ordinary_own_keys_reservation = Some((OrdinaryOwnKeysReservationSite::Index, 0));
+        crate::builtins::own_property_keys_or_throw(&mut vm, &source, false, true, true)
+            .expect("an index-empty exotic object needs no index staging growth");
+        assert_eq!(
+            vm.fail_ordinary_own_keys_reservation,
+            Some((OrdinaryOwnKeysReservationSite::Index, 0))
+        );
+        vm.fail_ordinary_own_keys_reservation = None;
+    }
+
+    let empty_boxed = vm.get_global("ordinaryEmptyBoxedString");
+    for site in [
+        OrdinaryOwnKeysReservationSite::Index,
+        OrdinaryOwnKeysReservationSite::String,
+    ] {
+        vm.fail_ordinary_own_keys_reservation = Some((site, 0));
+        assert!(crate::builtins::own_property_keys_or_throw(
+            &mut vm,
+            &empty_boxed,
+            true,
+            true,
+            false,
+        )
+        .expect("an enumerable-only empty boxed String needs no key growth")
+        .is_empty());
+        assert_eq!(vm.fail_ordinary_own_keys_reservation, Some((site, 0)));
+    }
+    vm.fail_ordinary_own_keys_reservation = None;
+
+    let excluded_strings = vm.get_global("ordinaryIndexArray");
+    for site in [
+        OrdinaryOwnKeysReservationSite::Index,
+        OrdinaryOwnKeysReservationSite::String,
+    ] {
+        vm.fail_ordinary_own_keys_reservation = Some((site, 0));
+        assert!(crate::builtins::own_property_keys_or_throw(
+            &mut vm,
+            &excluded_strings,
+            false,
+            false,
+            true,
+        )
+        .expect("excluded Array strings need no index or string staging growth")
+        .is_empty());
+        assert_eq!(vm.fail_ordinary_own_keys_reservation, Some((site, 0)));
+    }
+    vm.fail_ordinary_own_keys_reservation = None;
+
+    let fuel_index = vm.get_global("ordinaryIndexArray");
+    let fuel_string = vm.get_global("ordinaryStringObject");
+    let fuel_symbol = vm.get_global("ordinarySymbolObject");
+    let fuel_primitive = vm.get_global("ordinaryPrimitiveString");
+    for (site, source) in [
+        (OrdinaryOwnKeysReservationSite::Index, fuel_index),
+        (OrdinaryOwnKeysReservationSite::String, fuel_string),
+        (OrdinaryOwnKeysReservationSite::Symbol, fuel_symbol),
+        (OrdinaryOwnKeysReservationSite::Seen, fuel_primitive.clone()),
+        (OrdinaryOwnKeysReservationSite::Result, fuel_primitive),
+    ] {
+        vm.set_fuel(Some(1_000));
+        crate::builtins::own_property_keys_or_throw(&mut vm, &source, false, true, true)
+            .expect("ordinary key fuel fixture should measure successfully");
+        let consumed = 1_000 - vm.fuel_remaining().expect("fuel should remain configured");
+        assert!(consumed > 0);
+
+        vm.fail_ordinary_own_keys_reservation = Some((site, 0));
+        vm.set_fuel(Some(consumed - 1));
+        let error =
+            crate::builtins::own_property_keys_or_throw(&mut vm, &source, false, true, true)
+                .expect_err("N-1 ordinary key fuel must precede collection growth");
+        assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+        assert_eq!(vm.fuel_remaining(), Some(0));
+        assert_eq!(vm.fail_ordinary_own_keys_reservation, Some((site, 0)));
+
+        vm.set_fuel(Some(consumed));
+        let error =
+            crate::builtins::own_property_keys_or_throw(&mut vm, &source, false, true, true)
+                .expect_err("exact ordinary key fuel must expose the growth failure");
+        assert_eq!(error.kind, crate::error::ErrorKind::Range);
+        assert_eq!(vm.fuel_remaining(), Some(0));
+        assert_eq!(vm.fail_ordinary_own_keys_reservation, None);
+        vm.set_fuel(None);
+    }
+
+    for (site, source_name) in [
+        (OrdinaryOwnKeysReservationSite::Index, "ordinaryIndexArray"),
+        (
+            OrdinaryOwnKeysReservationSite::String,
+            "ordinaryRealmSource",
+        ),
+        (
+            OrdinaryOwnKeysReservationSite::Symbol,
+            "ordinarySymbolObject",
+        ),
+        (OrdinaryOwnKeysReservationSite::Seen, "ordinaryBoxedString"),
+        (
+            OrdinaryOwnKeysReservationSite::Result,
+            "ordinaryBoxedString",
+        ),
+    ] {
+        vm.fail_ordinary_own_keys_reservation = Some((site, 0));
+        let result = vm
+            .run(&format!(
+                "var ordinaryRealmError = callOrdinaryRealm({source_name}); \
+                 ordinaryRealmError instanceof ordinaryRealm.RangeError && \
+                 !(ordinaryRealmError instanceof RangeError);"
+            ))
+            .expect("foreign Realm ordinary own-key failure should be catchable");
+        assert_eq!(
+            result,
+            Value::Bool(true),
+            "ordinary own-key site {site:?} should use the foreign operation Realm"
+        );
+        assert_eq!(vm.fail_ordinary_own_keys_reservation, None);
+    }
+
+    let ordered_proxy = vm.get_global("ordinaryOrderOuter");
+    vm.fail_ordinary_own_keys_reservation = Some((OrdinaryOwnKeysReservationSite::String, 0));
+    let error =
+        crate::builtins::own_property_keys_or_throw(&mut vm, &ordered_proxy, false, true, true)
+            .expect_err("ordinary snapshot growth must precede reverse invariant validation");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(
+        vm.run("ordinaryOrderLog.join(',')")
+            .expect("ordinary Proxy order log should be inspectable"),
+        Value::String(Arc::from("ownKeys,isExtensible"))
+    );
+    let error =
+        crate::builtins::own_property_keys_or_throw(&mut vm, &ordered_proxy, false, true, true)
+            .expect_err("retry should reach the non-extensible exact-set invariant");
+    assert_eq!(error.kind, crate::error::ErrorKind::Type);
+    assert_eq!(
+        vm.run("ordinaryOrderLog.join(',')")
+            .expect("ordinary Proxy retry log should be inspectable"),
+        Value::String(Arc::from(
+            "ownKeys,isExtensible,ownKeys,isExtensible,descriptor:targetKey"
+        ))
+    );
+
+    let for_in_source = vm.get_global("ordinaryForInSource");
+    let iterator = vm
+        .make_for_in_keys(&for_in_source)
+        .expect("ordinary for-in iterator should initialize");
+    vm.fail_ordinary_own_keys_reservation = Some((OrdinaryOwnKeysReservationSite::String, 0));
+    let error = vm
+        .iterator_next(&iterator)
+        .expect_err("ordinary own-key failure must precede for-in snapshot publication");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    let Value::Object(iterator_index) = &iterator else {
+        panic!("ordinary for-in iterator should be an object");
+    };
+    let snapshot = vm.heap.with_obj(iterator_index.0, |object| {
+        let HeapObj::Iterator(iterator) = object else {
+            panic!("expected ordinary for-in iterator data");
+        };
+        let state = iterator.for_in.lock();
+        let state = state.as_ref().expect("ordinary for-in state should exist");
+        (
+            state.object_was_visited,
+            state.remaining_keys.len(),
+            state.remaining_index,
+        )
+    });
+    assert_eq!(snapshot, (false, 0, 0));
+    vm.fail_for_in_key_reservation_site = Some(ForInKeyReservationSite::SnapshotKeys);
+    let error = vm
+        .iterator_next(&iterator)
+        .expect_err("for-in snapshot growth must remain independently fallible on retry");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    let snapshot = vm.heap.with_obj(iterator_index.0, |object| {
+        let HeapObj::Iterator(iterator) = object else {
+            panic!("expected ordinary for-in iterator data");
+        };
+        let state = iterator.for_in.lock();
+        let state = state.as_ref().expect("ordinary for-in state should exist");
+        (
+            state.object_was_visited,
+            state.remaining_keys.len(),
+            state.remaining_index,
+        )
+    });
+    assert_eq!(snapshot, (false, 0, 0));
+    assert_eq!(
+        vm.iterator_next(&iterator)
+            .expect("ordinary for-in should retry after both growth failures"),
+        (Value::String(Arc::from("visible")), false)
+    );
+
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.execution_contexts.len(), baseline_contexts);
+    assert_eq!(vm.active_native_call_depth, baseline_native_depth);
+    assert_eq!(vm.fail_ordinary_own_keys_reservation, None);
+    assert_eq!(vm.fail_for_in_key_reservation_site, None);
+    fs::remove_dir_all(module_dir).expect("module fixture directory should be removed");
 }
 
 #[test]
