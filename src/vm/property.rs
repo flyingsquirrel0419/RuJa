@@ -210,6 +210,68 @@ fn compatible_proxy_define_descriptor(
     true
 }
 
+#[cfg(test)]
+fn take_proxy_define_property_reservation_failure(
+    vm: &mut Vm,
+    site: crate::vm::ProxyDefinePropertyReservationSite,
+) -> bool {
+    let Some((configured_site, remaining)) = vm.fail_proxy_define_property_reservation else {
+        return false;
+    };
+    if configured_site != site {
+        return false;
+    }
+    if remaining != 0 {
+        vm.fail_proxy_define_property_reservation = Some((configured_site, remaining - 1));
+        return false;
+    }
+    vm.fail_proxy_define_property_reservation = None;
+    true
+}
+
+pub(crate) fn reserve_proxy_define_property_roots(
+    vm: &mut Vm,
+    values: &[Value],
+    #[cfg(test)] site: crate::vm::ProxyDefinePropertyReservationSite,
+) -> error::Result<()> {
+    let required = values.iter().try_fold(0usize, |total, value| {
+        total
+            .checked_add(Vm::value_root_count(value))
+            .ok_or_else(|| Error::range("Proxy defineProperty root set is too large"))
+    })?;
+    if vm.gc_pins.capacity().saturating_sub(vm.gc_pins.len()) >= required {
+        return Ok(());
+    }
+    #[cfg(test)]
+    if take_proxy_define_property_reservation_failure(vm, site) {
+        return Err(Error::range("Proxy defineProperty root set is too large"));
+    }
+    vm.try_reserve_value_roots(values)
+}
+
+pub(crate) fn reserve_proxy_define_property_descriptor_properties(
+    _vm: &mut Vm,
+    properties: &mut indexmap::IndexMap<
+        crate::value::PropertyKey,
+        crate::value::PropertyDescriptor,
+    >,
+    additional: usize,
+) -> error::Result<()> {
+    if properties.capacity().saturating_sub(properties.len()) >= additional {
+        return Ok(());
+    }
+    #[cfg(test)]
+    if take_proxy_define_property_reservation_failure(
+        _vm,
+        crate::vm::ProxyDefinePropertyReservationSite::DescriptorProperties,
+    ) {
+        return Err(Error::range("Proxy defineProperty descriptor is too large"));
+    }
+    properties
+        .try_reserve(additional)
+        .map_err(|_| Error::range("Proxy defineProperty descriptor is too large"))
+}
+
 impl Vm {
     pub(crate) fn is_compatible_property_descriptor(
         &self,
@@ -1455,7 +1517,7 @@ impl Vm {
         desc: crate::value::PropertyDescriptor,
     ) -> error::Result<bool> {
         let proxy_descriptor = ProxyDefinePropertyDescriptor::complete(desc.clone());
-        let object = match self.proxy_define_own_property(obj, &key, &proxy_descriptor, None)? {
+        let object = match self.proxy_define_own_property(obj, &key, &proxy_descriptor)? {
             ProxyDefinePropertyOutcome::Ordinary(object) => object,
             ProxyDefinePropertyOutcome::Complete(result) => return Ok(result),
         };
@@ -1591,55 +1653,75 @@ impl Vm {
         &mut self,
         desc: &ProxyDefinePropertyDescriptor,
     ) -> error::Result<Value> {
-        let desc_idx = self.new_object_in_current_realm()?;
-        let desc_obj = Value::Object(desc_idx);
-        self.heap.with_obj(desc_idx.0, |o| {
-            let props = o.props();
-            let mut props = props.lock();
-            if desc.has_value {
-                props.insert(
-                    crate::value::PropertyKey::from("value"),
-                    crate::value::PropertyDescriptor::data(desc.descriptor.value.clone()),
-                );
-            }
-            if desc.has_writable {
-                props.insert(
-                    crate::value::PropertyKey::from("writable"),
-                    crate::value::PropertyDescriptor::data(Value::Bool(desc.descriptor.writable)),
-                );
-            }
-            if desc.has_get {
-                props.insert(
-                    crate::value::PropertyKey::from("get"),
-                    crate::value::PropertyDescriptor::data(
-                        desc.descriptor.get.clone().unwrap_or(Value::Undefined),
-                    ),
-                );
-            }
-            if desc.has_set {
-                props.insert(
-                    crate::value::PropertyKey::from("set"),
-                    crate::value::PropertyDescriptor::data(
-                        desc.descriptor.set.clone().unwrap_or(Value::Undefined),
-                    ),
-                );
-            }
-            if desc.has_enumerable {
-                props.insert(
-                    crate::value::PropertyKey::from("enumerable"),
-                    crate::value::PropertyDescriptor::data(Value::Bool(desc.descriptor.enumerable)),
-                );
-            }
-            if desc.has_configurable {
-                props.insert(
-                    crate::value::PropertyKey::from("configurable"),
-                    crate::value::PropertyDescriptor::data(Value::Bool(
-                        desc.descriptor.configurable,
-                    )),
-                );
-            }
-        });
-        Ok(desc_obj)
+        let property_count = [
+            desc.has_value,
+            desc.has_writable,
+            desc.has_get,
+            desc.has_set,
+            desc.has_enumerable,
+            desc.has_configurable,
+        ]
+        .into_iter()
+        .filter(|present| *present)
+        .count();
+        let mut properties = indexmap::IndexMap::new();
+        reserve_proxy_define_property_descriptor_properties(self, &mut properties, property_count)?;
+        if desc.has_value {
+            properties.insert(
+                crate::value::PropertyKey::from("value"),
+                crate::value::PropertyDescriptor::data(desc.descriptor.value.clone()),
+            );
+        }
+        if desc.has_writable {
+            properties.insert(
+                crate::value::PropertyKey::from("writable"),
+                crate::value::PropertyDescriptor::data(Value::Bool(desc.descriptor.writable)),
+            );
+        }
+        if desc.has_get {
+            properties.insert(
+                crate::value::PropertyKey::from("get"),
+                crate::value::PropertyDescriptor::data(
+                    desc.descriptor.get.clone().unwrap_or(Value::Undefined),
+                ),
+            );
+        }
+        if desc.has_set {
+            properties.insert(
+                crate::value::PropertyKey::from("set"),
+                crate::value::PropertyDescriptor::data(
+                    desc.descriptor.set.clone().unwrap_or(Value::Undefined),
+                ),
+            );
+        }
+        if desc.has_enumerable {
+            properties.insert(
+                crate::value::PropertyKey::from("enumerable"),
+                crate::value::PropertyDescriptor::data(Value::Bool(desc.descriptor.enumerable)),
+            );
+        }
+        if desc.has_configurable {
+            properties.insert(
+                crate::value::PropertyKey::from("configurable"),
+                crate::value::PropertyDescriptor::data(Value::Bool(desc.descriptor.configurable)),
+            );
+        }
+
+        let realm = self.current_realm_global_env();
+        let prototype = self
+            .realm_object_prototypes
+            .get(&realm.0)
+            .cloned()
+            .ok_or_else(|| Error::internal("missing Object prototype intrinsic"))?;
+        self.alloc(HeapObj::Object(crate::value::ObjectData {
+            props: Mutex::new(properties),
+            proto: Mutex::new(Some(prototype)),
+            extensible: AtomicBool::new(true),
+            class_name: None,
+            private_fields: Mutex::new(std::collections::HashMap::new()),
+            primitive: Mutex::new(None),
+        }))
+        .map(Value::Object)
     }
 
     /// Run Proxy [[DefineOwnProperty]] until a trap completes or an ordinary
@@ -1649,13 +1731,20 @@ impl Vm {
         object: &Value,
         key: &crate::value::PropertyKey,
         desc: &ProxyDefinePropertyDescriptor,
-        descriptor_object: Option<&Value>,
     ) -> error::Result<ProxyDefinePropertyOutcome> {
-        let mut roots = vec![object.clone(), desc.descriptor.value.clone()];
-        roots.extend(desc.descriptor.get.iter().cloned());
-        roots.extend(desc.descriptor.set.iter().cloned());
-        roots.extend(descriptor_object.iter().cloned().cloned());
-        let root_pins = self.pin_many(&roots);
+        let operation_roots = [
+            object.clone(),
+            desc.descriptor.value.clone(),
+            desc.descriptor.get.clone().unwrap_or(Value::Undefined),
+            desc.descriptor.set.clone().unwrap_or(Value::Undefined),
+        ];
+        reserve_proxy_define_property_roots(
+            self,
+            &operation_roots,
+            #[cfg(test)]
+            crate::vm::ProxyDefinePropertyReservationSite::OperationRoots,
+        )?;
+        let root_pins = self.pin_many(&operation_roots);
         let mut current = object.clone();
         let result = (|| loop {
             let Value::Object(idx) = &current else {
@@ -1678,7 +1767,14 @@ impl Vm {
 
             let (target, handler) = proxy_info?;
             self.consume_fuel()?;
-            let proxy_pins = self.pin_many(&[target.clone(), handler.clone()]);
+            let layer_roots = [target.clone(), handler.clone()];
+            reserve_proxy_define_property_roots(
+                self,
+                &layer_roots,
+                #[cfg(test)]
+                crate::vm::ProxyDefinePropertyReservationSite::LayerRoots,
+            )?;
+            let proxy_pins = self.pin_many(&layer_roots);
             let proxy_result = (|| {
                 let trap = self.get_proxy_method(&handler, "defineProperty")?;
                 if trap.is_nullish() {
@@ -1687,18 +1783,29 @@ impl Vm {
                 if !crate::builtins::is_callable(&trap, &self.heap) {
                     return Err(Error::type_err("Proxy defineProperty trap is not callable"));
                 }
+                reserve_proxy_define_property_roots(
+                    self,
+                    std::slice::from_ref(&trap),
+                    #[cfg(test)]
+                    crate::vm::ProxyDefinePropertyReservationSite::TrapRoot,
+                )?;
                 let trap_pin = self.pin(&trap);
-                let descriptor_object = match descriptor_object {
-                    Some(descriptor_object) => Ok(descriptor_object.clone()),
-                    None => self.proxy_property_descriptor_object(desc),
-                };
-                let descriptor_object = match descriptor_object {
+                let descriptor_object = match self.proxy_property_descriptor_object(desc) {
                     Ok(descriptor_object) => descriptor_object,
                     Err(error) => {
                         self.unpin(trap_pin);
                         return Err(error);
                     }
                 };
+                if let Err(error) = reserve_proxy_define_property_roots(
+                    self,
+                    std::slice::from_ref(&descriptor_object),
+                    #[cfg(test)]
+                    crate::vm::ProxyDefinePropertyReservationSite::DescriptorObjectRoot,
+                ) {
+                    self.unpin(trap_pin);
+                    return Err(error);
+                }
                 let descriptor_pin = self.pin(&descriptor_object);
                 let trap_result = self.call_function(
                     &trap,
@@ -1738,12 +1845,22 @@ impl Vm {
     ) -> error::Result<()> {
         let target_desc =
             crate::builtins::own_property_descriptor_for_key_or_throw(self, target, key)?;
-        let mut target_desc_roots = Vec::new();
-        if let Some(target_desc) = target_desc.as_ref() {
-            target_desc_roots.push(target_desc.value.clone());
-            target_desc_roots.extend(target_desc.get.iter().cloned());
-            target_desc_roots.extend(target_desc.set.iter().cloned());
-        }
+        let target_desc_roots = target_desc.as_ref().map_or_else(
+            || [Value::Undefined, Value::Undefined, Value::Undefined],
+            |target_desc| {
+                [
+                    target_desc.value.clone(),
+                    target_desc.get.clone().unwrap_or(Value::Undefined),
+                    target_desc.set.clone().unwrap_or(Value::Undefined),
+                ]
+            },
+        );
+        reserve_proxy_define_property_roots(
+            self,
+            &target_desc_roots,
+            #[cfg(test)]
+            crate::vm::ProxyDefinePropertyReservationSite::ValidationDescriptorRoots,
+        )?;
         let target_desc_pins = self.pin_many(&target_desc_roots);
         let validation = (|| {
             let extensible = self.is_extensible(target)?;
@@ -2987,7 +3104,7 @@ impl Vm {
     ) -> error::Result<bool> {
         let descriptor = crate::value::PropertyDescriptor::data(value.clone());
         let proxy_descriptor = ProxyDefinePropertyDescriptor::complete(descriptor.clone());
-        let object = match self.proxy_define_own_property(object, &key, &proxy_descriptor, None)? {
+        let object = match self.proxy_define_own_property(object, &key, &proxy_descriptor)? {
             ProxyDefinePropertyOutcome::Ordinary(object) => object,
             ProxyDefinePropertyOutcome::Complete(result) => return Ok(result),
         };
@@ -3058,7 +3175,7 @@ impl Vm {
         value: Value,
     ) -> error::Result<bool> {
         let proxy_descriptor = ProxyDefinePropertyDescriptor::value_only(value.clone());
-        let object = match self.proxy_define_own_property(object, &key, &proxy_descriptor, None)? {
+        let object = match self.proxy_define_own_property(object, &key, &proxy_descriptor)? {
             ProxyDefinePropertyOutcome::Ordinary(object) => object,
             ProxyDefinePropertyOutcome::Complete(result) => return Ok(result),
         };

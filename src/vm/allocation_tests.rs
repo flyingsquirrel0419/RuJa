@@ -1,15 +1,17 @@
 use super::property::MAX_PROXY_CYCLE_REPLAYS;
 use super::{
-    ExternalPromiseJob, ForInKeyReservationSite, GetPrototypeReservationSite, Microtask,
-    OrdinaryOwnKeysReservationSite, OwnKeyConsumerReservationSite,
-    PropertyTraversalReservationSite, ProxyDescriptorReservationSite, ProxyOwnKeysReservationSite,
-    Vm,
+    DescriptorMaterializationReservationSite, ExternalPromiseJob, ForInKeyReservationSite,
+    GetPrototypeReservationSite, Microtask, OrdinaryOwnKeysReservationSite,
+    OwnKeyConsumerReservationSite, PropertyTraversalReservationSite,
+    ProxyDefinePropertyReservationSite, ProxyDescriptorReservationSite,
+    ProxyOwnKeysReservationSite, Vm,
 };
 use crate::value::{
-    FunctionData, FunctionKind, HeapObj, NativeConstructMode, PromiseStatus, PropertyKey,
+    FunctionData, FunctionKind, HeapObj, NativeConstructMode, PromiseStatus, PropertyDescriptor,
+    PropertyKey,
 };
 use crate::Value;
-use indexmap::IndexSet;
+use indexmap::{IndexMap, IndexSet};
 use std::fs;
 use std::sync::Arc;
 
@@ -14859,6 +14861,1137 @@ fn proxy_descriptor_conversion_roots_get_results_across_gc() {
     assert_eq!(
         result.expect("descriptor Get results should survive later Proxy traps"),
         Value::String("41|42".into())
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+}
+
+#[test]
+fn descriptor_materialization_and_object_callers_are_fallible_and_realm_correct() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.run(
+        r#"
+        var materialValue = { marker: 73 };
+        var materialData = {};
+        Object.defineProperty(materialData, "x", {
+          value: materialValue,
+          writable: true,
+          enumerable: true,
+          configurable: true
+        });
+        var materialGetter = function () { return 41; };
+        var materialSetter = function (_) {};
+        var materialAccessor = {};
+        Object.defineProperty(materialAccessor, "x", {
+          get: materialGetter,
+          set: materialSetter,
+          enumerable: true,
+          configurable: true
+        });
+        var materialPlural = { a: materialValue };
+        var materialDefineData = {
+          value: materialValue,
+          writable: true,
+          enumerable: true,
+          configurable: true
+        };
+        var materialDefineAccessor = {
+          get: materialGetter,
+          set: materialSetter,
+          enumerable: true,
+          configurable: true
+        };
+        var materialDefineBag = { x: materialDefineData };
+        var materialRealm = $262.createRealm().global;
+        var materialGhost = new Proxy({}, {
+          ownKeys: function () { return ["ghost"]; },
+          getOwnPropertyDescriptor: function () { return undefined; }
+        });
+        "#,
+    )
+    .expect("descriptor materialization fixtures should initialize");
+
+    let baseline_pins = vm.gc_pins.len();
+    let baseline_contexts = vm.execution_contexts.len();
+    let baseline_native_depth = vm.active_native_call_depth;
+    let cases = [
+        (
+            DescriptorMaterializationReservationSite::FromDescriptorProperties,
+            "materialRealm.Object.getOwnPropertyDescriptor(materialData, 'x')",
+        ),
+        (
+            DescriptorMaterializationReservationSite::GetOwnDescriptorsResultProperty,
+            "materialRealm.Object.getOwnPropertyDescriptors(materialPlural)",
+        ),
+        (
+            DescriptorMaterializationReservationSite::DefinePropertiesRecord,
+            "materialRealm.Object.defineProperties({}, materialDefineBag)",
+        ),
+    ];
+
+    for (site, expression) in cases {
+        vm.fail_descriptor_materialization_reservation = Some((site, 0));
+        let result = vm
+            .run(&format!(
+                "var materialError; try {{ {expression}; }} \
+                 catch (error) {{ materialError = error; }} \
+                 materialError instanceof materialRealm.RangeError && \
+                 !(materialError instanceof RangeError);"
+            ))
+            .expect("foreign descriptor reservation failure should be catchable");
+        assert_eq!(result, Value::Bool(true), "{site:?}");
+        assert_eq!(
+            vm.fail_descriptor_materialization_reservation, None,
+            "{site:?}"
+        );
+        vm.run(expression)
+            .expect("descriptor operation should retry from clean state");
+        assert_eq!(vm.gc_pins.len(), baseline_pins, "{site:?}");
+        assert_eq!(vm.execution_contexts.len(), baseline_contexts, "{site:?}");
+        assert_eq!(
+            vm.active_native_call_depth, baseline_native_depth,
+            "{site:?}"
+        );
+    }
+
+    assert_eq!(
+        vm.run(
+            "Object.getPrototypeOf(materialRealm.Object.getOwnPropertyDescriptor(\
+             materialData, 'x')) === materialRealm.Object.prototype && \
+             Object.getPrototypeOf(materialRealm.Object.getOwnPropertyDescriptors(\
+             materialPlural)) === materialRealm.Object.prototype"
+        )
+        .expect("foreign descriptor results should use the method Realm"),
+        Value::Bool(true)
+    );
+
+    for site in [
+        DescriptorMaterializationReservationSite::FromDescriptorProperties,
+        DescriptorMaterializationReservationSite::FromDescriptorRoots,
+    ] {
+        vm.fail_descriptor_materialization_reservation = Some((site, 0));
+        assert_eq!(
+            vm.run("Object.getOwnPropertyDescriptor({}, 'missing')")
+                .expect("an absent descriptor needs no materialization"),
+            Value::Undefined
+        );
+        assert_eq!(
+            vm.fail_descriptor_materialization_reservation,
+            Some((site, 0))
+        );
+    }
+    vm.fail_descriptor_materialization_reservation = Some((
+        DescriptorMaterializationReservationSite::GetOwnDescriptorsResultProperty,
+        0,
+    ));
+    assert_eq!(
+        vm.run("Object.keys(Object.getOwnPropertyDescriptors(materialGhost)).length")
+            .expect("an absent plural descriptor needs no result property"),
+        Value::Number(0.0)
+    );
+    assert_eq!(
+        vm.fail_descriptor_materialization_reservation,
+        Some((
+            DescriptorMaterializationReservationSite::GetOwnDescriptorsResultProperty,
+            0
+        ))
+    );
+    vm.fail_descriptor_materialization_reservation = Some((
+        DescriptorMaterializationReservationSite::ToDescriptorValueRoot,
+        0,
+    ));
+    vm.run("Object.defineProperty({}, 'x', { value: 1 })")
+        .expect("a primitive descriptor value needs no value root");
+    assert_eq!(
+        vm.fail_descriptor_materialization_reservation,
+        Some((
+            DescriptorMaterializationReservationSite::ToDescriptorValueRoot,
+            0
+        ))
+    );
+    vm.fail_descriptor_materialization_reservation = Some((
+        DescriptorMaterializationReservationSite::ToDescriptorGetterRoot,
+        0,
+    ));
+    vm.run("Object.defineProperty({}, 'x', { get: undefined })")
+        .expect("an undefined getter needs no getter root");
+    assert_eq!(
+        vm.fail_descriptor_materialization_reservation,
+        Some((
+            DescriptorMaterializationReservationSite::ToDescriptorGetterRoot,
+            0
+        ))
+    );
+    vm.fail_descriptor_materialization_reservation = None;
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.execution_contexts.len(), baseline_contexts);
+    assert_eq!(vm.active_native_call_depth, baseline_native_depth);
+}
+
+#[test]
+fn get_own_property_descriptors_observes_own_keys_before_result_allocation() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "capDescriptorHeap",
+        |vm, _, _| cap_heap_at_current_live_count(vm),
+        0,
+    )
+    .expect("heap cap hook should register");
+    vm.run(
+        r#"
+        var pluralOrderMarker = { marker: 91 };
+        var pluralOrderProxy = new Proxy({}, {
+          ownKeys: function () {
+            capDescriptorHeap();
+            throw pluralOrderMarker;
+          }
+        });
+        var pluralAllocationTarget = {};
+        "#,
+    )
+    .expect("plural ordering fixtures should initialize");
+    let baseline_pins = vm.gc_pins.len();
+    let error = vm
+        .run("Object.getOwnPropertyDescriptors(pluralOrderProxy)")
+        .expect_err("ownKeys abrupt completion must precede result allocation");
+    vm.set_max_heap_objects(None);
+    assert_eq!(error.kind, crate::error::ErrorKind::User);
+    let marker = error
+        .thrown_value
+        .clone()
+        .expect("ownKeys should preserve the thrown marker");
+    let marker_pin = vm.pin(&marker);
+    assert_eq!(
+        vm.get_property(&marker, "marker")
+            .expect("thrown marker should remain live"),
+        Value::Number(91.0)
+    );
+    vm.unpin(marker_pin);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    vm.gc();
+    vm.set_max_heap_objects(Some(vm.heap.live_count()));
+    let error = vm
+        .run("Object.getOwnPropertyDescriptors(pluralAllocationTarget)")
+        .expect_err("plural result allocation should obey the exact heap cap");
+    vm.set_max_heap_objects(None);
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    vm.run("Object.getOwnPropertyDescriptors(pluralAllocationTarget)")
+        .expect("plural result allocation should retry after failure");
+
+    let object = vm.get_global("Object");
+    let method = vm
+        .get_property(&object, "getOwnPropertyDescriptors")
+        .expect("Object.getOwnPropertyDescriptors should exist");
+    let target = vm.get_global("pluralAllocationTarget");
+    vm.try_reserve_value_roots(&[method.clone(), target.clone()])
+        .expect("plural allocation fixture roots should reserve");
+    let fixture_pins = vm.pin_many(&[method.clone(), target.clone()]);
+    vm.gc();
+    let baseline_live = vm.heap.live_count();
+    vm.run("(function () { for (var i = 0; i < 200; i += 1) ({ garbage: i }); })();")
+        .expect("collectible plural result garbage should initialize");
+    let limit = vm.heap.live_count();
+    assert!(limit > baseline_live);
+    vm.set_max_heap_objects(Some(limit));
+    let result = vm
+        .call_function(&method, std::slice::from_ref(&target), None)
+        .expect("plural result allocation should collect and retry");
+    vm.set_max_heap_objects(None);
+    vm.unpin_many(fixture_pins);
+    assert!(matches!(result, Value::Object(_)));
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+}
+
+#[test]
+fn proxy_define_property_publication_is_fallible_ordered_and_realm_correct() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.run(
+        r#"
+        var proxyDefineOldValue = { marker: 1 };
+        var proxyDefineNewValue = { marker: 2 };
+        var proxyDefineTarget = {};
+        Object.defineProperty(proxyDefineTarget, "x", {
+          value: proxyDefineOldValue,
+          writable: true,
+          enumerable: true,
+          configurable: true
+        });
+        var proxyDefineTrapCalls = 0;
+        var proxyDefineDescriptorPrototype;
+        var proxyDefineProxy = new Proxy(proxyDefineTarget, {
+          defineProperty: function (_, __, descriptor) {
+            proxyDefineTrapCalls += 1;
+            proxyDefineDescriptorPrototype = Object.getPrototypeOf(descriptor);
+            return true;
+          }
+        });
+        var proxyDefineDescriptor = {
+          value: proxyDefineNewValue,
+          writable: true,
+          enumerable: true,
+          configurable: true
+        };
+        var proxyDefineFalse = new Proxy({}, {
+          defineProperty: function () { return false; }
+        });
+        var proxyDefineNonCallable = new Proxy({}, { defineProperty: {} });
+        var proxyDefineTransparent = new Proxy({}, {});
+        var proxyDefineEmpty = new Proxy({}, {
+          defineProperty: function () { return true; }
+        });
+        var proxyDefineRevocable = Proxy.revocable({}, {});
+        proxyDefineRevocable.revoke();
+        var proxyDefineRealm = $262.createRealm().global;
+        "#,
+    )
+    .expect("Proxy defineProperty reservation fixtures should initialize");
+
+    let baseline_pins = vm.gc_pins.len();
+    let baseline_contexts = vm.execution_contexts.len();
+    let baseline_native_depth = vm.active_native_call_depth;
+    {
+        let site = ProxyDefinePropertyReservationSite::DescriptorProperties;
+        vm.run("proxyDefineTrapCalls = 0")
+            .expect("trap counter should reset");
+        vm.fail_proxy_define_property_reservation = Some((site, 0));
+        let result = vm
+            .run(
+                "var proxyDefineError; \
+                 try { proxyDefineRealm.Reflect.defineProperty(\
+                   proxyDefineProxy, 'x', proxyDefineDescriptor); } \
+                 catch (error) { proxyDefineError = error; } \
+                 proxyDefineError instanceof proxyDefineRealm.RangeError && \
+                 !(proxyDefineError instanceof RangeError);",
+            )
+            .expect("foreign Proxy define reservation failure should be catchable");
+        assert_eq!(result, Value::Bool(true), "{site:?}");
+        assert_eq!(vm.fail_proxy_define_property_reservation, None, "{site:?}");
+        assert_eq!(vm.get_global("proxyDefineTrapCalls"), Value::Number(0.0));
+        assert_eq!(vm.gc_pins.len(), baseline_pins, "{site:?}");
+        vm.run("Reflect.defineProperty(proxyDefineProxy, 'x', proxyDefineDescriptor)")
+            .expect("Proxy define operation should retry from clean state");
+        assert_eq!(vm.get_global("proxyDefineTrapCalls"), Value::Number(1.0));
+    }
+
+    assert_eq!(
+        vm.run(
+            "proxyDefineRealm.Reflect.defineProperty(\
+               proxyDefineProxy, 'x', proxyDefineDescriptor); \
+             proxyDefineDescriptorPrototype === proxyDefineRealm.Object.prototype"
+        )
+        .expect("Proxy descriptor object should use the method Realm"),
+        Value::Bool(true)
+    );
+
+    for site in [
+        ProxyDefinePropertyReservationSite::TrapRoot,
+        ProxyDefinePropertyReservationSite::DescriptorProperties,
+        ProxyDefinePropertyReservationSite::DescriptorObjectRoot,
+        ProxyDefinePropertyReservationSite::ValidationDescriptorRoots,
+    ] {
+        vm.fail_proxy_define_property_reservation = Some((site, 0));
+        assert_eq!(
+            vm.run("Reflect.defineProperty(proxyDefineTransparent, 'x', { value: 1 })")
+                .expect("transparent forwarding should skip trapped define state"),
+            Value::Bool(true),
+            "{site:?}"
+        );
+        assert_eq!(
+            vm.fail_proxy_define_property_reservation,
+            Some((site, 0)),
+            "{site:?}"
+        );
+    }
+    vm.fail_proxy_define_property_reservation = Some((
+        ProxyDefinePropertyReservationSite::ValidationDescriptorRoots,
+        0,
+    ));
+    assert_eq!(
+        vm.run("Reflect.defineProperty(proxyDefineFalse, 'x', {})")
+            .expect("a false trap result should skip invariant validation"),
+        Value::Bool(false)
+    );
+    assert_eq!(
+        vm.fail_proxy_define_property_reservation,
+        Some((
+            ProxyDefinePropertyReservationSite::ValidationDescriptorRoots,
+            0
+        ))
+    );
+    vm.fail_proxy_define_property_reservation =
+        Some((ProxyDefinePropertyReservationSite::DescriptorProperties, 0));
+    assert_eq!(
+        vm.run("Reflect.defineProperty(proxyDefineEmpty, 'x', {})")
+            .expect("an empty descriptor needs no property storage"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        vm.fail_proxy_define_property_reservation,
+        Some((ProxyDefinePropertyReservationSite::DescriptorProperties, 0))
+    );
+    vm.fail_proxy_define_property_reservation = Some((
+        ProxyDefinePropertyReservationSite::ValidationDescriptorRoots,
+        0,
+    ));
+    assert_eq!(
+        vm.run("Reflect.defineProperty(proxyDefineEmpty, 'y', {})")
+            .expect("an absent target descriptor contributes no validation roots"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        vm.fail_proxy_define_property_reservation,
+        Some((
+            ProxyDefinePropertyReservationSite::ValidationDescriptorRoots,
+            0
+        ))
+    );
+
+    vm.fail_proxy_define_property_reservation =
+        Some((ProxyDefinePropertyReservationSite::TrapRoot, 0));
+    let error = vm
+        .run("Reflect.defineProperty(proxyDefineNonCallable, 'x', {})")
+        .expect_err("trap callability must precede trap root reservation");
+    assert_eq!(error.kind, crate::error::ErrorKind::Type);
+    assert_eq!(
+        vm.fail_proxy_define_property_reservation,
+        Some((ProxyDefinePropertyReservationSite::TrapRoot, 0))
+    );
+    vm.fail_proxy_define_property_reservation =
+        Some((ProxyDefinePropertyReservationSite::LayerRoots, 0));
+    let error = vm
+        .run("Reflect.defineProperty(proxyDefineRevocable.proxy, 'x', {})")
+        .expect_err("revocation must precede layer root reservation");
+    assert_eq!(error.kind, crate::error::ErrorKind::Type);
+    assert_eq!(
+        vm.fail_proxy_define_property_reservation,
+        Some((ProxyDefinePropertyReservationSite::LayerRoots, 0))
+    );
+    vm.fail_proxy_define_property_reservation = None;
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.execution_contexts.len(), baseline_contexts);
+    assert_eq!(vm.active_native_call_depth, baseline_native_depth);
+}
+
+#[test]
+fn descriptor_publication_root_helpers_reach_real_gc_pin_reservation() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    let rooted = vm
+        .new_object()
+        .map(Value::Object)
+        .expect("root fixture should allocate");
+    let Value::Object(rooted_idx) = rooted else {
+        unreachable!();
+    };
+    let rooted = Value::Object(rooted_idx);
+    let fill_pin_spare = |vm: &mut Vm| {
+        let padding = vm.gc_pins.capacity() - vm.gc_pins.len();
+        for _ in 0..padding {
+            vm.gc_pins.push(rooted_idx.0);
+        }
+        padding
+    };
+
+    for site in [
+        DescriptorMaterializationReservationSite::FromDescriptorRoots,
+        DescriptorMaterializationReservationSite::GetOwnDescriptorsOperationRoots,
+        DescriptorMaterializationReservationSite::GetOwnDescriptorsDescriptorRoot,
+        DescriptorMaterializationReservationSite::ToDescriptorObjectRoot,
+        DescriptorMaterializationReservationSite::ToDescriptorValueRoot,
+        DescriptorMaterializationReservationSite::ToDescriptorGetterRoot,
+        DescriptorMaterializationReservationSite::ToDescriptorSetterRoot,
+        DescriptorMaterializationReservationSite::DefineOperationRoots,
+        DescriptorMaterializationReservationSite::DefinePropertiesOperationRoots,
+        DescriptorMaterializationReservationSite::DefinePropertiesRecordRoots,
+    ] {
+        vm.try_reserve_gc_pins(1)
+            .expect("descriptor root fixture should obtain spare capacity");
+        vm.fail_descriptor_materialization_reservation = Some((site, 0));
+        crate::builtins::reserve_descriptor_materialization_roots(
+            &mut vm,
+            std::slice::from_ref(&rooted),
+            site,
+        )
+        .expect("spare root capacity must not consume the failure");
+        assert_eq!(
+            vm.fail_descriptor_materialization_reservation,
+            Some((site, 0))
+        );
+        let padding = fill_pin_spare(&mut vm);
+        let error = crate::builtins::reserve_descriptor_materialization_roots(
+            &mut vm,
+            std::slice::from_ref(&rooted),
+            site,
+        )
+        .expect_err("every descriptor root site should fail only at real growth");
+        assert_eq!(error.kind, crate::error::ErrorKind::Range, "{site:?}");
+        assert_eq!(vm.fail_descriptor_materialization_reservation, None);
+        vm.unpin_many(padding);
+    }
+
+    vm.try_reserve_gc_pins(1)
+        .expect("future root fixture should obtain spare capacity");
+    vm.fail_descriptor_materialization_reservation = Some((
+        DescriptorMaterializationReservationSite::GetOwnDescriptorsResultRoot,
+        0,
+    ));
+    crate::builtins::reserve_descriptor_materialization_root_slots(
+        &mut vm,
+        1,
+        DescriptorMaterializationReservationSite::GetOwnDescriptorsResultRoot,
+    )
+    .expect("spare future-root capacity must not consume the failure");
+    assert_eq!(
+        vm.fail_descriptor_materialization_reservation,
+        Some((
+            DescriptorMaterializationReservationSite::GetOwnDescriptorsResultRoot,
+            0
+        ))
+    );
+    let padding = fill_pin_spare(&mut vm);
+    crate::builtins::reserve_descriptor_materialization_root_slots(
+        &mut vm,
+        1,
+        DescriptorMaterializationReservationSite::GetOwnDescriptorsResultRoot,
+    )
+    .expect_err("future result root should fail only at real growth");
+    assert_eq!(vm.fail_descriptor_materialization_reservation, None);
+    vm.unpin_many(padding);
+
+    for site in [
+        ProxyDefinePropertyReservationSite::OperationRoots,
+        ProxyDefinePropertyReservationSite::LayerRoots,
+        ProxyDefinePropertyReservationSite::TrapRoot,
+        ProxyDefinePropertyReservationSite::DescriptorObjectRoot,
+        ProxyDefinePropertyReservationSite::ValidationDescriptorRoots,
+    ] {
+        vm.try_reserve_gc_pins(1)
+            .expect("Proxy root fixture should obtain spare capacity");
+        vm.fail_proxy_define_property_reservation = Some((site, 0));
+        super::property::reserve_proxy_define_property_roots(
+            &mut vm,
+            std::slice::from_ref(&rooted),
+            site,
+        )
+        .expect("spare Proxy root capacity must not consume the failure");
+        assert_eq!(vm.fail_proxy_define_property_reservation, Some((site, 0)));
+        let padding = fill_pin_spare(&mut vm);
+        let error = super::property::reserve_proxy_define_property_roots(
+            &mut vm,
+            std::slice::from_ref(&rooted),
+            site,
+        )
+        .expect_err("every Proxy define root site should reach real reservation");
+        assert_eq!(error.kind, crate::error::ErrorKind::Range, "{site:?}");
+        assert_eq!(vm.fail_proxy_define_property_reservation, None, "{site:?}");
+        vm.unpin_many(padding);
+    }
+
+    let padding = fill_pin_spare(&mut vm);
+    vm.fail_next_gc_pin_reservation = true;
+    crate::builtins::reserve_descriptor_materialization_roots(
+        &mut vm,
+        std::slice::from_ref(&rooted),
+        DescriptorMaterializationReservationSite::FromDescriptorRoots,
+    )
+    .expect_err("descriptor roots should reach the production reserve failure");
+    assert!(!vm.fail_next_gc_pin_reservation);
+    vm.unpin_many(padding);
+}
+
+#[test]
+fn descriptor_container_failpoints_follow_actual_capacity() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    for site in [
+        DescriptorMaterializationReservationSite::FromDescriptorProperties,
+        DescriptorMaterializationReservationSite::GetOwnDescriptorsResultProperty,
+    ] {
+        let mut properties = IndexMap::new();
+        crate::builtins::reserve_descriptor_property_storage(&mut vm, &mut properties, 1, site)
+            .expect("property storage should obtain spare capacity");
+        vm.fail_descriptor_materialization_reservation = Some((site, 0));
+        while properties.len() < properties.capacity() {
+            crate::builtins::reserve_descriptor_property_storage(&mut vm, &mut properties, 1, site)
+                .expect("spare property capacity must not consume the failure");
+            let key = PropertyKey::from(format!("k{}", properties.len()).as_str());
+            properties.insert(key, PropertyDescriptor::data(Value::Undefined));
+            assert_eq!(
+                vm.fail_descriptor_materialization_reservation,
+                Some((site, 0))
+            );
+        }
+        crate::builtins::reserve_descriptor_property_storage(&mut vm, &mut properties, 1, site)
+            .expect_err("the next real property growth should consume the failure");
+        assert_eq!(vm.fail_descriptor_materialization_reservation, None);
+    }
+
+    let descriptor = super::property::ProxyDefinePropertyDescriptor {
+        descriptor: PropertyDescriptor::data(Value::Undefined),
+        has_value: true,
+        has_writable: false,
+        has_enumerable: false,
+        has_configurable: false,
+        has_get: false,
+        has_set: false,
+    };
+    let mut records = Vec::new();
+    crate::builtins::reserve_descriptor_record_storage(&mut vm, &mut records)
+        .expect("record storage should obtain spare capacity");
+    vm.fail_descriptor_materialization_reservation = Some((
+        DescriptorMaterializationReservationSite::DefinePropertiesRecord,
+        0,
+    ));
+    while records.len() < records.capacity() {
+        crate::builtins::reserve_descriptor_record_storage(&mut vm, &mut records)
+            .expect("spare record capacity must not consume the failure");
+        records.push((PropertyKey::from("x"), descriptor.clone()));
+        assert_eq!(
+            vm.fail_descriptor_materialization_reservation,
+            Some((
+                DescriptorMaterializationReservationSite::DefinePropertiesRecord,
+                0
+            ))
+        );
+    }
+    crate::builtins::reserve_descriptor_record_storage(&mut vm, &mut records)
+        .expect_err("the next real record growth should consume the failure");
+    assert_eq!(vm.fail_descriptor_materialization_reservation, None);
+
+    let mut proxy_properties = IndexMap::new();
+    super::property::reserve_proxy_define_property_descriptor_properties(
+        &mut vm,
+        &mut proxy_properties,
+        1,
+    )
+    .expect("Proxy descriptor storage should obtain spare capacity");
+    vm.fail_proxy_define_property_reservation =
+        Some((ProxyDefinePropertyReservationSite::DescriptorProperties, 0));
+    while proxy_properties.len() < proxy_properties.capacity() {
+        super::property::reserve_proxy_define_property_descriptor_properties(
+            &mut vm,
+            &mut proxy_properties,
+            1,
+        )
+        .expect("spare Proxy descriptor capacity must not consume the failure");
+        let key = PropertyKey::from(format!("p{}", proxy_properties.len()).as_str());
+        proxy_properties.insert(key, PropertyDescriptor::data(Value::Undefined));
+        assert_eq!(
+            vm.fail_proxy_define_property_reservation,
+            Some((ProxyDefinePropertyReservationSite::DescriptorProperties, 0))
+        );
+    }
+    super::property::reserve_proxy_define_property_descriptor_properties(
+        &mut vm,
+        &mut proxy_properties,
+        1,
+    )
+    .expect_err("the next real Proxy descriptor growth should consume the failure");
+    assert_eq!(vm.fail_proxy_define_property_reservation, None);
+}
+
+#[test]
+fn descriptor_operation_root_failures_cleanup_and_retry() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.run(
+        r#"
+        var operationRootValue = { marker: 17 };
+        var operationDefineTarget = {};
+        var operationDefineDescriptor = {
+          value: operationRootValue,
+          writable: true,
+          configurable: true
+        };
+        var operationDefineBag = { x: operationDefineDescriptor };
+        var operationProxyCalls = 0;
+        var operationDefineProxy = new Proxy({}, {
+          defineProperty: function () {
+            operationProxyCalls += 1;
+            return true;
+          }
+        });
+        "#,
+    )
+    .expect("operation root fixtures should initialize");
+    let baseline_pins = vm.gc_pins.len();
+    let Value::Object(padding_root) = vm.object_proto else {
+        unreachable!();
+    };
+    let fill_pin_spare = |vm: &mut Vm| {
+        let padding = vm.gc_pins.capacity() - vm.gc_pins.len();
+        for _ in 0..padding {
+            vm.gc_pins.push(padding_root.0);
+        }
+        padding
+    };
+
+    let descriptor = PropertyDescriptor::data(vm.get_global("operationRootValue"));
+    let padding = fill_pin_spare(&mut vm);
+    vm.fail_descriptor_materialization_reservation = Some((
+        DescriptorMaterializationReservationSite::FromDescriptorRoots,
+        0,
+    ));
+    let error = crate::builtins::from_property_descriptor(&mut vm, descriptor.clone())
+        .expect_err("FromPropertyDescriptor root growth should fail catchably");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fail_descriptor_materialization_reservation, None);
+    vm.unpin_many(padding);
+    crate::builtins::from_property_descriptor(&mut vm, descriptor)
+        .expect("FromPropertyDescriptor should retry after root failure");
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    let target = vm.get_global("operationDefineTarget");
+    let descriptor_object = vm.get_global("operationDefineDescriptor");
+    let define_args = [target.clone(), Value::String("x".into()), descriptor_object];
+    let padding = fill_pin_spare(&mut vm);
+    vm.fail_descriptor_materialization_reservation = Some((
+        DescriptorMaterializationReservationSite::DefineOperationRoots,
+        0,
+    ));
+    let error = crate::builtins::object_define_property_result(&mut vm, &define_args, true)
+        .expect_err("Object.defineProperty operation roots should fail catchably");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fail_descriptor_materialization_reservation, None);
+    vm.unpin_many(padding);
+    crate::builtins::object_define_property_result(&mut vm, &define_args, true)
+        .expect("Object.defineProperty should retry after root failure");
+    assert_eq!(
+        vm.get_property(&target, "x")
+            .expect("retried property should be readable"),
+        vm.get_global("operationRootValue")
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    let define_properties_target = vm
+        .new_object()
+        .map(Value::Object)
+        .expect("defineProperties target should allocate");
+    let define_properties_args = [
+        define_properties_target.clone(),
+        vm.get_global("operationDefineBag"),
+    ];
+    let padding = fill_pin_spare(&mut vm);
+    vm.fail_descriptor_materialization_reservation = Some((
+        DescriptorMaterializationReservationSite::DefinePropertiesOperationRoots,
+        0,
+    ));
+    let error = crate::builtins::object_define_properties(&mut vm, &define_properties_args, None)
+        .expect_err("Object.defineProperties operation roots should fail catchably");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fail_descriptor_materialization_reservation, None);
+    vm.unpin_many(padding);
+    crate::builtins::object_define_properties(&mut vm, &define_properties_args, None)
+        .expect("Object.defineProperties should retry after root failure");
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    let proxy = vm.get_global("operationDefineProxy");
+    let proxy_descriptor = super::property::ProxyDefinePropertyDescriptor {
+        descriptor: PropertyDescriptor::data(vm.get_global("operationRootValue")),
+        has_value: true,
+        has_writable: false,
+        has_enumerable: false,
+        has_configurable: false,
+        has_get: false,
+        has_set: false,
+    };
+    let padding = fill_pin_spare(&mut vm);
+    vm.fail_proxy_define_property_reservation =
+        Some((ProxyDefinePropertyReservationSite::OperationRoots, 0));
+    let error =
+        match vm.proxy_define_own_property(&proxy, &PropertyKey::from("x"), &proxy_descriptor) {
+            Err(error) => error,
+            Ok(_) => panic!("Proxy define operation roots should fail catchably"),
+        };
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fail_proxy_define_property_reservation, None);
+    assert_eq!(vm.get_global("operationProxyCalls"), Value::Number(0.0));
+    vm.unpin_many(padding);
+    vm.proxy_define_own_property(&proxy, &PropertyKey::from("x"), &proxy_descriptor)
+        .expect("Proxy define should retry after operation-root failure");
+    assert_eq!(vm.get_global("operationProxyCalls"), Value::Number(1.0));
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+}
+
+#[test]
+fn descriptor_records_root_observed_fields_across_later_callbacks_and_gc() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "forceDescriptorPublicationGc",
+        |vm, _, _| {
+            vm.clear_kept_objects();
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("descriptor GC hook should register");
+    let baseline_pins = vm.gc_pins.len();
+    assert_eq!(
+        vm.run(
+            r#"
+            var directDescriptor = new Proxy({}, {
+              has: function (_, key) {
+                return key === "value" || key === "writable" ||
+                       key === "configurable";
+              },
+              get: function (_, key) {
+                if (key === "value") return { marker: 41 };
+                if (key === "writable") {
+                  forceDescriptorPublicationGc();
+                  return true;
+                }
+                if (key === "configurable") return true;
+              }
+            });
+            var directTarget = {};
+            Object.defineProperty(directTarget, "x", directDescriptor);
+
+            var pluralTarget = {};
+            var pluralBag = {};
+            Object.defineProperty(pluralBag, "first", {
+              enumerable: true,
+              get: function () {
+                return { value: { marker: 52 }, writable: true };
+              }
+            });
+            Object.defineProperty(pluralBag, "second", {
+              enumerable: true,
+              get: function () {
+                forceDescriptorPublicationGc();
+                return { value: 2 };
+              }
+            });
+            Object.defineProperties(pluralTarget, pluralBag);
+
+            var accessorBase = {};
+            var accessorTarget = new Proxy(accessorBase, {
+              defineProperty: function (target, key, descriptor) {
+                forceDescriptorPublicationGc();
+                return Reflect.defineProperty(target, key, descriptor);
+              }
+            });
+            var accessorDescriptor = new Proxy({}, {
+              has: function (_, key) {
+                return key === "get" || key === "set" ||
+                       key === "configurable";
+              },
+              get: function (_, key) {
+                if (key === "get") return function () { return 63; };
+                if (key === "set") return function (_) {};
+                if (key === "configurable") return true;
+              }
+            });
+            Object.defineProperty(accessorTarget, "x", accessorDescriptor);
+
+            [directTarget.x.marker, pluralTarget.first.marker, accessorBase.x]
+              .join("|");
+            "#,
+        )
+        .expect("descriptor records should retain observed fields across GC"),
+        Value::String("41|52|63".into())
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+}
+
+#[test]
+fn descriptor_object_allocations_root_fresh_fields_and_retry_heap_caps() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "capDescriptorAllocation",
+        |vm, _, _| {
+            vm.gc();
+            vm.set_max_heap_objects(Some(vm.heap.live_count()));
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("descriptor allocation failure hook should register");
+    vm.run(
+        r#"
+        var fromAllocationMode = 0;
+        var fromAllocationTarget = {};
+        Object.defineProperty(fromAllocationTarget, "x", {
+          value: 0,
+          writable: true,
+          configurable: true
+        });
+        var fromAllocationDescriptor = new Proxy({}, {
+          has: function (_, key) {
+            return key === "value" || key === "writable" ||
+                   key === "configurable";
+          },
+          get: function (_, key) {
+            if (key === "value") return { marker: 71 };
+            if (key === "configurable") return true;
+            if (key === "writable") {
+              if (fromAllocationMode === 2) {
+                fromAllocationMode = 0;
+                capDescriptorAllocation();
+              }
+              return true;
+            }
+          }
+        });
+        var fromAllocationProxy = new Proxy(fromAllocationTarget, {
+          getOwnPropertyDescriptor: function () {
+            return fromAllocationDescriptor;
+          }
+        });
+
+        var defineAllocationMode = 0;
+        var defineAllocationObserved = 0;
+        var defineAllocationHandler = {};
+        Object.defineProperty(defineAllocationHandler, "defineProperty", {
+          get: function () {
+            if (defineAllocationMode === 2) {
+              defineAllocationMode = 0;
+              capDescriptorAllocation();
+            }
+            return function (_, __, descriptor) {
+              defineAllocationObserved = descriptor.value.marker;
+              return true;
+            };
+          }
+        });
+        var defineAllocationProxy = new Proxy({}, defineAllocationHandler);
+        var defineAllocationDescriptor = new Proxy({}, {
+          has: function (_, key) { return key === "value"; },
+          get: function () { return { marker: 82 }; }
+        });
+        "#,
+    )
+    .expect("descriptor allocation fixtures should initialize");
+
+    let baseline_pins = vm.gc_pins.len();
+    assert_eq!(
+        vm.run("Object.getOwnPropertyDescriptor(fromAllocationProxy, 'x').value.marker")
+            .expect("FromPropertyDescriptor allocation should retain fresh fields"),
+        Value::Number(71.0)
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    assert_eq!(
+        vm.run(
+            "Reflect.defineProperty(defineAllocationProxy, 'x', \
+               defineAllocationDescriptor); \
+             defineAllocationObserved"
+        )
+        .expect("Proxy descriptor allocation should retain fresh fields"),
+        Value::Number(82.0)
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    let error = vm
+        .run(
+            "fromAllocationMode = 2; \
+             Object.getOwnPropertyDescriptor(fromAllocationProxy, 'x')",
+        )
+        .expect_err("FromPropertyDescriptor allocation should report the exact cap");
+    vm.set_max_heap_objects(None);
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    vm.run("defineAllocationObserved = 0")
+        .expect("Proxy retry marker should reset");
+    assert_eq!(
+        vm.run("Object.getOwnPropertyDescriptor(fromAllocationProxy, 'x').value.marker")
+            .expect("FromPropertyDescriptor should retry after allocation failure"),
+        Value::Number(71.0)
+    );
+
+    let error = vm
+        .run(
+            "defineAllocationMode = 2; \
+             Reflect.defineProperty(defineAllocationProxy, 'x', \
+               defineAllocationDescriptor)",
+        )
+        .expect_err("Proxy descriptor allocation should report the exact cap");
+    vm.set_max_heap_objects(None);
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(
+        vm.get_global("defineAllocationObserved"),
+        Value::Number(0.0),
+        "failed descriptor allocation must precede the Proxy trap"
+    );
+    assert_eq!(
+        vm.run(
+            "Reflect.defineProperty(defineAllocationProxy, 'x', \
+               defineAllocationDescriptor); \
+             defineAllocationObserved"
+        )
+        .expect("Proxy descriptor allocation should retry after failure"),
+        Value::Number(82.0)
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+}
+
+#[test]
+fn descriptor_object_allocations_preserve_fresh_fields_across_cap_gc() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.run(
+        r#"
+        var allocationGcGet;
+        var allocationGcSet;
+        var allocationGcSetterObserved = 0;
+        var fromAllocationGcSetterObserved = 0;
+        var allocationGcProxy = new Proxy({}, {
+          defineProperty: function (_, __, descriptor) {
+            allocationGcGet = descriptor.get;
+            allocationGcSet = descriptor.set;
+            return true;
+          }
+        });
+        "#,
+    )
+    .expect("descriptor allocation GC fixtures should initialize");
+    let baseline_pins = vm.gc_pins.len();
+
+    let fresh_value = vm
+        .new_object()
+        .map(Value::Object)
+        .expect("fresh descriptor value should allocate");
+    if let Value::Object(value_idx) = fresh_value {
+        vm.heap.with_obj(value_idx.0, |object| {
+            object.props().lock().insert(
+                PropertyKey::from("marker"),
+                PropertyDescriptor::data(Value::Number(71.0)),
+            );
+        });
+    }
+    let value_pin = vm.pin(&fresh_value);
+    vm.gc();
+    let baseline_live = vm.heap.live_count();
+    vm.run("(function () { for (var i = 0; i < 200; i += 1) ({ garbage: i }); })();")
+        .expect("collectible data-descriptor garbage should initialize");
+    let limit = vm.heap.live_count();
+    assert!(limit > baseline_live);
+    vm.unpin(value_pin);
+    vm.set_max_heap_objects(Some(limit));
+    let data_result = crate::builtins::from_property_descriptor(
+        &mut vm,
+        PropertyDescriptor::data(fresh_value.clone()),
+    )
+    .expect("data descriptor allocation should collect and retry");
+    vm.set_max_heap_objects(None);
+    let observed_value = vm
+        .get_property(&data_result, "value")
+        .expect("materialized data descriptor should expose value");
+    assert_eq!(observed_value, fresh_value);
+    assert_eq!(
+        vm.get_property(&observed_value, "marker")
+            .expect("fresh data value must remain live"),
+        Value::Number(71.0)
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    let getter = vm
+        .run("(function () { return 93; })")
+        .expect("fresh getter should allocate");
+    let setter = vm
+        .run("(function (value) { fromAllocationGcSetterObserved = value; })")
+        .expect("fresh setter should allocate");
+    vm.try_reserve_value_roots(&[getter.clone(), setter.clone()])
+        .expect("fresh accessor roots should reserve");
+    let accessor_pins = vm.pin_many(&[getter.clone(), setter.clone()]);
+    vm.gc();
+    let baseline_live = vm.heap.live_count();
+    vm.run("(function () { for (var i = 0; i < 200; i += 1) ({ garbage: i }); })();")
+        .expect("collectible accessor-descriptor garbage should initialize");
+    let limit = vm.heap.live_count();
+    assert!(limit > baseline_live);
+    vm.unpin_many(accessor_pins);
+    let accessor_descriptor = PropertyDescriptor {
+        value: Value::Undefined,
+        writable: false,
+        enumerable: false,
+        configurable: true,
+        get: Some(getter.clone()),
+        set: Some(setter.clone()),
+        is_accessor: true,
+    };
+    vm.set_max_heap_objects(Some(limit));
+    let accessor_result = crate::builtins::from_property_descriptor(&mut vm, accessor_descriptor)
+        .expect("accessor descriptor allocation should collect and retry");
+    vm.set_max_heap_objects(None);
+    let observed_getter = vm
+        .get_property(&accessor_result, "get")
+        .expect("materialized accessor descriptor should expose getter");
+    let observed_setter = vm
+        .get_property(&accessor_result, "set")
+        .expect("materialized accessor descriptor should expose setter");
+    assert_eq!(observed_getter, getter);
+    assert_eq!(observed_setter, setter);
+    assert_eq!(
+        vm.call_function(&observed_getter, &[], None)
+            .expect("fresh getter must remain callable"),
+        Value::Number(93.0)
+    );
+    vm.call_function(&observed_setter, &[Value::Number(94.0)], None)
+        .expect("fresh setter must remain callable");
+    assert_eq!(
+        vm.get_global("fromAllocationGcSetterObserved"),
+        Value::Number(94.0)
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    let proxy_getter = vm
+        .run("(function () { return 104; })")
+        .expect("fresh Proxy getter should allocate");
+    let proxy_setter = vm
+        .run("(function (value) { allocationGcSetterObserved = value; })")
+        .expect("fresh Proxy setter should allocate");
+    vm.try_reserve_value_roots(&[proxy_getter.clone(), proxy_setter.clone()])
+        .expect("fresh Proxy accessor roots should reserve");
+    let proxy_accessor_pins = vm.pin_many(&[proxy_getter.clone(), proxy_setter.clone()]);
+    vm.gc();
+    let baseline_live = vm.heap.live_count();
+    vm.run("(function () { for (var i = 0; i < 200; i += 1) ({ garbage: i }); })();")
+        .expect("collectible Proxy descriptor garbage should initialize");
+    let limit = vm.heap.live_count();
+    assert!(limit > baseline_live);
+    vm.unpin_many(proxy_accessor_pins);
+    let proxy_descriptor = super::property::ProxyDefinePropertyDescriptor {
+        descriptor: PropertyDescriptor {
+            value: Value::Undefined,
+            writable: false,
+            enumerable: false,
+            configurable: true,
+            get: Some(proxy_getter.clone()),
+            set: Some(proxy_setter.clone()),
+            is_accessor: true,
+        },
+        has_value: false,
+        has_writable: false,
+        has_enumerable: false,
+        has_configurable: true,
+        has_get: true,
+        has_set: true,
+    };
+    let proxy = vm.get_global("allocationGcProxy");
+    vm.set_max_heap_objects(Some(limit));
+    let outcome = vm
+        .proxy_define_own_property(&proxy, &PropertyKey::from("x"), &proxy_descriptor)
+        .expect("Proxy descriptor allocation should collect and retry");
+    vm.set_max_heap_objects(None);
+    assert!(matches!(
+        outcome,
+        super::property::ProxyDefinePropertyOutcome::Complete(true)
+    ));
+    assert_eq!(vm.get_global("allocationGcGet"), proxy_getter);
+    assert_eq!(vm.get_global("allocationGcSet"), proxy_setter);
+    assert_eq!(
+        vm.call_function(&vm.get_global("allocationGcGet"), &[], None)
+            .expect("Proxy descriptor getter must remain callable"),
+        Value::Number(104.0)
+    );
+    vm.call_function(
+        &vm.get_global("allocationGcSet"),
+        &[Value::Number(105.0)],
+        None,
+    )
+    .expect("Proxy descriptor setter must remain callable");
+    assert_eq!(
+        vm.get_global("allocationGcSetterObserved"),
+        Value::Number(105.0)
     );
     assert_eq!(vm.gc_pins.len(), baseline_pins);
 }

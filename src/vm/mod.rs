@@ -80,6 +80,36 @@ pub(crate) enum ProxyDescriptorReservationSite {
     DescriptorSetterRoot,
 }
 
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DescriptorMaterializationReservationSite {
+    FromDescriptorProperties,
+    FromDescriptorRoots,
+    GetOwnDescriptorsOperationRoots,
+    GetOwnDescriptorsResultRoot,
+    GetOwnDescriptorsResultProperty,
+    GetOwnDescriptorsDescriptorRoot,
+    ToDescriptorObjectRoot,
+    ToDescriptorValueRoot,
+    ToDescriptorGetterRoot,
+    ToDescriptorSetterRoot,
+    DefineOperationRoots,
+    DefinePropertiesOperationRoots,
+    DefinePropertiesRecord,
+    DefinePropertiesRecordRoots,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ProxyDefinePropertyReservationSite {
+    OperationRoots,
+    LayerRoots,
+    TrapRoot,
+    DescriptorProperties,
+    DescriptorObjectRoot,
+    ValidationDescriptorRoots,
+}
+
 pub(crate) use conversions::{to_int32, to_uint32};
 pub(crate) use property::{
     ProxyDefinePropertyDescriptor, ProxyDefinePropertyOutcome, TypedArrayDefineDescriptor,
@@ -250,6 +280,12 @@ pub struct Vm {
     pub(crate) fail_own_key_consumer_reservation: Option<(OwnKeyConsumerReservationSite, usize)>,
     #[cfg(test)]
     pub(crate) fail_proxy_descriptor_reservation: Option<(ProxyDescriptorReservationSite, usize)>,
+    #[cfg(test)]
+    pub(crate) fail_descriptor_materialization_reservation:
+        Option<(DescriptorMaterializationReservationSite, usize)>,
+    #[cfg(test)]
+    pub(crate) fail_proxy_define_property_reservation:
+        Option<(ProxyDefinePropertyReservationSite, usize)>,
     /// Receiver identities currently traversing Array stringification methods.
     /// Join checks after separator coercion and toLocaleString checks after its
     /// length snapshot, so recursive suppression preserves observable ordering.
@@ -786,6 +822,10 @@ impl Vm {
             fail_own_key_consumer_reservation: None,
             #[cfg(test)]
             fail_proxy_descriptor_reservation: None,
+            #[cfg(test)]
+            fail_descriptor_materialization_reservation: None,
+            #[cfg(test)]
+            fail_proxy_define_property_reservation: None,
             active_array_joins: Vec::new(),
             kept_objects: Vec::new(),
             current_yields: Vec::new(),
