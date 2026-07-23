@@ -378,10 +378,14 @@ guarantees are required.
   owned by ordinary own-key production are fallible as well. The result
   vectors, object roots, and final Array presence bitmaps for Object keys,
   values, entries, own names/Symbols, and Reflect ownKeys are fallible. Shared
-  numeric index formatting and PropertyKey/Error strings, descriptor traversal
-  state, other own-key caller containers, unrelated direct `ArrayData::new`
-  constructors, GC root enumeration, and mark worklists still use infallible
-  native growth and remain separate hard-host-OOM scopes.
+  numeric index formatting and PropertyKey/Error strings remain infallible.
+  Iterative Proxy `getOwnPropertyDescriptor` traversal now reserves its direct
+  roots and pending frames, but final descriptor-object materialization,
+  `Object.getOwnPropertyDescriptors` and `Object.defineProperties` containers,
+  Proxy `defineProperty` descriptor containers, JSON caller containers,
+  unrelated direct `ArrayData::new` constructors, GC root enumeration, and
+  mark worklists still use infallible native growth and remain separate
+  hard-host-OOM scopes.
 - Push, Pop, Shift, Unshift, Splice, Slice, Concat, Flat, FlatMap, ForEach,
   Join, ToLocaleString, Map, Reduce, ReduceRight, Reverse, ToReversed,
   ToSpliced, and With use live generic indexed operations with operation-wide

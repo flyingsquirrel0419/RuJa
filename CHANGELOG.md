@@ -62,6 +62,46 @@
 
 ### Fixed
 
+- Iterative Proxy `[[GetOwnProperty]]` descriptor traversal now reserves every
+  directly owned operation, layer, trap, pending-frame, validation-descriptor,
+  descriptor-object, and object-valued descriptor-field root before
+  publication. Pending frames reserve only at actual vector growth, while a
+  fixed three-slot root set retains target descriptor fields across observable
+  `IsExtensible` work without another temporary vector.
+
+  Reservation preserves ECMAScript error priority: trap and accessor
+  callability checks precede their roots; on the `undefined` trap-result path,
+  an absent target descriptor and a hidden non-configurable descriptor finish
+  before unnecessary validation roots, while only configurable target fields
+  survive across `IsExtensible`.
+  Transparent forwarding creates no trap or pending-frame reservation,
+  primitive fields create no descriptor-field root reservation, and spare
+  pending capacity creates no frame-vector reservation. Failures remain
+  catchable in the operation Realm, unwind all pins and frames, and permit a
+  complete retry.
+
+  Deterministic regressions cover all ten reservation sites, real GC-pin and
+  pending-vector growth, first and second nested failures, revocation, fuel,
+  callability and invariant priority, reverse validation, foreign Realms,
+  forced-GC survival of a uniquely created descriptor value, cleanup, retry,
+  and Object keys/values/entries caller ordering. Local verification passes all
+  targets/features with **237/237** library tests, **539/539** builtins tests,
+  **15/15** arguments tests, and **31/31** module tests, plus **236/236**
+  release library tests, **135/135** Python tooling tests, **1/1** doctest,
+  rustfmt, warnings-denied Clippy, release build, generated documentation, and
+  wasm32 checking. Rustdoc retains only the 13 pre-existing broken-link
+  warnings. Two GPT-5.6 final reviews are clean.
+
+  Implementation commit `2918d70` passes CI `29980403698` and all 33 jobs in
+  full run `29980403702`. Its 30 result files are byte-identical to the
+  corrected `29977240759` baseline and aggregate to unchanged **31890 pass /
+  5115 fail / 11459 skip / 3 timeout / 0 error / 48467 total / 37005 run**.
+  The downloaded CI binary reproduces the 16-directory Proxy, Reflect, Object,
+  and `for-in` cohort at **656 pass / 0 fail / 60 skip**. Final descriptor-object
+  materialization, `Object.getOwnPropertyDescriptors` and
+  `Object.defineProperties` containers, and Proxy `defineProperty` descriptor
+  containers remain separate allocator-safety scopes.
+
 - `Object.keys`, `Object.values`, `Object.entries`,
   `Object.getOwnPropertyNames`, `Object.getOwnPropertySymbols`, and
   `Reflect.ownKeys` now reserve caller-owned result vectors only at actual

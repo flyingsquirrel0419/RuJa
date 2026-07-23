@@ -1925,7 +1925,39 @@ foreign `Reflect.ownKeys` now receives its own Realm's `%Array.prototype%`.
 - 검토한 주요 대안: Preallocate from snapshot length, reserve before descriptor/Get, share one bulk conversion for all consumers, leave Array presence as hard OOM, clone entry key strings, or rewrite every ArrayData constructor and own-key caller together.
 - 선택한 방식: Reserve each accepted consumer publication at its actual growth boundary; reserve object roots before pinning; treat entries pair elements and outer pairs independently; route Realm-explicit arrays through make_value_array_in_env; and add a fallible dense-presence constructor used by that shared Value-array path.
 - 다른 대안 대신 이 방식을 선택한 이유: Snapshot length overallocates filtered results and changes failure priority; early reservation precedes required observable work; values and entries need different root lifetimes; leaving the bitmap would preserve an end-to-end abort; key ownership removes an unnecessary Arc allocation; and a global Array/caller rewrite exceeds this reviewable boundary.
-- 장점, 단점 및 영향: All six APIs now have exact growth, presence, Realm, retry, fuel, GC, and cleanup evidence, and shared Value-array callers gain reserve-before-pin/presence safety. Descriptor traversal internals, JSON and descriptor-related own-key callers, unrelated direct ArrayData::new constructors, PropertyKey/Error strings, GC root enumeration, and mark worklists remain independent scopes.
+- 장점, 단점 및 영향: All six APIs now have exact growth, presence, Realm, retry, fuel, GC, and cleanup evidence, and shared Value-array callers gain reserve-before-pin/presence safety. Descriptor result materialization, JSON and descriptor-related own-key caller containers, unrelated direct ArrayData::new constructors, PropertyKey/Error strings, GC root enumeration, and mark worklists remain independent scopes.
+```
+
+## Fallible Proxy descriptor traversal state
+
+`own_property_descriptor_for_key_or_throw` evaluates a Proxy
+`getOwnPropertyDescriptor` chain iteratively. It now reserves its operation
+input before the first pin, each target/handler layer after revocation and the
+edge fuel debit, and a callable trap after `GetMethod` and callability
+validation. A trapped layer reserves pending-frame capacity only when the
+vector is full, then reserves every frame root before publishing the frame.
+Transparent forwarding therefore creates neither trap nor pending-frame
+state.
+
+Descriptor conversion reserves the returned descriptor object and each
+object-valued `value`, `get`, and `set` field at the point ownership begins.
+Getter and setter callability errors remain ahead of their root reservations.
+Target descriptor fields use a fixed three-value root set across observable
+`IsExtensible` work. On the `undefined` trap-result path, an absent target
+descriptor returns immediately, a hidden non-configurable descriptor throws
+immediately, and only a configurable target descriptor retains fields across
+extensibility observation. Reverse validation still processes outer trapped
+layers only after the terminal descriptor is known, and every abrupt
+completion unwinds operation-local roots and frames.
+
+```text
+[Decision Log]
+- 목적과 의도: Make every native collection and temporary GC root directly owned by iterative Proxy getOwnPropertyDescriptor traversal allocator-fallible without changing trap, descriptor conversion, invariant, or caller observation order.
+- 기존 구현 및 제약 조건: Operation, layer, trap, pending-frame, descriptor-conversion, and validation values were pinned or pushed through infallible Vec growth; nested frames validate in reverse; descriptor Get and IsExtensible can execute user code; and several primitive or terminal error paths need no retained root.
+- 검토한 주요 대안: Reserve a maximum root budget at entry, preallocate pending frames from Proxy depth, root every primitive field, reserve before callability or invariant checks, replace all descriptor materialization and callers in one patch, or impose a fixed Proxy-depth limit.
+- 선택한 방식: Reserve each root at its semantic ownership boundary, reserve pending storage only when full and before any frame root or publication, retain target descriptor fields in a fixed array across IsExtensible, skip trap/pending sites for transparent forwarding and field-root sites for primitives, and skip validation-descriptor roots for absent or immediately non-configurable targets on the undefined trap-result path.
+- 다른 대안 대신 이 방식을 선택한 이유: Entry reservation and primitive rooting introduce false failures; Proxy depth is not known before observable traversal; early reservation changes required error priority; a fixed depth rejects valid programs; and final descriptor objects and caller containers have separate allocation and Realm boundaries.
+- 장점, 단점 및 영향: All ten sites now have catchable Realm-correct failure, actual-growth, ordering, nested reverse-validation, GC, retry, and cleanup evidence while successful semantics and Test262 admission remain unchanged. Final FromPropertyDescriptor object construction, Object.getOwnPropertyDescriptors and defineProperties containers, Proxy defineProperty descriptor containers, shared strings, GC root enumeration, and mark worklists remain independent scopes.
 ```
 
 ---

@@ -10682,6 +10682,50 @@ beside the corrected artifacts.
 - 장점, 단점 및 영향: The corrected set has exact zero-delta and focused 244/0/68 evidence plus deterministic growth, Realm, GC, retry, and cleanup coverage. It intentionally consists of 29 original artifacts and one exact-corpus downloaded-binary rerun; descriptor traversal and other own-key callers remain separate work.
 ```
 
+## Fallible Proxy descriptor traversal state
+
+Commit `2918d70` changes no Test262 admission. Iterative Proxy
+`getOwnPropertyDescriptor` traversal now reserves operation, layer, trap,
+pending-frame, validation-descriptor, descriptor-object, and object-valued
+descriptor-field roots before publication. Reservations preserve revocation,
+fuel, callability, descriptor conversion, target invariant, reverse-frame, and
+caller priority. Transparent forwarding skips trap and pending-frame sites,
+primitive fields skip descriptor-field root sites, spare frame capacity skips
+frame-vector growth, and the `undefined` trap-result path's absent or
+immediately invalid non-configurable target descriptors skip validation roots.
+
+Rust regressions cover all ten exact sites, the real GC-pin path, actual first
+and second pending growth, nested reverse validation, foreign Realms, forced GC
+of a value created only by a descriptor getter, complete retry, balanced VM
+depth, and descriptor-before-Get behavior in Object keys, values, and entries.
+Local gates pass all targets/features with **237/237** library tests,
+**539/539** builtins tests, **15/15** arguments tests, and **31/31** module
+tests, plus **236/236** release library tests, **135/135** tooling tests,
+**1/1** doctest, rustfmt, warnings-denied Clippy, release build, generated
+documentation, and wasm32 checking. Rustdoc has only the 13 pre-existing
+broken-link warnings. Two GPT-5.6 final reviews are clean.
+
+CI `29980403698` and all 33 jobs in full run `29980403702` pass. The 30
+full-matrix result files at
+`/tmp/ruja-proxy-descriptor-29980403702-final` are byte-identical to the
+corrected `29977240759` baseline and aggregate to unchanged **31890 pass / 5115
+fail / 11459 skip / 3 timeout / 0 error / 48467 total / 37005 run**. The
+downloaded CI binary on pinned Test262
+`020cb74075849d1e404bbcdb62feb7a02e6966db` reproduces the 16-directory Proxy,
+Reflect, Object, and `for-in` cohort at **656 pass / 0 fail / 60 skip / 716
+total**; output is persisted as `focused-proxy-descriptor.txt` beside the
+artifacts.
+
+```text
+[Decision Log]
+- 목적과 의도: Prove the Proxy descriptor-traversal allocator correction without widening Test262 admission or hiding broad conformance drift behind aggregate totals.
+- 기존 구현 및 제약 조건: The affected corpus already passed, Test262 cannot inject native Vec or GC-pin reservation failure, descriptor traps participate in several public callers, and equal aggregate totals can hide offsetting shard changes.
+- 검토한 주요 대안: Admit unrelated tests, rely only on Rust failpoints, compare only aggregate totals, omit downloaded-binary reproduction, or combine final descriptor materialization and every descriptor caller into this unit.
+- 선택한 방식: Keep admission unchanged, cover every reservation and no-reservation boundary locally, run the pinned full matrix, compare all 30 result files byte-for-byte with the corrected preceding baseline, and reproduce the 16-directory caller cohort with the downloaded CI binary.
+- 다른 대안 대신 이 방식을 선택한 이유: Admission does not prove host allocation behavior, local failpoints do not detect broad build or runner drift, aggregate equality is weaker than file equality, and final descriptor publication has independent allocation, Realm, and ordering boundaries.
+- 장점, 단점 및 영향: The unit has exact zero-delta plus focused 656/0/60 evidence and deterministic ordering, growth, Realm, GC, retry, and cleanup coverage. Final descriptor-object materialization, Object descriptor caller containers, Proxy defineProperty descriptor containers, shared strings, GC root enumeration, and mark worklists remain separate work.
+```
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is
