@@ -2,7 +2,8 @@ use super::property::MAX_PROXY_CYCLE_REPLAYS;
 use super::{
     ExternalPromiseJob, ForInKeyReservationSite, GetPrototypeReservationSite, Microtask,
     OrdinaryOwnKeysReservationSite, OwnKeyConsumerReservationSite,
-    PropertyTraversalReservationSite, ProxyOwnKeysReservationSite, Vm,
+    PropertyTraversalReservationSite, ProxyDescriptorReservationSite, ProxyOwnKeysReservationSite,
+    Vm,
 };
 use crate::value::{
     FunctionData, FunctionKind, HeapObj, NativeConstructMode, PromiseStatus, PropertyKey,
@@ -14098,6 +14099,694 @@ fn proxy_set_invariant_walks_consume_nested_fuel() {
         .expect("exact callable Proxy set-trap fuel should complete"));
     assert_eq!(vm.fuel_remaining(), Some(0));
     assert_eq!(vm.gc_pins.len(), baseline);
+}
+
+#[test]
+fn proxy_descriptor_pending_failpoint_follows_actual_capacity() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    let mut pending = Vec::new();
+    pending
+        .try_reserve(4)
+        .expect("test descriptor frame vector should reserve spare capacity");
+    let capacity = pending.capacity();
+    assert!(capacity >= 4);
+    vm.fail_proxy_descriptor_reservation = Some((ProxyDescriptorReservationSite::PendingFrame, 0));
+    while pending.len() < capacity {
+        crate::builtins::reserve_proxy_descriptor_pending_frame(&mut vm, &mut pending)
+            .expect("spare descriptor-frame capacity must not consume the failure");
+        assert_eq!(
+            vm.fail_proxy_descriptor_reservation,
+            Some((ProxyDescriptorReservationSite::PendingFrame, 0))
+        );
+        pending.push((Value::Undefined, Value::Undefined));
+    }
+    let error = crate::builtins::reserve_proxy_descriptor_pending_frame(&mut vm, &mut pending)
+        .expect_err("a full descriptor-frame vector must reach its growth failure");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(pending.len(), capacity);
+    assert_eq!(vm.fail_proxy_descriptor_reservation, None);
+
+    let rooted = Value::Object(vm.new_object().expect("root fixture should allocate"));
+    for site in [
+        ProxyDescriptorReservationSite::OperationRoot,
+        ProxyDescriptorReservationSite::LayerRoots,
+        ProxyDescriptorReservationSite::TrapRoot,
+        ProxyDescriptorReservationSite::PendingRoots,
+        ProxyDescriptorReservationSite::ValidationDescriptorRoots,
+        ProxyDescriptorReservationSite::DescriptorObjectRoot,
+        ProxyDescriptorReservationSite::DescriptorValueRoot,
+        ProxyDescriptorReservationSite::DescriptorGetterRoot,
+        ProxyDescriptorReservationSite::DescriptorSetterRoot,
+    ] {
+        vm.fail_next_gc_pin_reservation = true;
+        let error = crate::builtins::reserve_proxy_descriptor_roots(
+            &mut vm,
+            std::slice::from_ref(&rooted),
+            site,
+        )
+        .expect_err("every descriptor root site must reach the real reservation path");
+        assert_eq!(error.kind, crate::error::ErrorKind::Range, "{site:?}");
+        assert!(!vm.fail_next_gc_pin_reservation, "{site:?}");
+    }
+}
+
+#[test]
+fn proxy_descriptor_traversal_state_is_fallible_ordered_and_realm_correct() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "failNextDescriptorRootReservation",
+        |vm, _, _| {
+            vm.fail_next_gc_pin_reservation = true;
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("descriptor root reservation hook should register");
+    vm.register_fn(
+        "forceDescriptorGc",
+        |vm, _, _| {
+            vm.clear_kept_objects();
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("descriptor GC hook should register");
+    vm.run(
+        r#"
+        var descriptorTrapCalls = 0;
+        var descriptorGetCalls = 0;
+        var descriptorValue = { marker: 73 };
+        var descriptorTarget = {};
+        Object.defineProperty(descriptorTarget, "x", {
+          value: descriptorValue,
+          writable: true,
+          enumerable: true,
+          configurable: true
+        });
+        var descriptorResult = {
+          value: descriptorValue,
+          writable: true,
+          enumerable: true,
+          configurable: true
+        };
+        var descriptorProxy = new Proxy(descriptorTarget, {
+          getOwnPropertyDescriptor: function () {
+            descriptorTrapCalls += 1;
+            return descriptorResult;
+          },
+          get: function (target, key, receiver) {
+            descriptorGetCalls += 1;
+            return Reflect.get(target, key, receiver);
+          }
+        });
+
+        var descriptorGetter = function () { return 1; };
+        var descriptorSetter = function (_) {};
+        var accessorTarget = {};
+        Object.defineProperty(accessorTarget, "x", {
+          get: descriptorGetter,
+          set: descriptorSetter,
+          enumerable: true,
+          configurable: true
+        });
+        var accessorResult = {
+          get: descriptorGetter,
+          set: descriptorSetter,
+          enumerable: true,
+          configurable: true
+        };
+        var accessorTrapCalls = 0;
+        var accessorProxy = new Proxy(accessorTarget, {
+          getOwnPropertyDescriptor: function () {
+            accessorTrapCalls += 1;
+            return accessorResult;
+          }
+        });
+
+        var primitiveResultProxy = new Proxy({}, {
+          getOwnPropertyDescriptor: function () {
+            return {
+              value: 1,
+              writable: true,
+              enumerable: true,
+              configurable: true
+            };
+          }
+        });
+        var transparentDescriptorProxy = new Proxy(descriptorTarget, {});
+        var realPendingRootProxy = new Proxy(descriptorTarget, {
+          getOwnPropertyDescriptor: function () {
+            failNextDescriptorRootReservation();
+            return descriptorResult;
+          }
+        });
+        var realFieldRootResult = {
+          writable: true,
+          enumerable: true,
+          configurable: true
+        };
+        Object.defineProperty(realFieldRootResult, "value", {
+          enumerable: true,
+          get: function () {
+            failNextDescriptorRootReservation();
+            return descriptorValue;
+          }
+        });
+        var realFieldRootProxy = new Proxy(descriptorTarget, {
+          getOwnPropertyDescriptor: function () { return realFieldRootResult; }
+        });
+        var revokedDescriptorRecord = Proxy.revocable(descriptorTarget, {});
+        var revokedDescriptorProxy = revokedDescriptorRecord.proxy;
+        revokedDescriptorRecord.revoke();
+        var nonCallableDescriptorTrapProxy = new Proxy(descriptorTarget, {
+          getOwnPropertyDescriptor: {}
+        });
+        var invalidGetterDescriptorProxy = new Proxy({}, {
+          getOwnPropertyDescriptor: function () {
+            return { get: {}, configurable: true };
+          }
+        });
+        var invalidSetterDescriptorProxy = new Proxy({}, {
+          getOwnPropertyDescriptor: function () {
+            return { set: {}, configurable: true };
+          }
+        });
+        var hiddenDescriptorTarget = {};
+        Object.defineProperty(hiddenDescriptorTarget, "x", {
+          value: { marker: "fixed" },
+          configurable: false
+        });
+        var hiddenDescriptorProxy = new Proxy(hiddenDescriptorTarget, {
+          getOwnPropertyDescriptor: function () { return undefined; }
+        });
+
+        var manyDescriptorTrapCalls = 0;
+        var manyDescriptorProxy = descriptorTarget;
+        var manyDescriptorHandler = {
+          getOwnPropertyDescriptor: function () {
+            manyDescriptorTrapCalls += 1;
+            return descriptorResult;
+          }
+        };
+        for (var descriptorLayer = 0; descriptorLayer < 32; descriptorLayer += 1) {
+          manyDescriptorProxy = new Proxy(manyDescriptorProxy, manyDescriptorHandler);
+        }
+
+        var descriptorOrder = [];
+        function makeLoggedDescriptor(label) {
+          var result = {
+            writable: true,
+            enumerable: true,
+            configurable: true
+          };
+          Object.defineProperty(result, "value", {
+            enumerable: true,
+            get: function () {
+              descriptorOrder.push(label + "-value");
+              return { label: label };
+            }
+          });
+          return result;
+        }
+        var reverseBase = {};
+        Object.defineProperty(reverseBase, "x", {
+          value: { label: "base" },
+          writable: true,
+          enumerable: true,
+          configurable: true
+        });
+        var reverseInner = new Proxy(reverseBase, {
+          getOwnPropertyDescriptor: function () {
+            descriptorOrder.push("inner-trap");
+            return makeLoggedDescriptor("inner");
+          },
+          isExtensible: function (target) {
+            descriptorOrder.push("inner-extensible");
+            return Reflect.isExtensible(target);
+          }
+        });
+        var reverseOuter = new Proxy(reverseInner, {
+          getOwnPropertyDescriptor: function () {
+            descriptorOrder.push("outer-trap");
+            return makeLoggedDescriptor("outer");
+          }
+        });
+
+        var hiddenConfigurableWeak;
+        var hiddenConfigurableAlive = false;
+        var hiddenConfigurableInner = new Proxy({}, {
+          getOwnPropertyDescriptor: function () {
+            var result = {
+              writable: true,
+              enumerable: true,
+              configurable: true
+            };
+            Object.defineProperty(result, "value", {
+              enumerable: true,
+              get: function () {
+                var fresh = { marker: "hidden-configurable" };
+                hiddenConfigurableWeak = new WeakRef(fresh);
+                return fresh;
+              }
+            });
+            return result;
+          },
+          isExtensible: function () {
+            forceDescriptorGc();
+            hiddenConfigurableAlive =
+              hiddenConfigurableWeak.deref() !== undefined;
+            return true;
+          }
+        });
+        var hiddenConfigurableOuter = new Proxy(hiddenConfigurableInner, {
+          getOwnPropertyDescriptor: function () { return undefined; }
+        });
+
+        var descriptorRealm = $262.createRealm().global;
+        function callForeignDescriptor(source) {
+          return descriptorRealm.Function(
+            "source",
+            "try { return Object.getOwnPropertyDescriptor(source, 'x'); } " +
+            "catch (error) { return error; }"
+          )(source);
+        }
+        "#,
+    )
+    .expect("Proxy descriptor reservation fixtures should initialize");
+
+    let baseline_pins = vm.gc_pins.len();
+    let baseline_contexts = vm.execution_contexts.len();
+    let baseline_native_depth = vm.active_native_call_depth;
+    let data_proxy = vm.get_global("descriptorProxy");
+    let accessor_proxy = vm.get_global("accessorProxy");
+    let data_key = PropertyKey::from("x");
+
+    let sites = [
+        ProxyDescriptorReservationSite::OperationRoot,
+        ProxyDescriptorReservationSite::LayerRoots,
+        ProxyDescriptorReservationSite::TrapRoot,
+        ProxyDescriptorReservationSite::PendingFrame,
+        ProxyDescriptorReservationSite::PendingRoots,
+        ProxyDescriptorReservationSite::ValidationDescriptorRoots,
+        ProxyDescriptorReservationSite::DescriptorObjectRoot,
+        ProxyDescriptorReservationSite::DescriptorValueRoot,
+        ProxyDescriptorReservationSite::DescriptorGetterRoot,
+        ProxyDescriptorReservationSite::DescriptorSetterRoot,
+    ];
+    for site in sites {
+        vm.run("descriptorTrapCalls = 0; accessorTrapCalls = 0")
+            .expect("descriptor counters should reset");
+        let source = if matches!(
+            site,
+            ProxyDescriptorReservationSite::DescriptorGetterRoot
+                | ProxyDescriptorReservationSite::DescriptorSetterRoot
+        ) {
+            &accessor_proxy
+        } else {
+            &data_proxy
+        };
+        vm.fail_proxy_descriptor_reservation = Some((site, 0));
+        let error =
+            crate::builtins::own_property_descriptor_for_key_or_throw(&mut vm, source, &data_key)
+                .err()
+                .expect("each descriptor reservation site must fail catchably");
+        assert_eq!(error.kind, crate::error::ErrorKind::Range, "{site:?}");
+        assert_eq!(vm.fail_proxy_descriptor_reservation, None, "{site:?}");
+        let trap_calls = if std::ptr::eq(source, &accessor_proxy) {
+            vm.get_global("accessorTrapCalls")
+        } else {
+            vm.get_global("descriptorTrapCalls")
+        };
+        assert_eq!(
+            trap_calls,
+            Value::Number(
+                if matches!(
+                    site,
+                    ProxyDescriptorReservationSite::OperationRoot
+                        | ProxyDescriptorReservationSite::LayerRoots
+                        | ProxyDescriptorReservationSite::TrapRoot
+                ) {
+                    0.0
+                } else {
+                    1.0
+                }
+            ),
+            "{site:?}"
+        );
+        assert_eq!(vm.gc_pins.len(), baseline_pins, "{site:?}");
+        assert_eq!(vm.execution_contexts.len(), baseline_contexts, "{site:?}");
+        assert_eq!(
+            vm.active_native_call_depth, baseline_native_depth,
+            "{site:?}"
+        );
+
+        let descriptor =
+            crate::builtins::own_property_descriptor_for_key_or_throw(&mut vm, source, &data_key)
+                .expect("descriptor traversal should retry from clean state")
+                .expect("the retry should produce a descriptor");
+        assert!(descriptor.enumerable, "{site:?}");
+        if matches!(
+            site,
+            ProxyDescriptorReservationSite::DescriptorGetterRoot
+                | ProxyDescriptorReservationSite::DescriptorSetterRoot
+        ) {
+            assert!(descriptor.is_accessor, "{site:?}");
+        } else {
+            assert_eq!(
+                descriptor.value,
+                vm.get_global("descriptorValue"),
+                "{site:?}"
+            );
+        }
+        assert_eq!(vm.gc_pins.len(), baseline_pins, "{site:?}");
+    }
+
+    vm.fail_next_gc_pin_reservation = true;
+    let error =
+        crate::builtins::own_property_descriptor_for_key_or_throw(&mut vm, &data_proxy, &data_key)
+            .err()
+            .expect("the production GC-pin reservation must remain catchable");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert!(!vm.fail_next_gc_pin_reservation);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    for source_name in ["realPendingRootProxy", "realFieldRootProxy"] {
+        let source = vm.get_global(source_name);
+        let error =
+            crate::builtins::own_property_descriptor_for_key_or_throw(&mut vm, &source, &data_key)
+                .err()
+                .expect("a nested production root reservation must fail catchably");
+        assert_eq!(error.kind, crate::error::ErrorKind::Range, "{source_name}");
+        assert!(!vm.fail_next_gc_pin_reservation, "{source_name}");
+        assert_eq!(vm.gc_pins.len(), baseline_pins, "{source_name}");
+    }
+
+    let primitive = Value::String(Arc::from("x"));
+    vm.fail_proxy_descriptor_reservation = Some((ProxyDescriptorReservationSite::OperationRoot, 0));
+    assert!(crate::builtins::own_property_descriptor_for_key_or_throw(
+        &mut vm,
+        &primitive,
+        &PropertyKey::from("0")
+    )
+    .expect("a primitive descriptor read needs no operation root")
+    .is_some());
+    assert_eq!(
+        vm.fail_proxy_descriptor_reservation,
+        Some((ProxyDescriptorReservationSite::OperationRoot, 0))
+    );
+    vm.fail_proxy_descriptor_reservation = None;
+
+    let transparent = vm.get_global("transparentDescriptorProxy");
+    for site in [
+        ProxyDescriptorReservationSite::TrapRoot,
+        ProxyDescriptorReservationSite::PendingFrame,
+        ProxyDescriptorReservationSite::PendingRoots,
+        ProxyDescriptorReservationSite::DescriptorObjectRoot,
+        ProxyDescriptorReservationSite::DescriptorValueRoot,
+        ProxyDescriptorReservationSite::DescriptorGetterRoot,
+        ProxyDescriptorReservationSite::DescriptorSetterRoot,
+    ] {
+        vm.fail_proxy_descriptor_reservation = Some((site, 0));
+        let descriptor = crate::builtins::own_property_descriptor_for_key_or_throw(
+            &mut vm,
+            &transparent,
+            &data_key,
+        )
+        .expect("transparent forwarding should skip trapped descriptor state")
+        .expect("the transparent target descriptor should exist");
+        assert!(descriptor.enumerable);
+        assert_eq!(
+            vm.fail_proxy_descriptor_reservation,
+            Some((site, 0)),
+            "{site:?}"
+        );
+    }
+    vm.fail_proxy_descriptor_reservation = None;
+
+    let primitive_result = vm.get_global("primitiveResultProxy");
+    for site in [
+        ProxyDescriptorReservationSite::DescriptorValueRoot,
+        ProxyDescriptorReservationSite::DescriptorGetterRoot,
+        ProxyDescriptorReservationSite::DescriptorSetterRoot,
+        ProxyDescriptorReservationSite::ValidationDescriptorRoots,
+    ] {
+        vm.fail_proxy_descriptor_reservation = Some((site, 0));
+        let descriptor = crate::builtins::own_property_descriptor_for_key_or_throw(
+            &mut vm,
+            &primitive_result,
+            &data_key,
+        )
+        .expect("primitive descriptor fields need no object roots")
+        .expect("the primitive descriptor should exist");
+        assert_eq!(descriptor.value, Value::Number(1.0));
+        assert_eq!(
+            vm.fail_proxy_descriptor_reservation,
+            Some((site, 0)),
+            "{site:?}"
+        );
+    }
+    vm.fail_proxy_descriptor_reservation = None;
+
+    for (site, source_name) in [
+        (
+            ProxyDescriptorReservationSite::TrapRoot,
+            "nonCallableDescriptorTrapProxy",
+        ),
+        (
+            ProxyDescriptorReservationSite::DescriptorGetterRoot,
+            "invalidGetterDescriptorProxy",
+        ),
+        (
+            ProxyDescriptorReservationSite::DescriptorSetterRoot,
+            "invalidSetterDescriptorProxy",
+        ),
+        (
+            ProxyDescriptorReservationSite::ValidationDescriptorRoots,
+            "hiddenDescriptorProxy",
+        ),
+    ] {
+        let source = vm.get_global(source_name);
+        vm.fail_proxy_descriptor_reservation = Some((site, 0));
+        let error =
+            crate::builtins::own_property_descriptor_for_key_or_throw(&mut vm, &source, &data_key)
+                .err()
+                .expect("required TypeError must precede an unnecessary reservation");
+        assert_eq!(error.kind, crate::error::ErrorKind::Type, "{site:?}");
+        assert_eq!(vm.fail_proxy_descriptor_reservation, Some((site, 0)));
+        assert_eq!(vm.gc_pins.len(), baseline_pins, "{site:?}");
+    }
+    vm.fail_proxy_descriptor_reservation = None;
+
+    vm.set_fuel(Some(0));
+    vm.fail_proxy_descriptor_reservation = Some((ProxyDescriptorReservationSite::OperationRoot, 0));
+    let error =
+        crate::builtins::own_property_descriptor_for_key_or_throw(&mut vm, &data_proxy, &data_key)
+            .err()
+            .expect("operation ownership must precede Proxy-edge fuel");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    for site in [
+        ProxyDescriptorReservationSite::LayerRoots,
+        ProxyDescriptorReservationSite::TrapRoot,
+        ProxyDescriptorReservationSite::PendingFrame,
+        ProxyDescriptorReservationSite::PendingRoots,
+        ProxyDescriptorReservationSite::ValidationDescriptorRoots,
+        ProxyDescriptorReservationSite::DescriptorObjectRoot,
+        ProxyDescriptorReservationSite::DescriptorValueRoot,
+    ] {
+        vm.fail_proxy_descriptor_reservation = Some((site, 0));
+        let error = crate::builtins::own_property_descriptor_for_key_or_throw(
+            &mut vm,
+            &data_proxy,
+            &data_key,
+        )
+        .err()
+        .expect("Proxy-edge fuel must precede later descriptor reservation");
+        assert_eq!(error.kind, crate::error::ErrorKind::Fuel, "{site:?}");
+        assert_eq!(
+            vm.fail_proxy_descriptor_reservation,
+            Some((site, 0)),
+            "{site:?}"
+        );
+    }
+    vm.set_fuel(None);
+    vm.fail_proxy_descriptor_reservation = None;
+
+    let revoked = vm.get_global("revokedDescriptorProxy");
+    vm.fail_proxy_descriptor_reservation = Some((ProxyDescriptorReservationSite::OperationRoot, 0));
+    let error =
+        crate::builtins::own_property_descriptor_for_key_or_throw(&mut vm, &revoked, &data_key)
+            .err()
+            .expect("operation ownership must precede revocation");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    vm.fail_proxy_descriptor_reservation = Some((ProxyDescriptorReservationSite::LayerRoots, 0));
+    let error =
+        crate::builtins::own_property_descriptor_for_key_or_throw(&mut vm, &revoked, &data_key)
+            .err()
+            .expect("revocation must precede layer-root reservation");
+    assert_eq!(error.kind, crate::error::ErrorKind::Type);
+    assert_eq!(
+        vm.fail_proxy_descriptor_reservation,
+        Some((ProxyDescriptorReservationSite::LayerRoots, 0))
+    );
+    vm.fail_proxy_descriptor_reservation = None;
+
+    let many = vm.get_global("manyDescriptorProxy");
+    vm.fail_proxy_descriptor_reservation = Some((ProxyDescriptorReservationSite::PendingFrame, 1));
+    let error =
+        crate::builtins::own_property_descriptor_for_key_or_throw(&mut vm, &many, &data_key)
+            .err()
+            .expect("the second actual pending-frame growth must fail");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert!(matches!(
+        vm.get_global("manyDescriptorTrapCalls"),
+        Value::Number(count) if count > 1.0
+    ));
+    assert_eq!(vm.fail_proxy_descriptor_reservation, None);
+    assert!(
+        crate::builtins::own_property_descriptor_for_key_or_throw(&mut vm, &many, &data_key)
+            .expect("deep trapped traversal should retry")
+            .is_some()
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    let reverse = vm.get_global("reverseOuter");
+    vm.run("descriptorOrder = []")
+        .expect("descriptor order should reset");
+    vm.fail_proxy_descriptor_reservation =
+        Some((ProxyDescriptorReservationSite::DescriptorValueRoot, 1));
+    let error =
+        crate::builtins::own_property_descriptor_for_key_or_throw(&mut vm, &reverse, &data_key)
+            .err()
+            .expect("the outer reverse descriptor conversion should fail second");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(
+        vm.run("descriptorOrder.join(',')")
+            .expect("descriptor order should be inspectable"),
+        Value::String(Arc::from(
+            "outer-trap,inner-trap,inner-value,inner-extensible,outer-value"
+        ))
+    );
+
+    let hidden_configurable = vm.get_global("hiddenConfigurableOuter");
+    assert!(crate::builtins::own_property_descriptor_for_key_or_throw(
+        &mut vm,
+        &hidden_configurable,
+        &data_key
+    )
+    .expect("a configurable inner descriptor may be hidden by an extensible outer target")
+    .is_none());
+    assert_eq!(
+        vm.get_global("hiddenConfigurableAlive"),
+        Value::Bool(true),
+        "the inner descriptor value must survive the outer IsExtensible trap"
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    vm.run("descriptorOrder = []")
+        .expect("descriptor order should reset for retry");
+    assert!(crate::builtins::own_property_descriptor_for_key_or_throw(
+        &mut vm, &reverse, &data_key
+    )
+    .expect("reverse descriptor traversal should retry")
+    .is_some());
+    assert_eq!(
+        vm.run("descriptorOrder.join(',')")
+            .expect("retry order should be inspectable"),
+        Value::String(Arc::from(
+            "outer-trap,inner-trap,inner-value,inner-extensible,outer-value"
+        ))
+    );
+
+    for (site, source_name) in [
+        (
+            ProxyDescriptorReservationSite::OperationRoot,
+            "descriptorProxy",
+        ),
+        (
+            ProxyDescriptorReservationSite::LayerRoots,
+            "descriptorProxy",
+        ),
+        (ProxyDescriptorReservationSite::TrapRoot, "descriptorProxy"),
+        (
+            ProxyDescriptorReservationSite::PendingFrame,
+            "descriptorProxy",
+        ),
+        (
+            ProxyDescriptorReservationSite::PendingRoots,
+            "descriptorProxy",
+        ),
+        (
+            ProxyDescriptorReservationSite::ValidationDescriptorRoots,
+            "descriptorProxy",
+        ),
+        (
+            ProxyDescriptorReservationSite::DescriptorObjectRoot,
+            "descriptorProxy",
+        ),
+        (
+            ProxyDescriptorReservationSite::DescriptorValueRoot,
+            "descriptorProxy",
+        ),
+        (
+            ProxyDescriptorReservationSite::DescriptorGetterRoot,
+            "accessorProxy",
+        ),
+        (
+            ProxyDescriptorReservationSite::DescriptorSetterRoot,
+            "accessorProxy",
+        ),
+    ] {
+        vm.fail_proxy_descriptor_reservation = Some((site, 0));
+        let result = vm
+            .run(&format!(
+                "var foreignDescriptorError = callForeignDescriptor({source_name}); \
+                 foreignDescriptorError instanceof descriptorRealm.RangeError && \
+                 !(foreignDescriptorError instanceof RangeError);"
+            ))
+            .expect("foreign descriptor reservation failure should be catchable");
+        assert_eq!(result, Value::Bool(true), "{site:?}");
+        assert_eq!(vm.fail_proxy_descriptor_reservation, None, "{site:?}");
+        assert_eq!(vm.gc_pins.len(), baseline_pins, "{site:?}");
+    }
+
+    for (expression, expected_gets) in [
+        ("Object.keys(descriptorProxy)", 0.0),
+        ("Object.values(descriptorProxy)", 0.0),
+        ("Object.entries(descriptorProxy)", 0.0),
+    ] {
+        vm.run("descriptorTrapCalls = 0; descriptorGetCalls = 0")
+            .expect("consumer counters should reset");
+        vm.fail_proxy_descriptor_reservation =
+            Some((ProxyDescriptorReservationSite::DescriptorValueRoot, 0));
+        let error = vm
+            .run(expression)
+            .expect_err("descriptor conversion failure must precede consumer Get");
+        assert_eq!(error.kind, crate::error::ErrorKind::Range, "{expression}");
+        assert_eq!(vm.get_global("descriptorTrapCalls"), Value::Number(1.0));
+        assert_eq!(
+            vm.get_global("descriptorGetCalls"),
+            Value::Number(expected_gets),
+            "{expression}"
+        );
+        assert_eq!(vm.fail_proxy_descriptor_reservation, None);
+        vm.run(expression)
+            .expect("public own-key consumer should retry after descriptor failure");
+        assert_eq!(
+            vm.get_global("descriptorGetCalls"),
+            Value::Number(if expression.starts_with("Object.keys") {
+                0.0
+            } else {
+                1.0
+            }),
+            "{expression}"
+        );
+        assert_eq!(vm.gc_pins.len(), baseline_pins, "{expression}");
+    }
+
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.execution_contexts.len(), baseline_contexts);
+    assert_eq!(vm.active_native_call_depth, baseline_native_depth);
 }
 
 #[test]

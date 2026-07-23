@@ -7421,6 +7421,61 @@ fn own_property_descriptor_for_key(
     }
 }
 
+#[cfg(test)]
+fn take_proxy_descriptor_reservation_failure(
+    vm: &mut Vm,
+    site: crate::vm::ProxyDescriptorReservationSite,
+) -> bool {
+    let Some((configured_site, remaining)) = vm.fail_proxy_descriptor_reservation else {
+        return false;
+    };
+    if configured_site != site {
+        return false;
+    }
+    if remaining != 0 {
+        vm.fail_proxy_descriptor_reservation = Some((configured_site, remaining - 1));
+        return false;
+    }
+    vm.fail_proxy_descriptor_reservation = None;
+    true
+}
+
+pub(crate) fn reserve_proxy_descriptor_roots(
+    vm: &mut Vm,
+    values: &[Value],
+    #[cfg(test)] site: crate::vm::ProxyDescriptorReservationSite,
+) -> error::Result<()> {
+    if !values.iter().any(|value| Vm::value_root_count(value) != 0) {
+        return Ok(());
+    }
+    #[cfg(test)]
+    if take_proxy_descriptor_reservation_failure(vm, site) {
+        return Err(Error::range("Proxy descriptor root set is too large"));
+    }
+    vm.try_reserve_value_roots(values)
+}
+
+pub(crate) fn reserve_proxy_descriptor_pending_frame(
+    vm: &mut Vm,
+    pending: &mut Vec<(Value, Value)>,
+) -> error::Result<()> {
+    if pending.len() < pending.capacity() {
+        return Ok(());
+    }
+    #[cfg(test)]
+    if take_proxy_descriptor_reservation_failure(
+        vm,
+        crate::vm::ProxyDescriptorReservationSite::PendingFrame,
+    ) {
+        return Err(Error::range(
+            "Proxy descriptor validation chain is too large",
+        ));
+    }
+    pending
+        .try_reserve(1)
+        .map_err(|_| Error::range("Proxy descriptor validation chain is too large"))
+}
+
 fn property_descriptor_from_object(vm: &mut Vm, desc: &Value) -> error::Result<PropertyDescriptor> {
     if !matches!(desc, Value::Object(_)) {
         return Err(Error::type_err(
@@ -7428,6 +7483,12 @@ fn property_descriptor_from_object(vm: &mut Vm, desc: &Value) -> error::Result<P
         ));
     }
 
+    reserve_proxy_descriptor_roots(
+        vm,
+        std::slice::from_ref(desc),
+        #[cfg(test)]
+        crate::vm::ProxyDescriptorReservationSite::DescriptorObjectRoot,
+    )?;
     let mut pin_count = vm.pin(desc);
     let result = (|| {
         let mut value = Value::Undefined;
@@ -7449,6 +7510,12 @@ fn property_descriptor_from_object(vm: &mut Vm, desc: &Value) -> error::Result<P
         }
         if vm.has_property_with_free_ordinary_edge(desc, "value")? {
             value = vm.get_property(desc, "value")?;
+            reserve_proxy_descriptor_roots(
+                vm,
+                std::slice::from_ref(&value),
+                #[cfg(test)]
+                crate::vm::ProxyDescriptorReservationSite::DescriptorValueRoot,
+            )?;
             pin_count += vm.pin(&value);
             has_value = true;
         }
@@ -7458,10 +7525,16 @@ fn property_descriptor_from_object(vm: &mut Vm, desc: &Value) -> error::Result<P
         }
         if vm.has_property_with_free_ordinary_edge(desc, "get")? {
             let getter = vm.get_property(desc, "get")?;
-            pin_count += vm.pin(&getter);
             if !getter.is_undefined() && !is_callable(&getter, &vm.heap) {
                 return Err(Error::type_err("Getter must be a function"));
             }
+            reserve_proxy_descriptor_roots(
+                vm,
+                std::slice::from_ref(&getter),
+                #[cfg(test)]
+                crate::vm::ProxyDescriptorReservationSite::DescriptorGetterRoot,
+            )?;
+            pin_count += vm.pin(&getter);
             get = if getter.is_undefined() {
                 None
             } else {
@@ -7471,10 +7544,16 @@ fn property_descriptor_from_object(vm: &mut Vm, desc: &Value) -> error::Result<P
         }
         if vm.has_property_with_free_ordinary_edge(desc, "set")? {
             let setter = vm.get_property(desc, "set")?;
-            pin_count += vm.pin(&setter);
             if !setter.is_undefined() && !is_callable(&setter, &vm.heap) {
                 return Err(Error::type_err("Setter must be a function"));
             }
+            reserve_proxy_descriptor_roots(
+                vm,
+                std::slice::from_ref(&setter),
+                #[cfg(test)]
+                crate::vm::ProxyDescriptorReservationSite::DescriptorSetterRoot,
+            )?;
+            pin_count += vm.pin(&setter);
             set = if setter.is_undefined() {
                 None
             } else {
@@ -7522,6 +7601,12 @@ pub(crate) fn own_property_descriptor_for_key_or_throw(
     obj: &Value,
     key: &PropertyKey,
 ) -> error::Result<Option<PropertyDescriptor>> {
+    reserve_proxy_descriptor_roots(
+        vm,
+        std::slice::from_ref(obj),
+        #[cfg(test)]
+        crate::vm::ProxyDescriptorReservationSite::OperationRoot,
+    )?;
     let root_pin = vm.pin(obj);
     let mut current = obj.clone();
     let mut pending = Vec::new();
@@ -7573,6 +7658,12 @@ pub(crate) fn own_property_descriptor_for_key_or_throw(
             };
             let (target, handler) = proxy_result?;
             vm.consume_fuel()?;
+            reserve_proxy_descriptor_roots(
+                vm,
+                &[target.clone(), handler.clone()],
+                #[cfg(test)]
+                crate::vm::ProxyDescriptorReservationSite::LayerRoots,
+            )?;
             let proxy_pins = vm.pin_many(&[target.clone(), handler.clone()]);
             let trap = match vm.get_proxy_method(&handler, "getOwnPropertyDescriptor") {
                 Ok(trap) => trap,
@@ -7586,7 +7677,22 @@ pub(crate) fn own_property_descriptor_for_key_or_throw(
                 current = target;
                 continue;
             }
+            if !is_callable(&trap, &vm.heap) {
+                vm.unpin_many(proxy_pins);
+                return Err(Error::type_err(
+                    "Proxy getOwnPropertyDescriptor trap is not callable",
+                ));
+            }
             let key_value = property_key_to_value(key);
+            if let Err(error) = reserve_proxy_descriptor_roots(
+                vm,
+                std::slice::from_ref(&trap),
+                #[cfg(test)]
+                crate::vm::ProxyDescriptorReservationSite::TrapRoot,
+            ) {
+                vm.unpin_many(proxy_pins);
+                return Err(error);
+            }
             let trap_pin = vm.pin(&trap);
             let trap_result = vm.call_function(&trap, &[target.clone(), key_value], Some(handler));
             vm.unpin(trap_pin);
@@ -7602,6 +7708,19 @@ pub(crate) fn own_property_descriptor_for_key_or_throw(
                 return Err(Error::type_err(
                     "Proxy getOwnPropertyDescriptor trap must return an object or undefined",
                 ));
+            }
+            if let Err(error) = reserve_proxy_descriptor_pending_frame(vm, &mut pending) {
+                vm.unpin_many(proxy_pins);
+                return Err(error);
+            }
+            if let Err(error) = reserve_proxy_descriptor_roots(
+                vm,
+                &[target.clone(), trap_result.clone()],
+                #[cfg(test)]
+                crate::vm::ProxyDescriptorReservationSite::PendingRoots,
+            ) {
+                vm.unpin_many(proxy_pins);
+                return Err(error);
             }
             vm.unpin_many(proxy_pins);
             pending_pin_count += vm.pin(&target);
@@ -7631,25 +7750,54 @@ fn validate_proxy_get_own_property_descriptor_result(
     result: &Value,
     target_desc: Option<PropertyDescriptor>,
 ) -> error::Result<Option<PropertyDescriptor>> {
-    let mut descriptor_roots = Vec::new();
-    if let Some(target_desc) = target_desc.as_ref() {
-        descriptor_roots.push(target_desc.value.clone());
-        descriptor_roots.extend(target_desc.get.iter().cloned());
-        descriptor_roots.extend(target_desc.set.iter().cloned());
+    if result.is_undefined() {
+        let Some(target_desc) = target_desc.as_ref() else {
+            return Ok(None);
+        };
+        if !target_desc.configurable {
+            return Err(Error::type_err(
+                "Proxy getOwnPropertyDescriptor trap cannot hide the target property",
+            ));
+        }
+        let descriptor_roots = [
+            target_desc.value.clone(),
+            target_desc.get.clone().unwrap_or(Value::Undefined),
+            target_desc.set.clone().unwrap_or(Value::Undefined),
+        ];
+        reserve_proxy_descriptor_roots(
+            vm,
+            &descriptor_roots,
+            #[cfg(test)]
+            crate::vm::ProxyDescriptorReservationSite::ValidationDescriptorRoots,
+        )?;
+        let descriptor_pins = vm.pin_many(&descriptor_roots);
+        let extensible = vm.is_extensible(target);
+        vm.unpin_many(descriptor_pins);
+        if !extensible? {
+            return Err(Error::type_err(
+                "Proxy getOwnPropertyDescriptor trap cannot hide the target property",
+            ));
+        }
+        return Ok(None);
     }
+    let descriptor_roots = target_desc.as_ref().map_or_else(
+        || [Value::Undefined, Value::Undefined, Value::Undefined],
+        |descriptor| {
+            [
+                descriptor.value.clone(),
+                descriptor.get.clone().unwrap_or(Value::Undefined),
+                descriptor.set.clone().unwrap_or(Value::Undefined),
+            ]
+        },
+    );
+    reserve_proxy_descriptor_roots(
+        vm,
+        &descriptor_roots,
+        #[cfg(test)]
+        crate::vm::ProxyDescriptorReservationSite::ValidationDescriptorRoots,
+    )?;
     let descriptor_pins = vm.pin_many(&descriptor_roots);
     let validation = (|| {
-        if result.is_undefined() {
-            let Some(target_desc) = target_desc.as_ref() else {
-                return Ok(None);
-            };
-            if !target_desc.configurable || !vm.is_extensible(target)? {
-                return Err(Error::type_err(
-                    "Proxy getOwnPropertyDescriptor trap cannot hide the target property",
-                ));
-            }
-            return Ok(None);
-        }
         let extensible_target = vm.is_extensible(target)?;
         let result_desc = property_descriptor_from_object(vm, result)?;
         if !vm.is_compatible_property_descriptor(
