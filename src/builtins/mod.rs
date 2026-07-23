@@ -6261,10 +6261,13 @@ fn try_reserve_proxy_own_keys_roots(
     vm.try_reserve_value_roots(values)
 }
 
-fn reserve_proxy_own_keys_trap_result_key(
+pub(crate) fn reserve_proxy_own_keys_trap_result_key(
     _vm: &mut Vm,
     keys: &mut Vec<PropertyKey>,
 ) -> error::Result<()> {
+    if keys.len() < keys.capacity() {
+        return Ok(());
+    }
     #[cfg(test)]
     if take_proxy_own_keys_reservation_failure(
         _vm,
@@ -6276,10 +6279,13 @@ fn reserve_proxy_own_keys_trap_result_key(
         .map_err(|_| Error::range("Proxy ownKeys trap result is too large"))
 }
 
-fn reserve_proxy_own_keys_seen_key(
+pub(crate) fn reserve_proxy_own_keys_seen_key(
     _vm: &mut Vm,
     seen: &mut IndexSet<PropertyKey>,
 ) -> error::Result<()> {
+    if seen.len() < seen.capacity() {
+        return Ok(());
+    }
     #[cfg(test)]
     if take_proxy_own_keys_reservation_failure(_vm, crate::vm::ProxyOwnKeysReservationSite::SeenKey)
     {

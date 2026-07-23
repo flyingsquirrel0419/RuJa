@@ -3,8 +3,11 @@ use super::{
     ExternalPromiseJob, ForInKeyReservationSite, GetPrototypeReservationSite, Microtask,
     PropertyTraversalReservationSite, ProxyOwnKeysReservationSite, Vm,
 };
-use crate::value::{FunctionData, FunctionKind, HeapObj, NativeConstructMode, PromiseStatus};
+use crate::value::{
+    FunctionData, FunctionKind, HeapObj, NativeConstructMode, PromiseStatus, PropertyKey,
+};
 use crate::Value;
+use indexmap::IndexSet;
 use std::fs;
 use std::sync::Arc;
 
@@ -10573,6 +10576,62 @@ fn for_in_key_collection_reservations_are_fallible_atomic_and_released() {
 }
 
 #[test]
+fn proxy_own_keys_entry_failpoints_follow_actual_capacity() {
+    let mut vm = Vm::new().expect("VM should initialize");
+
+    let mut trap_keys = Vec::new();
+    trap_keys
+        .try_reserve(2)
+        .expect("test trap-result vector should reserve spare capacity");
+    let trap_capacity = trap_keys.capacity();
+    assert!(trap_capacity >= 2);
+    vm.fail_proxy_own_keys_reservation = Some((ProxyOwnKeysReservationSite::TrapResultKey, 0));
+    while trap_keys.len() < trap_capacity {
+        crate::builtins::reserve_proxy_own_keys_trap_result_key(&mut vm, &mut trap_keys)
+            .expect("spare trap-result capacity must not consume the failure");
+        assert_eq!(
+            vm.fail_proxy_own_keys_reservation,
+            Some((ProxyOwnKeysReservationSite::TrapResultKey, 0))
+        );
+        let index = trap_keys.len();
+        trap_keys.push(PropertyKey::from_string(format!("trap-{index}")));
+    }
+    assert_eq!(
+        vm.fail_proxy_own_keys_reservation,
+        Some((ProxyOwnKeysReservationSite::TrapResultKey, 0))
+    );
+    let error = crate::builtins::reserve_proxy_own_keys_trap_result_key(&mut vm, &mut trap_keys)
+        .expect_err("a full trap-result vector must reach the next actual growth failure");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fail_proxy_own_keys_reservation, None);
+
+    let mut seen = IndexSet::new();
+    seen.try_reserve(2)
+        .expect("test seen set should reserve spare capacity");
+    let seen_capacity = seen.capacity();
+    assert!(seen_capacity >= 2);
+    vm.fail_proxy_own_keys_reservation = Some((ProxyOwnKeysReservationSite::SeenKey, 0));
+    while seen.len() < seen_capacity {
+        crate::builtins::reserve_proxy_own_keys_seen_key(&mut vm, &mut seen)
+            .expect("spare seen-set capacity must not consume the failure");
+        assert_eq!(
+            vm.fail_proxy_own_keys_reservation,
+            Some((ProxyOwnKeysReservationSite::SeenKey, 0))
+        );
+        let index = seen.len();
+        seen.insert(PropertyKey::from_string(format!("seen-{index}")));
+    }
+    assert_eq!(
+        vm.fail_proxy_own_keys_reservation,
+        Some((ProxyOwnKeysReservationSite::SeenKey, 0))
+    );
+    let error = crate::builtins::reserve_proxy_own_keys_seen_key(&mut vm, &mut seen)
+        .expect_err("a full seen set must reach the next actual growth failure");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fail_proxy_own_keys_reservation, None);
+}
+
+#[test]
 fn proxy_own_keys_entry_reservations_are_fallible_ordered_and_retryable() {
     let mut vm = Vm::new().expect("VM should initialize");
     vm.register_fn(
@@ -10615,16 +10674,16 @@ fn proxy_own_keys_entry_reservations_are_fallible_ordered_and_retryable() {
           ownKeys: function () {
             trapResultCalls += 1;
             if (trapResultCalls === 1) {
-              return {
-                get length() { trapResultReads.push("length:first"); return 3; },
-                get 0() { trapResultReads.push("0:first"); return "first"; },
-                get 1() {
-                  trapResultReads.push("1:first");
-                  failProxyOwnKeysTrapResultKey();
-                  return "second";
-                },
-                get 2() { trapResultReads.push("2:first"); return "unreached"; }
-              };
+              return new Proxy({ length: 32 }, {
+                get: function (target, key) {
+                  if (key === "length") {
+                    trapResultReads.push("length:first");
+                    return 32;
+                  }
+                  trapResultReads.push(key + ":first");
+                  return "first-" + key;
+                }
+              });
             }
             return {
               get length() { trapResultReads.push("length:retry"); return 1; },
@@ -10652,6 +10711,20 @@ fn proxy_own_keys_entry_reservations_are_fallible_ordered_and_retryable() {
               get 1() { seenReads.push("1:" + call); return "beta"; }
             };
           }
+        });
+
+        var spareTrapProxy = new Proxy({}, {
+          ownKeys: function () { return ["spare-trap-a", "spare-trap-b"]; }
+        });
+        var spareSeenProxy = new Proxy({}, {
+          ownKeys: function () { return ["spare-seen-a", "spare-seen-b"]; }
+        });
+        var growthSeenKeys = [];
+        for (var growthSeenIndex = 0; growthSeenIndex < 32; growthSeenIndex += 1) {
+          growthSeenKeys.push("growth-seen-" + growthSeenIndex);
+        }
+        var growthSeenProxy = new Proxy({}, {
+          ownKeys: function () { return growthSeenKeys; }
         });
 
         var emptyProxy = new Proxy({}, { ownKeys: function () { return []; } });
@@ -10757,9 +10830,10 @@ fn proxy_own_keys_entry_reservations_are_fallible_ordered_and_retryable() {
     assert_eq!(vm.get_global("foreignSeenRange"), Value::Bool(true));
 
     let trap_result_proxy = vm.get_global("trapResultProxy");
+    vm.fail_proxy_own_keys_reservation = Some((ProxyOwnKeysReservationSite::TrapResultKey, 1));
     let error =
         crate::builtins::own_property_keys_or_throw(&mut vm, &trap_result_proxy, false, true, true)
-            .expect_err("a partially collected trap-result key vector must fail fallibly");
+            .expect_err("the second actual trap-result vector growth must fail fallibly");
     assert_eq!(error.kind, crate::error::ErrorKind::Range);
     assert_eq!(vm.get_global("trapResultCalls"), Value::Number(1.0));
     assert_eq!(
@@ -10767,9 +10841,13 @@ fn proxy_own_keys_entry_reservations_are_fallible_ordered_and_retryable() {
         Value::Number(0.0)
     );
     assert_eq!(
-        vm.run("trapResultReads.join('|')")
-            .expect("trap-result reads should be inspectable"),
-        Value::String(Arc::from("length:first|0:first|1:first"))
+        vm.run(
+            "trapResultReads[0] === 'length:first' && \
+             trapResultReads[1] === '0:first' && \
+             trapResultReads.length > 3 && trapResultReads.length < 33",
+        )
+        .expect("trap-result partial reads should be inspectable"),
+        Value::Bool(true)
     );
     assert_eq!(vm.gc_pins.len(), baseline_pins);
     assert_eq!(vm.execution_contexts.len(), baseline_contexts);
@@ -10783,12 +10861,28 @@ fn proxy_own_keys_entry_reservations_are_fallible_ordered_and_retryable() {
         Value::Number(1.0)
     );
     assert_eq!(
-        vm.run("trapResultReads.join('|')")
+        vm.run("trapResultReads.slice(-2).join('|')")
             .expect("retry reads should be inspectable"),
-        Value::String(Arc::from(
-            "length:first|0:first|1:first|length:retry|0:retry"
-        ))
+        Value::String(Arc::from("length:retry|0:retry"))
     );
+
+    let spare_trap_proxy = vm.get_global("spareTrapProxy");
+    vm.fail_proxy_own_keys_reservation = Some((ProxyOwnKeysReservationSite::TrapResultKey, 1));
+    assert_eq!(
+        crate::builtins::own_property_keys_or_throw(&mut vm, &spare_trap_proxy, false, true, true,)
+            .expect("a second trap-result key should reuse spare vector capacity")
+            .len(),
+        2
+    );
+    assert_eq!(
+        vm.fail_proxy_own_keys_reservation,
+        Some((ProxyOwnKeysReservationSite::TrapResultKey, 0))
+    );
+    let unique_proxy = vm.get_global("uniqueProxy");
+    let error =
+        crate::builtins::own_property_keys_or_throw(&mut vm, &unique_proxy, false, true, true)
+            .expect_err("the preserved trap-result failpoint should reach the next actual growth");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
 
     let seen_proxy = vm.get_global("seenProxy");
     vm.fail_proxy_own_keys_reservation = Some((ProxyOwnKeysReservationSite::SeenKey, 0));
@@ -10814,6 +10908,31 @@ fn proxy_own_keys_entry_reservations_are_fallible_ordered_and_retryable() {
     );
     assert_eq!(vm.get_global("seenCalls"), Value::Number(2.0));
     assert_eq!(vm.get_global("seenInvariantCalls"), Value::Number(1.0));
+
+    let spare_seen_proxy = vm.get_global("spareSeenProxy");
+    vm.fail_proxy_own_keys_reservation = Some((ProxyOwnKeysReservationSite::SeenKey, 1));
+    assert_eq!(
+        crate::builtins::own_property_keys_or_throw(&mut vm, &spare_seen_proxy, false, true, true,)
+            .expect("a second unique key should reuse spare seen-set capacity")
+            .len(),
+        2
+    );
+    assert_eq!(
+        vm.fail_proxy_own_keys_reservation,
+        Some((ProxyOwnKeysReservationSite::SeenKey, 0))
+    );
+    let unique_proxy = vm.get_global("uniqueProxy");
+    let error =
+        crate::builtins::own_property_keys_or_throw(&mut vm, &unique_proxy, false, true, true)
+            .expect_err("the preserved seen failpoint should reach the next actual growth");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    let growth_seen_proxy = vm.get_global("growthSeenProxy");
+    vm.fail_proxy_own_keys_reservation = Some((ProxyOwnKeysReservationSite::SeenKey, 1));
+    let error =
+        crate::builtins::own_property_keys_or_throw(&mut vm, &growth_seen_proxy, false, true, true)
+            .expect_err("the second actual seen-set growth must fail fallibly");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fail_proxy_own_keys_reservation, None);
 
     let empty_proxy = vm.get_global("emptyProxy");
     vm.fail_proxy_own_keys_reservation = Some((ProxyOwnKeysReservationSite::TrapResultKey, 0));
