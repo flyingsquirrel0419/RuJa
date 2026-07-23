@@ -1,8 +1,8 @@
 use super::property::MAX_PROXY_CYCLE_REPLAYS;
 use super::{
     ExternalPromiseJob, ForInKeyReservationSite, GetPrototypeReservationSite, Microtask,
-    OrdinaryOwnKeysReservationSite, PropertyTraversalReservationSite, ProxyOwnKeysReservationSite,
-    Vm,
+    OrdinaryOwnKeysReservationSite, OwnKeyConsumerReservationSite,
+    PropertyTraversalReservationSite, ProxyOwnKeysReservationSite, Vm,
 };
 use crate::value::{
     FunctionData, FunctionKind, HeapObj, NativeConstructMode, PromiseStatus, PropertyKey,
@@ -13184,6 +13184,391 @@ fn proxy_own_keys_post_validation_collections_are_fallible_and_atomic() {
             .expect("for-in should retry after both collection layers"),
         (Value::String(Arc::from("key0")), false)
     );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.execution_contexts.len(), baseline_contexts);
+    assert_eq!(vm.active_native_call_depth, baseline_native_depth);
+}
+
+#[test]
+fn own_key_consumer_failpoints_follow_actual_capacity() {
+    let mut vm = Vm::new().expect("VM should initialize");
+
+    for (site, additional) in [
+        (OwnKeyConsumerReservationSite::Result, 1),
+        (OwnKeyConsumerReservationSite::EntryElements, 2),
+    ] {
+        let mut values = Vec::new();
+        values
+            .try_reserve(4)
+            .expect("test result vector should reserve spare capacity");
+        let capacity = values.capacity();
+        assert!(capacity >= additional);
+        vm.fail_own_key_consumer_reservation = Some((site, 0));
+        while values.capacity() - values.len() >= additional {
+            crate::builtins::reserve_own_key_consumer_values(
+                &mut vm,
+                &mut values,
+                additional,
+                site,
+            )
+            .expect("spare result capacity must not consume the failure");
+            assert_eq!(vm.fail_own_key_consumer_reservation, Some((site, 0)));
+            values.extend(std::iter::repeat_n(0usize, additional));
+        }
+        let old_len = values.len();
+        let old_capacity = values.capacity();
+        let error = crate::builtins::reserve_own_key_consumer_values(
+            &mut vm,
+            &mut values,
+            additional,
+            site,
+        )
+        .expect_err("the exact full boundary must reach the growth failure");
+        assert_eq!(error.kind, crate::error::ErrorKind::Range);
+        assert_eq!(values.len(), old_len);
+        assert_eq!(values.capacity(), old_capacity);
+        assert_eq!(vm.fail_own_key_consumer_reservation, None);
+    }
+}
+
+#[test]
+fn own_key_consumers_are_fallible_realm_correct_and_rooted() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "failNextConsumerRootReservation",
+        |vm, _, _| {
+            vm.fail_next_gc_pin_reservation = true;
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("root reservation hook should register");
+    vm.register_fn(
+        "makeEphemeralConsumerValue",
+        |vm, _, _| {
+            let value = Value::Object(vm.new_object()?);
+            vm.set_property(&value, "marker", Value::String(Arc::from("ephemeral")))?;
+            Ok(value)
+        },
+        0,
+    )
+    .expect("ephemeral consumer value hook should register");
+    vm.run(
+        r#"
+        var ownKeyConsumerGetterCalls = 0;
+        var ownKeyConsumerValue = { marker: "kept" };
+        var ownKeyConsumerTarget = {};
+        Object.defineProperty(ownKeyConsumerTarget, "visible", {
+          configurable: true,
+          enumerable: true,
+          get: function () {
+            ownKeyConsumerGetterCalls += 1;
+            return ownKeyConsumerValue;
+          }
+        });
+        Object.defineProperty(ownKeyConsumerTarget, "hidden", {
+          configurable: true,
+          enumerable: false,
+          value: 2
+        });
+        var ownKeyConsumerSymbol = Symbol("consumer");
+        ownKeyConsumerTarget[ownKeyConsumerSymbol] = 3;
+
+        var ownKeyConsumerEmpty = {};
+        Object.defineProperty(ownKeyConsumerEmpty, "hidden", {
+          enumerable: false,
+          value: 1
+        });
+
+        var ownKeyConsumerMany = {};
+        for (var ownKeyConsumerIndex = 0; ownKeyConsumerIndex < 32;
+             ownKeyConsumerIndex += 1) {
+          ownKeyConsumerMany["key" + ownKeyConsumerIndex] = ownKeyConsumerIndex;
+        }
+
+        var ownKeyConsumerEntryCalls = 0;
+        var ownKeyConsumerEntries = {};
+        Object.defineProperty(ownKeyConsumerEntries, "first", {
+          enumerable: true,
+          get: function () { ownKeyConsumerEntryCalls += 1; return {}; }
+        });
+        Object.defineProperty(ownKeyConsumerEntries, "second", {
+          enumerable: true,
+          get: function () { ownKeyConsumerEntryCalls += 1; return {}; }
+        });
+
+        var ownKeyConsumerInjectRoot = true;
+        var ownKeyConsumerRootTarget = {};
+        Object.defineProperty(ownKeyConsumerRootTarget, "rooted", {
+          enumerable: true,
+          get: function () {
+            if (ownKeyConsumerInjectRoot) failNextConsumerRootReservation();
+            return ownKeyConsumerValue;
+          }
+        });
+
+        var ownKeyConsumerEphemeralTarget = {};
+        Object.defineProperty(ownKeyConsumerEphemeralTarget, "ephemeral", {
+          enumerable: true,
+          get: makeEphemeralConsumerValue
+        });
+
+        var ownKeyConsumerRealm = $262.createRealm().global;
+        var ownKeyConsumerForeignArray =
+          ownKeyConsumerRealm.Reflect.ownKeys(ownKeyConsumerTarget);
+        var ownKeyConsumerForeignPrototype =
+          Object.getPrototypeOf(ownKeyConsumerForeignArray) ===
+            ownKeyConsumerRealm.Array.prototype &&
+          Object.getPrototypeOf(ownKeyConsumerForeignArray) !== Array.prototype;
+        "#,
+    )
+    .expect("own-key consumer fixtures should initialize");
+    assert_eq!(
+        vm.get_global("ownKeyConsumerForeignPrototype"),
+        Value::Bool(true),
+        "Reflect.ownKeys must create its result in the native callee Realm"
+    );
+
+    let baseline_pins = vm.gc_pins.len();
+    let baseline_contexts = vm.execution_contexts.len();
+    let baseline_native_depth = vm.active_native_call_depth;
+
+    for expression in [
+        "Object.keys(ownKeyConsumerTarget)",
+        "Object.getOwnPropertyNames(ownKeyConsumerTarget)",
+        "Object.getOwnPropertySymbols(ownKeyConsumerTarget)",
+        "Reflect.ownKeys(ownKeyConsumerTarget)",
+    ] {
+        vm.fail_own_key_consumer_reservation = Some((OwnKeyConsumerReservationSite::Result, 0));
+        let error = vm
+            .run(expression)
+            .expect_err("the first accepted consumer result must grow fallibly");
+        assert_eq!(error.kind, crate::error::ErrorKind::Range, "{expression}");
+        assert_eq!(vm.fail_own_key_consumer_reservation, None, "{expression}");
+        assert_eq!(vm.gc_pins.len(), baseline_pins, "{expression}");
+    }
+    assert_eq!(
+        vm.get_global("ownKeyConsumerGetterCalls"),
+        Value::Number(0.0)
+    );
+
+    vm.fail_own_key_consumer_reservation = Some((OwnKeyConsumerReservationSite::Result, 0));
+    let error = vm
+        .run("Object.values(ownKeyConsumerTarget)")
+        .expect_err("Object.values result growth should follow its successful Get");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(
+        vm.get_global("ownKeyConsumerGetterCalls"),
+        Value::Number(1.0)
+    );
+
+    vm.fail_own_key_consumer_reservation = Some((OwnKeyConsumerReservationSite::EntryElements, 0));
+    let error = vm
+        .run("Object.entries(ownKeyConsumerTarget)")
+        .expect_err("Object.entries pair growth should follow its successful Get");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(
+        vm.get_global("ownKeyConsumerGetterCalls"),
+        Value::Number(2.0)
+    );
+
+    vm.fail_own_key_consumer_reservation = Some((OwnKeyConsumerReservationSite::Result, 0));
+    let error = vm
+        .run("Object.entries(ownKeyConsumerTarget)")
+        .expect_err("Object.entries outer result growth should follow pair creation");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(
+        vm.get_global("ownKeyConsumerGetterCalls"),
+        Value::Number(3.0)
+    );
+
+    vm.fail_own_key_consumer_reservation = Some((OwnKeyConsumerReservationSite::Result, 0));
+    assert_eq!(
+        vm.run("Object.keys(ownKeyConsumerEmpty).length")
+            .expect("a fully filtered Object.keys result needs no growth"),
+        Value::Number(0.0)
+    );
+    assert_eq!(
+        vm.fail_own_key_consumer_reservation,
+        Some((OwnKeyConsumerReservationSite::Result, 0))
+    );
+    vm.fail_own_key_consumer_reservation = None;
+
+    for expression in [
+        "Object.keys(ownKeyConsumerTarget)",
+        "Object.values(ownKeyConsumerTarget)",
+        "Object.getOwnPropertyNames(ownKeyConsumerTarget)",
+        "Object.getOwnPropertySymbols(ownKeyConsumerTarget)",
+        "Reflect.ownKeys(ownKeyConsumerTarget)",
+    ] {
+        vm.fail_own_key_consumer_reservation =
+            Some((OwnKeyConsumerReservationSite::ArrayPresence, 0));
+        let error = vm
+            .run(expression)
+            .expect_err("a non-empty result Array presence bitmap must be fallible");
+        assert_eq!(error.kind, crate::error::ErrorKind::Range, "{expression}");
+        assert_eq!(vm.fail_own_key_consumer_reservation, None, "{expression}");
+        assert_eq!(vm.gc_pins.len(), baseline_pins, "{expression}");
+    }
+
+    vm.fail_own_key_consumer_reservation = Some((OwnKeyConsumerReservationSite::ArrayPresence, 0));
+    let error = vm
+        .run("Object.entries(ownKeyConsumerTarget)")
+        .expect_err("Object.entries inner pair presence must fail independently");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    vm.fail_own_key_consumer_reservation = Some((OwnKeyConsumerReservationSite::ArrayPresence, 1));
+    let error = vm
+        .run("Object.entries(ownKeyConsumerTarget)")
+        .expect_err("Object.entries outer result presence must fail after its pair");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fail_own_key_consumer_reservation, None);
+
+    vm.fail_own_key_consumer_reservation = Some((OwnKeyConsumerReservationSite::ArrayPresence, 0));
+    assert_eq!(
+        vm.run("Object.keys({}).length")
+            .expect("an empty result needs no presence bitmap allocation"),
+        Value::Number(0.0)
+    );
+    assert_eq!(
+        vm.fail_own_key_consumer_reservation,
+        Some((OwnKeyConsumerReservationSite::ArrayPresence, 0))
+    );
+    vm.fail_own_key_consumer_reservation = None;
+
+    vm.fail_own_key_consumer_reservation = Some((OwnKeyConsumerReservationSite::Result, 1));
+    let error = vm
+        .run("Reflect.ownKeys(ownKeyConsumerMany)")
+        .expect_err("the second actual result-vector growth must remain fallible");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fail_own_key_consumer_reservation, None);
+    assert_eq!(
+        vm.run("Reflect.ownKeys(ownKeyConsumerMany).length")
+            .expect("Reflect.ownKeys should retry after discarded native state"),
+        Value::Number(32.0)
+    );
+
+    vm.run("ownKeyConsumerEntryCalls = 0")
+        .expect("entry counter should reset");
+    vm.fail_own_key_consumer_reservation = Some((OwnKeyConsumerReservationSite::EntryElements, 1));
+    let error = vm
+        .run("Object.entries(ownKeyConsumerEntries)")
+        .expect_err("the second pair-element allocation must fail independently");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(
+        vm.get_global("ownKeyConsumerEntryCalls"),
+        Value::Number(2.0)
+    );
+    assert_eq!(
+        vm.run("Object.entries(ownKeyConsumerEntries).length")
+            .expect("Object.entries should retry after pair-state discard"),
+        Value::Number(2.0)
+    );
+
+    let object = vm.get_global("Object");
+    let names = vm
+        .get_property(&object, "getOwnPropertyNames")
+        .expect("Object.getOwnPropertyNames should exist");
+    let target = vm.get_global("ownKeyConsumerTarget");
+    vm.fail_own_key_consumer_reservation = Some((OwnKeyConsumerReservationSite::Result, 0));
+    vm.set_fuel(Some(0));
+    let error = vm
+        .call_function(&names, std::slice::from_ref(&target), None)
+        .expect_err("producer fuel must precede caller-result growth");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(
+        vm.fail_own_key_consumer_reservation,
+        Some((OwnKeyConsumerReservationSite::Result, 0))
+    );
+    vm.set_fuel(None);
+    vm.fail_own_key_consumer_reservation = None;
+
+    for expression in [
+        "Object.values(ownKeyConsumerRootTarget)",
+        "Object.entries(ownKeyConsumerRootTarget)",
+    ] {
+        vm.run("ownKeyConsumerInjectRoot = true")
+            .expect("root injection should reset");
+        let error = vm
+            .run(expression)
+            .expect_err("object-valued consumer state must reserve roots before pinning");
+        assert_eq!(error.kind, crate::error::ErrorKind::Range, "{expression}");
+        assert!(!vm.fail_next_gc_pin_reservation, "{expression}");
+        assert_eq!(vm.gc_pins.len(), baseline_pins, "{expression}");
+        vm.run("ownKeyConsumerInjectRoot = false")
+            .expect("root injection should disable");
+    }
+    assert_eq!(
+        vm.run("Object.values(ownKeyConsumerRootTarget)[0].marker")
+            .expect("root-safe Object.values retry should preserve the value"),
+        Value::String(Arc::from("kept"))
+    );
+    assert_eq!(
+        vm.run("Object.entries(ownKeyConsumerRootTarget)[0][1].marker")
+            .expect("root-safe Object.entries retry should preserve the value"),
+        Value::String(Arc::from("kept"))
+    );
+
+    let object = vm.get_global("Object");
+    for (method, nested_index) in [("values", false), ("entries", true)] {
+        let function = vm
+            .get_property(&object, method)
+            .expect("Object consumer method should exist");
+        let target = vm.get_global("ownKeyConsumerEphemeralTarget");
+        vm.try_reserve_value_roots(&[function.clone(), target.clone()])
+            .expect("consumer fixture roots should reserve");
+        let fixture_pins = vm.pin_many(&[function.clone(), target.clone()]);
+        vm.gc();
+        let baseline_live = vm.heap.live_count();
+        vm.run("(function () { for (var i = 0; i < 200; i += 1) ({ garbage: i }); })();")
+            .expect("collectible consumer retry garbage should initialize");
+        let limit = vm.heap.live_count();
+        assert!(
+            limit > baseline_live,
+            "fixture must leave collectible garbage"
+        );
+        vm.set_max_heap_objects(Some(limit));
+        let result = vm
+            .call_function(&function, std::slice::from_ref(&target), None)
+            .unwrap_or_else(|error| {
+                panic!("Object.{method} should retry allocations after exact-cap GC: {error:?}")
+            });
+        vm.set_max_heap_objects(None);
+        vm.unpin_many(fixture_pins);
+        let value = if nested_index {
+            let pair = vm
+                .get_property(&result, "0")
+                .expect("Object.entries should return its first pair");
+            vm.get_property(&pair, "1")
+                .expect("Object.entries pair should retain its getter value")
+        } else {
+            vm.get_property(&result, "0")
+                .expect("Object.values should retain its getter value")
+        };
+        assert_eq!(
+            vm.get_property(&value, "marker")
+                .expect("ephemeral getter value should survive collection"),
+            Value::String(Arc::from("ephemeral")),
+            "Object.{method}"
+        );
+        assert_eq!(vm.gc_pins.len(), baseline_pins, "Object.{method}");
+    }
+
+    vm.fail_own_key_consumer_reservation = Some((OwnKeyConsumerReservationSite::Result, 0));
+    assert_eq!(
+        vm.run(
+            r#"
+            var ownKeyConsumerForeignError = ownKeyConsumerRealm.Function(
+              "target",
+              "try { return Reflect.ownKeys(target); } catch (error) { return error; }"
+            )(ownKeyConsumerTarget);
+            ownKeyConsumerForeignError instanceof ownKeyConsumerRealm.RangeError &&
+              !(ownKeyConsumerForeignError instanceof RangeError);
+            "#,
+        )
+        .expect("foreign consumer failure should be catchable"),
+        Value::Bool(true)
+    );
+    assert_eq!(vm.fail_own_key_consumer_reservation, None);
     assert_eq!(vm.gc_pins.len(), baseline_pins);
     assert_eq!(vm.execution_contexts.len(), baseline_contexts);
     assert_eq!(vm.active_native_call_depth, baseline_native_depth);

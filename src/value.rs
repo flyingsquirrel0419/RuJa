@@ -642,6 +642,16 @@ impl ArrayData {
         Self::with_present(items, present, proto)
     }
 
+    pub(crate) fn try_new(
+        items: Vec<Value>,
+        proto: Option<Value>,
+    ) -> Result<Self, std::collections::TryReserveError> {
+        let mut present = Vec::new();
+        present.try_reserve_exact(items.len())?;
+        present.resize(items.len(), true);
+        Ok(Self::with_present(items, present, proto))
+    }
+
     pub fn new_holes(len: usize, proto: Option<Value>) -> Self {
         Self::with_present(vec![Value::Undefined; len], vec![false; len], proto)
     }

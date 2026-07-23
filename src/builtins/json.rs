@@ -1977,11 +1977,19 @@ pub(crate) fn reflect_own_keys(
     if !matches!(target, Value::Object(_)) {
         return Err(Error::type_err("Reflect.ownKeys target must be an object"));
     }
-    let keys = own_property_keys_or_throw(vm, &target, false, true, true)?
-        .iter()
-        .map(property_key_to_value)
-        .collect();
-    make_value_array(vm, keys)
+    let property_keys = own_property_keys_or_throw(vm, &target, false, true, true)?;
+    let mut keys = Vec::new();
+    for key in property_keys {
+        reserve_own_key_consumer_values(
+            vm,
+            &mut keys,
+            1,
+            #[cfg(test)]
+            crate::vm::OwnKeyConsumerReservationSite::Result,
+        )?;
+        keys.push(property_key_to_value(&key));
+    }
+    make_value_array_in_current_realm(vm, keys)
 }
 fn reflect_get_prototype_of(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     reflect_get_prototype_of_strict(vm, args)

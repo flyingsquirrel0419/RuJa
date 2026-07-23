@@ -5768,8 +5768,20 @@ pub(crate) fn make_value_array_in_env(
             })?;
     vm.try_reserve_gc_pins(required_roots)?;
     let pin_count = vm.pin_many(&items) + vm.pin(&prototype);
-    let arr = HeapObj::Array(ArrayData::new(items, Some(prototype)));
-    let result = vm.alloc(arr).map(Value::Object);
+    let result = (|| {
+        #[cfg(test)]
+        if !items.is_empty()
+            && take_own_key_consumer_reservation_failure(
+                vm,
+                crate::vm::OwnKeyConsumerReservationSite::ArrayPresence,
+            )
+        {
+            return Err(Error::range("Array presence bitmap is too large"));
+        }
+        let array = ArrayData::try_new(items, Some(prototype))
+            .map_err(|_| Error::range("Array presence bitmap is too large"))?;
+        vm.alloc(HeapObj::Array(array)).map(Value::Object)
+    })();
     vm.unpin_many(pin_count);
     result
 }
@@ -5782,9 +5794,49 @@ pub(crate) fn make_value_array_in_current_realm(
 }
 
 pub(crate) fn make_str_array(vm: &mut Vm, strs: Vec<Arc<str>>) -> error::Result<Value> {
-    let items: Vec<Value> = strs.into_iter().map(Value::String).collect();
-    let arr = HeapObj::Array(ArrayData::new(items, Some(vm.array_proto.clone())));
-    Ok(Value::Object(GcIdx(vm.heap.allocate(arr)?)))
+    let mut items = Vec::new();
+    items
+        .try_reserve(strs.len())
+        .map_err(|_| Error::range("String array result is too large"))?;
+    items.extend(strs.into_iter().map(Value::String));
+    make_value_array(vm, items)
+}
+
+#[cfg(test)]
+fn take_own_key_consumer_reservation_failure(
+    vm: &mut Vm,
+    site: crate::vm::OwnKeyConsumerReservationSite,
+) -> bool {
+    let Some((configured_site, remaining)) = vm.fail_own_key_consumer_reservation else {
+        return false;
+    };
+    if configured_site != site {
+        return false;
+    }
+    if remaining != 0 {
+        vm.fail_own_key_consumer_reservation = Some((configured_site, remaining - 1));
+        return false;
+    }
+    vm.fail_own_key_consumer_reservation = None;
+    true
+}
+
+pub(crate) fn reserve_own_key_consumer_values<T>(
+    vm: &mut Vm,
+    values: &mut Vec<T>,
+    additional: usize,
+    #[cfg(test)] site: crate::vm::OwnKeyConsumerReservationSite,
+) -> error::Result<()> {
+    if additional <= values.capacity() - values.len() {
+        return Ok(());
+    }
+    #[cfg(test)]
+    if take_own_key_consumer_reservation_failure(vm, site) {
+        return Err(Error::range("own-key consumer result is too large"));
+    }
+    values
+        .try_reserve(additional)
+        .map_err(|_| Error::range("own-key consumer result is too large"))
 }
 
 fn object_keys(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
@@ -5796,18 +5848,25 @@ fn object_keys(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Resu
     }
     let obj = vm.to_object(object)?;
     let keys = own_property_keys_or_throw(vm, &obj, false, true, false)?;
-    let mut strings = Vec::new();
+    let mut values = Vec::new();
     for key in keys {
         if own_property_descriptor_for_key_or_throw(vm, &obj, &key)?
             .is_some_and(|desc| desc.enumerable)
         {
             if let PropertyKey::Str(name) = key {
-                strings.push(name);
+                reserve_own_key_consumer_values(
+                    vm,
+                    &mut values,
+                    1,
+                    #[cfg(test)]
+                    crate::vm::OwnKeyConsumerReservationSite::Result,
+                )?;
+                values.push(Value::String(name));
             }
         }
     }
     let realm = vm.current_realm_global_env();
-    create_array_from_values_in_realm(vm, strings.into_iter().map(Value::String).collect(), realm)
+    create_array_from_values_in_realm(vm, values, realm)
 }
 
 fn object_values(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
@@ -5819,7 +5878,7 @@ fn object_values(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Re
     }
     let obj = vm.to_object(object)?;
     let keys = own_property_keys_or_throw(vm, &obj, false, true, false)?;
-    let mut vals = Vec::with_capacity(keys.len());
+    let mut vals = Vec::new();
     let mut value_pins = 0;
     let result = (|| {
         for key in &keys {
@@ -5832,6 +5891,14 @@ fn object_values(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Re
                 continue;
             }
             let value = vm.get_property(&obj, k)?;
+            reserve_own_key_consumer_values(
+                vm,
+                &mut vals,
+                1,
+                #[cfg(test)]
+                crate::vm::OwnKeyConsumerReservationSite::Result,
+            )?;
+            vm.try_reserve_value_roots(std::slice::from_ref(&value))?;
             value_pins += vm.pin(&value);
             vals.push(value);
         }
@@ -5861,15 +5928,29 @@ fn object_entries(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::R
             {
                 continue;
             }
-            let Some(name) = k.as_str() else {
+            let PropertyKey::Str(name) = k else {
                 continue;
             };
-            let value = vm.get_property(&obj, name)?;
-            let pair = create_array_from_values_in_realm(
+            let value = vm.get_property(&obj, name.as_ref())?;
+            let mut pair_values = Vec::new();
+            reserve_own_key_consumer_values(
                 vm,
-                vec![Value::String(Arc::from(name)), value],
-                realm,
+                &mut pair_values,
+                2,
+                #[cfg(test)]
+                crate::vm::OwnKeyConsumerReservationSite::EntryElements,
             )?;
+            pair_values.push(Value::String(name));
+            pair_values.push(value);
+            let pair = create_array_from_values_in_realm(vm, pair_values, realm)?;
+            reserve_own_key_consumer_values(
+                vm,
+                &mut pairs,
+                1,
+                #[cfg(test)]
+                crate::vm::OwnKeyConsumerReservationSite::Result,
+            )?;
+            vm.try_reserve_value_roots(std::slice::from_ref(&pair))?;
             pair_pins += vm.pin(&pair);
             pairs.push(pair);
         }
@@ -6135,15 +6216,23 @@ fn object_get_own_property_names(
         ));
     }
     let obj = vm.to_object(object)?;
-    let keys: Vec<Arc<str>> = own_property_keys_or_throw(vm, &obj, false, true, false)?
-        .into_iter()
-        .filter_map(|key| match key {
-            PropertyKey::Str(s) => Some(s),
-            PropertyKey::Symbol(_) => None,
-        })
-        .collect();
+    let keys = own_property_keys_or_throw(vm, &obj, false, true, false)?;
+    let mut values = Vec::new();
+    for key in keys {
+        let PropertyKey::Str(name) = key else {
+            continue;
+        };
+        reserve_own_key_consumer_values(
+            vm,
+            &mut values,
+            1,
+            #[cfg(test)]
+            crate::vm::OwnKeyConsumerReservationSite::Result,
+        )?;
+        values.push(Value::String(name));
+    }
     let realm = vm.current_realm_global_env();
-    create_array_from_values_in_realm(vm, keys.into_iter().map(Value::String).collect(), realm)
+    create_array_from_values_in_realm(vm, values, realm)
 }
 
 fn object_get_own_property_symbols(
@@ -6158,13 +6247,21 @@ fn object_get_own_property_symbols(
         ));
     }
     let obj = vm.to_object(object)?;
-    let symbols: Vec<Value> = own_property_keys_or_throw(vm, &obj, false, false, true)?
-        .into_iter()
-        .filter_map(|key| match key {
-            PropertyKey::Symbol(id) => Some(Value::Symbol(id)),
-            PropertyKey::Str(_) => None,
-        })
-        .collect();
+    let keys = own_property_keys_or_throw(vm, &obj, false, false, true)?;
+    let mut symbols = Vec::new();
+    for key in keys {
+        let PropertyKey::Symbol(id) = key else {
+            continue;
+        };
+        reserve_own_key_consumer_values(
+            vm,
+            &mut symbols,
+            1,
+            #[cfg(test)]
+            crate::vm::OwnKeyConsumerReservationSite::Result,
+        )?;
+        symbols.push(Value::Symbol(id));
+    }
     let realm = vm.current_realm_global_env();
     create_array_from_values_in_realm(vm, symbols, realm)
 }
@@ -8813,20 +8910,7 @@ fn create_array_from_values_in_realm(
     values: Vec<Value>,
     realm: GcIdx,
 ) -> error::Result<Value> {
-    let prototype = vm
-        .realm_array_prototypes
-        .get(&realm.0)
-        .cloned()
-        .ok_or_else(|| Error::internal("missing Array prototype intrinsic"))?;
-    let mut roots = Vec::with_capacity(values.len() + 1);
-    roots.extend(values.iter().cloned());
-    roots.push(prototype.clone());
-    let pin_count = vm.pin_many(&roots);
-    let result = vm
-        .alloc(HeapObj::Array(ArrayData::new(values, Some(prototype))))
-        .map(Value::Object);
-    vm.unpin_many(pin_count);
-    result
+    make_value_array_in_env(vm, values, realm)
 }
 
 fn create_keyed_object_from_values(
