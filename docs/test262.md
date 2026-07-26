@@ -11085,8 +11085,15 @@ keys/values/entries/own-name/own-Symbol consumers, Reflect and Proxy ownKeys,
 JSON stringify, TypedArray ownKeys, and language property accessors report
 **263 pass / 0 fail / 31 skip / 0 timeout / 0 error / 294 total / 263 run**.
 Current and preceding release binaries produce byte-identical output. CI and
-full-matrix artifact evidence is recorded after the implementation commit is
-pushed.
+full-matrix artifact evidence confirms the same result: implementation commit
+`98d97b9` passes CI `30207697825` and all 33 jobs in full run `30207697847`.
+The original Annex B artifact moves one pass to a runner-contention timeout;
+rerunning that directory with the downloaded CI binary restores
+**201/811/74/0/0**. Corrected artifacts at
+`/tmp/ruja-property-key-30207697847-final` aggregate to unchanged **31890 pass
+/ 5115 fail / 11459 skip / 3 timeout / 0 error / 48467 total / 37005 run**.
+All 30 corrected result files are byte-identical to the preceding clean full
+run.
 
 ```text
 [Decision Log]
@@ -11095,7 +11102,7 @@ pushed.
 - 검토한 주요 대안: Rely only on Test262 totals, test only Array access, keep the 24-byte decimal representation, omit direct HashMap lookup, or report noisy wall-time samples as proof.
 - 선택한 방식: Pair focused JavaScript boundary tests with Rust representation/hash tests, warnings-denied static gates, isolated map benchmarks, and unchanged Test262 admission.
 - 다른 대안 대신 이 방식을 선택한 이유: Corpus tests cannot see ownership/layout; Array-only checks miss ordinary objects and Proxy/JSON consumers; a larger key regresses every map; equality without hash lookup is incomplete; and the shared host cannot produce trustworthy wall-time A/B evidence under current load.
-- 장점, 단점 및 영향: Numeric boundaries, ordering, materialization, Symbol filtering, compact layout, and cross-representation lookup have deterministic coverage. Full corpus evidence remains a post-push gate, and native numeric read-loop formatting is tracked separately rather than hidden in this unit.
+- 장점, 단점 및 영향: Numeric boundaries, ordering, materialization, Symbol filtering, compact layout, and cross-representation lookup have deterministic coverage. CI and all 30 corrected full-corpus artifacts show zero semantic drift; native numeric read-loop formatting remains tracked separately rather than hidden in this unit.
 ```
 
 ## Why the full-suite rate is not higher
