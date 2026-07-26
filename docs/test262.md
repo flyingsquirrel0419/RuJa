@@ -11317,6 +11317,18 @@ does not change the supported subset, which excludes staging. Runtime behavior
 is already covered by the direct fixed and length-tracking RAB/GSAB regression
 from the Object integrity unit.
 
+Commit `6f6f8db` passes ordinary CI `30223746065` and all **35/35** jobs in
+full run `30223746062`. The two new artifacts are independently **1/0/0/0/0**.
+Of the 30 preceding shards from full run `30221601417`, 29 are byte-identical;
+only Annex B differs because two preceding contention timeouts become one pass
+and one timeout. Rerunning Annex B with the downloaded current binary restores
+**201/811/74/0/0** and is byte-identical, with SHA-256
+`410da6b0d17c7cdd50df356717c298529ca9bcb63be12c77143ec2a1b966153a`,
+to clean artifact run `30219956582`. The corrected aggregate is **31901 pass /
+5110 fail / 11455 skip / 3 timeout / 0 error / 48469 total / 37011
+pass-or-fail run**. Downloaded artifacts, the binary, rerun log, and temporary
+pinned worktree were deleted after comparison.
+
 ```text
 [Decision Log]
 - 목적과 의도: Count two already-correct variable-length TypedArray preventExtensions staging tests while keeping all unrelated staging behavior gated.
@@ -11324,7 +11336,7 @@ from the Object integrity unit.
 - 검토한 주요 대안: Leave correct tests skipped, remove the three feature gates globally, include all staging, pass file paths to the runner, create a separate runner mode, or admit exact paths and add their singleton parent directories.
 - 선택한 방식: Add only the two audited paths and exact metadata to the shared extensibility manifest, verify recursive live-directory equality and the adjacent seal exclusion, and append the two parent directories explicitly to the full matrix.
 - 다른 대안 대신 이 방식을 선택한 이유: Global or staging-wide admission would overstate support; file arguments execute nothing because the runner recursively scans directories; a new runner mode adds unnecessary policy surface; exact paths plus recursive equality match current runner behavior and fail closed when upstream adds siblings.
-- 장점, 단점 및 영향: Focused coverage gains exactly two passes and full CI gains two independent result shards without runtime or supported-subset movement. The policy depends on pinned staging layout and intentionally fails preflight if upstream changes either directory.
+- 장점, 단점 및 영향: Focused coverage gains exactly two passes and full CI gains two independent result shards without runtime or supported-subset movement. The policy depends on pinned staging layout and intentionally fails preflight if upstream changes either directory; post-push artifacts prove exactly +2 pass/+2 total/+2 run after correcting Annex B contention.
 ```
 
 ## Why the full-suite rate is not higher

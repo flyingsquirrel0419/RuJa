@@ -17,7 +17,14 @@
   metadata and executes the two singleton staging directories as independent
   matrix shards. This is an admission-only change: the runtime behavior and
   direct fixed/length-tracking RAB/GSAB regressions shipped in the earlier
-  Object integrity unit.
+  Object integrity unit. Commit `6f6f8db` passes CI `30223746065` and all
+  **35/35** jobs in full run `30223746062`. Both new shards are **1/1**; 29 of
+  the 30 preceding shards are byte-identical to full run `30221601417`.
+  Current Annex B has one contention timeout, and a downloaded-binary rerun is
+  byte-identical to clean run `30219956582` at **201/811/74/0/0**. Corrected
+  full results are **31901 pass / 5110 fail / 11455 skip / 3 timeout / 0 error /
+  48469 total / 37011 pass-or-fail run**. Downloaded artifacts, the binary,
+  rerun log, and pinned worktree were deleted after comparison.
 
 - Embedded empty RegExp classes now lower at the class-scanner boundary instead
   of reaching the Rust backends as unsupported `[]` or `[^]` syntax. Positive
