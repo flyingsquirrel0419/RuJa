@@ -2,13 +2,13 @@ use super::property::MAX_PROXY_CYCLE_REPLAYS;
 use super::{
     DescriptorMaterializationReservationSite, ExternalPromiseJob, ForInKeyReservationSite,
     GetPrototypeReservationSite, Microtask, OrdinaryOwnKeysReservationSite,
-    OwnKeyConsumerReservationSite, PropertyTraversalReservationSite,
-    ProxyDefinePropertyReservationSite, ProxyDescriptorReservationSite,
-    ProxyOwnKeysReservationSite, Vm,
+    OrdinaryPropertyStorageReservationSite, OwnKeyConsumerReservationSite,
+    PropertyTraversalReservationSite, ProxyDefinePropertyReservationSite,
+    ProxyDescriptorReservationSite, ProxyOwnKeysReservationSite, Vm,
 };
 use crate::value::{
-    FunctionData, FunctionKind, HeapObj, NativeConstructMode, PromiseStatus, PropertyDescriptor,
-    PropertyKey,
+    ArrayData, FunctionData, FunctionKind, HeapObj, NativeConstructMode, PromiseStatus,
+    PropertyDescriptor, PropertyKey,
 };
 use crate::Value;
 use indexmap::{IndexMap, IndexSet};
@@ -19,6 +19,51 @@ fn cap_heap_at_current_live_count(vm: &mut Vm) -> crate::error::Result<Value> {
     vm.gc();
     vm.set_max_heap_objects(Some(vm.heap.live_count()));
     Ok(Value::Undefined)
+}
+
+fn fill_property_storage_to_spare(vm: &Vm, object: &Value, prefix: &str, spare: usize) {
+    let Value::Object(index) = object else {
+        panic!("property-storage fixture must be an object");
+    };
+    vm.heap.with_obj(index.0, |object| {
+        let properties = object.props();
+        let mut properties = properties.lock();
+        if properties.capacity().saturating_sub(properties.len()) <= spare {
+            properties
+                .try_reserve(spare + 1)
+                .expect("test property storage should reserve");
+        }
+        let target_len = properties.capacity() - spare;
+        let mut serial = 0usize;
+        while properties.len() < target_len {
+            let key = PropertyKey::from(format!("{prefix}{serial}").as_str());
+            properties
+                .entry(key)
+                .or_insert_with(|| PropertyDescriptor::data(Value::Undefined));
+            serial += 1;
+        }
+    });
+}
+
+fn array_storage_snapshot(
+    vm: &Vm,
+    array: &Value,
+    key: &PropertyKey,
+) -> (Vec<Value>, Vec<bool>, bool, Option<usize>) {
+    let Value::Object(index) = array else {
+        panic!("array-storage fixture must be an object");
+    };
+    vm.heap.with_obj(index.0, |object| {
+        let HeapObj::Array(array) = object else {
+            panic!("array-storage fixture must use ArrayData");
+        };
+        (
+            array.items.lock().clone(),
+            array.present.lock().clone(),
+            array.props.lock().contains_key(key),
+            *array.sparse_max.lock(),
+        )
+    })
 }
 
 fn call_iterator_next_result(vm: &mut Vm, iterator: &Value) -> crate::error::Result<Value> {
@@ -18192,4 +18237,809 @@ fn bound_function_metadata_allocation_obeys_the_exact_heap_cap() {
     assert_eq!(vm.gc_pins.len(), baseline_pins);
 
     vm.unpin_many(retained_pins);
+}
+
+#[test]
+fn ordinary_property_storage_failpoints_follow_actual_capacity() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.run("var ordinaryStorageTarget = {}")
+        .expect("ordinary storage target should initialize");
+    let target = vm.get_global("ordinaryStorageTarget");
+    fill_property_storage_to_spare(&vm, &target, "mapPadding", 1);
+    vm.fail_ordinary_property_storage_reservation =
+        Some((OrdinaryPropertyStorageReservationSite::PropertyStorage, 0));
+    let Value::Object(target_index) = target else {
+        unreachable!();
+    };
+    vm.publish_ordinary_property_storage(
+        target_index,
+        &PropertyKey::from("spare"),
+        PropertyDescriptor::data(Value::Number(1.0)),
+        true,
+        true,
+    )
+    .expect("spare map capacity should not reserve");
+    assert_eq!(
+        vm.fail_ordinary_property_storage_reservation,
+        Some((OrdinaryPropertyStorageReservationSite::PropertyStorage, 0))
+    );
+    let error = vm
+        .publish_ordinary_property_storage(
+            target_index,
+            &PropertyKey::from("growth"),
+            PropertyDescriptor::data(Value::Number(2.0)),
+            true,
+            true,
+        )
+        .expect_err("the first actual map growth should fail");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fail_ordinary_property_storage_reservation, None);
+    assert!(!vm.has_own(&Value::Object(target_index), "growth"));
+    vm.publish_ordinary_property_storage(
+        target_index,
+        &PropertyKey::from("growth"),
+        PropertyDescriptor::data(Value::Number(2.0)),
+        true,
+        true,
+    )
+    .expect("map growth should retry");
+
+    let replacement = vm
+        .new_object()
+        .map(Value::Object)
+        .expect("replacement fixture should allocate");
+    let Value::Object(replacement_index) = replacement else {
+        unreachable!();
+    };
+    let replacement_key = PropertyKey::from("existing");
+    vm.heap.with_obj(replacement_index.0, |object| {
+        object.props().lock().insert(
+            replacement_key.clone(),
+            PropertyDescriptor::data(Value::Number(1.0)),
+        );
+    });
+    fill_property_storage_to_spare(&vm, &replacement, "replacementPadding", 0);
+    vm.fail_ordinary_property_storage_reservation =
+        Some((OrdinaryPropertyStorageReservationSite::PropertyStorage, 0));
+    vm.publish_ordinary_property_storage(
+        replacement_index,
+        &replacement_key,
+        PropertyDescriptor::data(Value::Number(2.0)),
+        true,
+        true,
+    )
+    .expect("replacing a full-map entry should not reserve");
+    assert_eq!(
+        vm.fail_ordinary_property_storage_reservation,
+        Some((OrdinaryPropertyStorageReservationSite::PropertyStorage, 0))
+    );
+    assert_eq!(
+        vm.get_property(&replacement, "existing")
+            .expect("replacement should publish"),
+        Value::Number(2.0)
+    );
+
+    let migration_index = vm
+        .alloc(HeapObj::Array(ArrayData::new(
+            Vec::new(),
+            Some(vm.object_proto.clone()),
+        )))
+        .expect("dense migration fixture should allocate");
+    let migration = Value::Object(migration_index);
+    let migration_key = PropertyKey::from("0");
+    vm.heap.with_obj(migration_index.0, |object| {
+        let mut custom = PropertyDescriptor::data(Value::Number(3.0));
+        custom.writable = false;
+        object.props().lock().insert(migration_key.clone(), custom);
+    });
+    fill_property_storage_to_spare(&vm, &migration, "migrationPadding", 0);
+    vm.publish_ordinary_property_storage(
+        migration_index,
+        &migration_key,
+        PropertyDescriptor::data(Value::Number(4.0)),
+        true,
+        true,
+    )
+    .expect("dense migration should not reserve property storage");
+    assert_eq!(
+        vm.fail_ordinary_property_storage_reservation,
+        Some((OrdinaryPropertyStorageReservationSite::PropertyStorage, 0))
+    );
+    assert_eq!(
+        array_storage_snapshot(&vm, &migration, &migration_key),
+        (vec![Value::Number(4.0)], vec![true], false, None)
+    );
+    vm.fail_ordinary_property_storage_reservation = None;
+
+    let items_index = vm
+        .alloc(HeapObj::Array(ArrayData::new(
+            Vec::new(),
+            Some(vm.object_proto.clone()),
+        )))
+        .expect("items fixture should allocate");
+    let item_capacity = vm.heap.with_obj(items_index.0, |object| {
+        let HeapObj::Array(array) = object else {
+            unreachable!();
+        };
+        array
+            .items
+            .lock()
+            .try_reserve_exact(1)
+            .expect("items should reserve test capacity");
+        let capacity = array.items.lock().capacity();
+        array
+            .present
+            .lock()
+            .try_reserve_exact(capacity + 1)
+            .expect("presence should cover the items growth boundary");
+        capacity
+    });
+    assert!(item_capacity > 0);
+    let items_value = Value::Object(items_index);
+    vm.fail_ordinary_property_storage_reservation =
+        Some((OrdinaryPropertyStorageReservationSite::ArrayItems, 0));
+    vm.publish_ordinary_property_storage(
+        items_index,
+        &PropertyKey::from((item_capacity - 1).to_string().as_str()),
+        PropertyDescriptor::data(Value::Number(3.0)),
+        true,
+        true,
+    )
+    .expect("spare item capacity should not reserve");
+    assert_eq!(
+        vm.fail_ordinary_property_storage_reservation,
+        Some((OrdinaryPropertyStorageReservationSite::ArrayItems, 0))
+    );
+    let before_items_failure = array_storage_snapshot(
+        &vm,
+        &items_value,
+        &PropertyKey::from(item_capacity.to_string().as_str()),
+    );
+    let error = vm
+        .publish_ordinary_property_storage(
+            items_index,
+            &PropertyKey::from(item_capacity.to_string().as_str()),
+            PropertyDescriptor::data(Value::Number(4.0)),
+            true,
+            true,
+        )
+        .expect_err("the first actual item growth should fail");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(
+        array_storage_snapshot(
+            &vm,
+            &items_value,
+            &PropertyKey::from(item_capacity.to_string().as_str())
+        ),
+        before_items_failure
+    );
+    vm.publish_ordinary_property_storage(
+        items_index,
+        &PropertyKey::from(item_capacity.to_string().as_str()),
+        PropertyDescriptor::data(Value::Number(4.0)),
+        true,
+        true,
+    )
+    .expect("item growth should retry");
+
+    let presence_index = vm
+        .alloc(HeapObj::Array(ArrayData::new(
+            Vec::new(),
+            Some(vm.object_proto.clone()),
+        )))
+        .expect("presence fixture should allocate");
+    let presence_capacity = vm.heap.with_obj(presence_index.0, |object| {
+        let HeapObj::Array(array) = object else {
+            unreachable!();
+        };
+        array
+            .present
+            .lock()
+            .try_reserve_exact(1)
+            .expect("presence should reserve test capacity");
+        let capacity = array.present.lock().capacity();
+        array
+            .items
+            .lock()
+            .try_reserve_exact(capacity + 1)
+            .expect("items should cover the presence growth boundary");
+        capacity
+    });
+    assert!(presence_capacity > 0);
+    let presence_value = Value::Object(presence_index);
+    vm.fail_ordinary_property_storage_reservation =
+        Some((OrdinaryPropertyStorageReservationSite::ArrayPresence, 0));
+    vm.publish_ordinary_property_storage(
+        presence_index,
+        &PropertyKey::from((presence_capacity - 1).to_string().as_str()),
+        PropertyDescriptor::data(Value::Number(5.0)),
+        true,
+        true,
+    )
+    .expect("spare presence capacity should not reserve");
+    assert_eq!(
+        vm.fail_ordinary_property_storage_reservation,
+        Some((OrdinaryPropertyStorageReservationSite::ArrayPresence, 0))
+    );
+    let presence_key = PropertyKey::from(presence_capacity.to_string().as_str());
+    let before_presence_failure = array_storage_snapshot(&vm, &presence_value, &presence_key);
+    let error = vm
+        .publish_ordinary_property_storage(
+            presence_index,
+            &presence_key,
+            PropertyDescriptor::data(Value::Number(6.0)),
+            true,
+            true,
+        )
+        .expect_err("the first actual presence growth should fail");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(
+        array_storage_snapshot(&vm, &presence_value, &presence_key),
+        before_presence_failure
+    );
+    vm.publish_ordinary_property_storage(
+        presence_index,
+        &presence_key,
+        PropertyDescriptor::data(Value::Number(6.0)),
+        true,
+        true,
+    )
+    .expect("presence growth should retry");
+    assert_eq!(vm.fail_ordinary_property_storage_reservation, None);
+
+    for failure_site in [
+        OrdinaryPropertyStorageReservationSite::PropertyStorage,
+        OrdinaryPropertyStorageReservationSite::ArrayItems,
+        OrdinaryPropertyStorageReservationSite::ArrayPresence,
+    ] {
+        let arguments_index = vm
+            .alloc(HeapObj::Array(ArrayData::new(
+                Vec::new(),
+                Some(vm.object_proto.clone()),
+            )))
+            .expect("arguments growth fixture should allocate");
+        vm.heap.with_obj(arguments_index.0, |object| {
+            let HeapObj::Array(array) = object else {
+                unreachable!();
+            };
+            array
+                .is_arguments
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+        });
+        let arguments = Value::Object(arguments_index);
+        let key = PropertyKey::from("0");
+        let before = array_storage_snapshot(&vm, &arguments, &key);
+        let capacities_before = vm.heap.with_obj(arguments_index.0, |object| {
+            let HeapObj::Array(array) = object else {
+                unreachable!();
+            };
+            (
+                array.props.lock().capacity(),
+                array.items.lock().capacity(),
+                array.present.lock().capacity(),
+            )
+        });
+        vm.fail_ordinary_property_storage_reservation = Some((failure_site, 0));
+        let error = vm
+            .publish_ordinary_property_storage(
+                arguments_index,
+                &key,
+                PropertyDescriptor::data(Value::Number(7.0)),
+                true,
+                true,
+            )
+            .expect_err("combined arguments storage growth should fail atomically");
+        assert_eq!(error.kind, crate::error::ErrorKind::Range);
+        assert_eq!(array_storage_snapshot(&vm, &arguments, &key), before);
+        vm.heap.with_obj(arguments_index.0, |object| {
+            let HeapObj::Array(array) = object else {
+                unreachable!();
+            };
+            match failure_site {
+                OrdinaryPropertyStorageReservationSite::PropertyStorage => assert_eq!(
+                    (
+                        array.props.lock().capacity(),
+                        array.items.lock().capacity(),
+                        array.present.lock().capacity(),
+                    ),
+                    capacities_before
+                ),
+                OrdinaryPropertyStorageReservationSite::ArrayItems => {
+                    assert!(array.props.lock().capacity() >= 1);
+                    assert_eq!(array.items.lock().capacity(), capacities_before.1);
+                    assert_eq!(array.present.lock().capacity(), capacities_before.2);
+                }
+                OrdinaryPropertyStorageReservationSite::ArrayPresence => {
+                    assert!(array.props.lock().capacity() >= 1);
+                    assert!(array.items.lock().capacity() >= 1);
+                    assert_eq!(array.present.lock().capacity(), capacities_before.2);
+                }
+            }
+        });
+        vm.publish_ordinary_property_storage(
+            arguments_index,
+            &key,
+            PropertyDescriptor::data(Value::Number(7.0)),
+            true,
+            true,
+        )
+        .expect("combined arguments storage growth should retry");
+        assert_eq!(
+            array_storage_snapshot(&vm, &arguments, &key),
+            (vec![Value::Number(7.0)], vec![true], true, None)
+        );
+    }
+}
+
+#[test]
+fn ordinary_property_storage_failures_are_atomic_realm_correct_and_partial() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.run(
+        r#"
+        var storageCustomArray = [17];
+        var storageCustomDescriptor = {
+          get: function () { return 41; }, configurable: true
+        };
+        var storageSparseArray = [];
+        var storageSparseDescriptor = {
+          value: 7, writable: false, configurable: true
+        };
+        var storagePartialTarget = {};
+        var storagePartialFirst = { value: 1, configurable: true };
+        var storagePartialSecond = { value: 2, configurable: true };
+        var storagePartialLog = [];
+        var storagePartialBag = {};
+        Object.defineProperty(storagePartialBag, "first", {
+          enumerable: true,
+          get: function () {
+            storagePartialLog.push(
+              "first:" + Object.hasOwn(storagePartialTarget, "first"));
+            return storagePartialFirst;
+          }
+        });
+        Object.defineProperty(storagePartialBag, "second", {
+          enumerable: true,
+          get: function () {
+            storagePartialLog.push(
+              "second:" + Object.hasOwn(storagePartialTarget, "first"));
+            return storagePartialSecond;
+          }
+        });
+        var storageForeignTarget = {};
+        var storageForeignDescriptor = { value: 9 };
+        var storageRealm = $262.createRealm().global;
+        var callForeignStorage = storageRealm.Function(
+          "target", "descriptor",
+          "try { Object.defineProperty(target, 'foreign', descriptor); } " +
+          "catch (error) { return error; }"
+        );
+        "#,
+    )
+    .expect("ordinary storage fixtures should initialize");
+
+    let custom = vm.get_global("storageCustomArray");
+    fill_property_storage_to_spare(&vm, &custom, "customPadding", 0);
+    let custom_key = PropertyKey::from("0");
+    let custom_before = array_storage_snapshot(&vm, &custom, &custom_key);
+    vm.fail_ordinary_property_storage_reservation =
+        Some((OrdinaryPropertyStorageReservationSite::PropertyStorage, 0));
+    let error = vm
+        .run("Object.defineProperty(storageCustomArray, '0', storageCustomDescriptor)")
+        .expect_err("custom Array map growth should fail before dense mutation");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(
+        array_storage_snapshot(&vm, &custom, &custom_key),
+        custom_before
+    );
+    assert_eq!(
+        vm.get_property(&custom, "0")
+            .expect("the original dense element should survive"),
+        Value::Number(17.0)
+    );
+    vm.run("Object.defineProperty(storageCustomArray, '0', storageCustomDescriptor)")
+        .expect("custom Array publication should retry");
+    assert_eq!(
+        vm.get_property(&custom, "0")
+            .expect("the retried accessor should be readable"),
+        Value::Number(41.0)
+    );
+    assert_eq!(
+        array_storage_snapshot(&vm, &custom, &custom_key),
+        (vec![Value::Undefined], vec![false], true, None)
+    );
+
+    let sparse = vm.get_global("storageSparseArray");
+    fill_property_storage_to_spare(&vm, &sparse, "sparsePadding", 0);
+    let sparse_index = crate::value::MAX_DENSE_ARRAY_LEN;
+    let sparse_key = PropertyKey::from(sparse_index.to_string().as_str());
+    let sparse_before = array_storage_snapshot(&vm, &sparse, &sparse_key);
+    vm.fail_ordinary_property_storage_reservation =
+        Some((OrdinaryPropertyStorageReservationSite::PropertyStorage, 0));
+    let error = vm
+        .run(&format!(
+            "Object.defineProperty(storageSparseArray, '{sparse_index}', \
+             storageSparseDescriptor)"
+        ))
+        .expect_err("sparse map growth should fail before sparse metadata mutation");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(
+        array_storage_snapshot(&vm, &sparse, &sparse_key),
+        sparse_before
+    );
+    assert_eq!(
+        vm.get_property(&sparse, "length")
+            .expect("failed sparse publication must retain length"),
+        Value::Number(0.0)
+    );
+    vm.run(&format!(
+        "Object.defineProperty(storageSparseArray, '{sparse_index}', \
+         storageSparseDescriptor)"
+    ))
+    .expect("sparse publication should retry");
+    assert_eq!(
+        array_storage_snapshot(&vm, &sparse, &sparse_key),
+        (Vec::new(), Vec::new(), true, Some(sparse_index + 1))
+    );
+
+    let partial = vm.get_global("storagePartialTarget");
+    fill_property_storage_to_spare(&vm, &partial, "partialPadding", 1);
+    vm.fail_ordinary_property_storage_reservation =
+        Some((OrdinaryPropertyStorageReservationSite::PropertyStorage, 0));
+    let error = vm
+        .run("Object.defineProperties(storagePartialTarget, storagePartialBag)")
+        .expect_err("the second publication should fail after the first commits");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(
+        vm.run("storagePartialLog.join('|')")
+            .expect("descriptor conversion order should be observable"),
+        Value::String("first:false|second:false".into())
+    );
+    assert_eq!(
+        vm.get_property(&partial, "first")
+            .expect("the first committed definition should remain"),
+        Value::Number(1.0)
+    );
+    assert!(!vm.has_own(&partial, "second"));
+    vm.run("Object.defineProperties(storagePartialTarget, storagePartialBag)")
+        .expect("the complete plural operation should retry");
+    assert_eq!(
+        vm.get_property(&partial, "second")
+            .expect("the retried second definition should commit"),
+        Value::Number(2.0)
+    );
+
+    let foreign_target = vm.get_global("storageForeignTarget");
+    fill_property_storage_to_spare(&vm, &foreign_target, "foreignPadding", 0);
+    vm.fail_ordinary_property_storage_reservation =
+        Some((OrdinaryPropertyStorageReservationSite::PropertyStorage, 0));
+    assert_eq!(
+        vm.run(
+            "var storageForeignError = callForeignStorage( \
+               storageForeignTarget, storageForeignDescriptor); \
+             storageForeignError instanceof storageRealm.RangeError && \
+             !(storageForeignError instanceof RangeError)"
+        )
+        .expect("foreign storage failure should be catchable"),
+        Value::Bool(true)
+    );
+    assert!(!vm.has_own(&foreign_target, "foreign"));
+    assert_eq!(
+        vm.run(
+            "callForeignStorage(storageForeignTarget, storageForeignDescriptor); \
+             storageForeignTarget.foreign"
+        )
+        .expect("foreign storage publication should retry"),
+        Value::Number(9.0)
+    );
+    assert_eq!(vm.fail_ordinary_property_storage_reservation, None);
+}
+
+#[test]
+fn ordinary_property_storage_exotics_mapping_and_proxy_priority() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.run(
+        r#"
+        var storageString = Object("ab");
+        var storageStringDescriptor = { value: "a" };
+        var storageTypedArray = new Uint8Array(1);
+        var storageTrapDescriptor = { value: 1 };
+        var storageFuelDescriptor = { value: 1 };
+        var storageArgumentsDescriptor = { value: 2, writable: false };
+        var storageTrapCalls = 0;
+        var storageTrapProxy = new Proxy({}, {
+          defineProperty: function () {
+            storageTrapCalls += 1;
+            return true;
+          }
+        });
+        var storageFuelTarget = {};
+        var storageFuelProxy = new Proxy(storageFuelTarget, {});
+        var storageArguments;
+        var readStorageParameter;
+        var writeStorageParameter;
+        (function (parameter) {
+          storageArguments = arguments;
+          readStorageParameter = function () { return parameter; };
+          writeStorageParameter = function (value) { parameter = value; };
+        })(1);
+        "#,
+    )
+    .expect("storage exotic fixtures should initialize");
+
+    let string = vm.get_global("storageString");
+    let Value::Object(string_index) = string else {
+        unreachable!();
+    };
+    assert!(vm.heap.with_obj(string_index.0, |object| {
+        matches!(object, HeapObj::Object(data) if matches!(&*data.primitive.lock(), Some(Value::String(value)) if value.as_ref() == "ab"))
+    }));
+    assert!(!vm.heap.with_obj(string_index.0, |object| object
+        .props()
+        .lock()
+        .contains_key(&PropertyKey::from("0"))));
+
+    vm.fail_ordinary_property_storage_reservation =
+        Some((OrdinaryPropertyStorageReservationSite::PropertyStorage, 0));
+    assert_eq!(
+        vm.run("Reflect.defineProperty(storageString, '0', storageStringDescriptor)")
+            .expect("a compatible virtual String definition should succeed"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        vm.fail_ordinary_property_storage_reservation,
+        Some((OrdinaryPropertyStorageReservationSite::PropertyStorage, 0))
+    );
+    assert!(!vm.heap.with_obj(string_index.0, |object| object
+        .props()
+        .lock()
+        .contains_key(&PropertyKey::from("0"))));
+
+    let typed_array = vm.get_global("storageTypedArray");
+    vm.define_own_property(
+        &typed_array,
+        PropertyKey::from("0"),
+        PropertyDescriptor::data(Value::Number(7.0)),
+    )
+    .expect("direct TypedArray definition should not use ordinary storage");
+    assert_eq!(
+        vm.get_property(&typed_array, "0")
+            .expect("TypedArray element should update"),
+        Value::Number(7.0)
+    );
+    let Value::Object(typed_index) = typed_array else {
+        unreachable!();
+    };
+    assert!(!vm.heap.with_obj(typed_index.0, |object| object
+        .props()
+        .lock()
+        .contains_key(&PropertyKey::from("0"))));
+    assert_eq!(
+        vm.fail_ordinary_property_storage_reservation,
+        Some((OrdinaryPropertyStorageReservationSite::PropertyStorage, 0))
+    );
+
+    assert_eq!(
+        vm.run("Reflect.defineProperty(storageTrapProxy, 'x', storageTrapDescriptor)")
+            .expect("a completed Proxy trap should skip ordinary storage"),
+        Value::Bool(true)
+    );
+    assert_eq!(vm.get_global("storageTrapCalls"), Value::Number(1.0));
+    assert_eq!(
+        vm.fail_ordinary_property_storage_reservation,
+        Some((OrdinaryPropertyStorageReservationSite::PropertyStorage, 0))
+    );
+
+    let arguments = vm.get_global("storageArguments");
+    let Value::Object(arguments_index) = arguments else {
+        unreachable!();
+    };
+    vm.heap.with_obj(arguments_index.0, |object| {
+        object.props().lock().shift_remove(&PropertyKey::from("0"));
+    });
+    fill_property_storage_to_spare(&vm, &Value::Object(arguments_index), "argsPadding", 0);
+    let error = vm
+        .run("Reflect.defineProperty(storageArguments, '0', storageArgumentsDescriptor)")
+        .expect_err("mapped Arguments storage failure should precede postprocessing");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(
+        vm.run("readStorageParameter()")
+            .expect("the mapped parameter should remain unchanged after failure"),
+        Value::Number(1.0)
+    );
+    assert_eq!(
+        vm.run("writeStorageParameter(3); storageArguments[0]")
+            .expect("the mapping should survive failed publication"),
+        Value::Number(3.0)
+    );
+    assert_eq!(
+        vm.run(
+            "Reflect.defineProperty( \
+               storageArguments, '0', storageArgumentsDescriptor); \
+             writeStorageParameter(4); \
+             [readStorageParameter(), storageArguments[0]].join('|')"
+        )
+        .expect("mapped Arguments publication should retry and detach"),
+        Value::String("4|2".into())
+    );
+
+    let fuel_target = vm.get_global("storageFuelTarget");
+    fill_property_storage_to_spare(&vm, &fuel_target, "fuelPadding", 0);
+    vm.fail_ordinary_property_storage_reservation =
+        Some((OrdinaryPropertyStorageReservationSite::PropertyStorage, 0));
+    vm.set_fuel(Some(0));
+    let error = vm
+        .run("Reflect.defineProperty(storageFuelProxy, 'x', storageFuelDescriptor)")
+        .expect_err("Proxy edge fuel should precede terminal storage");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(
+        vm.fail_ordinary_property_storage_reservation,
+        Some((OrdinaryPropertyStorageReservationSite::PropertyStorage, 0))
+    );
+    vm.set_fuel(None);
+    let error = vm
+        .run("Reflect.defineProperty(storageFuelProxy, 'x', storageFuelDescriptor)")
+        .expect_err("terminal storage should fail after the Proxy edge");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert!(!vm.has_own(&fuel_target, "x"));
+    vm.set_fuel(None);
+    assert_eq!(
+        vm.run("Reflect.defineProperty(storageFuelProxy, 'x', storageFuelDescriptor)")
+            .expect("transparent Proxy storage should retry"),
+        Value::Bool(true)
+    );
+    vm.set_fuel(None);
+    assert_eq!(
+        vm.get_property(&fuel_target, "x").unwrap(),
+        Value::Number(1.0)
+    );
+    assert_eq!(vm.fail_ordinary_property_storage_reservation, None);
+}
+
+#[test]
+fn define_own_property_roots_typed_array_coercion_across_exact_heap_gc() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "forceTypedArrayGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Number(73.0))
+        },
+        0,
+    )
+    .expect("TypedArray GC hook should register");
+    let baseline_pins = vm.gc_pins.len();
+    let typed_array = vm
+        .run("new Uint8Array(1)")
+        .expect("unpublished TypedArray should allocate");
+    vm.try_reserve_value_roots(std::slice::from_ref(&typed_array))
+        .expect("TypedArray fixture root should reserve");
+    let mut fixture_pins = vm.pin(&typed_array);
+    let coercion_value = vm
+        .run("({ valueOf: forceTypedArrayGc })")
+        .expect("unpublished coercion value should allocate");
+
+    vm.try_reserve_value_roots(std::slice::from_ref(&coercion_value))
+        .expect("coercion fixture root should reserve");
+    fixture_pins += vm.pin(&coercion_value);
+    vm.gc();
+    let baseline_live = vm.heap.live_count();
+    vm.run("(function () { for (var i = 0; i < 200; i += 1) ({ garbage: i }); })();")
+        .expect("collectible TypedArray coercion garbage should initialize");
+    let exact_limit = vm.heap.live_count();
+    assert!(exact_limit > baseline_live);
+    vm.unpin_many(fixture_pins);
+
+    vm.set_max_heap_objects(Some(exact_limit));
+    assert!(vm
+        .define_own_property(
+            &typed_array,
+            PropertyKey::from("0"),
+            PropertyDescriptor::data(coercion_value)
+        )
+        .expect("TypedArray coercion should collect and retry"));
+    vm.set_max_heap_objects(None);
+    assert!(vm.heap.live_count() <= exact_limit);
+    assert_eq!(
+        vm.get_property(&typed_array, "0")
+            .expect("rooted TypedArray backing storage should survive"),
+        Value::Number(73.0)
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+}
+
+#[test]
+fn ordinary_property_storage_module_namespace_complete_descriptors() {
+    let module_dir = std::env::temp_dir().join(format!(
+        "ruja-ordinary-storage-namespace-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock should follow epoch")
+            .as_nanos()
+    ));
+    fs::create_dir_all(&module_dir).expect("module fixture directory should be created");
+    fs::write(
+        module_dir.join("dependency.js"),
+        "export let value = 1; \
+         globalThis.setStorageNamespaceValue = function (next) { value = next; };",
+    )
+    .expect("module dependency should be written");
+    fs::write(
+        module_dir.join("entry.js"),
+        "import * as namespace from './dependency.js'; \
+         globalThis.storageNamespace = namespace;",
+    )
+    .expect("module entry should be written");
+
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.run_module_file(module_dir.join("entry.js"))
+        .expect("module namespace should initialize");
+    let namespace = vm
+        .get_property(&vm.global_this.clone(), "storageNamespace")
+        .expect("module namespace should be published on the global object");
+    let export_key = PropertyKey::from("value");
+    let complete_export = |value| {
+        let mut descriptor = PropertyDescriptor::data(value);
+        descriptor.configurable = false;
+        descriptor
+    };
+
+    vm.fail_ordinary_property_storage_reservation =
+        Some((OrdinaryPropertyStorageReservationSite::PropertyStorage, 0));
+    assert!(vm
+        .define_own_property(
+            &namespace,
+            export_key.clone(),
+            complete_export(Value::Number(1.0))
+        )
+        .expect("an identical complete export descriptor should succeed"));
+    assert_eq!(
+        vm.fail_ordinary_property_storage_reservation,
+        Some((OrdinaryPropertyStorageReservationSite::PropertyStorage, 0))
+    );
+    let mut non_writable = complete_export(Value::Number(1.0));
+    non_writable.writable = false;
+    assert!(!vm
+        .define_own_property(&namespace, export_key.clone(), non_writable)
+        .expect("a non-writable export descriptor should fail normally"));
+    assert_eq!(
+        vm.fail_ordinary_property_storage_reservation,
+        Some((OrdinaryPropertyStorageReservationSite::PropertyStorage, 0))
+    );
+
+    vm.run("setStorageNamespaceValue(NaN)")
+        .expect("namespace export should become NaN");
+    assert!(vm
+        .define_own_property(
+            &namespace,
+            export_key.clone(),
+            complete_export(Value::Number(f64::NAN))
+        )
+        .expect("SameValue must consider NaN equal to itself"));
+    vm.run("setStorageNamespaceValue(-0)")
+        .expect("namespace export should become negative zero");
+    assert!(!vm
+        .define_own_property(
+            &namespace,
+            export_key.clone(),
+            complete_export(Value::Number(0.0))
+        )
+        .expect("SameValue must distinguish signed zero"));
+    assert!(vm
+        .define_own_property(&namespace, export_key, complete_export(Value::Number(-0.0)))
+        .expect("the matching signed-zero descriptor should succeed"));
+
+    let tag_key = PropertyKey::Symbol(vm.well_known_symbols.to_string_tag);
+    let tag_descriptor = vm
+        .own_property_descriptor_for_proxy_invariant(&namespace, &tag_key)
+        .expect("module namespace should expose @@toStringTag");
+    assert!(vm
+        .define_own_property(&namespace, tag_key, tag_descriptor)
+        .expect("Symbol keys should use ordinary compatible definition"));
+    assert_eq!(
+        vm.fail_ordinary_property_storage_reservation,
+        Some((OrdinaryPropertyStorageReservationSite::PropertyStorage, 0))
+    );
+    vm.fail_ordinary_property_storage_reservation = None;
+    fs::remove_dir_all(module_dir).expect("module fixture directory should be removed");
 }

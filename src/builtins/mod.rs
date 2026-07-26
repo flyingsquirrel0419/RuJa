@@ -8260,10 +8260,11 @@ fn object_define_property_record_result(
             }
             return Ok(success);
         }
-        let is_namespace = vm.heap.with_obj(idx.0, |object| {
-            matches!(object, HeapObj::ModuleNamespace(_))
-        });
-        if is_namespace {
+        let is_namespace_string = key.as_str().is_some()
+            && vm.heap.with_obj(idx.0, |object| {
+                matches!(object, HeapObj::ModuleNamespace(_))
+            });
+        if is_namespace_string {
             let current = own_property_descriptor_for_key_or_throw(vm, &target, &key)?;
             let success = current.is_some_and(|current| {
                 !is_accessor
@@ -8309,13 +8310,6 @@ fn object_define_property_record_result(
             return Ok(false);
         }
         let current = own_property_descriptor_for_key(vm, &target, &key);
-        let mapped_arguments_index = key
-            .as_str()
-            .and_then(crate::value::parse_array_index)
-            .and_then(|i| {
-                vm.arguments_mapped_binding_for_index(idx.0, i)
-                    .map(|mapped| (i, mapped))
-            });
         if current.is_none() {
             let extensible = vm.heap.with_obj(idx.0, |obj| obj.is_extensible());
             if !extensible {
@@ -8328,7 +8322,6 @@ fn object_define_property_record_result(
                 return Ok(false);
             }
         }
-        let map_value = value.clone();
         let descriptor = if let Some(mut current) = current {
             if !current.configurable {
                 if has_configurable && configurable {
@@ -8445,53 +8438,7 @@ fn object_define_property_record_result(
                 is_accessor: false,
             }
         };
-        let array_index = key.as_str().and_then(crate::value::parse_array_index);
-        vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Array(a) = obj {
-                if let Some(i) = array_index {
-                    if i >= a.items.lock().len() {
-                        let new_len = i + 1;
-                        if new_len <= crate::value::MAX_DENSE_ARRAY_LEN {
-                            let mut items = a.items.lock();
-                            let mut present = a.present.lock();
-                            while items.len() < new_len {
-                                items.push(Value::Undefined);
-                                present.push(false);
-                            }
-                            let dense_length = items.len();
-                            let mut sparse_max = a.sparse_max.lock();
-                            if sparse_max.is_some_and(|sparse| sparse <= dense_length) {
-                                *sparse_max = None;
-                            }
-                        } else {
-                            let mut sparse_max = a.sparse_max.lock();
-                            if sparse_max.is_none_or(|current| new_len > current) {
-                                *sparse_max = Some(new_len);
-                            }
-                        }
-                    }
-                }
-            }
-            obj.props().lock().insert(key.clone(), descriptor);
-        });
-        if array_index.is_some() {
-            vm.sync_array_length_descriptor_after_index(idx.0);
-        }
-        if let Some((i, (env, name))) = mapped_arguments_index {
-            if is_accessor {
-                vm.remove_arguments_mapping_for_index(idx.0, i);
-            } else {
-                if has_value {
-                    crate::environment::set(&vm.heap, env, &name, map_value);
-                }
-                if has_writable && !writable {
-                    vm.remove_arguments_mapping_for_index(idx.0, i);
-                }
-            }
-        }
-        if let Some(key) = key.as_str() {
-            vm.ic_invalidate(idx.0, key);
-        }
+        vm.publish_ordinary_property_storage(idx, &key, descriptor, has_value, has_writable)?;
     }
     Ok(true)
 }

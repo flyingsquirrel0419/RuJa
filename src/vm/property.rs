@@ -5,7 +5,7 @@ use super::*;
 
 use crate::error::{self, Error};
 use crate::value::HeapObj;
-use crate::value::{GcIdx, PromiseStatus, TypedArrayKind, Value};
+use crate::value::{GcIdx, PromiseStatus, PropertyDescriptor, PropertyKey, TypedArrayKind, Value};
 use std::sync::Arc;
 
 pub(crate) const MAX_PROXY_CYCLE_REPLAYS: usize = 512;
@@ -270,6 +270,356 @@ pub(crate) fn reserve_proxy_define_property_descriptor_properties(
     properties
         .try_reserve(additional)
         .map_err(|_| Error::range("Proxy defineProperty descriptor is too large"))
+}
+
+#[derive(Clone, Copy)]
+enum OrdinaryPropertyStorageKind {
+    VirtualNoop,
+    Property,
+    DenseArray { end: usize, write_property: bool },
+    CustomArray { index: usize },
+    ArgumentsCustom { index: usize },
+}
+
+#[derive(Clone, Copy)]
+struct OrdinaryPropertyStoragePlan {
+    kind: OrdinaryPropertyStorageKind,
+    array_index: Option<usize>,
+}
+
+impl OrdinaryPropertyStoragePlan {
+    fn writes_property(self) -> bool {
+        matches!(
+            self.kind,
+            OrdinaryPropertyStorageKind::Property
+                | OrdinaryPropertyStorageKind::DenseArray {
+                    write_property: true,
+                    ..
+                }
+                | OrdinaryPropertyStorageKind::CustomArray { .. }
+                | OrdinaryPropertyStorageKind::ArgumentsCustom { .. }
+        )
+    }
+
+    fn dense_end(self) -> Option<usize> {
+        match self.kind {
+            OrdinaryPropertyStorageKind::DenseArray { end, .. } => Some(end),
+            _ => None,
+        }
+    }
+}
+
+#[cfg(test)]
+fn take_ordinary_property_storage_reservation_failure(
+    vm: &mut Vm,
+    site: crate::vm::OrdinaryPropertyStorageReservationSite,
+) -> bool {
+    let Some((configured_site, remaining)) = vm.fail_ordinary_property_storage_reservation else {
+        return false;
+    };
+    if configured_site != site {
+        return false;
+    }
+    if remaining != 0 {
+        vm.fail_ordinary_property_storage_reservation = Some((configured_site, remaining - 1));
+        return false;
+    }
+    vm.fail_ordinary_property_storage_reservation = None;
+    true
+}
+
+impl Vm {
+    fn ordinary_property_storage_plan(
+        &self,
+        idx: GcIdx,
+        key: &PropertyKey,
+        descriptor: &PropertyDescriptor,
+    ) -> OrdinaryPropertyStoragePlan {
+        self.heap.with_obj(idx.0, |object| {
+            if let HeapObj::Object(data) = object {
+                let is_virtual_string_property = !data.props.lock().contains_key(key)
+                    && data
+                        .primitive
+                        .lock()
+                        .as_ref()
+                        .and_then(|primitive| match primitive {
+                            Value::String(value) => Some(value),
+                            _ => None,
+                        })
+                        .is_some_and(|value| {
+                            key.as_str() == Some("length")
+                                || crate::builtins::canonical_string_index(key)
+                                    .is_some_and(|index| index < crate::value::utf16_len(value))
+                        });
+                if is_virtual_string_property {
+                    return OrdinaryPropertyStoragePlan {
+                        kind: OrdinaryPropertyStorageKind::VirtualNoop,
+                        array_index: None,
+                    };
+                }
+            }
+
+            let HeapObj::Array(array) = object else {
+                return OrdinaryPropertyStoragePlan {
+                    kind: OrdinaryPropertyStorageKind::Property,
+                    array_index: None,
+                };
+            };
+            let Some(index) = key.as_str().and_then(crate::value::parse_array_index) else {
+                return OrdinaryPropertyStoragePlan {
+                    kind: OrdinaryPropertyStorageKind::Property,
+                    array_index: None,
+                };
+            };
+
+            let is_arguments = array
+                .is_arguments
+                .load(std::sync::atomic::Ordering::Relaxed);
+            let dense_default_data = !is_arguments
+                && !descriptor.is_accessor
+                && descriptor.writable
+                && descriptor.enumerable
+                && descriptor.configurable
+                && index < crate::value::MAX_DENSE_ARRAY_LEN;
+            let mapped_arguments_data = is_arguments
+                && !descriptor.is_accessor
+                && index < crate::value::MAX_DENSE_ARRAY_LEN;
+            let kind = if dense_default_data || mapped_arguments_data {
+                OrdinaryPropertyStorageKind::DenseArray {
+                    end: index + 1,
+                    write_property: mapped_arguments_data,
+                }
+            } else if is_arguments {
+                OrdinaryPropertyStorageKind::ArgumentsCustom { index }
+            } else {
+                OrdinaryPropertyStorageKind::CustomArray { index }
+            };
+            OrdinaryPropertyStoragePlan {
+                kind,
+                array_index: Some(index),
+            }
+        })
+    }
+
+    fn reserve_ordinary_property_map(
+        &mut self,
+        idx: GcIdx,
+        key: &PropertyKey,
+    ) -> error::Result<()> {
+        let needs_growth = self.heap.with_obj(idx.0, |object| {
+            let properties = object.props().lock();
+            !properties.contains_key(key) && properties.len() == properties.capacity()
+        });
+        if !needs_growth {
+            return Ok(());
+        }
+        #[cfg(test)]
+        if take_ordinary_property_storage_reservation_failure(
+            self,
+            crate::vm::OrdinaryPropertyStorageReservationSite::PropertyStorage,
+        ) {
+            return Err(Error::range("ordinary property storage is too large"));
+        }
+        self.heap.with_obj(idx.0, |object| {
+            object
+                .props()
+                .lock()
+                .try_reserve(1)
+                .map_err(|_| Error::range("ordinary property storage is too large"))
+        })
+    }
+
+    fn reserve_ordinary_array_vector(
+        &mut self,
+        idx: GcIdx,
+        end: usize,
+        items: bool,
+    ) -> error::Result<()> {
+        let (len, capacity) = self.heap.with_obj(idx.0, |object| {
+            let HeapObj::Array(array) = object else {
+                return (0, usize::MAX);
+            };
+            if items {
+                let values = array.items.lock();
+                (values.len(), values.capacity())
+            } else {
+                let presence = array.present.lock();
+                (presence.len(), presence.capacity())
+            }
+        });
+        if capacity >= end {
+            return Ok(());
+        }
+        #[cfg(test)]
+        {
+            let site = if items {
+                crate::vm::OrdinaryPropertyStorageReservationSite::ArrayItems
+            } else {
+                crate::vm::OrdinaryPropertyStorageReservationSite::ArrayPresence
+            };
+            if take_ordinary_property_storage_reservation_failure(self, site) {
+                return Err(Error::range("Array property storage is too large"));
+            }
+        }
+        let additional = end.saturating_sub(len);
+        self.heap.with_obj(idx.0, |object| {
+            let HeapObj::Array(array) = object else {
+                return Ok(());
+            };
+            if items {
+                array
+                    .items
+                    .lock()
+                    .try_reserve(additional)
+                    .map_err(|_| Error::range("Array property storage is too large"))
+            } else {
+                array
+                    .present
+                    .lock()
+                    .try_reserve(additional)
+                    .map_err(|_| Error::range("Array property storage is too large"))
+            }
+        })
+    }
+
+    fn preflight_ordinary_property_storage(
+        &mut self,
+        idx: GcIdx,
+        key: &PropertyKey,
+        plan: OrdinaryPropertyStoragePlan,
+    ) -> error::Result<()> {
+        if plan.writes_property() {
+            self.reserve_ordinary_property_map(idx, key)?;
+        }
+        if let Some(end) = plan.dense_end() {
+            self.reserve_ordinary_array_vector(idx, end, true)?;
+            self.reserve_ordinary_array_vector(idx, end, false)?;
+        }
+        Ok(())
+    }
+
+    /// Reserve and commit the target's directly owned props/items/present
+    /// containers. Shared key/value representation and post-commit length/IC
+    /// maintenance remain independent host-allocation boundaries.
+    pub(crate) fn publish_ordinary_property_storage(
+        &mut self,
+        idx: GcIdx,
+        key: &PropertyKey,
+        descriptor: PropertyDescriptor,
+        has_value: bool,
+        has_writable: bool,
+    ) -> error::Result<()> {
+        let plan = self.ordinary_property_storage_plan(idx, key, &descriptor);
+        if matches!(plan.kind, OrdinaryPropertyStorageKind::VirtualNoop) {
+            return Ok(());
+        }
+        let mapped_arguments = plan.array_index.and_then(|index| {
+            self.arguments_mapped_binding_for_index(idx.0, index)
+                .map(|binding| (index, binding))
+        });
+        let mapped_value = mapped_arguments.as_ref().map(|_| descriptor.value.clone());
+        let dense_value = plan.dense_end().map(|_| descriptor.value.clone());
+        let is_accessor = descriptor.is_accessor;
+        let writable = descriptor.writable;
+        self.preflight_ordinary_property_storage(idx, key, plan)?;
+
+        self.heap.with_obj(idx.0, |object| match plan.kind {
+            OrdinaryPropertyStorageKind::VirtualNoop => {}
+            OrdinaryPropertyStorageKind::Property => {
+                object.props().lock().insert(key.clone(), descriptor);
+            }
+            OrdinaryPropertyStorageKind::DenseArray {
+                end,
+                write_property,
+            } => {
+                let HeapObj::Array(array) = object else {
+                    unreachable!("dense property storage requires an Array");
+                };
+                let index = end - 1;
+                let mut items = array.items.lock();
+                let mut present = array.present.lock();
+                if items.len() < end {
+                    items.resize(end, Value::Undefined);
+                }
+                if present.len() < end {
+                    present.resize(end, false);
+                }
+                items[index] = dense_value.expect("dense storage must prepare its value");
+                present[index] = true;
+                drop(present);
+                drop(items);
+                if write_property {
+                    array.props.lock().insert(key.clone(), descriptor);
+                } else {
+                    array.props.lock().shift_remove(key);
+                }
+                let dense_length = array.items.lock().len();
+                let mut sparse_max = array.sparse_max.lock();
+                if sparse_max.is_some_and(|sparse| sparse <= dense_length) {
+                    *sparse_max = None;
+                }
+            }
+            OrdinaryPropertyStorageKind::CustomArray { index } => {
+                let HeapObj::Array(array) = object else {
+                    unreachable!("custom property storage requires an Array");
+                };
+                let dense_length = array.items.lock().len();
+                if index < dense_length {
+                    if let Some(item) = array.items.lock().get_mut(index) {
+                        *item = Value::Undefined;
+                    }
+                    if let Some(slot) = array.present.lock().get_mut(index) {
+                        *slot = false;
+                    }
+                } else {
+                    let mut sparse_max = array.sparse_max.lock();
+                    if sparse_max.is_none_or(|current| index >= current) {
+                        *sparse_max = Some(index + 1);
+                    }
+                }
+                array.props.lock().insert(key.clone(), descriptor);
+            }
+            OrdinaryPropertyStorageKind::ArgumentsCustom { index } => {
+                let HeapObj::Array(array) = object else {
+                    unreachable!("arguments property storage requires ArrayData");
+                };
+                if index < array.items.lock().len() {
+                    if let Some(item) = array.items.lock().get_mut(index) {
+                        *item = Value::Undefined;
+                    }
+                    if let Some(slot) = array.present.lock().get_mut(index) {
+                        *slot = false;
+                    }
+                }
+                array.props.lock().insert(key.clone(), descriptor);
+            }
+        });
+
+        if plan.array_index.is_some() {
+            self.sync_array_length_descriptor_after_index(idx.0);
+        }
+        if let Some((index, (env, name))) = mapped_arguments {
+            if is_accessor {
+                self.remove_arguments_mapping_for_index(idx.0, index);
+            } else {
+                if has_value {
+                    crate::environment::set(
+                        &self.heap,
+                        env,
+                        &name,
+                        mapped_value.expect("mapped storage must prepare its value"),
+                    );
+                }
+                if has_writable && !writable {
+                    self.remove_arguments_mapping_for_index(idx.0, index);
+                }
+            }
+        }
+        if let Some(name) = key.as_str() {
+            self.ic_invalidate(idx.0, name);
+        }
+        Ok(())
+    }
 }
 
 impl Vm {
@@ -1521,11 +1871,26 @@ impl Vm {
             ProxyDefinePropertyOutcome::Ordinary(object) => object,
             ProxyDefinePropertyOutcome::Complete(result) => return Ok(result),
         };
-        let obj = &object;
+        let operation_roots = [
+            object.clone(),
+            desc.value.clone(),
+            desc.get.clone().unwrap_or(Value::Undefined),
+            desc.set.clone().unwrap_or(Value::Undefined),
+        ];
+        self.try_reserve_value_roots(&operation_roots)?;
+        let operation_pins = self.pin_many(&operation_roots);
+        let result = self.define_own_property_after_proxy(&object, key, desc);
+        self.unpin_many(operation_pins);
+        result
+    }
+
+    fn define_own_property_after_proxy(
+        &mut self,
+        obj: &Value,
+        key: crate::value::PropertyKey,
+        desc: crate::value::PropertyDescriptor,
+    ) -> error::Result<bool> {
         if let Value::Object(idx) = obj {
-            if let Some(name) = key.as_str() {
-                self.ic_invalidate(idx.0, name);
-            }
             let is_array_length = key.as_str() == Some("length")
                 && self.heap.with_obj(idx.0, |object| {
                     matches!(object, HeapObj::Array(array) if !array.is_arguments.load(std::sync::atomic::Ordering::Relaxed))
@@ -1543,19 +1908,37 @@ impl Vm {
                     desc.is_accessor,
                 );
             }
-            let is_namespace = self
-                .heap
-                .with_obj(idx.0, |o| matches!(o, HeapObj::ModuleNamespace(_)));
-            if is_namespace {
-                let current = self.own_property_descriptor_for_proxy_invariant(obj, &key);
+            let is_namespace_string = key.as_str().is_some()
+                && self
+                    .heap
+                    .with_obj(idx.0, |o| matches!(o, HeapObj::ModuleNamespace(_)));
+            if is_namespace_string {
+                let current =
+                    crate::builtins::own_property_descriptor_for_key_or_throw(self, obj, &key)?;
                 let compatible = current.is_some_and(|current| {
                     !desc.configurable
-                        && desc.enumerable == current.enumerable
+                        && desc.enumerable
                         && !desc.is_accessor
-                        && (!desc.writable || current.writable)
-                        && desc.value == current.value
+                        && desc.writable
+                        && descriptor_same_value(&desc.value, &current.value)
                 });
                 return Ok(compatible);
+            }
+            if let Some(success) = self.define_typed_array_integer_index_property(
+                obj,
+                &key,
+                TypedArrayDefineDescriptor {
+                    value: (!desc.is_accessor).then_some(&desc.value),
+                    has_configurable: true,
+                    configurable: desc.configurable,
+                    has_enumerable: true,
+                    enumerable: desc.enumerable,
+                    is_accessor: desc.is_accessor,
+                    has_writable: !desc.is_accessor,
+                    writable: desc.writable,
+                },
+            )? {
+                return Ok(success);
             }
             let array_index = key.as_str().and_then(crate::value::parse_array_index);
             if array_index
@@ -1568,79 +1951,14 @@ impl Vm {
             if !compatible_complete_descriptor(current.as_ref(), &desc, extensible) {
                 return Ok(false);
             }
-            self.heap.with_obj(idx.0, |o| {
-                let HeapObj::Array(array) = o else {
-                    o.props().lock().insert(key.clone(), desc.clone());
-                    return;
-                };
-                let Some(index) = array_index else {
-                    array.props.lock().insert(key.clone(), desc.clone());
-                    return;
-                };
-
-                let is_arguments = array
-                    .is_arguments
-                    .load(std::sync::atomic::Ordering::Relaxed);
-                let dense_default_data = !is_arguments
-                    && !desc.is_accessor
-                    && desc.writable
-                    && desc.enumerable
-                    && desc.configurable
-                    && index < crate::value::MAX_DENSE_ARRAY_LEN;
-                if dense_default_data {
-                    let mut items = array.items.lock();
-                    let mut present = array.present.lock();
-                    while items.len() <= index {
-                        items.push(Value::Undefined);
-                        present.push(false);
-                    }
-                    items[index] = desc.value.clone();
-                    if present.len() <= index {
-                        present.resize(index + 1, false);
-                    }
-                    present[index] = true;
-                    let dense_length = items.len();
-                    array.props.lock().shift_remove(&key);
-                    let mut sparse_max = array.sparse_max.lock();
-                    if sparse_max.is_some_and(|sparse| sparse <= dense_length) {
-                        *sparse_max = None;
-                    }
-                    return;
-                }
-
-                if is_arguments && !desc.is_accessor && index < crate::value::MAX_DENSE_ARRAY_LEN {
-                    let mut items = array.items.lock();
-                    let mut present = array.present.lock();
-                    while items.len() <= index {
-                        items.push(Value::Undefined);
-                        present.push(false);
-                    }
-                    items[index] = desc.value.clone();
-                    if present.len() <= index {
-                        present.resize(index + 1, false);
-                    }
-                    present[index] = true;
-                } else {
-                    let dense_length = array.items.lock().len();
-                    if index < dense_length {
-                        if let Some(item) = array.items.lock().get_mut(index) {
-                            *item = Value::Undefined;
-                        }
-                        if let Some(slot) = array.present.lock().get_mut(index) {
-                            *slot = false;
-                        }
-                    } else {
-                        let mut sparse_max = array.sparse_max.lock();
-                        if sparse_max.is_none_or(|current| index >= current) {
-                            *sparse_max = Some(index + 1);
-                        }
-                    }
-                }
-                array.props.lock().insert(key.clone(), desc.clone());
-            });
-            if array_index.is_some() {
-                self.sync_array_length_descriptor_after_index(idx.0);
-            }
+            let complete_data_fields = !desc.is_accessor;
+            self.publish_ordinary_property_storage(
+                *idx,
+                &key,
+                desc,
+                complete_data_fields,
+                complete_data_fields,
+            )?;
             Ok(true)
         } else {
             Err(Error::type_err(

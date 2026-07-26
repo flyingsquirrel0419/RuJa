@@ -110,6 +110,14 @@ pub(crate) enum ProxyDefinePropertyReservationSite {
     ValidationDescriptorRoots,
 }
 
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum OrdinaryPropertyStorageReservationSite {
+    PropertyStorage,
+    ArrayItems,
+    ArrayPresence,
+}
+
 pub(crate) use conversions::{to_int32, to_uint32};
 pub(crate) use property::{
     ProxyDefinePropertyDescriptor, ProxyDefinePropertyOutcome, TypedArrayDefineDescriptor,
@@ -286,6 +294,9 @@ pub struct Vm {
     #[cfg(test)]
     pub(crate) fail_proxy_define_property_reservation:
         Option<(ProxyDefinePropertyReservationSite, usize)>,
+    #[cfg(test)]
+    pub(crate) fail_ordinary_property_storage_reservation:
+        Option<(OrdinaryPropertyStorageReservationSite, usize)>,
     /// Receiver identities currently traversing Array stringification methods.
     /// Join checks after separator coercion and toLocaleString checks after its
     /// length snapshot, so recursive suppression preserves observable ordering.
@@ -826,6 +837,8 @@ impl Vm {
             fail_descriptor_materialization_reservation: None,
             #[cfg(test)]
             fail_proxy_define_property_reservation: None,
+            #[cfg(test)]
+            fail_ordinary_property_storage_reservation: None,
             active_array_joins: Vec::new(),
             kept_objects: Vec::new(),
             current_yields: Vec::new(),
