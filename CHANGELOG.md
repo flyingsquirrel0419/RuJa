@@ -62,6 +62,42 @@
 
 ### Fixed
 
+- Object integrity operations now use one Proxy-aware
+  `SetIntegrityLevel`/`TestIntegrityLevel` pipeline across ordinary objects,
+  Arrays, Arguments, functions, iterators, TypedArrays, and Module Namespace
+  objects. `Object.isFrozen(Object.seal([]))` is correctly false because Array
+  `length` remains writable, deleted Arguments `length` no longer reappears,
+  Proxy freeze descriptors are presence-aware internal records rather than
+  prototype-pollutable JavaScript objects, and Module Namespace TDZ reads throw
+  in seal, freeze, and frozen predicates.
+
+  Direct objects inspect only descriptor attributes. Existing ordinary
+  descriptors update in place, while dense Array values move into reserved
+  custom-property storage instead of being cloned. This removes unchecked
+  large-BigInt descriptor clones from ordinary and dense-Array integrity
+  operations. Integrity roots, Array property growth, fuel, partial effects,
+  promoted mapped-Arguments value snapshot/detachment, retry, foreign Realms,
+  and exact-cap GC have deterministic regressions. Non-fixed TypedArray views
+  over resizable buffers now reject `[[PreventExtensions]]`; fixed views over
+  fixed buffers and growable SharedArrayBuffers retain the specification
+  result. Nested preventExtensions roots reserve before every pin. Module
+  Namespace re-export traversal uses allocation-free cycle detection and fuel
+  per indirection. Direct predicate scans precharge the same
+  conservative fuel budget as own-key materialization. Already-frozen direct
+  predicates avoid key and descriptor materialization; separated
+  10k-property/element benchmarks and repeated release workloads show no
+  measured steady-state regression.
+
+  Local gates pass all targets/features with **266/266** library tests and
+  **541/541** builtins tests, release library **265/265**, tooling **135/135**,
+  doctest **1/1**, rustfmt, warnings-denied Clippy, release build, generated
+  documentation, and wasm32 checking. Rustdoc retains 13 existing warnings.
+  Fixed Test262 Object integrity plus Module Namespace coverage is **257 pass /
+  0 fail / 20 skip / 0 timeout / 0 error**, byte-identical to the preceding
+  release binary. Forced execution of the two variable-length TypedArray
+  preventExtensions staging tests improves from **0/2** on the preceding
+  release to **2/2**; normal policy still skips those staging files.
+
 - Ordinary non-index `Set` receiver publication now uses the shared fallible
   storage publisher. New receiver properties reserve actual `props` growth
   before mutation; spare capacity and existing writable properties do not

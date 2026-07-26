@@ -1,4 +1,4 @@
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
 use ruja::Vm;
 
 fn bench_fib(c: &mut Criterion) {
@@ -159,6 +159,114 @@ fn bench_ordinary_set_receiver(c: &mut Criterion) {
     });
 }
 
+fn bench_integrity_level(c: &mut Criterion) {
+    c.bench_function("object_freeze_10k_properties", |b| {
+        b.iter_batched(
+            || {
+                let mut vm = Vm::new().expect("failed to initialize VM");
+                vm.run(
+                    r#"
+                    var object = Object.create(null);
+                    for (var i = 0; i < 10000; i++) object["field" + i] = i;
+                    "#,
+                )
+                .expect("object fixture failed");
+                let object_constructor = vm.get_global("Object");
+                let freeze = vm
+                    .get_property(&object_constructor, "freeze")
+                    .expect("Object.freeze should exist");
+                let object = vm.get_global("object");
+                (vm, object_constructor, freeze, object)
+            },
+            |(mut vm, object_constructor, freeze, object)| {
+                vm.call_function(&freeze, &[object], Some(object_constructor))
+                    .expect("object freeze failed")
+            },
+            BatchSize::SmallInput,
+        )
+    });
+
+    c.bench_function("array_freeze_10k_elements", |b| {
+        b.iter_batched(
+            || {
+                let mut vm = Vm::new().expect("failed to initialize VM");
+                vm.run(
+                    r#"
+                    var array = [];
+                    for (var i = 0; i < 10000; i++) array.push(i);
+                    "#,
+                )
+                .expect("Array fixture failed");
+                let object_constructor = vm.get_global("Object");
+                let freeze = vm
+                    .get_property(&object_constructor, "freeze")
+                    .expect("Object.freeze should exist");
+                let array = vm.get_global("array");
+                (vm, object_constructor, freeze, array)
+            },
+            |(mut vm, object_constructor, freeze, array)| {
+                vm.call_function(&freeze, &[array], Some(object_constructor))
+                    .expect("Array freeze failed")
+            },
+            BatchSize::SmallInput,
+        )
+    });
+
+    c.bench_function("object_is_frozen_10k_properties", |b| {
+        b.iter_batched(
+            || {
+                let mut vm = Vm::new().expect("failed to initialize VM");
+                vm.run(
+                    r#"
+                    var object = Object.create(null);
+                    for (var i = 0; i < 10000; i++) object["field" + i] = i;
+                    Object.freeze(object);
+                    "#,
+                )
+                .expect("object fixture failed");
+                let object_constructor = vm.get_global("Object");
+                let is_frozen = vm
+                    .get_property(&object_constructor, "isFrozen")
+                    .expect("Object.isFrozen should exist");
+                let object = vm.get_global("object");
+                (vm, object_constructor, is_frozen, object)
+            },
+            |(mut vm, object_constructor, is_frozen, object)| {
+                vm.call_function(&is_frozen, &[object], Some(object_constructor))
+                    .expect("predicate failed")
+            },
+            BatchSize::SmallInput,
+        )
+    });
+
+    c.bench_function("array_is_frozen_10k_elements", |b| {
+        b.iter_batched(
+            || {
+                let mut vm = Vm::new().expect("failed to initialize VM");
+                vm.run(
+                    r#"
+                    var array = [];
+                    for (var i = 0; i < 10000; i++) array.push(i);
+                    Object.freeze(array);
+                    "#,
+                )
+                .expect("Array fixture failed");
+                let object_constructor = vm.get_global("Object");
+                let is_frozen = vm
+                    .get_property(&object_constructor, "isFrozen")
+                    .expect("Object.isFrozen should exist");
+                let array = vm.get_global("array");
+                (vm, object_constructor, is_frozen, array)
+            },
+            |(mut vm, object_constructor, is_frozen, array)| {
+                vm.call_function(&is_frozen, &[array], Some(object_constructor))
+                    .expect("predicate failed")
+            },
+            BatchSize::SmallInput,
+        )
+    });
+}
+
 criterion_group!(
     benches,
     bench_fib,
@@ -166,6 +274,7 @@ criterion_group!(
     bench_array_push,
     bench_array_index_set,
     bench_inline_cache,
-    bench_ordinary_set_receiver
+    bench_ordinary_set_receiver,
+    bench_integrity_level
 );
 criterion_main!(benches);

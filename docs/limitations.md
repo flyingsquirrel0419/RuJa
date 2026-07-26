@@ -398,10 +398,19 @@ guarantees are required.
   shared representation paths remain infallible. Ordinary non-index Set
   receiver publication also preflights actual property-map growth and borrows
   post-commit cache keys after boxed String, Module Namespace, TypedArray,
-  Array, and Proxy classification. The remaining nearby hard-host-OOM scopes
-  include seal/freeze descriptor materialization, TypedArray byte conversion,
-  JSON caller containers, unrelated direct `ArrayData::new` constructors,
-  PropertyKey/Error strings, GC root enumeration, and mark worklists.
+  Array, and Proxy classification. Object integrity operations reserve their
+  operation root, use presence-aware internal descriptors, preflight Array
+  property publication, inspect direct attributes without cloning values, and
+  move dense values when materialization is required. Mapped Arguments
+  detachment can still clone the aliased value because `Value::BigInt` is
+  currently owned by value; sharing that immutable representation is separate
+  work. Namespace re-export initialization checks use allocation-free Brent
+  cycle detection and consume fuel per indirect binding. Integrity and nested
+  preventExtensions roots reserve before every pin. The remaining nearby
+  hard-host-OOM scopes include initial numeric
+  PropertyKey/shared-String creation, Proxy trap descriptor values, TypedArray
+  byte conversion, JSON caller containers, unrelated direct `ArrayData::new`
+  constructors, Error strings, GC root enumeration, and mark worklists.
 - Push, Pop, Shift, Unshift, Splice, Slice, Concat, Flat, FlatMap, ForEach,
   Join, ToLocaleString, Map, Reduce, ReduceRight, Reverse, ToReversed,
   ToSpliced, and With use live generic indexed operations with operation-wide

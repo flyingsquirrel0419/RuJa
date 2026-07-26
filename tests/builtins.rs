@@ -1187,6 +1187,47 @@ fn iterator_from_return_without_underlying_method_returns_done_result() {
 }
 
 #[test]
+fn typed_array_prevent_extensions_requires_a_fixed_length_view() {
+    assert_eq!(
+        run(r#"
+              var resizable = new ArrayBuffer(0, { maxByteLength: 8 });
+              var tracking = new Uint8Array(resizable);
+              var fixedResizable = new Uint8Array(resizable, 0, 0);
+              var trackingReflect = Reflect.preventExtensions(tracking);
+              var fixedReflect = Reflect.preventExtensions(fixedResizable);
+              var freezeError = "none";
+              try { Object.freeze(tracking); }
+              catch (error) { freezeError = error.name; }
+              resizable.resize(1);
+
+              var fixedBuffer = new ArrayBuffer(1);
+              var fixed = new Uint8Array(fixedBuffer);
+              var fixedSuccess = Reflect.preventExtensions(fixed);
+              var growable = new SharedArrayBuffer(0, { maxByteLength: 8 });
+              var growableTracking = new Uint8Array(growable);
+              var growableFixed = new Uint8Array(growable, 0, 0);
+              [
+                trackingReflect,
+                fixedReflect,
+                Object.isExtensible(tracking),
+                Object.isExtensible(fixedResizable),
+                freezeError,
+                tracking.length,
+                fixedSuccess,
+                Object.isExtensible(fixed),
+                Reflect.preventExtensions(growableTracking),
+                Reflect.preventExtensions(growableFixed),
+                Object.isExtensible(growableTracking),
+                Object.isExtensible(growableFixed)
+              ].join("|");
+            "#,),
+        Value::String(Arc::from(
+            "false|false|true|true|TypeError|1|true|false|false|true|true|false"
+        ))
+    );
+}
+
+#[test]
 fn iterator_from_uses_the_calling_realm_wrapper_prototype_and_errors() {
     assert_eq!(
         run(r#"
@@ -15827,7 +15868,11 @@ fn seal_and_freeze_update_integrity_for_arrays_arguments_functions_and_proxies()
     );
     assert_eq!(
         run("var a=[]; Object.seal(a); Object.isFrozen(a);"),
-        Value::Bool(true)
+        Value::Bool(false)
+    );
+    assert_eq!(
+        run("var a=[]; Object.preventExtensions(a); Object.isFrozen(a);"),
+        Value::Bool(false)
     );
     assert_eq!(
         run("var a=[]; a[2000000]=1; Object.freeze(a); a.length;"),
@@ -15895,6 +15940,73 @@ fn seal_and_freeze_update_integrity_for_arrays_arguments_functions_and_proxies()
     assert!(
         run_err("Object.freeze(new Proxy({x:1}, { defineProperty(){ return false; } }));")
             .contains("TypeError")
+    );
+}
+
+#[test]
+fn integrity_level_uses_internal_descriptor_records() {
+    assert_eq!(
+        run(r#"
+              var target = Object.freeze({ x: 2 });
+              Object.defineProperty(Object.prototype, "value", {
+                value: 1,
+                writable: true,
+                configurable: true
+              });
+              var seen;
+              var proxy = new Proxy(target, {
+                defineProperty: function(actualTarget, key, descriptor) {
+                  seen = Object.prototype.hasOwnProperty.call(descriptor, "value");
+                  return true;
+                }
+              });
+              var result;
+              try { Object.freeze(proxy); result = "ok"; }
+              catch (error) { result = error.name; }
+              delete Object.prototype.value;
+              [result, seen, target.x].join("|");
+            "#,),
+        Value::String(Arc::from("ok|false|2"))
+    );
+    assert_eq!(
+        run(r#"
+              (function () {
+                delete arguments.length;
+                Object.seal(arguments);
+                return Object.isSealed(arguments) &&
+                  !Object.prototype.hasOwnProperty.call(arguments, "length");
+              })(1);
+            "#,),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run(r#"
+              var huge = BigInt("1" + "0".repeat(4096));
+              var object = { value: huge };
+              var array = [huge];
+              Object.freeze(object);
+              Object.freeze(array);
+              [
+                object.value === huge,
+                array[0] === huge,
+                Object.isFrozen(object),
+                Object.isFrozen(array)
+              ].join("|");
+            "#,),
+        Value::String(Arc::from("true|true|true|true"))
+    );
+    assert_eq!(
+        run(r#"
+              (function (parameter) {
+                var args = arguments;
+                Object.defineProperty(args, "0", { enumerable: false });
+                parameter = 2;
+                Object.freeze(args);
+                parameter = 3;
+                return [args[0], Object.isFrozen(args), parameter].join("|");
+              })(1);
+            "#,),
+        Value::String(Arc::from("2|true|3"))
     );
 }
 

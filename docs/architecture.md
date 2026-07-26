@@ -2140,6 +2140,49 @@ ordinary target.
 - 장점, 단점 및 영향: Full/spare/existing map, retry, cache, Proxy/fuel, global, Realm, String UTF-16, Namespace NaN/signed-zero, and cleanup boundaries now have deterministic evidence. Receiver overwrite/create benchmarks show no measured regression. Initial PropertyKey/shared String creation, seal/freeze materialization, TypedArray byte conversion, JSON containers, unrelated ArrayData constructors, Error strings, GC root enumeration, and mark worklists remain separate scopes.
 ```
 
+## Object integrity levels
+
+`Object.seal`, `Object.freeze`, `Object.isSealed`, and `Object.isFrozen` share
+the specification integrity pipeline. Proxy objects retain observable
+`preventExtensions`, `ownKeys`, descriptor-trap, invariant, and define-trap
+ordering. Module Namespace exports retain TDZ observation. Direct objects use
+an attribute-only descriptor view because integrity checks do not consume data
+values or accessor functions.
+
+Integrity definitions carry only present `configurable: false` and, for frozen
+data properties, `writable: false`. Existing ordinary descriptors update in
+place. A dense Array index reserves destination property-map growth, moves its
+owned value into a custom descriptor, then clears dense presence; mapped
+Arguments obtains the current aliased value and detaches only after successful
+publication, including indices already promoted into property storage. Array
+`length` continues through ArraySetLength, including its writable bit. Deleted
+Arguments `length` is not synthesized by ownKeys.
+
+TypedArray `[[PreventExtensions]]` first applies `IsTypedArrayFixedLength`:
+length-tracking views and fixed views over non-shared resizable ArrayBuffers
+return false without changing extensibility. Fixed views over fixed buffers or
+growable SharedArrayBuffers continue through ordinary prevention. Every
+preventExtensions operation, Proxy layer, and trap root reserves before pinning.
+Module Namespace binding observation follows re-export indirection with Brent
+cycle detection, consumes fuel before each edge, and clones neither the binding
+value nor an owned visited set.
+
+Direct integrity predicates scan stored attributes without creating numeric
+keys or descriptor records after confirming non-extensibility. Proxy, Module
+Namespace, and mixed dense/custom Array states retain the common observable
+path. Predicate scans consume fuel for their complete direct key work before
+returning a result.
+
+```text
+[Decision Log]
+- 목적과 의도: Make Object integrity operations specification-correct, allocator-aware, and fast for repeated direct predicates without hiding Proxy, Module Namespace, Array, Arguments, Realm, fuel, or required partial effects.
+- 기존 구현 및 제약 조건: Separate object-kind shortcuts skipped Array length writability, synthesized deleted Arguments length, swallowed Namespace TDZ, bypassed common Proxy semantics and fuel, materialized descriptor objects through mutable Object.prototype, and cloned existing BigInt values. PreventExtensions and earlier per-key updates must remain visible after later failure.
+- 검토한 주요 대안: Patch each specialized path independently, retain JavaScript descriptor objects, clone complete descriptors for every key, make all predicates collect PropertyKeys, redesign every Value as shared storage in this unit, or route every direct object through Proxy machinery.
+- 선택한 방식: Share the specification-level operation; represent integrity definitions with presence-aware internal records; inspect direct descriptor attributes without values; mutate ordinary attributes in place; reserve then move dense Array values; retain observable Proxy and Namespace paths; and use a direct allocation-free predicate scan only where no JavaScript hook can observe it.
+- 다른 대안 대신 이 방식을 선택한 이유: Per-kind patches had already drifted; JavaScript descriptor objects expose prototype pollution and allocate GC cells; complete descriptor cloning creates host-OOM risk for immutable BigInts; universal key collection regresses steady-state predicates; a global Value representation change is wider than this integrity unit; and direct objects need no Proxy traversal.
+- 장점, 단점 및 영향: Array length, Arguments deletion/promoted mapping, Proxy descriptors, resizable-buffer TypedArray prevention, Namespace TDZ/re-export fuel, nested root reservation, map growth, retry, partial effects, exact-cap GC, large BigInt values, and repeated predicates now have coverage. Initial numeric PropertyKey/shared String creation remains infallible. Proxy traps must still observe complete descriptor values, and mapped-Arguments detachment can clone an aliased by-value BigInt until immutable BigInts use shared representation.
+```
+
 ---
 
 **Next:** [Features](features.md) · [Known limitations](limitations.md) · [Back to README](../README.md)

@@ -663,6 +663,119 @@ impl Vm {
         )
     }
 
+    /// Apply SetIntegrityLevel's attribute-only descriptor without cloning the
+    /// existing value. Dense Array values move into custom storage only after
+    /// the destination map has enough capacity.
+    pub(crate) fn define_integrity_attributes(
+        &mut self,
+        idx: GcIdx,
+        key: &PropertyKey,
+        writable: Option<bool>,
+    ) -> error::Result<bool> {
+        let dense_index = self.heap.with_obj(idx.0, |object| {
+            let HeapObj::Array(array) = object else {
+                return None;
+            };
+            let index = key.as_str().and_then(crate::value::parse_array_index)?;
+            if array.props.lock().contains_key(key)
+                || index >= array.items.lock().len()
+                || !array.is_dense_present(index)
+            {
+                return None;
+            }
+            Some(index)
+        });
+
+        if let Some(index) = dense_index {
+            let mapped_value = self
+                .arguments_mapped_binding_for_index(idx.0, index)
+                .and_then(|(environment, name)| {
+                    crate::environment::get(&self.heap, environment, &name)
+                });
+            self.reserve_ordinary_property_map(idx, key)?;
+            let is_arguments = self.heap.with_obj(idx.0, |object| {
+                let HeapObj::Array(array) = object else {
+                    return false;
+                };
+                let mut properties = array.props.lock();
+                if let Some(descriptor) = properties.get_mut(key) {
+                    descriptor.configurable = false;
+                    if let Some(writable) = writable {
+                        descriptor.writable = writable;
+                    }
+                    return array
+                        .is_arguments
+                        .load(std::sync::atomic::Ordering::Relaxed);
+                }
+                let mut items = array.items.lock();
+                let mut present = array.present.lock();
+                if index >= items.len() || !present.get(index).copied().unwrap_or(false) {
+                    return false;
+                }
+                let dense_value = std::mem::replace(&mut items[index], Value::Undefined);
+                present[index] = false;
+                let value = mapped_value.unwrap_or(dense_value);
+                let mut descriptor = PropertyDescriptor::data(value);
+                descriptor.writable = writable.unwrap_or(true);
+                descriptor.enumerable = true;
+                descriptor.configurable = false;
+                properties.insert(key.clone(), descriptor);
+                array
+                    .is_arguments
+                    .load(std::sync::atomic::Ordering::Relaxed)
+            });
+            if is_arguments && writable == Some(false) {
+                self.remove_arguments_mapping_for_index(idx.0, index);
+            }
+            return Ok(true);
+        }
+
+        let mapped_arguments = key
+            .as_str()
+            .and_then(crate::value::parse_array_index)
+            .and_then(|index| {
+                self.arguments_mapped_binding_for_index(idx.0, index)
+                    .map(|(environment, name)| (index, environment, name))
+            });
+        let mapped_value = if writable == Some(false) {
+            mapped_arguments
+                .as_ref()
+                .and_then(|(_, environment, name)| {
+                    crate::environment::get(&self.heap, *environment, name)
+                })
+        } else {
+            None
+        };
+        let updated = self.heap.with_obj(idx.0, |object| {
+            if let Some(descriptor) = object.props().lock().get_mut(key) {
+                if let Some(value) = mapped_value {
+                    descriptor.value = value;
+                }
+                descriptor.configurable = false;
+                if let Some(writable) = writable {
+                    descriptor.writable = writable;
+                }
+                return true;
+            }
+            if let HeapObj::Object(data) = object {
+                if let Some(Value::String(value)) = data.primitive.lock().as_ref() {
+                    return key.as_str() == Some("length")
+                        || key
+                            .as_str()
+                            .and_then(crate::value::parse_array_index)
+                            .is_some_and(|index| index < crate::value::utf16_len(value));
+                }
+            }
+            false
+        });
+        if updated && writable == Some(false) {
+            if let Some((index, _, _)) = mapped_arguments {
+                self.remove_arguments_mapping_for_index(idx.0, index);
+            }
+        }
+        Ok(updated)
+    }
+
     fn publish_ordinary_set_storage(
         &mut self,
         idx: GcIdx,
@@ -2424,6 +2537,7 @@ impl Vm {
     }
 
     pub(crate) fn prevent_extensions(&mut self, obj: &Value) -> error::Result<bool> {
+        self.try_reserve_value_roots(std::slice::from_ref(obj))?;
         let root_pin = self.pin(obj);
         let mut current = obj.clone();
         let result = (|| loop {
@@ -2443,18 +2557,38 @@ impl Vm {
                 }
             });
             let Some(proxy_info) = proxy_info else {
+                let fixed_length_typed_array = self.heap.with_obj(idx.0, |object| {
+                    let HeapObj::TypedArray(array) = object else {
+                        return None;
+                    };
+                    if array.length_tracking {
+                        return Some(false);
+                    }
+                    let Some(Value::Object(buffer_index)) = &array.viewed_array_buffer else {
+                        return Some(true);
+                    };
+                    Some(self.heap.with_obj(buffer_index.0, |buffer_object| {
+                        matches!(buffer_object, HeapObj::ArrayBuffer(buffer) if buffer.shared || buffer.max_byte_length.is_none())
+                    }))
+                });
+                if fixed_length_typed_array == Some(false) {
+                    return Ok(false);
+                }
                 self.heap.with_obj(idx.0, HeapObj::prevent_extensions);
                 return Ok(true);
             };
 
             let (target, handler) = proxy_info?;
             self.consume_fuel()?;
-            let proxy_pins = self.pin_many(&[target.clone(), handler.clone()]);
+            let proxy_roots = [target.clone(), handler.clone()];
+            self.try_reserve_value_roots(&proxy_roots)?;
+            let proxy_pins = self.pin_many(&proxy_roots);
             let proxy_result = (|| {
                 let trap = self.get_proxy_method(&handler, "preventExtensions")?;
                 if trap.is_nullish() {
                     return Ok(None);
                 }
+                self.try_reserve_value_roots(std::slice::from_ref(&trap))?;
                 let trap_pin = self.pin(&trap);
                 let trap_result =
                     self.call_function(&trap, std::slice::from_ref(&target), Some(handler.clone()));

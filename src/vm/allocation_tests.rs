@@ -7258,58 +7258,75 @@ fn exotic_integrity_descriptors_retry_gc_at_exact_cap_and_restore_pin_depth() {
     let mut vm = Vm::new().expect("VM should initialize");
     vm.run(
         r#"
-        globalThis.pendingSealTarget = new Map([["entry", 1]]);
+        var pendingSealTarget = new Map([["entry", 1]]);
         pendingSealTarget.first = 1;
         pendingSealTarget.second = 2;
-        globalThis.pendingFreezeTarget = Promise.resolve(1);
+        var pendingFreezeTarget = Promise.resolve(1);
         pendingFreezeTarget.first = 1;
         pendingFreezeTarget.second = 2;
-        function takeSealTarget() {
-          var target = pendingSealTarget;
-          pendingSealTarget = null;
-          return target;
-        }
-        function takeFreezeTarget() {
-          var target = pendingFreezeTarget;
-          pendingFreezeTarget = null;
-          return target;
-        }
         "#,
     )
     .expect("integrity fixtures should initialize");
+    let seal_target = vm.get_global("pendingSealTarget");
+    let freeze_target = vm.get_global("pendingFreezeTarget");
     vm.gc();
     let exact_live = vm.heap.live_count();
     let baseline_pins = vm.gc_pins.len();
-    vm.set_max_heap_objects(Some(exact_live + 2));
+    vm.set_max_heap_objects(Some(exact_live));
 
-    vm.run("globalThis.sealedResult = Object.seal(takeSealTarget());")
-        .expect("two reusable descriptor cells should complete exotic sealing");
-    assert!(vm.heap.live_count() <= exact_live + 2);
+    assert!(
+        crate::builtins::set_integrity_level(&mut vm, &seal_target, false)
+            .expect("internal descriptor records should need no GC cell for sealing")
+    );
+    assert!(vm.heap.live_count() <= exact_live);
+    assert!(!vm.is_extensible(&seal_target).unwrap());
+    let Value::Object(seal_index) = seal_target else {
+        unreachable!();
+    };
+    assert!(vm.heap.with_obj(seal_index.0, |object| object
+        .props()
+        .lock()
+        .values()
+        .all(|descriptor| !descriptor.configurable)));
     assert_eq!(vm.gc_pins.len(), baseline_pins);
 
     vm.set_max_heap_objects(None);
     vm.gc();
     let freeze_live = vm.heap.live_count();
-    vm.set_max_heap_objects(Some(freeze_live + 2));
-    vm.run("globalThis.frozenResult = Object.freeze(takeFreezeTarget());")
-        .expect("two reusable descriptor cells should complete exotic freezing");
-    assert!(vm.heap.live_count() <= freeze_live + 2);
+    vm.set_max_heap_objects(Some(freeze_live));
+    assert!(
+        crate::builtins::set_integrity_level(&mut vm, &freeze_target, true)
+            .expect("internal descriptor records should need no GC cell for freezing")
+    );
+    assert!(vm.heap.live_count() <= freeze_live);
+    assert!(!vm.is_extensible(&freeze_target).unwrap());
+    let Value::Object(freeze_index) = freeze_target else {
+        unreachable!();
+    };
+    assert!(vm
+        .heap
+        .with_obj(freeze_index.0, |object| object.props().lock().values().all(
+            |descriptor| {
+                !descriptor.configurable && (descriptor.is_accessor || !descriptor.writable)
+            }
+        )));
     assert_eq!(vm.gc_pins.len(), baseline_pins);
 
     vm.set_max_heap_objects(None);
     assert_eq!(
         vm.run(
             r#"
-            Object.isSealed(sealedResult) &&
-              !Object.isFrozen(sealedResult) &&
-              sealedResult.get("entry") === 1 &&
-              !Object.prototype.hasOwnProperty.call(sealedResult, "entry") &&
-              Object.isFrozen(frozenResult) &&
-              sealedResult.first === 1 && frozenResult.first === 1
+            [Object.isSealed(pendingSealTarget),
+              !Object.isFrozen(pendingSealTarget) &&
+              pendingSealTarget.get("entry") === 1,
+              !Object.prototype.hasOwnProperty.call(pendingSealTarget, "entry") &&
+              Object.isFrozen(pendingFreezeTarget),
+              pendingSealTarget.first === 1,
+              pendingFreezeTarget.first === 1].join("|")
             "#,
         )
         .expect("integrity results should remain live after cap-triggered GC"),
-        Value::Bool(true)
+        Value::String(Arc::from("true|true|true|true|true"))
     );
 
     vm.run("globalThis.failureTarget = new Map(); failureTarget.first = 1;")
@@ -7317,19 +7334,323 @@ fn exotic_integrity_descriptors_retry_gc_at_exact_cap_and_restore_pin_depth() {
     vm.gc();
     let saturated_live = vm.heap.live_count();
     vm.set_max_heap_objects(Some(saturated_live));
-    let error = vm
-        .run("Object.freeze(failureTarget);")
-        .expect_err("a saturated heap must reject the integrity descriptor allocation");
+    vm.run("Object.freeze(failureTarget);")
+        .expect("a saturated heap should need no integrity descriptor allocation");
     vm.set_max_heap_objects(None);
 
-    assert_eq!(error.kind, crate::error::ErrorKind::Range);
-    assert_main_realm_range_error(&vm, error.as_ref());
     assert_eq!(vm.gc_pins.len(), baseline_pins);
     assert_eq!(
-        vm.run("Object.isExtensible(failureTarget);")
-            .expect("the partially completed target should remain usable"),
+        vm.run("Object.isFrozen(failureTarget);")
+            .expect("the saturated target should be frozen"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn integrity_level_roots_fuel_and_array_publication_are_fallible() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.run(
+        r#"
+          var integrityRootTarget = { value: 1 };
+          var integrityArray = [1, 2];
+          Object.defineProperty(integrityArray, "0", {
+            value: 1,
+            writable: true,
+            enumerable: false,
+            configurable: true
+          });
+          var integrityFuelArray = [1, 2, 3];
+          var integrityArguments;
+          var readIntegrityParameter;
+          var writeIntegrityParameter;
+          (function (parameter) {
+            integrityArguments = arguments;
+            readIntegrityParameter = function () { return parameter; };
+            writeIntegrityParameter = function (value) { parameter = value; };
+          })(1);
+        "#,
+    )
+    .expect("integrity fixtures should initialize");
+    let baseline_pins = vm.gc_pins.len();
+
+    let root_target = vm.get_global("integrityRootTarget");
+    let Value::Object(root_index) = root_target else {
+        unreachable!();
+    };
+    let filler_start = vm.gc_pins.len();
+    while vm.gc_pins.len() < vm.gc_pins.capacity() {
+        vm.gc_pins.push(root_index.0);
+    }
+    vm.fail_descriptor_materialization_reservation = Some((
+        DescriptorMaterializationReservationSite::IntegrityOperationRoot,
+        0,
+    ));
+    let error = crate::builtins::set_integrity_level(&mut vm, &root_target, true)
+        .expect_err("integrity operation root growth should be fallible");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert!(vm.is_extensible(&root_target).unwrap());
+    assert_eq!(vm.fail_descriptor_materialization_reservation, None);
+    vm.gc_pins.truncate(filler_start);
+    assert!(
+        crate::builtins::set_integrity_level(&mut vm, &root_target, true)
+            .expect("integrity operation should retry")
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    while vm.gc_pins.len() < vm.gc_pins.capacity() {
+        vm.gc_pins.push(root_index.0);
+    }
+    vm.fail_descriptor_materialization_reservation = Some((
+        DescriptorMaterializationReservationSite::IntegrityOperationRoot,
+        0,
+    ));
+    let error = crate::builtins::test_integrity_level(&mut vm, &root_target, true)
+        .expect_err("integrity predicate root growth should be fallible");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    vm.gc_pins.truncate(filler_start);
+    assert!(
+        crate::builtins::test_integrity_level(&mut vm, &root_target, true)
+            .expect("integrity predicate should retry")
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    let object = vm.get_global("Object");
+    let freeze = vm
+        .get_property(&object, "freeze")
+        .expect("Object.freeze should exist");
+    let is_frozen = vm
+        .get_property(&object, "isFrozen")
+        .expect("Object.isFrozen should exist");
+
+    let array = vm.get_global("integrityArray");
+    fill_property_storage_to_spare(&vm, &array, "integrityArrayPadding", 0);
+    vm.fail_ordinary_property_storage_reservation =
+        Some((OrdinaryPropertyStorageReservationSite::PropertyStorage, 0));
+    let error = vm
+        .call_function(&freeze, std::slice::from_ref(&array), Some(object.clone()))
+        .expect_err("second Array descriptor publication should fail");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert!(!vm.is_extensible(&array).unwrap());
+    let zero = vm
+        .own_property_descriptor_for_proxy_invariant(&array, &PropertyKey::from("0"))
+        .expect("index zero should remain present");
+    let one = vm
+        .own_property_descriptor_for_proxy_invariant(&array, &PropertyKey::from("1"))
+        .expect("index one should remain present");
+    assert!(!zero.configurable && !zero.writable);
+    assert!(one.configurable && one.writable);
+    vm.call_function(&freeze, std::slice::from_ref(&array), Some(object.clone()))
+        .expect("Array integrity publication should retry");
+    assert_eq!(
+        vm.call_function(
+            &is_frozen,
+            std::slice::from_ref(&array),
+            Some(object.clone())
+        )
+        .unwrap(),
+        Value::Bool(true)
+    );
+
+    let fuel_array = vm.get_global("integrityFuelArray");
+    vm.set_fuel(Some(2));
+    let error = vm
+        .call_function(
+            &freeze,
+            std::slice::from_ref(&fuel_array),
+            Some(object.clone()),
+        )
+        .expect_err("Array own-key scan should consume exact fuel");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert!(!vm.is_extensible(&fuel_array).unwrap());
+    assert!(
+        vm.own_property_descriptor_for_proxy_invariant(&fuel_array, &PropertyKey::from("0"))
+            .expect("fuel fixture index should remain present")
+            .configurable
+    );
+    vm.set_fuel(Some(3));
+    vm.call_function(
+        &freeze,
+        std::slice::from_ref(&fuel_array),
+        Some(object.clone()),
+    )
+    .expect("exact Array own-key fuel should succeed");
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    vm.set_fuel(None);
+
+    let Value::Object(fuel_array_index) = fuel_array else {
+        unreachable!();
+    };
+    let predicate_work = vm.heap.with_obj(fuel_array_index.0, |object| {
+        let HeapObj::Array(array) = object else {
+            unreachable!();
+        };
+        array.props.lock().len() + array.present.lock().len()
+    });
+    let predicate_work = i64::try_from(predicate_work).expect("predicate work should fit fuel");
+    vm.set_fuel(Some(predicate_work - 1));
+    let error = vm
+        .call_function(
+            &is_frozen,
+            std::slice::from_ref(&fuel_array),
+            Some(object.clone()),
+        )
+        .expect_err("direct integrity scan must charge before reading attributes");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    vm.set_fuel(Some(predicate_work));
+    assert_eq!(
+        vm.call_function(
+            &is_frozen,
+            std::slice::from_ref(&fuel_array),
+            Some(object.clone()),
+        )
+        .expect("exact direct integrity fuel should succeed"),
+        Value::Bool(true)
+    );
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    vm.set_fuel(None);
+
+    vm.run(
+        r#"
+        var emptyIntegrityArray = Object.preventExtensions([]);
+        var boxedIntegrityString = Object.preventExtensions(Object("\ud834\udf06"));
+        "#,
+    )
+    .expect("direct predicate fuel fixtures should initialize");
+    let empty = vm.get_global("emptyIntegrityArray");
+    vm.set_fuel(Some(0));
+    assert_eq!(
+        vm.call_function(
+            &is_frozen,
+            std::slice::from_ref(&empty),
+            Some(object.clone())
+        )
+        .expect("an empty Array predicate needs no scan fuel"),
         Value::Bool(false)
     );
+    let boxed = vm.get_global("boxedIntegrityString");
+    vm.set_fuel(Some(3));
+    let error = vm
+        .call_function(
+            &is_frozen,
+            std::slice::from_ref(&boxed),
+            Some(object.clone()),
+        )
+        .expect_err("boxed String scan should retain its byte-length fuel bound");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    vm.set_fuel(Some(4));
+    assert_eq!(
+        vm.call_function(
+            &is_frozen,
+            std::slice::from_ref(&boxed),
+            Some(object.clone())
+        )
+        .expect("exact boxed String fuel should succeed"),
+        Value::Bool(true)
+    );
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    vm.set_fuel(None);
+
+    let arguments = vm.get_global("integrityArguments");
+    fill_property_storage_to_spare(&vm, &arguments, "integrityArgumentsPadding", 0);
+    vm.fail_ordinary_property_storage_reservation =
+        Some((OrdinaryPropertyStorageReservationSite::PropertyStorage, 0));
+    let error = vm
+        .call_function(
+            &freeze,
+            std::slice::from_ref(&arguments),
+            Some(object.clone()),
+        )
+        .expect_err("Arguments descriptor publication should be fallible");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert!(!vm.is_extensible(&arguments).unwrap());
+    vm.run("writeIntegrityParameter(2)")
+        .expect("failed freeze must retain the mapped parameter");
+    assert_eq!(
+        vm.get_property(&arguments, "0").unwrap(),
+        Value::Number(2.0)
+    );
+    vm.call_function(
+        &freeze,
+        std::slice::from_ref(&arguments),
+        Some(object.clone()),
+    )
+    .expect("Arguments integrity publication should retry");
+    vm.run("writeIntegrityParameter(3)")
+        .expect("frozen Arguments mapping should stay detached");
+    assert_eq!(
+        vm.get_property(&arguments, "0").unwrap(),
+        Value::Number(2.0)
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+}
+
+#[test]
+fn integrity_level_observes_module_namespace_tdz() {
+    let module_dir = std::env::temp_dir().join(format!(
+        "ruja-integrity-namespace-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock should follow epoch")
+            .as_nanos()
+    ));
+    fs::create_dir_all(&module_dir).expect("module fixture directory should be created");
+    fs::write(
+        module_dir.join("a.js"),
+        "import './b.js'; export let value = 1;",
+    )
+    .expect("module A should be written");
+    fs::write(
+        module_dir.join("b.js"),
+        "import * as namespace from './a.js'; \
+         globalThis.integrityNamespaceTdz = []; \
+         try { Object.seal(namespace); } \
+         catch (error) { integrityNamespaceTdz.push(error instanceof ReferenceError); } \
+         try { Object.isFrozen(namespace); } \
+         catch (error) { integrityNamespaceTdz.push(error instanceof ReferenceError); } \
+         try { Object.freeze(namespace); } \
+         catch (error) { integrityNamespaceTdz.push(error instanceof ReferenceError); }",
+    )
+    .expect("module B should be written");
+    fs::write(module_dir.join("entry.js"), "import './a.js';")
+        .expect("module entry should be written");
+
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.run_module_file(module_dir.join("entry.js"))
+        .expect("cyclic module fixture should evaluate");
+    assert_eq!(
+        vm.run("integrityNamespaceTdz.join('|')")
+            .expect("TDZ observations should be readable"),
+        Value::String(Arc::from("true|true|true"))
+    );
+
+    let terminal = crate::environment::new_env(&vm.heap, None, false)
+        .expect("terminal module environment should allocate");
+    crate::environment::declare(
+        &vm.heap,
+        terminal,
+        "value",
+        Value::Number(1.0),
+        crate::value::BindingKind::Const,
+    );
+    let mut target = terminal;
+    for _ in 0..4 {
+        let import = crate::environment::new_env(&vm.heap, None, false)
+            .expect("import environment should allocate");
+        crate::environment::declare_import(&vm.heap, import, "value", target, Arc::from("value"));
+        target = import;
+    }
+    vm.set_fuel(Some(3));
+    let error =
+        crate::builtins::observe_namespace_binding_initialized(&mut vm, target, Arc::from("value"))
+            .expect_err("N-1 import-indirection fuel should fail");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    vm.set_fuel(Some(4));
+    crate::builtins::observe_namespace_binding_initialized(&mut vm, target, Arc::from("value"))
+        .expect("exact import-indirection fuel should succeed");
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    vm.set_fuel(None);
+    fs::remove_dir_all(module_dir).expect("module fixture directory should be removed");
 }
 
 #[test]

@@ -10969,6 +10969,56 @@ full run `30195285326`. Artifacts at
 - 장점, 단점 및 영향: The unit has byte-identical 1683/0/81 focused evidence, deterministic allocation/cache/Realm/Proxy/String/Namespace coverage, and no measured workload regression. Initial PropertyKey/shared String creation, seal/freeze, TypedArray bytes, JSON containers, direct ArrayData constructors, Error strings, GC root enumeration, and mark worklists remain independent.
 ```
 
+## Object integrity allocation and exotic semantics
+
+This unit changes no Test262 admission. `Object.seal`, `Object.freeze`,
+`Object.isSealed`, and `Object.isFrozen` now share the Proxy-aware integrity
+algorithm. Direct Rust regressions cover Array length writability, deleted and
+mapped Arguments properties, descriptor prototype pollution, Proxy trap
+presence and partial effects, TypedArray definitions, Module Namespace TDZ,
+operation roots, Array map growth, exact fuel, retry, foreign Realms,
+exact-cap GC, and large BigInt values. Repeated direct predicates use an
+attribute-only path and have separate object/Array benchmarks.
+
+Local gates pass all targets/features with **266/266** library tests and
+**541/541** builtins tests, plus **265/265** release library tests,
+**135/135** tooling tests, **1/1** doctest, rustfmt, warnings-denied Clippy,
+release build, generated documentation, and wasm32 checking. Rustdoc has only
+13 existing warnings. GPT-5.6 reviews found the BigInt descriptor clone,
+steady-state predicate regression, Namespace seal TDZ omission, delayed fuel
+charging, promoted mapped-Arguments detachment, variable-length TypedArray
+prevention, nested root preflight, re-export traversal bounds, and benchmark
+isolation gaps. All were corrected; final review is CLEAN.
+
+On fixed Test262 `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the four
+`built-ins/Object/{freeze,seal,isFrozen,isSealed}` directories plus
+`language/module-code/namespace` are **257 pass / 0 fail / 20 skip / 0 timeout
+/ 0 error / 277 total / 257 run**. Current and preceding release binaries
+produce byte-identical output. Warm release wall-time comparisons with a 10k
+fixture and 0, 1, or 20 repeated predicates show no measured steady-state
+regression after the direct attribute scan. Isolated Criterion point estimates
+are about **5.30 ms** for freezing 10k object properties, **10.18 ms** for
+freezing 10k Array elements, **0.85 ms** for the object predicate, and **0.93
+ms** for the Array predicate.
+
+The two staging tests
+`staging/built-ins/{Object,Reflect}/preventExtensions/preventExtensions-variable-length-typed-arrays.js`
+remain outside normal admission. Forced execution improves from **0 pass / 2
+fail** on the preceding release to **2 pass / 0 fail**. They cover fixed and
+length-tracking views over resizable ArrayBuffers and growable
+SharedArrayBuffers; exact staging admission remains a separate tooling-policy
+decision.
+
+```text
+[Decision Log]
+- 목적과 의도: Prove Object integrity correctness, allocation boundaries, and repeated-predicate performance without widening Test262 admission.
+- 기존 구현 및 제약 조건: Test262 cannot inject native root/map reservation failures or host value clones; existing admitted tests did not expose deleted Arguments length, descriptor prototype pollution, Namespace seal TDZ, or a repeated isFrozen slowdown; aggregate totals can hide per-test drift.
+- 검토한 주요 대안: Admit unrelated tests, rely only on Test262, rely only on Rust failpoints, compare aggregate counts, omit the preceding binary, or benchmark only fixture creation plus one integrity operation.
+- 선택한 방식: Keep admission fixed; test allocation, Realm, exotic, fuel, partial-effect, and GC boundaries directly; compare exact focused output with the preceding release; and separate freeze from already-frozen predicate workloads.
+- 다른 대안 대신 이 방식을 선택한 이유: Admission does not prove host-allocation behavior; failpoints do not detect broad semantic drift; totals are weaker than byte identity; one binary cannot isolate patch effects; and a combined benchmark hid the repeated-predicate regression.
+- 장점, 단점 및 영향: The unit has byte-identical 257/0/20 focused evidence, deterministic exotic/allocation coverage, and no measured repeated-predicate regression. Initial numeric PropertyKey/shared String creation, Proxy descriptor values, and mapped-Arguments by-value BigInt duplication remain explicit follow-ups.
+```
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is

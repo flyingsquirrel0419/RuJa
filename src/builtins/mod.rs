@@ -5501,12 +5501,50 @@ pub(crate) fn push_unique_key(
     Ok(())
 }
 
+// Keep allocation-free integrity predicates on the same conservative scan
+// budget as ordinary own-key materialization.
+fn ordinary_own_property_scan_work(
+    vm: &Vm,
+    obj: &Value,
+    include_strings: bool,
+    typed_array_index_count: Option<usize>,
+) -> usize {
+    let mut work = typed_array_index_count.unwrap_or(0);
+    match obj {
+        Value::Object(idx) => {
+            work = work.saturating_add(vm.heap.with_obj(idx.0, |object| {
+                let mut object_work = object.props().lock().len();
+                if include_strings {
+                    if let HeapObj::Array(array) = object {
+                        object_work = object_work.saturating_add(array.present.lock().len());
+                    }
+                    if let HeapObj::Object(data) = object {
+                        if let Some(Value::String(string)) = data.primitive.lock().as_ref() {
+                            object_work = object_work.saturating_add(string.len());
+                        }
+                    }
+                    if let HeapObj::ModuleNamespace(namespace) = object {
+                        object_work = object_work.saturating_add(namespace.exports.lock().len());
+                    }
+                }
+                object_work
+            }));
+        }
+        Value::String(string) if include_strings => {
+            work = work.saturating_add(string.len());
+        }
+        _ => {}
+    }
+    work
+}
+
 fn ordinary_own_property_keys(
     vm: &mut Vm,
     obj: &Value,
     enumerable_only: bool,
     include_strings: bool,
     include_symbols: bool,
+    charge_fuel: bool,
 ) -> error::Result<Vec<PropertyKey>> {
     let mut keys = Vec::new();
     let mut seen = IndexSet::new();
@@ -5514,35 +5552,11 @@ fn ordinary_own_property_keys(
         .then(|| vm.typed_array_integer_index_own_property_key_count(obj))
         .flatten();
 
-    // Charge before materializing native key collections. The byte length is
-    // a conservative O(1) upper bound for a string's UTF-16 key count.
-    let mut scan_work = typed_array_index_count.unwrap_or(0);
-    match obj {
-        Value::Object(idx) => {
-            scan_work = scan_work.saturating_add(vm.heap.with_obj(idx.0, |o| {
-                let mut work = o.props().lock().len();
-                if include_strings {
-                    if let HeapObj::Array(array) = o {
-                        work = work.saturating_add(array.present.lock().len());
-                    }
-                    if let HeapObj::Object(object) = o {
-                        if let Some(Value::String(string)) = object.primitive.lock().as_ref() {
-                            work = work.saturating_add(string.len());
-                        }
-                    }
-                    if let HeapObj::ModuleNamespace(namespace) = o {
-                        work = work.saturating_add(namespace.exports.lock().len());
-                    }
-                }
-                work
-            }));
-        }
-        Value::String(string) if include_strings => {
-            scan_work = scan_work.saturating_add(string.len());
-        }
-        _ => {}
-    }
-    if vm.fuel_remaining().is_some() {
+    // Charge before materializing native key collections. String byte length
+    // is a conservative O(1) upper bound for its UTF-16 key count.
+    let scan_work =
+        ordinary_own_property_scan_work(vm, obj, include_strings, typed_array_index_count);
+    if charge_fuel && vm.fuel_remaining().is_some() {
         for _ in 0..scan_work {
             vm.consume_fuel()?;
         }
@@ -5590,7 +5604,7 @@ fn ordinary_own_property_keys(
                             index_keys.push(i as u32);
                         }
                     }
-                    if !enumerable_only {
+                    if !enumerable_only && !a.is_arguments.load(Ordering::Relaxed) {
                         reserve_ordinary_own_keys_vec(
                             &mut string_keys,
                             #[cfg(test)]
@@ -6376,124 +6390,6 @@ fn object_prevent_extensions(
     Ok(obj)
 }
 
-fn descriptor_is_frozen(desc: &PropertyDescriptor) -> bool {
-    !desc.configurable && (desc.is_accessor || !desc.writable)
-}
-
-fn array_length(array: &ArrayData) -> usize {
-    let dense_len = array.items.lock().len();
-    let sparse_len = array.sparse_max.lock().unwrap_or(0);
-    dense_len.max(sparse_len)
-}
-
-fn materialize_array_index_descriptors(array: &ArrayData, freeze: bool) {
-    let items = array.items.lock();
-    let present = array.present.lock();
-    let mut props = array.props.lock();
-    let is_arguments = array.is_arguments.load(Ordering::Relaxed);
-    for (index, value) in items.iter().enumerate() {
-        if !present.get(index).copied().unwrap_or(false) {
-            continue;
-        }
-        let key = PropertyKey::from_string(index.to_string());
-        let desc = props
-            .entry(key)
-            .or_insert_with(|| PropertyDescriptor::data(value.clone()));
-        if freeze && !desc.is_accessor {
-            desc.writable = false;
-            if is_arguments {
-                if let Some(map) = array.arguments_map.lock().as_mut() {
-                    if let Some(slot) = map.names.get_mut(index) {
-                        *slot = None;
-                    }
-                }
-            }
-        }
-        desc.configurable = false;
-    }
-    if !is_arguments {
-        let length_key = PropertyKey::from("length");
-        let sparse_len = array.sparse_max.lock().unwrap_or(0);
-        let length = Value::Number(items.len().max(sparse_len) as f64);
-        let desc = props.entry(length_key).or_insert_with(|| {
-            let mut desc = PropertyDescriptor::data(length);
-            desc.enumerable = false;
-            desc.configurable = false;
-            desc
-        });
-        if freeze && !desc.is_accessor {
-            desc.writable = false;
-        }
-        desc.configurable = false;
-    }
-}
-
-fn array_integrity(array: &ArrayData, frozen: bool) -> bool {
-    if array.extensible.load(Ordering::Relaxed) {
-        return false;
-    }
-    let length = array_length(array);
-    let items = array.items.lock();
-    let present = array.present.lock();
-    let props = array.props.lock();
-    for index in 0..items.len() {
-        if !present.get(index).copied().unwrap_or(false) {
-            continue;
-        }
-        let key = PropertyKey::from_string(index.to_string());
-        let Some(desc) = props.get(&key) else {
-            return false;
-        };
-        if frozen {
-            if !descriptor_is_frozen(desc) {
-                return false;
-            }
-        } else if desc.configurable {
-            return false;
-        }
-    }
-    if !array.is_arguments.load(Ordering::Relaxed) {
-        let length_key = PropertyKey::from("length");
-        if let Some(desc) = props.get(&length_key) {
-            if desc.configurable {
-                return false;
-            }
-            if desc.value != Value::Number(length as f64) {
-                return false;
-            }
-        }
-    }
-    let is_arguments = array.is_arguments.load(Ordering::Relaxed);
-    props.iter().all(|(key, desc)| {
-        if !is_arguments && key.as_str() == Some("length") {
-            return true;
-        }
-        if frozen {
-            descriptor_is_frozen(desc)
-        } else {
-            !desc.configurable
-        }
-    })
-}
-
-fn is_proxy_value(vm: &Vm, obj: &Value) -> bool {
-    matches!(obj, Value::Object(idx) if vm.heap.with_obj(idx.0, |o| matches!(o, HeapObj::Proxy(_))))
-}
-
-fn uses_specialized_integrity_path(vm: &Vm, obj: &Value) -> bool {
-    matches!(
-        obj,
-        Value::Object(idx)
-            if vm.heap.with_obj(idx.0, |object| matches!(
-                object,
-                HeapObj::Object(_)
-                    | HeapObj::Array(_)
-                    | HeapObj::Function(_)
-                    | HeapObj::IteratorHelper(_)
-            ))
-    )
-}
-
 #[cfg(test)]
 fn take_proxy_own_keys_reservation_failure(
     vm: &mut Vm,
@@ -6719,6 +6615,7 @@ pub(crate) fn own_property_keys_or_throw(
                     current_filters.0,
                     current_filters.1,
                     current_filters.2,
+                    true,
                 )?;
             };
 
@@ -6861,24 +6758,130 @@ struct IntegrityDescriptor {
     writable: Option<bool>,
 }
 
-fn integrity_descriptor_from_object(
+pub(crate) fn observe_namespace_binding_initialized(
     vm: &mut Vm,
-    desc_obj: &Value,
-) -> error::Result<IntegrityDescriptor> {
-    let configurable = if vm.has_own(desc_obj, "configurable") {
-        vm.get_property(desc_obj, "configurable")?.is_truthy()
-    } else {
-        false
+    environment: GcIdx,
+    name: Arc<str>,
+) -> error::Result<()> {
+    let mut current_environment = environment;
+    let mut current_name = name;
+    let mut checkpoint_environment = current_environment;
+    let mut checkpoint_name = current_name.clone();
+    let mut checkpoint_power = 1usize;
+    let mut checkpoint_span = 0usize;
+
+    loop {
+        let state = vm.heap.with_obj(current_environment.0, |object| {
+            let HeapObj::Environment(environment) = object else {
+                return None;
+            };
+            let bindings = environment.vars.lock();
+            let binding = bindings.get(current_name.as_ref())?;
+            Some((
+                binding.initialized.load(Ordering::Relaxed),
+                binding.indirect.clone(),
+            ))
+        });
+        let Some((initialized, indirect)) = state else {
+            return Ok(());
+        };
+        if !initialized {
+            return Err(Error::reference(format!(
+                "Cannot access '{}' before initialization",
+                current_name
+            )));
+        }
+        let Some((next_environment, next_name)) = indirect else {
+            return Ok(());
+        };
+        vm.consume_fuel()?;
+        current_environment = next_environment;
+        current_name = next_name;
+        checkpoint_span = checkpoint_span.saturating_add(1);
+        if current_environment == checkpoint_environment && current_name == checkpoint_name {
+            return Err(Error::reference(format!(
+                "Cannot access '{}' before initialization",
+                current_name
+            )));
+        }
+        if checkpoint_span == checkpoint_power {
+            checkpoint_environment = current_environment;
+            checkpoint_name = current_name.clone();
+            checkpoint_power = checkpoint_power.saturating_mul(2).max(1);
+            checkpoint_span = 0;
+        }
+    }
+}
+
+fn direct_test_integrity_level(
+    vm: &mut Vm,
+    obj: &Value,
+    frozen: bool,
+) -> Option<error::Result<bool>> {
+    let Value::Object(idx) = obj else {
+        return Some(Ok(true));
     };
-    let writable = if vm.has_own(desc_obj, "writable") {
-        Some(vm.get_property(desc_obj, "writable")?.is_truthy())
-    } else {
-        None
-    };
-    Ok(IntegrityDescriptor {
-        configurable,
-        writable,
-    })
+    let typed_array_index_count = vm.typed_array_integer_index_own_property_key_count(obj);
+    let observable = vm.heap.with_obj(idx.0, |object| {
+        matches!(object, HeapObj::Proxy(_) | HeapObj::ModuleNamespace(_))
+    });
+    if observable {
+        return None;
+    }
+
+    let scan_work = ordinary_own_property_scan_work(vm, obj, true, typed_array_index_count);
+    if vm.fuel_remaining().is_some() {
+        for _ in 0..scan_work {
+            if let Err(error) = vm.consume_fuel() {
+                return Some(Err(error));
+            }
+        }
+    }
+
+    let mixed_dense_array = vm.heap.with_obj(idx.0, |object| {
+        matches!(object, HeapObj::Array(array) if array.present.lock().iter().any(|present| *present))
+    });
+    if mixed_dense_array {
+        return Some((|| {
+            let keys = ordinary_own_property_keys(vm, obj, false, true, true, false)?;
+            for key in keys {
+                let Some(descriptor) = integrity_descriptor_for_key(vm, obj, &key)? else {
+                    continue;
+                };
+                if descriptor.configurable || (frozen && descriptor.writable.unwrap_or(false)) {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        })());
+    }
+
+    let valid = vm.heap.with_obj(idx.0, |object| {
+        let properties = object.props().lock();
+        let mut valid = properties.values().all(|descriptor| {
+            !descriptor.configurable && (!frozen || descriptor.is_accessor || !descriptor.writable)
+        });
+        drop(properties);
+
+        if let HeapObj::TypedArray(_) = object {
+            let count = typed_array_index_count.unwrap_or(0);
+            if count != 0 {
+                valid = false;
+            }
+        }
+        if let HeapObj::Array(array) = object {
+            let length_key = &vm.array_length_key;
+            if !array.is_arguments.load(Ordering::Relaxed)
+                && !array.props.lock().contains_key(length_key)
+            {
+                if frozen {
+                    valid = false;
+                }
+            }
+        }
+        valid
+    });
+    Some(Ok(valid))
 }
 
 fn integrity_descriptor_for_key(
@@ -6886,55 +6889,138 @@ fn integrity_descriptor_for_key(
     obj: &Value,
     key: &PropertyKey,
 ) -> error::Result<Option<IntegrityDescriptor>> {
-    if is_proxy_value(vm, obj) {
-        let key_value = property_key_to_value(key);
-        let desc = object_get_own_property_descriptor(vm, &[obj.clone(), key_value], None)?;
-        if desc.is_undefined() {
-            return Ok(None);
-        }
-        return integrity_descriptor_from_object(vm, &desc).map(Some);
-    }
-    Ok(
-        own_property_descriptor_for_key(vm, obj, key).map(|desc| IntegrityDescriptor {
-            configurable: desc.configurable,
-            writable: if desc.is_accessor {
-                None
-            } else {
-                Some(desc.writable)
-            },
-        }),
-    )
-}
-
-fn integrity_define_descriptor(vm: &mut Vm, writable: Option<bool>) -> error::Result<Value> {
-    let desc_obj = vm.alloc(HeapObj::Object(ObjectData {
-        props: Mutex::new(IndexMap::new()),
-        proto: Mutex::new(Some(vm.object_proto.clone())),
-        extensible: AtomicBool::new(true),
-        class_name: None,
-        private_fields: Mutex::new(std::collections::HashMap::new()),
-        primitive: Mutex::new(None),
-    }))?;
-    let mut props = IndexMap::new();
-    props.insert(
-        PropertyKey::from("configurable"),
-        PropertyDescriptor::data(Value::Bool(false)),
-    );
-    if let Some(writable) = writable {
-        props.insert(
-            PropertyKey::from("writable"),
-            PropertyDescriptor::data(Value::Bool(writable)),
+    let Value::Object(idx) = obj else {
+        return Ok(None);
+    };
+    let is_proxy = vm
+        .heap
+        .with_obj(idx.0, |object| matches!(object, HeapObj::Proxy(_)));
+    if is_proxy {
+        return Ok(
+            own_property_descriptor_for_key_or_throw(vm, obj, key)?.map(|desc| {
+                IntegrityDescriptor {
+                    configurable: desc.configurable,
+                    writable: if desc.is_accessor {
+                        None
+                    } else {
+                        Some(desc.writable)
+                    },
+                }
+            }),
         );
     }
-    vm.heap.with_obj(desc_obj.0, |o| {
-        if let HeapObj::Object(od) = o {
-            *od.props.lock() = props;
-        }
+
+    if let Some(present) = vm.typed_array_integer_index_has_property(obj, key) {
+        return Ok(present.then_some(IntegrityDescriptor {
+            configurable: true,
+            writable: Some(true),
+        }));
+    }
+
+    let namespace_binding = vm.heap.with_obj(idx.0, |object| {
+        let HeapObj::ModuleNamespace(namespace) = object else {
+            return None;
+        };
+        key.as_str()
+            .and_then(|name| namespace.exports.lock().get(name).cloned())
     });
-    Ok(Value::Object(desc_obj))
+    if let Some((environment, name)) = namespace_binding {
+        observe_namespace_binding_initialized(vm, environment, name)?;
+        return Ok(Some(IntegrityDescriptor {
+            configurable: false,
+            writable: Some(true),
+        }));
+    }
+
+    Ok(vm.heap.with_obj(idx.0, |object| {
+        if let HeapObj::Array(array) = object {
+            if key.as_str() == Some("length") {
+                if let Some(descriptor) = array.props.lock().get(key) {
+                    return Some(IntegrityDescriptor {
+                        configurable: descriptor.configurable,
+                        writable: (!descriptor.is_accessor).then_some(descriptor.writable),
+                    });
+                }
+                return (!array.is_arguments.load(Ordering::Relaxed)).then_some(
+                    IntegrityDescriptor {
+                        configurable: false,
+                        writable: Some(true),
+                    },
+                );
+            }
+            if let Some(index) = key.as_str().and_then(crate::value::parse_array_index) {
+                if let Some(descriptor) = array.props.lock().get(key) {
+                    return Some(IntegrityDescriptor {
+                        configurable: descriptor.configurable,
+                        writable: (!descriptor.is_accessor).then_some(descriptor.writable),
+                    });
+                }
+                if index < array.items.lock().len() && array.is_dense_present(index) {
+                    return Some(IntegrityDescriptor {
+                        configurable: true,
+                        writable: Some(true),
+                    });
+                }
+                return None;
+            }
+        }
+        if let Some(descriptor) = object.props().lock().get(key) {
+            return Some(IntegrityDescriptor {
+                configurable: descriptor.configurable,
+                writable: (!descriptor.is_accessor).then_some(descriptor.writable),
+            });
+        }
+        if let HeapObj::Object(data) = object {
+            if let Some(Value::String(value)) = data.primitive.lock().as_ref() {
+                if key.as_str() == Some("length") {
+                    return Some(IntegrityDescriptor {
+                        configurable: false,
+                        writable: Some(false),
+                    });
+                }
+                if key
+                    .as_str()
+                    .and_then(crate::value::parse_array_index)
+                    .is_some_and(|index| index < crate::value::utf16_len(value))
+                {
+                    return Some(IntegrityDescriptor {
+                        configurable: false,
+                        writable: Some(false),
+                    });
+                }
+            }
+        }
+        None
+    }))
 }
 
-fn set_integrity_level(vm: &mut Vm, obj: &Value, frozen: bool) -> error::Result<bool> {
+fn integrity_define_descriptor(writable: Option<bool>) -> crate::vm::ProxyDefinePropertyDescriptor {
+    crate::vm::ProxyDefinePropertyDescriptor {
+        descriptor: PropertyDescriptor {
+            value: Value::Undefined,
+            writable: writable.unwrap_or(false),
+            enumerable: false,
+            configurable: false,
+            get: None,
+            set: None,
+            is_accessor: false,
+        },
+        has_value: false,
+        has_writable: writable.is_some(),
+        has_enumerable: false,
+        has_configurable: true,
+        has_get: false,
+        has_set: false,
+    }
+}
+
+pub(crate) fn set_integrity_level(vm: &mut Vm, obj: &Value, frozen: bool) -> error::Result<bool> {
+    reserve_descriptor_materialization_roots(
+        vm,
+        std::slice::from_ref(obj),
+        #[cfg(test)]
+        crate::vm::DescriptorMaterializationReservationSite::IntegrityOperationRoot,
+    )?;
     let operation_pin = vm.pin(obj);
     let result = (|| {
         if !vm.prevent_extensions(obj)? {
@@ -6950,11 +7036,8 @@ fn set_integrity_level(vm: &mut Vm, obj: &Value, frozen: bool) -> error::Result<
             } else {
                 None
             };
-            let desc_obj = integrity_define_descriptor(vm, writable)?;
-            let key_value = property_key_to_value(&key);
-            if !object_define_property_result(vm, &[obj.clone(), key_value, desc_obj], false)? {
-                return Ok(false);
-            }
+            let descriptor = integrity_define_descriptor(writable);
+            object_define_property_record_result(vm, obj, &key, &descriptor, true, true)?;
         }
         Ok(true)
     })();
@@ -6962,11 +7045,20 @@ fn set_integrity_level(vm: &mut Vm, obj: &Value, frozen: bool) -> error::Result<
     result
 }
 
-fn test_integrity_level(vm: &mut Vm, obj: &Value, frozen: bool) -> error::Result<bool> {
+pub(crate) fn test_integrity_level(vm: &mut Vm, obj: &Value, frozen: bool) -> error::Result<bool> {
+    reserve_descriptor_materialization_roots(
+        vm,
+        std::slice::from_ref(obj),
+        #[cfg(test)]
+        crate::vm::DescriptorMaterializationReservationSite::IntegrityOperationRoot,
+    )?;
     let operation_pin = vm.pin(obj);
     let result = (|| {
         if vm.is_extensible(obj)? {
             return Ok(false);
+        }
+        if let Some(result) = direct_test_integrity_level(vm, obj, frozen) {
+            return result;
         }
         let keys = own_property_keys_or_throw(vm, obj, false, true, true)?;
         for key in keys {
@@ -6993,96 +7085,26 @@ fn object_is_extensible(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error:
 
 fn object_seal(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     let obj = args.first().cloned().unwrap_or(Value::Undefined);
-    if matches!(obj, Value::Object(_)) && !uses_specialized_integrity_path(vm, &obj) {
+    if matches!(obj, Value::Object(_)) {
         if !set_integrity_level(vm, &obj, false)? {
             return Err(Error::type_err("Object.seal failed to seal object"));
         }
-        return Ok(obj);
-    }
-    if matches!(obj, Value::Object(_)) && !vm.prevent_extensions(&obj)? {
-        return Err(Error::type_err("Object.seal failed to prevent extensions"));
-    }
-    if let Value::Object(idx) = &obj {
-        vm.heap.with_obj(idx.0, |o| match o {
-            HeapObj::Object(od) => {
-                for d in od.props.lock().values_mut() {
-                    d.configurable = false;
-                }
-            }
-            HeapObj::Array(a) => {
-                materialize_array_index_descriptors(a, false);
-                for d in a.props.lock().values_mut() {
-                    d.configurable = false;
-                }
-            }
-            HeapObj::Function(f) => {
-                for d in f.props.lock().values_mut() {
-                    d.configurable = false;
-                }
-            }
-            HeapObj::IteratorHelper(helper) => {
-                for d in helper.props.lock().values_mut() {
-                    d.configurable = false;
-                }
-            }
-            _ => {}
-        });
     }
     Ok(obj)
 }
 
 fn object_is_sealed(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     let obj = args.first().cloned().unwrap_or(Value::Undefined);
-    if matches!(obj, Value::Object(_)) && !uses_specialized_integrity_path(vm, &obj) {
+    if matches!(obj, Value::Object(_)) {
         return test_integrity_level(vm, &obj, false).map(Value::Bool);
-    }
-    if let Value::Object(idx) = &obj {
-        let sealed = vm.heap.with_obj(idx.0, |o| match o {
-            HeapObj::Object(od) => {
-                !od.extensible.load(Ordering::Relaxed)
-                    && od.props.lock().values().all(|d| !d.configurable)
-            }
-            HeapObj::Array(a) => array_integrity(a, false),
-            HeapObj::Function(f) => {
-                !f.extensible.load(Ordering::Relaxed)
-                    && f.props.lock().values().all(|d| !d.configurable)
-            }
-            HeapObj::IteratorHelper(helper) => {
-                !helper.extensible.load(Ordering::Relaxed)
-                    && helper.props.lock().values().all(|d| !d.configurable)
-            }
-            _ => !o.is_extensible(),
-        });
-        return Ok(Value::Bool(sealed));
     }
     Ok(Value::Bool(true))
 }
 
 fn object_is_frozen(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     let obj = args.first().cloned().unwrap_or(Value::Undefined);
-    if matches!(obj, Value::Object(_)) && !uses_specialized_integrity_path(vm, &obj) {
+    if matches!(obj, Value::Object(_)) {
         return test_integrity_level(vm, &obj, true).map(Value::Bool);
-    }
-    if let Value::Object(idx) = &obj {
-        let frozen = vm.heap.with_obj(idx.0, |o| match o {
-            HeapObj::Object(od) => {
-                let ext = od.extensible.load(Ordering::Relaxed);
-                let all_frozen = od.props.lock().values().all(descriptor_is_frozen);
-                !ext && all_frozen
-            }
-            HeapObj::Array(a) => array_integrity(a, true),
-            HeapObj::Function(f) => {
-                !f.extensible.load(Ordering::Relaxed)
-                    && f.props.lock().values().all(descriptor_is_frozen)
-            }
-            HeapObj::IteratorHelper(helper) => {
-                !helper.extensible.load(Ordering::Relaxed)
-                    && helper.props.lock().values().all(descriptor_is_frozen)
-            }
-            HeapObj::ModuleNamespace(namespace) => namespace.exports.lock().is_empty(),
-            _ => !o.is_extensible(),
-        });
-        return Ok(Value::Bool(frozen));
     }
     Ok(Value::Bool(true))
 }
@@ -7461,7 +7483,7 @@ pub(crate) fn object_define_properties(
             descriptors.push((key, descriptor));
         }
         for (key, descriptor) in descriptors {
-            object_define_property_record_result(vm, &target, &key, &descriptor, true)?;
+            object_define_property_record_result(vm, &target, &key, &descriptor, true, false)?;
         }
         Ok(target.clone())
     })();
@@ -8100,64 +8122,10 @@ fn object_get_own_property_descriptor(
 
 fn object_freeze(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
     let target = args.first().cloned().unwrap_or(Value::Undefined);
-    if matches!(target, Value::Object(_)) && !uses_specialized_integrity_path(vm, &target) {
+    if matches!(target, Value::Object(_)) {
         if !set_integrity_level(vm, &target, true)? {
             return Err(Error::type_err("Object.freeze failed to freeze object"));
         }
-        return Ok(target);
-    }
-    if matches!(target, Value::Object(_)) && !vm.prevent_extensions(&target)? {
-        return Err(Error::type_err(
-            "Object.freeze failed to prevent extensions",
-        ));
-    }
-    if let Value::Object(idx) = &target {
-        let has_namespace_exports = vm.heap.with_obj(idx.0, |object| {
-            matches!(object, HeapObj::ModuleNamespace(namespace) if !namespace.exports.lock().is_empty())
-        });
-        if has_namespace_exports {
-            return Err(Error::type_err(
-                "Cannot freeze a module namespace with writable exports",
-            ));
-        }
-    }
-    if let Value::Object(idx) = &target {
-        vm.heap.with_obj(idx.0, |obj| match obj {
-            HeapObj::Object(o) => {
-                for d in o.props.lock().values_mut() {
-                    if !d.is_accessor {
-                        d.writable = false;
-                    }
-                    d.configurable = false;
-                }
-            }
-            HeapObj::Array(a) => {
-                materialize_array_index_descriptors(a, true);
-                for d in a.props.lock().values_mut() {
-                    if !d.is_accessor {
-                        d.writable = false;
-                    }
-                    d.configurable = false;
-                }
-            }
-            HeapObj::Function(f) => {
-                for d in f.props.lock().values_mut() {
-                    if !d.is_accessor {
-                        d.writable = false;
-                    }
-                    d.configurable = false;
-                }
-            }
-            HeapObj::IteratorHelper(helper) => {
-                for d in helper.props.lock().values_mut() {
-                    if !d.is_accessor {
-                        d.writable = false;
-                    }
-                    d.configurable = false;
-                }
-            }
-            _ => {}
-        });
     }
     Ok(target)
 }
@@ -8195,7 +8163,7 @@ pub(crate) fn object_define_property_result(
     let result = (|| -> error::Result<bool> {
         let key = to_property_key_descriptor(vm, &key_input)?;
         let desc = to_property_descriptor_record(vm, &desc_input)?;
-        object_define_property_record_result(vm, &target, &key, &desc, throw_on_failure)
+        object_define_property_record_result(vm, &target, &key, &desc, throw_on_failure, false)
     })();
     vm.unpin_many(argument_pins);
     result
@@ -8207,6 +8175,7 @@ fn object_define_property_record_result(
     key: &PropertyKey,
     desc: &crate::vm::ProxyDefinePropertyDescriptor,
     throw_on_failure: bool,
+    integrity_mode: bool,
 ) -> error::Result<bool> {
     let target = target.clone();
     let key = key.clone();
@@ -8265,6 +8234,23 @@ fn object_define_property_record_result(
                 matches!(object, HeapObj::ModuleNamespace(_))
             });
         if is_namespace_string {
+            let is_integrity_descriptor = !has_value
+                && !has_enumerable
+                && !has_get
+                && !has_set
+                && has_configurable
+                && !configurable
+                && (!has_writable || !writable);
+            if integrity_mode && is_integrity_descriptor {
+                let current = integrity_descriptor_for_key(vm, &target, &key)?;
+                let success = current.is_some_and(|current| {
+                    !current.configurable && (!has_writable || current.writable == Some(writable))
+                });
+                if !success && throw_on_failure {
+                    return Err(Error::type_err("Cannot redefine module namespace property"));
+                }
+                return Ok(success);
+            }
             let current = own_property_descriptor_for_key_or_throw(vm, &target, &key)?;
             let success = current.is_some_and(|current| {
                 !is_accessor
@@ -8294,6 +8280,21 @@ fn object_define_property_record_result(
         )? {
             if !success && throw_on_failure {
                 return Err(Error::type_err("Cannot define TypedArray integer index"));
+            }
+            return Ok(success);
+        }
+        let is_integrity_descriptor = !has_value
+            && !has_enumerable
+            && !has_get
+            && !has_set
+            && has_configurable
+            && !configurable
+            && (!has_writable || !writable);
+        if integrity_mode && is_integrity_descriptor {
+            let success =
+                vm.define_integrity_attributes(idx, &key, has_writable.then_some(writable))?;
+            if !success && throw_on_failure {
+                return Err(Error::type_err("Cannot define missing integrity property"));
             }
             return Ok(success);
         }

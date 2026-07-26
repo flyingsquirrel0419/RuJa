@@ -83,6 +83,7 @@ pub(crate) enum ProxyDescriptorReservationSite {
 #[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DescriptorMaterializationReservationSite {
+    IntegrityOperationRoot,
     FromDescriptorProperties,
     FromDescriptorRoots,
     GetOwnDescriptorsOperationRoots,
