@@ -2000,6 +2000,41 @@ back to the main Realm.
 - 장점, 단점 및 영향: Descriptor fields now have one observable conversion, the defineProperties conversion pass completes before the first target mutation, public and Proxy output is Realm-correct, and every directly owned root or collection has exact growth, GC, cleanup, and retry evidence. Ordinary object property-map insertion, Array backing and length storage, ordinary Set/set_array_index, seal/freeze materialization, TypedArray byte conversion, JSON containers, unrelated ArrayData constructors, PropertyKey/Error and IC temporary strings, GC root enumeration, and mark worklists remain independent hard-host-OOM scopes.
 ```
 
+## Fallible ordinary property storage publication
+
+Complete VM descriptors and presence-aware Object/Reflect descriptor records
+now converge on one ordinary storage plan. The plan classifies publication as
+a virtual String no-op, ordinary property, dense Array element, custom Array
+element, or custom arguments element. It derives map ownership from the chosen
+representation rather than descriptor presence, so normal dense elements do
+not reserve `props`, mapped arguments reserve both their descriptor map and
+dense vectors, and replacing an existing key never reserves map growth.
+
+Preflight checks real `IndexMap` and `Vec` capacity in fixed `props`, `items`,
+then `present` order. It reserves every required directly owned container
+before changing values, presence bits, `sparse_max`, Array length, mapped
+bindings, or inline caches. Dense values needed after resize are cloned before
+commit. Publication then moves prepared values into storage and performs
+length, mapping, and cache maintenance only after direct storage succeeds.
+
+Transparent Proxy traversal returns a resolved target. `Vm::define_own_property`
+reserves and pins that target plus descriptor value/get/set fields through the
+remaining exotic coercion and publication. This is required for TypedArray
+`ToNumber`/`ToBigInt`, which can run JavaScript and collect an otherwise
+unpublished target. Integer-indexed TypedArray keys bypass ordinary storage;
+Module Namespace exports use complete-descriptor `SameValue` validation only
+for String keys, while Symbol keys retain ordinary semantics.
+
+```text
+[Decision Log]
+- 목적과 의도: Make ordinary property-map and Array backing publication catchable and atomic at actual native-container growth while aligning direct exotic definition and GC lifetime with ECMAScript semantics.
+- 기존 구현 및 제약 조건: Object/Reflect and direct VM paths duplicated infallible map/vector mutation; Array representation depends on descriptor shape; mapped arguments have post-publication parameter effects; transparent Proxy targets and descriptor objects can otherwise become unrooted before TypedArray coercion; String and Module Namespace properties may be virtual.
+- 검토한 주요 대안: Reserve every object map and Array vector at entry, keep duplicated publishers, preallocate from the numeric index, materialize boxed String properties, route TypedArray indices through ordinary maps, or combine Array length, ordinary Set, shared strings, byte conversion, and GC worklists into one change.
+- 선택한 방식: Build one representation-aware plan, reserve only actual `props`/`items`/`present` growth in deterministic order, prepare owned dense values before commit, publish representation state once, delay mapped bindings and cache work, pin resolved targets and descriptor fields across exotic coercion, and retain virtual/exotic no-storage paths.
+- 다른 대안 대신 이 방식을 선택한 이유: Entry reservation creates false failures; duplicated mutation drifts semantically; index-sized preallocation can over-allocate or reject valid sparse definitions; virtual materialization changes observable storage; ordinary TypedArray maps violate integer-indexed semantics; and the remaining host-allocation owners have independent rollback and ordering contracts.
+- 장점, 단점 및 영향: Direct containers now have exact growth, atomic failure, Realm, retry, partial-operation, Proxy priority, and forced-GC evidence. The guarantee intentionally excludes shared key/value representation, boxed-String canonicalization, Array length-key maintenance, inline-cache temporary strings, TypedArray byte vectors, ordinary Set/set_array_index, seal/freeze, JSON, direct ArrayData constructors, GC root enumeration, and mark worklists.
+```
+
 ---
 
 **Next:** [Features](features.md) · [Known limitations](limitations.md) · [Back to README](../README.md)

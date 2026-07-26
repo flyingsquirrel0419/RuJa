@@ -10774,6 +10774,53 @@ skip / 3 timeout / 0 error / 48467 total / 37005 run**.
 - 장점, 단점 및 영향: The unit has focused 2457/0/24 evidence plus deterministic field-order, two-pass, growth, Realm, GC, cleanup, and retry coverage. Ordinary property-map and Array backing publication remain the next independent allocator-safety scope.
 ```
 
+## Fallible ordinary property storage publication
+
+Commit `0a9c3f8` changes no Test262 admission. Ordinary definition now selects
+its final object/Array/arguments representation before mutation and reserves
+actual growth of `props`, `items`, and `present` in that order. Direct
+TypedArray integer indices use the element path, complete Module Namespace
+descriptors apply String-export `SameValue` rules while Symbol keys remain
+ordinary, compatible boxed String virtual definitions remain unmaterialized,
+and transparent Proxy targets plus descriptor fields remain pinned through
+observable TypedArray coercion.
+
+Rust regressions cover spare and full capacity, existing-key replacement,
+dense migration, all three combined-growth failure sites, custom and sparse
+rollback, defineProperties partial mutation, mapped-arguments retry and
+detachment, Proxy/fuel priority, foreign Realm RangeError identity, exotic
+no-reservation paths, complete Namespace descriptors including NaN and signed
+zero, and exact-cap forced GC of an otherwise unpublished TypedArray target.
+Local gates pass all targets/features with **251/251** library tests,
+**539/539** builtins tests, **15/15** arguments tests, and **31/31** module
+tests, plus **251/251** release library tests, **135/135** tooling tests,
+**1/1** doctest, rustfmt, warnings-denied Clippy, release build, generated
+documentation, and wasm32 checking. Rustdoc has only 13 pre-existing warnings.
+GPT-5.6 reviewers Socrates and Volta are clean after the dense-value clone,
+combined-growth, and fixture-root findings were corrected.
+
+CI `30186299215` and all 33 jobs in full run `30186299205` pass. Local and
+downloaded binaries on Test262
+`020cb74075849d1e404bbcdb62feb7a02e6966db` reproduce the six-directory Object,
+Reflect, TypedArray, mapped-arguments, and Module Namespace cohort at **1897
+pass / 0 fail / 13 skip / 1910 total**. Downloaded output is persisted as
+`focused-ordinary-property-storage.txt` beside the artifacts. The 30 full
+artifacts at `/tmp/ruja-ordinary-storage-30186299205-final` aggregate to
+unchanged **31890 pass / 5115 fail / 11459 skip / 3 timeout / 0 error / 48467
+total / 37005 run**. Twenty-nine files are byte-identical to run `29986403979`;
+that run's downloaded binary reruns annexB at the corrected baseline **201 / 811
+/ 74 / 0 / 0**, byte-identical to the current annexB artifact.
+
+```text
+[Decision Log]
+- 목적과 의도: Prove direct ordinary target-storage allocation safety and exotic semantic alignment without widening admission or mistaking host failpoints for Test262 coverage.
+- 기존 구현 및 제약 조건: The selected Test262 cohort already passed; Test262 cannot inject Rust map/vector reservation or force the exact unpublished-target GC lifetime; full aggregates can hide shard drift; and the preceding annexB artifact contained one contention timeout.
+- 검토한 주요 대안: Admit unrelated files, rely only on Test262, rely only on Rust failpoints, compare aggregate totals, accept the previous timeout artifact, omit downloaded-binary reproduction, or include Array length and ordinary Set allocation in this unit.
+- 선택한 방식: Keep admission unchanged, cover exact storage and root boundaries locally, run the six affected directories with local and downloaded binaries, run the fixed full matrix, compare all clean shards byte-for-byte, and rerun only the preceding annexB binary on the exact fixed corpus.
+- 다른 대안 대신 이 방식을 선택한 이유: Admission cannot prove native allocation atomicity or GC rooting; local failpoints cannot detect broad conformance drift; aggregate equality is weaker than file equality; timeout noise weakens evidence; and Array length/Set have separate mutation and rollback contracts.
+- 장점, 단점 및 영향: The unit has focused 1897/0/13 and corrected zero-delta full evidence plus deterministic capacity, ordering, Realm, retry, partial-operation, exotic, and forced-GC coverage. Shared value/key allocation, Array length, ordinary Set, TypedArray byte vectors, and GC worklists remain explicit later scopes.
+```
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is

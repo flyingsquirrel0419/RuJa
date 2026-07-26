@@ -383,13 +383,17 @@ guarantees are required.
   roots and pending frames. Final descriptor-object materialization,
   `Object.getOwnPropertyDescriptors` and `Object.defineProperties` containers,
   and Proxy `defineProperty` descriptor containers now reserve their directly
-  owned maps, vectors, and roots before publication. The remaining nearby
-  hard-host-OOM scopes are ordinary object property-map insertion, Array
-  backing growth during property definition, Array length storage, ordinary
-  `Set`/`set_array_index`, seal/freeze descriptor materialization, TypedArray
-  byte conversion, JSON caller containers, unrelated direct `ArrayData::new`
-  constructors, PropertyKey/Error and inline-cache temporary strings, GC root
-  enumeration, and mark worklists.
+  owned maps, vectors, and roots before publication. Ordinary property
+  definition also reserves actual growth of the target `props` map and Array
+  `items`/`present` vectors before mutation, including mapped-arguments dual
+  storage. This guarantee is limited to those directly owned containers:
+  BigInt/value preparation, boxed-String canonicalization, Array length-key
+  maintenance, and inline-cache temporary strings still use infallible shared
+  representation paths. The remaining nearby hard-host-OOM scopes also include
+  Array length storage, ordinary `Set`/`set_array_index`, seal/freeze descriptor
+  materialization, TypedArray byte conversion, JSON caller containers,
+  unrelated direct `ArrayData::new` constructors, PropertyKey/Error strings,
+  GC root enumeration, and mark worklists.
 - Push, Pop, Shift, Unshift, Splice, Slice, Concat, Flat, FlatMap, ForEach,
   Join, ToLocaleString, Map, Reduce, ReduceRight, Reverse, ToReversed,
   ToSpliced, and With use live generic indexed operations with operation-wide

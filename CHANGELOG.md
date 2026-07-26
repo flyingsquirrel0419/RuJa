@@ -62,6 +62,42 @@
 
 ### Fixed
 
+- Ordinary property definition now plans storage before publication and
+  fallibly reserves only actual growth of the target's `props` map and Array
+  `items`/`present` vectors. The shared path is used by complete VM descriptors
+  and presence-aware Object/Reflect descriptors; dense, custom, sparse, and
+  mapped-arguments representations commit only after every directly owned
+  container is ready. Existing keys, spare capacity, dense migration, boxed
+  String virtual properties, completed Proxy traps, and TypedArray integer
+  indices do not request irrelevant ordinary storage.
+
+  Direct TypedArray definition now uses integer-indexed exotic semantics, and
+  the resolved target plus descriptor fields stay rooted through observable
+  value coercion. Module Namespace string exports validate complete descriptors
+  with `SameValue` and propagate live-binding errors, while Symbol properties
+  use ordinary compatible definition. Mapped arguments update or detach their
+  parameter binding only after storage publication succeeds.
+
+  Exact regressions cover actual `props -> items -> present` growth at each
+  failure site, spare and replacement paths, dense/custom/sparse atomicity,
+  defineProperties partial mutation, mapped-arguments retry, Proxy/fuel
+  priority, foreign Realm errors, String/TypedArray/Namespace exclusions, and
+  exact-cap GC during TypedArray coercion of an otherwise unpublished target.
+  Local verification passes all targets/features with **251/251** library
+  tests, **539/539** builtins tests, **15/15** arguments tests, and **31/31**
+  module tests, plus **251/251** release library tests, **135/135** Python
+  tooling tests, **1/1** doctest, rustfmt, warnings-denied Clippy, release
+  build, generated documentation, and wasm32 checking. Rustdoc retains 13
+  pre-existing warnings. Two GPT-5.6 final reviews are clean.
+
+  Implementation commit `0a9c3f8` passes CI `30186299215` and all 33 jobs in
+  full run `30186299205`. Local and downloaded binaries reproduce the focused
+  property-definition cohort at **1897 pass / 0 fail / 13 skip**. Full
+  artifacts aggregate to unchanged **31890 pass / 5115 fail / 11459 skip / 3
+  timeout / 0 error / 48467 total / 37005 run**; 29 shards are byte-identical
+  to the previous artifacts, and the previous binary's exact-corpus annexB
+  rerun is byte-identical to the current clean annexB artifact.
+
 - Property descriptor conversion and publication now use one presence-aware
   internal record instead of allocating a normalized JS object and rereading
   it. `ToPropertyDescriptor` observes inherited fields in specification order
