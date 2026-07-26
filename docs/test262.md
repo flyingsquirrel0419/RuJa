@@ -11247,6 +11247,42 @@ comparison.
 - 장점, 단점 및 영향: Twenty-four clone sites disappear with exact focused and supported-language stability plus deterministic allocation-order, GC, retry, and cleanup coverage. Ordinary CI and all 30 full-corpus artifacts confirm zero semantic drift after correcting one preceding contention timeout; initial Reference boxes remain separate scope.
 ```
 
+## Embedded RegExp empty classes
+
+This runtime-only unit changes no Test262 admission. Pinned analyzer output on
+`9e61c12835c5e4a3bdba93850427e6742c4f64c4` identified exactly five backend
+syntax failures caused by valid embedded empty classes:
+
+- `built-ins/RegExp/S15.10.2.13_A1_T1.js`
+- `built-ins/RegExp/S15.10.2.13_A1_T2.js`
+- `built-ins/RegExp/S15.10.2.13_A2_T1.js`
+- `built-ins/RegExp/S15.10.2.13_A2_T2.js`
+- `built-ins/RegExp/S15.10.4.1_A8_T2.js`
+
+All five move from fail to pass. Complete `built-ins/RegExp` moves from
+**1036 pass / 7 fail / 836 skip / 0 timeout / 0 error** to **1041 / 2 / 836 /
+0 / 0**, exactly **+5 pass / -5 fail** over the unchanged **1879 total / 1043
+run**. A fresh analyzer reports only `quantifier-integer-limit.js` and
+`nullable-quantifier.js`. Direct tests separately cover compositions and mode
+boundaries that the five historical files do not.
+
+Local gates pass all targets/features with **275/275** debug and **273/273**
+release library tests, builtins **542/542**, tooling **135/135**, doctest
+**1/1**, wasm32, rustfmt, warnings-denied Clippy, and generated documentation;
+rustdoc retains 13 existing warnings. GPT-5.6 reviewers Planck and Kepler are
+clean after escape, nested-v, UTF-16, Unicode, Rust/fancy backend, source,
+historical-ADR, and exact-evidence audits.
+
+```text
+[Decision Log]
+- 목적과 의도: Prove that embedded empty-class lowering closes only the five existing RegExp failures without hiding admission or unrelated matcher movement.
+- 기존 구현 및 제약 조건: Test262 already executed these files, whole-pattern empty classes already passed, aggregate built-ins totals could hide offsetting changes, and backend syntax errors did not identify whether literal and constructor paths shared the defect.
+- 검토한 주요 대안: Widen admission, run only the five files, trust direct Rust tests, compare only full-matrix aggregates, or pair exact affected files with the complete pinned RegExp directory and analyzer identities.
+- 선택한 방식: Keep policy fixed, require all five exact files to pass, require complete RegExp to move by exactly +5/-5, run a fresh failure analyzer, and cover literal/constructor plus mode boundaries directly.
+- 다른 대안 대신 이 방식을 선택한 이유: Admission changes would confound runtime evidence; five files alone miss adjacent regressions; direct tests do not prove Test262 movement; and aggregate totals are weaker than directory-local counts plus exact remaining identities.
+- 장점, 단점 및 영향: The unit has exact five-file, directory-delta, and remaining-failure evidence. Full-matrix file identity remains post-push evidence; oversized quantifiers, nullable capture-prefilter disagreement, and broader nested-v syntax remain separate scopes.
+```
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is

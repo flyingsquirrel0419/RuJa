@@ -18590,6 +18590,61 @@ fn regex_literal_test() {
 }
 
 #[test]
+fn regexp_embedded_empty_classes_follow_ecmascript_semantics() {
+    assert_eq!(
+        run(r#"
+            !/[]/.test("x") &&
+              /[^]/.test("\n") &&
+              !/[]a/.test("\0a\0a") &&
+              !/a[]/.test("\0a\0a") &&
+              /[^]a/.test("\na") &&
+              /a[^]/.test("a\n") &&
+              !/x[]y/.test("xy") &&
+              /x[^]y/.test("x\ny") &&
+              /^(a[^])\1$/.test("aXaX") &&
+              /^(?=a[^]$)a[^]$/.test("a\n");
+            "#),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run(r#"
+            var never = new RegExp("a|b|[]", "ig");
+            var universal = new RegExp("a|b|[^]", "ig");
+            never.test("B") && !never.test("c") && universal.test("c") &&
+              never.ignoreCase && never.global && never.source === "a|b|[]" &&
+              universal.source === "a|b|[^]";
+            "#),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run(r#"
+            /[]*/.exec("x")[0] === "" &&
+              !/^(?:[])+$/.test("x") &&
+              !/([])+/.test("x") &&
+              /^[^]{2}$/.test("💩") &&
+              !/^[^]{2}$/u.test("💩") &&
+              /^a[^]$/u.test("a💩") &&
+              /^[^]$/u.test("\ud800") &&
+              !new RegExp("a[]", "v").test("aX") &&
+              new RegExp("a[^]", "v").test("a💩") &&
+              new RegExp("^[a--[b]]$", "v").test("a") &&
+              !new RegExp("^[a--[b]]$", "v").test("b");
+            "#),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run(r#"
+            /^[\]]$/.test("]") &&
+              /^\[\]$/.test("[]") &&
+              /^[^\]]$/.test("x") &&
+              !/^[^\]]$/.test("]") &&
+              /^[a]$/.test("a");
+            "#),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn regexp_character_class_escapes_use_ecmascript_sets() {
     assert_eq!(
         run(r#"

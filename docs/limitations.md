@@ -156,11 +156,13 @@ guarantees are required.
 - RegExp construction, `IsRegExp`, Realm fallback, the String-symbol methods,
   character-class escapes, active-ignoreCase `\w`/`\W` lowering, and `d`-flag
   match indices are implemented and audited, but full RegExp conformance is
-  not complete. The current `built-ins/RegExp` diagnostic is **1036 pass / 7
-  fail / 836 skip / 0 timeout**. The remaining failures are **5** valid
-  empty-class matcher files, **1** quantifier integer-limit file, and **1**
-  nullable-quantifier hybrid-boundary mismatch. The complete lookbehind subtree
-  is **17/17**.
+  not complete. The current `built-ins/RegExp` diagnostic is **1041 pass / 2
+  fail / 836 skip / 0 timeout**. The remaining failures are the quantifier
+  integer-limit file and nullable-quantifier hybrid-boundary mismatch. The
+  complete lookbehind subtree is **17/17**. Embedded empty classes now lower
+  through exact class boundaries in legacy, `u`, and `v` modes; broader valid
+  nested-`v` set syntax such as `[[]]` remains outside the admitted corpus and
+  can still be rejected by the backend.
 
   Source validation now models one quantifier plus an optional lazy marker,
   legacy UTF-16 class ranges and Annex B escapes, Unicode scalar ranges,

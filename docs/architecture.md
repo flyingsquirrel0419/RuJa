@@ -444,7 +444,7 @@ does not silently tighten the public crate's ordinary semantics.
 - 검토한 주요 대안: Continue translating assertions to Rust regex, enumerate candidate lookbehind starts, post-process captures, replace the complete matcher, or add directional instructions and explicit ECMAScript accounting to the maintained backend.
 - 선택한 방식: Detect assertions at the RuJa boundary, normalize JavaScript case and UTF-16 semantics first, compile lookbehind backward with atomic cursor restoration, implement the legacy RepeatMatcher exception in the parser/VM, and charge every ECMAScript branch, repeat, and capture-clear operation to one bounded budget with a 100,000-entry stack cap.
 - 다른 대안 대신 이 방식을 선택한 이유: Translation cannot preserve assertion capture/backreference order, prefix enumeration changes greediness and scales with input length, post-processing cannot reconstruct transactional matcher state, and a new engine is too broad for this unit. Directional compilation follows the specification directly while reusing the audited VM state model.
-- 장점, 단점 및 영향: The complete Test262 lookbehind subtree passes, hard duplicate-name lookbehind works, positive assertions remain atomic, and hostile successful zero-width or branch-growth patterns terminate under explicit limits. The cost is a larger maintained backend fork; unrelated RegExp grammar, empty-class, sentinel, nested-v, and linear-boundary work remains separate.
+- 장점, 단점 및 영향: The complete Test262 lookbehind subtree passes, hard duplicate-name lookbehind works, positive assertions remain atomic, and hostile successful zero-width or branch-growth patterns terminate under explicit limits. The cost is a larger maintained backend fork. At this historical decision boundary, unrelated RegExp grammar, empty-class, sentinel, nested-v, and linear-boundary work remained separate; the following sections record the later grammar and empty-class closures.
 ```
 
 ### RegExp grammar validation
@@ -484,7 +484,35 @@ RegExp source + flags
 - 검토한 주요 대안: Continue relying on backend errors, patch the 12 Test262 files by spelling, parse every RegExp into a new full AST, or add bounded source validators for the finite grammar surfaces.
 - 선택한 방식: Use a small quantifier state machine, syntax-aware escape boundaries, a UTF-16 legacy class tokenizer, scalar Unicode endpoints with surrogate-pair composition, and explicit nested-v/subtraction checks before compilation.
 - 다른 대안 대신 이 방식을 선택한 이유: Backend acceptance is observably wrong even for unexecuted literals, path-specific patches hide equivalent constructors, and a replacement parser is too broad for this unit. Mode-specific validators map directly to the relevant grammar invariants and can be differential-tested against Node.
-- 장점, 단점 및 영향: Twelve failures become passes with no matrix movement outside built-ins; malformed quantifiers and ranges fail consistently for literals and constructors, and 1,219 class differentials show no regression. Full v set algebra, Annex B backend lowering, empty-class execution, large-count policy, and hybrid nullable matching remain explicit separate units.
+- 장점, 단점 및 영향: Twelve failures become passes with no matrix movement outside built-ins; malformed quantifiers and ranges fail consistently for literals and constructors, and 1,219 class differentials show no regression. At this historical boundary, full v set algebra, Annex B backend lowering, empty-class execution, large-count policy, and hybrid nullable matching remained separate; the next section records the empty-class closure.
+```
+
+### RegExp empty-class lowering
+
+ECMAScript permits an empty positive character class, which never matches, and
+an empty negated class, which matches every input element. The Rust regex
+backends reject `[]` and `[^]` as unclosed classes. Whole-pattern forms already
+used equivalent backend atoms, but embedded forms such as `[]a`, `a[^]`, and
+`a|b|[]` reached the backend unchanged.
+
+The normalizer records the output offset when it enters an outer character
+class. At that class's closing bracket, it compares only the complete
+normalized class slice with exact `[]` and `[^]` spellings. A positive empty
+class becomes `[^\s\S]`. A negated empty class becomes a dot-all scalar atom
+in `u`/`v` mode or the existing complete UTF-16 plus surrogate-sentinel class
+in legacy mode. The replacement remains one atom, so concatenation,
+alternation, and following quantifiers retain their parse structure. Escaped
+brackets, transformed class escapes, non-empty classes, and nested `v` classes
+cannot equal either exact slice.
+
+```text
+[Decision Log]
+- 목적과 의도: Execute ECMAScript empty character classes in every pattern position without changing source preservation, UTF-16 mode, Unicode mode, or backend selection.
+- 기존 구현 및 제약 조건: Whole-source [] and [^] had explicit backend atoms, while five embedded Test262 forms reached backends that reject empty classes. Global text replacement would confuse escaped brackets and nested classes, and the normalized fragment must remain one quantifiable atom.
+- 검토한 주요 대안: Patch the five tests by source spelling, teach both Rust backends new syntax, replace every textual [] occurrence, parse a new full RegExp AST, or reuse the existing class scanner's exact outer-class boundary.
+- 선택한 방식: Share the established never-match and universal backend atoms, detect only exact normalized [] or [^] slices when an outer class closes, replace that complete slice before ignore-case materialization, and leave all other class state unchanged.
+- 다른 대안 대신 이 방식을 선택한 이유: Test-specific patches miss constructors and equivalent compositions; backend changes duplicate ECMAScript policy; text replacement is escape-unsafe; and a new AST is disproportionate. The scanner already owns escape state, nested-v depth, class output boundaries, and mode information.
+- 장점, 단점 및 영향: Five existing Test262 failures become passes with exact +5/-5 movement, literals and constructors share one path, and direct tests cover flags, quantifiers, UTF-16, Unicode, v mode, and escaped brackets. The oversized quantifier, nullable hybrid boundary, and broader valid nested-v set syntax remain independent RegExp units.
 ```
 
 `MakeClosure` follows the same rule for an ordinary function's fresh

@@ -818,6 +818,16 @@ struct NormalizedRegex {
     backref_sets: Vec<Vec<usize>>,
 }
 
+fn empty_ecmascript_class_backend_atom(negated: bool, unicode_mode: bool) -> &'static str {
+    if !negated {
+        r"[^\s\S]"
+    } else if unicode_mode {
+        "(?s:.)"
+    } else {
+        r"[\x00-\u{ffff}\u{f0000}-\u{f07ff}]"
+    }
+}
+
 fn normalize_regex_for_backend(
     source: &str,
     flags: &str,
@@ -829,18 +839,13 @@ fn normalize_regex_for_backend(
     let unicode_mode = flags.contains('u') || flags.contains('v');
     if source == "[]" {
         return Ok(NormalizedRegex {
-            source: r"[^\s\S]".to_string(),
+            source: empty_ecmascript_class_backend_atom(false, unicode_mode).to_string(),
             backref_sets: Vec::new(),
         });
     }
     if source == "[^]" {
-        let source = if unicode_mode {
-            "(?s:.)".to_string()
-        } else {
-            r"[\x00-\u{ffff}\u{f0000}-\u{f07ff}]".to_string()
-        };
         return Ok(NormalizedRegex {
-            source,
+            source: empty_ecmascript_class_backend_atom(true, unicode_mode).to_string(),
             backref_sets: Vec::new(),
         });
     }
@@ -1160,6 +1165,21 @@ fn normalize_regex_for_backend(
             in_class = false;
             unicode_sets_class_depth = 0;
             out.push(ch);
+            let empty_class = class_output_start.and_then(|start| match &out[start..] {
+                "[]" => Some(false),
+                "[^]" => Some(true),
+                _ => None,
+            });
+            if let Some(negated) = empty_class {
+                let start = class_output_start
+                    .take()
+                    .expect("empty class must have an output start");
+                out.truncate(start);
+                out.push_str(empty_ecmascript_class_backend_atom(negated, unicode_mode));
+                class_has_active_word_escape = false;
+                materialize_current_word_class = true;
+                continue;
+            }
             let legacy_ignore_case =
                 !unicode_mode && modifier_stack.last().is_some_and(|state| state.ignore_case);
             if class_has_active_word_escape || legacy_ignore_case {

@@ -4,6 +4,28 @@
 
 ### Changed
 
+- Embedded empty RegExp classes now lower at the class-scanner boundary instead
+  of reaching the Rust backends as unsupported `[]` or `[^]` syntax. Positive
+  empty classes become the existing never-match atom; negated empty classes
+  become the existing Unicode-scalar or legacy UTF-16-code-unit universal
+  atom. Exact slice matching preserves escaped brackets, non-empty classes,
+  nested `v` subtraction, quantifiers, alternation, and original `.source`.
+
+  Direct literal/constructor tests cover leading and trailing classes,
+  alternation, ignore-case/global flags, quantifiers, newlines, lone
+  surrogates, legacy versus Unicode astral behavior, `v` mode, and escaped
+  brackets. On pinned Test262
+  `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, all five affected files move
+  from fail to pass and complete `built-ins/RegExp` moves from
+  **1036 pass / 7 fail / 836 skip** to **1041 / 2 / 836**. The two remaining
+  failures are `quantifier-integer-limit.js` and `nullable-quantifier.js`.
+  Local gates pass all targets/features with **275/275** debug and **273/273**
+  release library tests, builtins **542/542**, tooling **135/135**, doctest
+  **1/1**, wasm32, rustfmt, warnings-denied Clippy, and generated documentation;
+  rustdoc retains 13 existing warnings. GPT-5.6 correctness reviewer Planck and
+  evidence/documentation reviewer Kepler are clean after adding Fancy backend
+  fixtures and clarifying historical ADR boundaries.
+
 - Retained Reference reads now use one `GetValueKeepReference` opcode instead
   of `Dup; GetValue`. The opcode moves the sole boxed Reference off the stack,
   pre-reserves and pins its complete GC root set, resolves the value, then
