@@ -60,6 +60,12 @@ jobs:
           TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
           test262_tooling_test.ModuleCoreAdmissionTests.test_function_bind_admission_is_exact_live_disjoint_and_shared
           -v
+      - name: Verify exact extensibility admission
+        working-directory: tools
+        run: >-
+          TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
+          test262_tooling_test.ModuleCoreAdmissionTests.test_extensibility_manifest_is_exact_live_disjoint_and_shared
+          -v
       - name: Build directory matrix
         id: dirs
         run: |
@@ -68,6 +74,9 @@ jobs:
           dirs=$(cd test262/test && {
             find . -maxdepth 1 -mindepth 1 -type d | sed 's|^\./||' | grep -vxE 'harness|language|intl402|staging'
             find ./language -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sed 's|^\./||'
+            printf '%s\n' \
+              staging/built-ins/Object/preventExtensions \
+              staging/built-ins/Reflect/preventExtensions
           } | sort -u | jq -R . | jq -s -c .)
           echo "dirs=$dirs" >> "$GITHUB_OUTPUT"
           echo "matrix directories: $dirs"

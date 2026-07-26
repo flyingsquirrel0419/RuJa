@@ -228,7 +228,9 @@ guarantees are required.
   Resizable ArrayBuffer provides `maxByteLength`, `resizable`, and `resize()`.
   TypedArray and DataView views distinguish fixed from length-tracking slots,
   recompute dynamic bounds after resize/grow, and recover when a fixed view
-  returns in bounds. A public embedder-facing agent API is not yet implemented.
+  returns in bounds. Exact Object/Reflect `preventExtensions` staging coverage
+  is admitted; the adjacent `Object.seal` staging case remains gated pending a
+  separate audit. A public embedder-facing agent API is not yet implemented.
 - Async generators serialize requests, and ordinary async functions preserve
   suspended frames across pending Await operations and GC. Both resume through
   the FIFO microtask queue. There is no event-loop preemption; `Vm::tick()`
@@ -260,9 +262,11 @@ guarantees are required.
 - test262 conformance is scoped, not full: RuJa targets a deliberately
   scoped subset of ES5.1 + selected ES2015+ features (see
   [test262.md](test262.md#supported-subset) for the exact list). The full
-  suite is run in CI (excluding `intl402`/`staging`). The latest verified full
-  result is 65.8% of all matrix files and 86.2% of pass-or-fail executed files
-  (**31,894 pass / 5,115 fail / 11,455 skip / 3 timeout / 0 error**); within
+  suite is run in CI, excluding `intl402` and all staging tests except the two
+  exact variable-length TypedArray `preventExtensions` shards. The latest
+  verified full result is 65.8% of all matrix files and 86.2% of pass-or-fail
+  executed files
+  (**31,899 pass / 5,110 fail / 11,455 skip / 3 timeout / 0 error**); within
   the supported subset, tests currently run at 100%.
   Full ES conformance is not claimed. See
   [test262.md](test262.md) for current numbers and the failure breakdown.

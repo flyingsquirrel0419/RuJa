@@ -1,4 +1,4 @@
-"""Frozen Test262 Object and Proxy extensibility files."""
+"""Frozen Test262 Object, Reflect, and Proxy extensibility files."""
 
 from pathlib import Path
 
@@ -38,6 +38,16 @@ _EXTRA_FEATURES = {
         "Reflect"
     },
     "built-ins/Proxy/preventExtensions/trap-is-undefined.js": {"Reflect"},
+    "staging/built-ins/Object/preventExtensions/preventExtensions-variable-length-typed-arrays.js": {
+        "ArrayBuffer",
+        "SharedArrayBuffer",
+        "resizable-arraybuffer",
+    },
+    "staging/built-ins/Reflect/preventExtensions/preventExtensions-variable-length-typed-arrays.js": {
+        "ArrayBuffer",
+        "SharedArrayBuffer",
+        "resizable-arraybuffer",
+    },
 }
 EXTENSIBILITY_FEATURES = {
     path: frozenset(

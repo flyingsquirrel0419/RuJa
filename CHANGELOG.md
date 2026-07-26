@@ -4,6 +4,21 @@
 
 ### Changed
 
+- The two variable-length TypedArray `preventExtensions` staging tests are now
+  admitted through the shared exact-path extensibility policy. Their three
+  otherwise gated features are removed only for the two audited files, while
+  recursive live-directory equality prevents future staging siblings from
+  entering the full matrix. The adjacent `Object.seal` staging test remains
+  gated.
+
+  Pinned Test262
+  `9e61c12835c5e4a3bdba93850427e6742c4f64c4` runs both admitted files at
+  **2 pass / 0 fail / 0 skip / 2 total**. Full CI now verifies their exact
+  metadata and executes the two singleton staging directories as independent
+  matrix shards. This is an admission-only change: the runtime behavior and
+  direct fixed/length-tracking RAB/GSAB regressions shipped in the earlier
+  Object integrity unit.
+
 - Embedded empty RegExp classes now lower at the class-scanner boundary instead
   of reaching the Rust backends as unsupported `[]` or `[^]` syntax. Positive
   empty classes become the existing never-match atom; negated empty classes

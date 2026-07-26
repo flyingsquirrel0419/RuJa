@@ -2224,7 +2224,7 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                     tool.TEST262 = original_root
 
     def test_extensibility_manifest_is_exact_live_disjoint_and_shared(self):
-        self.assertEqual(len(EXTENSIBILITY_FILES), 29)
+        self.assertEqual(len(EXTENSIBILITY_FILES), 31)
         self.assertEqual(frozenset(EXTENSIBILITY_FEATURES), EXTENSIBILITY_FILES)
         self.assertEqual(
             EXTENSIBILITY_MODULE_FILES,
@@ -2239,13 +2239,15 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                 for family in (
                     "Object/isExtensible/",
                     "Object/preventExtensions/",
+                    "Reflect/preventExtensions/",
                     "Proxy/isExtensible/",
                     "Proxy/preventExtensions/",
                 )
             },
             {
                 "Object/isExtensible/": 1,
-                "Object/preventExtensions/": 4,
+                "Object/preventExtensions/": 5,
+                "Reflect/preventExtensions/": 1,
                 "Proxy/isExtensible/": 12,
                 "Proxy/preventExtensions/": 12,
             },
@@ -2269,6 +2271,18 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
         )
         realm = "built-ins/Proxy/isExtensible/trap-is-not-callable-realm.js"
         reflected = "built-ins/Proxy/preventExtensions/return-false.js"
+        variable_length_object = (
+            "staging/built-ins/Object/preventExtensions/"
+            "preventExtensions-variable-length-typed-arrays.js"
+        )
+        variable_length_reflect = (
+            "staging/built-ins/Reflect/preventExtensions/"
+            "preventExtensions-variable-length-typed-arrays.js"
+        )
+        variable_length_seal = (
+            "staging/built-ins/Object/seal/"
+            "seal-variable-length-typed-arrays.js"
+        )
         self.assertEqual(
             EXTENSIBILITY_FEATURES[constructor],
             {"Reflect.construct", "arrow-function"},
@@ -2276,6 +2290,17 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
         self.assertEqual(EXTENSIBILITY_FEATURES[symbol], {"Symbol"})
         self.assertEqual(EXTENSIBILITY_FEATURES[realm], {"Proxy", "cross-realm"})
         self.assertEqual(EXTENSIBILITY_FEATURES[reflected], {"Proxy", "Reflect"})
+        variable_length_features = {
+            "ArrayBuffer",
+            "SharedArrayBuffer",
+            "resizable-arraybuffer",
+        }
+        self.assertEqual(
+            EXTENSIBILITY_FEATURES[variable_length_object], variable_length_features
+        )
+        self.assertEqual(
+            EXTENSIBILITY_FEATURES[variable_length_reflect], variable_length_features
+        )
 
         test_root = Path(test262_runner.TEST262) / "test"
         try:
@@ -2290,11 +2315,12 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                 self.assertEqual(
                     frozenset(metadata.get("features", [])), features, relative
                 )
-                expected_includes = (
-                    ["isConstructor.js"]
-                    if relative.endswith("/not-a-constructor.js")
-                    else []
-                )
+                if relative.endswith("/not-a-constructor.js"):
+                    expected_includes = ["isConstructor.js"]
+                elif relative in {variable_length_object, variable_length_reflect}:
+                    expected_includes = ["resizableArrayBufferUtils.js"]
+                else:
+                    expected_includes = []
                 self.assertEqual(
                     metadata.get("includes", []), expected_includes, relative
                 )
@@ -2311,10 +2337,38 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                 self.assertEqual(metadata.get("flags", []), expected_flags, relative)
                 self.assertNotIn("negative", metadata, relative)
 
+            for relative in (variable_length_object, variable_length_reflect):
+                directory = (test_root / relative).parent
+                self.assertEqual(
+                    {
+                        path.relative_to(test_root).as_posix()
+                        for path in directory.rglob("*.js")
+                    },
+                    {relative},
+                )
+
+            seal_path = test_root / variable_length_seal
+            self.assertTrue(seal_path.is_file(), variable_length_seal)
+            seal_metadata = test262_runner.parse_meta(seal_path.read_text())
+            self.assertEqual(
+                frozenset(seal_metadata.get("features", [])),
+                variable_length_features,
+            )
+            self.assertEqual(
+                seal_metadata.get("includes", []), ["resizableArrayBufferUtils.js"]
+            )
+            for tool in (test262_runner, test262_analyze):
+                self.assertFalse(tool.extensibility_path(seal_path))
+                self.assertTrue(tool.should_skip(seal_metadata, seal_path))
+
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             future = root / "test/built-ins/Proxy/preventExtensions/future.js"
             outside = root / "test/built-ins/Proxy/defineProperty/future.js"
+            staging_future = (
+                root / "test/staging/built-ins/Object/preventExtensions/future.js"
+            )
+            staging_seal = root / "test" / variable_length_seal
             non_module = (
                 root / "test/built-ins/Proxy/preventExtensions/call-parameters.js"
             )
@@ -2349,8 +2403,20 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                         )
                     self.assertFalse(tool.extensibility_path(future))
                     self.assertFalse(tool.extensibility_path(outside))
+                    self.assertFalse(tool.extensibility_path(staging_future))
+                    self.assertFalse(tool.extensibility_path(staging_seal))
                     self.assertTrue(tool.should_skip({"features": ["Proxy"]}, future))
                     self.assertTrue(tool.should_skip({"features": ["Proxy"]}, outside))
+                    self.assertTrue(
+                        tool.should_skip(
+                            {"features": sorted(variable_length_features)}, staging_future
+                        )
+                    )
+                    self.assertTrue(
+                        tool.should_skip(
+                            {"features": sorted(variable_length_features)}, staging_seal
+                        )
+                    )
                     self.assertTrue(
                         tool.should_skip(
                             {"features": ["Proxy"], "flags": ["module"]},

@@ -11002,13 +11002,13 @@ are about **5.30 ms** for freezing 10k object properties, **10.18 ms** for
 freezing 10k Array elements, **0.85 ms** for the object predicate, and **0.93
 ms** for the Array predicate.
 
-The two staging tests
+At the time of this runtime unit, the two staging tests
 `staging/built-ins/{Object,Reflect}/preventExtensions/preventExtensions-variable-length-typed-arrays.js`
-remain outside normal admission. Forced execution improves from **0 pass / 2
+remained outside normal admission. Forced execution improved from **0 pass / 2
 fail** on the preceding release to **2 pass / 0 fail**. They cover fixed and
 length-tracking views over resizable ArrayBuffers and growable
-SharedArrayBuffers; exact staging admission remains a separate tooling-policy
-decision.
+SharedArrayBuffers. Their later exact staging admission is recorded below as a
+separate tooling-policy decision.
 
 Implementation commit `5a3e7d5` passes CI `30201495431` and all 33 jobs in
 full run `30201495450`. Its original Annex B artifact moved two passes to
@@ -11292,6 +11292,39 @@ sparse pinned worktree were deleted after comparison.
 - 선택한 방식: Keep policy fixed, require all five exact files to pass, require complete RegExp to move by exactly +5/-5, run a fresh failure analyzer, and cover literal/constructor plus mode boundaries directly.
 - 다른 대안 대신 이 방식을 선택한 이유: Admission changes would confound runtime evidence; five files alone miss adjacent regressions; direct tests do not prove Test262 movement; and aggregate totals are weaker than directory-local counts plus exact remaining identities.
 - 장점, 단점 및 영향: The unit has exact five-file, directory-delta, remaining-failure, ordinary-CI, and corrected full-matrix file-identity evidence. Oversized quantifiers, nullable capture-prefilter disagreement, and broader nested-v syntax remain separate scopes.
+```
+
+## Variable-length TypedArray preventExtensions staging admission
+
+The shared extensibility manifest now admits exactly these two pinned staging
+files:
+
+- `staging/built-ins/Object/preventExtensions/preventExtensions-variable-length-typed-arrays.js`
+- `staging/built-ins/Reflect/preventExtensions/preventExtensions-variable-length-typed-arrays.js`
+
+Each requires exactly `ArrayBuffer`, `SharedArrayBuffer`, and
+`resizable-arraybuffer`, plus `resizableArrayBufferUtils.js`. Runner and analyzer
+remove those feature gates only for exact manifest members. Tooling verifies
+both live directories recursively contain only their single admitted file, so
+the full workflow can execute the two directories without admitting future
+nested siblings. The pinned
+`staging/built-ins/Object/seal/seal-variable-length-typed-arrays.js` file
+remains gated.
+
+The pinned focused run is **2 pass / 0 fail / 0 skip / 0 timeout / 0 error / 2
+total / 2 run**. This policy-only unit adds two full-matrix result shards and
+does not change the supported subset, which excludes staging. Runtime behavior
+is already covered by the direct fixed and length-tracking RAB/GSAB regression
+from the Object integrity unit.
+
+```text
+[Decision Log]
+- 목적과 의도: Count two already-correct variable-length TypedArray preventExtensions staging tests while keeping all unrelated staging behavior gated.
+- 기존 구현 및 제약 조건: Runtime semantics and direct regressions already passed, but the three broad feature gates skipped both files; the full runner accepts directories and recursively discovers JavaScript files, while staging is excluded from the ordinary matrix.
+- 검토한 주요 대안: Leave correct tests skipped, remove the three feature gates globally, include all staging, pass file paths to the runner, create a separate runner mode, or admit exact paths and add their singleton parent directories.
+- 선택한 방식: Add only the two audited paths and exact metadata to the shared extensibility manifest, verify recursive live-directory equality and the adjacent seal exclusion, and append the two parent directories explicitly to the full matrix.
+- 다른 대안 대신 이 방식을 선택한 이유: Global or staging-wide admission would overstate support; file arguments execute nothing because the runner recursively scans directories; a new runner mode adds unnecessary policy surface; exact paths plus recursive equality match current runner behavior and fail closed when upstream adds siblings.
+- 장점, 단점 및 영향: Focused coverage gains exactly two passes and full CI gains two independent result shards without runtime or supported-subset movement. The policy depends on pinned staging layout and intentionally fails preflight if upstream changes either directory.
 ```
 
 ## Why the full-suite rate is not higher

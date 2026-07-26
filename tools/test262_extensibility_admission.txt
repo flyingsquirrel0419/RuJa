@@ -1,4 +1,4 @@
-# Exact Object and Proxy [[IsExtensible]] / [[PreventExtensions]] admission.
+# Exact Object, Reflect, and Proxy [[IsExtensible]] / [[PreventExtensions]] admission.
 built-ins/Object/isExtensible/not-a-constructor.js
 built-ins/Object/preventExtensions/abrupt-completion.js
 built-ins/Object/preventExtensions/not-a-constructor.js
@@ -28,3 +28,5 @@ built-ins/Proxy/preventExtensions/trap-is-not-callable.js
 built-ins/Proxy/preventExtensions/trap-is-null-target-is-proxy.js
 built-ins/Proxy/preventExtensions/trap-is-undefined-target-is-proxy.js
 built-ins/Proxy/preventExtensions/trap-is-undefined.js
+staging/built-ins/Object/preventExtensions/preventExtensions-variable-length-typed-arrays.js
+staging/built-ins/Reflect/preventExtensions/preventExtensions-variable-length-typed-arrays.js
