@@ -19473,9 +19473,12 @@ fn ordinary_property_storage_module_namespace_complete_descriptors() {
     let mut vm = Vm::new().expect("VM should initialize");
     vm.run_module_file(module_dir.join("entry.js"))
         .expect("module namespace should initialize");
+    vm.run("var storageNamespaceSetBase = { value: 0 }")
+        .expect("module namespace Set base should initialize");
     let namespace = vm
         .get_property(&vm.global_this.clone(), "storageNamespace")
         .expect("module namespace should be published on the global object");
+    let set_base = vm.get_global("storageNamespaceSetBase");
     let export_key = PropertyKey::from("value");
     let complete_export = |value| {
         let mut descriptor = PropertyDescriptor::data(value);
@@ -19492,6 +19495,16 @@ fn ordinary_property_storage_module_namespace_complete_descriptors() {
             complete_export(Value::Number(1.0))
         )
         .expect("an identical complete export descriptor should succeed"));
+    assert_eq!(
+        vm.fail_ordinary_property_storage_reservation,
+        Some((OrdinaryPropertyStorageReservationSite::PropertyStorage, 0))
+    );
+    assert!(vm
+        .try_set_property_with_receiver(&set_base, "value", Value::Number(1.0), &namespace)
+        .expect("SameValue namespace receiver Set should succeed"));
+    assert!(!vm
+        .try_set_property_with_receiver(&set_base, "value", Value::Number(2.0), &namespace)
+        .expect("different namespace receiver Set should fail normally"));
     assert_eq!(
         vm.fail_ordinary_property_storage_reservation,
         Some((OrdinaryPropertyStorageReservationSite::PropertyStorage, 0))
@@ -19515,6 +19528,9 @@ fn ordinary_property_storage_module_namespace_complete_descriptors() {
             complete_export(Value::Number(f64::NAN))
         )
         .expect("SameValue must consider NaN equal to itself"));
+    assert!(vm
+        .try_set_property_with_receiver(&set_base, "value", Value::Number(f64::NAN), &namespace)
+        .expect("namespace receiver Set must consider NaN equal to itself"));
     vm.run("setStorageNamespaceValue(-0)")
         .expect("namespace export should become negative zero");
     assert!(!vm
@@ -19527,6 +19543,12 @@ fn ordinary_property_storage_module_namespace_complete_descriptors() {
     assert!(vm
         .define_own_property(&namespace, export_key, complete_export(Value::Number(-0.0)))
         .expect("the matching signed-zero descriptor should succeed"));
+    assert!(!vm
+        .try_set_property_with_receiver(&set_base, "value", Value::Number(0.0), &namespace)
+        .expect("namespace receiver Set must distinguish signed zero"));
+    assert!(vm
+        .try_set_property_with_receiver(&set_base, "value", Value::Number(-0.0), &namespace)
+        .expect("matching signed-zero namespace receiver Set should succeed"));
 
     let tag_key = PropertyKey::Symbol(vm.well_known_symbols.to_string_tag);
     let tag_descriptor = vm
@@ -20139,4 +20161,259 @@ fn inline_cache_storage_is_borrowed_bounded_and_best_effort() {
     vm.ic_clear();
     assert_eq!(vm.ic_entry_count, 0);
     assert!(vm.ic.is_empty());
+}
+
+#[test]
+fn ordinary_non_index_set_receiver_storage_is_fallible_and_borrowed() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.run(
+        r#"
+          var ordinarySetBase = Object.create(null);
+          var ordinarySetReceiver = Object.create(null);
+          var ordinarySetDirect = Object.create(null);
+          var ordinarySetSpare = Object.create(null);
+          var ordinarySetExisting = Object.create(null);
+          Object.defineProperty(ordinarySetExisting, "field", {
+            value: 1,
+            writable: true,
+            enumerable: false,
+            configurable: false
+          });
+        "#,
+    )
+    .expect("ordinary Set receiver fixtures should initialize");
+    let base = vm.get_global("ordinarySetBase");
+    let receiver = vm.get_global("ordinarySetReceiver");
+    let Value::Object(receiver_index) = receiver else {
+        unreachable!();
+    };
+    fill_property_storage_to_spare(&vm, &receiver, "receiverPadding", 0);
+    vm.ic_put(receiver_index.0, "field", Value::Number(99.0));
+    vm.fail_ordinary_property_storage_reservation =
+        Some((OrdinaryPropertyStorageReservationSite::PropertyStorage, 0));
+    let error = vm
+        .try_set_property_with_receiver(&base, "field", Value::Number(2.0), &receiver)
+        .expect_err("receiver map growth should preflight");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert!(!vm.has_own_property(&receiver, "field"));
+    assert_eq!(
+        vm.ic_get(receiver_index.0, "field"),
+        Some(Value::Number(99.0))
+    );
+    vm.try_set_property_with_receiver(&base, "field", Value::Number(2.0), &receiver)
+        .expect("receiver map growth should retry");
+    assert_eq!(
+        vm.get_property(&receiver, "field").unwrap(),
+        Value::Number(2.0)
+    );
+    assert_eq!(vm.ic_get(receiver_index.0, "field"), None);
+
+    let direct = vm.get_global("ordinarySetDirect");
+    let Value::Object(direct_index) = direct else {
+        unreachable!();
+    };
+    fill_property_storage_to_spare(&vm, &direct, "directPadding", 0);
+    vm.ic_put(direct_index.0, "field", Value::Number(98.0));
+    vm.fail_ordinary_property_storage_reservation =
+        Some((OrdinaryPropertyStorageReservationSite::PropertyStorage, 0));
+    let error = vm
+        .set_property(&direct, "field", Value::Number(3.0))
+        .expect_err("direct receiver map growth should preflight");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert!(!vm.has_own_property(&direct, "field"));
+    assert_eq!(
+        vm.ic_get(direct_index.0, "field"),
+        Some(Value::Number(98.0))
+    );
+    vm.set_property(&direct, "field", Value::Number(3.0))
+        .expect("direct receiver map growth should retry");
+    assert_eq!(vm.ic_get(direct_index.0, "field"), None);
+
+    let spare = vm.get_global("ordinarySetSpare");
+    fill_property_storage_to_spare(&vm, &spare, "sparePadding", 1);
+    vm.fail_ordinary_property_storage_reservation =
+        Some((OrdinaryPropertyStorageReservationSite::PropertyStorage, 0));
+    vm.try_set_property_with_receiver(&base, "field", Value::Number(3.0), &spare)
+        .expect("spare receiver capacity should not reserve");
+    assert_eq!(
+        vm.fail_ordinary_property_storage_reservation,
+        Some((OrdinaryPropertyStorageReservationSite::PropertyStorage, 0))
+    );
+
+    let existing = vm.get_global("ordinarySetExisting");
+    fill_property_storage_to_spare(&vm, &existing, "existingPadding", 0);
+    vm.try_set_property_with_receiver(&base, "field", Value::Number(4.0), &existing)
+        .expect("existing receiver property should not reserve");
+    assert_eq!(
+        vm.fail_ordinary_property_storage_reservation,
+        Some((OrdinaryPropertyStorageReservationSite::PropertyStorage, 0))
+    );
+    let Value::Object(existing_index) = existing else {
+        unreachable!();
+    };
+    let descriptor = vm.heap.with_obj(existing_index.0, |object| {
+        object
+            .props()
+            .lock()
+            .get(&PropertyKey::from("field"))
+            .cloned()
+            .expect("existing descriptor should remain")
+    });
+    assert_eq!(descriptor.value, Value::Number(4.0));
+    assert!(descriptor.writable);
+    assert!(!descriptor.enumerable);
+    assert!(!descriptor.configurable);
+    vm.fail_ordinary_property_storage_reservation = None;
+}
+
+#[test]
+fn ordinary_set_rejects_virtual_boxed_string_receiver_properties() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    assert_eq!(
+        vm.run(
+            r#"
+              var ordinaryStringBase = { 0: 1, 1: 1, length: 1, extra: 1 };
+              var ordinaryStringReceiver = Object("\u{1F600}");
+              [
+                Reflect.set(ordinaryStringBase, "0", 9, ordinaryStringReceiver),
+                Reflect.set(ordinaryStringBase, "1", 9, ordinaryStringReceiver),
+                Reflect.set(ordinaryStringBase, "length", 9, ordinaryStringReceiver),
+                Reflect.set(ordinaryStringBase, "extra", 9, ordinaryStringReceiver),
+                ordinaryStringReceiver.length,
+                ordinaryStringReceiver.extra,
+                Object.getOwnPropertyDescriptor(ordinaryStringReceiver, "0").writable,
+                Object.getOwnPropertyDescriptor(ordinaryStringReceiver, "1").writable
+              ].join("|");
+            "#,
+        )
+        .expect("boxed String receiver Set should complete"),
+        Value::String(Arc::from("false|false|false|true|2|9|false|false"))
+    );
+}
+
+#[test]
+fn ordinary_non_index_set_receiver_preserves_proxy_realm_and_global_order() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.run(
+        r#"
+          var ordinarySetTransparentTarget = Object.create(null);
+          var ordinarySetTransparent = new Proxy(ordinarySetTransparentTarget, {});
+          var ordinarySetTransparentReceiver = Object.create(null);
+          var ordinarySetCompletedTarget = Object.create(null);
+          var ordinarySetCompleted = new Proxy(ordinarySetCompletedTarget, {
+            set: function () { return true; }
+          });
+          var ordinarySetGlobalBinding = 1;
+          var ordinarySetRealm = $262.createRealm().global;
+          var ordinarySetForeignBase = ordinarySetRealm.eval("Object.create(null)");
+          var ordinarySetForeignReceiver = ordinarySetRealm.eval("Object.create(null)");
+        "#,
+    )
+    .expect("ordinary receiver ordering fixtures should initialize");
+    let baseline_pins = vm.gc_pins.len();
+    let baseline_contexts = vm.execution_contexts.len();
+    let baseline_native_depth = vm.active_native_call_depth;
+
+    let transparent = vm.get_global("ordinarySetTransparent");
+    let transparent_receiver = vm.get_global("ordinarySetTransparentReceiver");
+    fill_property_storage_to_spare(&vm, &transparent_receiver, "transparentReceiverPadding", 0);
+    vm.fail_ordinary_property_storage_reservation =
+        Some((OrdinaryPropertyStorageReservationSite::PropertyStorage, 0));
+    vm.set_fuel(Some(0));
+    let error = vm
+        .try_set_property_with_receiver(
+            &transparent,
+            "field",
+            Value::Number(5.0),
+            &transparent_receiver,
+        )
+        .expect_err("Proxy fuel must precede receiver publication");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(
+        vm.fail_ordinary_property_storage_reservation,
+        Some((OrdinaryPropertyStorageReservationSite::PropertyStorage, 0))
+    );
+    assert!(!vm.has_own_property(&transparent_receiver, "field"));
+    vm.set_fuel(None);
+    let error = vm
+        .try_set_property_with_receiver(
+            &transparent,
+            "field",
+            Value::Number(5.0),
+            &transparent_receiver,
+        )
+        .expect_err("transparent Proxy should reach receiver storage preflight");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    vm.try_set_property_with_receiver(
+        &transparent,
+        "field",
+        Value::Number(5.0),
+        &transparent_receiver,
+    )
+    .expect("transparent Proxy receiver publication should retry");
+
+    vm.fail_ordinary_property_storage_reservation =
+        Some((OrdinaryPropertyStorageReservationSite::PropertyStorage, 0));
+    assert_eq!(
+        vm.run("Reflect.set(ordinarySetCompleted, 'field', 6)")
+            .expect("completed Proxy Set should skip receiver publication"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        vm.fail_ordinary_property_storage_reservation,
+        Some((OrdinaryPropertyStorageReservationSite::PropertyStorage, 0))
+    );
+    assert!(!vm.has_own_property(&vm.get_global("ordinarySetCompletedTarget"), "field"));
+    vm.fail_ordinary_property_storage_reservation = None;
+
+    assert_eq!(
+        vm.run(
+            "Reflect.set(Object.create(null), 'ordinarySetGlobalBinding', 7, globalThis); \
+             ordinarySetGlobalBinding === 7 && globalThis.ordinarySetGlobalBinding === 7"
+        )
+        .expect("global receiver publication should preserve its binding mirror"),
+        Value::Bool(true)
+    );
+
+    let foreign_receiver = vm.get_global("ordinarySetForeignReceiver");
+    fill_property_storage_to_spare(&vm, &foreign_receiver, "foreignReceiverPadding", 0);
+    vm.fail_ordinary_property_storage_reservation =
+        Some((OrdinaryPropertyStorageReservationSite::PropertyStorage, 0));
+    assert_eq!(
+        vm.run(
+            r#"
+              var ordinarySetForeignError;
+              try {
+                ordinarySetRealm.Reflect.set(
+                  ordinarySetForeignBase,
+                  "field",
+                  8,
+                  ordinarySetForeignReceiver
+                );
+              } catch (error) {
+                ordinarySetForeignError = error;
+              }
+              ordinarySetForeignError instanceof ordinarySetRealm.RangeError &&
+                !(ordinarySetForeignError instanceof RangeError);
+            "#,
+        )
+        .expect("foreign receiver allocation error should be catchable"),
+        Value::Bool(true)
+    );
+    assert!(!vm.has_own_property(&foreign_receiver, "field"));
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.execution_contexts.len(), baseline_contexts);
+    assert_eq!(vm.active_native_call_depth, baseline_native_depth);
+    assert_eq!(
+        vm.run(
+            "ordinarySetRealm.Reflect.set(ordinarySetForeignBase, 'field', 8, \
+             ordinarySetForeignReceiver)"
+        )
+        .expect("foreign receiver publication should retry"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        vm.get_property(&foreign_receiver, "field").unwrap(),
+        Value::Number(8.0)
+    );
 }

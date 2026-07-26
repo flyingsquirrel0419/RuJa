@@ -2111,6 +2111,35 @@ reservation therefore preserves all existing entries.
 - 장점, 단점 및 영향: Direct dense, custom, sparse, mapped-Arguments, transparent/completed Proxy, Realm, retry, and cache-cap paths now have deterministic allocation and ordering evidence. Borrowed cache access removes per-hit/per-write temporary allocation, and release workload comparison found no regression. Initial PropertyKey/shared String creation, ordinary non-index Set publication, seal/freeze, TypedArray byte conversion, JSON containers, unrelated ArrayData constructors, PropertyKey/Error strings, GC root enumeration, and mark worklists remain independent scopes.
 ```
 
+## Fallible ordinary non-index Set receiver publication
+
+`OrdinarySetWithOwnDescriptor` now publishes ordinary non-index receiver data
+through the same Set-mode storage planner as Array indices. A missing property
+reserves actual `props` growth before mutation; an existing writable data
+descriptor retains its attributes and replaces only its value. The publisher
+invalidates a String-key cache entry after commit through borrowed `&str`, so
+allocation failure leaves both property state and cache state untouched.
+
+Direct non-Proxy receivers retain their exotic boundaries before storage
+planning. TypedArray canonical numeric indices use element definition, Array
+length and indices use their dedicated publishers, and Module Namespace String
+exports compare the requested value with the live binding using `SameValue`.
+Boxed String virtual `length` and UTF-16 indices are recognized directly as
+non-writable, avoiding both a false ordinary-map shadow and allocation of a
+temporary character descriptor. Proxy receivers continue through their full
+`[[GetOwnProperty]]` and `[[DefineOwnProperty]]` paths before reaching an
+ordinary target.
+
+```text
+[Decision Log]
+- 목적과 의도: Make ordinary non-index Set receiver publication catchable and atomic at native map growth while preserving receiver exotic methods, abrupt order, descriptor attributes, Realm identity, and hot-path cache behavior.
+- 기존 구현 및 제약 조건: The final ordinary receiver branch cloned a cache String and inserted into props without reserve; it inspected only materialized props, so boxed String indices could be shadowed; Module Namespace exports always rejected receiver Set even when a value-only descriptor was SameValue; and Proxy, TypedArray, Array, global, strictness, fuel, and mapped-Arguments paths already had established order.
+- 검토한 주요 대안: Add a local try_reserve around the manual insert, call the full Proxy-aware descriptor operation for every direct receiver, materialize String virtual descriptors, reject every Namespace write, route all Set forms through generic DefineOwnProperty, or extend the shared Set planner only after exotic classification.
+- 선택한 방식: Classify Proxy, TypedArray, Array, Namespace, and boxed String receiver behavior first; preserve or create one complete ordinary data descriptor; publish it through Set-mode actual-growth preflight; and borrow the existing key for post-commit cache invalidation.
+- 다른 대안 대신 이 방식을 선택한 이유: Local reserve logic would duplicate the publisher; full descriptor dispatch adds roots, fuel, and false allocation to ordinary receivers; String materialization allocates unnecessary value data; blanket Namespace rejection violates value-only SameValue; and fully generic definition adds hot-path work while duplicating already-correct exotic routing.
+- 장점, 단점 및 영향: Full/spare/existing map, retry, cache, Proxy/fuel, global, Realm, String UTF-16, Namespace NaN/signed-zero, and cleanup boundaries now have deterministic evidence. Receiver overwrite/create benchmarks show no measured regression. Initial PropertyKey/shared String creation, seal/freeze materialization, TypedArray byte conversion, JSON containers, unrelated ArrayData constructors, Error strings, GC root enumeration, and mark worklists remain separate scopes.
+```
+
 ---
 
 **Next:** [Features](features.md) · [Known limitations](limitations.md) · [Back to README](../README.md)

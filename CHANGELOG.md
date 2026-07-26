@@ -62,6 +62,35 @@
 
 ### Fixed
 
+- Ordinary non-index `Set` receiver publication now uses the shared fallible
+  storage publisher. New receiver properties reserve actual `props` growth
+  before mutation; spare capacity and existing writable properties do not
+  reserve, and replacements preserve descriptor attributes. Cache invalidation
+  borrows the existing property key after commit instead of allocating a
+  temporary `String`, so failed preflight leaves receiver state and cache
+  entries unchanged and retryable.
+
+  Receiver checks now recognize boxed String virtual `length` and UTF-16 index
+  properties as non-writable without materializing descriptors. Module
+  Namespace receiver definitions implement value-only `SameValue`: identical
+  exports and `NaN` succeed, different values and opposite signed zero fail,
+  and uninitialized exports retain their TDZ `ReferenceError` ordering.
+
+  Exact regressions cover full/spare/existing maps, descriptor preservation,
+  cache atomicity, retry, transparent Proxy fuel priority, completed Proxies,
+  global receivers, foreign Realm errors and cleanup, surrogate-pair indices,
+  Namespace `SameValue`, and allocation-failpoint exclusion. Local verification
+  passes all targets/features with **264/264** library tests, **539/539**
+  builtins tests, **15/15** arguments tests, **50/50** Array-index tests, and
+  **31/31** module tests, plus **263/263** release library tests, **135/135**
+  tooling tests, **1/1** doctest, rustfmt, warnings-denied Clippy, release build,
+  generated documentation, and wasm32 checking. Rustdoc retains 13 existing
+  warnings. GPT-5.6 reviewers Lovelace and Locke are clean. The four-directory
+  focused Test262 output is byte-identical to the preceding release at **1683
+  pass / 0 fail / 81 skip / 0 timeout / 0 error**. New receiver overwrite and
+  creation workloads measure about 1.13 seconds per 100,000 and 130 ms per
+  10,000 operations, with no three-run regression against that binary.
+
 - Direct Array index assignment now uses the same representation-aware,
   fallible storage publisher as property definition. Dense append, sparse
   creation, and custom-to-dense migration reserve actual `props`, `items`, and

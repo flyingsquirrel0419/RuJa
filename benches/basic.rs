@@ -127,12 +127,45 @@ fn bench_inline_cache(c: &mut Criterion) {
     });
 }
 
+fn bench_ordinary_set_receiver(c: &mut Criterion) {
+    let overwrite = r#"
+        var base = { value: 0 };
+        var receiver = { value: 0 };
+        for (var i = 0; i < 100000; i++) {
+            Reflect.set(base, "value", i, receiver);
+        }
+        receiver.value;
+    "#;
+    c.bench_function("ordinary_set_receiver_overwrite_100k", |b| {
+        b.iter(|| {
+            let mut vm = Vm::new().expect("failed to initialize VM");
+            vm.run(overwrite).expect("receiver overwrite failed")
+        })
+    });
+
+    let create = r#"
+        var base = Object.create(null);
+        var receiver = Object.create(null);
+        for (var i = 0; i < 10000; i++) {
+            Reflect.set(base, "field" + i, i, receiver);
+        }
+        receiver.field9999;
+    "#;
+    c.bench_function("ordinary_set_receiver_create_10k", |b| {
+        b.iter(|| {
+            let mut vm = Vm::new().expect("failed to initialize VM");
+            vm.run(create).expect("receiver creation failed")
+        })
+    });
+}
+
 criterion_group!(
     benches,
     bench_fib,
     bench_tight_loop,
     bench_array_push,
     bench_array_index_set,
-    bench_inline_cache
+    bench_inline_cache,
+    bench_ordinary_set_receiver
 );
 criterion_main!(benches);

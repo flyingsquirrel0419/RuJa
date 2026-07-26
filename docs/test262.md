@@ -10921,6 +10921,46 @@ downloaded release binary reproduces the five-directory focused output at
 - 장점, 단점 및 영향: The unit has byte-identical 4054/4/243 focused evidence, exact representation/Realm/Proxy/Arguments/cache tests, and no measured workload regression. Initial shared PropertyKey creation and ordinary non-index Set remain separate allocator scopes.
 ```
 
+## Fallible ordinary non-index Set receiver publication
+
+This unit changes no Test262 admission. Ordinary non-index receiver creation
+and replacement now use the shared fallible Set publisher, boxed String
+virtual indices cannot be shadowed by receiver Set, and direct Module Namespace
+receivers accept only value-only `SameValue` definitions. Rust regressions
+inject the exact property-map growth failure and cover spare and existing map
+capacity, descriptor attributes, atomic cache retention, retry, transparent
+Proxy fuel, completed Proxy suppression, global receivers, foreign Realm error
+identity and cleanup, UTF-16 surrogate indices, Namespace `NaN`, and signed
+zero.
+
+Local gates pass all targets/features with **264/264** library tests,
+**539/539** builtins tests, **15/15** arguments tests, **50/50** Array-index
+tests, and **31/31** module tests, plus **263/263** release library tests,
+**135/135** tooling tests, **1/1** doctest, rustfmt, warnings-denied Clippy,
+release build, generated documentation, wasm32 checking, and both new
+Criterion workloads. Rustdoc has only 13 existing warnings. GPT-5.6 reviewers
+Lovelace and Locke are clean after the boxed String and Module Namespace
+findings were fixed.
+
+On fixed Test262 `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the
+`built-ins/Reflect/set`, `built-ins/String`,
+`language/expressions/assignment`, and `language/module-code/namespace`
+directories are **1683 pass / 0 fail / 81 skip / 0 timeout / 0 error / 1764
+total / 1683 run**. Current and preceding release binaries produce
+byte-identical output. Criterion point estimates are about 1.13 seconds for
+100,000 receiver overwrites and 130 ms for 10,000 receiver creations; three
+wall-time runs against the preceding release show no regression.
+
+```text
+[Decision Log]
+- 목적과 의도: Prove allocator-safe ordinary non-index receiver publication and corrected String/Namespace exotic semantics without widening Test262 admission or degrading the Set hot path.
+- 기존 구현 및 제약 조건: Test262 cannot inject native map reservation failure or inspect cache retention; existing admitted tests did not expose the boxed String or Namespace receiver bugs; Realm and Proxy order can be changed by misplaced preflight; and aggregate equality can hide per-test drift.
+- 검토한 주요 대안: Admit unrelated files, rely only on Test262, rely only on Rust failpoints, compare only totals, omit the preceding binary, skip performance evidence, or broaden the unit into PropertyKey and every remaining allocator owner.
+- 선택한 방식: Keep admission fixed, test each native growth and exotic order directly, compare exact focused output with the preceding release, run broad local gates, and benchmark receiver overwrite and creation workloads on both binaries.
+- 다른 대안 대신 이 방식을 선택한 이유: Admission does not prove host-allocation behavior; failpoints do not detect broad semantic drift; aggregate totals are weaker than byte identity; one binary cannot isolate patch cost; and the remaining owners have separate rollback and ordering contracts.
+- 장점, 단점 및 영향: The unit has byte-identical 1683/0/81 focused evidence, deterministic allocation/cache/Realm/Proxy/String/Namespace coverage, and no measured workload regression. Initial PropertyKey/shared String creation, seal/freeze, TypedArray bytes, JSON containers, direct ArrayData constructors, Error strings, GC root enumeration, and mark worklists remain independent.
+```
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is

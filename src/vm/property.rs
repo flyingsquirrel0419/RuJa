@@ -643,8 +643,8 @@ impl Vm {
     }
 
     /// Reserve and commit the target's directly owned props/items/present
-    /// containers. Shared key/value representation and post-commit length/IC
-    /// maintenance remain independent host-allocation boundaries.
+    /// containers. Shared key/value representation remains an independent
+    /// host-allocation boundary; post-commit cache invalidation borrows keys.
     pub(crate) fn publish_ordinary_property_storage(
         &mut self,
         idx: GcIdx,
@@ -663,7 +663,7 @@ impl Vm {
         )
     }
 
-    fn publish_array_index_set_storage(
+    fn publish_ordinary_set_storage(
         &mut self,
         idx: GcIdx,
         key: &PropertyKey,
@@ -2579,9 +2579,6 @@ impl Vm {
         // logic below before falling back to ordinary object semantics.
         match obj {
             Value::Object(idx) => {
-                // Native abstract operations bypass the bytecode store opcodes,
-                // so invalidate their receiver cache entry here as well.
-                self.ic_invalidate(idx.0, key);
                 let is_global_this = self.heap.with_obj(idx.0, |o| {
                     matches!(o, HeapObj::Object(od) if od.class_name.as_deref() == Some("global"))
                 });
@@ -2694,7 +2691,7 @@ impl Vm {
                         }
                         let mut descriptor = desc;
                         descriptor.value = value;
-                        self.publish_array_index_set_storage(*idx, &pkey, descriptor)?;
+                        self.publish_ordinary_set_storage(*idx, &pkey, descriptor)?;
                         return Ok(());
                     }
                     let dense_own_index = self.heap.with_obj(idx.0, |o| {
@@ -2722,7 +2719,7 @@ impl Vm {
                     // Dense array elements are own writable data properties,
                     // so prototype setters/non-writable data properties do
                     // not participate in this write.
-                    self.publish_array_index_set_storage(
+                    self.publish_ordinary_set_storage(
                         *idx,
                         &pkey,
                         PropertyDescriptor::data(value),
@@ -2791,6 +2788,7 @@ impl Vm {
                             existing.value = value;
                         }
                     });
+                    self.ic_invalidate(idx.0, key);
                     self.mirror_global_property_to_binding(
                         *idx,
                         key,
@@ -3510,14 +3508,16 @@ impl Vm {
         });
         if let Some((env, name)) = namespace_binding {
             match crate::environment::get_checked(&self.heap, env, &name) {
-                Ok(_) => return Ok(false),
+                Ok(Some(current)) => return Ok(descriptor_same_value(&value, &current)),
+                Ok(None) | Err(false) => {
+                    return Ok(descriptor_same_value(&value, &Value::Undefined))
+                }
                 Err(true) => {
                     return Err(Error::reference(format!(
                         "Cannot access '{}' before initialization",
                         name
                     )))
                 }
-                Err(false) => return Ok(false),
             }
         }
         if let Some(index) = pkey.as_str().and_then(crate::value::parse_array_index) {
@@ -3556,41 +3556,44 @@ impl Vm {
                 let mut descriptor =
                     current.unwrap_or_else(|| PropertyDescriptor::data(value.clone()));
                 descriptor.value = value.clone();
-                self.publish_array_index_set_storage(*receiver_idx, &pkey, descriptor)?;
+                self.publish_ordinary_set_storage(*receiver_idx, &pkey, descriptor)?;
                 return Ok(true);
             }
+        }
+
+        let string_exotic_property = self.heap.with_obj(receiver_idx.0, |object| {
+            let HeapObj::Object(data) = object else {
+                return false;
+            };
+            let primitive = data.primitive.lock();
+            let Some(Value::String(value)) = primitive.as_ref() else {
+                return false;
+            };
+            pkey.as_str() == Some("length")
+                || crate::builtins::canonical_string_index(&pkey)
+                    .is_some_and(|index| index < crate::value::utf16_len(value))
+        });
+        if string_exotic_property {
+            return Ok(false);
         }
 
         let existing = self
             .heap
             .with_obj(receiver_idx.0, |o| o.props().lock().get(&pkey).cloned());
-        if let Some(desc) = existing {
+        let descriptor = if let Some(mut desc) = existing {
             if desc.is_accessor || !desc.writable {
                 return Ok(false);
             }
+            desc.value = value;
+            desc
         } else {
             let is_extensible = self.heap.with_obj(receiver_idx.0, |o| o.is_extensible());
             if !is_extensible {
                 return Ok(false);
             }
-        }
-        let cache_key = pkey.as_str().map(|s| s.to_string());
-        self.heap.with_obj(receiver_idx.0, |o| {
-            let props = o.props();
-            let mut props = props.lock();
-            if let Some(existing) = props.get_mut(&pkey) {
-                existing.value = value.clone();
-            } else {
-                props.insert(
-                    pkey.clone(),
-                    crate::value::PropertyDescriptor::data(value.clone()),
-                );
-            }
-        });
-        self.set_arguments_mapped_binding_for_key(receiver_idx.0, &pkey, &value);
-        if let Some(key) = cache_key {
-            self.ic_invalidate(receiver_idx.0, &key);
-        }
+            PropertyDescriptor::data(value)
+        };
+        self.publish_ordinary_set_storage(*receiver_idx, &pkey, descriptor)?;
         Ok(true)
     }
 

@@ -395,10 +395,12 @@ guarantees are required.
   cache entry on failure. These guarantees are limited to those directly owned
   containers and existing keys: BigInt/value preparation, boxed-String
   canonicalization, initial PropertyKey/numeric-index formatting, and other
-  shared representation paths remain infallible. The remaining nearby
-  hard-host-OOM scopes also include ordinary non-index `Set`, seal/freeze
-  descriptor materialization, TypedArray byte conversion, JSON caller
-  containers, unrelated direct `ArrayData::new` constructors,
+  shared representation paths remain infallible. Ordinary non-index Set
+  receiver publication also preflights actual property-map growth and borrows
+  post-commit cache keys after boxed String, Module Namespace, TypedArray,
+  Array, and Proxy classification. The remaining nearby hard-host-OOM scopes
+  include seal/freeze descriptor materialization, TypedArray byte conversion,
+  JSON caller containers, unrelated direct `ArrayData::new` constructors,
   PropertyKey/Error strings, GC root enumeration, and mark worklists.
 - Push, Pop, Shift, Unshift, Splice, Slice, Concat, Flat, FlatMap, ForEach,
   Join, ToLocaleString, Map, Reduce, ReduceRight, Reverse, ToReversed,
