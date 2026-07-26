@@ -11211,6 +11211,34 @@ comparison.
 - 장점, 단점 및 영향: Focused and supported language behavior is unchanged while direct tests prove the removed clones were not roots. Full-matrix artifact identity remains post-push evidence.
 ```
 
+## Retained Reference move opcode
+
+This runtime/compiler unit changes no Test262 admission. All 24 bytecode paths
+that need both a Reference and its value replace `Dup; GetValue` with one
+move-based opcode. A compiler regression requires the fused shape, while an
+allocation failpoint proves root reservation fails before an observable getter
+or raw `super` key coercion and that retry, thrown getters, forced GC, and pin
+cleanup preserve the old stack contract.
+
+On pinned Test262 `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the
+complete adjacent Reference cohort is **930 pass / 0 fail / 19 skip / 0 timeout
+/ 0 error** on both current and preceding binaries, with byte-identical output
+SHA `de466337f732c6866fc3a27d8631f3751204b9fb8e91f1f3ecbf20c4d75835f7`.
+The supported subset remains **12761 pass / 0 fail / 7678 skip / 20439 total**.
+Direct local classes **105/105**, ES2015 **133/133**, operators **130/130**,
+and `with` **58/58** also pass. Full-matrix artifact identity remains post-push
+evidence.
+
+```text
+[Decision Log]
+- 목적과 의도: Prove that moving a retained boxed Reference through GetValue removes allocation without changing observable Reference semantics or Test262 admission.
+- 기존 구현 및 제약 조건: Test262 cannot inspect Rust Box cloning, root reservations, or pin depth; equal aggregates can hide offsetting changes; GetValue may execute coercion, getters, Proxy traps, and GC before completing abruptly.
+- 검토한 주요 대안: Rely only on compiler inspection, run only aggregate Test262, widen admission, compare only current output, or pair deterministic failpoints with exact current/preceding Reference output.
+- 선택한 방식: Keep admission fixed, assert all retained compiler sites use the fused opcode, force reservation and getter failures locally, compare the complete adjacent Reference cohort byte-for-byte, and rerun the supported subset.
+- 다른 대안 대신 이 방식을 선택한 이유: Bytecode shape alone does not prove roots or unwind behavior; Test262 alone cannot force allocator boundaries; totals are weaker than exact output identity; and admission changes would confound a representation-only runtime result.
+- 장점, 단점 및 영향: Twenty-four clone sites disappear with exact focused and supported-language stability plus deterministic allocation-order, GC, retry, and cleanup coverage. Full CI artifact comparison remains post-push evidence, and initial Reference boxes remain separate scope.
+```
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is

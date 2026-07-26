@@ -418,9 +418,14 @@ guarantees are required.
   preventExtensions roots reserve before every pin. Computed compound, logical,
   and update References now hand numeric keys directly to structured
   `PropertyKey` coercion. Reference consumers borrow their records, and heap
-  tracing, root counting, and pin publication share one visitor. Remaining
+  tracing, root counting, and pin publication share one visitor. All 24 paths
+  that retain a Reference while reading its value now move the sole box through
+  a fused opcode instead of cloning it; root reservation and pin publication
+  still scan the complete record before observable re-entry, and raw names
+  reserve two simultaneously live root suffixes for shared key coercion.
+  Remaining
   nearby hard-host-OOM scopes include initial Reference record/base/name/
-  receiver boxes, required retained-Reference `Dup` clones, non-index/shared-
+  receiver boxes, non-index/shared-
   String key creation, native indexed loops that still format names, Proxy trap descriptor
   values, TypedArray byte conversion, JSON caller containers, unrelated direct
   `ArrayData::new` constructors, Error strings, GC root enumeration, and mark

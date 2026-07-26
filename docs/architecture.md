@@ -2288,6 +2288,37 @@ abrupt raw-assignment and computed-super coercion tests require exact cleanup.
 - 장점, 단점 및 영향: Five defensive record clones and five boxed-value clones disappear without layout or admission changes. Root coverage and abrupt cleanup have one deterministic oracle. Initial Reference creation boxes, required Dup clones for retained References, host allocator failure, and recursion through deliberately nested internal References remain separate work.
 ```
 
+## Retained Reference move opcode
+
+Update, compound/logical assignment, method and identifier calls, and tagged
+calls need both a Reference and its resolved value. These paths previously
+emitted `Dup; GetValue`; cloning `Value::Reference(Box<ReferenceRecord>)`
+allocated and recursively cloned the record even though only one owner was
+needed after resolution. `GetValueKeepReference` now has the explicit stack
+contract `[Reference] -> [Reference, resolved value]` and moves the original
+box through resolution.
+
+Before any observable getter, Proxy trap, key coercion, or GC can run, the
+opcode reserves and pins the Reference's complete root set. Raw property names
+temporarily pin the same record again inside shared key coercion, so those
+References reserve two complete root suffixes up front. It removes the operand
+only while the outer roots are pinned. On normal or abrupt completion it
+restores the original Reference to the stack before releasing pins, matching
+the prior `Dup; GetValue` unwind shape. Reservation failure restores the input
+without invoking user code. The compiler uses this opcode at all 24 retained
+Reference reads; ordinary value duplication and standalone `GetValue` remain
+separate operations.
+
+```text
+[Decision Log]
+- 목적과 의도: Remove boxed Reference duplication from every retained read while preserving exact stack, evaluation-order, abrupt-completion, and GC-root semantics.
+- 기존 구현 및 제약 조건: Dup cloned the recursive Box before GetValue at 24 update, assignment, call, and tag sites. GetValue can invoke key coercion, getters, and Proxy traps or trigger GC, and frame unwinding expects the retained Reference to remain on the operand stack after an error.
+- 검토한 주요 대안: Keep Dup, convert the public Reference payload to Arc, borrow a raw stack pointer across re-entry, add separate pin/unpin bytecodes, specialize every compiler form, or add one fused move-and-resolve opcode.
+- 선택한 방식: Add GetValueKeepReference with an explicit stack contract; move the sole Box off the stack, pre-reserve one root suffix for resolved names or the two-suffix peak for raw names, pin the outer roots, resolve through shared GetValue, restore the Reference before unpinning, then publish the resolved value only on success.
+- 다른 대안 대신 이 방식을 선택한 이유: Arc changes public representation and adds atomic traffic; a stack pointer can be invalidated by re-entrant stack growth; split bytecodes expose unsafe intermediate states; per-form implementations would drift; and the fused opcode keeps one auditable ownership and cleanup boundary.
+- 장점, 단점 및 영향: Twenty-four deep Box clones disappear with no public layout or JavaScript semantic change. Direct failpoints prove reservation before ordinary getters and raw super key coercion, retry, thrown-getter cleanup, and restoration of the incoming pin depth; the shared Reference-root test separately proves exact root count and order. Focused Test262 output remains byte-identical. The opcode still scans and pins roots before re-entry, raw names reserve a two-suffix transient peak, and initial Reference creation boxes remain independent work.
+```
+
 ---
 
 **Next:** [Features](features.md) · [Known limitations](limitations.md) · [Back to README](../README.md)

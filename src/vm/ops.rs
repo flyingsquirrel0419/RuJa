@@ -1088,6 +1088,7 @@ impl Vm {
                     let resolved = self.get_value(&v)?;
                     self.stack.push(resolved);
                 }
+                Op::GetValueKeepReference => self.op_get_value_keep_reference()?,
                 Op::PutValue => {
                     // Stack: [value, ref] (ref on top). Pop ref, then value.
                     let r#ref = self.stack.pop().unwrap_or(Value::Undefined);
@@ -2823,6 +2824,46 @@ impl Vm {
         let b = self.stack.pop().unwrap_or(Value::Undefined);
         let a = self.stack.pop().unwrap_or(Value::Undefined);
         (a, b)
+    }
+
+    pub(crate) fn op_get_value_keep_reference(&mut self) -> error::Result<()> {
+        let reference = self.stack.pop().unwrap_or(Value::Undefined);
+        let peak_root_copies = match &reference {
+            Value::Reference(record)
+                if matches!(&record.base, crate::value::ReferenceBase::Value(_))
+                    && matches!(
+                        &record.name,
+                        crate::value::ReferencedName::UncoercedProperty(_)
+                    ) =>
+            {
+                2usize
+            }
+            _ => 1usize,
+        };
+        let required_roots = Self::value_root_count(&reference)
+            .checked_mul(peak_root_copies)
+            .ok_or_else(|| Error::range("temporary root set is too large"));
+        let reservation = required_roots.and_then(|required| {
+            if required == 0 {
+                Ok(())
+            } else {
+                self.try_reserve_gc_pins(required)
+            }
+        });
+        if let Err(error) = reservation {
+            self.stack.push(reference);
+            return Err(error);
+        }
+        let pin_count = self.pin(&reference);
+        let resolved = self.get_value(&reference);
+
+        // Match `Dup; GetValue`: the retained operand remains on the stack even
+        // when GetValue completes abruptly and the frame unwinder takes over.
+        self.stack.push(reference);
+        self.unpin_many(pin_count);
+        let resolved = resolved?;
+        self.stack.push(resolved);
+        Ok(())
     }
 
     fn this_value_from_reference(&self, r#ref: &Value) -> Value {

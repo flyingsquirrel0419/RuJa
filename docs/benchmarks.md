@@ -153,6 +153,14 @@ sample size make these no-regression checks, not a throughput claim. The
 deterministic evidence is the removed clone sites plus direct root-identity
 tests; retained `Dup` still clones one boxed Reference per operation.
 
+After all 24 retained reads moved from `Dup; GetValue` to
+`GetValueKeepReference`, two more short sequential samples placed numeric at
+roughly **82.96-83.41 ms**, versus **84.60-84.87 ms** on the preceding source.
+String control was roughly **84.9-86.8 ms** current versus **84.9-86.3 ms**
+preceding, an overlapping result. Treat the numeric shift as about a 2% local
+workload improvement rather than a general throughput claim. Compiler
+inspection proving 24 eliminated boxed-Reference clones is deterministic.
+
 ```sh
 cargo bench --bench basic -- computed_reference --quick
 ```

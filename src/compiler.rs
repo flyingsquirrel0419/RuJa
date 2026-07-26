@@ -4252,8 +4252,8 @@ impl Compiler {
             Expr::Ident(name) => {
                 let name_idx = self.chunk.add_constant(Value::String(name.clone()));
                 self.chunk.emit(Op::LoadRef(name_idx), self.current_line);
-                self.chunk.emit(Op::Dup, self.current_line);
-                self.chunk.emit(Op::GetValue, self.current_line);
+                self.chunk
+                    .emit(Op::GetValueKeepReference, self.current_line);
                 if call_optional {
                     self.emit_optional_chain_nullish_exit(2, exit_values, exits);
                 }
@@ -4276,8 +4276,8 @@ impl Compiler {
                 let name_idx = self.chunk.add_constant(Value::String(name.clone()));
                 self.chunk
                     .emit(Op::MakePrivateRef(name_idx), self.current_line);
-                self.chunk.emit(Op::Dup, self.current_line);
-                self.chunk.emit(Op::GetValue, self.current_line);
+                self.chunk
+                    .emit(Op::GetValueKeepReference, self.current_line);
                 if call_optional {
                     self.emit_optional_chain_nullish_exit(2, exit_values, exits);
                 }
@@ -4296,8 +4296,8 @@ impl Compiler {
                 ..
             } if matches!(object.as_ref(), Expr::Super) => {
                 self.compile_super_property_reference(property, *computed)?;
-                self.chunk.emit(Op::Dup, self.current_line);
-                self.chunk.emit(Op::GetValue, self.current_line);
+                self.chunk
+                    .emit(Op::GetValueKeepReference, self.current_line);
                 if *optional || call_optional {
                     self.emit_optional_chain_nullish_exit(2, exit_values, exits);
                 }
@@ -4321,8 +4321,8 @@ impl Compiler {
                 }
                 self.compile_optional_chain_member_key(property, *computed)?;
                 self.chunk.emit(Op::MakePropertyRef, self.current_line);
-                self.chunk.emit(Op::Dup, self.current_line);
-                self.chunk.emit(Op::GetValue, self.current_line);
+                self.chunk
+                    .emit(Op::GetValueKeepReference, self.current_line);
                 if call_optional {
                     self.emit_optional_chain_nullish_exit(2, exit_values, exits);
                 }
@@ -4420,8 +4420,8 @@ impl Compiler {
                 ..
             } if matches!(object.as_ref(), Expr::Super) => {
                 self.compile_super_property_reference(property, *computed)?;
-                self.chunk.emit(Op::Dup, self.current_line);
-                self.chunk.emit(Op::GetValue, self.current_line);
+                self.chunk
+                    .emit(Op::GetValueKeepReference, self.current_line);
                 if *optional {
                     self.emit_optional_chain_nullish_exit(2, 2, &mut exits);
                 }
@@ -4440,8 +4440,8 @@ impl Compiler {
                 }
                 self.compile_optional_chain_member_key(property, *computed)?;
                 self.chunk.emit(Op::MakePropertyRef, self.current_line);
-                self.chunk.emit(Op::Dup, self.current_line);
-                self.chunk.emit(Op::GetValue, self.current_line);
+                self.chunk
+                    .emit(Op::GetValueKeepReference, self.current_line);
                 true
             }
             Expr::PrivateGet {
@@ -4456,8 +4456,8 @@ impl Compiler {
                 let name_idx = self.chunk.add_constant(Value::String(name.clone()));
                 self.chunk
                     .emit(Op::MakePrivateRef(name_idx), self.current_line);
-                self.chunk.emit(Op::Dup, self.current_line);
-                self.chunk.emit(Op::GetValue, self.current_line);
+                self.chunk
+                    .emit(Op::GetValueKeepReference, self.current_line);
                 true
             }
             _ => {
@@ -4652,8 +4652,8 @@ impl Compiler {
                             }
                             self.chunk.emit(Op::MakePropertyRef, self.current_line);
                         }
-                        self.chunk.emit(Op::Dup, self.current_line);
-                        self.chunk.emit(Op::GetValue, self.current_line);
+                        self.chunk
+                            .emit(Op::GetValueKeepReference, self.current_line);
                         self.chunk.emit(Op::ToNumeric, self.current_line);
                         let tmp_idx = self.intern("#upd");
                         self.chunk.emit(Op::Dup, self.current_line);
@@ -4674,8 +4674,8 @@ impl Compiler {
                             let name_idx = self.chunk.add_constant(Value::String(name.clone()));
                             self.chunk
                                 .emit(Op::MakePrivateRef(name_idx), self.current_line);
-                            self.chunk.emit(Op::Dup, self.current_line);
-                            self.chunk.emit(Op::GetValue, self.current_line);
+                            self.chunk
+                                .emit(Op::GetValueKeepReference, self.current_line);
                             self.chunk.emit(Op::ToNumeric, self.current_line);
                             let tmp_idx = self.intern("#upd");
                             self.chunk.emit(Op::Dup, self.current_line);
@@ -4692,8 +4692,8 @@ impl Compiler {
                         if let Expr::Ident(name) = target.as_ref() {
                             let name_idx = self.chunk.add_constant(Value::String(name.clone()));
                             self.chunk.emit(Op::LoadRef(name_idx), self.current_line);
-                            self.chunk.emit(Op::Dup, self.current_line);
-                            self.chunk.emit(Op::GetValue, self.current_line);
+                            self.chunk
+                                .emit(Op::GetValueKeepReference, self.current_line);
                             self.chunk.emit(Op::ToNumeric, self.current_line);
                             let tmp_idx = self.intern("#upd");
                             self.chunk.emit(Op::Dup, self.current_line);
@@ -5128,8 +5128,8 @@ impl Compiler {
                         let is_eval_call = !*call_opt && &**name == "eval";
                         let name_idx = self.chunk.add_constant(Value::String(name.clone()));
                         self.chunk.emit(Op::LoadRef(name_idx), self.current_line);
-                        self.chunk.emit(Op::Dup, self.current_line);
-                        self.chunk.emit(Op::GetValue, self.current_line);
+                        self.chunk
+                            .emit(Op::GetValueKeepReference, self.current_line);
                         let mut jend = 0usize;
                         if *call_opt {
                             // `f?.(args)`: keep the identifier Reference
@@ -5190,8 +5190,8 @@ impl Compiler {
                         let name_idx = self.chunk.add_constant(Value::String(name.clone()));
                         self.chunk
                             .emit(Op::MakePrivateRef(name_idx), self.current_line);
-                        self.chunk.emit(Op::Dup, self.current_line);
-                        self.chunk.emit(Op::GetValue, self.current_line);
+                        self.chunk
+                            .emit(Op::GetValueKeepReference, self.current_line);
                         let has_spread = self.compile_optional_chain_args(args)?;
                         if has_spread {
                             self.chunk.emit(Op::CallRefSpread, self.current_line);
@@ -5211,8 +5211,8 @@ impl Compiler {
                             // super.m(args): call parent proto's m with `this`.
                             let has_spread = args.iter().any(|a| matches!(a, Expr::Spread(_)));
                             self.compile_super_property_reference(property, *computed)?;
-                            self.chunk.emit(Op::Dup, self.current_line);
-                            self.chunk.emit(Op::GetValue, self.current_line);
+                            self.chunk
+                                .emit(Op::GetValueKeepReference, self.current_line);
                             if has_spread {
                                 self.chunk.emit(Op::NewArray(0), self.current_line);
                                 for a in args {
@@ -5274,8 +5274,8 @@ impl Compiler {
                         }
                         let has_spread = args.iter().any(|a| matches!(a, Expr::Spread(_)));
                         self.chunk.emit(Op::MakePropertyRef, self.current_line);
-                        self.chunk.emit(Op::Dup, self.current_line);
-                        self.chunk.emit(Op::GetValue, self.current_line);
+                        self.chunk
+                            .emit(Op::GetValueKeepReference, self.current_line);
                         let mut call_jend = 0usize;
                         if *call_opt {
                             // `a.b?.(args)` resolves the method before
@@ -5471,8 +5471,8 @@ impl Compiler {
                     Expr::Ident(name) => {
                         let name_idx = self.chunk.add_constant(Value::String(name.clone()));
                         self.chunk.emit(Op::LoadRef(name_idx), self.current_line);
-                        self.chunk.emit(Op::Dup, self.current_line);
-                        self.chunk.emit(Op::GetValue, self.current_line);
+                        self.chunk
+                            .emit(Op::GetValueKeepReference, self.current_line);
                         TaggedCallKind::Reference
                     }
                     Expr::Member {
@@ -5482,8 +5482,8 @@ impl Compiler {
                         ..
                     } if matches!(object.as_ref(), Expr::Super) => {
                         self.compile_super_property_reference(property, *computed)?;
-                        self.chunk.emit(Op::Dup, self.current_line);
-                        self.chunk.emit(Op::GetValue, self.current_line);
+                        self.chunk
+                            .emit(Op::GetValueKeepReference, self.current_line);
                         TaggedCallKind::Reference
                     }
                     Expr::Member {
@@ -5495,8 +5495,8 @@ impl Compiler {
                         self.compile_expr(object)?;
                         self.compile_optional_chain_member_key(property, *computed)?;
                         self.chunk.emit(Op::MakePropertyRef, self.current_line);
-                        self.chunk.emit(Op::Dup, self.current_line);
-                        self.chunk.emit(Op::GetValue, self.current_line);
+                        self.chunk
+                            .emit(Op::GetValueKeepReference, self.current_line);
                         TaggedCallKind::Reference
                     }
                     Expr::PrivateGet { object, name, .. } => {
@@ -5504,8 +5504,8 @@ impl Compiler {
                         let name_idx = self.chunk.add_constant(Value::String(name.clone()));
                         self.chunk
                             .emit(Op::MakePrivateRef(name_idx), self.current_line);
-                        self.chunk.emit(Op::Dup, self.current_line);
-                        self.chunk.emit(Op::GetValue, self.current_line);
+                        self.chunk
+                            .emit(Op::GetValueKeepReference, self.current_line);
                         TaggedCallKind::Reference
                     }
                     Expr::OptionalChain(inner) => {
@@ -7101,8 +7101,8 @@ impl Compiler {
                 let name_idx = self.chunk.add_constant(Value::String(name.clone()));
                 self.chunk
                     .emit(Op::MakePrivateRef(name_idx), self.current_line);
-                self.chunk.emit(Op::Dup, self.current_line);
-                self.chunk.emit(Op::GetValue, self.current_line);
+                self.chunk
+                    .emit(Op::GetValueKeepReference, self.current_line);
                 self.compile_expr(value)?;
                 self.chunk.emit(bin, 0);
                 self.chunk.emit(Op::Swap, self.current_line);
@@ -7137,9 +7137,8 @@ impl Compiler {
                     self.chunk.emit(Op::MakePropertyRef, self.current_line);
                 }
                 // stack: [ref]
-                self.chunk.emit(Op::Dup, self.current_line);
-                // stack: [ref, ref]
-                self.chunk.emit(Op::GetValue, self.current_line);
+                self.chunk
+                    .emit(Op::GetValueKeepReference, self.current_line);
                 // stack: [ref, currentValue]
                 self.compile_expr(value)?;
                 // stack: [ref, currentValue, rhs]
@@ -7159,9 +7158,8 @@ impl Compiler {
                 let name_idx = self.chunk.add_constant(Value::String(name.clone()));
                 self.chunk.emit(Op::LoadRef(name_idx), self.current_line);
                 // stack: [ref]
-                self.chunk.emit(Op::Dup, self.current_line);
-                // stack: [ref, ref]
-                self.chunk.emit(Op::GetValue, self.current_line);
+                self.chunk
+                    .emit(Op::GetValueKeepReference, self.current_line);
                 // stack: [ref, currentValue]
                 self.compile_expr(value)?;
                 // stack: [ref, currentValue, rhs]
@@ -7198,8 +7196,8 @@ impl Compiler {
                 let name_idx = self.chunk.add_constant(Value::String(name.clone()));
                 self.chunk
                     .emit(Op::MakePrivateRef(name_idx), self.current_line);
-                self.chunk.emit(Op::Dup, self.current_line);
-                self.chunk.emit(Op::GetValue, self.current_line);
+                self.chunk
+                    .emit(Op::GetValueKeepReference, self.current_line);
                 self.chunk.emit(Op::Dup, self.current_line);
                 let cond_jump = match op {
                     AssignOp::AndAssign => Op::JumpIfFalse(0),
@@ -7251,9 +7249,8 @@ impl Compiler {
                     self.chunk.emit(Op::MakePropertyRef, self.current_line);
                 }
                 // stack: [ref]
-                self.chunk.emit(Op::Dup, self.current_line);
-                // stack: [ref, ref]
-                self.chunk.emit(Op::GetValue, self.current_line);
+                self.chunk
+                    .emit(Op::GetValueKeepReference, self.current_line);
                 // stack: [ref, currentValue]
                 self.chunk.emit(Op::Dup, self.current_line);
                 // stack: [ref, currentValue, currentValue]
@@ -7292,8 +7289,8 @@ impl Compiler {
                 // property is deleted by the RHS.
                 let name_idx = self.chunk.add_constant(Value::String(name.clone()));
                 self.chunk.emit(Op::LoadRef(name_idx), self.current_line);
-                self.chunk.emit(Op::Dup, self.current_line);
-                self.chunk.emit(Op::GetValue, self.current_line);
+                self.chunk
+                    .emit(Op::GetValueKeepReference, self.current_line);
                 self.chunk.emit(Op::Dup, self.current_line);
                 let cond_jump = match op {
                     AssignOp::AndAssign => Op::JumpIfFalse(0),
@@ -7542,6 +7539,82 @@ mod tests {
         assert!(
             !chunk.code.iter().any(|op| matches!(op, Op::ToPropertyKey)),
             "computed read-modify-write should preserve numeric PropertyKey values"
+        );
+    }
+
+    #[test]
+    fn retained_reference_reads_use_the_move_opcode() {
+        let program = crate::parser::Parser::parse(
+            r#"
+            var object = { value: 1, method: function() {} };
+            var callee = function() {};
+            var identifier = 1;
+
+            class Base { method() {} }
+            class Derived extends Base {
+                #value = 1;
+                #method() {}
+
+                exercise() {
+                    identifier++;
+                    object.value++;
+                    this.#value++;
+
+                    identifier += 1;
+                    object.value += 1;
+                    this.#value += 1;
+
+                    identifier ||= 1;
+                    object.value ||= 1;
+                    this.#value ||= 1;
+
+                    callee();
+                    object.method();
+                    this.#method();
+                    super.method();
+
+                    callee``;
+                    object.method``;
+                    this.#method``;
+                    super.method``;
+
+                    callee?.();
+                    object.method?.();
+                    object?.method();
+                    object?.method?.();
+                    this.#method?.();
+                    this?.#method();
+                    super.method?.();
+                }
+            }
+            "#,
+        )
+        .expect("fixture should parse");
+        let (chunk, functions) = Compiler::new()
+            .compile_program(&program)
+            .expect("fixture should compile");
+
+        let chunks =
+            std::iter::once(&chunk).chain(functions.iter().map(|function| function.chunk.as_ref()));
+        assert_eq!(
+            chunks
+                .clone()
+                .map(|chunk| {
+                    chunk
+                        .code
+                        .iter()
+                        .filter(|op| matches!(op, Op::GetValueKeepReference))
+                        .count()
+                })
+                .sum::<usize>(),
+            24
+        );
+        assert!(
+            !chunks.into_iter().any(|chunk| chunk
+                .code
+                .windows(2)
+                .any(|ops| matches!(ops, [Op::Dup, Op::GetValue]))),
+            "retained Reference reads must not deep-clone through Dup"
         );
     }
 }

@@ -92,6 +92,106 @@ fn direct_reference_rooting_restores_pins_after_key_coercion_errors() {
     );
 }
 
+#[test]
+fn retained_reference_move_reserves_roots_before_get_and_restores_pins() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        var retainedMoveGets = 0;
+        var retainedMoveValue = 1;
+        var retainedMoveRawCoercions = 0;
+        var retainedMoveRawValue = 7;
+        var retainedMoveRawKey = {
+            toString() { retainedMoveRawCoercions++; return "retainedMoveRawValue"; }
+        };
+        var retainedMoveTarget = {
+            get value() { retainedMoveGets++; return retainedMoveValue; },
+            set value(next) { retainedMoveValue = next; }
+        };
+        "#,
+    )
+    .expect("failed to install retained Reference fixture");
+    let baseline = vm.gc_pins.len();
+
+    vm.fail_next_gc_pin_reservation = true;
+    let error = vm
+        .run("retainedMoveTarget.value += 1")
+        .expect_err("retained Reference root reservation should fail first");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.gc_pins.len(), baseline);
+    assert_eq!(
+        vm.run("retainedMoveGets === 0 && retainedMoveValue === 1")
+            .expect("reservation failure must precede the getter"),
+        Value::Bool(true)
+    );
+
+    assert_eq!(
+        vm.run(
+            "retainedMoveTarget.value += 1; \
+             retainedMoveGets === 1 && retainedMoveValue === 2"
+        )
+        .expect("retained Reference operation should retry"),
+        Value::Bool(true)
+    );
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    let global = vm.global_this.clone();
+    let raw_key = vm
+        .get_property(&global, "retainedMoveRawKey")
+        .expect("raw Reference key should exist");
+    let raw_reference = Value::Reference(Box::new(ReferenceRecord {
+        base: ReferenceBase::Value(Box::new(global.clone())),
+        name: ReferencedName::UncoercedProperty(Box::new(raw_key)),
+        strict: true,
+        this_value: Some(Box::new(global)),
+    }));
+    let stack_baseline = vm.stack.len();
+    vm.stack.push(raw_reference);
+    vm.fail_next_gc_pin_reservation = true;
+    let error = vm
+        .op_get_value_keep_reference()
+        .expect_err("raw Reference peak roots should reserve before coercion");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.gc_pins.len(), baseline);
+    assert_eq!(vm.stack.len(), stack_baseline + 1);
+    let raw_reference = vm.stack.pop().expect("failed opcode should restore input");
+    assert_eq!(
+        vm.run("retainedMoveRawCoercions === 0")
+            .expect("raw reservation failure must precede key coercion"),
+        Value::Bool(true)
+    );
+
+    vm.stack.push(raw_reference);
+    vm.op_get_value_keep_reference()
+        .expect("raw Reference operation should retry");
+    assert_eq!(vm.stack.len(), stack_baseline + 2);
+    assert_eq!(vm.stack.pop(), Some(Value::Number(7.0)));
+    assert!(matches!(vm.stack.pop(), Some(Value::Reference(_))));
+    assert_eq!(
+        vm.run("retainedMoveRawCoercions === 1")
+            .expect("raw Reference key should be coerced once on retry"),
+        Value::Bool(true)
+    );
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    assert_eq!(
+        vm.run(
+            r#"
+            var retainedMoveCaught = false;
+            var retainedMoveThrowing = {
+                get value() { throw new Error("retained getter"); }
+            };
+            try { retainedMoveThrowing.value++; }
+            catch (error) { retainedMoveCaught = error.message === "retained getter"; }
+            retainedMoveCaught;
+            "#,
+        )
+        .expect("getter failure should be catchable"),
+        Value::Bool(true)
+    );
+    assert_eq!(vm.gc_pins.len(), baseline);
+}
+
 fn cap_heap_at_current_live_count(vm: &mut Vm) -> crate::error::Result<Value> {
     vm.gc();
     vm.set_max_heap_objects(Some(vm.heap.live_count()));

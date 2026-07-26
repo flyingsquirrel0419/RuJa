@@ -4,6 +4,32 @@
 
 ### Changed
 
+- Retained Reference reads now use one `GetValueKeepReference` opcode instead
+  of `Dup; GetValue`. The opcode moves the sole boxed Reference off the stack,
+  pre-reserves and pins its complete GC root set, resolves the value, then
+  restores the original Reference before releasing pins. Raw property names
+  reserve the two simultaneously live root suffixes needed during key
+  coercion. This preserves the old normal and abrupt stack contract without
+  allocating a second `Box`.
+
+  All 24 compiler sites that retain a Reference for update, compound/logical
+  assignment, calls, or tagged calls use the move opcode; no retained
+  `Dup; GetValue` pair remains. Direct tests cover bytecode shape, reservation
+  failure before an observable getter or raw `super` key coercion, forced GC,
+  thrown getters, retry, and exact pin cleanup. Reference-heavy classes
+  **105/105**, ES2015 **133/133**, operators **130/130**, and `with` **58/58**
+  pass. Local gates pass all targets/features with **275/275** debug and
+  **273/273** release library tests, tooling, wasm32, rustfmt, warnings-denied
+  Clippy, and generated documentation; rustdoc retains 13 existing warnings.
+  Final GPT-5.6 correctness and scope/documentation reviews are clean after the
+  raw-name peak-root and exhaustive compiler-fixture fixes. Pinned Reference
+  Test262 is byte-identical to the
+  preceding binary at **930 pass / 0 fail / 19 skip**, and the supported subset
+  remains **12761/0/7678**. Two short Criterion A/B samples show about a 2%
+  numeric improvement and overlapping string-control results; the deterministic
+  evidence is removal of 24 boxed-Reference clones. Initial Reference creation
+  boxes remain.
+
 - Reference consumers now borrow `ReferenceRecord` fields instead of deep-
   cloning their outer `Box` in `GetValue`, `PutValue`, and delete. Raw
   `PutValue` and deferred-key resolution publish the record's heap roots

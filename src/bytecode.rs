@@ -409,6 +409,7 @@ pub enum Op {
     ResolvePropertyRef, // resolve a retained raw property Reference exactly once
     MakePrivateRef(usize), // pop base, push private Reference; arg = name constant idx
     GetValue,         // pop a Reference, push its resolved value
+    GetValueKeepReference, // [Reference] -> [Reference, resolved value] without cloning
     PutValue,         // pop [Reference, value], store value into the Reference
 
     // Coerce top-of-stack to a string via ToPrimitive(string) + ToString
