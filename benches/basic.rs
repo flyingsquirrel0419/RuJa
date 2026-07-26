@@ -1,5 +1,5 @@
-use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
-use ruja::Vm;
+use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion};
+use ruja::{Value, Vm};
 
 fn bench_fib(c: &mut Criterion) {
     let src = r#"
@@ -267,6 +267,35 @@ fn bench_integrity_level(c: &mut Criterion) {
     });
 }
 
+fn bench_bigint_storage(c: &mut Criterion) {
+    let bigint = Value::bigint(
+        num_bigint::BigInt::parse_bytes(&vec![b'9'; 16 * 1024], 10)
+            .expect("benchmark BigInt should parse"),
+    );
+    c.bench_function("bigint_value_clone_16k_digits", |b| {
+        b.iter(|| black_box(bigint.clone()))
+    });
+
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        function smallBigIntArithmetic() {
+          var value = 1n;
+          for (var i = 0; i < 10000; i++) value = (value + 3n) ^ 1n;
+          return value;
+        }
+        "#,
+    )
+    .expect("BigInt arithmetic fixture failed");
+    let function = vm.get_global("smallBigIntArithmetic");
+    c.bench_function("bigint_small_arithmetic_10k", |b| {
+        b.iter(|| {
+            vm.call_function(&function, &[], None)
+                .expect("BigInt arithmetic failed")
+        })
+    });
+}
+
 criterion_group!(
     benches,
     bench_fib,
@@ -275,6 +304,7 @@ criterion_group!(
     bench_array_index_set,
     bench_inline_cache,
     bench_ordinary_set_receiver,
-    bench_integrity_level
+    bench_integrity_level,
+    bench_bigint_storage
 );
 criterion_main!(benches);

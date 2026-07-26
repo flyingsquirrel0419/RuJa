@@ -1793,7 +1793,7 @@ pub(crate) fn date_to_temporal_instant(
     let mut props = IndexMap::new();
     props.insert(
         PropertyKey::from("epochNanoseconds"),
-        data_prop(Value::BigInt(epoch_nanoseconds)),
+        data_prop(Value::bigint(epoch_nanoseconds)),
     );
     let obj = HeapObj::Object(ObjectData {
         props: Mutex::new(props),

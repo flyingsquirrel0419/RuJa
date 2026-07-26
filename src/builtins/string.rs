@@ -1497,7 +1497,7 @@ pub(crate) fn number_constructor(
         };
         match prim {
             Value::BigInt(n) => Ok(Value::Number(
-                num_traits::ToPrimitive::to_f64(&n).unwrap_or_else(|| {
+                num_traits::ToPrimitive::to_f64(n.as_ref()).unwrap_or_else(|| {
                     if n.sign() == num_bigint::Sign::Minus {
                         f64::NEG_INFINITY
                     } else {

@@ -156,15 +156,26 @@ impl Vm {
         }
     }
 
+    /// Convert to an owned BigInt for embedders using the historical public API.
     pub fn to_bigint(&mut self, v: &Value) -> error::Result<num_bigint::BigInt> {
+        self.coerce_bigint_shared(v)
+            .map(|value| value.as_ref().clone())
+    }
+
+    /// Internal conversion keeps immutable BigInt storage shared across values.
+    pub(crate) fn coerce_bigint_shared(
+        &mut self,
+        v: &Value,
+    ) -> error::Result<Arc<num_bigint::BigInt>> {
         let prim = match v {
             Value::Object(_) => self.to_primitive_number(v)?,
             _ => v.clone(),
         };
         match prim {
             Value::BigInt(n) => Ok(n),
-            Value::Bool(b) => Ok(num_bigint::BigInt::from(if b { 1 } else { 0 })),
+            Value::Bool(b) => Ok(Arc::new(num_bigint::BigInt::from(if b { 1 } else { 0 }))),
             Value::String(s) => Self::string_to_bigint(&s)
+                .map(Arc::new)
                 .ok_or_else(|| Error::syntax(format!("Cannot convert {} to a BigInt", s))),
             Value::Undefined
             | Value::Null
@@ -877,17 +888,17 @@ impl Vm {
             }
             // BigInt vs Number: compare numerically.
             (Value::BigInt(x), Value::Number(y)) => Self::number_to_bigint_exact(*y)
-                .map(|v| *x == v)
+                .map(|v| **x == v)
                 .unwrap_or(false),
             (Value::Number(x), Value::BigInt(y)) => Self::number_to_bigint_exact(*x)
-                .map(|v| v == *y)
+                .map(|v| v == **y)
                 .unwrap_or(false),
             // BigInt vs String: parse the string, then compare.
             (Value::BigInt(x), Value::String(s)) => {
-                Self::string_to_bigint(s).map(|v| v == *x).unwrap_or(false)
+                Self::string_to_bigint(s).map(|v| v == **x).unwrap_or(false)
             }
             (Value::String(s), Value::BigInt(y)) => {
-                Self::string_to_bigint(s).map(|v| v == *y).unwrap_or(false)
+                Self::string_to_bigint(s).map(|v| v == **y).unwrap_or(false)
             }
             _ => false,
         })

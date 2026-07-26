@@ -917,7 +917,7 @@ fn atomic_operand(
 ) -> error::Result<(Value, Vec<u8>)> {
     let converted = match kind {
         crate::value::TypedArrayKind::BigInt64 | crate::value::TypedArrayKind::BigUint64 => {
-            Value::BigInt(vm.to_bigint(value)?)
+            Value::BigInt(vm.coerce_bigint_shared(value)?)
         }
         _ => {
             let number = vm.to_number(value)?;
@@ -2469,7 +2469,7 @@ fn data_view_read_bigint64(
     } else {
         BigInt::from(u64::from_be_bytes(raw))
     };
-    Ok(Value::BigInt(value))
+    Ok(Value::bigint(value))
 }
 
 fn bigint_to_u64_element(value: &BigInt) -> u64 {
@@ -2488,7 +2488,7 @@ fn data_view_write_bigint64(
     let (buffer, view_offset, view_length) = data_view_slots(vm, this, name)?;
     require_mutable_data_view_buffer(vm, &buffer)?;
     let request_index = data_view_to_index(vm, args.first().unwrap_or(&Value::Undefined), name)?;
-    let bigint_value = vm.to_bigint(args.get(1).unwrap_or(&Value::Undefined))?;
+    let bigint_value = vm.coerce_bigint_shared(args.get(1).unwrap_or(&Value::Undefined))?;
     let little_endian = args.get(2).is_some_and(|value| vm.to_boolean(value));
     let view_length = data_view_effective_byte_length(vm, view.as_ref())?;
     if is_detached_array_buffer(vm, &buffer) {
@@ -4434,7 +4434,7 @@ pub(crate) fn typed_array_with(
         };
         let numeric_value = match kind {
             crate::value::TypedArrayKind::BigInt64 | crate::value::TypedArrayKind::BigUint64 => {
-                Value::BigInt(vm.to_bigint(&replacement)?)
+                Value::BigInt(vm.coerce_bigint_shared(&replacement)?)
             }
             _ => Value::Number(vm.to_number(&replacement)?),
         };
@@ -5025,7 +5025,7 @@ pub(crate) fn typed_array_read_element(
             bytes[offset + 7],
         ])),
         crate::value::TypedArrayKind::BigInt64 => {
-            Value::BigInt(BigInt::from(i64::from_ne_bytes([
+            Value::bigint(BigInt::from(i64::from_ne_bytes([
                 bytes[offset],
                 bytes[offset + 1],
                 bytes[offset + 2],
@@ -5037,7 +5037,7 @@ pub(crate) fn typed_array_read_element(
             ])))
         }
         crate::value::TypedArrayKind::BigUint64 => {
-            Value::BigInt(BigInt::from(u64::from_ne_bytes([
+            Value::bigint(BigInt::from(u64::from_ne_bytes([
                 bytes[offset],
                 bytes[offset + 1],
                 bytes[offset + 2],
@@ -5079,11 +5079,11 @@ pub(crate) fn typed_array_value_to_bytes(
             (vm.to_number(value)? as f32).to_ne_bytes().to_vec()
         }
         crate::value::TypedArrayKind::Float64 => vm.to_number(value)?.to_ne_bytes().to_vec(),
-        crate::value::TypedArrayKind::BigInt64 | crate::value::TypedArrayKind::BigUint64 => {
-            bigint_to_u64_element(&vm.to_bigint(value)?)
-                .to_ne_bytes()
-                .to_vec()
-        }
+        crate::value::TypedArrayKind::BigInt64 | crate::value::TypedArrayKind::BigUint64 => vm
+            .coerce_bigint_shared(value)
+            .map(|bigint| bigint_to_u64_element(&bigint))?
+            .to_ne_bytes()
+            .to_vec(),
     };
     Ok(bytes)
 }

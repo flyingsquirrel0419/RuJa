@@ -172,7 +172,7 @@ pub enum Value {
     Null,
     Bool(bool),
     Number(f64),
-    BigInt(BigInt),
+    BigInt(Arc<BigInt>),
     String(Arc<str>),
     Object(GcIdx),
     Symbol(u32),
@@ -258,6 +258,11 @@ pub enum ReferenceBase {
 }
 
 impl Value {
+    /// Wrap an immutable BigInt so cloning a `Value` remains constant-time.
+    pub fn bigint(value: BigInt) -> Self {
+        Self::BigInt(Arc::new(value))
+    }
+
     pub fn undefined() -> Self {
         Value::Undefined
     }
@@ -313,6 +318,12 @@ impl Value {
             Value::PrivateName(_) => "object",
             Value::Reference(_) => "object",
         }
+    }
+}
+
+impl From<BigInt> for Value {
+    fn from(value: BigInt) -> Self {
+        Self::bigint(value)
     }
 }
 

@@ -166,15 +166,15 @@ pub(crate) fn global_bigint(vm: &mut Vm, args: &[Value], _: Option<Value>) -> er
         _ => arg.clone(),
     };
     match prim {
-        Value::BigInt(n) => Ok(Value::BigInt(n.clone())),
-        Value::Bool(b) => Ok(Value::BigInt(num_bigint::BigInt::from(if b {
+        Value::BigInt(n) => Ok(Value::BigInt(n)),
+        Value::Bool(b) => Ok(Value::bigint(num_bigint::BigInt::from(if b {
             1
         } else {
             0
         }))),
         Value::Number(n) => {
             if let Some(bigint) = Vm::number_to_bigint_exact(n) {
-                Ok(Value::BigInt(bigint))
+                Ok(Value::bigint(bigint))
             } else {
                 Err(Error::range(format!(
                     "The number {} cannot be converted to a BigInt because it is not an integer",
@@ -183,7 +183,7 @@ pub(crate) fn global_bigint(vm: &mut Vm, args: &[Value], _: Option<Value>) -> er
             }
         }
         Value::String(s) => Vm::string_to_bigint(&s)
-            .map(Value::BigInt)
+            .map(Value::bigint)
             .ok_or_else(|| Error::syntax(format!("Cannot convert {} to a BigInt", s))),
         Value::Undefined | Value::Null | Value::Symbol(_) | Value::PrivateName(_) => {
             Err(Error::type_err("Cannot convert to a BigInt".to_string()))
@@ -209,7 +209,7 @@ fn bigint_to_index(vm: &mut Vm, value: &Value, name: &str) -> error::Result<usiz
     Ok(integer as usize)
 }
 
-fn bigint_uint_n(bits: usize, value: BigInt) -> BigInt {
+fn bigint_uint_n(bits: usize, value: &BigInt) -> BigInt {
     if bits == 0 {
         return BigInt::zero();
     }
@@ -227,17 +227,17 @@ pub(crate) fn bigint_as_int_n(
         args.first().unwrap_or(&Value::Undefined),
         "BigInt.asIntN",
     )?;
-    let bigint = vm.to_bigint(args.get(1).unwrap_or(&Value::Undefined))?;
+    let bigint = vm.coerce_bigint_shared(args.get(1).unwrap_or(&Value::Undefined))?;
     if bits == 0 {
-        return Ok(Value::BigInt(BigInt::zero()));
+        return Ok(Value::bigint(BigInt::zero()));
     }
     let modulus = BigInt::from(1u8) << bits;
     let threshold = BigInt::from(1u8) << (bits - 1);
-    let wrapped = ((bigint % &modulus) + &modulus) % &modulus;
+    let wrapped = ((bigint.as_ref() % &modulus) + &modulus) % &modulus;
     if wrapped >= threshold {
-        Ok(Value::BigInt(wrapped - modulus))
+        Ok(Value::bigint(wrapped - modulus))
     } else {
-        Ok(Value::BigInt(wrapped))
+        Ok(Value::bigint(wrapped))
     }
 }
 
@@ -251,11 +251,11 @@ pub(crate) fn bigint_as_uint_n(
         args.first().unwrap_or(&Value::Undefined),
         "BigInt.asUintN",
     )?;
-    let bigint = vm.to_bigint(args.get(1).unwrap_or(&Value::Undefined))?;
-    Ok(Value::BigInt(bigint_uint_n(bits, bigint)))
+    let bigint = vm.coerce_bigint_shared(args.get(1).unwrap_or(&Value::Undefined))?;
+    Ok(Value::bigint(bigint_uint_n(bits, &bigint)))
 }
 
-fn this_bigint_value(vm: &mut Vm, value: Option<Value>) -> error::Result<BigInt> {
+fn this_bigint_value(vm: &mut Vm, value: Option<Value>) -> error::Result<Arc<BigInt>> {
     match value {
         Some(Value::BigInt(n)) => Ok(n),
         Some(Value::Object(idx)) => {

@@ -4520,7 +4520,7 @@ impl Compiler {
                 self.chunk.emit(Op::Const(idx), self.current_line);
             }
             Expr::BigInt(n) => {
-                let idx = self.chunk.add_constant(Value::BigInt(n.clone()));
+                let idx = self.chunk.add_constant(Value::bigint(n.clone()));
                 self.chunk.emit(Op::Const(idx), self.current_line);
             }
             Expr::String(s) => {

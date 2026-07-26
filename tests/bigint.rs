@@ -2,8 +2,71 @@
 
 mod common;
 use common::{run, run_err};
-use ruja::Value;
+use ruja::{Value, Vm};
 use std::sync::Arc;
+
+#[test]
+fn bigint_value_clone_shares_immutable_storage() {
+    let expected = num_bigint::BigInt::parse_bytes(&vec![b'9'; 16 * 1024], 10).unwrap();
+    let original = Value::bigint(expected.clone());
+    let cloned = original.clone();
+    let mut vm = Vm::new().expect("failed to initialize VM");
+
+    match (&original, &cloned) {
+        (Value::BigInt(left), Value::BigInt(right)) => assert!(Arc::ptr_eq(left, right)),
+        _ => panic!("expected BigInt values"),
+    }
+    assert_eq!(vm.to_bigint(&original).unwrap(), expected);
+}
+
+#[test]
+fn bigint_shared_storage_preserves_value_semantics() {
+    assert_eq!(
+        run(r#"
+            var digits = "9".repeat(4096);
+            var left = BigInt(digits);
+            var right = BigInt(digits);
+            var map = new Map([[left, "found"]]);
+            var set = new Set([left, right]);
+            var boxed = Object(left);
+            (function (parameter) {
+              Object.freeze(arguments);
+              return [
+                left === right,
+                map.get(right),
+                set.size,
+                boxed.valueOf() === left,
+                arguments[0] === left,
+                parameter === left,
+                (left + 1n) - 1n === left
+              ].join("|");
+            })(left);
+        "#),
+        Value::String(Arc::from("true|found|1|true|true|true|true"))
+    );
+}
+
+#[test]
+fn bigint_cross_realm_and_binary_views_preserve_numeric_value() {
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var decimal = "18446744073709551615";
+            var foreign = other.eval(`BigInt("${decimal}")`);
+            var local = BigInt(decimal);
+            var typed = new BigUint64Array([foreign]);
+            var view = new DataView(new ArrayBuffer(8));
+            view.setBigInt64(0, foreign, true);
+            [
+              foreign === local,
+              typed[0] === local,
+              view.getBigUint64(0, true) === local,
+              other.Object(foreign).valueOf() === local
+            ].join("|");
+        "#),
+        Value::String(Arc::from("true|true|true|true"))
+    );
+}
 
 #[test]
 fn bigint_literal_typeof() {
@@ -14,21 +77,21 @@ fn bigint_literal_typeof() {
 fn bigint_add() {
     assert_eq!(
         run("123n + 456n;"),
-        Value::BigInt(num_bigint::BigInt::from(579))
+        Value::bigint(num_bigint::BigInt::from(579))
     );
 }
 
 #[test]
 fn bigint_sub_mul_div_mod() {
-    assert_eq!(run("10n - 3n;"), Value::BigInt(num_bigint::BigInt::from(7)));
-    assert_eq!(run("6n * 7n;"), Value::BigInt(num_bigint::BigInt::from(42)));
+    assert_eq!(run("10n - 3n;"), Value::bigint(num_bigint::BigInt::from(7)));
+    assert_eq!(run("6n * 7n;"), Value::bigint(num_bigint::BigInt::from(42)));
     assert_eq!(
         run("100n / 7n;"),
-        Value::BigInt(num_bigint::BigInt::from(14))
+        Value::bigint(num_bigint::BigInt::from(14))
     );
     assert_eq!(
         run("100n % 7n;"),
-        Value::BigInt(num_bigint::BigInt::from(2))
+        Value::bigint(num_bigint::BigInt::from(2))
     );
 }
 
@@ -36,7 +99,7 @@ fn bigint_sub_mul_div_mod() {
 fn bigint_pow() {
     assert_eq!(
         run("2n ** 10n;"),
-        Value::BigInt(num_bigint::BigInt::from(1024))
+        Value::bigint(num_bigint::BigInt::from(1024))
     );
     for src in ["1n ** -1n;", "0n ** -1n;", "(-1n) ** -1n;"] {
         let err = run_err(src);
@@ -46,7 +109,7 @@ fn bigint_pow() {
 
 #[test]
 fn bigint_neg() {
-    assert_eq!(run("-5n;"), Value::BigInt(num_bigint::BigInt::from(-5)));
+    assert_eq!(run("-5n;"), Value::bigint(num_bigint::BigInt::from(-5)));
 }
 
 #[test]
@@ -86,19 +149,19 @@ fn bigint_compare() {
 fn bigint_constructor() {
     assert_eq!(
         run("BigInt(123);"),
-        Value::BigInt(num_bigint::BigInt::from(123))
+        Value::bigint(num_bigint::BigInt::from(123))
     );
     assert_eq!(
         run("BigInt('456');"),
-        Value::BigInt(num_bigint::BigInt::from(456))
+        Value::bigint(num_bigint::BigInt::from(456))
     );
     assert_eq!(
         run("BigInt(true);"),
-        Value::BigInt(num_bigint::BigInt::from(1))
+        Value::bigint(num_bigint::BigInt::from(1))
     );
     assert_eq!(
         run("BigInt({ valueOf: function() { return '0x10'; } });"),
-        Value::BigInt(num_bigint::BigInt::from(16))
+        Value::bigint(num_bigint::BigInt::from(16))
     );
 }
 
@@ -221,24 +284,24 @@ fn bigint_mix_with_number_is_typeerror() {
 fn bigint_numeric_operator_coercions() {
     assert_eq!(
         run("0b101n & 0b011n;"),
-        Value::BigInt(num_bigint::BigInt::from(1))
+        Value::bigint(num_bigint::BigInt::from(1))
     );
     assert_eq!(
         run("0b101n | 0b011n;"),
-        Value::BigInt(num_bigint::BigInt::from(7))
+        Value::bigint(num_bigint::BigInt::from(7))
     );
     assert_eq!(
         run("0b101n ^ 0b011n;"),
-        Value::BigInt(num_bigint::BigInt::from(6))
+        Value::bigint(num_bigint::BigInt::from(6))
     );
     assert_eq!(
         run("Object(0b101n) & 0b011n;"),
-        Value::BigInt(num_bigint::BigInt::from(1))
+        Value::bigint(num_bigint::BigInt::from(1))
     );
-    assert_eq!(run("8n >> 1n;"), Value::BigInt(num_bigint::BigInt::from(4)));
+    assert_eq!(run("8n >> 1n;"), Value::bigint(num_bigint::BigInt::from(4)));
     assert_eq!(
         run("1n << 4n;"),
-        Value::BigInt(num_bigint::BigInt::from(16))
+        Value::bigint(num_bigint::BigInt::from(16))
     );
 
     for src in ["1n & 1;", "1n | 1;", "1n ^ 1;", "1n >>> 1n;", "+0n;"] {
@@ -301,13 +364,13 @@ fn bigint_large_exact() {
 
 #[test]
 fn bigint_hex_oct_bin_literals() {
-    assert_eq!(run("0xffn;"), Value::BigInt(num_bigint::BigInt::from(255)));
+    assert_eq!(run("0xffn;"), Value::bigint(num_bigint::BigInt::from(255)));
     assert_eq!(
         run("0x10000000000000000n;"),
-        Value::BigInt(num_bigint::BigInt::parse_bytes(b"10000000000000000", 16).unwrap())
+        Value::bigint(num_bigint::BigInt::parse_bytes(b"10000000000000000", 16).unwrap())
     );
-    assert_eq!(run("0o17n;"), Value::BigInt(num_bigint::BigInt::from(15)));
-    assert_eq!(run("0b101n;"), Value::BigInt(num_bigint::BigInt::from(5)));
+    assert_eq!(run("0o17n;"), Value::bigint(num_bigint::BigInt::from(15)));
+    assert_eq!(run("0b101n;"), Value::bigint(num_bigint::BigInt::from(5)));
 }
 
 #[test]

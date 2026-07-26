@@ -95,6 +95,19 @@ mod tests {
         assert_eq!(to_json_value(&mut vm, &private), serde_json::Value::Null);
         assert_eq!(to_json_value(&mut vm, &reference), serde_json::Value::Null);
     }
+
+    #[test]
+    fn bigint_converts_to_an_exact_decimal_json_string() {
+        let mut vm = Vm::new().expect("failed to initialize VM");
+        let bigint = Value::bigint(
+            num_bigint::BigInt::parse_bytes(b"123456789012345678901234567890", 10).unwrap(),
+        );
+
+        assert_eq!(
+            to_json_value(&mut vm, &bigint),
+            serde_json::Value::String("123456789012345678901234567890".to_string())
+        );
+    }
 }
 
 /// Convert a `serde_json::Value` into a `ruja::Value`.

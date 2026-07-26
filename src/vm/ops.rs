@@ -1280,7 +1280,7 @@ impl Vm {
                             Err(Error::range("BigInt exponent must be positive".to_string()))
                         } else {
                             // Use BigInt's own pow (exponent is a u32).
-                            let exp = num_traits::ToPrimitive::to_u32(&y).ok_or_else(|| {
+                            let exp = num_traits::ToPrimitive::to_u32(y).ok_or_else(|| {
                                 Error::range("BigInt exponent is too large".to_string())
                             })?;
                             Ok(x.pow(exp))
@@ -1290,7 +1290,7 @@ impl Vm {
                 Op::Neg => {
                     let v = self.stack.pop().unwrap_or(Value::Undefined);
                     match self.to_numeric(&v)? {
-                        Value::BigInt(n) => self.stack.push(Value::BigInt(-n)),
+                        Value::BigInt(n) => self.stack.push(Value::bigint(-n.as_ref())),
                         Value::Number(n) => self.stack.push(Value::Number(-n)),
                         _ => unreachable!("ToNumeric returns Number or BigInt"),
                     }
@@ -1303,7 +1303,7 @@ impl Vm {
                 Op::BitNot => {
                     let v = self.stack.pop().unwrap_or(Value::Undefined);
                     match self.to_numeric(&v)? {
-                        Value::BigInt(n) => self.stack.push(Value::BigInt(!n)),
+                        Value::BigInt(n) => self.stack.push(Value::bigint(!n.as_ref())),
                         Value::Number(n) => self.stack.push(Value::Number(!to_int32(n) as f64)),
                         _ => unreachable!("ToNumeric returns Number or BigInt"),
                     }
@@ -1814,7 +1814,7 @@ impl Vm {
                 Op::Inc => {
                     let v = self.stack.pop().unwrap_or(Value::Undefined);
                     match v {
-                        Value::BigInt(n) => self.stack.push(Value::BigInt(n + 1)),
+                        Value::BigInt(n) => self.stack.push(Value::bigint(n.as_ref() + 1)),
                         _ => {
                             let n = self.to_number(&v)?;
                             self.stack.push(Value::Number(n + 1.0));
@@ -1824,7 +1824,7 @@ impl Vm {
                 Op::Dec => {
                     let v = self.stack.pop().unwrap_or(Value::Undefined);
                     match v {
-                        Value::BigInt(n) => self.stack.push(Value::BigInt(n - 1)),
+                        Value::BigInt(n) => self.stack.push(Value::bigint(n.as_ref() - 1)),
                         _ => {
                             let n = self.to_number(&v)?;
                             self.stack.push(Value::Number(n - 1.0));
@@ -3490,7 +3490,7 @@ impl Vm {
 
     fn bitwise_bin<
         F: Fn(i32, i32) -> i32,
-        B: Fn(num_bigint::BigInt, num_bigint::BigInt) -> error::Result<num_bigint::BigInt>,
+        B: Fn(&num_bigint::BigInt, &num_bigint::BigInt) -> error::Result<num_bigint::BigInt>,
     >(
         &mut self,
         numf: F,
@@ -3500,7 +3500,7 @@ impl Vm {
         let av = self.to_numeric(&a)?;
         let bv = self.to_numeric(&b)?;
         match (av, bv) {
-            (Value::BigInt(x), Value::BigInt(y)) => self.stack.push(Value::BigInt(bigf(x, y)?)),
+            (Value::BigInt(x), Value::BigInt(y)) => self.stack.push(Value::bigint(bigf(&x, &y)?)),
             (Value::BigInt(_), _) | (_, Value::BigInt(_)) => {
                 return Err(Error::type_err(
                     "Cannot mix BigInt and other types, use explicit conversions".to_string(),
@@ -3522,11 +3522,11 @@ impl Vm {
         match (av, bv) {
             (Value::BigInt(x), Value::BigInt(y)) => {
                 let shifted = if right {
-                    Self::bigint_signed_right_shift(x, y)?
+                    Self::bigint_signed_right_shift(&x, &y)?
                 } else {
-                    Self::bigint_left_shift(x, y)?
+                    Self::bigint_left_shift(&x, &y)?
                 };
-                self.stack.push(Value::BigInt(shifted));
+                self.stack.push(Value::bigint(shifted));
             }
             (Value::BigInt(_), _) | (_, Value::BigInt(_)) => {
                 return Err(Error::type_err(
@@ -3549,11 +3549,11 @@ impl Vm {
     }
 
     fn bigint_left_shift(
-        x: num_bigint::BigInt,
-        y: num_bigint::BigInt,
+        x: &num_bigint::BigInt,
+        y: &num_bigint::BigInt,
     ) -> error::Result<num_bigint::BigInt> {
         if y.is_negative() {
-            return Self::bigint_signed_right_shift(x, -y);
+            return Self::bigint_signed_right_shift(x, &-y);
         }
         let shift = y
             .to_usize()
@@ -3562,11 +3562,11 @@ impl Vm {
     }
 
     fn bigint_signed_right_shift(
-        x: num_bigint::BigInt,
-        y: num_bigint::BigInt,
+        x: &num_bigint::BigInt,
+        y: &num_bigint::BigInt,
     ) -> error::Result<num_bigint::BigInt> {
         if y.is_negative() {
-            return Self::bigint_left_shift(x, -y);
+            return Self::bigint_left_shift(x, &-y);
         }
         let shift = y
             .to_usize()
@@ -3593,7 +3593,7 @@ impl Vm {
 
     fn push_numeric_bin<
         F: Fn(f64, f64) -> f64,
-        B: Fn(num_bigint::BigInt, num_bigint::BigInt) -> error::Result<num_bigint::BigInt>,
+        B: Fn(&num_bigint::BigInt, &num_bigint::BigInt) -> error::Result<num_bigint::BigInt>,
     >(
         &mut self,
         numf: F,
@@ -3601,7 +3601,7 @@ impl Vm {
     ) -> error::Result<()> {
         let (av, bv) = self.numeric_pair()?;
         match (av, bv) {
-            (Value::BigInt(x), Value::BigInt(y)) => self.stack.push(Value::BigInt(bigf(x, y)?)),
+            (Value::BigInt(x), Value::BigInt(y)) => self.stack.push(Value::bigint(bigf(&x, &y)?)),
             (Value::Number(x), Value::Number(y)) => self.stack.push(Value::Number(numf(x, y))),
             _ => unreachable!("numeric_pair returns matching Number or BigInt operands"),
         }
@@ -3614,7 +3614,7 @@ impl Vm {
     /// `RangeError` per spec.
     fn num_bin_bigint<
         F: Fn(f64, f64) -> f64,
-        B: Fn(num_bigint::BigInt, num_bigint::BigInt) -> error::Result<num_bigint::BigInt>,
+        B: Fn(&num_bigint::BigInt, &num_bigint::BigInt) -> error::Result<num_bigint::BigInt>,
     >(
         &mut self,
         numf: F,
@@ -3640,7 +3640,7 @@ impl Vm {
             }
             // BigInt + BigInt stays BigInt; mixing with other types is a TypeError.
             (Value::BigInt(x), Value::BigInt(y)) => {
-                self.stack.push(Value::BigInt(x + y));
+                self.stack.push(Value::bigint(x.as_ref() + y.as_ref()));
                 return Ok(());
             }
             (Value::BigInt(_), _) | (_, Value::BigInt(_)) => {
@@ -3669,7 +3669,7 @@ impl Vm {
             }
             (Value::BigInt(x), Value::BigInt(y)) => Self::apply_compare_order(op, x.cmp(y)),
             (Value::BigInt(x), Value::String(s)) => Self::string_to_bigint(s)
-                .map(|y| Self::apply_compare_order(op, x.cmp(&y)))
+                .map(|y| Self::apply_compare_order(op, x.as_ref().cmp(&y)))
                 .unwrap_or(false),
             (Value::String(s), Value::BigInt(y)) => Self::string_to_bigint(s)
                 .map(|x| Self::apply_compare_order(op, x.cmp(y)))
