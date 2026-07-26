@@ -118,6 +118,15 @@ pub(crate) enum OrdinaryPropertyStorageReservationSite {
     ArrayPresence,
 }
 
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ArrayLengthReservationSite {
+    OperationRoots,
+    PropertyStorage,
+    ArrayItems,
+    ArrayPresence,
+}
+
 pub(crate) use conversions::{to_int32, to_uint32};
 pub(crate) use property::{
     ProxyDefinePropertyDescriptor, ProxyDefinePropertyOutcome, TypedArrayDefineDescriptor,
@@ -297,6 +306,8 @@ pub struct Vm {
     #[cfg(test)]
     pub(crate) fail_ordinary_property_storage_reservation:
         Option<(OrdinaryPropertyStorageReservationSite, usize)>,
+    #[cfg(test)]
+    pub(crate) fail_array_length_reservation: Option<(ArrayLengthReservationSite, usize)>,
     /// Receiver identities currently traversing Array stringification methods.
     /// Join checks after separator coercion and toLocaleString checks after its
     /// length snapshot, so recursive suppression preserves observable ordering.
@@ -310,6 +321,9 @@ pub struct Vm {
     pub(crate) next_private_name_id: u64,
     pub(crate) symbol_registry: HashMap<Arc<str>, u32>,
     pub(crate) symbol_descriptions: HashMap<u32, Option<Arc<str>>>,
+    /// Canonical non-GC key reused by Array length operations so publication
+    /// never needs to allocate key storage after its fallible preflight.
+    pub(crate) array_length_key: PropertyKey,
     pub(crate) well_known_symbols: WellKnownSymbols,
     pub(crate) global_names: HashMap<Arc<str>, usize>,
     pub(crate) global_constants: Vec<Value>,
@@ -839,6 +853,8 @@ impl Vm {
             fail_proxy_define_property_reservation: None,
             #[cfg(test)]
             fail_ordinary_property_storage_reservation: None,
+            #[cfg(test)]
+            fail_array_length_reservation: None,
             active_array_joins: Vec::new(),
             kept_objects: Vec::new(),
             current_yields: Vec::new(),
@@ -846,6 +862,7 @@ impl Vm {
             next_private_name_id: 1,
             symbol_registry: HashMap::new(),
             symbol_descriptions: HashMap::new(),
+            array_length_key: PropertyKey::from("length"),
             well_known_symbols: WellKnownSymbols {
                 iterator: 1,
                 to_primitive: 2,

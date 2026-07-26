@@ -645,6 +645,36 @@ fn array_define_length_deletes_rolls_back_and_applies_writability() {
 }
 
 #[test]
+fn array_define_length_deletes_in_descending_order_before_rollback() {
+    let v = run(r#"var array = [];
+           for (var index = 2; index <= 5; index += 1) {
+             Object.defineProperty(array, String(index), {
+               value: index,
+               writable: true,
+               enumerable: true,
+               configurable: index !== 3
+             });
+           }
+           var result = Reflect.defineProperty(array, 'length', {
+             value: 1,
+             writable: false
+           });
+           [
+             result,
+             array.length,
+             array.hasOwnProperty('5'),
+             array.hasOwnProperty('4'),
+             array.hasOwnProperty('3'),
+             array.hasOwnProperty('2'),
+             Object.getOwnPropertyDescriptor(array, 'length').writable
+           ].join('|');"#);
+    assert_eq!(
+        v,
+        Value::String(Arc::from("false|4|false|false|true|true|false"))
+    );
+}
+
+#[test]
 fn sparse_array_length_descriptor_tracks_sparse_max() {
     let v = run(r#"var array = [];
            Object.defineProperty(array, '2097152', {

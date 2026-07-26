@@ -1,10 +1,11 @@
 use super::property::MAX_PROXY_CYCLE_REPLAYS;
 use super::{
-    DescriptorMaterializationReservationSite, ExternalPromiseJob, ForInKeyReservationSite,
-    GetPrototypeReservationSite, Microtask, OrdinaryOwnKeysReservationSite,
-    OrdinaryPropertyStorageReservationSite, OwnKeyConsumerReservationSite,
-    PropertyTraversalReservationSite, ProxyDefinePropertyReservationSite,
-    ProxyDescriptorReservationSite, ProxyOwnKeysReservationSite, Vm,
+    ArrayLengthReservationSite, DescriptorMaterializationReservationSite, ExternalPromiseJob,
+    ForInKeyReservationSite, GetPrototypeReservationSite, Microtask,
+    OrdinaryOwnKeysReservationSite, OrdinaryPropertyStorageReservationSite,
+    OwnKeyConsumerReservationSite, PropertyTraversalReservationSite,
+    ProxyDefinePropertyReservationSite, ProxyDescriptorReservationSite,
+    ProxyOwnKeysReservationSite, Vm,
 };
 use crate::value::{
     ArrayData, FunctionData, FunctionKind, HeapObj, NativeConstructMode, PromiseStatus,
@@ -836,7 +837,7 @@ fn array_copy_results_preserve_sparse_slice_and_cap_materializing_with() {
         assert!(array.items.lock().is_empty());
         assert!(array.present.lock().is_empty());
         assert_eq!(*array.sparse_max.lock(), Some(length));
-        assert!(array
+        assert!(!array
             .props
             .lock()
             .contains_key(&crate::value::PropertyKey::from("length")));
@@ -10731,7 +10732,7 @@ fn ordinary_own_key_collections_are_fallible_ordered_and_atomic() {
         var ordinaryIndexArray = [1, 2];
         var ordinaryDuplicateArray = [1];
         Object.defineProperty(ordinaryDuplicateArray, "length", {
-          value: 1, writable: true
+          value: 1, writable: false
         });
         var ordinaryBoxedString = Object("A\u{1F600}");
         var ordinaryTypedArray = new Uint8Array([1, 2]);
@@ -18943,6 +18944,504 @@ fn define_own_property_roots_typed_array_coercion_across_exact_heap_gc() {
         vm.get_property(&typed_array, "0")
             .expect("rooted TypedArray backing storage should survive"),
         Value::Number(73.0)
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+}
+
+#[test]
+fn array_length_reservations_follow_actual_capacity_and_retry_atomically() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    let baseline_pins = vm.gc_pins.len();
+
+    let dense = crate::builtins::array::array_create_in_current_realm(&mut vm, 3)
+        .expect("dense Array should allocate");
+    let Value::Object(dense_index) = dense.clone() else {
+        unreachable!();
+    };
+    vm.fail_array_length_reservation = Some((ArrayLengthReservationSite::OperationRoots, 0));
+    vm.set_array_length(dense_index.0, Value::Number(2.0))
+        .expect("spare root capacity should not reserve");
+    assert_eq!(
+        vm.fail_array_length_reservation,
+        Some((ArrayLengthReservationSite::OperationRoots, 0))
+    );
+    assert_eq!(
+        vm.get_property(&dense, "length").unwrap(),
+        Value::Number(2.0)
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    let filler_start = vm.gc_pins.len();
+    while vm.gc_pins.len() < vm.gc_pins.capacity() {
+        vm.gc_pins.push(dense_index.0);
+    }
+    let error = vm
+        .set_array_length(dense_index.0, Value::Number(1.0))
+        .expect_err("the first actual root growth should fail");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fail_array_length_reservation, None);
+    assert_eq!(
+        vm.get_property(&dense, "length").unwrap(),
+        Value::Number(2.0)
+    );
+    vm.gc_pins.truncate(filler_start);
+    vm.set_array_length(dense_index.0, Value::Number(1.0))
+        .expect("root growth should retry");
+    assert_eq!(
+        vm.get_property(&dense, "length").unwrap(),
+        Value::Number(1.0)
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    vm.fail_array_length_reservation = Some((ArrayLengthReservationSite::PropertyStorage, 0));
+    vm.set_array_length(dense_index.0, Value::Number(0.0))
+        .expect("a virtual length shrink should not materialize a descriptor");
+    assert!(vm
+        .define_array_length_property(
+            dense_index.0,
+            None,
+            true,
+            true,
+            false,
+            false,
+            false,
+            false,
+            false,
+        )
+        .expect("writable:true is a no-op for virtual length"));
+    assert_eq!(
+        vm.fail_array_length_reservation,
+        Some((ArrayLengthReservationSite::PropertyStorage, 0))
+    );
+    assert!(vm.heap.with_obj(dense_index.0, |object| {
+        let HeapObj::Array(array) = object else {
+            unreachable!();
+        };
+        !array
+            .props
+            .lock()
+            .contains_key(&PropertyKey::from("length"))
+    }));
+    vm.fail_array_length_reservation = None;
+
+    let spare_length_index = vm
+        .alloc(HeapObj::Array(ArrayData::new(
+            Vec::new(),
+            Some(vm.array_proto.clone()),
+        )))
+        .expect("spare length Array should allocate");
+    vm.heap.with_obj(spare_length_index.0, |object| {
+        let HeapObj::Array(array) = object else {
+            unreachable!();
+        };
+        array
+            .props
+            .lock()
+            .try_reserve_exact(1)
+            .expect("length property storage should reserve spare capacity");
+    });
+    vm.fail_array_length_reservation = Some((ArrayLengthReservationSite::PropertyStorage, 0));
+    assert!(vm
+        .define_array_length_property(
+            spare_length_index.0,
+            None,
+            true,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+        )
+        .expect("spare property capacity should not reserve"));
+    assert_eq!(
+        vm.fail_array_length_reservation,
+        Some((ArrayLengthReservationSite::PropertyStorage, 0))
+    );
+    vm.fail_array_length_reservation = None;
+
+    let missing_length_index = vm
+        .alloc(HeapObj::Array(ArrayData::new(
+            Vec::new(),
+            Some(vm.array_proto.clone()),
+        )))
+        .expect("direct Array should allocate");
+    vm.fail_array_length_reservation = Some((ArrayLengthReservationSite::PropertyStorage, 0));
+    let error = vm
+        .define_array_length_property(
+            missing_length_index.0,
+            None,
+            true,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+        )
+        .expect_err("missing length descriptor storage should fail");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert!(vm.heap.with_obj(missing_length_index.0, |object| {
+        let HeapObj::Array(array) = object else {
+            unreachable!();
+        };
+        array.props.lock().is_empty()
+    }));
+    assert!(vm
+        .define_array_length_property(
+            missing_length_index.0,
+            None,
+            true,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+        )
+        .expect("length descriptor storage should retry"));
+    vm.fail_array_length_reservation = Some((ArrayLengthReservationSite::PropertyStorage, 0));
+    assert!(vm
+        .define_array_length_property(
+            missing_length_index.0,
+            None,
+            true,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+        )
+        .expect("replacing the length descriptor should not reserve map storage"));
+    assert_eq!(
+        vm.fail_array_length_reservation,
+        Some((ArrayLengthReservationSite::PropertyStorage, 0))
+    );
+    vm.fail_array_length_reservation = None;
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+}
+
+#[test]
+fn array_length_vector_failpoints_precede_all_mutation() {
+    for failed_site in [
+        ArrayLengthReservationSite::ArrayItems,
+        ArrayLengthReservationSite::ArrayPresence,
+    ] {
+        let mut vm = Vm::new().expect("VM should initialize");
+        let array_index = vm
+            .alloc(HeapObj::Array(ArrayData::new(
+                Vec::new(),
+                Some(vm.array_proto.clone()),
+            )))
+            .expect("direct Array should allocate");
+        vm.heap.with_obj(array_index.0, |object| {
+            let HeapObj::Array(array) = object else {
+                unreachable!();
+            };
+            let mut length = PropertyDescriptor::data(Value::Number(0.0));
+            length.enumerable = false;
+            length.configurable = false;
+            array
+                .props
+                .lock()
+                .insert(PropertyKey::from("length"), length);
+            if failed_site == ArrayLengthReservationSite::ArrayItems {
+                array
+                    .present
+                    .lock()
+                    .try_reserve_exact(1)
+                    .expect("presence fixture should reserve");
+            } else {
+                array
+                    .items
+                    .lock()
+                    .try_reserve_exact(1)
+                    .expect("items fixture should reserve");
+            }
+        });
+        let array = Value::Object(array_index);
+        let baseline = array_storage_snapshot(&vm, &array, &PropertyKey::from("length"));
+        let baseline_pins = vm.gc_pins.len();
+
+        vm.fail_array_length_reservation = Some((failed_site, 0));
+        let error = vm
+            .set_array_length(array_index.0, Value::Number(1.0))
+            .expect_err("the selected vector growth should fail");
+        assert_eq!(
+            error.kind,
+            crate::error::ErrorKind::Range,
+            "{failed_site:?}"
+        );
+        assert_eq!(vm.fail_array_length_reservation, None, "{failed_site:?}");
+        assert_eq!(
+            array_storage_snapshot(&vm, &array, &PropertyKey::from("length")),
+            baseline,
+            "{failed_site:?}"
+        );
+        assert_eq!(vm.gc_pins.len(), baseline_pins, "{failed_site:?}");
+
+        vm.set_array_length(array_index.0, Value::Number(1.0))
+            .expect("vector growth should retry");
+        assert_eq!(
+            vm.get_property(&array, "length").unwrap(),
+            Value::Number(1.0)
+        );
+        assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+        vm.set_array_length(array_index.0, Value::Number(0.0))
+            .expect("truncation should retain vector capacity");
+        vm.fail_array_length_reservation = Some((failed_site, 0));
+        vm.set_array_length(array_index.0, Value::Number(1.0))
+            .expect("spare vector capacity should not reserve");
+        assert_eq!(
+            vm.fail_array_length_reservation,
+            Some((failed_site, 0)),
+            "{failed_site:?}"
+        );
+    }
+}
+
+#[test]
+fn sparse_array_length_shrink_and_rollback_never_grow_dense_storage() {
+    for failed_site in [
+        ArrayLengthReservationSite::ArrayItems,
+        ArrayLengthReservationSite::ArrayPresence,
+    ] {
+        let mut vm = Vm::new().expect("VM should initialize");
+        vm.run(
+            r#"
+            var sparseLengthConfigurable = [];
+            Object.defineProperty(sparseLengthConfigurable, "1000", {
+              value: 1,
+              configurable: true
+            });
+            var sparseLengthBlocked = [];
+            Object.defineProperty(sparseLengthBlocked, "1000", {
+              value: 1,
+              configurable: false
+            });
+            "#,
+        )
+        .expect("sparse length fixtures should initialize");
+        let configurable = vm.get_global("sparseLengthConfigurable");
+        let blocked = vm.get_global("sparseLengthBlocked");
+        let Value::Object(configurable_index) = configurable.clone() else {
+            unreachable!();
+        };
+        let Value::Object(blocked_index) = blocked.clone() else {
+            unreachable!();
+        };
+
+        vm.fail_array_length_reservation = Some((failed_site, 0));
+        assert!(vm
+            .define_array_length_property(
+                configurable_index.0,
+                Some(Value::Number(10.0)),
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+            )
+            .expect("configurable sparse shrink should not grow dense storage"));
+        assert_eq!(
+            vm.fail_array_length_reservation,
+            Some((failed_site, 0)),
+            "{failed_site:?}"
+        );
+        assert_eq!(
+            vm.get_property(&configurable, "length").unwrap(),
+            Value::Number(10.0)
+        );
+        for length in [10.0, 11.0] {
+            assert!(vm
+                .define_array_length_property(
+                    configurable_index.0,
+                    Some(Value::Number(length)),
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                )
+                .expect("same or larger sparse length should retain sparse storage"));
+            assert_eq!(
+                vm.fail_array_length_reservation,
+                Some((failed_site, 0)),
+                "{failed_site:?} at {length}"
+            );
+        }
+        assert_eq!(
+            vm.get_property(&configurable, "length").unwrap(),
+            Value::Number(11.0)
+        );
+        assert!(vm.heap.with_obj(configurable_index.0, |object| {
+            let HeapObj::Array(array) = object else {
+                unreachable!();
+            };
+            array.items.lock().is_empty() && array.present.lock().is_empty()
+        }));
+
+        vm.set_fuel(Some(1));
+        assert!(!vm
+            .define_array_length_property(
+                blocked_index.0,
+                Some(Value::Number(0.0)),
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+            )
+            .expect("a sparse blocker should return false without dense growth"));
+        assert_eq!(vm.fuel_remaining(), Some(0));
+        vm.set_fuel(None);
+        assert_eq!(
+            vm.fail_array_length_reservation,
+            Some((failed_site, 0)),
+            "{failed_site:?}"
+        );
+        assert_eq!(
+            vm.get_property(&blocked, "length").unwrap(),
+            Value::Number(1001.0)
+        );
+        assert!(vm.heap.with_obj(blocked_index.0, |object| {
+            let HeapObj::Array(array) = object else {
+                unreachable!();
+            };
+            array.items.lock().is_empty() && array.present.lock().is_empty()
+        }));
+    }
+}
+
+#[test]
+fn array_length_proxy_and_foreign_realm_failures_cleanup_and_retry() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.run(
+        r#"
+        globalThis.lengthRealm = $262.createRealm().global;
+        globalThis.lengthForeignTarget = lengthRealm.eval(`[]`);
+        globalThis.lengthForeignProxy = new Proxy(lengthForeignTarget, {});
+        globalThis.lengthCompletedTarget = [];
+        globalThis.lengthCompletedProxy = new Proxy(lengthCompletedTarget, {
+          defineProperty: function () { return true; }
+        });
+        "#,
+    )
+    .expect("foreign Realm transparent Proxy fixture should initialize");
+    let baseline_pins = vm.gc_pins.len();
+    let baseline_contexts = vm.execution_contexts.len();
+    let baseline_native_depth = vm.active_native_call_depth;
+
+    vm.fail_array_length_reservation = Some((ArrayLengthReservationSite::ArrayItems, 0));
+    assert_eq!(
+        vm.run(
+            r#"
+            var lengthForeignError;
+            try {
+              lengthRealm.Reflect.defineProperty(
+                lengthForeignProxy,
+                'length',
+                { value: 1 }
+              );
+            } catch (error) {
+              lengthForeignError = error;
+            }
+            lengthForeignError instanceof lengthRealm.RangeError &&
+              !(lengthForeignError instanceof RangeError);
+            "#,
+        )
+        .expect("foreign Array length allocation error should be catchable"),
+        Value::Bool(true)
+    );
+    assert_eq!(vm.fail_array_length_reservation, None);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.execution_contexts.len(), baseline_contexts);
+    assert_eq!(vm.active_native_call_depth, baseline_native_depth);
+    assert_eq!(
+        vm.run("lengthForeignTarget.length === 0")
+            .expect("failed foreign target update should be atomic"),
+        Value::Bool(true)
+    );
+
+    assert_eq!(
+        vm.run("lengthRealm.Reflect.defineProperty(lengthForeignProxy, 'length', { value: 1 })")
+            .expect("foreign target update should retry"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        vm.run("lengthForeignTarget.length === 1")
+            .expect("foreign target retry should publish"),
+        Value::Bool(true)
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.execution_contexts.len(), baseline_contexts);
+    assert_eq!(vm.active_native_call_depth, baseline_native_depth);
+
+    vm.fail_array_length_reservation = Some((ArrayLengthReservationSite::ArrayItems, 0));
+    assert_eq!(
+        vm.run("Reflect.defineProperty(lengthCompletedProxy, 'length', { value: 1 })")
+            .expect("a completed Proxy trap should skip target Array storage"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        vm.fail_array_length_reservation,
+        Some((ArrayLengthReservationSite::ArrayItems, 0))
+    );
+    assert_eq!(
+        vm.run("lengthCompletedTarget.length")
+            .expect("completed trap must not mutate its target"),
+        Value::Number(0.0)
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.execution_contexts.len(), baseline_contexts);
+    assert_eq!(vm.active_native_call_depth, baseline_native_depth);
+}
+
+#[test]
+fn array_length_conversion_roots_target_and_value_across_forced_gc() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "forceArrayLengthGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Number(1.0))
+        },
+        0,
+    )
+    .expect("Array length GC hook should register");
+    let target = crate::builtins::array::array_create_in_current_realm(&mut vm, 3)
+        .expect("unpublished target Array should allocate");
+    let value = vm
+        .run(
+            r#"
+            globalThis.arrayLengthGcValue = {
+              valueOf: function () { return forceArrayLengthGc(); }
+            };
+            arrayLengthGcValue;
+            "#,
+        )
+        .expect("unpublished conversion value should allocate");
+    vm.run("delete globalThis.arrayLengthGcValue")
+        .expect("conversion value global should be removed");
+    let baseline_pins = vm.gc_pins.len();
+    let Value::Object(target_index) = target.clone() else {
+        unreachable!();
+    };
+
+    vm.set_array_length(target_index.0, value)
+        .expect("both conversions should survive forced GC");
+    assert_eq!(
+        vm.get_property(&target, "length")
+            .expect("the rooted target should remain live"),
+        Value::Number(1.0)
     );
     assert_eq!(vm.gc_pins.len(), baseline_pins);
 }

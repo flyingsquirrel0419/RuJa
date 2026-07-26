@@ -328,7 +328,132 @@ fn take_ordinary_property_storage_reservation_failure(
     true
 }
 
+#[cfg(test)]
+fn take_array_length_reservation_failure(
+    vm: &mut Vm,
+    site: crate::vm::ArrayLengthReservationSite,
+) -> bool {
+    let Some((configured_site, remaining)) = vm.fail_array_length_reservation else {
+        return false;
+    };
+    if configured_site != site {
+        return false;
+    }
+    if remaining != 0 {
+        vm.fail_array_length_reservation = Some((configured_site, remaining - 1));
+        return false;
+    }
+    vm.fail_array_length_reservation = None;
+    true
+}
+
 impl Vm {
+    fn reserve_array_length_roots(&mut self, values: &[Value]) -> error::Result<()> {
+        let required = values.iter().try_fold(0usize, |total, value| {
+            total
+                .checked_add(Self::value_root_count(value))
+                .ok_or_else(|| Error::range("Array length root set is too large"))
+        })?;
+        if self.gc_pins.capacity().saturating_sub(self.gc_pins.len()) >= required {
+            return Ok(());
+        }
+        #[cfg(test)]
+        if take_array_length_reservation_failure(
+            self,
+            crate::vm::ArrayLengthReservationSite::OperationRoots,
+        ) {
+            return Err(Error::range("Array length root set is too large"));
+        }
+        self.try_reserve_gc_pins(required)
+    }
+
+    fn reserve_array_length_property_map(
+        &mut self,
+        idx: usize,
+        key: &PropertyKey,
+    ) -> error::Result<()> {
+        let needs_growth = self.heap.with_obj(idx, |object| {
+            let HeapObj::Array(array) = object else {
+                return false;
+            };
+            let properties = array.props.lock();
+            !properties.contains_key(key) && properties.len() == properties.capacity()
+        });
+        if !needs_growth {
+            return Ok(());
+        }
+        #[cfg(test)]
+        if take_array_length_reservation_failure(
+            self,
+            crate::vm::ArrayLengthReservationSite::PropertyStorage,
+        ) {
+            return Err(Error::range("Array length property storage is too large"));
+        }
+        self.heap.with_obj(idx, |object| {
+            let HeapObj::Array(array) = object else {
+                return Ok(());
+            };
+            array
+                .props
+                .lock()
+                .try_reserve(1)
+                .map_err(|_| Error::range("Array length property storage is too large"))
+        })
+    }
+
+    fn reserve_array_length_vector(
+        &mut self,
+        idx: usize,
+        end: usize,
+        items: bool,
+    ) -> error::Result<()> {
+        let (len, capacity) = self.heap.with_obj(idx, |object| {
+            let HeapObj::Array(array) = object else {
+                return (0, usize::MAX);
+            };
+            if items {
+                let values = array.items.lock();
+                (values.len(), values.capacity())
+            } else {
+                let presence = array.present.lock();
+                (presence.len(), presence.capacity())
+            }
+        });
+        if capacity >= end {
+            return Ok(());
+        }
+        #[cfg(test)]
+        {
+            let site = if items {
+                crate::vm::ArrayLengthReservationSite::ArrayItems
+            } else {
+                crate::vm::ArrayLengthReservationSite::ArrayPresence
+            };
+            if take_array_length_reservation_failure(self, site) {
+                return Err(Error::range("Array length storage is too large"));
+            }
+        }
+        let additional = end.saturating_sub(len);
+        self.heap.with_obj(idx, |object| {
+            let HeapObj::Array(array) = object else {
+                return Ok(());
+            };
+            if items {
+                array
+                    .items
+                    .lock()
+                    .try_reserve(additional)
+                    .map_err(|_| Error::range("Array length storage is too large"))
+            } else {
+                array
+                    .present
+                    .lock()
+                    .try_reserve(additional)
+                    .map_err(|_| Error::range("Array length storage is too large"))
+            }
+        })
+    }
+
     fn ordinary_property_storage_plan(
         &self,
         idx: GcIdx,
@@ -4236,9 +4361,13 @@ impl Vm {
         configurable: bool,
         is_accessor: bool,
     ) -> error::Result<bool> {
-        let mut roots = vec![Value::Object(GcIdx(idx))];
-        roots.extend(value.iter().cloned());
-        let pin_count = self.pin_many(&roots);
+        let target = Value::Object(GcIdx(idx));
+        let operation_roots = [target.clone(), value.clone().unwrap_or(Value::Undefined)];
+        self.reserve_array_length_roots(&operation_roots)?;
+        let mut pin_count = self.pin(&target);
+        if let Some(value) = value.as_ref() {
+            pin_count += self.pin(value);
+        }
         let result = (|| {
             let new_len = if let Some(value) = value.as_ref() {
                 let new_len = crate::vm::to_uint32(self.to_number(value)?) as usize;
@@ -4253,18 +4382,25 @@ impl Vm {
 
             // ArraySetLength performs both observable conversions before it
             // reads and validates the current length descriptor.
-            let (old_len, old_writable, dense_len, property_count) =
+            let length_key = self.array_length_key.clone();
+            let (old_len, old_writable, has_length_descriptor, dense_len, property_count) =
                 self.heap.with_obj(idx, |object| {
                     let HeapObj::Array(array) = object else {
-                        return (0, false, 0, 0);
+                        return (0, false, false, 0, 0);
                     };
                     let dense_len = array.items.lock().len();
                     let old_len = dense_len.max(array.sparse_max.lock().unwrap_or(0));
                     let props = array.props.lock();
-                    let old_writable = props
-                        .get(&crate::value::PropertyKey::from("length"))
-                        .is_none_or(|descriptor| descriptor.writable);
-                    (old_len, old_writable, dense_len, props.len())
+                    let length_descriptor = props.get(&length_key);
+                    let old_writable =
+                        length_descriptor.is_none_or(|descriptor| descriptor.writable);
+                    (
+                        old_len,
+                        old_writable,
+                        length_descriptor.is_some(),
+                        dense_len,
+                        props.len(),
+                    )
                 });
             if is_accessor
                 || (has_configurable && configurable)
@@ -4275,20 +4411,19 @@ impl Vm {
             }
 
             let Some(new_len) = new_len else {
-                if has_writable {
+                if has_writable && !writable {
+                    self.reserve_array_length_property_map(idx, &length_key)?;
                     self.heap.with_obj(idx, |object| {
                         if let HeapObj::Array(array) = object {
                             let mut props = array.props.lock();
-                            let descriptor = props
-                                .entry(crate::value::PropertyKey::from("length"))
-                                .or_insert_with(|| {
-                                    let mut descriptor = crate::value::PropertyDescriptor::data(
-                                        Value::Number(old_len as f64),
-                                    );
-                                    descriptor.enumerable = false;
-                                    descriptor.configurable = false;
-                                    descriptor
-                                });
+                            let descriptor = props.entry(length_key.clone()).or_insert_with(|| {
+                                let mut descriptor = crate::value::PropertyDescriptor::data(
+                                    Value::Number(old_len as f64),
+                                );
+                                descriptor.enumerable = false;
+                                descriptor.configurable = false;
+                                descriptor
+                            });
                             descriptor.writable = writable;
                         }
                     });
@@ -4302,14 +4437,13 @@ impl Vm {
             }
 
             let mut effective_len = new_len;
-            let mut removable = Vec::new();
             if new_len < old_len {
                 for _ in 0..property_count {
                     self.consume_fuel()?;
                 }
-                let indexed_properties = self.heap.with_obj(idx, |object| {
+                effective_len = self.heap.with_obj(idx, |object| {
                     let HeapObj::Array(array) = object else {
-                        return Vec::new();
+                        return new_len;
                     };
                     array
                         .props
@@ -4317,22 +4451,17 @@ impl Vm {
                         .iter()
                         .filter_map(|(key, descriptor)| {
                             let index = key.as_str().and_then(crate::value::parse_array_index)?;
-                            Some((key.clone(), index, descriptor.configurable))
+                            (index >= new_len && !descriptor.configurable).then_some(index + 1)
                         })
-                        .collect::<Vec<_>>()
+                        .max()
+                        .unwrap_or(new_len)
                 });
-                for (_, index, configurable) in &indexed_properties {
-                    if *index >= new_len && !configurable {
-                        effective_len = effective_len.max(index + 1);
-                    }
-                }
-                removable.extend(indexed_properties.into_iter().filter_map(
-                    |(key, index, configurable)| {
-                        (index >= effective_len && configurable).then_some(key)
-                    },
-                ));
             }
-            let dense_target = if effective_len <= crate::value::MAX_DENSE_ARRAY_LEN {
+            let dense_target = if new_len <= old_len {
+                dense_len.min(effective_len)
+            } else if dense_len < old_len {
+                dense_len
+            } else if effective_len <= crate::value::MAX_DENSE_ARRAY_LEN {
                 effective_len
             } else {
                 dense_len.min(crate::value::MAX_DENSE_ARRAY_LEN)
@@ -4340,12 +4469,19 @@ impl Vm {
             for _ in 0..dense_len.abs_diff(dense_target) {
                 self.consume_fuel()?;
             }
+            let materialize_length = !has_length_descriptor && has_writable && !writable;
+            if materialize_length {
+                self.reserve_array_length_property_map(idx, &length_key)?;
+            }
+            if dense_target > dense_len {
+                self.reserve_array_length_vector(idx, dense_target, true)?;
+                self.reserve_array_length_vector(idx, dense_target, false)?;
+            }
 
             let delete_succeeded = self.heap.with_obj(idx, |object| {
                 let HeapObj::Array(array) = object else {
                     return false;
                 };
-                let cap = crate::value::MAX_DENSE_ARRAY_LEN;
                 let mut items = array.items.lock();
                 let mut present = array.present.lock();
                 if new_len < old_len {
@@ -4353,48 +4489,39 @@ impl Vm {
                     // non-configurable index is the first failure, so lower
                     // indices must remain and length rolls back above it.
                     let mut props = array.props.lock();
-                    for key in &removable {
-                        props.shift_remove(key);
-                    }
+                    props.retain(|key, descriptor| {
+                        !key.as_str()
+                            .and_then(crate::value::parse_array_index)
+                            .is_some_and(|index| index >= effective_len && descriptor.configurable)
+                    });
                 }
 
-                if effective_len <= cap {
-                    if effective_len < items.len() {
-                        items.truncate(effective_len);
-                        present.truncate(effective_len);
-                    } else {
-                        while items.len() < effective_len {
-                            items.push(Value::Undefined);
-                            present.push(false);
-                        }
-                    }
-                    drop(present);
-                    drop(items);
-                    *array.sparse_max.lock() = None;
+                if dense_target < items.len() {
+                    items.truncate(dense_target);
+                    present.truncate(dense_target);
                 } else {
-                    if items.len() > cap {
-                        items.truncate(cap);
-                        present.truncate(cap);
+                    while items.len() < dense_target {
+                        items.push(Value::Undefined);
+                        present.push(false);
                     }
-                    drop(present);
-                    drop(items);
-                    *array.sparse_max.lock() = Some(effective_len);
                 }
+                drop(present);
+                drop(items);
+                *array.sparse_max.lock() = (effective_len > dense_target).then_some(effective_len);
 
                 let mut props = array.props.lock();
-                let length = props
-                    .entry(crate::value::PropertyKey::from("length"))
-                    .or_insert_with(|| {
-                        let mut descriptor = crate::value::PropertyDescriptor::data(Value::Number(
-                            effective_len as f64,
-                        ));
-                        descriptor.enumerable = false;
-                        descriptor.configurable = false;
-                        descriptor
-                    });
-                length.value = Value::Number(effective_len as f64);
-                if has_writable && !writable {
+                if let Some(length) = props.get_mut(&length_key) {
+                    length.value = Value::Number(effective_len as f64);
+                    if has_writable && !writable {
+                        length.writable = false;
+                    }
+                } else if materialize_length {
+                    let mut length =
+                        crate::value::PropertyDescriptor::data(Value::Number(effective_len as f64));
+                    length.enumerable = false;
+                    length.configurable = false;
                     length.writable = false;
+                    props.insert(length_key, length);
                 }
                 effective_len == new_len
             });
