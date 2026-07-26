@@ -2264,6 +2264,30 @@ remain separate paths.
 - 장점, 단점 및 영향: Canonical numeric keys avoid temporary String and Arc allocation on 64-bit targets. wasm32 removes the redundant opcode and Value::String handoff but retains its final Arc-backed numeric key allocation. Focused Test262 output is byte-identical and direct tests cover opcode shape, boundaries, null bases, Proxy order, and forced GC. Boxed Reference records, non-index key formatting, JavaScript-visible key Strings, and native indexed loops remain.
 ```
 
+## Borrowed Reference consumption and root traversal
+
+`GetValue`, `PutValue`, and delete borrow their `ReferenceRecord` instead of
+cloning its `Box` and every nested base, raw name, or explicit receiver.
+Deferred key resolution pins the record directly. Extracting an owned receiver
+or base clones only its contained `Value`, avoiding a temporary Box allocation.
+
+`Value::visit_gc_roots` is the single root definition for internal Values and
+Reference records. Heap tracing, temporary-root sizing, and pin publication all
+use that visitor, including Environment bases, object/value bases, explicit
+`[[ThisValue]]`, uncoerced property names, and nested References. A direct test
+requires the same ordered root set from visitor, count, and pin operations;
+abrupt raw-assignment and computed-super coercion tests require exact cleanup.
+
+```text
+[Decision Log]
+- 목적과 의도: Remove defensive Reference deep clones while preserving one exact GC-root contract across heap tracing and temporary roots.
+- 기존 구현 및 제약 조건: Reference records are boxed recursive Values. GetValue, PutValue, delete, deferred-key rooting, and boxed receiver extraction cloned whole boxes even though cloning is not a GC root; three separate root match trees could drift as the record layout changed.
+- 검토한 주요 대안: Keep all clones, change the public payload to Arc, inline ReferenceRecord into every Value, add a retained-reference opcode immediately, or first borrow consumers and centralize root traversal.
+- 선택한 방식: Keep Box representation and bytecode stable, borrow immutable consumers, publish roots directly from ReferenceRecord, clone only an owned inner Value when required, and route trace/count/pin through Value::visit_gc_roots.
+- 다른 대안 대신 이 방식을 선택한 이유: Arc adds atomic traffic and a source-level payload change; inline records enlarge every Value; a new opcode changes dozens of compiler sites and requires a separate move/rooting proof; defensive clones allocate but do not protect GcIdx values.
+- 장점, 단점 및 영향: Five defensive record clones and five boxed-value clones disappear without layout or admission changes. Root coverage and abrupt cleanup have one deterministic oracle. Initial Reference creation boxes, required Dup clones for retained References, host allocator failure, and recursion through deliberately nested internal References remain separate work.
+```
+
 ---
 
 **Next:** [Features](features.md) · [Known limitations](limitations.md) · [Back to README](../README.md)

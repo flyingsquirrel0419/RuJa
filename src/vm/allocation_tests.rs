@@ -9,12 +9,88 @@ use super::{
 };
 use crate::value::{
     ArrayData, FunctionData, FunctionKind, HeapObj, NativeConstructMode, PromiseStatus,
-    PropertyDescriptor, PropertyKey,
+    PropertyDescriptor, PropertyKey, ReferenceBase, ReferenceRecord, ReferencedName,
 };
 use crate::Value;
 use indexmap::{IndexMap, IndexSet};
 use std::fs;
 use std::sync::Arc;
+
+#[test]
+fn reference_root_visitor_count_and_pin_share_one_complete_walk() {
+    let nested = Value::Reference(Box::new(ReferenceRecord {
+        base: ReferenceBase::Environment(crate::value::GcIdx(41)),
+        name: ReferencedName::Property(PropertyKey::from("nested")),
+        strict: false,
+        this_value: None,
+    }));
+    let reference = ReferenceRecord {
+        base: ReferenceBase::Value(Box::new(nested)),
+        name: ReferencedName::UncoercedProperty(Box::new(Value::Object(crate::value::GcIdx(43)))),
+        strict: true,
+        this_value: Some(Box::new(Value::Object(crate::value::GcIdx(42)))),
+    };
+    let value = Value::Reference(Box::new(reference.clone()));
+    let mut visited = Vec::new();
+    value.visit_gc_roots(&mut |root| visited.push(root));
+    assert_eq!(visited, vec![41, 42, 43]);
+    assert_eq!(Vm::value_root_count(&value), visited.len());
+
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    let baseline = vm.gc_pins.len();
+    let count = vm.pin_reference(&reference);
+    assert_eq!(count, visited.len());
+    assert_eq!(&vm.gc_pins[baseline..], visited);
+    vm.unpin_many(count);
+    assert_eq!(vm.gc_pins.len(), baseline);
+}
+
+#[test]
+fn direct_reference_rooting_restores_pins_after_key_coercion_errors() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    let baseline = vm.gc_pins.len();
+
+    assert_eq!(
+        vm.run(
+            r#"
+            var referenceRootTarget = {};
+            var referenceRootKey = {
+                toString() { throw new Error("raw key"); }
+            };
+            var referenceRootCaught = false;
+            try { referenceRootTarget[referenceRootKey] = 1; }
+            catch (error) { referenceRootCaught = error.message === "raw key"; }
+            referenceRootCaught;
+            "#,
+        )
+        .expect("raw PutValue key error should be catchable"),
+        Value::Bool(true)
+    );
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    assert_eq!(
+        vm.run(
+            r#"
+            class ReferenceRootBase {}
+            class ReferenceRootDerived extends ReferenceRootBase {
+                update(key) { return super[key]++; }
+            }
+            var referenceRootSuperCaught = false;
+            try { new ReferenceRootDerived().update(referenceRootKey); }
+            catch (error) { referenceRootSuperCaught = error.message === "raw key"; }
+            referenceRootSuperCaught;
+            "#,
+        )
+        .expect("super ResolvePropertyRef key error should be catchable"),
+        Value::Bool(true)
+    );
+    assert_eq!(vm.gc_pins.len(), baseline);
+    assert_eq!(
+        vm.run("referenceRootTarget.reused = 1; referenceRootTarget.reused")
+            .expect("VM should remain reusable after Reference coercion errors"),
+        Value::Number(1.0)
+    );
+}
 
 fn cap_heap_at_current_live_count(vm: &mut Vm) -> crate::error::Result<Value> {
     vm.gc();

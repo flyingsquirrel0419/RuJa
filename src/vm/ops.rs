@@ -1057,8 +1057,7 @@ impl Vm {
                         return Err(Error::type_err("Cannot access null super base"));
                     }
                     if let crate::value::ReferencedName::UncoercedProperty(name) = &record.name {
-                        let rooted = Value::Reference(record.clone());
-                        let pin_count = self.pin(&rooted);
+                        let pin_count = self.pin_reference(&record);
                         let name_result = self.coerce_property_key_record(name);
                         self.unpin_many(pin_count);
                         record.name = name_result?.into();
@@ -2829,11 +2828,11 @@ impl Vm {
     fn this_value_from_reference(&self, r#ref: &Value) -> Value {
         if let Value::Reference(record) = r#ref {
             if let Some(this_value) = &record.this_value {
-                return *this_value.clone();
+                return this_value.as_ref().clone();
             }
             match &record.base {
                 crate::value::ReferenceBase::ObjectEnvironment(base)
-                | crate::value::ReferenceBase::Value(base) => return *base.clone(),
+                | crate::value::ReferenceBase::Value(base) => return base.as_ref().clone(),
                 crate::value::ReferenceBase::Unresolvable
                 | crate::value::ReferenceBase::Environment(_) => {}
             }

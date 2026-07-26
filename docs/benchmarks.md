@@ -145,6 +145,14 @@ timer noise, not a throughput claim. The deterministic evidence is compiler
 coverage proving the three forms emit `MakePropertyRef` without an earlier
 `ToPropertyKey`.
 
+After defensive Reference-record clones were removed, two short sequential
+samples placed the current numeric workload at roughly **82.6-83.0 ms** and
+the string control at **83.7-84.4 ms**. The preceding source measured roughly
+**83.9-84.7 ms** and **85.1-88.3 ms**, respectively. The shared host and small
+sample size make these no-regression checks, not a throughput claim. The
+deterministic evidence is the removed clone sites plus direct root-identity
+tests; retained `Dup` still clones one boxed Reference per operation.
+
 ```sh
 cargo bench --bench basic -- computed_reference --quick
 ```

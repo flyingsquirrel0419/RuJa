@@ -4,6 +4,28 @@
 
 ### Changed
 
+- Reference consumers now borrow `ReferenceRecord` fields instead of deep-
+  cloning their outer `Box` in `GetValue`, `PutValue`, and delete. Raw
+  `PutValue` and deferred-key resolution publish the record's heap roots
+  directly, and boxed base/receiver extraction clones only the contained
+  `Value`. One authoritative
+  `visit_gc_roots` walk now serves heap tracing, temporary-root counting, and
+  pin publication, preventing those three root definitions from drifting.
+
+  Direct tests cover nested Environment/base/receiver/raw-name roots, exact
+  root counts, pin suffixes, abrupt key coercion, cleanup, and VM reuse.
+  Reference-heavy classes **105/105**, ES2015 **133/133**, operators
+  **130/130**, and `with` **58/58** pass. Local gates pass all targets/features
+  with **273/273** library tests, release library **271/271**, tooling
+  **135/135**, doctest **1/1**, wasm32 checking, rustfmt, warnings-denied
+  Clippy, and generated documentation. Rustdoc retains 13 existing warnings.
+  Pinned Reference Test262 remains byte-identical at **930 pass / 0 fail / 19
+  skip**, and the supported subset remains **12761/0/7678**. Repeated 30k
+  Criterion samples show no regression: current numeric/string point estimates
+  are about **82.6-83.0 ms / 83.7-84.4 ms**, versus preceding **83.9-84.7 ms /
+  85.1-88.3 ms**. Final GPT-5.6 correctness and performance/documentation
+  reviews are clean. Reference creation boxes and required `Dup` clones remain.
+
 - Test262 language early-error admission now includes the four exact generator
   update-expression parse-negative files for prefix/postfix increment and
   decrement. RuJa already rejects each invalid `yield` target correctly; this

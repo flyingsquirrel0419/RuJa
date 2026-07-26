@@ -549,6 +549,37 @@ pub enum ReferenceBase {
 }
 
 impl Value {
+    /// Visit every VM-heap index reachable through an internal value. Heap
+    /// tracing, temporary-root sizing, and root publication share this walk so
+    /// Reference layout changes cannot make their root sets drift apart.
+    pub(crate) fn visit_gc_roots(&self, visit: &mut impl FnMut(usize)) {
+        match self {
+            Value::Object(index) => visit(index.0),
+            Value::Reference(reference) => reference.visit_gc_roots(visit),
+            _ => {}
+        }
+    }
+}
+
+impl ReferenceRecord {
+    pub(crate) fn visit_gc_roots(&self, visit: &mut impl FnMut(usize)) {
+        match &self.base {
+            ReferenceBase::Unresolvable => {}
+            ReferenceBase::Environment(environment) => visit(environment.0),
+            ReferenceBase::ObjectEnvironment(base) | ReferenceBase::Value(base) => {
+                base.visit_gc_roots(visit)
+            }
+        }
+        if let Some(this_value) = &self.this_value {
+            this_value.visit_gc_roots(visit);
+        }
+        if let ReferencedName::UncoercedProperty(name) = &self.name {
+            name.visit_gc_roots(visit);
+        }
+    }
+}
+
+impl Value {
     /// Wrap an immutable BigInt so cloning a `Value` remains constant-time.
     pub fn bigint(value: BigInt) -> Self {
         Self::BigInt(Arc::new(value))

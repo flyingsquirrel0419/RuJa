@@ -417,9 +417,11 @@ guarantees are required.
   Integrity and nested
   preventExtensions roots reserve before every pin. Computed compound, logical,
   and update References now hand numeric keys directly to structured
-  `PropertyKey` coercion. Remaining nearby hard-host-OOM scopes include boxed
-  Reference records/bases and their deep clones, non-index/shared-String key
-  creation, native indexed loops that still format names, Proxy trap descriptor
+  `PropertyKey` coercion. Reference consumers borrow their records, and heap
+  tracing, root counting, and pin publication share one visitor. Remaining
+  nearby hard-host-OOM scopes include initial Reference record/base/name/
+  receiver boxes, required retained-Reference `Dup` clones, non-index/shared-
+  String key creation, native indexed loops that still format names, Proxy trap descriptor
   values, TypedArray byte conversion, JSON caller containers, unrelated direct
   `ArrayData::new` constructors, Error strings, GC root enumeration, and mark
   worklists.

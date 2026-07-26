@@ -50,24 +50,7 @@ pub struct Heap {
 }
 
 fn push_value(value: &crate::value::Value, worklist: &mut Vec<usize>) {
-    match value {
-        crate::value::Value::Object(idx) => worklist.push(idx.0),
-        crate::value::Value::Reference(reference) => {
-            match &reference.base {
-                crate::value::ReferenceBase::Unresolvable => {}
-                crate::value::ReferenceBase::Environment(env) => worklist.push(env.0),
-                crate::value::ReferenceBase::ObjectEnvironment(base)
-                | crate::value::ReferenceBase::Value(base) => push_value(base, worklist),
-            }
-            if let Some(this_value) = &reference.this_value {
-                push_value(this_value, worklist);
-            }
-            if let crate::value::ReferencedName::UncoercedProperty(name) = &reference.name {
-                push_value(name, worklist);
-            }
-        }
-        _ => {}
-    }
+    value.visit_gc_roots(&mut |root| worklist.push(root));
 }
 
 fn trace_private_slot(slot: &crate::value::PrivateSlot, worklist: &mut Vec<usize>) {

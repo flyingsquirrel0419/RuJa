@@ -3127,7 +3127,6 @@ impl Vm {
     pub(crate) fn get_value(&mut self, v: &Value) -> error::Result<Value> {
         match v {
             Value::Reference(r) => {
-                let r = r.clone();
                 match &r.base {
                     crate::value::ReferenceBase::Unresolvable => {
                         let name = r.name.as_str().map(|s| s.to_string()).unwrap_or_default();
@@ -3250,7 +3249,7 @@ impl Vm {
                                         "Cannot read property from null super base",
                                     ));
                                 }
-                                self.get_property_key_rx(base, name, *receiver.clone())
+                                self.get_property_key_rx(base, name, receiver.as_ref().clone())
                             } else {
                                 self.get_property_reference_value(base, name)
                             }
@@ -3266,7 +3265,7 @@ impl Vm {
                             self.unpin_many(pin_count);
                             let name = name_result?;
                             if let Some(receiver) = &r.this_value {
-                                self.get_property_key_rx(base, &name, *receiver.clone())
+                                self.get_property_key_rx(base, &name, receiver.as_ref().clone())
                             } else {
                                 self.get_property_reference_value(base, &name)
                             }
@@ -3385,7 +3384,6 @@ impl Vm {
         let Value::Reference(reference) = v else {
             return Ok(true);
         };
-        let reference = reference.clone();
         if reference.this_value.is_some() {
             return Err(Error::reference("Cannot delete super property"));
         }
@@ -3422,7 +3420,7 @@ impl Vm {
                 "Cannot convert undefined or null to object",
             ));
         }
-        if matches!(reference.name, crate::value::ReferencedName::Private(_)) {
+        if matches!(&reference.name, crate::value::ReferencedName::Private(_)) {
             return Err(Error::internal("cannot delete a private reference"));
         }
 
@@ -3464,7 +3462,6 @@ impl Vm {
     pub(crate) fn put_value(&mut self, v: &Value, value: Value) -> error::Result<()> {
         match v {
             Value::Reference(r) => {
-                let r = r.clone();
                 match &r.base {
                     crate::value::ReferenceBase::Unresolvable => {
                         let name = r.name.as_str().map(|s| s.to_string()).unwrap_or_default();
@@ -3756,7 +3753,8 @@ impl Vm {
                         let name = match &r.name {
                             crate::value::ReferencedName::Property(name) => name.clone(),
                             crate::value::ReferencedName::UncoercedProperty(name) => {
-                                let pin_count = self.pin_many(&[v.clone(), value.clone()]);
+                                let mut pin_count = self.pin_reference(r);
+                                pin_count += self.pin(&value);
                                 let name_result = self.coerce_property_key_record(name);
                                 self.unpin_many(pin_count);
                                 name_result?
@@ -3765,7 +3763,7 @@ impl Vm {
                         };
                         if let Some(receiver) = &r.this_value {
                             let base_obj = if matches!(base.as_ref(), Value::Object(_)) {
-                                *base.clone()
+                                base.as_ref().clone()
                             } else {
                                 self.to_object(base)?
                             };

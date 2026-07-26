@@ -11174,6 +11174,33 @@ sparse pinned worktree were deleted after comparison.
 - 장점, 단점 및 영향: Supported coverage gains exactly four passes with no failures or semantic code change. Other generator tests remain gated and require independent audits.
 ```
 
+## Borrowed Reference consumers
+
+This runtime-only unit changes no Test262 admission. On pinned corpus
+`9e61c12835c5e4a3bdba93850427e6742c4f64c4`, compound assignment, logical
+assignment, all four update directories, `super`, and `with` remain **930 pass
+/ 0 fail / 19 skip / 949 total**. Current and preceding release binaries
+produce byte-identical output with SHA-256
+`de466337f732c6866fc3a27d8631f3751204b9fb8e91f1f3ecbf20c4d75835f7`.
+The supported language subset remains **12761 pass / 0 fail / 7678 skip /
+20439 total**.
+
+Direct tests are required because Test262 cannot observe Rust Box cloning or
+compare the heap tracer's roots with temporary pins. They cover nested
+Environment/base/receiver/raw-name roots, exact visitor/count/pin identity,
+abrupt raw assignment and computed-super coercion cleanup, forced GC, Proxy,
+private, `with`, call, update, and delete Reference paths.
+
+```text
+[Decision Log]
+- 목적과 의도: Prove that removing defensive Rust ownership clones changes neither JavaScript Reference semantics nor GC reachability.
+- 기존 구현 및 제약 조건: Focused Test262 covers observable order and results but cannot inspect allocations or internal roots; aggregate full-suite totals can hide offsetting changes.
+- 검토한 주요 대안: Rely only on Rust tests, run only aggregate Test262, widen admission, compare only current output, or pair direct root invariants with byte-identical current/preceding output.
+- 선택한 방식: Keep admission fixed, require one authoritative root visitor and abrupt cleanup regressions, compare the complete adjacent Reference cohort byte-for-byte, and rerun the supported subset.
+- 다른 대안 대신 이 방식을 선택한 이유: Internal tests prove ownership and roots but not language breadth; aggregate counts are weaker than exact output; admission is unrelated; and one binary cannot isolate the implementation.
+- 장점, 단점 및 영향: Focused and supported language behavior is unchanged while direct tests prove the removed clones were not roots. Full-matrix artifact identity remains post-push evidence.
+```
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is

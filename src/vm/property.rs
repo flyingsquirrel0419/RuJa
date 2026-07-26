@@ -1128,29 +1128,9 @@ impl Vm {
 
     /// Count the exact temporary heap roots `pin` will publish for a value.
     pub(crate) fn value_root_count(value: &Value) -> usize {
-        match value {
-            Value::Object(_) => 1,
-            Value::Reference(reference) => {
-                let base = match &reference.base {
-                    crate::value::ReferenceBase::Unresolvable => 0,
-                    crate::value::ReferenceBase::Environment(_) => 1,
-                    crate::value::ReferenceBase::ObjectEnvironment(base)
-                    | crate::value::ReferenceBase::Value(base) => Self::value_root_count(base),
-                };
-                let this_value = reference
-                    .this_value
-                    .as_ref()
-                    .map_or(0, |value| Self::value_root_count(value));
-                let name = match &reference.name {
-                    crate::value::ReferencedName::UncoercedProperty(name) => {
-                        Self::value_root_count(name)
-                    }
-                    _ => 0,
-                };
-                base.saturating_add(this_value).saturating_add(name)
-            }
-            _ => 0,
-        }
+        let mut count = 0usize;
+        value.visit_gc_roots(&mut |_| count = count.saturating_add(1));
+        count
     }
 
     /// Make a following known-size pin batch allocator-failure-safe.
@@ -1211,26 +1191,11 @@ impl Vm {
     }
 
     fn push_value_roots(roots: &mut Vec<usize>, value: &Value) {
-        match value {
-            Value::Object(idx) => roots.push(idx.0),
-            Value::Reference(r) => {
-                match &r.base {
-                    crate::value::ReferenceBase::Unresolvable => {}
-                    crate::value::ReferenceBase::Environment(env_idx) => roots.push(env_idx.0),
-                    crate::value::ReferenceBase::ObjectEnvironment(base)
-                    | crate::value::ReferenceBase::Value(base) => {
-                        Self::push_value_roots(roots, base)
-                    }
-                }
-                if let Some(this_value) = &r.this_value {
-                    Self::push_value_roots(roots, this_value);
-                }
-                if let crate::value::ReferencedName::UncoercedProperty(name) = &r.name {
-                    Self::push_value_roots(roots, name);
-                }
-            }
-            _ => {}
-        }
+        value.visit_gc_roots(&mut |root| roots.push(root));
+    }
+
+    fn push_reference_roots(roots: &mut Vec<usize>, reference: &crate::value::ReferenceRecord) {
+        reference.visit_gc_roots(&mut |root| roots.push(root));
     }
 
     #[cfg(test)]
@@ -5079,6 +5044,12 @@ impl Vm {
     pub fn pin(&mut self, v: &Value) -> usize {
         let before = self.gc_pins.len();
         Self::push_value_roots(&mut self.gc_pins, v);
+        self.gc_pins.len() - before
+    }
+
+    pub(crate) fn pin_reference(&mut self, reference: &crate::value::ReferenceRecord) -> usize {
+        let before = self.gc_pins.len();
+        Self::push_reference_roots(&mut self.gc_pins, reference);
         self.gc_pins.len() - before
     }
 
