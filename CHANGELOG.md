@@ -89,7 +89,12 @@
   focused Test262 output is byte-identical to the preceding release at **1683
   pass / 0 fail / 81 skip / 0 timeout / 0 error**. New receiver overwrite and
   creation workloads measure about 1.13 seconds per 100,000 and 130 ms per
-  10,000 operations, with no three-run regression against that binary.
+  10,000 operations, with no three-run regression against that binary. CI
+  `30195285329` and all 33 jobs in full run `30195285326` pass. Downloaded
+  artifacts aggregate to unchanged **31890 pass / 5115 fail / 11459 skip / 3
+  timeout / 0 error** and all 30 files are byte-identical to the preceding
+  clean full run. The downloaded release binary also reproduces focused
+  **1683/0/81/0/0** byte-for-byte.
 
 - Direct Array index assignment now uses the same representation-aware,
   fallible storage publisher as property definition. Dense append, sparse

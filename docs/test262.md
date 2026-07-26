@@ -10951,6 +10951,14 @@ byte-identical output. Criterion point estimates are about 1.13 seconds for
 100,000 receiver overwrites and 130 ms for 10,000 receiver creations; three
 wall-time runs against the preceding release show no regression.
 
+Implementation commit `5ce09c8` passes CI `30195285329` and all 33 jobs in
+full run `30195285326`. Artifacts at
+`/tmp/ruja-ordinary-non-index-set-30195285326-final` aggregate to unchanged
+**31890 pass / 5115 fail / 11459 skip / 3 timeout / 0 error / 48467 total /
+37005 run**. All 30 files are byte-identical to preceding clean full run
+`30192642310`. The downloaded release binary reproduces focused
+**1683/0/81/0/0**, byte-identical to both local binaries.
+
 ```text
 [Decision Log]
 - 목적과 의도: Prove allocator-safe ordinary non-index receiver publication and corrected String/Namespace exotic semantics without widening Test262 admission or degrading the Set hot path.
