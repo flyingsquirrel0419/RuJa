@@ -20,7 +20,15 @@
   warnings-denied Clippy, and generated documentation. Rustdoc retains 13
   existing warnings. Final GPT-5.6 correctness review is clean; the independent
   documentation review's three stale historical/count descriptions were
-  corrected. No runtime or parser code changed.
+  corrected. No runtime or parser code changed. Commit `d810343` passes CI
+  `30213116749` and all 33 jobs in full run `30213116898`. The original Annex B
+  artifact moves one pass to a contention timeout; the downloaded binary rerun
+  restores **201/811/74/0/0**. Corrected full results aggregate to **31894 pass
+  / 5115 fail / 11455 skip / 3 timeout / 0 error / 48467 total / 37009
+  pass-or-fail run**. Of 30 result files, 28 are byte-identical to the preceding
+  run; Annex B differs only by the timeout, and expressions moves exactly **+4
+  pass / -4 skip**. Downloaded artifacts and the pinned worktree were deleted
+  after verification.
 
 - Computed compound assignment, logical assignment, and update expressions now
   pass their evaluated key directly to `MakePropertyRef`. On 64-bit targets,

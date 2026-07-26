@@ -11153,6 +11153,17 @@ Reference cluster moves from **926/0/23** to **930/0/19**. The supported
 language subset is **12761 pass / 0 fail / 7678 skip / 20439 total**. Tooling
 also requires future siblings in all four directories to remain skipped.
 
+Commit `d810343` passes ordinary CI `30213116749` and all 33 jobs in full run
+`30213116898`. Raw artifacts aggregate to **31893 pass / 5115 fail / 11455
+skip / 4 timeout / 0 error** because one Annex B pass moved to a runner-
+contention timeout. Rerunning Annex B on the pinned corpus with the downloaded
+binary restores **201/811/74/0/0**, producing the corrected aggregate **31894
+pass / 5115 fail / 11455 skip / 3 timeout / 0 error / 48467 total / 37009
+pass-or-fail run**. Twenty-eight result files are byte-identical to the
+preceding full run; expressions changes only by **+4 pass / -4 skip**, and
+Annex B differs only by the transient timeout. Downloaded artifacts and the
+sparse pinned worktree were deleted after comparison.
+
 ```text
 [Decision Log]
 - 목적과 의도: Count four already-correct generator update-expression early errors without widening RuJa's general generator support claim.

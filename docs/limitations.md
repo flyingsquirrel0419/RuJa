@@ -259,10 +259,9 @@ guarantees are required.
   scoped subset of ES5.1 + selected ES2015+ features (see
   [test262.md](test262.md#supported-subset) for the exact list). The full
   suite is run in CI (excluding `intl402`/`staging`). The latest verified full
-  baseline before the current policy-only admission is 65.8% of all matrix
-  files and 86.2% of executed files (**31,890 pass / 5,115 fail / 11,459 skip
-  / 3 timeout / 0 error**); within the supported subset, tests currently run
-  at 100%.
+  result is 65.8% of all matrix files and 86.2% of pass-or-fail executed files
+  (**31,894 pass / 5,115 fail / 11,455 skip / 3 timeout / 0 error**); within
+  the supported subset, tests currently run at 100%.
   Full ES conformance is not claimed. See
   [test262.md](test262.md) for current numbers and the failure breakdown.
 - Decorator support covers audited class and public/private
