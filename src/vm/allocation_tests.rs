@@ -178,7 +178,7 @@ fn set_direct_has_instance(vm: &Vm, function: &Value, handler: Value) {
             panic!("direct hasInstance target must be a function");
         };
         function.props.lock().insert(
-            crate::value::PropertyKey::Symbol(vm.well_known_symbols.has_instance),
+            crate::value::PropertyKey::symbol(vm.well_known_symbols.has_instance),
             crate::value::PropertyDescriptor::data(handler),
         );
     });
@@ -4332,7 +4332,7 @@ fn arguments_objects_retry_allocation_and_restore_pins_at_the_exact_cap() {
         let iterator = vm
             .get_property_by_key(
                 &arguments,
-                &crate::value::PropertyKey::Symbol(vm.well_known_symbols.iterator),
+                &crate::value::PropertyKey::symbol(vm.well_known_symbols.iterator),
             )
             .expect("arguments iterator should be readable");
         assert_eq!(iterator, values);
@@ -9657,7 +9657,7 @@ fn ordinary_property_walks_consume_exact_fuel_and_restore_pin_depth() {
     let leaf = vm.get_global("ordinaryFuelLeaf");
     let key = crate::value::PropertyKey::from("marker");
     let symbol_key = match vm.get_global("ordinaryFuelSymbol") {
-        Value::Symbol(id) => crate::value::PropertyKey::Symbol(id),
+        Value::Symbol(id) => crate::value::PropertyKey::symbol(id),
         value => panic!("expected Symbol fixture, got {value:?}"),
     };
     let baseline = vm.gc_pins.len();
@@ -9806,7 +9806,7 @@ fn inherited_proxy_trap_lookups_consume_exact_edge_fuel() {
     let has_proxy = vm.get_global("inheritedHasProxy");
     let set_proxy = vm.get_global("inheritedSetProxy");
     let symbol_key = match vm.get_global("propertyFuelSymbol") {
-        Value::Symbol(id) => crate::value::PropertyKey::Symbol(id),
+        Value::Symbol(id) => crate::value::PropertyKey::symbol(id),
         value => panic!("expected Symbol fixture, got {value:?}"),
     };
     let baseline = vm.gc_pins.len();
@@ -12017,14 +12017,8 @@ fn proxy_own_keys_entry_reservations_are_fallible_ordered_and_retryable() {
     )
     .expect("distinct Symbols with equal descriptions are distinct keys");
     assert_eq!(distinct_symbols.len(), 2);
-    assert!(matches!(
-        distinct_symbols[0],
-        crate::value::PropertyKey::Symbol(_)
-    ));
-    assert!(matches!(
-        distinct_symbols[1],
-        crate::value::PropertyKey::Symbol(_)
-    ));
+    assert!(distinct_symbols[0].is_symbol());
+    assert!(distinct_symbols[1].is_symbol());
     assert_ne!(distinct_symbols[0], distinct_symbols[1]);
 
     let nested_outer = vm.get_global("nestedOuter");
@@ -19871,7 +19865,7 @@ fn ordinary_property_storage_module_namespace_complete_descriptors() {
         .try_set_property_with_receiver(&set_base, "value", Value::Number(-0.0), &namespace)
         .expect("matching signed-zero namespace receiver Set should succeed"));
 
-    let tag_key = PropertyKey::Symbol(vm.well_known_symbols.to_string_tag);
+    let tag_key = PropertyKey::symbol(vm.well_known_symbols.to_string_tag);
     let tag_descriptor = vm
         .own_property_descriptor_for_proxy_invariant(&namespace, &tag_key)
         .expect("module namespace should expose @@toStringTag");

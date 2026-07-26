@@ -176,7 +176,7 @@ fn array_from_async_define_and_continue(
     value: Value,
     iterable: bool,
 ) -> error::Result<()> {
-    let key = PropertyKey::from(frame.index.to_string());
+    let key = PropertyKey::from_integer_index(frame.index as u64);
     let define =
         vm.define_own_property_or_throw(&frame.target, key, PropertyDescriptor::data(value));
     if let Err(error) = define {
@@ -464,7 +464,7 @@ pub(crate) fn array_from_async(
         let async_method = array_from_async_get_method(
             vm,
             &items,
-            PropertyKey::Symbol(vm.well_known_symbols.async_iterator),
+            PropertyKey::symbol(vm.well_known_symbols.async_iterator),
         );
         let async_method = match async_method {
             Ok(method) => method,
@@ -476,7 +476,7 @@ pub(crate) fn array_from_async(
             let method = array_from_async_get_method(
                 vm,
                 &items,
-                PropertyKey::Symbol(vm.well_known_symbols.iterator),
+                PropertyKey::symbol(vm.well_known_symbols.iterator),
             );
             match method {
                 Ok(method) => (method, true),
@@ -620,7 +620,7 @@ pub(crate) fn array_from(vm: &mut Vm, args: &[Value], this: Option<Value>) -> er
         return Err(Error::type_err("Array.from requires an array-like value"));
     }
 
-    let iterator_key = PropertyKey::Symbol(vm.well_known_symbols.iterator);
+    let iterator_key = PropertyKey::symbol(vm.well_known_symbols.iterator);
     let iterator_method = vm.get_property_by_key(&src_val, &iterator_key)?;
     if !iterator_method.is_nullish() {
         if !is_callable(&iterator_method, &vm.heap) {
@@ -663,7 +663,7 @@ pub(crate) fn array_from(vm: &mut Vm, args: &[Value], this: Option<Value>) -> er
                 let value_pin = vm.pin(&value);
                 let define_result = vm.define_own_property_or_throw(
                     &target,
-                    PropertyKey::from(index.to_string()),
+                    PropertyKey::from_integer_index(index as u64),
                     PropertyDescriptor::data(value),
                 );
                 vm.unpin_many(value_pin);
@@ -709,7 +709,7 @@ pub(crate) fn array_from(vm: &mut Vm, args: &[Value], this: Option<Value>) -> er
             let value_pin = vm.pin(&value);
             let define_result = vm.define_own_property_or_throw(
                 &target,
-                PropertyKey::from(index.to_string()),
+                PropertyKey::from_integer_index(index as u64),
                 PropertyDescriptor::data(value),
             );
             vm.unpin_many(value_pin);
@@ -738,7 +738,7 @@ pub(crate) fn array_of(vm: &mut Vm, args: &[Value], this: Option<Value>) -> erro
         for (i, item) in args.iter().enumerate() {
             vm.define_own_property_or_throw(
                 &result,
-                PropertyKey::from(i.to_string()),
+                PropertyKey::from_integer_index(i as u64),
                 PropertyDescriptor::data(item.clone()),
             )?;
         }
@@ -1045,7 +1045,7 @@ pub(crate) fn array_filter(
                 if selected.is_truthy() {
                     let define = vm.define_own_property_or_throw(
                         &result,
-                        PropertyKey::from(target_index.to_string()),
+                        PropertyKey::from_integer_index(target_index),
                         PropertyDescriptor::data(value),
                     );
                     vm.unpin(value_pin);
@@ -1440,7 +1440,7 @@ pub(crate) fn array_to_reversed(
             let value_pin = vm.pin(&value);
             let define = vm.define_own_property_or_throw(
                 &result,
-                PropertyKey::from(index.to_string()),
+                PropertyKey::from_integer_index(index),
                 PropertyDescriptor::data(value),
             );
             vm.unpin(value_pin);
@@ -1542,7 +1542,7 @@ pub(crate) fn array_to_spliced(
             let value_pin = vm.pin(&value);
             let define = vm.define_own_property_or_throw(
                 &result,
-                PropertyKey::from(write_index.to_string()),
+                PropertyKey::from_integer_index(write_index),
                 PropertyDescriptor::data(value),
             );
             vm.unpin(value_pin);
@@ -1554,7 +1554,7 @@ pub(crate) fn array_to_spliced(
             vm.consume_fuel()?;
             vm.define_own_property_or_throw(
                 &result,
-                PropertyKey::from(write_index.to_string()),
+                PropertyKey::from_integer_index(write_index),
                 PropertyDescriptor::data(item.clone()),
             )?;
             write_index += 1;
@@ -1567,7 +1567,7 @@ pub(crate) fn array_to_spliced(
             let value_pin = vm.pin(&value);
             let define = vm.define_own_property_or_throw(
                 &result,
-                PropertyKey::from(write_index.to_string()),
+                PropertyKey::from_integer_index(write_index),
                 PropertyDescriptor::data(value),
             );
             vm.unpin(value_pin);
@@ -1617,7 +1617,7 @@ pub(crate) fn array_with(vm: &mut Vm, args: &[Value], this: Option<Value>) -> er
             let value_pin = vm.pin(&value);
             let define = vm.define_own_property_or_throw(
                 &result,
-                PropertyKey::from(index.to_string()),
+                PropertyKey::from_integer_index(index),
                 PropertyDescriptor::data(value),
             );
             vm.unpin(value_pin);
@@ -1804,7 +1804,7 @@ fn array_species_create(vm: &mut Vm, original: &Value, length: u64) -> error::Re
             }
         }
         if matches!(constructor, Value::Object(_)) {
-            let species_key = PropertyKey::Symbol(vm.well_known_symbols.species);
+            let species_key = PropertyKey::symbol(vm.well_known_symbols.species);
             let species = vm.get_property_by_key(&constructor, &species_key)?;
             pin_count += vm.pin(&species);
             constructor = if matches!(species, Value::Null) {
@@ -1829,7 +1829,7 @@ fn is_concat_spreadable(vm: &mut Vm, value: &Value) -> error::Result<bool> {
     if !value.is_object() {
         return Ok(false);
     }
-    let key = PropertyKey::Symbol(vm.well_known_symbols.is_concat_spreadable);
+    let key = PropertyKey::symbol(vm.well_known_symbols.is_concat_spreadable);
     let spreadable = vm.get_property_by_key(value, &key)?;
     if !spreadable.is_undefined() {
         return Ok(spreadable.is_truthy());
@@ -1995,7 +1995,7 @@ pub(crate) fn array_slice(
                 let value_pin = vm.pin(&value);
                 let define = vm.define_own_property_or_throw(
                     &result,
-                    PropertyKey::from(target_index.to_string()),
+                    PropertyKey::from_integer_index(target_index),
                     PropertyDescriptor::data(value),
                 );
                 vm.unpin(value_pin);
@@ -2049,7 +2049,7 @@ pub(crate) fn array_concat(
                         let value_pin = vm.pin(&value);
                         let define = vm.define_own_property_or_throw(
                             &result,
-                            PropertyKey::from(next_index.to_string()),
+                            PropertyKey::from_integer_index(next_index),
                             PropertyDescriptor::data(value),
                         );
                         vm.unpin(value_pin);
@@ -2067,7 +2067,7 @@ pub(crate) fn array_concat(
                 vm.consume_fuel()?;
                 vm.define_own_property_or_throw(
                     &result,
-                    PropertyKey::from(next_index.to_string()),
+                    PropertyKey::from_integer_index(next_index),
                     PropertyDescriptor::data(item.clone()),
                 )?;
                 next_index += 1;
@@ -2317,7 +2317,7 @@ pub(crate) fn array_splice(
                 let value_pin = vm.pin(&value);
                 let define = vm.define_own_property_or_throw(
                     &removed,
-                    PropertyKey::from(removed_index.to_string()),
+                    PropertyKey::from_integer_index(removed_index),
                     PropertyDescriptor::data(value),
                 );
                 vm.unpin(value_pin);
@@ -2624,7 +2624,7 @@ fn flatten_into_array(
         }
         let define = vm.define_own_property_or_throw(
             target,
-            PropertyKey::from(target_index.to_string()),
+            PropertyKey::from_integer_index(target_index),
             PropertyDescriptor::data(element),
         );
         vm.unpin_many(element_pins);

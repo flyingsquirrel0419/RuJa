@@ -1820,7 +1820,7 @@ impl Vm {
         self.try_reserve_gc_pins(required_roots)?;
         let pin_count = self.pin_many(&[object.clone(), constructor.clone()]);
         let result = (|| {
-            let has_instance_key = PropertyKey::Symbol(self.well_known_symbols.has_instance);
+            let has_instance_key = PropertyKey::symbol(self.well_known_symbols.has_instance);
             let has_instance = self.get_property_by_key(constructor, &has_instance_key)?;
             if !has_instance.is_undefined() && !has_instance.is_null() {
                 if !crate::builtins::is_callable(&has_instance, &self.heap) {
@@ -1880,7 +1880,7 @@ impl Vm {
                     self.consume_fuel()?;
                     let target = Value::Object(target);
                     let has_instance_key =
-                        PropertyKey::Symbol(self.well_known_symbols.has_instance);
+                        PropertyKey::symbol(self.well_known_symbols.has_instance);
                     let has_instance = self.get_property_by_key(&target, &has_instance_key)?;
                     if !has_instance.is_nullish() {
                         if !crate::builtins::is_callable(&has_instance, &self.heap) {
@@ -3276,20 +3276,19 @@ impl Vm {
                         }
                     },
                     crate::value::ReferenceBase::ObjectEnvironment(base) => match &r.name {
-                        crate::value::ReferencedName::Property(crate::value::PropertyKey::Str(
-                            s,
-                        )) => {
-                            if !self.has_property(base, s)? {
+                        crate::value::ReferencedName::Property(key) => {
+                            if let Some(id) = key.symbol_id() {
+                                return self.get_property(base, &format!("[Symbol {}]", id));
+                            }
+                            let s = key.as_str().expect("string property keys have text");
+                            if !self.has_property(base, &s)? {
                                 if r.strict {
                                     return Err(Error::reference(format!("{} is not defined", s)));
                                 }
                                 return Ok(Value::Undefined);
                             }
-                            self.get_property(base, s)
+                            self.get_property(base, &s)
                         }
-                        crate::value::ReferencedName::Property(
-                            crate::value::PropertyKey::Symbol(id),
-                        ) => self.get_property(base, &format!("[Symbol {}]", id)),
                         crate::value::ReferencedName::UncoercedProperty(_)
                         | crate::value::ReferencedName::Private(_) => Err(Error::internal(
                             "invalid reference name for an object environment base",
@@ -3306,13 +3305,13 @@ impl Vm {
         base: &Value,
         name: &crate::value::PropertyKey,
     ) -> error::Result<Value> {
-        let crate::value::PropertyKey::Str(key) = name else {
+        let Some(key) = name.as_str() else {
             let key = Self::property_key_to_value(name);
             return self.get_property_key(base, &key);
         };
 
         let Value::Object(idx) = base else {
-            return self.get_property(base, key);
+            return self.get_property(base, &key);
         };
         let cacheable_own_data = self.heap.with_obj(idx.0, |object| {
             if matches!(
@@ -3331,13 +3330,13 @@ impl Vm {
                 .is_some_and(|desc| !desc.is_accessor)
         });
         if !cacheable_own_data {
-            return self.get_property(base, key);
+            return self.get_property(base, &key);
         }
-        if let Some(cached) = self.ic_get(idx.0, key) {
+        if let Some(cached) = self.ic_get(idx.0, &key) {
             return Ok(cached);
         }
-        let value = self.get_property(base, key)?;
-        self.ic_put(idx.0, key, value.clone());
+        let value = self.get_property(base, &key)?;
+        self.ic_put(idx.0, &key, value.clone());
         Ok(value)
     }
 
@@ -3397,7 +3396,7 @@ impl Vm {
                     .name
                     .as_str()
                     .ok_or_else(|| Error::internal("invalid environment reference name"))?;
-                return self.delete_environment_reference(*env_idx, name);
+                return self.delete_environment_reference(*env_idx, &name);
             }
             crate::value::ReferenceBase::ObjectEnvironment(base) => {
                 let key = match &reference.name {
@@ -3773,10 +3772,12 @@ impl Vm {
                             let success = self.try_set_property_key_with_receiver(
                                 &base_obj, &name, value, receiver,
                             )?;
-                            if let (true, Value::Object(idx), crate::value::PropertyKey::Str(key)) =
-                                (success, receiver.as_ref(), &name)
-                            {
-                                self.ic_invalidate(idx.0, key);
+                            if success {
+                                if let (Value::Object(idx), Some(key)) =
+                                    (receiver.as_ref(), name.as_str())
+                                {
+                                    self.ic_invalidate(idx.0, &key);
+                                }
                             }
                             if !success && r.strict {
                                 return Err(Error::type_err("Cannot assign to super property"));
@@ -3790,9 +3791,7 @@ impl Vm {
                             self.try_set_property_key_with_receiver(&boxed, &name, value, base)?
                         };
                         if success {
-                            if let (Value::Object(idx), crate::value::PropertyKey::Str(s)) =
-                                (base.as_ref(), &name)
-                            {
+                            if let (Value::Object(idx), Some(s)) = (base.as_ref(), name.as_str()) {
                                 let is_global_this = self.heap.with_obj(idx.0, |o| {
                                     matches!(
                                         o,
@@ -3802,42 +3801,41 @@ impl Vm {
                                 });
                                 self.mirror_global_property_to_binding(
                                     *idx,
-                                    s,
+                                    &s,
                                     true,
                                     is_global_this,
                                 );
                             }
                         }
                         if !success && r.strict {
-                            match &name {
-                                crate::value::PropertyKey::Str(s) => {
-                                    return Err(Error::type_err(format!(
-                                        "Cannot assign to read only property '{}' of object",
-                                        s
-                                    )));
-                                }
-                                crate::value::PropertyKey::Symbol(_) => {
-                                    return Err(Error::type_err(
-                                        "Cannot assign to read only Symbol property",
-                                    ));
-                                }
+                            if let Some(s) = name.as_str() {
+                                return Err(Error::type_err(format!(
+                                    "Cannot assign to read only property '{}' of object",
+                                    s
+                                )));
                             }
+                            return Err(Error::type_err(
+                                "Cannot assign to read only Symbol property",
+                            ));
                         }
                     }
                     crate::value::ReferenceBase::ObjectEnvironment(base) => match &r.name {
-                        crate::value::ReferencedName::Property(crate::value::PropertyKey::Str(
-                            s,
-                        )) => {
-                            if !self.has_property(base, s)? {
-                                if r.strict {
-                                    return Err(Error::reference(format!("{} is not defined", s)));
+                        crate::value::ReferencedName::Property(key) => {
+                            if let Some(id) = key.symbol_id() {
+                                self.set_property_key(base, &Value::Symbol(id), value)?;
+                            } else {
+                                let s = key.as_str().expect("string property keys have text");
+                                if !self.has_property(base, &s)? {
+                                    if r.strict {
+                                        return Err(Error::reference(format!(
+                                            "{} is not defined",
+                                            s
+                                        )));
+                                    }
                                 }
+                                self.set_object_environment_property(base, &s, value)?
                             }
-                            self.set_object_environment_property(base, s, value)?
                         }
-                        crate::value::ReferencedName::Property(
-                            crate::value::PropertyKey::Symbol(id),
-                        ) => self.set_property_key(base, &Value::Symbol(*id), value)?,
                         crate::value::ReferencedName::UncoercedProperty(_)
                         | crate::value::ReferencedName::Private(_) => {
                             return Err(Error::internal(
@@ -3902,7 +3900,7 @@ impl Vm {
             desc.configurable = false;
             // enumerable = true (default)
             tmpl.props.lock().insert(
-                crate::value::PropertyKey::from(i.to_string().as_str()),
+                crate::value::PropertyKey::from_integer_index(i as u64),
                 desc,
             );
         }
@@ -3938,7 +3936,7 @@ impl Vm {
             desc.writable = false;
             desc.configurable = false;
             obj.props.lock().insert(
-                crate::value::PropertyKey::from(i.to_string().as_str()),
+                crate::value::PropertyKey::from_integer_index(i as u64),
                 desc,
             );
         }

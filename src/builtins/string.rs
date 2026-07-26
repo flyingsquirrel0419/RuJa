@@ -51,7 +51,7 @@ fn string_array_from_parts(vm: &mut Vm, parts: Vec<String>) -> error::Result<Val
             vm.consume_fuel()?;
             vm.define_data_property(
                 &array,
-                PropertyKey::from(index.to_string().as_str()),
+                PropertyKey::from_integer_index(index as u64),
                 Value::String(Arc::from(part.as_str())),
             )?;
         }
@@ -314,7 +314,7 @@ pub(crate) fn str_search(vm: &mut Vm, args: &[Value], this: Option<Value>) -> er
         ));
     }
     let search_value = args.first().cloned().unwrap_or(Value::Undefined);
-    let search_key = PropertyKey::Symbol(vm.well_known_symbols.search);
+    let search_key = PropertyKey::symbol(vm.well_known_symbols.search);
     if matches!(search_value, Value::Object(_)) {
         let searcher = vm.get_property_by_key(&search_value, &search_key)?;
         if !searcher.is_nullish() {
@@ -513,7 +513,7 @@ pub(crate) fn str_split(vm: &mut Vm, args: &[Value], this: Option<Value>) -> err
     let separator = args.first().cloned().unwrap_or(Value::Undefined);
     let limit_value = args.get(1).cloned().unwrap_or(Value::Undefined);
     if matches!(separator, Value::Object(_)) {
-        let split_key = PropertyKey::Symbol(vm.well_known_symbols.split);
+        let split_key = PropertyKey::symbol(vm.well_known_symbols.split);
         let splitter = vm.get_property_by_key(&separator, &split_key)?;
         if !splitter.is_nullish() {
             if !is_callable(&splitter, &vm.heap) {
@@ -555,7 +555,7 @@ pub(crate) fn str_replace(
         .filter(|value| matches!(value, Value::Object(_)))
         .cloned()
     {
-        let replace_key = PropertyKey::Symbol(vm.well_known_symbols.replace);
+        let replace_key = PropertyKey::symbol(vm.well_known_symbols.replace);
         let replacer = vm.get_property_by_key(&search_value, &replace_key)?;
         if !replacer.is_nullish() {
             let is_callable = matches!(&replacer, Value::Object(idx) if {
@@ -904,7 +904,7 @@ pub(crate) fn str_match(vm: &mut Vm, args: &[Value], this: Option<Value>) -> err
             "String.prototype method called on null or undefined",
         ));
     }
-    let match_key = PropertyKey::Symbol(vm.well_known_symbols.r#match);
+    let match_key = PropertyKey::symbol(vm.well_known_symbols.r#match);
     let search_value = args.first().cloned().unwrap_or(Value::Undefined);
     if matches!(search_value, Value::Object(_)) {
         let matcher = vm.get_property_by_key(&search_value, &match_key)?;
@@ -970,7 +970,7 @@ pub(crate) fn str_match_all(
             }
         }
 
-        let match_all_key = PropertyKey::Symbol(vm.well_known_symbols.match_all);
+        let match_all_key = PropertyKey::symbol(vm.well_known_symbols.match_all);
         let matcher = vm.get_property_by_key(&search_value, &match_all_key)?;
         if !matcher.is_nullish() {
             let is_callable = matches!(&matcher, Value::Object(idx) if {
@@ -989,7 +989,7 @@ pub(crate) fn str_match_all(
 
     let s = str_val(vm, &Some(receiver))?;
     let regexp = regexp_create_intrinsic_with_flags(vm, &search_value, Some("g"))?;
-    let match_all_key = PropertyKey::Symbol(vm.well_known_symbols.match_all);
+    let match_all_key = PropertyKey::symbol(vm.well_known_symbols.match_all);
     let matcher = vm.get_property_by_key(&regexp, &match_all_key)?;
     if matcher.is_nullish() {
         return Err(Error::type_err("Symbol.matchAll method is not callable"));
@@ -1205,7 +1205,7 @@ pub(crate) fn str_replace_all(
         }
 
         if matches!(search_value, Value::Object(_)) {
-            let replace_key = PropertyKey::Symbol(vm.well_known_symbols.replace);
+            let replace_key = PropertyKey::symbol(vm.well_known_symbols.replace);
             let replacer = vm.get_property_by_key(&search_value, &replace_key)?;
             if !replacer.is_nullish() {
                 let is_callable = matches!(&replacer, Value::Object(idx) if {

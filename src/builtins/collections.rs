@@ -201,14 +201,14 @@ pub(crate) fn setup_string_iterator_proto_in_env(
             let mut tag = data_prop(Value::String(Arc::from("String Iterator")));
             tag.writable = false;
             obj.props().lock().insert(
-                PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
+                PropertyKey::symbol(vm.well_known_symbols.to_string_tag),
                 tag,
             );
         });
     }
     vm.define_own_property_or_throw(
         string_proto,
-        PropertyKey::Symbol(vm.well_known_symbols.iterator),
+        PropertyKey::symbol(vm.well_known_symbols.iterator),
         data_prop(Value::Object(iterator_method)),
     )?;
     vm.realm_string_iterator_prototypes
@@ -248,7 +248,7 @@ pub(crate) fn setup_array_iterator_proto_in_env(
             let mut tag = data_prop(Value::String(Arc::from("Array Iterator")));
             tag.writable = false;
             object.props().lock().insert(
-                PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
+                PropertyKey::symbol(vm.well_known_symbols.to_string_tag),
                 tag,
             );
         });
@@ -299,7 +299,7 @@ fn collection_iterator_proto(
             is_accessor: false,
         };
         obj.props().lock().insert(
-            PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
+            PropertyKey::symbol(vm.well_known_symbols.to_string_tag),
             desc,
         );
     });
@@ -3226,7 +3226,7 @@ fn array_items_snapshot(value: &Value, vm: &Vm, name: &str) -> error::Result<Vec
 fn keyed_result_property_key(value: &Value) -> error::Result<PropertyKey> {
     match value {
         Value::String(s) => Ok(PropertyKey::from(s.clone())),
-        Value::Symbol(id) => Ok(PropertyKey::Symbol(*id)),
+        Value::Symbol(id) => Ok(PropertyKey::symbol(*id)),
         _ => Err(Error::type_err("Promise keyed result key is invalid")),
     }
 }
@@ -4910,7 +4910,7 @@ fn promise_species_constructor(
         return Err(Error::type_err("Promise constructor is not an object"));
     }
 
-    let species_key = PropertyKey::Symbol(vm.well_known_symbols.species);
+    let species_key = PropertyKey::symbol(vm.well_known_symbols.species);
     let species = vm.get_property_by_key(&constructor, &species_key)?;
     if species.is_undefined() || matches!(species, Value::Null) {
         return Ok(default_constructor);

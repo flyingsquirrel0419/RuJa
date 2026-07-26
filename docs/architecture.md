@@ -2210,6 +2210,35 @@ independent work.
 - 장점, 단점 및 영향: Runtime clone is O(1), a 64K-digit property-read stress workload improves about 29.5%, and focused BigInt plus binary-view Test262 output is unchanged. Every BigInt still allocates an Arc control block, parser-to-constant transfer still clones once, direct enum construction is an alpha API change, and Arc/num-bigint allocation remains infallible host allocation rather than a catchable heap-limit error.
 ```
 
+## Compact canonical numeric property keys
+
+On 64-bit targets, canonical ECMAScript array-index names (`0` through
+`4294967294`) are stored inside `PropertyKey` as a `u32`. Ordinary strings
+remain `Arc<str>` and Symbols remain `u32` ids. A private two-variant
+representation nests the index and Symbol forms together, preserving the
+previous 16-byte `PropertyKey` size on x86_64. On 32-bit targets the same safe
+Rust layout would grow keys from 8 to 12 bytes, so canonical indices retain the
+previous Arc-backed string representation there. Both target widths therefore
+keep `PropertyKey` exactly the size of `Arc<str>`.
+
+Numeric text is formatted into a ten-byte stack view only when an API needs
+string semantics, hashing, an inline-cache name, or a JavaScript String result.
+Object `[[Get]]` and `[[Set]]` retain the structured key, so computed numeric
+access does not format and then parse the same key before dispatch. Hash and
+equality remain string-compatible, including lookup against a legacy Arc-backed
+canonical string. `ownKeys` sorts inline indices numerically and materializes
+JavaScript Strings only at the observable result boundary.
+
+```text
+[Decision Log]
+- 목적과 의도: Remove canonical numeric PropertyKey allocation while preserving ECMAScript string identity, own-key ordering, Proxy invariants, object-map density, and ordinary string-key performance.
+- 기존 구현 및 제약 조건: Every generated or Number-derived index formatted a String and allocated Arc<str>; stable Rust has no genuinely fallible Arc<str> constructor; PropertyKey is present in every property map and key worklist, so representation growth has global cost.
+- 검토한 주요 대안: Keep allocation and add a test-only failure shim, claim String/Arc construction is fallible, add an 11-byte decimal enum variant, use unsafe tagged pointer storage, globally intern property strings, or nest u32 Index/Symbol forms behind a private compact representation.
+- 선택한 방식: Store canonical indices as u32 in a private inline variant shared with Symbols on 64-bit targets, retain the previous Arc-backed index form on 32-bit targets, use a stack decimal view at string boundaries, preserve string-compatible Hash/Eq, and route simple object computed Get/Set directly through PropertyKey.
+- 다른 대안 대신 이 방식을 선택한 이유: A failure shim does not harden real host OOM; stable Arc allocation cannot report failure; the decimal enum grew PropertyKey from 16 to 24 bytes; unsafe pointer tagging was unjustified; global interning retains attacker-controlled names; and the nested representation remains safe Rust and two words.
+- 장점, 단점 및 영향: Canonical key creation and storage allocate no string on 64-bit targets, PropertyKey size is unchanged on both target widths, public representation is no longer exhaustively matchable, and own-key/JSON/Proxy boundaries retain exact text. Hashing an inline index formats at most ten stack bytes; 32-bit canonical keys, JS-visible String materialization, non-index Number formatting, compound/logical/update references, and many native Array/TypedArray read/write loops still allocate numeric names as explicit follow-ups.
+```
+
 ---
 
 **Next:** [Features](features.md) · [Known limitations](limitations.md) · [Back to README](../README.md)

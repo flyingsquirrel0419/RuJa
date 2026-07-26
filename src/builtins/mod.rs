@@ -2098,7 +2098,7 @@ pub(crate) fn object_to_string(
     let pin_count = vm.pin(&object);
     let tag = vm.get_property_by_key(
         &object,
-        &PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
+        &PropertyKey::symbol(vm.well_known_symbols.to_string_tag),
     );
     vm.unpin_many(pin_count);
     let tag = tag?;
@@ -2370,7 +2370,7 @@ fn make_typed_array_intrinsic_in_env(vm: &mut Vm, env: GcIdx) -> error::Result<(
                     data_prop(Value::Object(typed_array_of_fn)),
                 );
                 f.props.lock().insert(
-                    PropertyKey::Symbol(species_symbol),
+                    PropertyKey::symbol(species_symbol),
                     accessor_get_prop(Value::Object(typed_array_species_getter)),
                 );
             }
@@ -2462,7 +2462,7 @@ fn make_typed_array_intrinsic_in_env(vm: &mut Vm, env: GcIdx) -> error::Result<(
                 accessor_get_prop(Value::Object(typed_array_length_getter)),
             );
             props.insert(
-                PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
+                PropertyKey::symbol(vm.well_known_symbols.to_string_tag),
                 accessor_get_prop(Value::Object(typed_array_to_string_tag_getter)),
             );
             props.insert(
@@ -2586,7 +2586,7 @@ fn make_typed_array_intrinsic_in_env(vm: &mut Vm, env: GcIdx) -> error::Result<(
                 data_prop(Value::Object(typed_array_entries_fn)),
             );
             props.insert(
-                PropertyKey::Symbol(vm.well_known_symbols.iterator),
+                PropertyKey::symbol(vm.well_known_symbols.iterator),
                 data_prop(Value::Object(typed_array_values_fn)),
             );
         });
@@ -2667,7 +2667,7 @@ fn install_array_buffer_constructor_in_env(
                     data_prop(Value::Object(array_buffer_is_view_fn)),
                 );
                 props.insert(
-                    PropertyKey::Symbol(vm.well_known_symbols.species),
+                    PropertyKey::symbol(vm.well_known_symbols.species),
                     accessor_get_prop(Value::Object(array_buffer_species_getter)),
                 );
             }
@@ -2698,7 +2698,7 @@ fn install_array_buffer_constructor_in_env(
                 accessor_get_prop(Value::Object(array_buffer_max_byte_length_getter)),
             );
             props.insert(
-                PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
+                PropertyKey::symbol(vm.well_known_symbols.to_string_tag),
                 PropertyDescriptor {
                     value: Value::String(Arc::from("ArrayBuffer")),
                     writable: false,
@@ -2779,7 +2779,7 @@ fn install_shared_array_buffer_constructor_in_env(
     }
     vm.heap.with_obj(constructor.0, |obj| {
         obj.props().lock().insert(
-            PropertyKey::Symbol(vm.well_known_symbols.species),
+            PropertyKey::symbol(vm.well_known_symbols.species),
             accessor_get_prop(Value::Object(species_getter)),
         );
     });
@@ -2800,7 +2800,7 @@ fn install_shared_array_buffer_constructor_in_env(
         let mut tag = data_prop(Value::String(Arc::from("SharedArrayBuffer")));
         tag.writable = false;
         props.insert(
-            PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
+            PropertyKey::symbol(vm.well_known_symbols.to_string_tag),
             tag,
         );
     });
@@ -2876,7 +2876,7 @@ fn install_data_view_constructor_in_env(
                 accessor_get_prop(Value::Object(data_view_byte_offset_getter)),
             );
             props.insert(
-                PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
+                PropertyKey::symbol(vm.well_known_symbols.to_string_tag),
                 PropertyDescriptor {
                     value: Value::String(Arc::from("DataView")),
                     writable: false,
@@ -2931,7 +2931,7 @@ fn install_weak_ref_constructor_in_env(
         let mut tag = data_prop(Value::String(Arc::from("WeakRef")));
         tag.writable = false;
         props.insert(
-            PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
+            PropertyKey::symbol(vm.well_known_symbols.to_string_tag),
             tag,
         );
     });
@@ -2989,7 +2989,7 @@ fn install_finalization_registry_constructor_in_env(
         let mut tag = data_prop(Value::String(Arc::from("FinalizationRegistry")));
         tag.writable = false;
         obj.props().lock().insert(
-            PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
+            PropertyKey::symbol(vm.well_known_symbols.to_string_tag),
             tag,
         );
     });
@@ -3261,23 +3261,23 @@ fn make_regexp_constructor_in_env(vm: &mut Vm, env: GcIdx) -> error::Result<(GcI
                 accessor_get_prop(Value::Object(sticky_getter)),
             );
             props.insert(
-                PropertyKey::Symbol(vm.well_known_symbols.r#match),
+                PropertyKey::symbol(vm.well_known_symbols.r#match),
                 data_prop(Value::Object(match_fn)),
             );
             props.insert(
-                PropertyKey::Symbol(vm.well_known_symbols.match_all),
+                PropertyKey::symbol(vm.well_known_symbols.match_all),
                 data_prop(Value::Object(match_all_fn)),
             );
             props.insert(
-                PropertyKey::Symbol(vm.well_known_symbols.search),
+                PropertyKey::symbol(vm.well_known_symbols.search),
                 data_prop(Value::Object(search_fn)),
             );
             props.insert(
-                PropertyKey::Symbol(vm.well_known_symbols.replace),
+                PropertyKey::symbol(vm.well_known_symbols.replace),
                 data_prop(Value::Object(replace_fn)),
             );
             props.insert(
-                PropertyKey::Symbol(vm.well_known_symbols.split),
+                PropertyKey::symbol(vm.well_known_symbols.split),
                 data_prop(Value::Object(split_fn)),
             );
         }
@@ -3296,7 +3296,7 @@ fn make_regexp_constructor_in_env(vm: &mut Vm, env: GcIdx) -> error::Result<(GcI
                 data_prop(Value::Object(regex_proto)),
             );
             f.props.lock().insert(
-                PropertyKey::Symbol(vm.well_known_symbols.species),
+                PropertyKey::symbol(vm.well_known_symbols.species),
                 accessor_get_prop(Value::Object(regexp_species_getter)),
             );
         }
@@ -3391,7 +3391,7 @@ fn install_array_intrinsic_in_env(
         .insert(env.0, values.clone());
     vm.heap.with_obj(prototype.0, |object| {
         object.props().lock().insert(
-            PropertyKey::Symbol(vm.well_known_symbols.iterator),
+            PropertyKey::symbol(vm.well_known_symbols.iterator),
             data_prop(values),
         );
     });
@@ -3414,7 +3414,7 @@ fn install_array_intrinsic_in_env(
         vm.new_native_function_in_env("get [Symbol.species]", promise_species_get, 0, env)?;
     vm.heap.with_obj(constructor.0, |object| {
         object.props().lock().insert(
-            PropertyKey::Symbol(vm.well_known_symbols.species),
+            PropertyKey::symbol(vm.well_known_symbols.species),
             accessor_get_prop(Value::Object(species)),
         );
     });
@@ -3459,7 +3459,7 @@ fn install_promise_intrinsic_in_env(
         let mut tag = data_prop(Value::String(Arc::from("Promise")));
         tag.writable = false;
         object.props().lock().insert(
-            PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
+            PropertyKey::symbol(vm.well_known_symbols.to_string_tag),
             tag,
         );
     });
@@ -3491,7 +3491,7 @@ fn install_promise_intrinsic_in_env(
         vm.new_native_function_in_env("get [Symbol.species]", promise_species_get, 0, realm)?;
     vm.heap.with_obj(constructor.0, |object| {
         object.props().lock().insert(
-            PropertyKey::Symbol(vm.well_known_symbols.species),
+            PropertyKey::symbol(vm.well_known_symbols.species),
             accessor_get_prop(Value::Object(species)),
         );
     });
@@ -3540,7 +3540,7 @@ fn install_generator_intrinsics_in_env(
         let mut tag = data_prop(Value::String(Arc::from("Generator")));
         tag.writable = false;
         props.insert(
-            PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
+            PropertyKey::symbol(vm.well_known_symbols.to_string_tag),
             tag,
         );
     });
@@ -3577,7 +3577,7 @@ fn install_generator_intrinsics_in_env(
         let mut tag = data_prop(Value::String(Arc::from("GeneratorFunction")));
         tag.writable = false;
         props.insert(
-            PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
+            PropertyKey::symbol(vm.well_known_symbols.to_string_tag),
             tag,
         );
     });
@@ -3638,11 +3638,11 @@ fn install_async_generator_intrinsics_in_env(
     vm.heap.with_obj(async_iterator_prototype.0, |object| {
         let mut props = object.props().lock();
         props.insert(
-            PropertyKey::Symbol(vm.well_known_symbols.async_iterator),
+            PropertyKey::symbol(vm.well_known_symbols.async_iterator),
             data_prop(Value::Object(async_iterator)),
         );
         props.insert(
-            PropertyKey::Symbol(vm.well_known_symbols.async_dispose),
+            PropertyKey::symbol(vm.well_known_symbols.async_dispose),
             data_prop(Value::Object(async_dispose)),
         );
     });
@@ -3672,7 +3672,7 @@ fn install_async_generator_intrinsics_in_env(
         let mut tag = data_prop(Value::String(Arc::from("AsyncGenerator")));
         tag.writable = false;
         props.insert(
-            PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
+            PropertyKey::symbol(vm.well_known_symbols.to_string_tag),
             tag,
         );
     });
@@ -3709,7 +3709,7 @@ fn install_async_generator_intrinsics_in_env(
         let mut tag = data_prop(Value::String(Arc::from("AsyncGeneratorFunction")));
         tag.writable = false;
         props.insert(
-            PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
+            PropertyKey::symbol(vm.well_known_symbols.to_string_tag),
             tag,
         );
     });
@@ -3888,7 +3888,7 @@ fn populate_test262_realm(vm: &mut Vm, realm_env: GcIdx) -> error::Result<Value>
         has_instance_desc.enumerable = false;
         has_instance_desc.configurable = false;
         props.insert(
-            PropertyKey::Symbol(vm.well_known_symbols.has_instance),
+            PropertyKey::symbol(vm.well_known_symbols.has_instance),
             has_instance_desc,
         );
         let restricted = PropertyDescriptor {
@@ -4138,7 +4138,7 @@ fn populate_test262_realm(vm: &mut Vm, realm_env: GcIdx) -> error::Result<Value>
         let mut tag = data_prop(Value::String(Arc::from("BigInt")));
         tag.writable = false;
         props.insert(
-            PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
+            PropertyKey::symbol(vm.well_known_symbols.to_string_tag),
             tag,
         );
         props.insert(
@@ -4186,7 +4186,7 @@ fn populate_test262_realm(vm: &mut Vm, realm_env: GcIdx) -> error::Result<Value>
         accessor_get_prop(Value::Object(symbol_description_idx)),
     );
     symbol_proto_props.insert(
-        PropertyKey::Symbol(vm.well_known_symbols.to_primitive),
+        PropertyKey::symbol(vm.well_known_symbols.to_primitive),
         PropertyDescriptor {
             value: Value::Object(symbol_to_primitive_idx),
             writable: false,
@@ -4198,7 +4198,7 @@ fn populate_test262_realm(vm: &mut Vm, realm_env: GcIdx) -> error::Result<Value>
         },
     );
     symbol_proto_props.insert(
-        PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
+        PropertyKey::symbol(vm.well_known_symbols.to_string_tag),
         PropertyDescriptor {
             value: Value::String(Arc::from("Symbol")),
             writable: false,
@@ -4379,7 +4379,7 @@ fn install_date_intrinsic_in_env(
 
         vm.heap.with_obj(prototype.0, |object| {
             object.props().lock().insert(
-                PropertyKey::Symbol(vm.well_known_symbols.to_primitive),
+                PropertyKey::symbol(vm.well_known_symbols.to_primitive),
                 PropertyDescriptor {
                     value: Value::Object(to_primitive),
                     writable: false,
@@ -4807,7 +4807,7 @@ fn object_has_own_key(vm: &Vm, obj: &Value, key: &PropertyKey) -> error::Result<
                 if let HeapObj::ModuleNamespace(namespace) = heap_obj {
                     return key
                         .as_str()
-                        .and_then(|name| namespace.exports.lock().get(name).cloned());
+                        .and_then(|name| namespace.exports.lock().get(name.as_ref()).cloned());
                 }
                 None
             });
@@ -4825,7 +4825,7 @@ fn object_has_own_key(vm: &Vm, obj: &Value, key: &PropertyKey) -> error::Result<
                 if let HeapObj::ModuleNamespace(namespace) = heap_obj {
                     if key
                         .as_str()
-                        .is_some_and(|name| namespace.exports.lock().contains_key(name))
+                        .is_some_and(|name| namespace.exports.lock().contains_key(name.as_ref()))
                     {
                         return true;
                     }
@@ -4834,18 +4834,18 @@ fn object_has_own_key(vm: &Vm, obj: &Value, key: &PropertyKey) -> error::Result<
                     return true;
                 }
                 if let HeapObj::Array(a) = heap_obj {
-                    if key.as_str() == Some("length") {
+                    if key.as_str().is_some_and(|name| name == "length") {
                         return !a.is_arguments.load(Ordering::Relaxed);
                     }
                     if let Some(name) = key.as_str() {
-                        if let Some(i) = crate::value::parse_array_index(name) {
+                        if let Some(i) = crate::value::parse_array_index(&name) {
                             return a.is_dense_present(i);
                         }
                     }
                 }
                 if let HeapObj::Object(od) = heap_obj {
                     if let Some(Value::String(s)) = od.primitive.lock().clone() {
-                        if key.as_str() == Some("length") {
+                        if key.as_str().is_some_and(|name| name == "length") {
                             return true;
                         }
                         return canonical_string_index(key)
@@ -4856,7 +4856,7 @@ fn object_has_own_key(vm: &Vm, obj: &Value, key: &PropertyKey) -> error::Result<
             }))
         }
         Value::String(s) => {
-            if key.as_str() == Some("length") {
+            if key.as_str().is_some_and(|name| name == "length") {
                 return Ok(true);
             }
             Ok(canonical_string_index(key).is_some_and(|i| i < crate::value::utf16_len(s)))
@@ -4868,15 +4868,19 @@ fn object_has_own_key(vm: &Vm, obj: &Value, key: &PropertyKey) -> error::Result<
 fn to_property_key_descriptor(vm: &mut Vm, value: &Value) -> error::Result<PropertyKey> {
     match vm.to_property_key_value(value)? {
         Value::String(s) => Ok(PropertyKey::from_rc(s)),
-        Value::Symbol(id) => Ok(PropertyKey::Symbol(id)),
+        Value::Symbol(id) => Ok(PropertyKey::symbol(id)),
         _ => unreachable!("ToPropertyKey returns only String or Symbol"),
     }
 }
 
 pub(crate) fn property_key_to_value(key: &PropertyKey) -> Value {
-    match key {
-        PropertyKey::Str(s) => Value::String(s.clone()),
-        PropertyKey::Symbol(id) => Value::Symbol(*id),
+    if let Some(id) = key.symbol_id() {
+        Value::Symbol(id)
+    } else {
+        Value::String(
+            key.string_arc()
+                .expect("non-Symbol property keys have string values"),
+        )
     }
 }
 
@@ -5667,42 +5671,41 @@ fn ordinary_own_property_keys(
                 if enumerable_only && !desc.enumerable {
                     continue;
                 }
-                match k {
-                    PropertyKey::Str(s) if include_strings => {
-                        if let Some(index) = array_index_key(s) {
-                            reserve_ordinary_own_keys_vec(
-                                &mut index_keys,
-                                #[cfg(test)]
-                                reservation_failure,
-                                #[cfg(test)]
-                                crate::vm::OrdinaryOwnKeysReservationSite::Index,
-                                "ordinary own-key index list is too large",
-                            )?;
-                            index_keys.push(index);
-                        } else {
-                            reserve_ordinary_own_keys_vec(
-                                &mut string_keys,
-                                #[cfg(test)]
-                                reservation_failure,
-                                #[cfg(test)]
-                                crate::vm::OrdinaryOwnKeysReservationSite::String,
-                                "ordinary own-key string list is too large",
-                            )?;
-                            string_keys.push(PropertyKey::from(s.clone()));
-                        }
+                if let Some(id) = k.symbol_id() {
+                    if !include_symbols {
+                        continue;
                     }
-                    PropertyKey::Symbol(id) if include_symbols => {
+                    reserve_ordinary_own_keys_vec(
+                        &mut symbol_keys,
+                        #[cfg(test)]
+                        reservation_failure,
+                        #[cfg(test)]
+                        crate::vm::OrdinaryOwnKeysReservationSite::Symbol,
+                        "ordinary own-key Symbol list is too large",
+                    )?;
+                    symbol_keys.push(PropertyKey::symbol(id));
+                } else if include_strings {
+                    if let Some(index) = k.array_index() {
                         reserve_ordinary_own_keys_vec(
-                            &mut symbol_keys,
+                            &mut index_keys,
                             #[cfg(test)]
                             reservation_failure,
                             #[cfg(test)]
-                            crate::vm::OrdinaryOwnKeysReservationSite::Symbol,
-                            "ordinary own-key Symbol list is too large",
+                            crate::vm::OrdinaryOwnKeysReservationSite::Index,
+                            "ordinary own-key index list is too large",
                         )?;
-                        symbol_keys.push(PropertyKey::Symbol(*id));
+                        index_keys.push(index);
+                    } else {
+                        reserve_ordinary_own_keys_vec(
+                            &mut string_keys,
+                            #[cfg(test)]
+                            reservation_failure,
+                            #[cfg(test)]
+                            crate::vm::OrdinaryOwnKeysReservationSite::String,
+                            "ordinary own-key string list is too large",
+                        )?;
+                        string_keys.push(k.clone());
                     }
-                    _ => {}
                 }
             }
 
@@ -5712,7 +5715,7 @@ fn ordinary_own_property_keys(
                 push_unique_key(
                     &mut keys,
                     &mut seen,
-                    PropertyKey::from(n.to_string().as_str()),
+                    PropertyKey::from_array_index(n),
                     #[cfg(test)]
                     reservation_failure,
                 )?;
@@ -5742,7 +5745,7 @@ fn ordinary_own_property_keys(
                 push_unique_key(
                     &mut keys,
                     &mut seen,
-                    PropertyKey::from(i.to_string().as_str()),
+                    PropertyKey::from_integer_index(i as u64),
                     #[cfg(test)]
                     reservation_failure,
                 )?;
@@ -5867,7 +5870,7 @@ fn object_keys(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Resu
         if own_property_descriptor_for_key_or_throw(vm, &obj, &key)?
             .is_some_and(|desc| desc.enumerable)
         {
-            if let PropertyKey::Str(name) = key {
+            if let Some(name) = key.into_string_arc() {
                 reserve_own_key_consumer_values(
                     vm,
                     &mut values,
@@ -5904,7 +5907,7 @@ fn object_values(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Re
             {
                 continue;
             }
-            let value = vm.get_property(&obj, k)?;
+            let value = vm.get_property(&obj, &k)?;
             reserve_own_key_consumer_values(
                 vm,
                 &mut vals,
@@ -5942,7 +5945,7 @@ fn object_entries(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::R
             {
                 continue;
             }
-            let PropertyKey::Str(name) = k else {
+            let Some(name) = k.into_string_arc() else {
                 continue;
             };
             let value = vm.get_property(&obj, name.as_ref())?;
@@ -6233,7 +6236,7 @@ fn object_get_own_property_names(
     let keys = own_property_keys_or_throw(vm, &obj, false, true, false)?;
     let mut values = Vec::new();
     for key in keys {
-        let PropertyKey::Str(name) = key else {
+        let Some(name) = key.into_string_arc() else {
             continue;
         };
         reserve_own_key_consumer_values(
@@ -6264,7 +6267,7 @@ fn object_get_own_property_symbols(
     let keys = own_property_keys_or_throw(vm, &obj, false, false, true)?;
     let mut symbols = Vec::new();
     for key in keys {
-        let PropertyKey::Symbol(id) = key else {
+        let Some(id) = key.symbol_id() else {
             continue;
         };
         reserve_own_key_consumer_values(
@@ -6535,8 +6538,8 @@ fn proxy_own_keys_from_array_like(
             vm.consume_fuel()?;
             let item = vm.get_property(key_list, &index.to_string())?;
             let key = match item {
-                Value::String(value) => PropertyKey::Str(value),
-                Value::Symbol(id) => PropertyKey::Symbol(id),
+                Value::String(value) => PropertyKey::from_rc(value),
+                Value::Symbol(id) => PropertyKey::symbol(id),
                 _ => {
                     return Err(Error::type_err(
                         "Proxy ownKeys trap entries must be strings or symbols",
@@ -6730,8 +6733,8 @@ pub(crate) fn own_property_keys_or_throw(
             let mut filtered = Vec::new();
             for key in frame.trap_keys {
                 vm.consume_fuel()?;
-                let included = matches!(&key, PropertyKey::Str(_) if frame.include_strings)
-                    || matches!(&key, PropertyKey::Symbol(_) if frame.include_symbols);
+                let included = (!key.is_symbol() && frame.include_strings)
+                    || (key.is_symbol() && frame.include_symbols);
                 if !included {
                     continue;
                 }
@@ -6922,7 +6925,7 @@ fn integrity_descriptor_for_key(
             return None;
         };
         key.as_str()
-            .and_then(|name| namespace.exports.lock().get(name).cloned())
+            .and_then(|name| namespace.exports.lock().get(name.as_ref()).cloned())
     });
     if let Some((environment, name)) = namespace_binding {
         observe_namespace_binding_initialized(vm, environment, name)?;
@@ -6934,7 +6937,7 @@ fn integrity_descriptor_for_key(
 
     Ok(vm.heap.with_obj(idx.0, |object| {
         if let HeapObj::Array(array) = object {
-            if key.as_str() == Some("length") {
+            if key.as_str().is_some_and(|name| name == "length") {
                 if let Some(descriptor) = array.props.lock().get(key) {
                     return Some(IntegrityDescriptor {
                         configurable: descriptor.configurable,
@@ -6948,7 +6951,7 @@ fn integrity_descriptor_for_key(
                     },
                 );
             }
-            if let Some(index) = key.as_str().and_then(crate::value::parse_array_index) {
+            if let Some(index) = key.array_index().map(|index| index as usize) {
                 if let Some(descriptor) = array.props.lock().get(key) {
                     return Some(IntegrityDescriptor {
                         configurable: descriptor.configurable,
@@ -6972,16 +6975,15 @@ fn integrity_descriptor_for_key(
         }
         if let HeapObj::Object(data) = object {
             if let Some(Value::String(value)) = data.primitive.lock().as_ref() {
-                if key.as_str() == Some("length") {
+                if key.as_str().is_some_and(|name| name == "length") {
                     return Some(IntegrityDescriptor {
                         configurable: false,
                         writable: Some(false),
                     });
                 }
                 if key
-                    .as_str()
-                    .and_then(crate::value::parse_array_index)
-                    .is_some_and(|index| index < crate::value::utf16_len(value))
+                    .array_index()
+                    .is_some_and(|index| (index as usize) < crate::value::utf16_len(value))
                 {
                     return Some(IntegrityDescriptor {
                         configurable: false,
@@ -7493,7 +7495,8 @@ pub(crate) fn object_define_properties(
 }
 
 pub(crate) fn canonical_string_index(key: &PropertyKey) -> Option<usize> {
-    canonical_string_index_name(key.as_str()?)
+    let name = key.as_str()?;
+    canonical_string_index_name(&name)
 }
 
 pub(crate) fn canonical_string_index_name(name: &str) -> Option<usize> {
@@ -7506,7 +7509,7 @@ pub(crate) fn canonical_string_index_name(name: &str) -> Option<usize> {
 }
 
 fn string_exotic_own_property_descriptor(s: &str, key: &PropertyKey) -> Option<PropertyDescriptor> {
-    if key.as_str() == Some("length") {
+    if key.as_str().is_some_and(|name| name == "length") {
         let mut desc = PropertyDescriptor::data(Value::Number(crate::value::utf16_len(s) as f64));
         desc.writable = false;
         desc.enumerable = false;
@@ -7551,7 +7554,7 @@ fn own_property_descriptor_for_key(
 
         let array_descriptor = vm.heap.with_obj(idx.0, |o| {
             if let HeapObj::Array(a) = o {
-                if key.as_str() == Some("length") {
+                if key.as_str().is_some_and(|name| name == "length") {
                     if let Some(desc) = a.props.lock().get(key).cloned() {
                         return Some(desc);
                     }
@@ -7575,7 +7578,7 @@ fn own_property_descriptor_for_key(
             if let HeapObj::ModuleNamespace(namespace) = o {
                 return key
                     .as_str()
-                    .and_then(|name| namespace.exports.lock().get(name).cloned());
+                    .and_then(|name| namespace.exports.lock().get(name.as_ref()).cloned());
             }
             None
         });
@@ -7817,7 +7820,7 @@ pub(crate) fn own_property_descriptor_for_key_or_throw(
                 if let HeapObj::ModuleNamespace(namespace) = o {
                     return key
                         .as_str()
-                        .and_then(|name| namespace.exports.lock().get(name).cloned());
+                        .and_then(|name| namespace.exports.lock().get(name.as_ref()).cloned());
                 }
                 None
             });
@@ -8208,7 +8211,7 @@ fn object_define_property_record_result(
             _ => unreachable!("DefineOwnProperty target remains an object"),
         };
         let target = ordinary_target;
-        let is_array_length = key.as_str() == Some("length")
+        let is_array_length = key.as_str().is_some_and(|name| name == "length")
                     && vm.heap.with_obj(idx.0, |object| {
                         matches!(object, HeapObj::Array(array) if !array.is_arguments.load(Ordering::Relaxed))
                     });
@@ -8298,11 +8301,9 @@ fn object_define_property_record_result(
             }
             return Ok(success);
         }
-        if key
-            .as_str()
-            .and_then(crate::value::parse_array_index)
-            .is_some_and(|index| vm.array_index_blocked_by_non_writable_length(idx.0, index))
-        {
+        if key.array_index().is_some_and(|index| {
+            vm.array_index_blocked_by_non_writable_length(idx.0, index as usize)
+        }) {
             if throw_on_failure {
                 return Err(Error::type_err(
                     "Cannot define Array index with non-writable length",
@@ -8317,7 +8318,9 @@ fn object_define_property_record_result(
                 if throw_on_failure {
                     return Err(Error::type_err(format!(
                         "Cannot define property '{}', object is not extensible",
-                        key.as_str().unwrap_or("Symbol")
+                        key.as_str()
+                            .map(|name| name.to_string())
+                            .unwrap_or_else(|| "Symbol".to_string())
                     )));
                 }
                 return Ok(false);
@@ -8802,7 +8805,7 @@ fn install_async_function_intrinsic(
             let mut tag_desc = data_prop(Value::String(Arc::from("AsyncFunction")));
             tag_desc.writable = false;
             props.insert(
-                PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
+                PropertyKey::symbol(vm.well_known_symbols.to_string_tag),
                 tag_desc,
             );
         });
@@ -8873,7 +8876,7 @@ fn iterator_from(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Re
         ));
     }
 
-    let iterator_key = PropertyKey::Symbol(vm.well_known_symbols.iterator);
+    let iterator_key = PropertyKey::symbol(vm.well_known_symbols.iterator);
     let method = vm.get_property_by_key(&input, &iterator_key)?;
     let iterator = if method.is_nullish() {
         input
@@ -9319,7 +9322,7 @@ fn allocate_iterator_zip(
 fn get_sync_iterator(vm: &mut Vm, iterable: Value) -> error::Result<IteratorHelperInner> {
     let iterable_pin = vm.pin(&iterable);
     let result = (|| {
-        let iterator_key = PropertyKey::Symbol(vm.well_known_symbols.iterator);
+        let iterator_key = PropertyKey::symbol(vm.well_known_symbols.iterator);
         let method = vm.get_property_by_key(&iterable, &iterator_key)?;
         if method.is_nullish() || !is_callable(&method, &vm.heap) {
             return Err(Error::type_err("value is not iterable"));
@@ -9603,7 +9606,7 @@ fn iterator_zip_keyed(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> erro
 }
 
 fn iterator_concat(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
-    let iterator_key = PropertyKey::Symbol(vm.well_known_symbols.iterator);
+    let iterator_key = PropertyKey::symbol(vm.well_known_symbols.iterator);
     let mut iterables = Vec::with_capacity(args.len());
     let mut pin_count = 0;
     let result = (|| -> error::Result<Value> {
@@ -9935,7 +9938,7 @@ fn get_iterator_flattenable_reject_primitives(
         return Err(Error::type_err(primitive_error));
     }
     let mapped_pin = vm.pin(&mapped);
-    let iterator_key = PropertyKey::Symbol(vm.well_known_symbols.iterator);
+    let iterator_key = PropertyKey::symbol(vm.well_known_symbols.iterator);
     let method = match vm.get_property_by_key(&mapped, &iterator_key) {
         Ok(method) => method,
         Err(error) => {
@@ -10950,7 +10953,7 @@ fn iterator_to_string_tag_set(
         vm,
         args,
         this,
-        PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
+        PropertyKey::symbol(vm.well_known_symbols.to_string_tag),
     )
 }
 
@@ -11042,7 +11045,7 @@ fn install_iterator_intrinsic_in_env(
                 data_prop(Value::Object(helper_return)),
             ),
             (
-                PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
+                PropertyKey::symbol(vm.well_known_symbols.to_string_tag),
                 helper_tag,
             ),
         ])),
@@ -11127,15 +11130,15 @@ fn install_iterator_intrinsic_in_env(
                 ),
             );
             props.insert(
-                PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
+                PropertyKey::symbol(vm.well_known_symbols.to_string_tag),
                 accessor_prop(Value::Object(tag_get), Value::Object(tag_set)),
             );
             props.insert(
-                PropertyKey::Symbol(vm.well_known_symbols.iterator),
+                PropertyKey::symbol(vm.well_known_symbols.iterator),
                 data_prop(Value::Object(iterator_fn)),
             );
             props.insert(
-                PropertyKey::Symbol(vm.well_known_symbols.dispose),
+                PropertyKey::symbol(vm.well_known_symbols.dispose),
                 data_prop(Value::Object(dispose_fn)),
             );
             props.insert(PropertyKey::from("map"), data_prop(Value::Object(map)));
@@ -11499,7 +11502,7 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
                     let mut tag = data_prop(Value::String(Arc::from("BigInt")));
                     tag.writable = false;
                     obj.props().lock().insert(
-                        PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
+                        PropertyKey::symbol(vm.well_known_symbols.to_string_tag),
                         tag,
                     );
                     obj.props().lock().insert(
@@ -11606,7 +11609,7 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
         has_instance_desc.enumerable = false;
         has_instance_desc.configurable = false;
         props.insert(
-            PropertyKey::Symbol(vm.well_known_symbols.has_instance),
+            PropertyKey::symbol(vm.well_known_symbols.has_instance),
             has_instance_desc,
         );
         let restricted = PropertyDescriptor {

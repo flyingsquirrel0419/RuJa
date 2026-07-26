@@ -221,9 +221,13 @@ fn serialize_json_property(
     if depth > MAX_STRINGIFY_DEPTH {
         return Ok(None);
     }
-    let key_value = match &key {
-        PropertyKey::Str(key) => Value::String(key.clone()),
-        PropertyKey::Symbol(symbol) => Value::Symbol(*symbol),
+    let key_value = if let Some(symbol) = key.symbol_id() {
+        Value::Symbol(symbol)
+    } else {
+        Value::String(
+            key.string_arc()
+                .expect("non-Symbol property keys have string values"),
+        )
     };
     let mut value = vm.get_property_by_key(holder, &key)?;
     let value_pin = vm.pin(&value);
@@ -346,7 +350,7 @@ fn serialize_json_value(
                     let part = serialize_json_property(
                         vm,
                         &value,
-                        PropertyKey::from(index.to_string()),
+                        PropertyKey::from_integer_index(index as u64),
                         &child_indent,
                         ctx,
                         depth + 1,
@@ -376,7 +380,7 @@ fn serialize_json_value(
                 };
                 let mut pairs = Vec::new();
                 for key in keys {
-                    let PropertyKey::Str(key_string) = &key else {
+                    let Some(key_string) = key.as_str() else {
                         continue;
                     };
                     if let Some(serialized) = serialize_json_property(
@@ -388,12 +392,16 @@ fn serialize_json_value(
                         depth + 1,
                     )? {
                         if ctx.gap.is_empty() {
-                            pairs.push(format!("{}:{}", quote_json_string(key_string), serialized));
+                            pairs.push(format!(
+                                "{}:{}",
+                                quote_json_string(&key_string),
+                                serialized
+                            ));
                         } else {
                             pairs.push(format!(
                                 "{}{}: {}",
                                 child_indent,
-                                quote_json_string(key_string),
+                                quote_json_string(&key_string),
                                 serialized
                             ));
                         }
@@ -629,16 +637,17 @@ fn json_source_child<'a>(
     node: &'a JsonSourceNode,
     key: &PropertyKey,
 ) -> Option<&'a JsonSourceNode> {
-    match (&node.kind, key) {
-        (JsonSourceKind::Array(children), PropertyKey::Str(key)) => key
-            .parse::<usize>()
-            .ok()
-            .and_then(|index| children.get(index)),
-        (JsonSourceKind::Object(children), PropertyKey::Str(key)) => children
-            .iter()
-            .rev()
-            .find_map(|(candidate, child)| (candidate == key).then_some(child)),
-        _ => None,
+    match &node.kind {
+        JsonSourceKind::Array(children) => key
+            .array_index()
+            .and_then(|index| children.get(index as usize)),
+        JsonSourceKind::Object(children) => key.as_str().and_then(|key| {
+            children
+                .iter()
+                .rev()
+                .find_map(|(candidate, child)| (candidate.as_ref() == key).then_some(child))
+        }),
+        JsonSourceKind::Primitive(_) => None,
     }
 }
 
@@ -671,7 +680,7 @@ fn internalize_json_property(
                     length.trunc().min(9_007_199_254_740_991.0) as usize
                 };
                 for index in 0..length {
-                    let key = PropertyKey::from(index.to_string());
+                    let key = PropertyKey::from_integer_index(index as u64);
                     let revived = internalize_json_property(
                         vm,
                         reviver,
@@ -705,9 +714,13 @@ fn internalize_json_property(
                 }
             }
         }
-        let key = match &name {
-            PropertyKey::Str(key) => Value::String(key.clone()),
-            PropertyKey::Symbol(symbol) => Value::Symbol(*symbol),
+        let key = if let Some(symbol) = name.symbol_id() {
+            Value::Symbol(symbol)
+        } else {
+            Value::String(
+                name.string_arc()
+                    .expect("non-Symbol property keys have string values"),
+            )
         };
         let context = Value::Object(vm.new_object()?);
         if !matches!(value, Value::Object(_)) {
@@ -1888,7 +1901,7 @@ pub(crate) fn reflect_get(vm: &mut Vm, args: &[Value], _: Option<Value>) -> erro
     match &key {
         Value::String(s) => vm.get_property_rx(&target, s, receiver),
         Value::Symbol(id) => {
-            vm.get_property_key_rx(&target, &crate::value::PropertyKey::Symbol(*id), receiver)
+            vm.get_property_key_rx(&target, &crate::value::PropertyKey::symbol(*id), receiver)
         }
         _ => unreachable!("ToPropertyKey returns only String or Symbol"),
     }
@@ -1905,7 +1918,7 @@ pub(crate) fn reflect_set(vm: &mut Vm, args: &[Value], _: Option<Value>) -> erro
         Value::String(s) => vm.try_set_property_with_receiver(&target, s, value, &receiver),
         Value::Symbol(id) => vm.try_set_property_key_with_receiver(
             &target,
-            &PropertyKey::Symbol(*id),
+            &PropertyKey::symbol(*id),
             value,
             &receiver,
         ),
@@ -1921,7 +1934,7 @@ pub(crate) fn reflect_has(vm: &mut Vm, args: &[Value], _: Option<Value>) -> erro
     let key = reflect_property_key(vm, args)?;
     let pkey = match key {
         Value::String(s) => PropertyKey::from(s.as_ref()),
-        Value::Symbol(id) => PropertyKey::Symbol(id),
+        Value::Symbol(id) => PropertyKey::symbol(id),
         _ => unreachable!("ToPropertyKey returns only String or Symbol"),
     };
     let has = vm.has_property_key(&target, &pkey)?;
@@ -1941,7 +1954,7 @@ pub(crate) fn reflect_delete_property(
     let key = reflect_property_key(vm, args)?;
     let pkey = match key {
         Value::String(s) => PropertyKey::from_rc(s),
-        Value::Symbol(id) => PropertyKey::Symbol(id),
+        Value::Symbol(id) => PropertyKey::symbol(id),
         _ => unreachable!("ToPropertyKey returns only String or Symbol"),
     };
     vm.delete_property_key(&target, &pkey).map(Value::Bool)
@@ -2102,7 +2115,7 @@ pub(crate) fn build_reflect_in_env(
         tag.enumerable = false;
         tag.configurable = true;
         props.insert(
-            PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
+            PropertyKey::symbol(vm.well_known_symbols.to_string_tag),
             tag,
         );
         let obj = HeapObj::Object(ObjectData {
@@ -2137,7 +2150,7 @@ pub(crate) fn build_json(vm: &mut Vm) -> error::Result<Value> {
     tag.enumerable = false;
     tag.configurable = true;
     props.insert(
-        PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
+        PropertyKey::symbol(vm.well_known_symbols.to_string_tag),
         tag,
     );
     let obj = HeapObj::Object(ObjectData {

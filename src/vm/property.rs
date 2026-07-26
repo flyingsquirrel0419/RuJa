@@ -479,7 +479,7 @@ impl Vm {
                             _ => None,
                         })
                         .is_some_and(|value| {
-                            key.as_str() == Some("length")
+                            key.as_str().is_some_and(|name| name == "length")
                                 || crate::builtins::canonical_string_index(key)
                                     .is_some_and(|index| index < crate::value::utf16_len(value))
                         });
@@ -497,7 +497,7 @@ impl Vm {
                     array_index: None,
                 };
             };
-            let Some(index) = key.as_str().and_then(crate::value::parse_array_index) else {
+            let Some(index) = key.array_index().map(|index| index as usize) else {
                 return OrdinaryPropertyStoragePlan {
                     kind: OrdinaryPropertyStorageKind::Property,
                     array_index: None,
@@ -676,7 +676,7 @@ impl Vm {
             let HeapObj::Array(array) = object else {
                 return None;
             };
-            let index = key.as_str().and_then(crate::value::parse_array_index)?;
+            let index = key.array_index().map(|index| index as usize)?;
             if array.props.lock().contains_key(key)
                 || index >= array.items.lock().len()
                 || !array.is_dense_present(index)
@@ -731,8 +731,8 @@ impl Vm {
         }
 
         let mapped_arguments = key
-            .as_str()
-            .and_then(crate::value::parse_array_index)
+            .array_index()
+            .map(|index| index as usize)
             .and_then(|index| {
                 self.arguments_mapped_binding_for_index(idx.0, index)
                     .map(|(environment, name)| (index, environment, name))
@@ -759,11 +759,10 @@ impl Vm {
             }
             if let HeapObj::Object(data) = object {
                 if let Some(Value::String(value)) = data.primitive.lock().as_ref() {
-                    return key.as_str() == Some("length")
-                        || key
-                            .as_str()
-                            .and_then(crate::value::parse_array_index)
-                            .is_some_and(|index| index < crate::value::utf16_len(value));
+                    return key.as_str().is_some_and(|name| name == "length")
+                        || key.array_index().is_some_and(|index| {
+                            (index as usize) < crate::value::utf16_len(value)
+                        });
                 }
             }
             false
@@ -908,7 +907,7 @@ impl Vm {
             }
         }
         if let Some(name) = key.as_str() {
-            self.ic_invalidate(idx.0, name);
+            self.ic_invalidate(idx.0, &name);
         }
         Ok(())
     }
@@ -986,7 +985,7 @@ impl Vm {
         pkey: &crate::value::PropertyKey,
         value: &Value,
     ) {
-        let Some(index) = pkey.as_str().and_then(crate::value::parse_array_index) else {
+        let Some(index) = pkey.array_index().map(|index| index as usize) else {
             return;
         };
         if let Some((env, name)) = self.arguments_mapped_binding_for_index(receiver_idx, index) {
@@ -1007,8 +1006,8 @@ impl Vm {
         if base_idx != receiver_idx {
             return false;
         }
-        key.as_str()
-            .and_then(crate::value::parse_array_index)
+        key.array_index()
+            .map(|index| index as usize)
             .and_then(|index| self.arguments_mapped_binding_for_index(base_idx.0, index))
             .is_some_and(|(env, name)| {
                 crate::environment::set(&self.heap, env, &name, value.clone());
@@ -1458,7 +1457,8 @@ impl Vm {
         let Value::Object(idx) = obj else {
             return Ok(GetOwnPropertyOutcome::Absent);
         };
-        let key_str = key.as_str();
+        let key_str_value = key.as_str();
+        let key_str = key_str_value.as_deref();
 
         // These instance-field compatibility paths stand in for prototype
         // accessors, so an ordinary own property must still be able to shadow
@@ -1687,7 +1687,7 @@ impl Vm {
                 matches!(object, HeapObj::Object(data) if data.class_name.as_deref() == Some("global"))
             });
             if is_global_this {
-                if let Some(value) = crate::environment::get(&self.heap, self.global, name) {
+                if let Some(value) = crate::environment::get(&self.heap, self.global, &name) {
                     return Ok(GetOwnPropertyOutcome::Value(value));
                 }
             }
@@ -2025,12 +2025,12 @@ impl Vm {
 
             if let Some(name) = key.as_str() {
                 let namespace_export = self.heap.with_obj(idx.0, |o| {
-                    matches!(o, HeapObj::ModuleNamespace(namespace) if namespace.exports.lock().contains_key(name))
+                    matches!(o, HeapObj::ModuleNamespace(namespace) if namespace.exports.lock().contains_key(name.as_ref()))
                 });
                 if namespace_export {
                     return Ok(false);
                 }
-                if let Some(slots) = self.typed_array_numeric_slots(idx, name) {
+                if let Some(slots) = self.typed_array_numeric_slots(idx, &name) {
                     return Ok(!self.is_valid_typed_array_numeric_index(&slots));
                 }
             }
@@ -2054,7 +2054,7 @@ impl Vm {
                         }
                         return Some(false);
                     }
-                    if let Some(i) = key.as_str().and_then(crate::value::parse_array_index) {
+                    if let Some(i) = key.array_index().map(|index| index as usize) {
                         let (exists, configurable) = {
                             let props = a.props.lock();
                             if let Some(desc) = props.get(key) {
@@ -2118,14 +2118,14 @@ impl Vm {
                 o.props().lock().shift_remove(key);
             });
             if let Some(name) = key.as_str() {
-                self.ic_invalidate(idx.0, name);
+                self.ic_invalidate(idx.0, &name);
                 let realm_env = self.realm_globals.iter().find_map(|(env, global)| {
                     matches!(global, Value::Object(global_idx) if global_idx == &idx)
                         .then_some(GcIdx(*env))
                 });
                 if let Some(realm_env) = realm_env {
                     crate::environment::delete_global_var_binding_exact(
-                        &self.heap, realm_env, name,
+                        &self.heap, realm_env, &name,
                     );
                 }
             }
@@ -2221,7 +2221,7 @@ impl Vm {
         desc: crate::value::PropertyDescriptor,
     ) -> error::Result<bool> {
         if let Value::Object(idx) = obj {
-            let is_array_length = key.as_str() == Some("length")
+            let is_array_length = key.as_str().is_some_and(|name| name == "length")
                 && self.heap.with_obj(idx.0, |object| {
                     matches!(object, HeapObj::Array(array) if !array.is_arguments.load(std::sync::atomic::Ordering::Relaxed))
                 });
@@ -2270,7 +2270,7 @@ impl Vm {
             )? {
                 return Ok(success);
             }
-            let array_index = key.as_str().and_then(crate::value::parse_array_index);
+            let array_index = key.array_index().map(|index| index as usize);
             if array_index
                 .is_some_and(|index| self.array_index_blocked_by_non_writable_length(idx.0, index))
             {
@@ -3170,7 +3170,7 @@ impl Vm {
         receiver: &Value,
         traversal: &mut PropertyTraversal,
     ) -> error::Result<OrdinarySetOutcome> {
-        let key = pkey.as_str().unwrap_or("");
+        let key = pkey.as_str().unwrap_or_default();
         loop {
             self.set_arguments_mapping_if_same_receiver(
                 &Value::Object(base_idx),
@@ -3186,7 +3186,7 @@ impl Vm {
             }
             let receiver_is_base =
                 matches!(receiver, Value::Object(receiver_idx) if *receiver_idx == base_idx);
-            if let Some(slots) = self.typed_array_numeric_slots(base_idx, key) {
+            if let Some(slots) = self.typed_array_numeric_slots(base_idx, &key) {
                 if receiver_is_base {
                     self.set_typed_array_numeric_slots(base_idx, slots, &value)?;
                     return Ok(OrdinarySetOutcome::Complete(true));
@@ -3205,7 +3205,7 @@ impl Vm {
                         return None;
                     };
                     if !a.is_arguments.load(std::sync::atomic::Ordering::Relaxed)
-                        && pkey.as_str() == Some("length")
+                        && pkey.as_str().is_some_and(|name| name == "length")
                     {
                         let length = a.items.lock().len().max(a.sparse_max.lock().unwrap_or(0));
                         let mut desc =
@@ -3214,7 +3214,7 @@ impl Vm {
                         desc.configurable = false;
                         return Some(desc);
                     }
-                    let index = pkey.as_str().and_then(crate::value::parse_array_index)?;
+                    let index = pkey.array_index().map(|index| index as usize)?;
                     if !a.is_dense_present(index) {
                         return None;
                     }
@@ -3349,7 +3349,7 @@ impl Vm {
             return None;
         }
         let name = key.as_str()?;
-        let slots = self.typed_array_numeric_slots(*idx, name)?;
+        let slots = self.typed_array_numeric_slots(*idx, &name)?;
         let Some(index) = self.typed_array_valid_index(&slots) else {
             return Some(None);
         };
@@ -3419,7 +3419,7 @@ impl Vm {
             return None;
         };
         let name = key.as_str()?;
-        let slots = self.typed_array_numeric_slots(*idx, name)?;
+        let slots = self.typed_array_numeric_slots(*idx, &name)?;
         Some(self.is_valid_typed_array_numeric_index(&slots))
     }
 
@@ -3479,7 +3479,7 @@ impl Vm {
         let Some(name) = key.as_str() else {
             return Ok(None);
         };
-        let Some(slots) = self.typed_array_numeric_slots(*idx, name) else {
+        let Some(slots) = self.typed_array_numeric_slots(*idx, &name) else {
             return Ok(None);
         };
         if self.typed_array_valid_index(&slots).is_none()
@@ -3621,7 +3621,7 @@ impl Vm {
         )? {
             return Ok(success);
         }
-        let receiver_is_array_length = pkey.as_str() == Some("length")
+        let receiver_is_array_length = pkey.as_str().is_some_and(|name| name == "length")
             && self.heap.with_obj(receiver_idx.0, |object| {
                 matches!(object, HeapObj::Array(array) if !array.is_arguments.load(std::sync::atomic::Ordering::Relaxed))
             });
@@ -3636,7 +3636,7 @@ impl Vm {
             if let HeapObj::ModuleNamespace(namespace) = object {
                 return pkey
                     .as_str()
-                    .and_then(|name| namespace.exports.lock().get(name).cloned());
+                    .and_then(|name| namespace.exports.lock().get(name.as_ref()).cloned());
             }
             None
         });
@@ -3654,7 +3654,7 @@ impl Vm {
                 }
             }
         }
-        if let Some(index) = pkey.as_str().and_then(crate::value::parse_array_index) {
+        if let Some(index) = pkey.array_index().map(|index| index as usize) {
             let is_array = self
                 .heap
                 .with_obj(receiver_idx.0, |object| matches!(object, HeapObj::Array(_)));
@@ -3703,7 +3703,7 @@ impl Vm {
             let Some(Value::String(value)) = primitive.as_ref() else {
                 return false;
             };
-            pkey.as_str() == Some("length")
+            pkey.as_str().is_some_and(|name| name == "length")
                 || crate::builtins::canonical_string_index(&pkey)
                     .is_some_and(|index| index < crate::value::utf16_len(value))
         });
@@ -3765,7 +3765,7 @@ impl Vm {
             return Ok(success);
         }
 
-        if let Some(index) = key.as_str().and_then(crate::value::parse_array_index) {
+        if let Some(index) = key.array_index().map(|index| index as usize) {
             let blocked_by_array_length =
                 self.array_index_blocked_by_non_writable_length(object_idx.0, index);
             if blocked_by_array_length {
@@ -3813,7 +3813,7 @@ impl Vm {
             return Ok(success);
         }
 
-        let object_is_array_length = key.as_str() == Some("length")
+        let object_is_array_length = key.as_str().is_some_and(|name| name == "length")
             && self.heap.with_obj(object_idx.0, |heap_object| {
                 matches!(heap_object, HeapObj::Array(array) if !array.is_arguments.load(std::sync::atomic::Ordering::Relaxed))
             });
@@ -3824,12 +3824,9 @@ impl Vm {
         let current =
             crate::builtins::own_property_descriptor_for_key_or_throw(self, &object, &key)?;
         if current.is_none()
-            && key
-                .as_str()
-                .and_then(crate::value::parse_array_index)
-                .is_some_and(|index| {
-                    self.array_index_blocked_by_non_writable_length(object_idx.0, index)
-                })
+            && key.array_index().is_some_and(|index| {
+                self.array_index_blocked_by_non_writable_length(object_idx.0, index as usize)
+            })
         {
             return Ok(false);
         }
@@ -4537,7 +4534,7 @@ impl Vm {
                         .lock()
                         .iter()
                         .filter_map(|(key, descriptor)| {
-                            let index = key.as_str().and_then(crate::value::parse_array_index)?;
+                            let index = key.array_index().map(|index| index as usize)?;
                             (index >= new_len && !descriptor.configurable).then_some(index + 1)
                         })
                         .max()
@@ -4577,8 +4574,8 @@ impl Vm {
                     // indices must remain and length rolls back above it.
                     let mut props = array.props.lock();
                     props.retain(|key, descriptor| {
-                        !key.as_str()
-                            .and_then(crate::value::parse_array_index)
+                        !key.array_index()
+                            .map(|index| index as usize)
                             .is_some_and(|index| index >= effective_len && descriptor.configurable)
                     });
                 }

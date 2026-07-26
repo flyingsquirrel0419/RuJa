@@ -298,7 +298,7 @@ fn get_module_namespace(
     tag.configurable = false;
     let mut props = IndexMap::new();
     props.insert(
-        crate::value::PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
+        crate::value::PropertyKey::symbol(vm.well_known_symbols.to_string_tag),
         tag,
     );
     let namespace = GcIdx(vm.heap.allocate(crate::value::HeapObj::ModuleNamespace(

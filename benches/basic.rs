@@ -1,4 +1,6 @@
 use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion};
+use indexmap::IndexMap;
+use ruja::value::PropertyKey;
 use ruja::{Value, Vm};
 
 fn bench_fib(c: &mut Criterion) {
@@ -89,6 +91,41 @@ fn bench_array_index_set(c: &mut Criterion) {
         b.iter(|| {
             let mut vm = Vm::new().expect("failed to initialize VM");
             vm.run(sparse_set).expect("sparse Set failed")
+        })
+    });
+}
+
+fn bench_property_key_maps(c: &mut Criterion) {
+    const KEY_COUNT: u32 = 10_000;
+    let numeric_keys: Vec<_> = (0..KEY_COUNT).map(PropertyKey::from_array_index).collect();
+    let numeric_map: IndexMap<_, _> = numeric_keys
+        .iter()
+        .cloned()
+        .enumerate()
+        .map(|(index, key)| (key, index))
+        .collect();
+    c.bench_function("property_key_numeric_lookup_10k", |b| {
+        b.iter(|| {
+            for key in &numeric_keys {
+                black_box(numeric_map.get(key));
+            }
+        })
+    });
+
+    let string_keys: Vec<_> = (0..KEY_COUNT)
+        .map(|index| PropertyKey::from_string(format!("field{index}")))
+        .collect();
+    let string_map: IndexMap<_, _> = string_keys
+        .iter()
+        .cloned()
+        .enumerate()
+        .map(|(index, key)| (key, index))
+        .collect();
+    c.bench_function("property_key_string_lookup_10k", |b| {
+        b.iter(|| {
+            for key in &string_keys {
+                black_box(string_map.get(key));
+            }
         })
     });
 }
@@ -302,6 +339,7 @@ criterion_group!(
     bench_tight_loop,
     bench_array_push,
     bench_array_index_set,
+    bench_property_key_maps,
     bench_inline_cache,
     bench_ordinary_set_receiver,
     bench_integrity_level,

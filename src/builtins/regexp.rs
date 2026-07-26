@@ -538,7 +538,7 @@ fn regexp_split_append(
     index: usize,
     value: Value,
 ) -> error::Result<()> {
-    vm.define_data_property(array, PropertyKey::from(index.to_string().as_str()), value)
+    vm.define_data_property(array, PropertyKey::from_integer_index(index as u64), value)
 }
 
 fn new_regexp_string_iterator(
@@ -598,7 +598,7 @@ pub(crate) fn setup_regexp_string_iterator_proto_in_env(
             let mut props = obj.props().lock();
             props.insert(PropertyKey::from("next"), data_prop(Value::Object(next_fn)));
             props.insert(
-                PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
+                PropertyKey::symbol(vm.well_known_symbols.to_string_tag),
                 PropertyDescriptor {
                     value: Value::String(Arc::from("RegExp String Iterator")),
                     writable: false,
@@ -701,7 +701,7 @@ fn regexp_species_constructor(
     if !matches!(constructor, Value::Object(_)) {
         return Err(Error::type_err("RegExp constructor is not an object"));
     }
-    let species_key = PropertyKey::Symbol(vm.well_known_symbols.species);
+    let species_key = PropertyKey::symbol(vm.well_known_symbols.species);
     let species = vm.get_property_by_key(&constructor, &species_key)?;
     if species.is_undefined() || matches!(species, Value::Null) {
         return Ok(default_constructor);
@@ -716,7 +716,7 @@ pub(crate) fn is_regexp_spec(vm: &mut Vm, value: &Value) -> error::Result<bool> 
     let Value::Object(_) = value else {
         return Ok(false);
     };
-    let match_key = PropertyKey::Symbol(vm.well_known_symbols.r#match);
+    let match_key = PropertyKey::symbol(vm.well_known_symbols.r#match);
     let matcher = vm.get_property_by_key(value, &match_key)?;
     if !matcher.is_undefined() {
         return Ok(vm.to_boolean(&matcher));
@@ -2865,7 +2865,7 @@ pub fn setup_collections(vm: &mut Vm) -> error::Result<()> {
     vm.heap.with_obj(map_ctor.0, |obj| {
         let mut props = obj.props().lock();
         props.insert(
-            PropertyKey::Symbol(vm.well_known_symbols.species),
+            PropertyKey::symbol(vm.well_known_symbols.species),
             accessor_get_prop(Value::Object(map_species_getter)),
         );
         props.insert(
@@ -2883,7 +2883,7 @@ pub fn setup_collections(vm: &mut Vm) -> error::Result<()> {
                 .map(|desc| desc.value.clone())
                 .unwrap_or(Value::Undefined);
             o.props().lock().insert(
-                PropertyKey::Symbol(vm.well_known_symbols.iterator),
+                PropertyKey::symbol(vm.well_known_symbols.iterator),
                 data_prop(entries),
             );
         });
@@ -2926,7 +2926,7 @@ pub fn setup_collections(vm: &mut Vm) -> error::Result<()> {
         vm.new_native_function("get [Symbol.species]", promise_species_get, 0)?;
     vm.heap.with_obj(set_ctor.0, |obj| {
         obj.props().lock().insert(
-            PropertyKey::Symbol(vm.well_known_symbols.species),
+            PropertyKey::symbol(vm.well_known_symbols.species),
             accessor_get_prop(Value::Object(set_species_getter)),
         );
     });
@@ -2943,7 +2943,7 @@ pub fn setup_collections(vm: &mut Vm) -> error::Result<()> {
                 .lock()
                 .insert(PropertyKey::from("keys"), data_prop(values.clone()));
             o.props().lock().insert(
-                PropertyKey::Symbol(vm.well_known_symbols.iterator),
+                PropertyKey::symbol(vm.well_known_symbols.iterator),
                 data_prop(values),
             );
         });
@@ -3027,7 +3027,7 @@ pub fn setup_collections(vm: &mut Vm) -> error::Result<()> {
         accessor_get_prop(Value::Object(sym_description_getter)),
     );
     sym_proto_props.insert(
-        PropertyKey::Symbol(vm.well_known_symbols.to_primitive),
+        PropertyKey::symbol(vm.well_known_symbols.to_primitive),
         PropertyDescriptor {
             value: Value::Object(sym_to_primitive_idx),
             writable: false,
@@ -3039,7 +3039,7 @@ pub fn setup_collections(vm: &mut Vm) -> error::Result<()> {
         },
     );
     sym_proto_props.insert(
-        PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
+        PropertyKey::symbol(vm.well_known_symbols.to_string_tag),
         PropertyDescriptor {
             value: Value::String(Arc::from("Symbol")),
             writable: false,

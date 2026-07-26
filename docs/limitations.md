@@ -378,7 +378,11 @@ guarantees are required.
   owned by ordinary own-key production are fallible as well. The result
   vectors, object roots, and final Array presence bitmaps for Object keys,
   values, entries, own names/Symbols, and Reflect ownKeys are fallible. Shared
-  numeric index formatting and PropertyKey/Error strings remain infallible.
+  JavaScript-visible numeric key Strings and PropertyKey/Error strings remain
+  infallible. On 64-bit targets canonical array-index PropertyKeys use compact
+  inline `u32` storage and stack formatting, so initial key creation no longer
+  needs a host string allocation. 32-bit targets retain Arc-backed numeric keys
+  to avoid enlarging every property-map entry.
   Iterative Proxy `getOwnPropertyDescriptor` traversal now reserves its direct
   roots and pending frames. Final descriptor-object materialization,
   `Object.getOwnPropertyDescriptors` and `Object.defineProperties` containers,
@@ -394,8 +398,10 @@ guarantees are required.
   insertion reserves its key and object/property maps best-effort and skips the
   cache entry on failure. These guarantees are limited to those directly owned
   containers and existing keys: BigInt/value preparation, boxed-String
-  canonicalization, initial PropertyKey/numeric-index formatting, and other
-  shared representation paths remain infallible. Ordinary non-index Set
+  canonicalization, non-index Number formatting, JavaScript-visible key String
+  materialization, and other shared representation paths remain infallible.
+  Canonical array-index PropertyKeys avoid this boundary with compact inline
+  storage on 64-bit targets. Ordinary non-index Set
   receiver publication also preflights actual property-map growth and borrows
   post-commit cache keys after boxed String, Module Namespace, TypedArray,
   Array, and Proxy classification. Object integrity operations reserve their

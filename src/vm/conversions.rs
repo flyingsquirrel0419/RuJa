@@ -255,7 +255,7 @@ impl Vm {
                 // takes precedence over valueOf/toString and receives the hint.
                 {
                     let tp_key =
-                        crate::value::PropertyKey::Symbol(self.well_known_symbols.to_primitive);
+                        crate::value::PropertyKey::symbol(self.well_known_symbols.to_primitive);
                     let method = self.get_property_by_key(v, &tp_key)?;
                     if !method.is_undefined() && !method.is_null() {
                         if !crate::builtins::is_callable(&method, &self.heap) {
@@ -334,16 +334,28 @@ impl Vm {
         &mut self,
         v: &Value,
     ) -> error::Result<crate::value::PropertyKey> {
+        if let Value::Number(number) = v {
+            if *number == 0.0 {
+                return Ok(crate::value::PropertyKey::from_array_index(0));
+            }
+            if number.is_finite()
+                && *number > 0.0
+                && *number < u32::MAX as f64
+                && number.fract() == 0.0
+            {
+                return Ok(crate::value::PropertyKey::from_array_index(*number as u32));
+            }
+        }
         match self.to_property_key_value(v)? {
             Value::String(s) => Ok(crate::value::PropertyKey::from_rc(s)),
-            Value::Symbol(id) => Ok(crate::value::PropertyKey::Symbol(id)),
+            Value::Symbol(id) => Ok(crate::value::PropertyKey::symbol(id)),
             _ => unreachable!("ToPropertyKey returns only String or Symbol"),
         }
     }
 
     /// Get a property by a `Value` key, supporting string keys (via the
     /// existing `get_property(&str)` path) and Symbol keys (looked up directly
-    /// in the object's `props` map as `PropertyKey::Symbol`).
+    /// through their structured `PropertyKey`).
     pub fn get_property_key(&mut self, obj: &Value, key: &Value) -> error::Result<Value> {
         // Per spec, base is checked for null/undefined BEFORE ToPropertyKey.
         match obj {
@@ -358,15 +370,16 @@ impl Vm {
             _ => {}
         }
         let property_key = self.coerce_property_key_record(key)?;
-        if let Some(name) = property_key.as_str() {
-            return self.get_property(obj, name);
-        }
         match obj {
+            Value::Object(_) => self.get_property_key_direct(obj, &property_key, obj.clone()),
             Value::String(_)
             | Value::Number(_)
             | Value::BigInt(_)
             | Value::Bool(_)
             | Value::Symbol(_) => {
+                if let Some(name) = property_key.as_str() {
+                    return self.get_property(obj, &name);
+                }
                 let proto = self.current_realm_primitive_prototype(obj);
                 if proto.is_undefined() {
                     Ok(Value::Undefined)
@@ -374,7 +387,7 @@ impl Vm {
                     self.get_property_key_rx(&proto, &property_key, obj.clone())
                 }
             }
-            _ => self.get_property_by_key(obj, &property_key),
+            _ => Ok(Value::Undefined),
         }
     }
 
@@ -389,16 +402,15 @@ impl Vm {
             return Err(Error::type_err("Cannot set property of primitive"));
         }
         let property_key = self.coerce_property_key_record(key)?;
-        if let Some(name) = property_key.as_str() {
-            return self.set_property(obj, name, value);
-        }
         if matches!(obj, Value::Object(_)) {
             let success =
                 self.try_set_property_key_with_receiver(obj, &property_key, value, obj)?;
             if !success && self.current_strict() {
-                return Err(Error::type_err(
-                    "Cannot assign to read only Symbol property",
-                ));
+                let message = property_key.as_str().map_or_else(
+                    || "Cannot assign to read only Symbol property".to_string(),
+                    |name| format!("Cannot assign to read only property '{}'", name),
+                );
+                return Err(Error::type_err(message));
             }
             Ok(())
         } else if self.current_strict() {
@@ -418,16 +430,16 @@ impl Vm {
         obj: &Value,
         key: &crate::value::PropertyKey,
     ) -> error::Result<Value> {
-        if let Some(name) = key.as_str() {
-            return self.get_property(obj, name);
-        }
         match obj {
-            Value::Object(_) => self.get_property_key_rx(obj, key, obj.clone()),
+            Value::Object(_) => self.get_property_key_direct(obj, key, obj.clone()),
             Value::String(_)
             | Value::Number(_)
             | Value::BigInt(_)
             | Value::Bool(_)
             | Value::Symbol(_) => {
+                if let Some(name) = key.as_str() {
+                    return self.get_property(obj, &name);
+                }
                 let prototype = self.current_realm_primitive_prototype(obj);
                 if prototype.is_undefined() {
                     Ok(Value::Undefined)
@@ -440,9 +452,13 @@ impl Vm {
     }
 
     pub(crate) fn property_key_to_value(key: &crate::value::PropertyKey) -> Value {
-        match key {
-            crate::value::PropertyKey::Str(s) => Value::String(s.clone()),
-            crate::value::PropertyKey::Symbol(id) => Value::Symbol(*id),
+        if let Some(id) = key.symbol_id() {
+            Value::Symbol(id)
+        } else {
+            Value::String(
+                key.string_arc()
+                    .expect("non-Symbol property keys have string values"),
+            )
         }
     }
 
@@ -457,7 +473,7 @@ impl Vm {
             if let HeapObj::ModuleNamespace(namespace) = o {
                 if key
                     .as_str()
-                    .is_some_and(|name| namespace.exports.lock().contains_key(name))
+                    .is_some_and(|name| namespace.exports.lock().contains_key(name.as_ref()))
                 {
                     return true;
                 }
@@ -470,9 +486,8 @@ impl Vm {
                     return !a.is_arguments.load(std::sync::atomic::Ordering::Relaxed);
                 }
                 return key
-                    .as_str()
-                    .and_then(crate::value::parse_array_index)
-                    .is_some_and(|i| a.is_dense_present(i));
+                    .array_index()
+                    .is_some_and(|i| a.is_dense_present(i as usize));
             }
             if let HeapObj::Object(od) = o {
                 if let Some(Value::String(s)) = od.primitive.lock().clone() {
@@ -508,7 +523,7 @@ impl Vm {
             if let HeapObj::ModuleNamespace(namespace) = o {
                 return key
                     .as_str()
-                    .and_then(|name| namespace.exports.lock().get(name).cloned());
+                    .and_then(|name| namespace.exports.lock().get(name.as_ref()).cloned());
             }
             None
         });
@@ -556,7 +571,7 @@ impl Vm {
             None
         });
         if let Some(Value::String(s)) = string_exotic {
-            let value = if key.as_str() == Some("length") {
+            let value = if key.as_str().is_some_and(|name| name == "length") {
                 Some(Value::Number(crate::value::utf16_len(&s) as f64))
             } else {
                 crate::builtins::canonical_string_index(key)
@@ -568,12 +583,12 @@ impl Vm {
             if let Some(value) = value {
                 let mut desc = crate::value::PropertyDescriptor::data(value);
                 desc.writable = false;
-                desc.enumerable = key.as_str() != Some("length");
+                desc.enumerable = !key.as_str().is_some_and(|name| name == "length");
                 desc.configurable = false;
                 return Some(desc);
             }
         }
-        let index = key.as_str().and_then(crate::value::parse_array_index)?;
+        let index = key.array_index().map(|index| index as usize)?;
         self.array_index_own_property_descriptor(idx.0, index, key)
     }
 

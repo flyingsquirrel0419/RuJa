@@ -19,14 +19,16 @@ impl Vm {
         key: &crate::value::PropertyKey,
         prefix: Option<&str>,
     ) -> Arc<str> {
-        let base = match key {
-            crate::value::PropertyKey::Str(name) => name.to_string(),
-            crate::value::PropertyKey::Symbol(id) => self
-                .symbol_descriptions
-                .get(id)
+        let base = if let Some(id) = key.symbol_id() {
+            self.symbol_descriptions
+                .get(&id)
                 .and_then(|description| description.as_ref())
                 .map(|description| format!("[{}]", description))
-                .unwrap_or_default(),
+                .unwrap_or_default()
+        } else {
+            key.as_str()
+                .expect("non-Symbol property keys have string values")
+                .to_string()
         };
         match prefix {
             Some(prefix) => Arc::from(format!("{}{}", prefix, base).as_str()),
@@ -87,10 +89,7 @@ impl Vm {
     }
 
     fn property_key_from_value(&mut self, key: &Value) -> error::Result<crate::value::PropertyKey> {
-        Ok(match key {
-            Value::Symbol(id) => crate::value::PropertyKey::Symbol(*id),
-            _ => crate::value::PropertyKey::from(self.to_property_key(key)?),
-        })
+        self.coerce_property_key_record(key)
     }
 
     fn private_slot_key_from_name(
@@ -1343,7 +1342,7 @@ impl Vm {
                     }
                     let property_key = match self.to_property_key_value(&key)? {
                         Value::String(name) => crate::value::PropertyKey::from(name),
-                        Value::Symbol(id) => crate::value::PropertyKey::Symbol(id),
+                        Value::Symbol(id) => crate::value::PropertyKey::symbol(id),
                         _ => unreachable!("ToPropertyKey returns string or symbol"),
                     };
                     let has = self.has_property_key(&obj, &property_key)?;
@@ -1738,18 +1737,9 @@ impl Vm {
                     let key = self.stack.pop().unwrap_or(Value::Undefined);
                     let obj = self.stack.pop().unwrap_or(Value::Undefined);
                     self.set_method_home_object(&value, &obj);
-                    let (pkey, cache_key) = match &key {
-                        Value::Symbol(id) => (crate::value::PropertyKey::Symbol(*id), None),
-                        _ => {
-                            let key_str = self.to_property_key(&key)?;
-                            (
-                                crate::value::PropertyKey::from(key_str.as_str()),
-                                Some(key_str),
-                            )
-                        }
-                    };
-                    self.define_data_property(&obj, pkey, value.clone())?;
-                    if let (Value::Object(idx), Some(key_str)) = (&obj, cache_key) {
+                    let pkey = self.coerce_property_key_record(&key)?;
+                    self.define_data_property(&obj, pkey.clone(), value.clone())?;
+                    if let (Value::Object(idx), Some(key_str)) = (&obj, pkey.as_str()) {
                         self.ic_invalidate(idx.0, &key_str);
                     }
                     self.stack.push(value);
@@ -1761,18 +1751,15 @@ impl Vm {
                     let key = self.stack.pop().unwrap_or(Value::Undefined);
                     let obj = self.stack.pop().unwrap_or(Value::Undefined);
                     self.set_method_home_object(&value, &obj);
-                    let pkey = match &key {
-                        Value::Symbol(id) => crate::value::PropertyKey::Symbol(*id),
-                        _ => crate::value::PropertyKey::from(self.to_property_key(&key)?),
-                    };
+                    let pkey = self.coerce_property_key_record(&key)?;
                     if let Value::Object(idx) = &obj {
                         let mut desc = crate::value::PropertyDescriptor::data(value.clone());
                         desc.enumerable = false;
                         desc.configurable = true;
                         desc.writable = true;
                         self.define_own_property_or_throw(&obj, pkey.clone(), desc)?;
-                        if let crate::value::PropertyKey::Str(key_str) = &pkey {
-                            self.ic_invalidate(idx.0, key_str.as_ref());
+                        if let Some(key_str) = pkey.as_str() {
+                            self.ic_invalidate(idx.0, &key_str);
                         }
                     }
                     self.stack.push(value);
@@ -2289,7 +2276,7 @@ impl Vm {
                     match kind {
                         0 => {
                             let property_key = match &key {
-                                Value::Symbol(id) => crate::value::PropertyKey::Symbol(*id),
+                                Value::Symbol(id) => crate::value::PropertyKey::symbol(*id),
                                 _ => {
                                     let key_string = self.to_property_key(&key)?;
                                     crate::value::PropertyKey::from(key_string.as_str())
@@ -2911,7 +2898,7 @@ impl Vm {
                         "Dynamic import attribute values must be strings",
                     ));
                 };
-                if key.as_str() != Some("type") {
+                if !key.is_str("type") {
                     return Err(Error::type_err("Unsupported dynamic import attribute"));
                 }
                 import_type = Some(value);

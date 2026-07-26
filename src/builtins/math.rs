@@ -350,7 +350,7 @@ pub(crate) fn build_math_in_env(
     let mut tag = data_prop(Value::String(Arc::from("Math")));
     tag.writable = false;
     props.insert(
-        PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
+        PropertyKey::symbol(vm.well_known_symbols.to_string_tag),
         tag,
     );
     let obj = HeapObj::Object(ObjectData {
@@ -413,13 +413,7 @@ pub(crate) fn format_for_console(vm: &mut Vm, v: &Value, depth: usize) -> error:
                     .lock()
                     .iter()
                     .filter(|(_, d)| d.enumerable)
-                    .filter_map(|(k, d)| {
-                        if let crate::value::PropertyKey::Str(s) = k {
-                            Some((s.clone(), d.value.clone()))
-                        } else {
-                            None
-                        }
-                    })
+                    .filter_map(|(k, d)| k.string_arc().map(|s| (s, d.value.clone())))
                     .collect();
                 (is_array, is_func, items, pairs)
             });

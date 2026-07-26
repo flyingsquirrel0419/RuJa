@@ -104,6 +104,30 @@ for bin in "$PREVIOUS_RUJA" target/release/ruja; do
 done
 ```
 
+## Compact PropertyKey checks
+
+`property_key_numeric_lookup_10k` and `property_key_string_lookup_10k` isolate
+prebuilt `IndexMap<PropertyKey, _>` lookup from VM creation and compilation.
+They catch numeric stack-format/hash cost and ordinary Arc-backed string-key
+regressions separately. The representation unit test also requires
+`size_of::<PropertyKey>() == size_of::<Arc<str>>()`; the rejected decimal-byte
+enum measured 24 bytes on x86_64, while the retained nested `u32` representation
+is 16 bytes. The inline form is limited to 64-bit targets: wasm32 keeps the
+previous Arc-backed numeric key and 8-byte `PropertyKey` rather than accepting
+the safe nested representation's 12-byte layout.
+
+One `--quick` run on a heavily shared two-CPU host measured 10,000 numeric
+lookups at 273 microseconds and string lookups at 151-155 microseconds. The
+rough 12 ns per-lookup difference is the bounded cost of formatting index bytes
+for string-compatible hashing. End-to-end wall-time samples were too noisy at
+host load 9-14 to support a regression claim, so they are not treated as
+release evidence.
+
+```sh
+cargo bench --bench basic 'property_key_|array_index|ordinary_set_receiver' \
+  -- --sample-size 20 --warm-up-time 1 --measurement-time 3
+```
+
 ## Reproducing
 
 ```sh

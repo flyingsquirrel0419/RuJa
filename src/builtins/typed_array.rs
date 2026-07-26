@@ -255,7 +255,7 @@ fn array_buffer_species_constructor(
         return Err(Error::type_err("ArrayBuffer constructor is not an object"));
     }
 
-    let species_key = PropertyKey::Symbol(vm.well_known_symbols.species);
+    let species_key = PropertyKey::symbol(vm.well_known_symbols.species);
     let species = vm.get_property_by_key(&constructor, &species_key)?;
     if species.is_undefined() || matches!(species, Value::Null) {
         return Ok(default_constructor);
@@ -279,7 +279,7 @@ fn typed_array_species_constructor(
         return Err(Error::type_err("TypedArray constructor is not an object"));
     }
 
-    let species_key = PropertyKey::Symbol(vm.well_known_symbols.species);
+    let species_key = PropertyKey::symbol(vm.well_known_symbols.species);
     let species = vm.get_property_by_key(&constructor, &species_key)?;
     if species.is_undefined() || matches!(species, Value::Null) {
         return Ok(default_constructor);
@@ -1436,7 +1436,7 @@ pub(crate) fn install_atomics_in_env(
     let mut tag = data_prop(Value::String(Arc::from("Atomics")));
     tag.writable = false;
     props.insert(
-        PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
+        PropertyKey::symbol(vm.well_known_symbols.to_string_tag),
         tag,
     );
     let atomics = Value::Object(GcIdx(vm.heap.allocate(HeapObj::Object(ObjectData {
@@ -2916,7 +2916,7 @@ pub(crate) fn typed_array_at(
     if actual < 0.0 || actual >= length as f64 {
         return Ok(Value::Undefined);
     }
-    vm.get_property_by_key(&this, &PropertyKey::from((actual as usize).to_string()))
+    vm.get_property_by_key(&this, &PropertyKey::from_integer_index(actual as u64))
 }
 
 fn typed_array_content_type(kind: crate::value::TypedArrayKind) -> &'static str {
@@ -5410,7 +5410,7 @@ pub(crate) fn typed_array_from(
     };
     let this_arg = args.get(2).cloned().unwrap_or(Value::Undefined);
 
-    let iterator_key = PropertyKey::Symbol(vm.well_known_symbols.iterator);
+    let iterator_key = PropertyKey::symbol(vm.well_known_symbols.iterator);
     let iterator_method = vm.get_property_by_key(&source, &iterator_key)?;
     if !iterator_method.is_undefined() && !iterator_method.is_null() {
         if !is_callable(&iterator_method, &vm.heap) {
@@ -5575,7 +5575,7 @@ fn typed_array_constructor_with_kind(
                     ));
                 }
             }
-            let iterator_key = PropertyKey::Symbol(vm.well_known_symbols.iterator);
+            let iterator_key = PropertyKey::symbol(vm.well_known_symbols.iterator);
             let is_builtin_iterable = vm.heap.with_obj(idx.0, |o| {
                 matches!(
                     o,

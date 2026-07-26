@@ -11065,6 +11065,39 @@ widening feature admission.
 - 장점, 단점 및 영향: Both focused cohorts remain fully green and count-identical while direct tests cover non-observable ownership. Exact per-file byte comparison and full-matrix artifacts remain post-push CI evidence.
 ```
 
+## Compact canonical numeric PropertyKeys
+
+This unit changes no Test262 admission. Direct regressions cover canonical and
+non-canonical boundaries, signed zero, fractional/NaN/infinite Number keys,
+ordinary object reads/writes/deletes, own-key ordering, JSON serialization,
+Proxy `ownKeys` string/Symbol filtering, and Hash/Eq compatibility between
+inline and Arc-backed canonical names. The representation test requires the
+same size as `Arc<str>`; wasm32 deliberately retains Arc-backed numeric keys so
+the optimization cannot silently enlarge every property map on either width.
+
+Local gates pass all targets/features with **270/270** library tests,
+**541/541** builtins tests, **52/52** Array-index tests, and the complete
+integration suite. Release library is **268/268**, tooling **135/135**, doctest
+**1/1**, and rustfmt, warnings-denied Clippy, and wasm32 checking pass.
+
+On pinned Test262 `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, Object
+keys/values/entries/own-name/own-Symbol consumers, Reflect and Proxy ownKeys,
+JSON stringify, TypedArray ownKeys, and language property accessors report
+**263 pass / 0 fail / 31 skip / 0 timeout / 0 error / 294 total / 263 run**.
+Current and preceding release binaries produce byte-identical output. CI and
+full-matrix artifact evidence is recorded after the implementation commit is
+pushed.
+
+```text
+[Decision Log]
+- 목적과 의도: Verify that allocation-free canonical numeric keys preserve all observable String-key behavior and do not trade allocation reduction for global map-size growth.
+- 기존 구현 및 제약 조건: Test262 cannot inspect Rust enum size, Arc allocation, or cross-representation Hash/Eq; numeric keys are observable through ordering, Proxy lists, JSON, String exotics, Arrays, and TypedArrays.
+- 검토한 주요 대안: Rely only on Test262 totals, test only Array access, keep the 24-byte decimal representation, omit direct HashMap lookup, or report noisy wall-time samples as proof.
+- 선택한 방식: Pair focused JavaScript boundary tests with Rust representation/hash tests, warnings-denied static gates, isolated map benchmarks, and unchanged Test262 admission.
+- 다른 대안 대신 이 방식을 선택한 이유: Corpus tests cannot see ownership/layout; Array-only checks miss ordinary objects and Proxy/JSON consumers; a larger key regresses every map; equality without hash lookup is incomplete; and the shared host cannot produce trustworthy wall-time A/B evidence under current load.
+- 장점, 단점 및 영향: Numeric boundaries, ordering, materialization, Symbol filtering, compact layout, and cross-representation lookup have deterministic coverage. Full corpus evidence remains a post-push gate, and native numeric read-loop formatting is tracked separately rather than hidden in this unit.
+```
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is

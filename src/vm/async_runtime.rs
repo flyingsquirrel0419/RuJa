@@ -1708,7 +1708,7 @@ impl Vm {
                                 );
                                 iterator_desc.enumerable = false;
                                 props.insert(
-                                    crate::value::PropertyKey::Symbol(
+                                    crate::value::PropertyKey::symbol(
                                         self.well_known_symbols.iterator,
                                     ),
                                     iterator_desc,
@@ -2275,7 +2275,7 @@ impl Vm {
         };
         let is_builtin_iterable = is_map || is_set || is_gen;
         if !matches!(iterable, Value::Object(_)) {
-            let sym_key = crate::value::PropertyKey::Symbol(self.well_known_symbols.iterator);
+            let sym_key = crate::value::PropertyKey::symbol(self.well_known_symbols.iterator);
             let iter_method = self.get_property_by_key(iterable, &sym_key)?;
             if iter_method.is_nullish() {
                 return Err(Error::type_err("value is not iterable"));
@@ -2284,7 +2284,7 @@ impl Vm {
             return self.new_lazy_iterator(iter_obj);
         }
         if is_arr {
-            let sym_key = crate::value::PropertyKey::Symbol(self.well_known_symbols.iterator);
+            let sym_key = crate::value::PropertyKey::symbol(self.well_known_symbols.iterator);
             let iter_method = self.get_property_by_key(iterable, &sym_key)?;
             if iter_method.is_undefined() || iter_method.is_null() {
                 return Err(Error::type_err("value is not iterable"));
@@ -2294,7 +2294,7 @@ impl Vm {
         }
         if !is_builtin_iterable {
             if let Value::Object(_) = iterable {
-                let sym_key = crate::value::PropertyKey::Symbol(self.well_known_symbols.iterator);
+                let sym_key = crate::value::PropertyKey::symbol(self.well_known_symbols.iterator);
                 if self.has_property_key(iterable, &sym_key)? {
                     let iter_method = self.get_property_by_key(iterable, &sym_key)?;
                     let iter_obj = self.call_function(&iter_method, &[], Some(iterable.clone()))?;
@@ -2351,7 +2351,7 @@ impl Vm {
     /// wrapped directly (their `next()` already returns a Promise).
     pub fn make_async_iterator(&mut self, iterable: &Value) -> error::Result<Value> {
         if let Value::Object(_) = iterable {
-            let akey = crate::value::PropertyKey::Symbol(self.well_known_symbols.async_iterator);
+            let akey = crate::value::PropertyKey::symbol(self.well_known_symbols.async_iterator);
             if self.has_property_key(iterable, &akey)? {
                 let m = self.get_property_by_key(iterable, &akey)?;
                 if !m.is_nullish() {
@@ -2540,10 +2540,7 @@ impl Vm {
         snapshot_object: &Value,
         keys: Vec<PropertyKey>,
     ) -> error::Result<()> {
-        let string_count = keys
-            .iter()
-            .filter(|key| matches!(key, PropertyKey::Str(_)))
-            .count();
+        let string_count = keys.iter().filter(|key| !key.is_symbol()).count();
         self.heap.with_obj(iterator.0, |object| {
             let HeapObj::Iterator(iterator) = object else {
                 return Err(Error::internal("for-in snapshot iterator missing"));
@@ -2589,10 +2586,7 @@ impl Vm {
             state.remaining_keys.clear();
             state
                 .remaining_keys
-                .extend(keys.into_iter().filter_map(|key| match key {
-                    PropertyKey::Str(name) => Some(name),
-                    PropertyKey::Symbol(_) => None,
-                }));
+                .extend(keys.into_iter().filter_map(PropertyKey::into_string_arc));
             state.remaining_index = 0;
             state.object_was_visited = true;
             Ok(())

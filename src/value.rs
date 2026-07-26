@@ -12,61 +12,265 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, AtomicUsize, Ordering};
 use std::fmt;
 use std::sync::Arc;
 
-/// A property key: either a string (possibly numeric-origin) or a Symbol id.
-///
-/// Stored in object `props` maps so that Symbol-keyed properties (e.g.
-/// `Symbol.iterator`) coexist with ordinary string-keyed ones.
-#[derive(Clone, Debug)]
-pub enum PropertyKey {
-    Str(Arc<str>),
+/// Stack storage for formatting a canonical ECMAScript array-index string.
+#[derive(Clone, Copy, Debug)]
+struct ArrayIndexKey {
+    bytes: [u8; 10],
+    len: u8,
+}
+
+impl ArrayIndexKey {
+    fn new(value: u32) -> Self {
+        debug_assert!(value < u32::MAX);
+        let mut bytes = [0; 10];
+        let mut cursor = bytes.len();
+        let mut remaining = value;
+        loop {
+            cursor -= 1;
+            bytes[cursor] = b'0' + (remaining % 10) as u8;
+            remaining /= 10;
+            if remaining == 0 {
+                break;
+            }
+        }
+        let len = bytes.len() - cursor;
+        bytes.copy_within(cursor.., 0);
+        Self {
+            bytes,
+            len: len as u8,
+        }
+    }
+
+    fn as_str(&self) -> &str {
+        std::str::from_utf8(&self.bytes[..self.len as usize])
+            .expect("array-index digits are valid UTF-8")
+    }
+}
+
+#[cfg(target_pointer_width = "64")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum InlinePropertyKey {
+    Index(u32),
     Symbol(u32),
 }
 
+#[cfg(target_pointer_width = "32")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum InlinePropertyKey {
+    Symbol(u32),
+}
+
+#[derive(Clone, Debug)]
+enum PropertyKeyRepr {
+    Str(Arc<str>),
+    Inline(InlinePropertyKey),
+}
+
+/// Borrowed or stack-formatted view of a string property key.
+#[derive(Clone, Copy, Debug)]
+enum PropertyKeyStrRepr<'a> {
+    Borrowed(&'a str),
+    Index(ArrayIndexKey),
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct PropertyKeyStr<'a>(PropertyKeyStrRepr<'a>);
+
+impl std::ops::Deref for PropertyKeyStr<'_> {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        match &self.0 {
+            PropertyKeyStrRepr::Borrowed(value) => value,
+            PropertyKeyStrRepr::Index(index) => index.as_str(),
+        }
+    }
+}
+
+impl AsRef<str> for PropertyKeyStr<'_> {
+    fn as_ref(&self) -> &str {
+        self
+    }
+}
+
+impl PartialEq<&str> for PropertyKeyStr<'_> {
+    fn eq(&self, other: &&str) -> bool {
+        self.as_ref() == *other
+    }
+}
+
+impl PartialEq<PropertyKeyStr<'_>> for &str {
+    fn eq(&self, other: &PropertyKeyStr<'_>) -> bool {
+        *self == other.as_ref()
+    }
+}
+
+impl PartialEq<PropertyKeyStr<'_>> for String {
+    fn eq(&self, other: &PropertyKeyStr<'_>) -> bool {
+        self.as_str() == other.as_ref()
+    }
+}
+
+impl Default for PropertyKeyStr<'_> {
+    fn default() -> Self {
+        PropertyKeyStr(PropertyKeyStrRepr::Borrowed(""))
+    }
+}
+
+impl fmt::Display for PropertyKeyStr<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self)
+    }
+}
+
+/// A string, inline canonical array-index, or Symbol property key.
+#[derive(Clone, Debug)]
+pub struct PropertyKey(PropertyKeyRepr);
+
+const _: () = assert!(std::mem::size_of::<PropertyKey>() == std::mem::size_of::<Arc<str>>());
+
 impl PropertyKey {
     pub fn from_string(s: String) -> Self {
-        PropertyKey::Str(Arc::from(s.as_str()))
-    }
-    pub fn from_rc(s: Arc<str>) -> Self {
-        PropertyKey::Str(s)
+        #[cfg(target_pointer_width = "64")]
+        if let Some(index) = parse_array_index(&s) {
+            return PropertyKey::from_array_index(index as u32);
+        }
+        PropertyKey(PropertyKeyRepr::Str(Arc::from(s.as_str())))
     }
 
-    /// If this key is a string key, return its text; otherwise `None`.
-    pub fn as_str(&self) -> Option<&str> {
-        match self {
-            PropertyKey::Str(s) => Some(s.as_ref()),
-            PropertyKey::Symbol(_) => None,
+    pub fn from_rc(s: Arc<str>) -> Self {
+        #[cfg(target_pointer_width = "64")]
+        if let Some(index) = parse_array_index(&s) {
+            return PropertyKey::from_array_index(index as u32);
+        }
+        PropertyKey(PropertyKeyRepr::Str(s))
+    }
+
+    pub fn from_array_index(index: u32) -> Self {
+        if index == u32::MAX {
+            return PropertyKey(PropertyKeyRepr::Str(Arc::from("4294967295")));
+        }
+        #[cfg(target_pointer_width = "64")]
+        {
+            PropertyKey(PropertyKeyRepr::Inline(InlinePropertyKey::Index(index)))
+        }
+        #[cfg(target_pointer_width = "32")]
+        {
+            PropertyKey(PropertyKeyRepr::Str(Arc::from(
+                ArrayIndexKey::new(index).as_str(),
+            )))
+        }
+    }
+
+    pub(crate) fn from_integer_index(index: u64) -> Self {
+        if index < u32::MAX as u64 {
+            PropertyKey::from_array_index(index as u32)
+        } else {
+            PropertyKey::from_string(index.to_string())
+        }
+    }
+
+    pub fn symbol(id: u32) -> Self {
+        PropertyKey(PropertyKeyRepr::Inline(InlinePropertyKey::Symbol(id)))
+    }
+
+    /// Return a borrowed or stack-formatted view for a string key.
+    pub fn as_str(&self) -> Option<PropertyKeyStr<'_>> {
+        match &self.0 {
+            PropertyKeyRepr::Str(value) => {
+                Some(PropertyKeyStr(PropertyKeyStrRepr::Borrowed(value)))
+            }
+            #[cfg(target_pointer_width = "64")]
+            PropertyKeyRepr::Inline(InlinePropertyKey::Index(index)) => Some(PropertyKeyStr(
+                PropertyKeyStrRepr::Index(ArrayIndexKey::new(*index)),
+            )),
+            PropertyKeyRepr::Inline(InlinePropertyKey::Symbol(_)) => None,
+        }
+    }
+
+    pub fn array_index(&self) -> Option<u32> {
+        match &self.0 {
+            #[cfg(target_pointer_width = "64")]
+            PropertyKeyRepr::Inline(InlinePropertyKey::Index(index)) => Some(*index),
+            PropertyKeyRepr::Str(value) => parse_array_index(value).map(|index| index as u32),
+            PropertyKeyRepr::Inline(InlinePropertyKey::Symbol(_)) => None,
+        }
+    }
+
+    pub fn symbol_id(&self) -> Option<u32> {
+        match self.0 {
+            PropertyKeyRepr::Inline(InlinePropertyKey::Symbol(id)) => Some(id),
+            _ => None,
+        }
+    }
+
+    pub fn is_str(&self, expected: &str) -> bool {
+        self.as_str()
+            .is_some_and(|value| value.as_ref() == expected)
+    }
+
+    pub(crate) fn string_arc(&self) -> Option<Arc<str>> {
+        match &self.0 {
+            PropertyKeyRepr::Str(value) => Some(value.clone()),
+            #[cfg(target_pointer_width = "64")]
+            PropertyKeyRepr::Inline(InlinePropertyKey::Index(index)) => {
+                Some(Arc::from(ArrayIndexKey::new(*index).as_str()))
+            }
+            PropertyKeyRepr::Inline(InlinePropertyKey::Symbol(_)) => None,
+        }
+    }
+
+    pub(crate) fn into_string_arc(self) -> Option<Arc<str>> {
+        match self.0 {
+            PropertyKeyRepr::Str(value) => Some(value),
+            #[cfg(target_pointer_width = "64")]
+            PropertyKeyRepr::Inline(InlinePropertyKey::Index(index)) => {
+                Some(Arc::from(ArrayIndexKey::new(index).as_str()))
+            }
+            PropertyKeyRepr::Inline(InlinePropertyKey::Symbol(_)) => None,
         }
     }
 
     pub fn is_symbol(&self) -> bool {
-        matches!(self, PropertyKey::Symbol(_))
+        self.symbol_id().is_some()
     }
 }
 
 impl From<&str> for PropertyKey {
     fn from(s: &str) -> Self {
-        PropertyKey::Str(Arc::from(s))
+        #[cfg(target_pointer_width = "64")]
+        if let Some(index) = parse_array_index(s) {
+            return PropertyKey::from_array_index(index as u32);
+        }
+        PropertyKey(PropertyKeyRepr::Str(Arc::from(s)))
     }
 }
+
 impl From<String> for PropertyKey {
     fn from(s: String) -> Self {
-        PropertyKey::Str(Arc::from(s.as_str()))
+        PropertyKey::from_string(s)
     }
 }
+
 impl From<Arc<str>> for PropertyKey {
     fn from(s: Arc<str>) -> Self {
-        PropertyKey::Str(s)
+        PropertyKey::from_rc(s)
     }
 }
 
 impl std::hash::Hash for PropertyKey {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        match self {
-            PropertyKey::Str(s) => {
+        match &self.0 {
+            PropertyKeyRepr::Str(value) => {
                 0u8.hash(state);
-                s.hash(state);
+                value.hash(state);
             }
-            PropertyKey::Symbol(id) => {
+            #[cfg(target_pointer_width = "64")]
+            PropertyKeyRepr::Inline(InlinePropertyKey::Index(index)) => {
+                0u8.hash(state);
+                ArrayIndexKey::new(*index).as_str().hash(state);
+            }
+            PropertyKeyRepr::Inline(InlinePropertyKey::Symbol(id)) => {
                 1u8.hash(state);
                 id.hash(state);
             }
@@ -76,15 +280,102 @@ impl std::hash::Hash for PropertyKey {
 
 impl PartialEq for PropertyKey {
     fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (PropertyKey::Str(a), PropertyKey::Str(b)) => a == b,
-            (PropertyKey::Symbol(a), PropertyKey::Symbol(b)) => a == b,
+        match (&self.0, &other.0) {
+            (PropertyKeyRepr::Str(a), PropertyKeyRepr::Str(b)) => a == b,
+            #[cfg(target_pointer_width = "64")]
+            (
+                PropertyKeyRepr::Inline(InlinePropertyKey::Index(a)),
+                PropertyKeyRepr::Inline(InlinePropertyKey::Index(b)),
+            ) => a == b,
+            (
+                PropertyKeyRepr::Inline(InlinePropertyKey::Symbol(a)),
+                PropertyKeyRepr::Inline(InlinePropertyKey::Symbol(b)),
+            ) => a == b,
+            #[cfg(target_pointer_width = "64")]
+            (PropertyKeyRepr::Inline(InlinePropertyKey::Index(index)), PropertyKeyRepr::Str(s))
+            | (PropertyKeyRepr::Str(s), PropertyKeyRepr::Inline(InlinePropertyKey::Index(index))) => {
+                parse_array_index(s) == Some(*index as usize)
+            }
             _ => false,
         }
     }
 }
 
 impl Eq for PropertyKey {}
+
+#[cfg(test)]
+mod property_key_tests {
+    use super::{InlinePropertyKey, PropertyKey, PropertyKeyRepr};
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    use std::sync::Arc;
+
+    #[cfg(target_pointer_width = "64")]
+    fn hash(key: &PropertyKey) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        key.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    #[test]
+    #[cfg(target_pointer_width = "32")]
+    fn canonical_array_indices_preserve_text_on_32_bit_targets() {
+        for (text, value) in [("0", 0), ("1", 1), ("4294967294", u32::MAX - 1)] {
+            let key = PropertyKey::from_array_index(value);
+            assert_eq!(key.as_str().unwrap(), text);
+            assert_eq!(key.array_index(), Some(value));
+        }
+
+        let original: Arc<str> = Arc::from("123");
+        let key = PropertyKey::from_rc(original.clone());
+        assert!(Arc::ptr_eq(
+            &original,
+            &key.string_arc().expect("numeric key remains a string")
+        ));
+    }
+
+    #[test]
+    #[cfg(target_pointer_width = "64")]
+    fn canonical_array_indices_are_inline_and_exact() {
+        for (text, value) in [("0", 0), ("1", 1), ("4294967294", u32::MAX - 1)] {
+            let key = PropertyKey::from(text);
+            assert!(matches!(
+                key,
+                PropertyKey(PropertyKeyRepr::Inline(InlinePropertyKey::Index(index)))
+                    if index == value
+            ));
+            assert_eq!(key.as_str().unwrap(), text);
+        }
+
+        for text in ["00", "01", "-0", "4294967295", "1.5"] {
+            assert!(matches!(
+                PropertyKey::from(text),
+                PropertyKey(PropertyKeyRepr::Str(_))
+            ));
+        }
+    }
+
+    #[test]
+    #[cfg(target_pointer_width = "64")]
+    fn inline_and_arc_string_keys_share_equality_and_hash() {
+        let inline = PropertyKey::from_array_index(1234);
+        let arc = PropertyKey(PropertyKeyRepr::Str(Arc::from("1234")));
+        assert_eq!(inline, arc);
+        assert_eq!(hash(&inline), hash(&arc));
+
+        let mut keys = std::collections::HashMap::new();
+        keys.insert(inline, "value");
+        assert_eq!(keys.get(&arc), Some(&"value"));
+    }
+
+    #[test]
+    fn inline_index_preserves_property_key_storage_size() {
+        assert_eq!(
+            std::mem::size_of::<PropertyKey>(),
+            std::mem::size_of::<Arc<str>>()
+        );
+    }
+}
 
 use num_bigint::{BigInt, BigUint};
 use num_traits::Zero;
@@ -227,7 +518,7 @@ pub enum ReferencedName {
 }
 
 impl ReferencedName {
-    pub fn as_str(&self) -> Option<&str> {
+    pub fn as_str(&self) -> Option<PropertyKeyStr<'_>> {
         match self {
             ReferencedName::Property(key) => key.as_str(),
             ReferencedName::UncoercedProperty(_) | ReferencedName::Private(_) => None,

@@ -52,6 +52,68 @@ fn max_uint32_minus_one_is_a_property_not_index() {
     assert_eq!(v, Value::String(std::sync::Arc::from("x")));
 }
 
+#[test]
+fn numeric_property_keys_preserve_text_order_and_boundaries() {
+    let value = run(r#"
+        var object = {};
+        object[-0] = "zero";
+        object[1] = "one";
+        object["01"] = "leading";
+        object[4294967294] = "max-index";
+        object[4294967295] = "named-boundary";
+        object[1.5] = "fraction";
+        object[NaN] = "nan";
+        object[Infinity] = "infinity";
+
+        var keys = Object.keys(object).join(",");
+        var names = Object.getOwnPropertyNames(object).join(",");
+        var reflected = Reflect.ownKeys(object).join(",");
+        var json = JSON.stringify(object);
+        var values = [
+          object[0], object[-0], object[1], object["01"],
+          object[4294967294], object[4294967295], object[1.5],
+          object[NaN], object[Infinity]
+        ].join(",");
+        var deleted = delete object[1];
+        [keys, names, reflected, json, values, deleted, 1 in object].join("|");
+    "#);
+    assert_eq!(
+        value,
+        Value::String(std::sync::Arc::from(
+            "0,1,4294967294,01,4294967295,1.5,NaN,Infinity|\
+             0,1,4294967294,01,4294967295,1.5,NaN,Infinity|\
+             0,1,4294967294,01,4294967295,1.5,NaN,Infinity|\
+             {\"0\":\"zero\",\"1\":\"one\",\"4294967294\":\"max-index\",\"01\":\"leading\",\"4294967295\":\"named-boundary\",\"1.5\":\"fraction\",\"NaN\":\"nan\",\"Infinity\":\"infinity\"}|\
+             zero,zero,one,leading,max-index,named-boundary,fraction,nan,infinity|true|false"
+        ))
+    );
+}
+
+#[test]
+fn proxy_own_keys_treats_inline_indices_as_string_keys() {
+    let value = run(r#"
+        var symbol = Symbol("marker");
+        var target = { 2: "two", x: "ex" };
+        target[symbol] = "symbol";
+        var proxy = new Proxy(target, {
+          ownKeys: function() { return ["2", "x", symbol]; }
+        });
+        [
+          Object.keys(proxy).join(","),
+          Object.getOwnPropertyNames(proxy).join(","),
+          Object.getOwnPropertySymbols(proxy)[0] === symbol,
+          Reflect.ownKeys(proxy).length,
+          JSON.stringify(proxy)
+        ].join("|");
+    "#);
+    assert_eq!(
+        value,
+        Value::String(std::sync::Arc::from(
+            "2,x|2,x|true|3|{\"2\":\"two\",\"x\":\"ex\"}"
+        ))
+    );
+}
+
 /// Negative indices are named properties, not array slots.
 #[test]
 fn negative_index_is_a_property() {
