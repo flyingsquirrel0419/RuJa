@@ -11191,6 +11191,16 @@ Environment/base/receiver/raw-name roots, exact visitor/count/pin identity,
 abrupt raw assignment and computed-super coercion cleanup, forced GC, Proxy,
 private, `with`, call, update, and delete Reference paths.
 
+Commit `68e3766` passes ordinary CI `30215764494` and all 33 jobs in full run
+`30215764513`. Raw artifacts aggregate to **31892 pass / 5115 fail / 11455
+skip / 5 timeout / 0 error** because Annex B records two transient timeouts.
+Rerunning Annex B on the pinned corpus with the downloaded binary restores
+**201/811/74/0/0**, producing corrected **31894 pass / 5115 fail / 11455 skip
+/ 3 timeout / 0 error / 48467 total / 37009 pass-or-fail run**. The other 29
+result files are byte-identical to preceding full run `30214416788`.
+Downloaded artifacts and the sparse pinned worktree were deleted after
+comparison.
+
 ```text
 [Decision Log]
 - 목적과 의도: Prove that removing defensive Rust ownership clones changes neither JavaScript Reference semantics nor GC reachability.

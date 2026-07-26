@@ -24,7 +24,15 @@
   Criterion samples show no regression: current numeric/string point estimates
   are about **82.6-83.0 ms / 83.7-84.4 ms**, versus preceding **83.9-84.7 ms /
   85.1-88.3 ms**. Final GPT-5.6 correctness and performance/documentation
-  reviews are clean. Reference creation boxes and required `Dup` clones remain.
+  reviews are clean. Commit `68e3766` passes CI `30215764494` and all 33 jobs
+  in full run `30215764513`. Raw artifacts aggregate to **31892 pass / 5115
+  fail / 11455 skip / 5 timeout / 0 error** because two Annex B passes moved
+  to contention timeouts. The downloaded binary rerun restores
+  **201/811/74/0/0**, producing corrected **31894/5115/11455/3/0** over
+  **48467** total and **37009** pass-or-fail run. The other 29 result files are
+  byte-identical to preceding full run `30214416788`. Artifacts and sparse
+  worktree were deleted after comparison. Reference creation boxes and
+  required `Dup` clones remain.
 
 - Test262 language early-error admission now includes the four exact generator
   update-expression parse-negative files for prefix/postfix increment and
