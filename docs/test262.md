@@ -11105,6 +11105,31 @@ run.
 - 장점, 단점 및 영향: Numeric boundaries, ordering, materialization, Symbol filtering, compact layout, and cross-representation lookup have deterministic coverage. CI and all 30 corrected full-corpus artifacts show zero semantic drift; native numeric read-loop formatting remains tracked separately rather than hidden in this unit.
 ```
 
+## Computed read-modify-write PropertyKey handoff
+
+This unit changes no Test262 admission. On pinned corpus
+`9e61c12835c5e4a3bdba93850427e6742c4f64c4`, compound assignment, logical
+assignment, all four prefix/postfix increment/decrement directories, `super`,
+and `with` report **926 pass / 0 fail / 23 skip / 0 timeout / 0 error / 949
+total / 926 run**. Current and preceding release binaries produce
+byte-identical output with SHA-256
+`2c9baf866e644bc21e1a847feb519ec0ca6cf7b9114ec0a40a169bd0a58ec227`.
+
+Direct regressions inspect emitted bytecode and cover canonical/boundary Number
+keys, signed zero, null-base ordering, Proxy get/set receivers, object-key
+coercion, and forced GC during every observable read-modify-write stage.
+Post-push CI and full-matrix artifacts remain the final broad gate.
+
+```text
+[Decision Log]
+- 목적과 의도: Prove that removing temporary numeric key materialization from computed read-modify-write expressions changes no Reference semantics or Test262 admission.
+- 기존 구현 및 제약 조건: Aggregate full-suite totals cannot isolate compound/logical/update ordering; Test262 cannot inspect bytecode or force host GC during key coercion and Proxy traps.
+- 검토한 주요 대안: Rely only on Rust tests, compare only aggregate totals, widen admission, run one current binary, or pair direct internals with the complete adjacent Reference cluster on current and preceding releases.
+- 선택한 방식: Keep admission fixed, inspect opcode shape directly, exercise GC/order boundaries in Rust integration tests, and require byte-identical focused Test262 output from both binaries.
+- 다른 대안 대신 이 방식을 선택한 이유: Internal tests prove optimization shape but not language breadth; aggregates can hide offsetting drift; admission is unrelated; one binary cannot isolate the patch.
+- 장점, 단점 및 영향: Focused Reference coverage remains 926/0 with exact output identity while deterministic tests prove the removed opcode and preserved ordering. Full matrix evidence remains post-push; boxed Reference clone allocation is independent work.
+```
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is

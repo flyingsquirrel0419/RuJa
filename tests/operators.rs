@@ -1276,14 +1276,6 @@ fn update_member_uses_property_reference() {
     assert_eq!(
         run(r#"
             var log = [];
-            var toPrimitiveSym = Symbol("toPrimitive");
-            var toPrimitiveKey = {};
-            Object.defineProperty(toPrimitiveKey, Symbol.toPrimitive, {
-              value: function() {
-                log.push("toPrimitiveKey");
-                return toPrimitiveSym;
-              }
-            });
             var key = {
               toString: function() {
                 log.push("key");
@@ -1620,6 +1612,155 @@ fn compound_element() {
     assert_eq!(
         run("var a = [10,20,30]; a[1] += 5; a[1];"),
         Value::Number(25.0)
+    );
+}
+
+#[test]
+fn numeric_computed_references_preserve_property_key_boundaries() {
+    assert_eq!(
+        run(r#"
+            var object = {
+              "0": 1,
+              "4294967294": 2,
+              "4294967295": 3,
+              "-0": 4,
+              "1.5": 5
+            };
+            object[-0] += 1;
+            object[4294967294]++;
+            object[4294967295] ||= 9;
+            object[-0] &&= 7;
+            ++object[1.5];
+            [
+              object[0], object["-0"], object[4294967294],
+              object[4294967295], object[1.5],
+              Object.keys(object).join("|")
+            ].join(";");
+        "#),
+        Value::String(Arc::from("7;4;3;3;6;0|4294967294|4294967295|-0|1.5"))
+    );
+}
+
+#[test]
+fn computed_read_modify_write_null_base_skips_key_coercion_and_rhs() {
+    for source in ["base[prop] += rhs();", "base[prop]++;", "++base[prop];"] {
+        let err = run_err(&format!(
+            r#"
+            var base = null;
+            var prop = {{
+              toString: function() {{
+                throw new Error("property key evaluated");
+              }}
+            }};
+            var rhs = function() {{
+              throw new Error("right-hand side evaluated");
+            }};
+            {source}
+            "#
+        ));
+        assert!(err.contains("TypeError"), "source {source} got {err}");
+        assert!(
+            !err.contains("property key evaluated"),
+            "source {source} coerced property key before null-base check: {err}"
+        );
+        assert!(
+            !err.contains("right-hand side evaluated"),
+            "source {source} evaluated RHS before null-base check: {err}"
+        );
+    }
+}
+
+#[test]
+fn computed_read_modify_write_roots_reference_across_gc() {
+    let mut vm = ruja::Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+
+    assert_eq!(
+        vm.run(
+            r#"
+            var log = [];
+            function makeKey(label) {
+              return {
+                toString: function() {
+                  log.push("toString:" + label);
+                  return {};
+                },
+                valueOf: function() {
+                  log.push("valueOf:" + label);
+                  forceGc();
+                  return 0;
+                }
+              };
+            }
+            function makeBase(label, initial) {
+              return new Proxy({ 0: initial }, {
+                get: function(target, name, receiver) {
+                  log.push("get:" + label + ":" + name);
+                  forceGc();
+                  return Reflect.get(target, name, receiver);
+                },
+                set: function(target, name, value, receiver) {
+                  log.push("set:" + label + ":" + value);
+                  forceGc();
+                  return Reflect.set(target, name, value, receiver);
+                }
+              });
+            }
+            var compound = makeBase("compound", 1)[makeKey("compound")] +=
+              (forceGc(), 2);
+            var logical = makeBase("logical", 1)[makeKey("logical")] &&=
+              (forceGc(), 4);
+            var update = makeBase("update", 4)[makeKey("update")]++;
+            [compound, logical, update, log.join("|")].join(";");
+            "#,
+        )
+        .expect("computed read-modify-write References should survive GC"),
+        Value::String(Arc::from(
+            "3;4;4;toString:compound|valueOf:compound|get:compound:0|set:compound:3|toString:logical|valueOf:logical|get:logical:0|set:logical:4|toString:update|valueOf:update|get:update:0|set:update:5"
+        ))
+    );
+}
+
+#[test]
+fn computed_read_modify_write_preserves_object_to_symbol_keys() {
+    assert_eq!(
+        run(r#"
+            var symbol = Symbol("key");
+            var coercions = 0;
+            var key = {};
+            key[Symbol.toPrimitive] = function() {
+              coercions++;
+              return symbol;
+            };
+            var target = {};
+            target[symbol] = 1;
+            var log = [];
+            var proxy = new Proxy(target, {
+              get: function(inner, name, receiver) {
+                log.push("get:" + (name === symbol));
+                return Reflect.get(inner, name, receiver);
+              },
+              set: function(inner, name, value, receiver) {
+                log.push("set:" + (name === symbol) + ":" + value);
+                return Reflect.set(inner, name, value, receiver);
+              }
+            });
+            var compound = proxy[key] += 1;
+            var logical = proxy[key] &&= 4;
+            var update = proxy[key]++;
+            [compound, logical, update, target[symbol], coercions, log.join("|")].join(";");
+        "#),
+        Value::String(Arc::from(
+            "2;4;4;5;3;get:true|set:true:2|get:true|set:true:4|get:true|set:true:5"
+        ))
     );
 }
 

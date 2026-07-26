@@ -4638,7 +4638,6 @@ impl Compiler {
                             if *computed {
                                 self.compile_expr(property)?;
                                 self.chunk.emit(Op::CheckNullBase, self.current_line);
-                                self.chunk.emit(Op::ToPropertyKey, self.current_line);
                             } else {
                                 self.chunk.emit(Op::CheckNullBase, self.current_line);
                                 let key = if let Expr::String(s) = property.as_ref() {
@@ -7087,9 +7086,8 @@ impl Compiler {
     }
 
     /// Compile a numeric/bitwise compound assignment (`+=`, `-=`, `<<=`, ...).
-    /// Handles both identifier and member targets. For member targets the
-    /// object/key pair is re-evaluated for the store (consistent with the
-    /// simple-assignment codegen), since RuJa has no pair-duplication opcode.
+    /// Handles both identifier and member targets. Member targets retain one
+    /// property Reference from GetValue through PutValue.
     fn compile_compound_assign(
         &mut self,
         op: &AssignOp,
@@ -7124,7 +7122,6 @@ impl Compiler {
                     if *computed {
                         self.compile_expr(property)?;
                         self.chunk.emit(Op::CheckNullBase, self.current_line);
-                        self.chunk.emit(Op::ToPropertyKey, self.current_line);
                     } else {
                         self.chunk.emit(Op::CheckNullBase, self.current_line);
                         let key = if let Expr::String(s) = property.as_ref() {
@@ -7240,7 +7237,6 @@ impl Compiler {
                     if *computed {
                         self.compile_expr(property)?;
                         self.chunk.emit(Op::CheckNullBase, self.current_line);
-                        self.chunk.emit(Op::ToPropertyKey, self.current_line);
                     } else {
                         let key = if let Expr::String(s) = property.as_ref() {
                             s.to_string()
@@ -7520,5 +7516,32 @@ fn collect_var_names_recursive_skip_functions(node: &StmtNode, out: &mut Vec<Arc
         }
         StmtNode::Labeled(_, body) => collect_var_names_recursive_skip_functions(&body.node, out),
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn computed_read_modify_write_routes_key_coercion_through_property_reference() {
+        let program = crate::parser::Parser::parse("o[0] += 1; o[1] ||= 2; o[2]++;")
+            .expect("fixture should parse");
+        let (chunk, _) = Compiler::new()
+            .compile_program(&program)
+            .expect("fixture should compile");
+
+        assert_eq!(
+            chunk
+                .code
+                .iter()
+                .filter(|op| matches!(op, Op::MakePropertyRef))
+                .count(),
+            3
+        );
+        assert!(
+            !chunk.code.iter().any(|op| matches!(op, Op::ToPropertyKey)),
+            "computed read-modify-write should preserve numeric PropertyKey values"
+        );
     }
 }

@@ -130,6 +130,53 @@ fn bench_property_key_maps(c: &mut Criterion) {
     });
 }
 
+fn bench_computed_references(c: &mut Criterion) {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        function numericComputedReferences() {
+            var object = { 0: 0, 1: 0, 2: 0 };
+            for (var i = 0; i < 10000; i++) {
+                object[0] += 1;
+                object[1] ||= 1;
+                object[2]++;
+            }
+            return object[0] + object[1] + object[2];
+        }
+        function stringComputedReferences() {
+            var object = { 0: 0, 1: 0, 2: 0 };
+            for (var i = 0; i < 10000; i++) {
+                object["0"] += 1;
+                object["1"] ||= 1;
+                object["2"]++;
+            }
+            return object["0"] + object["1"] + object["2"];
+        }
+        "#,
+    )
+    .expect("computed Reference fixtures failed");
+
+    let numeric = vm.get_global("numericComputedReferences");
+    c.bench_function("computed_reference_numeric_30k", |b| {
+        b.iter(|| {
+            black_box(
+                vm.call_function(&numeric, &[], None)
+                    .expect("numeric computed References failed"),
+            )
+        })
+    });
+
+    let string = vm.get_global("stringComputedReferences");
+    c.bench_function("computed_reference_string_30k", |b| {
+        b.iter(|| {
+            black_box(
+                vm.call_function(&string, &[], None)
+                    .expect("string computed References failed"),
+            )
+        })
+    });
+}
+
 fn bench_inline_cache(c: &mut Criterion) {
     let cached_read = r#"
         var object = { value: 1 };
@@ -340,6 +387,7 @@ criterion_group!(
     bench_array_push,
     bench_array_index_set,
     bench_property_key_maps,
+    bench_computed_references,
     bench_inline_cache,
     bench_ordinary_set_receiver,
     bench_integrity_level,

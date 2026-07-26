@@ -4,6 +4,30 @@
 
 ### Changed
 
+- Computed compound assignment, logical assignment, and update expressions now
+  pass their evaluated key directly to `MakePropertyRef`. On 64-bit targets,
+  canonical numeric names therefore become inline `PropertyKey` indices
+  without first allocating a temporary JavaScript String and reparsing it.
+  wasm32 removes the redundant opcode/value handoff but retains its Arc-backed
+  numeric key. Null-base ordering,
+  Symbol/object key coercion, Proxy receivers, strictness, `with`, private
+  names, and `super` keep their existing Reference semantics.
+
+  Bytecode, numeric-boundary, null-base, Proxy, and forced-GC regressions cover
+  the three read-modify-write forms. A retained 30k-operation numeric/string
+  Criterion pair measured the numeric case at 100.06 ms after the change versus
+  100.89 ms before it; the roughly 1% samples are timer-noise evidence only,
+  while opcode removal is deterministic. Pinned Test262 compound, logical,
+  update, `super`, and `with` coverage remains byte-identical at **926 pass / 0
+  fail / 23 skip / 0 timeout / 0 error** between current and preceding release
+  binaries. Local gates pass all targets/features with **271/271** library
+  tests, **541/541** builtins tests, **130/130** operators tests, release library
+  **269/269**, tooling **135/135**, doctest **1/1**, wasm32 checking, rustfmt,
+  warnings-denied Clippy, release build, and generated documentation. Rustdoc
+  retains 13 existing warnings. Two final GPT-5.6 reviews are clean after
+  tightening wasm32 documentation and adding ephemeral-GC plus object-to-Symbol
+  key coverage.
+
 - Runtime BigInt values now use shared immutable `Arc<BigInt>` storage, making
   `Value` clones constant-time for multi-limb integers across properties,
   constant pools, boxing, mapped Arguments, descriptors, and Realm crossings.

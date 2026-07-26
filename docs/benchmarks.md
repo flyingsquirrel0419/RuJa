@@ -128,6 +128,27 @@ cargo bench --bench basic 'property_key_|array_index|ordinary_set_receiver' \
   -- --sample-size 20 --warm-up-time 1 --measurement-time 3
 ```
 
+## Computed Reference checks
+
+`computed_reference_numeric_30k` and `computed_reference_string_30k` reuse one
+VM and call precompiled functions, excluding VM construction and parsing. Each
+function performs 10,000 compound, logical, and update operations against
+computed properties. The string workload is a control for general Reference
+dispatch; on x86_64, the numeric workload catches accidental key
+materialization. On wasm32 it covers only the redundant opcode/value handoff
+because the final numeric key remains Arc-backed.
+
+One sequential `--quick` A/B measured the preceding numeric path at **100.89
+ms** and the direct structured-key path at **100.06 ms**. String control moved
+from **99.78 ms** to **100.86 ms**. These roughly 1% shifts are shared-host
+timer noise, not a throughput claim. The deterministic evidence is compiler
+coverage proving the three forms emit `MakePropertyRef` without an earlier
+`ToPropertyKey`.
+
+```sh
+cargo bench --bench basic -- computed_reference --quick
+```
+
 ## Reproducing
 
 ```sh

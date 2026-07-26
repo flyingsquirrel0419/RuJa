@@ -415,11 +415,14 @@ guarantees are required.
   infallible host allocator. Namespace re-export initialization checks use
   allocation-free Brent cycle detection and consume fuel per indirect binding.
   Integrity and nested
-  preventExtensions roots reserve before every pin. The remaining nearby
-  hard-host-OOM scopes include initial numeric
-  PropertyKey/shared-String creation, Proxy trap descriptor values, TypedArray
-  byte conversion, JSON caller containers, unrelated direct `ArrayData::new`
-  constructors, Error strings, GC root enumeration, and mark worklists.
+  preventExtensions roots reserve before every pin. Computed compound, logical,
+  and update References now hand numeric keys directly to structured
+  `PropertyKey` coercion. Remaining nearby hard-host-OOM scopes include boxed
+  Reference records/bases and their deep clones, non-index/shared-String key
+  creation, native indexed loops that still format names, Proxy trap descriptor
+  values, TypedArray byte conversion, JSON caller containers, unrelated direct
+  `ArrayData::new` constructors, Error strings, GC root enumeration, and mark
+  worklists.
 - Push, Pop, Shift, Unshift, Splice, Slice, Concat, Flat, FlatMap, ForEach,
   Join, ToLocaleString, Map, Reduce, ReduceRight, Reverse, ToReversed,
   ToSpliced, and With use live generic indexed operations with operation-wide

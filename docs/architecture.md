@@ -2236,7 +2236,32 @@ JavaScript Strings only at the observable result boundary.
 - 검토한 주요 대안: Keep allocation and add a test-only failure shim, claim String/Arc construction is fallible, add an 11-byte decimal enum variant, use unsafe tagged pointer storage, globally intern property strings, or nest u32 Index/Symbol forms behind a private compact representation.
 - 선택한 방식: Store canonical indices as u32 in a private inline variant shared with Symbols on 64-bit targets, retain the previous Arc-backed index form on 32-bit targets, use a stack decimal view at string boundaries, preserve string-compatible Hash/Eq, and route simple object computed Get/Set directly through PropertyKey.
 - 다른 대안 대신 이 방식을 선택한 이유: A failure shim does not harden real host OOM; stable Arc allocation cannot report failure; the decimal enum grew PropertyKey from 16 to 24 bytes; unsafe pointer tagging was unjustified; global interning retains attacker-controlled names; and the nested representation remains safe Rust and two words.
-- 장점, 단점 및 영향: Canonical key creation and storage allocate no string on 64-bit targets, PropertyKey size is unchanged on both target widths, public representation is no longer exhaustively matchable, and own-key/JSON/Proxy boundaries retain exact text. Hashing an inline index formats at most ten stack bytes; 32-bit canonical keys, JS-visible String materialization, non-index Number formatting, compound/logical/update references, and many native Array/TypedArray read/write loops still allocate numeric names as explicit follow-ups.
+- 장점, 단점 및 영향: Canonical key creation and storage allocate no string on 64-bit targets, PropertyKey size is unchanged on both target widths, public representation is no longer exhaustively matchable, and own-key/JSON/Proxy boundaries retain exact text. Hashing an inline index formats at most ten stack bytes; 32-bit canonical keys, JS-visible String materialization, non-index Number formatting, Reference record boxes, and many native Array/TypedArray read/write loops remain explicit follow-ups.
+```
+
+## Computed read-modify-write property references
+
+Ordinary computed compound, logical, and update expressions evaluate the base
+and key, perform the required null-base check, then let `MakePropertyRef`
+coerce the key directly into `PropertyKey`. The previous bytecode emitted a
+standalone `ToPropertyKey` first. On 64-bit targets, canonical Numbers therefore
+created an `Arc<str>` JavaScript String which `MakePropertyRef` immediately
+parsed back into the inline index representation.
+
+Simple assignment, destructuring and loop targets, and delete retain their raw
+Reference paths because their specification-visible key-coercion timing is
+different. `super` retains an explicit `[[ThisValue]]` and resolves its raw
+name once before duplication. Private names and `with` environment References
+remain separate paths.
+
+```text
+[Decision Log]
+- 목적과 의도: Carry compact numeric keys through ordinary computed read-modify-write References without changing evaluation order or observable Reference behavior.
+- 기존 구현 및 제약 조건: Compound, logical, and update code already retained one Reference but emitted ToPropertyKey before MakePropertyRef, allocating and reparsing canonical numeric names on 64-bit targets. Null bases must reject before coercion; object keys, Proxy traps, GC, strictness, with, super, and private names have distinct observable rules.
+- 검토한 주요 대안: Change every raw Reference, remove CheckNullBase, add a new opcode, redesign boxed Reference records, or route only the three ordinary computed read-modify-write forms directly through existing MakePropertyRef.
+- 선택한 방식: Remove the redundant ToPropertyKey opcode only from ordinary computed compound/logical/update lowering, retain CheckNullBase, and keep every deferred, super, private, and environment Reference path unchanged.
+- 다른 대안 대신 이 방식을 선택한 이유: Existing MakePropertyRef already pins base/key and performs Symbol-preserving structured coercion; broad raw-Reference changes would alter simple-assignment/delete timing; a new opcode duplicates existing behavior; Reference boxing is a separate allocation and clone problem.
+- 장점, 단점 및 영향: Canonical numeric keys avoid temporary String and Arc allocation on 64-bit targets. wasm32 removes the redundant opcode and Value::String handoff but retains its final Arc-backed numeric key allocation. Focused Test262 output is byte-identical and direct tests cover opcode shape, boundaries, null bases, Proxy order, and forced GC. Boxed Reference records, non-index key formatting, JavaScript-visible key Strings, and native indexed loops remain.
 ```
 
 ---
