@@ -282,6 +282,12 @@ enum OrdinaryPropertyStorageKind {
 }
 
 #[derive(Clone, Copy)]
+enum OrdinaryPropertyStorageMode {
+    Define,
+    Set,
+}
+
+#[derive(Clone, Copy)]
 struct OrdinaryPropertyStoragePlan {
     kind: OrdinaryPropertyStorageKind,
     array_index: Option<usize>,
@@ -459,6 +465,7 @@ impl Vm {
         idx: GcIdx,
         key: &PropertyKey,
         descriptor: &PropertyDescriptor,
+        mode: OrdinaryPropertyStorageMode,
     ) -> OrdinaryPropertyStoragePlan {
         self.heap.with_obj(idx.0, |object| {
             if let HeapObj::Object(data) = object {
@@ -500,19 +507,31 @@ impl Vm {
             let is_arguments = array
                 .is_arguments
                 .load(std::sync::atomic::Ordering::Relaxed);
+            let has_property = array.props.lock().contains_key(key);
+            let dense_length = array.items.lock().len();
             let dense_default_data = !is_arguments
                 && !descriptor.is_accessor
                 && descriptor.writable
                 && descriptor.enumerable
                 && descriptor.configurable
                 && index < crate::value::MAX_DENSE_ARRAY_LEN;
-            let mapped_arguments_data = is_arguments
+            let arguments_dense_data = is_arguments
                 && !descriptor.is_accessor
-                && index < crate::value::MAX_DENSE_ARRAY_LEN;
-            let kind = if dense_default_data || mapped_arguments_data {
+                && index < crate::value::MAX_DENSE_ARRAY_LEN
+                && match mode {
+                    OrdinaryPropertyStorageMode::Define => true,
+                    OrdinaryPropertyStorageMode::Set => {
+                        descriptor.writable
+                            && descriptor.enumerable
+                            && descriptor.configurable
+                            && index < dense_length
+                    }
+                };
+            let kind = if dense_default_data || arguments_dense_data {
                 OrdinaryPropertyStorageKind::DenseArray {
                     end: index + 1,
-                    write_property: mapped_arguments_data,
+                    write_property: arguments_dense_data
+                        && (matches!(mode, OrdinaryPropertyStorageMode::Define) || has_property),
                 }
             } else if is_arguments {
                 OrdinaryPropertyStorageKind::ArgumentsCustom { index }
@@ -634,7 +653,42 @@ impl Vm {
         has_value: bool,
         has_writable: bool,
     ) -> error::Result<()> {
-        let plan = self.ordinary_property_storage_plan(idx, key, &descriptor);
+        self.publish_property_storage(
+            idx,
+            key,
+            descriptor,
+            has_value,
+            has_writable,
+            OrdinaryPropertyStorageMode::Define,
+        )
+    }
+
+    fn publish_array_index_set_storage(
+        &mut self,
+        idx: GcIdx,
+        key: &PropertyKey,
+        descriptor: PropertyDescriptor,
+    ) -> error::Result<()> {
+        self.publish_property_storage(
+            idx,
+            key,
+            descriptor,
+            true,
+            false,
+            OrdinaryPropertyStorageMode::Set,
+        )
+    }
+
+    fn publish_property_storage(
+        &mut self,
+        idx: GcIdx,
+        key: &PropertyKey,
+        descriptor: PropertyDescriptor,
+        has_value: bool,
+        has_writable: bool,
+        mode: OrdinaryPropertyStorageMode,
+    ) -> error::Result<()> {
+        let plan = self.ordinary_property_storage_plan(idx, key, &descriptor, mode);
         if matches!(plan.kind, OrdinaryPropertyStorageKind::VirtualNoop) {
             return Ok(());
         }
@@ -827,6 +881,28 @@ impl Vm {
         }
     }
 
+    fn set_arguments_mapping_if_same_receiver(
+        &self,
+        base: &Value,
+        key: &PropertyKey,
+        value: &Value,
+        receiver: &Value,
+    ) -> bool {
+        let (Value::Object(base_idx), Value::Object(receiver_idx)) = (base, receiver) else {
+            return false;
+        };
+        if base_idx != receiver_idx {
+            return false;
+        }
+        key.as_str()
+            .and_then(crate::value::parse_array_index)
+            .and_then(|index| self.arguments_mapped_binding_for_index(base_idx.0, index))
+            .is_some_and(|(env, name)| {
+                crate::environment::set(&self.heap, env, &name, value.clone());
+                true
+            })
+    }
+
     pub(crate) fn array_index_own_property_descriptor(
         &self,
         obj_idx: usize,
@@ -864,6 +940,7 @@ impl Vm {
     }
 
     pub(crate) fn sync_array_length_descriptor_after_index(&mut self, obj_idx: usize) {
+        let length_key = self.array_length_key.clone();
         let updated = self.heap.with_obj(obj_idx, |object| {
             let HeapObj::Array(array) = object else {
                 return false;
@@ -879,18 +956,32 @@ impl Vm {
                 .lock()
                 .len()
                 .max(array.sparse_max.lock().unwrap_or(0));
-            if let Some(descriptor) = array
-                .props
-                .lock()
-                .get_mut(&crate::value::PropertyKey::from("length"))
-            {
-                descriptor.value = Value::Number(length as f64);
+            if let Some(descriptor) = array.props.lock().get_mut(&length_key) {
+                let next = Value::Number(length as f64);
+                if descriptor.value != next {
+                    descriptor.value = next;
+                    return true;
+                }
             }
-            true
+            false
         });
         if updated {
             self.ic_invalidate(obj_idx, "length");
         }
+    }
+
+    fn array_length_writable(&self, obj_idx: usize) -> bool {
+        let length_key = self.array_length_key.clone();
+        self.heap.with_obj(obj_idx, |object| {
+            let HeapObj::Array(array) = object else {
+                return false;
+            };
+            array
+                .props
+                .lock()
+                .get(&length_key)
+                .is_none_or(|descriptor| descriptor.writable)
+        })
     }
 
     pub(crate) fn array_index_blocked_by_non_writable_length(
@@ -898,6 +989,7 @@ impl Vm {
         obj_idx: usize,
         index: usize,
     ) -> bool {
+        let length_key = self.array_length_key.clone();
         self.heap.with_obj(obj_idx, |object| {
             let HeapObj::Array(array) = object else {
                 return false;
@@ -916,7 +1008,7 @@ impl Vm {
             let length_writable = array
                 .props
                 .lock()
-                .get(&crate::value::PropertyKey::from("length"))
+                .get(&length_key)
                 .is_none_or(|descriptor| descriptor.writable);
             index >= old_length && !length_writable
         })
@@ -2542,16 +2634,7 @@ impl Vm {
                         }
                         return Ok(());
                     }
-                    let length_writable = self.heap.with_obj(idx.0, |object| {
-                        let HeapObj::Array(array) = object else {
-                            return false;
-                        };
-                        array
-                            .props
-                            .lock()
-                            .get(&crate::value::PropertyKey::from("length"))
-                            .is_none_or(|descriptor| descriptor.writable)
-                    });
+                    let length_writable = self.array_length_writable(idx.0);
                     if !length_writable {
                         if strict {
                             return Err(Error::type_err("Cannot assign to read only array length"));
@@ -2573,6 +2656,9 @@ impl Vm {
                 });
                 if let Some(i) = array_index {
                     let pkey = crate::value::PropertyKey::from(key);
+                    if let Some((env, name)) = self.arguments_mapped_binding_for_index(idx.0, i) {
+                        crate::environment::set(&self.heap, env, &name, value.clone());
+                    }
                     let own_desc = self.heap.with_obj(idx.0, |o| {
                         if let HeapObj::Array(a) = o {
                             return a.props.lock().get(&pkey).cloned();
@@ -2606,43 +2692,9 @@ impl Vm {
                             }
                             return Ok(());
                         }
-                        if let Some((env, name)) = self.arguments_mapped_binding_for_index(idx.0, i)
-                        {
-                            crate::environment::set(&self.heap, env, &name, value.clone());
-                        }
-                        self.heap.with_obj(idx.0, |o| {
-                            if let HeapObj::Array(a) = o {
-                                let is_arguments =
-                                    a.is_arguments.load(std::sync::atomic::Ordering::Relaxed);
-                                let migrate_to_dense = !is_arguments
-                                    && !desc.is_accessor
-                                    && desc.writable
-                                    && desc.enumerable
-                                    && desc.configurable
-                                    && i < crate::value::MAX_DENSE_ARRAY_LEN;
-                                if (is_arguments || migrate_to_dense)
-                                    && i < crate::value::MAX_DENSE_ARRAY_LEN
-                                {
-                                    let mut items = a.items.lock();
-                                    let mut present = a.present.lock();
-                                    while items.len() <= i {
-                                        items.push(Value::Undefined);
-                                        present.push(false);
-                                    }
-                                    items[i] = value.clone();
-                                    if present.len() <= i {
-                                        present.resize(i + 1, false);
-                                    }
-                                    present[i] = true;
-                                }
-                                let mut props = a.props.lock();
-                                if migrate_to_dense {
-                                    props.shift_remove(&pkey);
-                                } else if let Some(descriptor) = props.get_mut(&pkey) {
-                                    descriptor.value = value.clone();
-                                }
-                            }
-                        });
+                        let mut descriptor = desc;
+                        descriptor.value = value;
+                        self.publish_array_index_set_storage(*idx, &pkey, descriptor)?;
                         return Ok(());
                     }
                     let dense_own_index = self.heap.with_obj(idx.0, |o| {
@@ -2670,23 +2722,11 @@ impl Vm {
                     // Dense array elements are own writable data properties,
                     // so prototype setters/non-writable data properties do
                     // not participate in this write.
-                    let mapped = self.heap.with_obj(idx.0, |o| {
-                        if let HeapObj::Array(a) = o {
-                            a.arguments_map.lock().as_ref().and_then(|m| {
-                                m.names
-                                    .get(i)
-                                    .and_then(|n| n.as_ref())
-                                    .map(|n| (m.env, n.clone()))
-                            })
-                        } else {
-                            None
-                        }
-                    });
-                    if let Some((env, name)) = mapped {
-                        crate::environment::set(&self.heap, env, &name, value.clone());
-                    }
-                    self.set_array_index(idx.0, i, value)?;
-                    self.sync_array_length_descriptor_after_index(idx.0);
+                    self.publish_array_index_set_storage(
+                        *idx,
+                        &pkey,
+                        PropertyDescriptor::data(value),
+                    )?;
                     return Ok(());
                 }
 
@@ -2847,6 +2887,7 @@ impl Vm {
         value: Value,
         receiver: &Value,
     ) -> error::Result<bool> {
+        self.set_arguments_mapping_if_same_receiver(base, key, &value, receiver);
         let traversal_roots = [base.clone(), value.clone(), receiver.clone()];
         let mut traversal = self.try_new_property_traversal(&traversal_roots, 0)?;
         self.try_set_property_key_with_receiver_tracked(base, key, value, receiver, &mut traversal)
@@ -2863,6 +2904,7 @@ impl Vm {
         let root_pins = self.pin_many(&[base.clone(), value.clone(), receiver.clone()]);
         let mut current = base.clone();
         let result = (|| loop {
+            self.set_arguments_mapping_if_same_receiver(&current, key, &value, receiver);
             let Value::Object(base_idx) = &current else {
                 return Err(Error::type_err(
                     "Cannot set property of primitive".to_string(),
@@ -2998,6 +3040,12 @@ impl Vm {
     ) -> error::Result<OrdinarySetOutcome> {
         let key = pkey.as_str().unwrap_or("");
         loop {
+            self.set_arguments_mapping_if_same_receiver(
+                &Value::Object(base_idx),
+                pkey,
+                &value,
+                receiver,
+            );
             let is_module_namespace = self.heap.with_obj(base_idx.0, |object| {
                 matches!(object, HeapObj::ModuleNamespace(_))
             });
@@ -3446,16 +3494,7 @@ impl Vm {
                 matches!(object, HeapObj::Array(array) if !array.is_arguments.load(std::sync::atomic::Ordering::Relaxed))
             });
         if receiver_is_array_length {
-            let length_writable = self.heap.with_obj(receiver_idx.0, |object| {
-                let HeapObj::Array(array) = object else {
-                    return false;
-                };
-                array
-                    .props
-                    .lock()
-                    .get(&crate::value::PropertyKey::from("length"))
-                    .is_none_or(|descriptor| descriptor.writable)
-            });
+            let length_writable = self.array_length_writable(receiver_idx.0);
             if !length_writable {
                 return Ok(false);
             }
@@ -3481,6 +3520,47 @@ impl Vm {
                 Err(false) => return Ok(false),
             }
         }
+        if let Some(index) = pkey.as_str().and_then(crate::value::parse_array_index) {
+            let is_array = self
+                .heap
+                .with_obj(receiver_idx.0, |object| matches!(object, HeapObj::Array(_)));
+            if is_array {
+                let current =
+                    self.array_index_own_property_descriptor(receiver_idx.0, index, &pkey);
+                if current
+                    .as_ref()
+                    .is_some_and(|descriptor| descriptor.is_accessor || !descriptor.writable)
+                {
+                    return Ok(false);
+                }
+                if current.is_none() {
+                    let (is_arguments, extensible) = self.heap.with_obj(receiver_idx.0, |object| {
+                        let HeapObj::Array(array) = object else {
+                            unreachable!();
+                        };
+                        (
+                            array
+                                .is_arguments
+                                .load(std::sync::atomic::Ordering::Relaxed),
+                            array.extensible.load(std::sync::atomic::Ordering::Relaxed),
+                        )
+                    });
+                    if !extensible
+                        || (!is_arguments
+                            && self
+                                .array_index_blocked_by_non_writable_length(receiver_idx.0, index))
+                    {
+                        return Ok(false);
+                    }
+                }
+                let mut descriptor =
+                    current.unwrap_or_else(|| PropertyDescriptor::data(value.clone()));
+                descriptor.value = value.clone();
+                self.publish_array_index_set_storage(*receiver_idx, &pkey, descriptor)?;
+                return Ok(true);
+            }
+        }
+
         let existing = self
             .heap
             .with_obj(receiver_idx.0, |o| o.props().lock().get(&pkey).cloned());
@@ -3489,31 +3569,6 @@ impl Vm {
                 return Ok(false);
             }
         } else {
-            if let Some(name) = pkey.as_str() {
-                let array_receiver = self.heap.with_obj(receiver_idx.0, |o| {
-                    if let HeapObj::Array(a) = o {
-                        let present = crate::value::parse_array_index(name)
-                            .is_some_and(|i| a.is_dense_present(i));
-                        let extensible = a.extensible.load(std::sync::atomic::Ordering::Relaxed);
-                        return Some((present, extensible));
-                    }
-                    None
-                });
-                if let Some((present, extensible)) = array_receiver {
-                    if let Some(index) = crate::value::parse_array_index(name) {
-                        if !present && !extensible {
-                            return Ok(false);
-                        }
-                        if self.array_index_blocked_by_non_writable_length(receiver_idx.0, index) {
-                            return Ok(false);
-                        }
-                        self.set_arguments_mapped_binding_for_key(receiver_idx.0, &pkey, &value);
-                        self.set_array_index(receiver_idx.0, index, value)?;
-                        self.sync_array_length_descriptor_after_index(receiver_idx.0);
-                        return Ok(true);
-                    }
-                }
-            }
             let is_extensible = self.heap.with_obj(receiver_idx.0, |o| o.is_extensible());
             if !is_extensible {
                 return Ok(false);
@@ -3574,31 +3629,8 @@ impl Vm {
         }
 
         if let Some(index) = key.as_str().and_then(crate::value::parse_array_index) {
-            let blocked_by_array_length = self.heap.with_obj(object_idx.0, |heap_object| {
-                let HeapObj::Array(array) = heap_object else {
-                    return false;
-                };
-                if array
-                    .is_arguments
-                    .load(std::sync::atomic::Ordering::Relaxed)
-                    || self
-                        .array_index_own_property_descriptor(object_idx.0, index, &key)
-                        .is_some()
-                {
-                    return false;
-                }
-                let old_length = array
-                    .items
-                    .lock()
-                    .len()
-                    .max(array.sparse_max.lock().unwrap_or(0));
-                let length_writable = array
-                    .props
-                    .lock()
-                    .get(&crate::value::PropertyKey::from("length"))
-                    .is_none_or(|descriptor| descriptor.writable);
-                index >= old_length && !length_writable
-            });
+            let blocked_by_array_length =
+                self.array_index_blocked_by_non_writable_length(object_idx.0, index);
             if blocked_by_array_length {
                 return Ok(false);
             }
@@ -3654,37 +3686,13 @@ impl Vm {
 
         let current =
             crate::builtins::own_property_descriptor_for_key_or_throw(self, &object, &key)?;
-        let array_index_state = key
-            .as_str()
-            .and_then(crate::value::parse_array_index)
-            .and_then(|index| {
-                self.heap.with_obj(object_idx.0, |heap_object| {
-                    let HeapObj::Array(array) = heap_object else {
-                        return None;
-                    };
-                    if array
-                        .is_arguments
-                        .load(std::sync::atomic::Ordering::Relaxed)
-                    {
-                        return None;
-                    }
-                    let old_length = array
-                        .items
-                        .lock()
-                        .len()
-                        .max(array.sparse_max.lock().unwrap_or(0));
-                    let length_writable = array
-                        .props
-                        .lock()
-                        .get(&crate::value::PropertyKey::from("length"))
-                        .is_none_or(|descriptor| descriptor.writable);
-                    Some((index, old_length, length_writable))
-                })
-            });
         if current.is_none()
-            && array_index_state.is_some_and(|(index, old_length, length_writable)| {
-                index >= old_length && !length_writable
-            })
+            && key
+                .as_str()
+                .and_then(crate::value::parse_array_index)
+                .is_some_and(|index| {
+                    self.array_index_blocked_by_non_writable_length(object_idx.0, index)
+                })
         {
             return Ok(false);
         }
@@ -4285,64 +4293,6 @@ impl Vm {
                 checkpoint_power = checkpoint_power.saturating_mul(2);
             }
         }
-    }
-
-    /// Set an integer-indexed element of an array, extending with
-    /// `undefined` holes as needed.
-    pub(crate) fn set_array_index(
-        &mut self,
-        idx: usize,
-        i: usize,
-        value: Value,
-    ) -> error::Result<()> {
-        // Spec allows arrays to be sparse. To keep untrusted code from
-        // forcing a huge dense allocation (`a[0x80000000]` used to OOM-kill
-        // the host with ~2B slots), indices at or beyond the dense cap are
-        // stored as named string properties while `length` is advanced to
-        // cover them. Reads of the holes between return `undefined`, exactly
-        // as a real sparse array does.
-        if i >= crate::value::MAX_DENSE_ARRAY_LEN {
-            self.heap.with_obj(idx, |o| {
-                if let HeapObj::Array(a) = o {
-                    let pkey = crate::value::PropertyKey::from_string(i.to_string());
-                    a.props
-                        .lock()
-                        .insert(pkey, crate::value::PropertyDescriptor::data(value));
-                    let mut sm = a.sparse_max.lock();
-                    if sm.is_none_or(|cur| i >= cur) {
-                        // length must cover index i, i.e. i+1.
-                        *sm = Some(i + 1);
-                    }
-                }
-            });
-            return Ok(());
-        }
-        self.heap.with_obj(idx, |o| {
-            if let HeapObj::Array(a) = o {
-                let is_arguments = a.is_arguments.load(std::sync::atomic::Ordering::Relaxed);
-                let mut items = a.items.lock();
-                let mut present = a.present.lock();
-                if !is_arguments {
-                    while items.len() <= i {
-                        items.push(Value::Undefined);
-                        present.push(false);
-                    }
-                }
-                if i < items.len() {
-                    items[i] = value;
-                    if present.len() <= i {
-                        present.resize(i + 1, false);
-                    }
-                    present[i] = true;
-                } else {
-                    let pkey = crate::value::PropertyKey::from_string(i.to_string());
-                    a.props
-                        .lock()
-                        .insert(pkey, crate::value::PropertyDescriptor::data(value));
-                }
-            }
-        });
-        Ok(())
     }
 
     /// ES [[Set]] for `Array.prototype.length`. Validates the value per
@@ -4986,7 +4936,7 @@ impl Vm {
     pub fn gc(&mut self) {
         let roots = self.collect_roots();
         self.heap.collect(&roots);
-        self.ic.clear();
+        self.ic_clear();
         self.schedule_finalization_cleanup_jobs();
     }
 
@@ -5474,20 +5424,140 @@ impl Vm {
 
     /// Inline cache lookup: returns cached value if (obj_idx, key) was seen.
     pub(crate) fn ic_get(&self, obj_idx: usize, key: &str) -> Option<Value> {
-        self.ic.get(&(obj_idx, key.to_string())).cloned()
+        self.ic
+            .get(&obj_idx)
+            .and_then(|properties| properties.get(key))
+            .cloned()
     }
 
-    /// Store a value in the inline cache.
-    pub(crate) fn ic_put(&mut self, obj_idx: usize, key: String, val: Value) {
-        // Limit cache size to avoid unbounded growth.
-        if self.ic.len() > 4096 {
-            self.ic.clear();
+    #[cfg(test)]
+    fn take_inline_cache_reservation_failure(
+        &mut self,
+        site: crate::vm::InlineCacheReservationSite,
+    ) -> bool {
+        if self.fail_inline_cache_reservation == Some(site) {
+            self.fail_inline_cache_reservation = None;
+            return true;
         }
-        self.ic.insert((obj_idx, key), val);
+        false
+    }
+
+    /// Cache insertion is an optional optimization. Allocation failure skips
+    /// publication rather than turning a successful JS read into host abort.
+    pub(crate) fn ic_put(&mut self, obj_idx: usize, key: &str, val: Value) {
+        if let Some(existing) = self
+            .ic
+            .get_mut(&obj_idx)
+            .and_then(|properties| properties.get_mut(key))
+        {
+            *existing = val;
+            return;
+        }
+
+        let mut owned_key = String::new();
+        if !key.is_empty() {
+            #[cfg(test)]
+            if self
+                .take_inline_cache_reservation_failure(crate::vm::InlineCacheReservationSite::Key)
+            {
+                return;
+            }
+            if owned_key.try_reserve_exact(key.len()).is_err() {
+                return;
+            }
+        }
+        owned_key.push_str(key);
+
+        const MAX_INLINE_CACHE_ENTRIES: usize = 4096;
+        if self.ic_entry_count >= MAX_INLINE_CACHE_ENTRIES {
+            let mut replacement = std::collections::HashMap::new();
+            #[cfg(test)]
+            if self.take_inline_cache_reservation_failure(
+                crate::vm::InlineCacheReservationSite::PropertyMap,
+            ) {
+                return;
+            }
+            if replacement.try_reserve(1).is_err() {
+                return;
+            }
+            replacement.insert(owned_key, val);
+            self.ic_clear();
+            self.ic.insert(obj_idx, replacement);
+            self.ic_entry_count = 1;
+            return;
+        }
+
+        if !self.ic.contains_key(&obj_idx) {
+            if self.ic.len() == self.ic.capacity() {
+                #[cfg(test)]
+                if self.take_inline_cache_reservation_failure(
+                    crate::vm::InlineCacheReservationSite::ObjectMap,
+                ) {
+                    return;
+                }
+                if self.ic.try_reserve(1).is_err() {
+                    return;
+                }
+            }
+            let mut properties = std::collections::HashMap::new();
+            #[cfg(test)]
+            if self.take_inline_cache_reservation_failure(
+                crate::vm::InlineCacheReservationSite::PropertyMap,
+            ) {
+                return;
+            }
+            if properties.try_reserve(1).is_err() {
+                return;
+            }
+            properties.insert(owned_key, val);
+            self.ic.insert(obj_idx, properties);
+        } else {
+            let needs_growth = self
+                .ic
+                .get(&obj_idx)
+                .is_some_and(|properties| properties.len() == properties.capacity());
+            if needs_growth {
+                #[cfg(test)]
+                if self.take_inline_cache_reservation_failure(
+                    crate::vm::InlineCacheReservationSite::PropertyMap,
+                ) {
+                    return;
+                }
+                let Some(properties) = self.ic.get_mut(&obj_idx) else {
+                    return;
+                };
+                if properties.try_reserve(1).is_err() {
+                    return;
+                }
+            }
+            self.ic
+                .get_mut(&obj_idx)
+                .expect("inline cache object bucket must exist")
+                .insert(owned_key, val);
+        }
+        self.ic_entry_count += 1;
     }
 
     /// Invalidate a cache entry when a property is written.
     pub(crate) fn ic_invalidate(&mut self, obj_idx: usize, key: &str) {
-        self.ic.remove(&(obj_idx, key.to_string()));
+        let mut remove_object = false;
+        let removed = if let Some(properties) = self.ic.get_mut(&obj_idx) {
+            let removed = properties.remove(key).is_some();
+            remove_object = properties.is_empty();
+            removed
+        } else {
+            false
+        };
+        if removed {
+            self.ic_entry_count -= 1;
+        }
+        if remove_object {
+            self.ic.remove(&obj_idx);
+        }
+    }
+
+    pub(crate) fn ic_clear(&mut self) {
+        self.ic.clear();
+        self.ic_entry_count = 0;
     }
 }

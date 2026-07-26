@@ -62,6 +62,44 @@
 
 ### Fixed
 
+- Direct Array index assignment now uses the same representation-aware,
+  fallible storage publisher as property definition. Dense append, sparse
+  creation, and custom-to-dense migration reserve actual `props`, `items`, and
+  `present` growth before mutation; existing dense/custom writes and spare
+  capacity do not reserve. The removed `set_array_index` path no longer builds
+  a second numeric key or performs unchecked map/vector growth.
+
+  Array prototype traversal, extensibility, and non-writable `length` checks
+  remain ahead of publication; storage commits before logical length changes.
+  Mapped Arguments reruns its pre-update at every same-receiver `[[Set]]`
+  entry, including recursive transparent Proxy forwarding, while receiver
+  `[[DefineOwnProperty]]` updates the parameter map only after successful
+  storage. This preserves required partial effects across Proxy getters,
+  false/throw traps, and catchable allocation failure.
+
+  The inline cache is now grouped by object identity with an exact 4,096-entry
+  count. Reads and invalidations borrow `&str` without temporary `String`
+  allocation, empty object buckets are removed, every GC clear resets the
+  count, and key/map allocation during optional insertion is best-effort rather
+  than a host abort. At the cap, the replacement bucket is fully reserved
+  before the old cache is cleared, so failed optional insertion retains all
+  existing entries. New Criterion coverage exercises dense overwrite/append,
+  sparse Set, read hits, and invalidate hit/miss paths; three-run comparison
+  with the preceding release binary found no slowdown.
+
+  Exact regressions cover every storage and cache reservation site, atomic
+  retry, no-reservation replacements, descriptor preservation, Realm-correct
+  errors, completed/transparent Proxies, recursive mapped-Arguments ordering,
+  cleanup, cache overwrite/pruning/cap behavior, and Array length stability.
+  Local verification passes all targets/features with **261/261** library
+  tests, **539/539** builtins tests, **15/15** arguments tests, **50/50** Array
+  index tests, and **31/31** module tests, plus **260/260** release library
+  tests, **135/135** Python tooling tests, **1/1** doctest, rustfmt,
+  warnings-denied Clippy, release build, generated documentation, and wasm32
+  checking. Rustdoc retains 13 pre-existing warnings. Two GPT-5.6 final reviews
+  are clean. The five-directory focused Test262 output is byte-identical to the
+  preceding binary at **4054 pass / 4 fail / 243 skip / 0 timeout / 0 error**.
+
 - Array `length` definition now reserves actual operation-root, property-map,
   dense-item, and presence growth before mutation. Shrink scans once for the
   highest non-configurable blocker and removes configurable indexed

@@ -620,7 +620,7 @@ pub struct ArrayData {
     /// Largest array index currently stored as a named property rather
     /// than in the dense `items` backing store (see `MAX_DENSE_ARRAY_LEN`).
     /// `None` when no such out-of-band index exists, so `length` equals
-    /// `items.len()`. Kept in sync only by `set_array_index`.
+    /// `items.len()`. Kept in sync by the shared property-storage publisher.
     pub sparse_max: Mutex<Option<usize>>,
     /// Sloppy-mode mapped arguments object support. When present, integer
     /// indices alias the corresponding parameter binding in `env`.

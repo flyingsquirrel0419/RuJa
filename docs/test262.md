@@ -10870,6 +10870,48 @@ result `focused-array-length.txt` at **4731/4/121/0/0**.
 - 장점, 단점 및 영향: The unit has deterministic reservation, sparse, deletion, rollback, Realm, Proxy, cleanup, and forced-GC evidence plus an unchanged 4731/4/121 focused aggregate. Per-test focused output identity was not established; full-shard identity was established after replacing one contention timeout with the exact-corpus rerun. Direct index Set, temporary strings, and cache invalidation remain explicit later scopes.
 ```
 
+## Fallible Array index Set and borrowed inline cache
+
+This unit changes no Test262 admission. Direct Array index assignment now uses
+the fallible ordinary storage publisher in Set mode, while cache reads and
+invalidations no longer allocate temporary String keys. Rust regressions cover
+actual and spare `props`/`items`/`present` growth, existing dense and custom
+properties, sparse state and length, atomic retry, foreign Realm errors,
+completed and transparent Proxies, non-writable length/extensibility/prototype
+priority, mapped Arguments Set-versus-Define ordering, recursive transparent
+re-entry, observable Proxy getter effects, cache reservation failure,
+overwrite, pruning, exact cap, failed cap replacement retention, and clear
+behavior.
+
+Local gates pass all targets/features with **261/261** library tests,
+**539/539** builtins tests, **15/15** arguments tests, **50/50** Array-index
+tests, and **31/31** module tests, plus **260/260** release library tests,
+**135/135** tooling tests, **1/1** doctest, rustfmt, warnings-denied Clippy,
+release build, generated documentation, wasm32 checking, and all five new
+Criterion workloads. Rustdoc has only 13 pre-existing warnings. GPT-5.6
+reviewers McClintock and Chandrasekhar are clean after recursive Arguments
+preamble, receiver post-publication ordering, and cap-replacement retention
+findings were corrected.
+
+On fixed Test262 `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the five
+`built-ins/Array`, `built-ins/Reflect/set`, `language/arguments-object`,
+`language/expressions/assignment`, and `language/expressions/compound-assignment`
+directories are **4054 pass / 4 fail / 243 skip / 0 timeout / 0 error / 4301
+total / 4058 run**. Current and preceding release binaries produce
+byte-identical output. Three-run wall-time comparison for dense overwrite,
+dense append, sparse Set, cached read, and invalidate hit/miss workloads also
+shows no regression.
+
+```text
+[Decision Log]
+- 목적과 의도: Prove direct Array index Set allocation and exotic ordering safety plus allocation-free cache lookup/invalidation without widening conformance admission or trading correctness for benchmark speed.
+- 기존 구현 및 제약 조건: Test262 cannot inject native map/vector/cache reservation failure or observe internal representation; mapped Arguments has required partial effects around callbacks and failure; the selected focused corpus already has four failures; and aggregate equality alone can hide per-test drift.
+- 검토한 주요 대안: Admit unrelated files, rely only on Test262, rely only on failpoints, compare aggregate totals, omit the preceding binary, or skip hot-path performance measurement.
+- 선택한 방식: Keep admission unchanged, cover every allocation and ordering boundary deterministically in Rust, compare the exact focused output with the preceding release binary, run broad local gates, and benchmark dense/sparse Set plus cache hit/invalidation workloads against that binary.
+- 다른 대안 대신 이 방식을 선택한 이유: Admission cannot prove host-allocation safety; failpoints cannot detect broad semantic drift; aggregates are weaker than byte identity; one binary cannot separate patch effects from corpus policy; and structural allocation safety still needs evidence that hot-path performance did not regress.
+- 장점, 단점 및 영향: The unit has byte-identical 4054/4/243 focused evidence, exact representation/Realm/Proxy/Arguments/cache tests, and no measured workload regression. Initial shared PropertyKey creation and ordinary non-index Set remain separate allocator scopes.
+```
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is

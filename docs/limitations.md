@@ -388,15 +388,18 @@ guarantees are required.
   `items`/`present` vectors before mutation, including mapped-arguments dual
   storage. Array length mutation likewise reserves actual operation-root,
   property-map, dense-item, and presence growth, uses a canonical VM-owned
-  length key, and needs no deletion scratch collection. These guarantees are
-  limited to directly owned containers and that canonical key: BigInt/value
-  preparation, boxed-String canonicalization, numeric index formatting, and
-  inline-cache temporary strings still use infallible shared representation
-  paths. The remaining nearby hard-host-OOM scopes also include ordinary
-  `Set`/`set_array_index`, seal/freeze descriptor materialization, TypedArray
-  byte conversion, JSON caller containers, unrelated direct `ArrayData::new`
-  constructors, PropertyKey/Error strings, GC root enumeration, and mark
-  worklists.
+  length key, and needs no deletion scratch collection. Direct Array index Set
+  now uses the same fallible storage preflight and reuses its existing key.
+  Inline-cache reads and invalidations borrow keys without allocation; optional
+  insertion reserves its key and object/property maps best-effort and skips the
+  cache entry on failure. These guarantees are limited to those directly owned
+  containers and existing keys: BigInt/value preparation, boxed-String
+  canonicalization, initial PropertyKey/numeric-index formatting, and other
+  shared representation paths remain infallible. The remaining nearby
+  hard-host-OOM scopes also include ordinary non-index `Set`, seal/freeze
+  descriptor materialization, TypedArray byte conversion, JSON caller
+  containers, unrelated direct `ArrayData::new` constructors,
+  PropertyKey/Error strings, GC root enumeration, and mark worklists.
 - Push, Pop, Shift, Unshift, Splice, Slice, Concat, Flat, FlatMap, ForEach,
   Join, ToLocaleString, Map, Reduce, ReduceRight, Reverse, ToReversed,
   ToSpliced, and With use live generic indexed operations with operation-wide

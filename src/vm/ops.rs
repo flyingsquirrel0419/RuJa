@@ -1715,7 +1715,7 @@ impl Vm {
                                 cached
                             } else {
                                 let val = self.get_property(&obj, &key_str)?;
-                                self.ic_put(idx.0, key_str.clone(), val.clone());
+                                self.ic_put(idx.0, &key_str, val.clone());
                                 val
                             }
                         } else {

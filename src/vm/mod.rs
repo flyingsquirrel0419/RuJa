@@ -127,6 +127,14 @@ pub(crate) enum ArrayLengthReservationSite {
     ArrayPresence,
 }
 
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum InlineCacheReservationSite {
+    Key,
+    ObjectMap,
+    PropertyMap,
+}
+
 pub(crate) use conversions::{to_int32, to_uint32};
 pub(crate) use property::{
     ProxyDefinePropertyDescriptor, ProxyDefinePropertyOutcome, TypedArrayDefineDescriptor,
@@ -268,9 +276,10 @@ pub struct Vm {
     pub(crate) set_proto: Value,
     pub(crate) date_proto: Value,
     pub(crate) microtask_queue: std::collections::VecDeque<Microtask>,
-    /// Monomorphic inline cache: (heap_idx, property_name) -> cached Value.
-    /// Caches own data-property reads on that object for that key.
-    pub(crate) ic: std::collections::HashMap<(usize, String), Value>,
+    /// Monomorphic inline cache grouped by heap identity. The nested map lets
+    /// read and invalidation paths borrow `&str` without allocating a key.
+    pub(crate) ic: std::collections::HashMap<usize, std::collections::HashMap<String, Value>>,
+    pub(crate) ic_entry_count: usize,
     /// Temporary GC roots pinned across operations that hold heap values in
     /// Rust locals (e.g. a Promise handler while `call_function` runs, which
     /// may itself trigger a GC). Push indices on entry, pop on exit.
@@ -308,6 +317,8 @@ pub struct Vm {
         Option<(OrdinaryPropertyStorageReservationSite, usize)>,
     #[cfg(test)]
     pub(crate) fail_array_length_reservation: Option<(ArrayLengthReservationSite, usize)>,
+    #[cfg(test)]
+    pub(crate) fail_inline_cache_reservation: Option<InlineCacheReservationSite>,
     /// Receiver identities currently traversing Array stringification methods.
     /// Join checks after separator coercion and toLocaleString checks after its
     /// length snapshot, so recursive suppression preserves observable ordering.
@@ -824,6 +835,7 @@ impl Vm {
             date_proto: Value::Undefined,
             microtask_queue: std::collections::VecDeque::new(),
             ic: std::collections::HashMap::new(),
+            ic_entry_count: 0,
             gc_pins: Vec::new(),
             #[cfg(test)]
             fail_next_gc_pin_reservation: false,
@@ -855,6 +867,8 @@ impl Vm {
             fail_ordinary_property_storage_reservation: None,
             #[cfg(test)]
             fail_array_length_reservation: None,
+            #[cfg(test)]
+            fail_inline_cache_reservation: None,
             active_array_joins: Vec::new(),
             kept_objects: Vec::new(),
             current_yields: Vec::new(),
@@ -1106,7 +1120,7 @@ impl Vm {
         if microtask_result.is_ok() && self.heap.live_count() > 0 {
             let roots = self.collect_roots();
             if self.heap.maybe_collect(&roots) {
-                self.ic.clear();
+                self.ic_clear();
             }
             self.schedule_finalization_cleanup_jobs();
         }
@@ -1166,7 +1180,7 @@ impl Vm {
         if microtask_result.is_ok() && self.heap.live_count() > 0 {
             let roots = self.collect_roots();
             if self.heap.maybe_collect(&roots) {
-                self.ic.clear();
+                self.ic_clear();
             }
             self.schedule_finalization_cleanup_jobs();
         }
@@ -1719,7 +1733,7 @@ impl Vm {
             let pinned_result = self.pin_many(&result_roots);
             let roots = self.collect_roots();
             if self.heap.maybe_collect(&roots) {
-                self.ic.clear();
+                self.ic_clear();
             }
             self.schedule_finalization_cleanup_jobs();
             self.unpin_many(pinned_result);
@@ -3322,7 +3336,7 @@ impl Vm {
             return Ok(cached);
         }
         let value = self.get_property(base, key)?;
-        self.ic_put(idx.0, key.to_string(), value.clone());
+        self.ic_put(idx.0, key, value.clone());
         Ok(value)
     }
 

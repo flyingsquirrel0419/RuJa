@@ -2069,6 +2069,48 @@ is created only when `writable: false` must persist.
 - 장점, 단점 및 영향: Array length mutation now has bounded linear shrink work, exact growth reservations, no deletion scratch allocation, sparse-storage preservation, Realm-correct catchable failure, balanced cleanup, and retry evidence. Required partial deletion remains observable. Ordinary Set/set_array_index, numeric and cache temporary strings, seal/freeze, shared strings, TypedArray byte conversion, JSON containers, direct ArrayData constructors, GC root enumeration, and mark worklists remain independent scopes.
 ```
 
+## Fallible Array index Set and borrowed inline cache
+
+Direct Array index assignment has a dedicated `Set` storage-planning mode that
+shares the ordinary publisher's `props`, `items`, and `present` preflight and
+commit machinery. It reuses the caller's existing `PropertyKey`, so sparse Set
+does not format or allocate a second numeric key. Regular default data indices
+use dense storage below the cap, custom descriptors retain their attributes,
+and sparse indices publish one property plus `sparse_max`. Arguments values
+within existing dense backing remain unmaterialized unless a custom descriptor
+already exists; out-of-backing indices use ordinary property storage without
+changing the ordinary Arguments `length` property.
+
+Prototype traversal, Proxy traps, extensibility, and non-writable Array
+`length` checks complete before storage preflight. Successful publication then
+synchronizes logical Array length, but invalidates a materialized length cache
+entry only when its value changed. Mapped Arguments performs its parameter-map
+pre-update before traversal allocation at the first same-receiver `[[Set]]`
+entry and again at every recursive entry reached through ordinary or
+transparent Proxy forwarding. The receiver's Arguments
+`[[DefineOwnProperty]]` post-update occurs only after successful storage. An
+abrupt publication therefore retains earlier `[[Set]]` and observable Proxy
+effects without publishing the indexed property.
+
+The inline cache stores one nested String-key map per object and maintains an
+exact global entry count. `ic_get` and `ic_invalidate` use borrowed `&str`
+lookups, invalidation prunes empty object buckets, and every GC-related clear
+resets the count. New cache entries fallibly prepare their owned key and actual
+outer/inner map growth; failure simply skips this optional optimization.
+Overwrite uses existing capacity. At the 4,096-entry cap, the next entry's
+replacement bucket is fully reserved before the old cache is cleared; a failed
+reservation therefore preserves all existing entries.
+
+```text
+[Decision Log]
+- 목적과 의도: Make direct Array index Set publication allocator-fallible and representation-safe while removing temporary inline-cache lookup/invalidation allocation without changing Array, Arguments, Proxy, Realm, or abrupt-completion semantics.
+- 기존 구현 및 제약 조건: Three direct Set paths grew Array maps/vectors inside mutation, sparse Set formatted a second key, mapped bindings could change on the wrong side of failure, length synchronization invalidated unchanged descriptors, and every cache lookup/invalidation allocated a String. Arguments [[Set]] pre-updates its map before ordinary traversal, while receiver Arguments [[DefineOwnProperty]] post-updates only after successful definition and transparent Proxy recursion can enter both operations repeatedly.
+- 검토한 주요 대안: Keep set_array_index with local reserves, route every Array write through full generic traversal, materialize every Arguments index descriptor, update mapped bindings only before or only after publication, retain one tuple-key cache with temporary Strings, scan the cache on invalidation, or make cache allocation observable errors.
+- 선택한 방식: Add a Set-specific representation plan over the shared fallible publisher; reuse the existing PropertyKey; preserve default dense and custom/sparse representations; rerun mapped preambles at each same-receiver Set entry and post-update after receiver publication; update length only when changed; group cache entries by object with a counted 4,096 cap; and make cache insertion best-effort fallible while borrowing lookup/invalidation keys.
+- 다른 대안 대신 이 방식을 선택한 이유: Local reserve logic would duplicate representation rules; fully generic traversal adds hot-path overhead; eager Arguments descriptors create false allocation and storage; one-sided mapping order violates one of the two exotic operations; tuple lookup requires allocation; cache scans are O(n); and an optimization must not turn a successful JS read into an abrupt completion.
+- 장점, 단점 및 영향: Direct dense, custom, sparse, mapped-Arguments, transparent/completed Proxy, Realm, retry, and cache-cap paths now have deterministic allocation and ordering evidence. Borrowed cache access removes per-hit/per-write temporary allocation, and release workload comparison found no regression. Initial PropertyKey/shared String creation, ordinary non-index Set publication, seal/freeze, TypedArray byte conversion, JSON containers, unrelated ArrayData constructors, PropertyKey/Error strings, GC root enumeration, and mark worklists remain independent scopes.
+```
+
 ---
 
 **Next:** [Features](features.md) · [Known limitations](limitations.md) · [Back to README](../README.md)

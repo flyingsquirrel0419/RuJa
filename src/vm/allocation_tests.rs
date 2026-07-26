@@ -1,7 +1,7 @@
 use super::property::MAX_PROXY_CYCLE_REPLAYS;
 use super::{
     ArrayLengthReservationSite, DescriptorMaterializationReservationSite, ExternalPromiseJob,
-    ForInKeyReservationSite, GetPrototypeReservationSite, Microtask,
+    ForInKeyReservationSite, GetPrototypeReservationSite, InlineCacheReservationSite, Microtask,
     OrdinaryOwnKeysReservationSite, OrdinaryPropertyStorageReservationSite,
     OwnKeyConsumerReservationSite, PropertyTraversalReservationSite,
     ProxyDefinePropertyReservationSite, ProxyDescriptorReservationSite,
@@ -19541,4 +19541,602 @@ fn ordinary_property_storage_module_namespace_complete_descriptors() {
     );
     vm.fail_ordinary_property_storage_reservation = None;
     fs::remove_dir_all(module_dir).expect("module fixture directory should be removed");
+}
+
+#[test]
+fn direct_array_index_set_growth_failures_are_atomic_and_retryable() {
+    for failed_site in [
+        OrdinaryPropertyStorageReservationSite::ArrayItems,
+        OrdinaryPropertyStorageReservationSite::ArrayPresence,
+    ] {
+        let mut vm = Vm::new().expect("VM should initialize");
+        let array_index = vm
+            .alloc(HeapObj::Array(ArrayData::new(
+                Vec::new(),
+                Some(vm.array_proto.clone()),
+            )))
+            .expect("dense Set fixture should allocate");
+        vm.heap.with_obj(array_index.0, |object| {
+            let HeapObj::Array(array) = object else {
+                unreachable!();
+            };
+            if failed_site == OrdinaryPropertyStorageReservationSite::ArrayItems {
+                array
+                    .present
+                    .lock()
+                    .try_reserve_exact(1)
+                    .expect("presence fixture should reserve");
+            } else {
+                array
+                    .items
+                    .lock()
+                    .try_reserve_exact(1)
+                    .expect("item fixture should reserve");
+            }
+        });
+        let array = Value::Object(array_index);
+        let key = PropertyKey::from("0");
+        let before = array_storage_snapshot(&vm, &array, &key);
+
+        vm.fail_ordinary_property_storage_reservation = Some((failed_site, 0));
+        let error = vm
+            .set_property(&array, "0", Value::Number(7.0))
+            .expect_err("direct Set growth should be fallible");
+        assert_eq!(error.kind, crate::error::ErrorKind::Range);
+        assert_eq!(array_storage_snapshot(&vm, &array, &key), before);
+        assert_eq!(
+            vm.get_property(&array, "length").unwrap(),
+            Value::Number(0.0)
+        );
+
+        vm.set_property(&array, "0", Value::Number(7.0))
+            .expect("direct Set growth should retry");
+        assert_eq!(
+            array_storage_snapshot(&vm, &array, &key),
+            (vec![Value::Number(7.0)], vec![true], false, None)
+        );
+        assert_eq!(
+            vm.get_property(&array, "length").unwrap(),
+            Value::Number(1.0)
+        );
+    }
+
+    let mut vm = Vm::new().expect("VM should initialize");
+    let sparse = vm
+        .alloc(HeapObj::Array(ArrayData::new(
+            Vec::new(),
+            Some(vm.array_proto.clone()),
+        )))
+        .expect("sparse Set fixture should allocate");
+    let sparse = Value::Object(sparse);
+    let sparse_index = crate::value::MAX_DENSE_ARRAY_LEN;
+    let sparse_name = sparse_index.to_string();
+    let sparse_key = PropertyKey::from(sparse_name.as_str());
+    let sparse_before = array_storage_snapshot(&vm, &sparse, &sparse_key);
+    vm.fail_ordinary_property_storage_reservation =
+        Some((OrdinaryPropertyStorageReservationSite::PropertyStorage, 0));
+    let error = vm
+        .set_property(&sparse, &sparse_name, Value::Number(8.0))
+        .expect_err("sparse direct Set map growth should fail");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(
+        array_storage_snapshot(&vm, &sparse, &sparse_key),
+        sparse_before
+    );
+    assert_eq!(
+        vm.get_property(&sparse, "length").unwrap(),
+        Value::Number(0.0)
+    );
+    vm.set_property(&sparse, &sparse_name, Value::Number(8.0))
+        .expect("sparse direct Set should retry");
+    assert_eq!(
+        array_storage_snapshot(&vm, &sparse, &sparse_key),
+        (Vec::new(), Vec::new(), true, Some(sparse_index + 1))
+    );
+    assert_eq!(
+        vm.get_property(&sparse, "length").unwrap(),
+        Value::Number((sparse_index + 1) as f64)
+    );
+}
+
+#[test]
+fn direct_array_index_set_proxy_and_foreign_realm_failures_cleanup_and_retry() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.run(
+        r#"
+        globalThis.indexSetRealm = $262.createRealm().global;
+        globalThis.indexSetForeignTarget = indexSetRealm.eval(`[]`);
+        globalThis.indexSetForeignProxy = new Proxy(indexSetForeignTarget, {});
+        globalThis.indexSetCompletedTarget = [];
+        globalThis.indexSetCompletedProxy = new Proxy(indexSetCompletedTarget, {
+          set: function () { return true; }
+        });
+        "#,
+    )
+    .expect("foreign Realm Array Set fixtures should initialize");
+    let baseline_pins = vm.gc_pins.len();
+    let baseline_contexts = vm.execution_contexts.len();
+    let baseline_native_depth = vm.active_native_call_depth;
+
+    vm.fail_ordinary_property_storage_reservation =
+        Some((OrdinaryPropertyStorageReservationSite::ArrayItems, 0));
+    assert_eq!(
+        vm.run(
+            r#"
+            var indexSetForeignError;
+            try {
+              indexSetRealm.Reflect.set(
+                indexSetForeignProxy,
+                "0",
+                7,
+                indexSetForeignTarget
+              );
+            } catch (error) {
+              indexSetForeignError = error;
+            }
+            indexSetForeignError instanceof indexSetRealm.RangeError &&
+              !(indexSetForeignError instanceof RangeError);
+            "#,
+        )
+        .expect("foreign Array Set allocation error should be catchable"),
+        Value::Bool(true)
+    );
+    assert_eq!(vm.fail_ordinary_property_storage_reservation, None);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.execution_contexts.len(), baseline_contexts);
+    assert_eq!(vm.active_native_call_depth, baseline_native_depth);
+    assert_eq!(
+        vm.run("indexSetForeignTarget.length === 0")
+            .expect("failed foreign Set should be atomic"),
+        Value::Bool(true)
+    );
+
+    assert_eq!(
+        vm.run(
+            "indexSetRealm.Reflect.set(\
+                indexSetForeignProxy, '0', 7, indexSetForeignTarget)",
+        )
+        .expect("foreign Array Set should retry"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        vm.run("indexSetForeignTarget.length === 1 && indexSetForeignTarget[0] === 7")
+            .expect("foreign Array Set retry should publish"),
+        Value::Bool(true)
+    );
+
+    vm.fail_ordinary_property_storage_reservation =
+        Some((OrdinaryPropertyStorageReservationSite::ArrayItems, 0));
+    assert_eq!(
+        vm.run("Reflect.set(indexSetCompletedProxy, '0', 9)")
+            .expect("completed Proxy Set should skip target publication"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        vm.fail_ordinary_property_storage_reservation,
+        Some((OrdinaryPropertyStorageReservationSite::ArrayItems, 0))
+    );
+    assert_eq!(
+        vm.run("indexSetCompletedTarget.length === 0")
+            .expect("completed Proxy Set must not mutate its target"),
+        Value::Bool(true)
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.execution_contexts.len(), baseline_contexts);
+    assert_eq!(vm.active_native_call_depth, baseline_native_depth);
+}
+
+#[test]
+fn direct_array_index_set_migration_and_priority_use_the_shared_publisher() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    let migration_index = vm
+        .alloc(HeapObj::Array(ArrayData::new(
+            Vec::new(),
+            Some(vm.array_proto.clone()),
+        )))
+        .expect("migration fixture should allocate");
+    let migration = Value::Object(migration_index);
+    let key = PropertyKey::from("0");
+    vm.heap.with_obj(migration_index.0, |object| {
+        let HeapObj::Array(array) = object else {
+            unreachable!();
+        };
+        array
+            .props
+            .lock()
+            .insert(key.clone(), PropertyDescriptor::data(Value::Number(1.0)));
+        *array.sparse_max.lock() = Some(1);
+    });
+    let before = array_storage_snapshot(&vm, &migration, &key);
+    vm.fail_ordinary_property_storage_reservation =
+        Some((OrdinaryPropertyStorageReservationSite::ArrayItems, 0));
+    let error = vm
+        .set_property(&migration, "0", Value::Number(2.0))
+        .expect_err("custom-to-dense Set migration should preflight");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(array_storage_snapshot(&vm, &migration, &key), before);
+    vm.set_property(&migration, "0", Value::Number(2.0))
+        .expect("custom-to-dense Set migration should retry");
+    assert_eq!(
+        array_storage_snapshot(&vm, &migration, &key),
+        (vec![Value::Number(2.0)], vec![true], false, None)
+    );
+    for (site, value) in [
+        (OrdinaryPropertyStorageReservationSite::PropertyStorage, 3.0),
+        (OrdinaryPropertyStorageReservationSite::ArrayItems, 4.0),
+        (OrdinaryPropertyStorageReservationSite::ArrayPresence, 5.0),
+    ] {
+        vm.fail_ordinary_property_storage_reservation = Some((site, 0));
+        vm.set_property(&migration, "0", Value::Number(value))
+            .expect("existing dense Set should not reserve");
+        assert_eq!(
+            vm.fail_ordinary_property_storage_reservation,
+            Some((site, 0)),
+            "{site:?}"
+        );
+    }
+    vm.fail_ordinary_property_storage_reservation = None;
+
+    let custom_index = vm
+        .alloc(HeapObj::Array(ArrayData::new(
+            Vec::new(),
+            Some(vm.array_proto.clone()),
+        )))
+        .expect("custom descriptor fixture should allocate");
+    let custom = Value::Object(custom_index);
+    vm.heap.with_obj(custom_index.0, |object| {
+        let HeapObj::Array(array) = object else {
+            unreachable!();
+        };
+        let mut descriptor = PropertyDescriptor::data(Value::Number(1.0));
+        descriptor.enumerable = false;
+        descriptor.configurable = false;
+        array.props.lock().insert(key.clone(), descriptor);
+        *array.sparse_max.lock() = Some(1);
+    });
+    vm.fail_ordinary_property_storage_reservation =
+        Some((OrdinaryPropertyStorageReservationSite::PropertyStorage, 0));
+    vm.set_property(&custom, "0", Value::Number(6.0))
+        .expect("existing custom descriptor Set should not reserve");
+    assert_eq!(
+        vm.fail_ordinary_property_storage_reservation,
+        Some((OrdinaryPropertyStorageReservationSite::PropertyStorage, 0))
+    );
+    vm.heap.with_obj(custom_index.0, |object| {
+        let HeapObj::Array(array) = object else {
+            unreachable!();
+        };
+        let descriptor = array.props.lock().get(&key).cloned().unwrap();
+        assert_eq!(descriptor.value, Value::Number(6.0));
+        assert!(descriptor.writable);
+        assert!(!descriptor.enumerable);
+        assert!(!descriptor.configurable);
+        assert!(array.items.lock().is_empty());
+        assert_eq!(*array.sparse_max.lock(), Some(1));
+    });
+    vm.fail_ordinary_property_storage_reservation = None;
+
+    vm.run(
+        r#"
+        var directSetObserved = 0;
+        var directSetPrototype = {};
+        Object.defineProperty(directSetPrototype, "0", {
+          set: function (value) { directSetObserved = value; },
+          configurable: true
+        });
+        var directSetInherited = [];
+        Object.setPrototypeOf(directSetInherited, directSetPrototype);
+        var directSetLocked = [];
+        Object.defineProperty(directSetLocked, "length", { writable: false });
+        var directSetSealed = [];
+        Object.preventExtensions(directSetSealed);
+        "#,
+    )
+    .expect("priority fixtures should initialize");
+    vm.fail_ordinary_property_storage_reservation =
+        Some((OrdinaryPropertyStorageReservationSite::ArrayItems, 0));
+    let inherited = vm.get_global("directSetInherited");
+    vm.set_property(&inherited, "0", Value::Number(9.0))
+        .expect("prototype setter should run before receiver publication");
+    assert_eq!(vm.get_global("directSetObserved"), Value::Number(9.0));
+    assert_eq!(
+        vm.fail_ordinary_property_storage_reservation,
+        Some((OrdinaryPropertyStorageReservationSite::ArrayItems, 0))
+    );
+    for name in ["directSetLocked", "directSetSealed"] {
+        let array = vm.get_global(name);
+        vm.set_property(&array, "0", Value::Number(9.0))
+            .expect("non-strict rejected Set should complete normally");
+        assert!(!vm.has_own_property(&array, "0"));
+        assert_eq!(
+            vm.fail_ordinary_property_storage_reservation,
+            Some((OrdinaryPropertyStorageReservationSite::ArrayItems, 0))
+        );
+    }
+}
+
+#[test]
+fn mapped_arguments_set_preserves_set_and_define_failure_ordering() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.run(
+        r#"
+        var mappedSetArguments;
+        var mappedSetRead;
+        var mappedSetWrite;
+        function mappedSetCapture(parameter) {
+          mappedSetArguments = arguments;
+          mappedSetRead = function () { return parameter; };
+          mappedSetWrite = function (value) { parameter = value; };
+        }
+        mappedSetCapture(1);
+        var mappedSetBase = { 0: 10 };
+        "#,
+    )
+    .expect("mapped arguments fixtures should initialize");
+    let arguments = vm.get_global("mappedSetArguments");
+    let Value::Object(arguments_index) = arguments.clone() else {
+        unreachable!();
+    };
+    let key = PropertyKey::from("0");
+    vm.heap.with_obj(arguments_index.0, |object| {
+        let HeapObj::Array(array) = object else {
+            unreachable!();
+        };
+        array.items.lock().clear();
+        array.present.lock().clear();
+        array.props.lock().shift_remove(&key);
+    });
+    vm.run("Object.setPrototypeOf(mappedSetArguments, new Proxy({}, { set: null }))")
+        .expect("mapped arguments should accept a transparent Proxy prototype");
+    fill_property_storage_to_spare(&vm, &arguments, "mappedSetPadding", 0);
+    let before = array_storage_snapshot(&vm, &arguments, &key);
+    vm.fail_ordinary_property_storage_reservation =
+        Some((OrdinaryPropertyStorageReservationSite::PropertyStorage, 0));
+    let error = vm
+        .run("mappedSetArguments[0] = 2")
+        .expect_err("same-receiver Arguments Set should fail after mapping");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(array_storage_snapshot(&vm, &arguments, &key), before);
+    assert_eq!(
+        vm.run("mappedSetRead()").unwrap(),
+        Value::Number(2.0),
+        "Arguments [[Set]] updates the parameter map before ordinary Set"
+    );
+    vm.run("mappedSetArguments[0] = 2")
+        .expect("same-receiver Arguments Set should retry");
+
+    vm.heap.with_obj(arguments_index.0, |object| {
+        let HeapObj::Array(array) = object else {
+            unreachable!();
+        };
+        array.items.lock().clear();
+        array.present.lock().clear();
+        array.props.lock().shift_remove(&key);
+    });
+    fill_property_storage_to_spare(&vm, &arguments, "mappedSetForeignPadding", 0);
+    let before_foreign = array_storage_snapshot(&vm, &arguments, &key);
+    vm.fail_ordinary_property_storage_reservation =
+        Some((OrdinaryPropertyStorageReservationSite::PropertyStorage, 0));
+    let error = vm
+        .run("Reflect.set(mappedSetBase, '0', 3, mappedSetArguments)")
+        .expect_err("receiver Arguments DefineOwnProperty should fail before mapping");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(
+        array_storage_snapshot(&vm, &arguments, &key),
+        before_foreign
+    );
+    assert_eq!(vm.run("mappedSetRead()").unwrap(), Value::Number(2.0));
+    assert_eq!(
+        vm.run("Reflect.set(mappedSetBase, '0', 3, mappedSetArguments)")
+            .unwrap(),
+        Value::Bool(true)
+    );
+    assert_eq!(vm.run("mappedSetRead()").unwrap(), Value::Number(3.0));
+    vm.heap.with_obj(arguments_index.0, |object| {
+        let HeapObj::Array(array) = object else {
+            unreachable!();
+        };
+        array.items.lock().clear();
+        array.present.lock().clear();
+        array.props.lock().shift_remove(&key);
+    });
+    assert_eq!(
+        vm.run(
+            r#"
+            Object.setPrototypeOf(mappedSetArguments, new Proxy({}, {
+              set: function () { return false; }
+            }));
+            Reflect.set(mappedSetArguments, "0", 4, mappedSetArguments);
+            "#,
+        )
+        .unwrap(),
+        Value::Bool(false)
+    );
+    assert_eq!(vm.run("mappedSetRead()").unwrap(), Value::Number(4.0));
+    assert_eq!(
+        vm.run(
+            r#"
+            Object.setPrototypeOf(mappedSetArguments, new Proxy({}, {
+              set: function () { throw 17; }
+            }));
+            var mappedSetThrown;
+            try {
+              Reflect.set(mappedSetArguments, "0", 5, mappedSetArguments);
+            } catch (error) {
+              mappedSetThrown = error;
+            }
+            mappedSetThrown;
+            "#,
+        )
+        .unwrap(),
+        Value::Number(17.0)
+    );
+    assert_eq!(vm.run("mappedSetRead()").unwrap(), Value::Number(5.0));
+    assert_eq!(
+        vm.run(
+            r#"
+            Object.setPrototypeOf(mappedSetArguments, new Proxy({}, {
+              set: function () { return false; }
+            }));
+            var mappedSetWrapper = new Proxy(mappedSetArguments, { set: null });
+            Reflect.set(mappedSetWrapper, "0", 6, mappedSetArguments);
+            "#,
+        )
+        .unwrap(),
+        Value::Bool(false)
+    );
+    assert_eq!(
+        vm.run("mappedSetRead()").unwrap(),
+        Value::Number(6.0),
+        "transparent Proxy forwarding must enter Arguments [[Set]] before traversal"
+    );
+    vm.run(
+        r#"
+            var mappedSetGetterHandler = {};
+            Object.defineProperty(mappedSetGetterHandler, "set", {
+              get: function () {
+                mappedSetWrite(91);
+                return null;
+              }
+            });
+            Object.setPrototypeOf(
+              mappedSetArguments,
+              new Proxy({}, mappedSetGetterHandler)
+            );
+            mappedSetWrapper = new Proxy(mappedSetArguments, { set: null });
+            "#,
+    )
+    .expect("observable Proxy getter fixture should initialize");
+    fill_property_storage_to_spare(&vm, &arguments, "mappedSetGetterPadding", 0);
+    let getter_before = array_storage_snapshot(&vm, &arguments, &key);
+    vm.fail_ordinary_property_storage_reservation =
+        Some((OrdinaryPropertyStorageReservationSite::PropertyStorage, 0));
+    let error = vm
+        .run("Reflect.set(mappedSetWrapper, '0', 7, mappedSetArguments)")
+        .expect_err("receiver publication should fail after the Proxy getter");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(array_storage_snapshot(&vm, &arguments, &key), getter_before);
+    assert_eq!(
+        vm.run("mappedSetRead()").unwrap(),
+        Value::Number(91.0),
+        "failed receiver definition must retain the intervening getter effect"
+    );
+    assert_eq!(
+        vm.run("Reflect.set(mappedSetWrapper, '0', 7, mappedSetArguments)")
+            .unwrap(),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        vm.run("mappedSetRead()").unwrap(),
+        Value::Number(7.0),
+        "successful receiver definition must post-update the parameter map"
+    );
+    vm.heap.with_obj(arguments_index.0, |object| {
+        let HeapObj::Array(array) = object else {
+            unreachable!();
+        };
+        array.items.lock().clear();
+        array.present.lock().clear();
+        array.props.lock().shift_remove(&key);
+    });
+    assert_eq!(
+        vm.run(
+            r#"
+            var mappedSetCycleLookups = 0;
+            var mappedSetCycleHandler = {};
+            Object.defineProperty(mappedSetCycleHandler, "set", {
+              get: function () {
+                mappedSetCycleLookups += 1;
+                if (mappedSetCycleLookups === 1) {
+                  mappedSetWrite(91);
+                  return null;
+                }
+                return function () { return false; };
+              }
+            });
+            var mappedSetCycleProxy = new Proxy(
+              mappedSetArguments,
+              mappedSetCycleHandler
+            );
+            Object.setPrototypeOf(mappedSetArguments, mappedSetCycleProxy);
+            Reflect.set(mappedSetArguments, "0", 7, mappedSetArguments);
+            "#,
+        )
+        .unwrap(),
+        Value::Bool(false)
+    );
+    assert_eq!(
+        vm.run("mappedSetRead()").unwrap(),
+        Value::Number(7.0),
+        "recursive transparent Arguments [[Set]] must rerun its mapped preamble"
+    );
+    assert_eq!(
+        vm.get_property(&arguments, "length").unwrap(),
+        Value::Number(1.0),
+        "arguments indexed Set must not update its ordinary length property"
+    );
+}
+
+#[test]
+fn inline_cache_storage_is_borrowed_bounded_and_best_effort() {
+    for failed_site in [
+        InlineCacheReservationSite::Key,
+        InlineCacheReservationSite::ObjectMap,
+        InlineCacheReservationSite::PropertyMap,
+    ] {
+        let mut vm = Vm::new().expect("VM should initialize");
+        vm.fail_inline_cache_reservation = Some(failed_site);
+        vm.ic_put(7, "value", Value::Number(1.0));
+        assert_eq!(vm.ic_get(7, "value"), None, "{failed_site:?}");
+        assert_eq!(vm.ic_entry_count, 0, "{failed_site:?}");
+        assert!(vm.ic.is_empty(), "{failed_site:?}");
+        assert_eq!(vm.fail_inline_cache_reservation, None, "{failed_site:?}");
+    }
+
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.ic_put(7, "value", Value::Number(1.0));
+    vm.fail_inline_cache_reservation = Some(InlineCacheReservationSite::PropertyMap);
+    vm.ic_put(7, "value", Value::Number(2.0));
+    assert_eq!(vm.ic_get(7, "value"), Some(Value::Number(2.0)));
+    assert_eq!(vm.ic_entry_count, 1);
+    assert_eq!(
+        vm.fail_inline_cache_reservation,
+        Some(InlineCacheReservationSite::PropertyMap),
+        "an overwrite must not reserve"
+    );
+    assert_eq!(vm.ic_get(7, "missing"), None);
+    vm.ic_invalidate(7, "missing");
+    assert_eq!(
+        vm.fail_inline_cache_reservation,
+        Some(InlineCacheReservationSite::PropertyMap),
+        "borrowed lookup and invalidation must not reserve"
+    );
+    vm.ic_invalidate(7, "value");
+    assert_eq!(vm.ic_entry_count, 0);
+    assert!(!vm.ic.contains_key(&7));
+    vm.fail_inline_cache_reservation = None;
+
+    for index in 0..4096usize {
+        vm.ic_put(11, &format!("key{index}"), Value::Number(index as f64));
+    }
+    assert_eq!(vm.ic_entry_count, 4096);
+    vm.ic_put(11, "key0", Value::Number(-1.0));
+    assert_eq!(
+        vm.ic_entry_count, 4096,
+        "overwrite must retain the exact cap"
+    );
+    assert_eq!(vm.ic_get(11, "key0"), Some(Value::Number(-1.0)));
+    vm.fail_inline_cache_reservation = Some(InlineCacheReservationSite::PropertyMap);
+    vm.ic_put(12, "next", Value::Bool(true));
+    assert_eq!(vm.ic_entry_count, 4096);
+    assert_eq!(vm.ic_get(11, "key0"), Some(Value::Number(-1.0)));
+    assert_eq!(vm.ic_get(12, "next"), None);
+    assert_eq!(vm.fail_inline_cache_reservation, None);
+    vm.ic_put(12, "next", Value::Bool(true));
+    assert_eq!(vm.ic_entry_count, 1);
+    assert_eq!(vm.ic_get(11, "key0"), None);
+    assert_eq!(vm.ic_get(12, "next"), Some(Value::Bool(true)));
+    vm.ic_clear();
+    assert_eq!(vm.ic_entry_count, 0);
+    assert!(vm.ic.is_empty());
 }
