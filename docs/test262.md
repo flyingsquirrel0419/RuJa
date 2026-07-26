@@ -11118,7 +11118,14 @@ byte-identical output with SHA-256
 Direct regressions inspect emitted bytecode and cover canonical/boundary Number
 keys, signed zero, null-base ordering, Proxy get/set receivers, object-key
 coercion, and forced GC during every observable read-modify-write stage.
-Post-push CI and full-matrix artifacts remain the final broad gate.
+Implementation commit `f3766ec` passes CI `30210419512` and all 33 jobs in full
+run `30210419518`. The original Annex B artifact moves two passes to
+runner-contention timeouts; rerunning that directory with the downloaded CI
+binary restores **201/811/74/0/0**. Corrected artifacts at
+`/tmp/ruja-computed-ref-30210419518-final` aggregate to unchanged **31890 pass
+/ 5115 fail / 11459 skip / 3 timeout / 0 error / 48467 total / 37005 run**.
+All 30 corrected result files are byte-identical to the preceding clean run,
+and the downloaded binary reproduces focused **926/0/23** byte-for-byte.
 
 ```text
 [Decision Log]
@@ -11127,7 +11134,7 @@ Post-push CI and full-matrix artifacts remain the final broad gate.
 - 검토한 주요 대안: Rely only on Rust tests, compare only aggregate totals, widen admission, run one current binary, or pair direct internals with the complete adjacent Reference cluster on current and preceding releases.
 - 선택한 방식: Keep admission fixed, inspect opcode shape directly, exercise GC/order boundaries in Rust integration tests, and require byte-identical focused Test262 output from both binaries.
 - 다른 대안 대신 이 방식을 선택한 이유: Internal tests prove optimization shape but not language breadth; aggregates can hide offsetting drift; admission is unrelated; one binary cannot isolate the patch.
-- 장점, 단점 및 영향: Focused Reference coverage remains 926/0 with exact output identity while deterministic tests prove the removed opcode and preserved ordering. Full matrix evidence remains post-push; boxed Reference clone allocation is independent work.
+- 장점, 단점 및 영향: Focused Reference coverage remains 926/0 with exact output identity while deterministic tests prove the removed opcode and preserved ordering. CI and all 30 corrected full-matrix artifacts show zero semantic drift; boxed Reference clone allocation is independent work.
 ```
 
 ## Why the full-suite rate is not higher

@@ -26,7 +26,14 @@
   warnings-denied Clippy, release build, and generated documentation. Rustdoc
   retains 13 existing warnings. Two final GPT-5.6 reviews are clean after
   tightening wasm32 documentation and adding ephemeral-GC plus object-to-Symbol
-  key coverage.
+  key coverage. Implementation commit `f3766ec` passes CI `30210419512` and all
+  33 jobs in full run `30210419518`. The original Annex B artifact moves two
+  passes to runner-contention timeouts; the downloaded binary rerun restores
+  **201/811/74/0/0**. Corrected artifacts at
+  `/tmp/ruja-computed-ref-30210419518-final` aggregate to unchanged **31890 pass
+  / 5115 fail / 11459 skip / 3 timeout / 0 error / 48467 total / 37005 run**;
+  all 30 corrected files match the preceding clean run exactly. The downloaded
+  binary also reproduces focused **926/0/23** byte-for-byte.
 
 - Runtime BigInt values now use shared immutable `Arc<BigInt>` storage, making
   `Value` clones constant-time for multi-limb integers across properties,
