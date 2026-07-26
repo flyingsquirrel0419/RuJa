@@ -28,7 +28,13 @@
   remains **12761/0/7678**. Two short Criterion A/B samples show about a 2%
   numeric improvement and overlapping string-control results; the deterministic
   evidence is removal of 24 boxed-Reference clones. Initial Reference creation
-  boxes remain.
+  boxes remain. Commit `00b5496` passes CI `30218857008` and all 33 jobs in
+  full run `30218856969`. Full artifacts aggregate to the corrected baseline
+  **31894 pass / 5115 fail / 11455 skip / 3 timeout / 0 error / 48467 total /
+  37009 pass-or-fail run**. Twenty-nine result files are byte-identical to
+  preceding full run `30217016070`; its sole Annex B contention timeout returns
+  to the clean **201/811/74/0/0** result. Downloaded artifacts were deleted
+  immediately after comparison.
 
 - Reference consumers now borrow `ReferenceRecord` fields instead of deep-
   cloning their outer `Box` in `GetValue`, `PutValue`, and delete. Raw

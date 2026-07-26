@@ -11226,8 +11226,16 @@ complete adjacent Reference cohort is **930 pass / 0 fail / 19 skip / 0 timeout
 SHA `de466337f732c6866fc3a27d8631f3751204b9fb8e91f1f3ecbf20c4d75835f7`.
 The supported subset remains **12761 pass / 0 fail / 7678 skip / 20439 total**.
 Direct local classes **105/105**, ES2015 **133/133**, operators **130/130**,
-and `with` **58/58** also pass. Full-matrix artifact identity remains post-push
-evidence.
+and `with` **58/58** also pass. Full-matrix evidence is recorded below.
+
+Commit `00b5496` passes ordinary CI `30218857008` and all 33 jobs in full run
+`30218856969`. Its 30 artifacts aggregate to **31894 pass / 5115 fail / 11455
+skip / 3 timeout / 0 error / 48467 total / 37009 pass-or-fail run**. Against
+preceding full run `30217016070`, 29 files are byte-identical. Only Annex B
+differs: the preceding artifact's one contention timeout returns to pass, so
+the current artifact is the clean **201 pass / 811 fail / 74 skip / 0 timeout /
+0 error** baseline. Both downloaded artifact sets were deleted after exact
+comparison.
 
 ```text
 [Decision Log]
@@ -11236,7 +11244,7 @@ evidence.
 - 검토한 주요 대안: Rely only on compiler inspection, run only aggregate Test262, widen admission, compare only current output, or pair deterministic failpoints with exact current/preceding Reference output.
 - 선택한 방식: Keep admission fixed, assert all retained compiler sites use the fused opcode, force reservation and getter failures locally, compare the complete adjacent Reference cohort byte-for-byte, and rerun the supported subset.
 - 다른 대안 대신 이 방식을 선택한 이유: Bytecode shape alone does not prove roots or unwind behavior; Test262 alone cannot force allocator boundaries; totals are weaker than exact output identity; and admission changes would confound a representation-only runtime result.
-- 장점, 단점 및 영향: Twenty-four clone sites disappear with exact focused and supported-language stability plus deterministic allocation-order, GC, retry, and cleanup coverage. Full CI artifact comparison remains post-push evidence, and initial Reference boxes remain separate scope.
+- 장점, 단점 및 영향: Twenty-four clone sites disappear with exact focused and supported-language stability plus deterministic allocation-order, GC, retry, and cleanup coverage. Ordinary CI and all 30 full-corpus artifacts confirm zero semantic drift after correcting one preceding contention timeout; initial Reference boxes remain separate scope.
 ```
 
 ## Why the full-suite rate is not higher
