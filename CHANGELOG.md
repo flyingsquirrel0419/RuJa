@@ -96,7 +96,12 @@
   0 fail / 20 skip / 0 timeout / 0 error**, byte-identical to the preceding
   release binary. Forced execution of the two variable-length TypedArray
   preventExtensions staging tests improves from **0/2** on the preceding
-  release to **2/2**; normal policy still skips those staging files.
+  release to **2/2**; normal policy still skips those staging files. CI
+  `30201495431` and all 33 full-matrix jobs in `30201495450` pass. The original
+  Annex B shard had two contention timeouts; the same downloaded binary and
+  pinned corpus restored the clean result. Corrected artifacts aggregate to
+  unchanged **31890 pass / 5115 fail / 11459 skip / 3 timeout / 0 error** and
+  all 30 result files are byte-identical to run `30195285326`.
 
 - Ordinary non-index `Set` receiver publication now uses the shared fallible
   storage publisher. New receiver properties reserve actual `props` growth

@@ -11009,6 +11009,15 @@ length-tracking views over resizable ArrayBuffers and growable
 SharedArrayBuffers; exact staging admission remains a separate tooling-policy
 decision.
 
+Implementation commit `5a3e7d5` passes CI `30201495431` and all 33 jobs in
+full run `30201495450`. Its original Annex B artifact moved two passes to
+runner-contention timeouts; the same downloaded binary on the pinned corpus
+restores **201/811/74/0/0**. Corrected artifacts at
+`/tmp/ruja-integrity-level-30201495450-final` aggregate to unchanged **31890
+pass / 5115 fail / 11459 skip / 3 timeout / 0 error / 48467 total / 37005
+run**. All 30 corrected result files are byte-identical to full run
+`30195285326`, and the downloaded binary reproduces both focused cohorts.
+
 ```text
 [Decision Log]
 - 목적과 의도: Prove Object integrity correctness, allocation boundaries, and repeated-predicate performance without widening Test262 admission.
