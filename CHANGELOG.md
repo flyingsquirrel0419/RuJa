@@ -23,7 +23,14 @@
   **267/267** library tests, **541/541** builtins tests, **24/24** BigInt tests,
   release library **267/267**, tooling **135/135**, doctest **1/1**, rustfmt,
   warnings-denied Clippy, release build, generated documentation, and wasm32
-  checking. Rustdoc retains 13 existing warnings.
+  checking. Rustdoc retains 13 existing warnings. CI `30203903239` and all 33
+  jobs in full run `30203903224` pass. The original Annex B artifact has one
+  runner-contention timeout; the downloaded binary rerun restores
+  **201/811/74/0/0**. Corrected artifacts at
+  `/tmp/ruja-shared-bigint-30203903224-final-v1` aggregate to unchanged
+  **31890 pass / 5115 fail / 11459 skip / 3 timeout / 0 error / 48467 total /
+  37005 run**; all 30 corrected result files match the preceding clean run.
+  The downloaded binary reproduces both focused cohorts.
 
 - TypedArray `toString` Test262 admission now maps its four audited files to
   exact per-file feature metadata instead of subtracting one four-feature union

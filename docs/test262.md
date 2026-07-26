@@ -11039,6 +11039,15 @@ BigInt get/set plus BigInt64Array and BigUint64Array constructors report **93
 pass / 0 fail / 0 skip**. Current and preceding downloaded release binaries
 produce identical counts in both cohorts.
 
+CI `30203903239` and all 33 jobs in full run `30203903224` pass. Its original
+Annex B artifact moves one pass to a runner-contention timeout; rerunning that
+directory with the downloaded binary restores **201/811/74/0/0**. Corrected
+artifacts at `/tmp/ruja-shared-bigint-30203903224-final-v1` aggregate to the
+unchanged **31890 pass / 5115 fail / 11459 skip / 3 timeout / 0 error / 48467
+total / 37005 run**. The other 29 files are byte-identical to the preceding
+clean artifacts, and the corrected Annex B result is also identical. The
+downloaded binary reproduces focused **496/0/44** and **93/0/0**.
+
 Rust regressions additionally prove pointer sharing after a 16K-digit `Value`
 clone and value semantics through independently parsed Map/Set keys, boxing,
 mapped Arguments freeze, cross-Realm evaluation, TypedArrays, DataView, serde,
