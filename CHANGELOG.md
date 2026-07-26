@@ -24,7 +24,15 @@
   **1/1**, wasm32, rustfmt, warnings-denied Clippy, and generated documentation;
   rustdoc retains 13 existing warnings. GPT-5.6 correctness reviewer Planck and
   evidence/documentation reviewer Kepler are clean after adding Fancy backend
-  fixtures and clarifying historical ADR boundaries.
+  fixtures and clarifying historical ADR boundaries. Commit `35d7ccc` passes
+  CI `30221601414` and all 33 jobs in full run `30221601417`. Built-ins changes
+  exactly **+5 pass / -5 fail**; 28 other original artifacts are byte-identical
+  to preceding full run `30219956582`. The current Annex B artifact moves two
+  passes to contention timeouts, while the downloaded CI binary rerun is
+  byte-identical to the clean baseline **201/811/74/0/0**. Corrected full
+  results are **31899 pass / 5110 fail / 11455 skip / 3 timeout / 0 error /
+  48467 total / 37009 pass-or-fail run**. Artifacts and the sparse worktree were
+  deleted after comparison.
 
 - Retained Reference reads now use one `GetValueKeepReference` opcode instead
   of `Dup; GetValue`. The opcode moves the sole boxed Reference off the stack,

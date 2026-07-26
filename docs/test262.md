@@ -11273,6 +11273,17 @@ rustdoc retains 13 existing warnings. GPT-5.6 reviewers Planck and Kepler are
 clean after escape, nested-v, UTF-16, Unicode, Rust/fancy backend, source,
 historical-ADR, and exact-evidence audits.
 
+Commit `35d7ccc` passes ordinary CI `30221601414` and all 33 jobs in full run
+`30221601417`. Against preceding full run `30219956582`, built-ins moves
+exactly from **16275/4304/3086/3/0** to **16280/4299/3086/3/0**, and 28 other
+original result files are byte-identical. The current Annex B artifact has two
+runner-contention timeouts instead of passes. Rerunning the downloaded CI
+binary on the exact pinned corpus restores **201/811/74/0/0** and produces a
+file byte-identical to the preceding clean artifact. The corrected aggregate
+is **31899 pass / 5110 fail / 11455 skip / 3 timeout / 0 error / 48467 total /
+37009 pass-or-fail run**. Both artifact sets, the rerun log and binary, and the
+sparse pinned worktree were deleted after comparison.
+
 ```text
 [Decision Log]
 - 목적과 의도: Prove that embedded empty-class lowering closes only the five existing RegExp failures without hiding admission or unrelated matcher movement.
@@ -11280,7 +11291,7 @@ historical-ADR, and exact-evidence audits.
 - 검토한 주요 대안: Widen admission, run only the five files, trust direct Rust tests, compare only full-matrix aggregates, or pair exact affected files with the complete pinned RegExp directory and analyzer identities.
 - 선택한 방식: Keep policy fixed, require all five exact files to pass, require complete RegExp to move by exactly +5/-5, run a fresh failure analyzer, and cover literal/constructor plus mode boundaries directly.
 - 다른 대안 대신 이 방식을 선택한 이유: Admission changes would confound runtime evidence; five files alone miss adjacent regressions; direct tests do not prove Test262 movement; and aggregate totals are weaker than directory-local counts plus exact remaining identities.
-- 장점, 단점 및 영향: The unit has exact five-file, directory-delta, and remaining-failure evidence. Full-matrix file identity remains post-push evidence; oversized quantifiers, nullable capture-prefilter disagreement, and broader nested-v syntax remain separate scopes.
+- 장점, 단점 및 영향: The unit has exact five-file, directory-delta, remaining-failure, ordinary-CI, and corrected full-matrix file-identity evidence. Oversized quantifiers, nullable capture-prefilter disagreement, and broader nested-v syntax remain separate scopes.
 ```
 
 ## Why the full-suite rate is not higher
