@@ -4,6 +4,27 @@
 
 ### Changed
 
+- Runtime BigInt values now use shared immutable `Arc<BigInt>` storage, making
+  `Value` clones constant-time for multi-limb integers across properties,
+  constant pools, boxing, mapped Arguments, descriptors, and Realm crossings.
+  Arithmetic and TypedArray/DataView/Atomics conversions borrow operands and
+  allocate only fresh results; equality and Map/Set hashing remain value-based.
+  The public `Vm::to_bigint() -> BigInt` contract is unchanged. Direct enum
+  construction now takes `Arc<BigInt>`; embedders can use
+  `Value::bigint(BigInt)` or `Value::from(BigInt)`.
+
+  This is a runtime clone optimization, not a BigInt OOM guarantee. Parser AST
+  transfer still clones once, and `num-bigint` limbs plus Arc control blocks
+  remain outside the VM heap cap. A 64K-digit property-read stress workload
+  improves from 1.05 s to 0.74 s, while small arithmetic is unchanged within
+  timer noise. Focused Test262 BigInt operations are **496 pass / 0 fail / 44
+  skip**, and BigInt TypedArray/DataView coverage is **93/93** on both current
+  and preceding release binaries. Local gates pass all targets/features with
+  **267/267** library tests, **541/541** builtins tests, **24/24** BigInt tests,
+  release library **267/267**, tooling **135/135**, doctest **1/1**, rustfmt,
+  warnings-denied Clippy, release build, generated documentation, and wasm32
+  checking. Rustdoc retains 13 existing warnings.
+
 - TypedArray `toString` Test262 admission now maps its four audited files to
   exact per-file feature metadata instead of subtracting one four-feature union
   from every listed path. The shared manifest covers the parent `toString.js`

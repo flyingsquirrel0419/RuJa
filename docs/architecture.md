@@ -2180,7 +2180,34 @@ returning a result.
 - 검토한 주요 대안: Patch each specialized path independently, retain JavaScript descriptor objects, clone complete descriptors for every key, make all predicates collect PropertyKeys, redesign every Value as shared storage in this unit, or route every direct object through Proxy machinery.
 - 선택한 방식: Share the specification-level operation; represent integrity definitions with presence-aware internal records; inspect direct descriptor attributes without values; mutate ordinary attributes in place; reserve then move dense Array values; retain observable Proxy and Namespace paths; and use a direct allocation-free predicate scan only where no JavaScript hook can observe it.
 - 다른 대안 대신 이 방식을 선택한 이유: Per-kind patches had already drifted; JavaScript descriptor objects expose prototype pollution and allocate GC cells; complete descriptor cloning creates host-OOM risk for immutable BigInts; universal key collection regresses steady-state predicates; a global Value representation change is wider than this integrity unit; and direct objects need no Proxy traversal.
-- 장점, 단점 및 영향: Array length, Arguments deletion/promoted mapping, Proxy descriptors, resizable-buffer TypedArray prevention, Namespace TDZ/re-export fuel, nested root reservation, map growth, retry, partial effects, exact-cap GC, large BigInt values, and repeated predicates now have coverage. Initial numeric PropertyKey/shared String creation remains infallible. Proxy traps must still observe complete descriptor values, and mapped-Arguments detachment can clone an aliased by-value BigInt until immutable BigInts use shared representation.
+- 장점, 단점 및 영향: Array length, Arguments deletion/promoted mapping, Proxy descriptors, resizable-buffer TypedArray prevention, Namespace TDZ/re-export fuel, nested root reservation, map growth, retry, partial effects, exact-cap GC, large BigInt values, and repeated predicates now have coverage. Initial numeric PropertyKey/shared String creation remains infallible. Proxy traps must still observe complete descriptor values. The following shared immutable BigInt unit removes the mapped-Arguments deep clone.
+```
+
+## Shared immutable BigInt values
+
+Runtime `Value::BigInt` payloads use `Arc<BigInt>`. JavaScript BigInts are
+immutable, so property reads, constant-pool clones, boxing, mapped Arguments,
+Realm crossings, and descriptor publication can share limb storage without an
+observable identity change. Equality and Map/Set hashing remain value-based.
+Arithmetic, bitwise, shift, and fixed-width conversions borrow both operands
+and allocate only the result; no operation mutates shared storage.
+
+The public `Vm::to_bigint() -> BigInt` API keeps its owned return contract for
+embedders. Internal coercion uses a shared return type. Direct Rust construction
+with the public enum payload changes from `Value::BigInt(BigInt)` to
+`Value::bigint(BigInt)`, `Value::from(BigInt)`, or
+`Value::BigInt(Arc<BigInt>)`. Parser AST nodes remain owned and incur one clone
+while entering the constant pool; removing that compile-time copy is
+independent work.
+
+```text
+[Decision Log]
+- 목적과 의도: Make semantic Value duplication constant-time for multi-limb BigInts while preserving ECMAScript value semantics, worker-thread compatibility, and the existing owned embedding conversion API.
+- 기존 구현 및 제약 조건: Value derived Clone over an owned BigInt, so property reads, mapped Arguments detachment, boxing, and constant-pool copies cloned limb vectors. Values cross Atomics worker boundaries and therefore must remain Send. BigInt limb allocation is outside the GC heap cap.
+- 검토한 주요 대안: Keep owned BigInts, use Rc, globally intern BigInts, use Arc with copy-on-write arithmetic, introduce a Small/Shared tagged representation now, or move AST BigInts to shared storage in the same unit.
+- 선택한 방식: Store immutable runtime BigInts in Arc, borrow operands for all arithmetic and binary conversion paths, allocate a fresh Arc only for new numeric results, preserve value-based equality/hash, and retain an owned public to_bigint compatibility wrapper.
+- 다른 대안 대신 이 방식을 선택한 이유: Rc is not Send; global interning retains attacker-controlled values; copy-on-write makes cost depend on aliasing and can reintroduce deep clones; Small/Shared and AST migration have wider representation and performance surfaces; leaving values owned preserves a known large-clone cost.
+- 장점, 단점 및 영향: Runtime clone is O(1), a 64K-digit property-read stress workload improves about 29.5%, and focused BigInt plus binary-view Test262 output is unchanged. Every BigInt still allocates an Arc control block, parser-to-constant transfer still clones once, direct enum construction is an alpha API change, and Arc/num-bigint allocation remains infallible host allocation rather than a catchable heap-limit error.
 ```
 
 ---

@@ -68,6 +68,42 @@ use case runs short scripts with tight resource limits, not tight inner
 loops. If you need high-throughput JS execution, use QuickJS or V8 with
 process-level isolation instead.
 
+## BigInt shared-storage check
+
+The immutable BigInt representation has two retained Criterion workloads:
+
+| Benchmark | Current result |
+|-----------|----------------|
+| `bigint_value_clone_16k_digits` | 24.6-27.6 ns |
+| `bigint_small_arithmetic_10k` | 45.3-53.0 ms |
+
+A release A/B against the preceding downloaded CI binary reads one 64K-digit
+BigInt property 100,000 times. Wall time improves from **1.05 s** to **0.74 s**
+(about **29.5%**); maximum RSS remains similar at 8.8-9.2 MiB. Five-run small
+BigInt arithmetic stays at **0.07 s** on both binaries, within timer noise.
+These numbers prove clone-cost removal for this workload, not general BigInt
+throughput or sandboxed allocation safety.
+
+Reproduce the retained Criterion measurements and release A/B with:
+
+```sh
+cargo bench --bench basic -- bigint_ \
+  --sample-size 20 --warm-up-time 1 --measurement-time 2
+
+# Point PREVIOUS_RUJA at the preceding downloaded release artifact.
+cargo build --release --all-features
+for bin in "$PREVIOUS_RUJA" target/release/ruja; do
+  echo "$bin"
+  /usr/bin/time -f '%e sec %M KiB' "$bin" -e '
+    var value = BigInt("9".repeat(65536));
+    var object = { value: value };
+    var result;
+    for (var i = 0; i < 100000; i++) result = object.value;
+    result === value;
+  ' >/dev/null
+done
+```
+
 ## Reproducing
 
 ```sh

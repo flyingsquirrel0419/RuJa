@@ -11025,7 +11025,35 @@ run**. All 30 corrected result files are byte-identical to full run
 - 검토한 주요 대안: Admit unrelated tests, rely only on Test262, rely only on Rust failpoints, compare aggregate counts, omit the preceding binary, or benchmark only fixture creation plus one integrity operation.
 - 선택한 방식: Keep admission fixed; test allocation, Realm, exotic, fuel, partial-effect, and GC boundaries directly; compare exact focused output with the preceding release; and separate freeze from already-frozen predicate workloads.
 - 다른 대안 대신 이 방식을 선택한 이유: Admission does not prove host-allocation behavior; failpoints do not detect broad semantic drift; totals are weaker than byte identity; one binary cannot isolate patch effects; and a combined benchmark hid the repeated-predicate regression.
-- 장점, 단점 및 영향: The unit has byte-identical 257/0/20 focused evidence, deterministic exotic/allocation coverage, and no measured repeated-predicate regression. Initial numeric PropertyKey/shared String creation, Proxy descriptor values, and mapped-Arguments by-value BigInt duplication remain explicit follow-ups.
+- 장점, 단점 및 영향: The unit has byte-identical 257/0/20 focused evidence, deterministic exotic/allocation coverage, and no measured repeated-predicate regression. Initial numeric PropertyKey/shared String creation and Proxy descriptor values remain explicit follow-ups; the following shared immutable BigInt unit removes mapped-Arguments limb duplication.
+```
+
+## Shared immutable BigInt representation
+
+This unit changes no Test262 admission. On pinned corpus
+`9e61c12835c5e4a3bdba93850427e6742c4f64c4`, `built-ins/BigInt` plus the
+addition, subtraction, multiplication, division, exponentiation, bitwise,
+shift, relational, and unary-minus expression directories report **496 pass /
+0 fail / 44 skip / 0 timeout / 0 error / 540 total / 496 run**. DataView
+BigInt get/set plus BigInt64Array and BigUint64Array constructors report **93
+pass / 0 fail / 0 skip**. Current and preceding downloaded release binaries
+produce identical counts in both cohorts.
+
+Rust regressions additionally prove pointer sharing after a 16K-digit `Value`
+clone and value semantics through independently parsed Map/Set keys, boxing,
+mapped Arguments freeze, cross-Realm evaluation, TypedArrays, DataView, serde,
+and arithmetic. These representation and embedding checks are not observable
+through Test262, so the focused corpus is paired with direct tests instead of
+widening feature admission.
+
+```text
+[Decision Log]
+- 목적과 의도: Verify that shared BigInt storage changes only Rust ownership and performance, not JavaScript numeric, collection, Realm, or binary-view behavior.
+- 기존 구현 및 제약 조건: Test262 cannot inspect Arc sharing, public Rust conversion types, or host allocation behavior; aggregate full-suite totals are too broad for a representation-only change.
+- 검토한 주요 대안: Widen admission, run only BigInt builtins, rely only on direct Rust tests, compare only current output, or use full-suite aggregates as the regression oracle.
+- 선택한 방식: Keep admission fixed, compare two focused semantic cohorts on current and preceding binaries, and pair them with direct pointer-sharing and embedding regressions.
+- 다른 대안 대신 이 방식을 선택한 이유: Admission changes would conflate policy with representation; one cohort misses TypedArray/DataView boundaries; direct tests alone miss broad language drift; and one binary or aggregate counts cannot isolate regressions.
+- 장점, 단점 및 영향: Both focused cohorts remain fully green and count-identical while direct tests cover non-observable ownership. Exact per-file byte comparison and full-matrix artifacts remain post-push CI evidence.
 ```
 
 ## Why the full-suite rate is not higher

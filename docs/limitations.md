@@ -402,10 +402,13 @@ guarantees are required.
   operation root, use presence-aware internal descriptors, preflight Array
   property publication, inspect direct attributes without cloning values, and
   move dense values when materialization is required. Mapped Arguments
-  detachment can still clone the aliased value because `Value::BigInt` is
-  currently owned by value; sharing that immutable representation is separate
-  work. Namespace re-export initialization checks use allocation-free Brent
-  cycle detection and consume fuel per indirect binding. Integrity and nested
+  detachment and other semantic `Value` duplication now share immutable
+  `Arc<BigInt>` limb storage instead of cloning it. This is a clone
+  optimization, not an allocation-safety boundary: parsing and arithmetic
+  results still allocate `num-bigint` limbs and Arc control blocks through the
+  infallible host allocator. Namespace re-export initialization checks use
+  allocation-free Brent cycle detection and consume fuel per indirect binding.
+  Integrity and nested
   preventExtensions roots reserve before every pin. The remaining nearby
   hard-host-OOM scopes include initial numeric
   PropertyKey/shared-String creation, Proxy trap descriptor values, TypedArray
@@ -422,9 +425,12 @@ guarantees are required.
   memory-heavy than a shared per-class method table would be
 - Static class field declarations (`static x = 1`) are not yet supported;
   static initialization blocks (`static { }`) are
-- BigInt: arbitrary precision via `num-bigint`; fixed-width
+- BigInt: arbitrary precision via shared immutable `Arc<num_bigint::BigInt>`
+  runtime values; fixed-width
   `asIntN`/`asUintN`, prototype conversion methods, and DataView 64-bit
-  interop are implemented
+  interop are implemented. The VM heap cap does not account for BigInt limb or
+  Arc allocations, so large parsing, multiplication, and shifts can still hit
+  host OOM rather than a catchable JavaScript error
 - Wrapper objects (`new String(x)`, `new Number(x)`, `new Boolean(x)`,
   `Object(x)`) now store the wrapped primitive, so `.valueOf()` and
   `ToPrimitive` resolve to it (`new Number(5) + 1 === 6`). Boxed-string

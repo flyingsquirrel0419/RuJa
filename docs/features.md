@@ -61,7 +61,8 @@
   arithmetic (`+ - * / % **`, comparisons, `===`/`==` with `Number`);
   mixing BigInt with `Number` throws `TypeError`; `BigInt()` constructor
   `valueOf()`, `toString(radix)`, `BigInt.asIntN`, and `BigInt.asUintN`
-  supported
+  supported. Runtime values share immutable limb storage across clones;
+  arithmetic allocates fresh results and preserves value-based equality/hash
 - `try/finally` non-local transfers: `return`/`throw`/`break`/`continue`
   in `try`/`catch` divert through **all** enclosing `finally` blocks,
   innermost-first, including nested `try/finally`; a `return`/`throw`
