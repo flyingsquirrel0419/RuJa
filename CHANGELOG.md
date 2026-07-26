@@ -99,6 +99,11 @@
   checking. Rustdoc retains 13 pre-existing warnings. Two GPT-5.6 final reviews
   are clean. The five-directory focused Test262 output is byte-identical to the
   preceding binary at **4054 pass / 4 fail / 243 skip / 0 timeout / 0 error**.
+  CI `30192642319` and all 33 jobs in full run `30192642310` pass. Downloaded
+  artifacts aggregate to the unchanged **31890 pass / 5115 fail / 11459 skip /
+  3 timeout / 0 error**; all 30 files are byte-identical to the corrected
+  preceding baseline. The downloaded release binary also reproduces focused
+  **4054/4/243/0/0** byte-for-byte.
 
 - Array `length` definition now reserves actual operation-root, property-map,
   dense-item, and presence growth before mutation. Shrink scans once for the

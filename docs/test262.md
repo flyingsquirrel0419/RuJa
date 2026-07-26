@@ -10902,6 +10902,15 @@ byte-identical output. Three-run wall-time comparison for dense overwrite,
 dense append, sparse Set, cached read, and invalidate hit/miss workloads also
 shows no regression.
 
+Implementation commit `c49e0fd` passes CI `30192642319` and all 33 jobs in
+full run `30192642310`. Artifacts at
+`/tmp/ruja-array-index-set-30192642310-final` aggregate to unchanged **31890
+pass / 5115 fail / 11459 skip / 3 timeout / 0 error / 48467 total / 37005
+run**. The 29 non-Annex-B files are byte-identical to full run `30188817855`,
+and clean Annex B is byte-identical to that run's exact-corpus correction. The
+downloaded release binary reproduces the five-directory focused output at
+**4054/4/243/0/0**, byte-identical to both local binaries.
+
 ```text
 [Decision Log]
 - 목적과 의도: Prove direct Array index Set allocation and exotic ordering safety plus allocation-free cache lookup/invalidation without widening conformance admission or trading correctness for benchmark speed.
