@@ -4,6 +4,24 @@
 
 ### Changed
 
+- Test262 language early-error admission now includes the four exact generator
+  update-expression parse-negative files for prefix/postfix increment and
+  decrement. RuJa already rejects each invalid `yield` target correctly; this
+  is a policy-only change that removes the broad `generators` skip only from
+  those audited paths. The shared manifest now freezes nine files, and tooling
+  proves runner/analyzer symmetry, pinned metadata, and continued rejection of
+  future siblings. The four complete update directories pass **142/142** on
+  pinned Test262; the adjacent Reference cluster moves from **926 pass / 0 fail
+  / 23 skip** to **930 pass / 0 fail / 19 skip**, exactly **+4 pass / -4
+  skip**, and the supported subset is **12761 pass / 0 fail / 7678 skip**.
+  Local gates pass all targets/features with **271/271** library tests,
+  **541/541** builtins tests, **130/130** operators tests, release library
+  **269/269**, tooling **135/135**, doctest **1/1**, wasm32 checking, rustfmt,
+  warnings-denied Clippy, and generated documentation. Rustdoc retains 13
+  existing warnings. Final GPT-5.6 correctness review is clean; the independent
+  documentation review's three stale historical/count descriptions were
+  corrected. No runtime or parser code changed.
+
 - Computed compound assignment, logical assignment, and update expressions now
   pass their evaluated key directly to `MakePropertyRef`. On 64-bit targets,
   canonical numeric names therefore become inline `PropertyKey` indices
@@ -19,12 +37,12 @@
   100.89 ms before it; the roughly 1% samples are timer-noise evidence only,
   while opcode removal is deterministic. Pinned Test262 compound, logical,
   update, `super`, and `with` coverage remains byte-identical at **926 pass / 0
-  fail / 23 skip / 0 timeout / 0 error** between current and preceding release
-  binaries. Local gates pass all targets/features with **271/271** library
-  tests, **541/541** builtins tests, **130/130** operators tests, release library
-  **269/269**, tooling **135/135**, doctest **1/1**, wasm32 checking, rustfmt,
-  warnings-denied Clippy, release build, and generated documentation. Rustdoc
-  retains 13 existing warnings. Two final GPT-5.6 reviews are clean after
+  fail / 23 skip / 0 timeout / 0 error** between the `f3766ec` implementation
+  and its preceding release binaries. Local gates pass all targets/features
+  with **271/271** library tests, **541/541** builtins tests, **130/130**
+  operators tests, release library **269/269**, tooling **135/135**, doctest
+  **1/1**, wasm32 checking, rustfmt, warnings-denied Clippy, release build, and
+  generated documentation. Rustdoc retains 13 existing warnings. Two final GPT-5.6 reviews are clean after
   tightening wasm32 documentation and adding ephemeral-GC plus object-to-Symbol
   key coverage. Implementation commit `f3766ec` passes CI `30210419512` and all
   33 jobs in full run `30210419518`. The original Annex B artifact moves two

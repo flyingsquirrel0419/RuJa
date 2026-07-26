@@ -19,6 +19,18 @@ LANGUAGE_EARLY_ERROR_FEATURES = {
     ),
     "language/expressions/class/class-name-ident-await-escaped-module.js": frozenset(),
     "language/statements/class/class-name-ident-await-escaped-module.js": frozenset(),
+    "language/expressions/prefix-increment/target-cover-yieldexpr.js": frozenset(
+        {"generators"}
+    ),
+    "language/expressions/postfix-increment/target-cover-yieldexpr.js": frozenset(
+        {"generators"}
+    ),
+    "language/expressions/prefix-decrement/target-cover-yieldexpr.js": frozenset(
+        {"generators"}
+    ),
+    "language/expressions/postfix-decrement/target-cover-yieldexpr.js": frozenset(
+        {"generators"}
+    ),
 }
 LANGUAGE_EARLY_ERROR_MODULE_FILES = frozenset(
     {

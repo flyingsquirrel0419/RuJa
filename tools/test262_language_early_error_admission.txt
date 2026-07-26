@@ -4,3 +4,7 @@ language/statements/labeled/decl-async-function.js
 language/statements/labeled/decl-async-generator.js
 language/expressions/class/class-name-ident-await-escaped-module.js
 language/statements/class/class-name-ident-await-escaped-module.js
+language/expressions/prefix-increment/target-cover-yieldexpr.js
+language/expressions/postfix-increment/target-cover-yieldexpr.js
+language/expressions/prefix-decrement/target-cover-yieldexpr.js
+language/expressions/postfix-decrement/target-cover-yieldexpr.js

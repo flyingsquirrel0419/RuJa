@@ -31,7 +31,7 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 65.8% of all matrix files; 86.2% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (12757 pass / 0 fail / 7682 skip / 20439 total on the current pinned checkout) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (12761 pass / 0 fail / 7678 skip / 20439 total on the current pinned checkout) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
@@ -10104,22 +10104,23 @@ restriction. Both raw and escaped `await` are now rejected across the complete
 Module parse goal, including class names nested inside ordinary functions;
 Script parsing continues to allow those contextual names where specified.
 
-`tools/test262_language_early_error_admission.txt` freezes exactly the five
-files. A shared feature map removes `generators`, `async-functions`, or
-`async-iteration` only from the matching labelled file, and only the two exact
-class-name paths receive module admission. Tooling verifies manifest/map
-equality, disjointness, runner/analyzer symmetry, live pinned features, flags,
-includes, and parse-negative metadata, extra-feature rejection, invalid paths,
-and future or outside siblings. Full-matrix setup runs the live check before
-constructing the directory matrix.
+`tools/test262_language_early_error_admission.txt` originally froze exactly
+these five files and now freezes nine after the generator update-expression
+follow-up documented below. A shared feature map removes `generators`,
+`async-functions`, or `async-iteration` only from each matching admitted file,
+and only the two exact class-name paths receive module admission. Tooling
+verifies manifest/map equality, disjointness, runner/analyzer symmetry, live
+pinned features, flags, includes, and parse-negative metadata, extra-feature
+rejection, invalid paths, and future or outside siblings. Full-matrix setup
+runs the live check before constructing the directory matrix.
 
-The exact cohort is **5/5**, and the complete labelled-statement directory is
-**21 pass / 0 fail / 3 skip**. Local verification passes all targets/features
-with **219/219** library tests, **537/537** builtins tests, and **15/15**
-arguments tests, plus **218/218** release library tests, **134/134** Python
-tooling tests, **1/1** doctest, rustfmt, warnings-denied Clippy, release build,
-generated documentation, Python bytecode compilation, workflow YAML parsing,
-and wasm32 checking. Rustdoc retains only the 13 pre-existing broken
+The original five-file cohort is **5/5**, and the complete labelled-statement
+directory is **21 pass / 0 fail / 3 skip**. Local verification passes all
+targets/features with **219/219** library tests, **537/537** builtins tests,
+and **15/15** arguments tests, plus **218/218** release library tests,
+**134/134** Python tooling tests, **1/1** doctest, rustfmt, warnings-denied
+Clippy, release build, generated documentation, Python bytecode compilation,
+workflow YAML parsing, and wasm32 checking. Rustdoc retains only the 13 pre-existing broken
 intra-doc-link warnings. Two GPT-5.6 reviews are clean after one review found
 and the implementation fixed the nested-function Module source-goal boundary.
 CI `29903293887` passes both jobs, and full-matrix setup passes the new live
@@ -11110,9 +11111,9 @@ run.
 This unit changes no Test262 admission. On pinned corpus
 `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, compound assignment, logical
 assignment, all four prefix/postfix increment/decrement directories, `super`,
-and `with` report **926 pass / 0 fail / 23 skip / 0 timeout / 0 error / 949
-total / 926 run**. Current and preceding release binaries produce
-byte-identical output with SHA-256
+and `with` reported **926 pass / 0 fail / 23 skip / 0 timeout / 0 error / 949
+total / 926 run** at implementation commit `f3766ec`. That release and its
+preceding binary produce byte-identical output with SHA-256
 `2c9baf866e644bc21e1a847feb519ec0ca6cf7b9114ec0a40a169bd0a58ec227`.
 
 Direct regressions inspect emitted bytecode and cover canonical/boundary Number
@@ -11135,6 +11136,31 @@ and the downloaded binary reproduces focused **926/0/23** byte-for-byte.
 - 선택한 방식: Keep admission fixed, inspect opcode shape directly, exercise GC/order boundaries in Rust integration tests, and require byte-identical focused Test262 output from both binaries.
 - 다른 대안 대신 이 방식을 선택한 이유: Internal tests prove optimization shape but not language breadth; aggregates can hide offsetting drift; admission is unrelated; one binary cannot isolate the patch.
 - 장점, 단점 및 영향: Focused Reference coverage remains 926/0 with exact output identity while deterministic tests prove the removed opcode and preserved ordering. CI and all 30 corrected full-matrix artifacts show zero semantic drift; boxed Reference clone allocation is independent work.
+```
+
+## Generator update-expression early-error admission
+
+The parser already rejects `yield` used as the target of prefix/postfix
+increment or decrement. Four corresponding Test262 parse-negative files were
+still skipped only because they carry the broad `generators` feature. The
+shared language early-error manifest now admits those four exact paths and
+maps each to `generators`; no parser, compiler, or runtime code changed.
+
+On pinned Test262 `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, all four
+files pass, their complete update-expression directories are **142 pass / 0
+fail / 0 skip**, and the adjacent compound/logical/update/`super`/`with`
+Reference cluster moves from **926/0/23** to **930/0/19**. The supported
+language subset is **12761 pass / 0 fail / 7678 skip / 20439 total**. Tooling
+also requires future siblings in all four directories to remain skipped.
+
+```text
+[Decision Log]
+- 목적과 의도: Count four already-correct generator update-expression early errors without widening RuJa's general generator support claim.
+- 기존 구현 및 제약 조건: Each file has correct parse-negative behavior, but the broad generators gate skips it; directory-wide admission would expose unrelated unsupported tests.
+- 검토한 주요 대안: Leave correct tests skipped, remove the generators gate globally, admit all four directories, add a separate manifest, or extend the existing language early-error manifest.
+- 선택한 방식: Add only the four audited paths and their exact feature metadata to the existing shared manifest, with runner/analyzer and future-sibling tooling checks.
+- 다른 대안 대신 이 방식을 선택한 이유: Exact admission reflects observed support without conflating policy with runtime work, while reusing the existing workflow preflight and one source of truth.
+- 장점, 단점 및 영향: Supported coverage gains exactly four passes with no failures or semantic code change. Other generator tests remain gated and require independent audits.
 ```
 
 ## Why the full-suite rate is not higher

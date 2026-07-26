@@ -567,6 +567,18 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
             ),
             "language/expressions/class/class-name-ident-await-escaped-module.js": frozenset(),
             "language/statements/class/class-name-ident-await-escaped-module.js": frozenset(),
+            "language/expressions/prefix-increment/target-cover-yieldexpr.js": frozenset(
+                {"generators"}
+            ),
+            "language/expressions/postfix-increment/target-cover-yieldexpr.js": frozenset(
+                {"generators"}
+            ),
+            "language/expressions/prefix-decrement/target-cover-yieldexpr.js": frozenset(
+                {"generators"}
+            ),
+            "language/expressions/postfix-decrement/target-cover-yieldexpr.js": frozenset(
+                {"generators"}
+            ),
         }
         expected_modules = frozenset(
             {
@@ -635,6 +647,18 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                 root
                 / "test/language/expressions/class/"
                 "class-name-ident-await-escaped-module-future.js",
+                root
+                / "test/language/expressions/prefix-increment/"
+                "target-cover-yieldexpr-future.js",
+                root
+                / "test/language/expressions/postfix-increment/"
+                "target-cover-yieldexpr-future.js",
+                root
+                / "test/language/expressions/prefix-decrement/"
+                "target-cover-yieldexpr-future.js",
+                root
+                / "test/language/expressions/postfix-decrement/"
+                "target-cover-yieldexpr-future.js",
             )
             outside = root / "test/language/statements/if/decl-gen.js"
             for tool in (test262_runner, test262_analyze):
@@ -712,6 +736,13 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                             future_siblings[1],
                         )
                     )
+                    for future_update in future_siblings[2:]:
+                        self.assertTrue(
+                            tool.should_skip(
+                                {"flags": [], "features": ["generators"]},
+                                future_update,
+                            )
+                        )
                     self.assertTrue(
                         tool.should_skip(
                             {"flags": [], "features": ["generators"]}, outside
