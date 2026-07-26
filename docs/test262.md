@@ -10821,6 +10821,55 @@ that run's downloaded binary reruns annexB at the corrected baseline **201 / 811
 - 장점, 단점 및 영향: The unit has focused 1897/0/13 and corrected zero-delta full evidence plus deterministic capacity, ordering, Realm, retry, partial-operation, exotic, and forced-GC coverage. Shared value/key allocation, Array length, ordinary Set, TypedArray byte vectors, and GC worklists remain explicit later scopes.
 ```
 
+## Fallible Array length mutation
+
+Commit `75401b9` changes no Test262 admission. Array `length` definition now
+preflights actual root, property-map, dense-item, and presence growth, uses no
+deletion scratch vector, preserves sparse backing across shrink and rollback,
+and materializes virtual length only when non-writability must persist.
+
+Rust regressions cover every reservation site, spare and full capacity, failed
+preflight atomicity and retry, dense and sparse shrink, equal-length and growth
+paths, the highest non-configurable blocker, higher configurable deletion,
+deferred `writable: false`, exact fuel, foreign Realm errors, transparent and
+completed Proxy paths, pin/context/native-depth cleanup, and forced GC across
+the two observable conversions. Local gates pass all targets/features with
+**256/256** library tests, **539/539** builtins tests, **15/15** arguments
+tests, and **31/31** module tests, plus **255/255** release library tests,
+**135/135** tooling tests, **1/1** doctest, rustfmt, warnings-denied Clippy,
+release build, generated documentation, and wasm32 checking. Rustdoc has only
+13 pre-existing warnings. GPT-5.6 reviewers Wegener and Parfit are clean after
+sparse equality and canonical-key follow-up review.
+
+On fixed Test262 `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the four
+`built-ins/Array`, `Object/defineProperty`, `Object/defineProperties`, and
+`Reflect/defineProperty` directories remain **4731 pass / 4 fail / 121 skip /
+0 timeout / 0 error / 4856 total / 4735 run**. The preceding downloaded binary
+has the identical aggregate, establishing no count-level focused change; this
+comparison does not claim byte-identical per-test output.
+
+CI `30188817875` and all 33 jobs in full run `30188817855` pass. The original
+30 artifacts aggregate to **31889 pass / 5115 fail / 11459 skip / 4 timeout / 0
+error / 48467 total / 37004 run** because `annexB` shifted one baseline pass to
+a runner-contention timeout. Rerunning only `annexB` with the same downloaded
+binary and pinned corpus restores **201/811/74/0/0** and is byte-identical to
+run `30186299205`. With that corrected shard, all 30 files match the baseline
+and aggregate to unchanged **31890/5115/11459/3/0** over **48467** total and
+**37005** run. Evidence is stored at
+`/tmp/ruja-array-length-30188817855-final`, including the original artifact,
+corrected `test262_annexB_rerun_result.txt`, and downloaded-binary focused
+result `focused-array-length.txt` at **4731/4/121/0/0**.
+
+```text
+[Decision Log]
+- 목적과 의도: Prove Array length allocation, sparse-representation, partial-deletion, rollback, and GC safety without widening Test262 admission or hiding known focused failures.
+- 기존 구현 및 제약 조건: Test262 cannot inject native root/map/vector reservation failure or force exact conversion-time collection; the selected four directories contain four failures whose per-test identities were not compared; and equal aggregate totals alone cannot prove full-shard stability.
+- 검토한 주요 대안: Admit unrelated Array files, rely only on Rust failpoints, treat focused aggregate equality as full evidence, omit old-binary comparison, or combine direct index Set and cache allocation in this unit.
+- 선택한 방식: Keep admission unchanged, exercise every allocation and no-allocation boundary locally, compare the focused fixed corpus with current and preceding binaries, run ordinary CI and the pinned full matrix, and inspect downloaded per-shard artifacts.
+- 다른 대안 대신 이 방식을 선택한 이유: Admission cannot prove host-allocation ordering; local failpoints cannot detect broad semantic drift; focused equality does not cover unrelated shards; an old-binary comparison identifies corpus/policy effects; and Set/cache mutation has an independent contract.
+- 장점, 단점 및 영향: The unit has deterministic reservation, sparse, deletion, rollback, Realm, Proxy, cleanup, and forced-GC evidence plus an unchanged 4731/4/121 focused aggregate. Per-test focused output identity was not established; full-shard identity was established after replacing one contention timeout with the exact-corpus rerun. Direct index Set, temporary strings, and cache invalidation remain explicit later scopes.
+```
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is

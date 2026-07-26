@@ -62,6 +62,42 @@
 
 ### Fixed
 
+- Array `length` definition now reserves actual operation-root, property-map,
+  dense-item, and presence growth before mutation. Shrink scans once for the
+  highest non-configurable blocker and removes configurable indexed
+  descriptors with one linear retain pass, avoiding allocation-sized deletion
+  scratch state while preserving descending-deletion rollback semantics and
+  deferred `writable: false`.
+
+  Sparse Arrays remain sparse across shrink, blocked rollback, equal-length
+  definition, and growth; none of those paths expands dense holes to the
+  logical length. Virtual `length` stays unmaterialized unless a persistent
+  non-writable descriptor is required, and the VM reuses one canonical
+  `length` key instead of allocating it per operation. Resolved targets and
+  values remain rooted across both observable numeric conversions.
+
+  Exact regressions cover every reservation site, spare capacity, retry and
+  atomicity, sparse truncation and rollback, deletion order, deferred
+  writability, exact fuel, foreign Realms, transparent and completed Proxies,
+  cleanup, and forced GC between the two conversions. Local verification
+  passes all targets/features with **256/256** library tests, **539/539**
+  builtins tests, **15/15** arguments tests, and **31/31** module tests, plus
+  **255/255** release library tests, **135/135** Python tooling tests, **1/1**
+  doctest, rustfmt, warnings-denied Clippy, release build, generated
+  documentation, and wasm32 checking. Rustdoc retains 13 pre-existing
+  warnings. Two independent GPT-5.6 final reviews are clean. The focused
+  four-directory Test262 cohort remains **4731 pass / 4 fail / 121 skip / 0
+  timeout / 0 error**, identical to the preceding downloaded binary.
+
+  Implementation commit `75401b9` passes CI `30188817875` and all 33 jobs in
+  full run `30188817855`. The initial `annexB` artifact shifted one pass to a
+  runner-contention timeout; the same downloaded binary and pinned corpus rerun
+  is byte-identical to the baseline **201/811/74/0/0**. The corrected 30-file
+  evidence aggregates to unchanged **31890 pass / 5115 fail / 11459 skip / 3
+  timeout / 0 error / 48467 total / 37005 run**, with every shard matching full
+  run `30186299205`. The downloaded release binary reproduces the focused
+  cohort at **4731/4/121/0/0**.
+
 - Ordinary property definition now plans storage before publication and
   fallibly reserves only actual growth of the target's `props` map and Array
   `items`/`present` vectors. The shared path is used by complete VM descriptors

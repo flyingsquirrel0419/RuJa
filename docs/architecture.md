@@ -2035,6 +2035,40 @@ for String keys, while Symbol keys retain ordinary semantics.
 - 장점, 단점 및 영향: Direct containers now have exact growth, atomic failure, Realm, retry, partial-operation, Proxy priority, and forced-GC evidence. The guarantee intentionally excludes shared key/value representation, boxed-String canonicalization, Array length-key maintenance, inline-cache temporary strings, TypedArray byte vectors, ordinary Set/set_array_index, seal/freeze, JSON, direct ArrayData constructors, GC root enumeration, and mark worklists.
 ```
 
+## Fallible Array length mutation
+
+`ArraySetLength` reserves and pins its target/value roots before both observable
+numeric conversions, then reads the old descriptor. After validation, it
+reserves only actual growth of the `props` map, dense `items`, and `present`
+bitmap before any directly owned Array state changes. A VM-owned canonical
+`PropertyKey` supplies `length`, so the operation does not allocate a fresh
+shared String key.
+
+Shrink needs no deletion scratch collection. One linear scan finds the highest
+non-configurable indexed property at or above the requested length. A single
+`IndexMap::retain` removes configurable indexed properties above the effective
+length, after which dense storage is truncated only when it already covers
+that range. This is equivalent to descending deletion: a blocker restores
+length to its index plus one, lower indices remain untouched, higher
+configurable indices are gone, and a requested `writable: false` is applied
+only after rollback.
+
+Sparse representation is preserved when dense backing is shorter than the
+logical length. Shrink, blocked rollback, equal-length definition, and growth
+therefore update logical metadata without materializing holes. Virtual
+`length` also remains virtual for value changes and `writable: true`; storage
+is created only when `writable: false` must persist.
+
+```text
+[Decision Log]
+- 목적과 의도: Make Array length mutation allocator-fallible and representation-safe while preserving ArraySetLength conversion, deletion, rollback, writability, Realm, fuel, Proxy, and GC semantics.
+- 기존 구현 및 제약 조건: Length conversion can execute JavaScript twice; shrinking previously built deletion scratch vectors, sparse rollback could resize dense storage to a large blocker index, virtual length was materialized on ordinary updates, and direct map/vector growth was infallible. Partial deletion at a non-configurable index is required behavior rather than an atomic transaction.
+- 검토한 주요 대안: Collect every deletion key, delete through repeated map removal, preallocate dense storage to the logical length, always materialize the length descriptor, reserve all containers at entry, or combine ordinary Set, index-key strings, and inline-cache allocation in the same patch.
+- 선택한 방식: Root conversion operands before observable work; preflight only actual directly owned growth; scan once for the highest blocker; remove eligible custom indices with one retain pass; truncate dense backing only within its existing range; keep sparse and virtual state unmaterialized; and use one VM-owned canonical length key.
+- 다른 대안 대신 이 방식을 선택한 이유: Scratch keys and repeated removal add fallible allocation or quadratic work; logical-length dense allocation is unbounded and changes representation; eager descriptor materialization creates false failures; entry reservation changes abrupt-completion priority; and index Set plus cache invalidation have separate publication contracts.
+- 장점, 단점 및 영향: Array length mutation now has bounded linear shrink work, exact growth reservations, no deletion scratch allocation, sparse-storage preservation, Realm-correct catchable failure, balanced cleanup, and retry evidence. Required partial deletion remains observable. Ordinary Set/set_array_index, numeric and cache temporary strings, seal/freeze, shared strings, TypedArray byte conversion, JSON containers, direct ArrayData constructors, GC root enumeration, and mark worklists remain independent scopes.
+```
+
 ---
 
 **Next:** [Features](features.md) · [Known limitations](limitations.md) · [Back to README](../README.md)

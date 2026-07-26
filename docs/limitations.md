@@ -386,14 +386,17 @@ guarantees are required.
   owned maps, vectors, and roots before publication. Ordinary property
   definition also reserves actual growth of the target `props` map and Array
   `items`/`present` vectors before mutation, including mapped-arguments dual
-  storage. This guarantee is limited to those directly owned containers:
-  BigInt/value preparation, boxed-String canonicalization, Array length-key
-  maintenance, and inline-cache temporary strings still use infallible shared
-  representation paths. The remaining nearby hard-host-OOM scopes also include
-  Array length storage, ordinary `Set`/`set_array_index`, seal/freeze descriptor
-  materialization, TypedArray byte conversion, JSON caller containers,
-  unrelated direct `ArrayData::new` constructors, PropertyKey/Error strings,
-  GC root enumeration, and mark worklists.
+  storage. Array length mutation likewise reserves actual operation-root,
+  property-map, dense-item, and presence growth, uses a canonical VM-owned
+  length key, and needs no deletion scratch collection. These guarantees are
+  limited to directly owned containers and that canonical key: BigInt/value
+  preparation, boxed-String canonicalization, numeric index formatting, and
+  inline-cache temporary strings still use infallible shared representation
+  paths. The remaining nearby hard-host-OOM scopes also include ordinary
+  `Set`/`set_array_index`, seal/freeze descriptor materialization, TypedArray
+  byte conversion, JSON caller containers, unrelated direct `ArrayData::new`
+  constructors, PropertyKey/Error strings, GC root enumeration, and mark
+  worklists.
 - Push, Pop, Shift, Unshift, Splice, Slice, Concat, Flat, FlatMap, ForEach,
   Join, ToLocaleString, Map, Reduce, ReduceRight, Reverse, ToReversed,
   ToSpliced, and With use live generic indexed operations with operation-wide
