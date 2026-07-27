@@ -11318,6 +11318,24 @@ global/sticky `lastIndex`, global match and replacement iteration, and both
 Unicode-scalar and legacy UTF-16 compositions. Existing repeated-capture,
 duplicate-name, and lookaround suites remain green.
 
+Local gates pass all targets/features, including Criterion smoke targets,
+**287/287** debug library tests, **285/285** release library tests,
+**544/544** builtins, wasm32, doctest **1/1**, rustfmt, warnings-denied Clippy,
+and generated documentation with the 13 pre-existing rustdoc warnings. Python
+tooling is **135** tests with four expected skips when an explicitly
+unavailable checkout is selected; the host's partial sparse checkout lacks one
+unrelated staging fixture.
+
+Feature commit `7dd4102` passes ordinary CI `30289895334` and all **35/35**
+jobs in full run `30289895937`. Against immediate preceding full run
+`30287220200`, 30 of 32 result files are byte-identical. Built-ins moves
+exactly from **16280/4299/3086/3/0** to **16281/4298/3086/3/0**. Annex B's
+preceding contention timeout returns to **201/811/74/0/0**, SHA-256
+`410da6b0d17c7cdd50df356717c298529ca9bcb63be12c77143ec2a1b966153a`,
+byte-identical to clean run `30285089340`. The corrected aggregate is
+**31902 pass / 5109 fail / 11455 skip / 3 timeout / 0 error** over **48469**
+tests and **37011** pass-or-fail executions.
+
 ```text
 [Decision Log]
 - 목적과 의도: Close the nullable RepeatMatcher boundary failure without moving hostile no-match probes onto a backtracking-only path.
