@@ -11713,6 +11713,14 @@ The immediately preceding `0a880f3` release under the new two-file policy is
 **1091 pass / 2 fail / 786 skip / 0 timeout / 0 error**. The current release is
 **1093/0/786/0/0** under the same policy, proving exact two-file movement.
 
+Feature commit `24f4464a463e259d80757c1983af1783126aec6d` passes both jobs
+in ordinary CI run `30307971537` and all **35/35** jobs in full run
+`30307971322`. Against immediate predecessor `30306477487`, 31 of 32 result
+artifacts are byte-identical. Only `built-ins` changes, by exactly **+2 pass /
+-2 skip** to **16332/4297/3036/3/0**. The complete aggregate is
+**31953 pass / 5108 fail / 11405 skip / 3 timeout / 0 error** over **48469**
+total files and **37061** executions.
+
 ```text
 [Decision Log]
 - 목적과 의도: Prove the shared u/v exclusivity rule without weakening the broad regexp-v-flag support boundary.
