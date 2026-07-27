@@ -11457,6 +11457,16 @@ visitor reports it once, malformed non-object environment data is rejected,
 and get/set/delete/call behavior survives Proxy-triggered GC. Cross-Realm
 primitive boxing and strict global fallback remain distinct and green.
 
+Implementation commit `8366015` passes ordinary CI run `30276201220` and all
+35 jobs in full run `30276195375`. Thirty-one of 32 result artifacts are
+immediately byte-identical to preceding run `30269385090`. The matrix Annex B
+artifact has one transient contention timeout at **200/811/74/1/0**; the
+downloaded CI binary reruns the exact pinned directory at
+**201/811/74/0/0**, byte-identical to the preceding artifact. With that exact
+rerun substituted, all 32 result files match and the aggregate remains
+**31901 pass / 5110 fail / 11455 skip / 3 timeout / 0 error / 48469 total /
+37011 run**.
+
 ```text
 [Decision Log]
 - 목적과 의도: Prove that direct GcIdx storage for with-object Reference bases changes only native allocation ownership and leaves Object Environment Record behavior unchanged.

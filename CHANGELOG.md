@@ -24,6 +24,14 @@
   ms on the preceding source and 201.83-208.30 ms on repeated current runs;
   Criterion reports no significant change.
 
+  Implementation commit `8366015` passes ordinary CI `30276201220` and all
+  35 jobs in full Test262 run `30276195375`. Thirty-one matrix result files
+  are immediately byte-identical to the preceding run; Annex B's sole
+  contention timeout disappears when rerun with the downloaded CI binary,
+  restoring the byte-identical **201/811/74/0** result. The corrected 32-file
+  aggregate remains **31901 pass / 5110 fail / 11455 skip / 3 timeout / 0
+  error** over **48469** tests.
+
 - The VM now retains one rootless vacant `Box<ReferenceRecord>` and reuses it
   for sequential identifier, property, super, and private References. Every
   checkout happens before observable re-entry; terminal get, put, delete,
