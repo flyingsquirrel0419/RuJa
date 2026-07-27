@@ -3946,6 +3946,61 @@ fn array_iterators_preserve_safe_indices_and_advance_before_allocation() {
     assert_eq!(vm.gc_pins.len(), baseline);
     vm.unpin(iterator_pin);
 
+    for (method, entries) in [("values", false), ("entries", true)] {
+        let iterator = vm
+            .run(&format!(
+                r#"
+                iteratorKeyLog = [];
+                (function() {{
+                  var source = new Proxy({{}}, {{
+                    get: function(target, key) {{
+                      iteratorKeyLog.push(String(key));
+                      if (key === "length") return 4294967296;
+                      if (key === "4294967295") return "boundary";
+                    }}
+                  }});
+                  return Array.prototype.{method}.call(source);
+                }})()
+                "#
+            ))
+            .expect("large indexed iterator should initialize");
+        let iterator_pin = vm.pin(&iterator);
+        let Value::Object(iterator_idx) = iterator else {
+            panic!("Array iterator should be an object");
+        };
+        vm.heap.with_obj(iterator_idx.0, |object| {
+            let HeapObj::CollectionIterator(iterator) = object else {
+                panic!("Array iterator should retain collection slots");
+            };
+            *iterator.index.lock() = u32::MAX as u64;
+        });
+        let result = call_iterator_next_result(&mut vm, &Value::Object(iterator_idx))
+            .expect("named integer boundary should be read");
+        let value = vm
+            .get_property(&result, "value")
+            .expect("iterator result value should be readable");
+        if entries {
+            assert_eq!(
+                vm.get_property(&value, "0")
+                    .expect("entry index should be readable"),
+                Value::Number(u32::MAX as f64)
+            );
+            assert_eq!(
+                vm.get_property(&value, "1")
+                    .expect("entry value should be readable"),
+                Value::String(Arc::from("boundary"))
+            );
+        } else {
+            assert_eq!(value, Value::String(Arc::from("boundary")));
+        }
+        assert_eq!(
+            vm.run("iteratorKeyLog.join(',')")
+                .expect("trap key log should be readable"),
+            Value::String(Arc::from("length,4294967295"))
+        );
+        vm.unpin(iterator_pin);
+    }
+
     let iterator = vm
         .run("Array.prototype.values.call({ 0: 'first', 1: 'second', length: 2 })")
         .expect("value iterator should initialize");

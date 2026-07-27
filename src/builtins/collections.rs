@@ -492,9 +492,13 @@ fn array_iterator_step(
     let index_value = Value::Number(index as f64);
     let result = match kind {
         CollectionIteratorKind::ArrayKeys => index_value,
-        CollectionIteratorKind::ArrayValues => vm.get_property(source, &index.to_string())?,
+        CollectionIteratorKind::ArrayValues => {
+            let name = PropertyKey::integer_index_str(index);
+            vm.get_property(source, &name)?
+        }
         CollectionIteratorKind::ArrayEntries => {
-            let element = vm.get_property(source, &index.to_string())?;
+            let name = PropertyKey::integer_index_str(index);
+            let element = vm.get_property(source, &name)?;
             let element_pin = vm.pin(&element);
             let pair = make_value_array_in_current_realm(vm, vec![index_value, element]);
             vm.unpin_many(element_pin);

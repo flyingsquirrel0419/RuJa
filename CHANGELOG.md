@@ -4,6 +4,26 @@
 
 ### Changed
 
+- Ninety numeric property-name formatting sites across Array, TypedArray,
+  Array iterators, call argument materialization, JSON, RegExp, Proxy own-key
+  validation, and adjacent array-like constructors no longer create temporary
+  Rust `String` values. Structured operations use `from_integer_index`; paths
+  that must retain established string dispatch use a stack decimal view.
+  Generic Array paths preserve decimal property names above the canonical
+  ArrayIndex boundary through `Number.MAX_SAFE_INTEGER`.
+
+  A structured strict-Set helper reuses the established string `[[Set]]` path
+  through a stack decimal view, preserving Array, TypedArray, Proxy, namespace,
+  receiver, and error ordering. Direct tests cover `4294967294`, `4294967295`,
+  `4294967296`, and `9007199254740990`, primitive String searches, Proxy
+  get/set/delete keys, and Array iterator values/entries at the named-integer
+  boundary. Pinned Array/TypedArray/JSON/RegExp/Proxy/Reflect Test262 output is
+  byte-identical to the preceding binary at **6712 pass / 6 fail / 1082 skip /
+  0 timeout / 0 error / 7800 total**. Five-run process wall-time diagnostics
+  found no regression in Array reverse, TypedArray reverse, or Array iterator
+  values; these shared-host samples are smoke evidence, not benchmark claims.
+  The pinned supported subset remains **12761 pass / 0 fail / 7678 skip**.
+
 - The two variable-length TypedArray `preventExtensions` staging tests are now
   admitted through the shared exact-path extensibility policy. Their three
   otherwise gated features are removed only for the two audited files, while

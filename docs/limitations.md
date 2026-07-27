@@ -429,10 +429,11 @@ guarantees are required.
   a fused opcode instead of cloning it; root reservation and pin publication
   still scan the complete record before observable re-entry, and raw names
   reserve two simultaneously live root suffixes for shared key coercion.
-  Remaining
+  Native indexed loops now pass numeric cursors through structured PropertyKey
+  APIs; canonical indices avoid temporary Strings on 64-bit targets. Remaining
   nearby hard-host-OOM scopes include initial Reference record/base/name/
-  receiver boxes, non-index/shared-
-  String key creation, native indexed loops that still format names, Proxy trap descriptor
+  receiver boxes, non-index/shared-String key creation, integer names above
+  `4294967294`, every numeric key on 32-bit targets, Proxy trap descriptor
   values, TypedArray byte conversion, JSON caller containers, unrelated direct
   `ArrayData::new` constructors, Error strings, GC root enumeration, and mark
   worklists.

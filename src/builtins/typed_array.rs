@@ -3148,9 +3148,9 @@ pub(crate) fn typed_array_set(
             for index in 0..source_length {
                 let value = typed_array_read_element(source_kind, &source_bytes, index)
                     .ok_or_else(|| Error::type_err("TypedArray set source read failed"))?;
-                vm.set_property_strict(
+                vm.set_integer_index_strict(
                     &target,
-                    &(target_offset as usize + index).to_string(),
+                    (target_offset as usize + index) as u64,
                     value,
                 )?;
             }
@@ -3175,10 +3175,11 @@ pub(crate) fn typed_array_set(
         let pin_count = vm.pin(&target) + vm.pin(&source);
         let result: error::Result<()> = (|| {
             for index in 0..source_length {
-                let value = vm.get_property(&source, &index.to_string())?;
-                vm.set_property_strict(
+                let source_key = PropertyKey::from_integer_index(index as u64);
+                let value = vm.get_property_by_key(&source, &source_key)?;
+                vm.set_integer_index_strict(
                     &target,
-                    &(target_offset as usize + index).to_string(),
+                    (target_offset as usize + index) as u64,
                     value,
                 )?;
             }
@@ -3495,8 +3496,9 @@ pub(crate) fn typed_array_slice(
                 }
             } else {
                 for index in 0..copy_count {
-                    let value = vm.get_property(&this, &(start + index).to_string())?;
-                    vm.set_property_strict(&result, &index.to_string(), value)?;
+                    let source_key = PropertyKey::from_integer_index((start + index) as u64);
+                    let value = vm.get_property_by_key(&this, &source_key)?;
+                    vm.set_integer_index_strict(&result, index as u64, value)?;
                 }
             }
             Ok(())
@@ -3671,7 +3673,8 @@ fn typed_array_predicate_impl(
             } else {
                 offset
             };
-            let value = vm.get_property(&this, &index.to_string())?;
+            let key = PropertyKey::from_integer_index(index as u64);
+            let value = vm.get_property_by_key(&this, &key)?;
             let predicate_result = vm.call_function(
                 &callback,
                 &[value.clone(), Value::Number(index as f64), this.clone()],
@@ -3747,7 +3750,8 @@ pub(crate) fn typed_array_includes(
         };
         for index in start..length {
             vm.consume_fuel()?;
-            let value = vm.get_property(&this, &index.to_string())?;
+            let key = PropertyKey::from_integer_index(index as u64);
+            let value = vm.get_property_by_key(&this, &key)?;
             if value.same_value_zero(&target) {
                 return Ok(Value::Bool(true));
             }
@@ -3800,9 +3804,9 @@ pub(crate) fn typed_array_index_of(
         };
         for index in start..length {
             vm.consume_fuel()?;
-            let key = index.to_string();
-            if vm.has_property(&this, &key)? {
-                let value = vm.get_property(&this, &key)?;
+            let key = PropertyKey::from_integer_index(index as u64);
+            if vm.has_property_key(&this, &key)? {
+                let value = vm.get_property_by_key(&this, &key)?;
                 if vm.strict_eq(&value, &target) {
                     return Ok(Value::Number(index as f64));
                 }
@@ -3881,9 +3885,9 @@ pub(crate) fn typed_array_last_index_of(
         };
         for index in (0..=start).rev() {
             vm.consume_fuel()?;
-            let key = index.to_string();
-            if vm.has_property(&this, &key)? {
-                let value = vm.get_property(&this, &key)?;
+            let key = PropertyKey::from_integer_index(index as u64);
+            if vm.has_property_key(&this, &key)? {
+                let value = vm.get_property_by_key(&this, &key)?;
                 if vm.strict_eq(&value, &target) {
                     return Ok(Value::Number(index as f64));
                 }
@@ -3956,14 +3960,15 @@ pub(crate) fn typed_array_map(
         let result_pin_count = vm.pin(&result);
         let map_result: error::Result<()> = (|| {
             for index in 0..length {
-                let value = vm.get_property(&this, &index.to_string())?;
+                let key = PropertyKey::from_integer_index(index as u64);
+                let value = vm.get_property_by_key(&this, &key)?;
                 let mapped = vm.call_function(
                     &callback,
                     &[value, Value::Number(index as f64), this.clone()],
                     Some(this_arg.clone()),
                 )?;
                 let mapped_pin_count = vm.pin(&mapped);
-                let write_result = vm.set_property_strict(&result, &index.to_string(), mapped);
+                let write_result = vm.set_integer_index_strict(&result, index as u64, mapped);
                 vm.unpin_many(mapped_pin_count);
                 write_result?;
             }
@@ -4022,7 +4027,8 @@ pub(crate) fn typed_array_filter(
     let operation: error::Result<Value> = (|| {
         let mut kept = Vec::new();
         for index in 0..length {
-            let value = vm.get_property(&this, &index.to_string())?;
+            let key = PropertyKey::from_integer_index(index as u64);
+            let value = vm.get_property_by_key(&this, &key)?;
             let selected = vm.call_function(
                 &callback,
                 &[value.clone(), Value::Number(index as f64), this.clone()],
@@ -4038,7 +4044,7 @@ pub(crate) fn typed_array_filter(
         let write_result: error::Result<()> = (|| {
             for (index, value) in kept.into_iter().enumerate() {
                 let value_pin_count = vm.pin(&value);
-                let set_result = vm.set_property_strict(&result, &index.to_string(), value);
+                let set_result = vm.set_integer_index_strict(&result, index as u64, value);
                 vm.unpin_many(value_pin_count);
                 set_result?;
             }
@@ -4109,7 +4115,8 @@ fn typed_array_reduce_impl(
             (args[1].clone(), 0)
         } else {
             let index = if from_right { length - 1 } else { 0 };
-            (vm.get_property(&this, &index.to_string())?, 1)
+            let key = PropertyKey::from_integer_index(index as u64);
+            (vm.get_property_by_key(&this, &key)?, 1)
         };
         accumulator_pin_count = vm.pin(&accumulator);
 
@@ -4119,7 +4126,8 @@ fn typed_array_reduce_impl(
             } else {
                 offset
             };
-            let value = vm.get_property(&this, &index.to_string())?;
+            let key = PropertyKey::from_integer_index(index as u64);
+            let value = vm.get_property_by_key(&this, &key)?;
             let next = vm.call_function(
                 &callback,
                 &[
@@ -4283,11 +4291,12 @@ pub(crate) fn typed_array_sort(
     let result: error::Result<()> = (|| {
         let mut items = Vec::with_capacity(length);
         for index in 0..length {
-            items.push(vm.get_property(&this, &index.to_string())?);
+            let key = PropertyKey::from_integer_index(index as u64);
+            items.push(vm.get_property_by_key(&this, &key)?);
         }
         typed_array_stable_sort(vm, &mut items, comparator.as_ref())?;
         for (index, value) in items.into_iter().enumerate() {
-            vm.set_property_strict(&this, &index.to_string(), value)?;
+            vm.set_integer_index_strict(&this, index as u64, value)?;
         }
         Ok(())
     })();
@@ -4347,7 +4356,8 @@ pub(crate) fn typed_array_to_sorted(
     let sorted: error::Result<Vec<Value>> = (|| {
         let mut items = Vec::with_capacity(length);
         for index in 0..length {
-            items.push(vm.get_property(&this, &index.to_string())?);
+            let key = PropertyKey::from_integer_index(index as u64);
+            items.push(vm.get_property_by_key(&this, &key)?);
         }
         typed_array_stable_sort(vm, &mut items, comparator.as_ref())?;
         Ok(items)
@@ -4372,7 +4382,7 @@ pub(crate) fn typed_array_to_sorted(
     let result_pin_count = vm.pin(&result);
     let write_result: error::Result<()> = (|| {
         for (index, value) in sorted.into_iter().enumerate() {
-            vm.set_property_strict(&result, &index.to_string(), value)?;
+            vm.set_integer_index_strict(&result, index as u64, value)?;
         }
         Ok(())
     })();
@@ -4440,11 +4450,11 @@ pub(crate) fn typed_array_with(
         };
         let numeric_pin_count = vm.pin(&numeric_value);
         let create_result: error::Result<Value> = (|| {
-            if !actual_index.is_finite()
-                || actual_index < 0.0
-                || actual_index > usize::MAX as f64
-                || !vm.has_property(&this, &(actual_index as usize).to_string())?
-            {
+            if !actual_index.is_finite() || actual_index < 0.0 || actual_index > usize::MAX as f64 {
+                return Err(Error::range("TypedArray with index is out of bounds"));
+            }
+            let key = PropertyKey::from_integer_index(actual_index as u64);
+            if !vm.has_property_key(&this, &key)? {
                 return Err(Error::range("TypedArray with index is out of bounds"));
             }
 
@@ -4467,12 +4477,13 @@ pub(crate) fn typed_array_with(
             let result_pin_count = vm.pin(&result);
             let copy_result: error::Result<()> = (|| {
                 for target_index in 0..length {
+                    let key = PropertyKey::from_integer_index(target_index as u64);
                     let value = if target_index as f64 == actual_index {
                         numeric_value.clone()
                     } else {
-                        vm.get_property(&this, &target_index.to_string())?
+                        vm.get_property_by_key(&this, &key)?
                     };
-                    vm.set_property_strict(&result, &target_index.to_string(), value)?;
+                    vm.set_integer_index_strict(&result, target_index as u64, value)?;
                 }
                 Ok(())
             })();
@@ -4541,7 +4552,8 @@ pub(crate) fn typed_array_join(
             if index > 0 {
                 append(&mut result, separator.as_ref())?;
             }
-            let value = vm.get_property(&this, &index.to_string())?;
+            let key = PropertyKey::from_integer_index(index as u64);
+            let value = vm.get_property_by_key(&this, &key)?;
             if !value.is_nullish() {
                 let value_pin = vm.pin(&value);
                 let element = vm.to_string(&value);
@@ -4607,7 +4619,8 @@ pub(crate) fn typed_array_to_locale_string(
             if index > 0 {
                 append(&mut output, ",")?;
             }
-            let value = vm.get_property(&this, &index.to_string())?;
+            let key = PropertyKey::from_integer_index(index as u64);
+            let value = vm.get_property_by_key(&this, &key)?;
             if value.is_nullish() {
                 continue;
             }
@@ -4681,10 +4694,12 @@ pub(crate) fn typed_array_reverse(
     let result: error::Result<()> = (|| {
         for lower in 0..length / 2 {
             let upper = length - lower - 1;
-            let lower_value = vm.get_property(&this, &lower.to_string())?;
-            let upper_value = vm.get_property(&this, &upper.to_string())?;
-            vm.set_property_strict(&this, &lower.to_string(), upper_value)?;
-            vm.set_property_strict(&this, &upper.to_string(), lower_value)?;
+            let lower_key = PropertyKey::from_integer_index(lower as u64);
+            let upper_key = PropertyKey::from_integer_index(upper as u64);
+            let lower_value = vm.get_property_by_key(&this, &lower_key)?;
+            let upper_value = vm.get_property_by_key(&this, &upper_key)?;
+            vm.set_integer_index_strict(&this, lower as u64, upper_value)?;
+            vm.set_integer_index_strict(&this, upper as u64, lower_value)?;
         }
         Ok(())
     })();
@@ -4747,8 +4762,9 @@ pub(crate) fn typed_array_to_reversed(
     let copy_result: error::Result<()> = (|| {
         for target_index in 0..length {
             let source_index = length - target_index - 1;
-            let value = vm.get_property(&this, &source_index.to_string())?;
-            vm.set_property_strict(&result, &target_index.to_string(), value)?;
+            let source_key = PropertyKey::from_integer_index(source_index as u64);
+            let value = vm.get_property_by_key(&this, &source_key)?;
+            vm.set_integer_index_strict(&result, target_index as u64, value)?;
         }
         Ok(())
     })();
@@ -5287,7 +5303,7 @@ fn typed_array_write_indexed_values(
     let write_result: error::Result<()> = (|| {
         for (index, value) in values.iter().cloned().enumerate() {
             let mapped = typed_array_mapped_value(vm, value, index, map_fn, this_arg)?;
-            vm.set_property_strict(result, &index.to_string(), mapped)?;
+            vm.set_integer_index_strict(result, index as u64, mapped)?;
         }
         Ok(())
     })();
@@ -5436,9 +5452,10 @@ pub(crate) fn typed_array_from(
     let source_pin = vm.pin(&source);
     let write_result: error::Result<()> = (|| {
         for index in 0..length {
-            let value = vm.get_property(&source, &index.to_string())?;
+            let key = PropertyKey::from_integer_index(index as u64);
+            let value = vm.get_property_by_key(&source, &key)?;
             let mapped = typed_array_mapped_value(vm, value, index, map_fn.as_ref(), &this_arg)?;
-            vm.set_property_strict(&result, &index.to_string(), mapped)?;
+            vm.set_integer_index_strict(&result, index as u64, mapped)?;
         }
         Ok(())
     })();
@@ -5603,7 +5620,8 @@ fn typed_array_constructor_with_kind(
                 .ok_or_else(|| Error::range(format!("Invalid {} length", kind.name())))?;
             let mut bytes = Vec::with_capacity(byte_len);
             for index in 0..length {
-                let item = vm.get_property(&array_like, &index.to_string())?;
+                let key = PropertyKey::from_integer_index(index as u64);
+                let item = vm.get_property_by_key(&array_like, &key)?;
                 bytes.extend_from_slice(&typed_array_value_to_bytes(vm, kind, &item)?);
             }
             bytes

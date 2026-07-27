@@ -2113,6 +2113,19 @@ impl Vm {
         self.set_property_impl(obj, key, value, true, true)
     }
 
+    pub(crate) fn set_integer_index_strict(
+        &mut self,
+        obj: &Value,
+        index: u64,
+        value: Value,
+    ) -> error::Result<()> {
+        // Indexed native loops must retain the specialized string [[Set]]
+        // dispatch. A stack view avoids prebuilding an Arc-backed key on
+        // 32-bit hosts and above the canonical ArrayIndex boundary.
+        let name = crate::value::PropertyKey::integer_index_str(index);
+        self.set_property_impl(obj, &name, value, true, true)
+    }
+
     pub(crate) fn set_object_environment_property(
         &mut self,
         obj: &Value,

@@ -3847,6 +3847,14 @@ fn array_search_methods_use_array_like_property_access() {
         run("Array.prototype.indexOf.call(new String('null'), 'l');"),
         Value::Number(2.0)
     );
+    assert_eq!(
+        run("Array.prototype.indexOf.call('abc', 'b');"),
+        Value::Number(1.0)
+    );
+    assert_eq!(
+        run("Array.prototype.lastIndexOf.call('abca', 'a');"),
+        Value::Number(3.0)
+    );
     assert_eq!(run("[0,,2].indexOf(undefined);"), Value::Number(-1.0));
     assert_eq!(run("[0,,2].includes(undefined);"), Value::Bool(true));
     assert_eq!(
@@ -3878,6 +3886,36 @@ fn array_search_methods_use_array_like_property_access() {
             [arr.lastIndexOf("unconfigurable"), arr.length, 2 in arr, 3 in arr].join("|");
             "#),
         Value::String(Arc::from("2|3|true|false"))
+    );
+}
+
+#[test]
+fn generic_array_push_and_pop_preserve_named_integer_boundary_keys() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            var target = { length: 4294967295 };
+            var proxy = new Proxy(target, {
+              get: function(target, key, receiver) {
+                log.push("get:" + String(key));
+                return Reflect.get(target, key, receiver);
+              },
+              set: function(target, key, value, receiver) {
+                log.push("set:" + String(key));
+                return Reflect.set(target, key, value, receiver);
+              },
+              deleteProperty: function(target, key) {
+                log.push("delete:" + String(key));
+                return Reflect.deleteProperty(target, key);
+              }
+            });
+            var pushed = Array.prototype.push.call(proxy, "boundary");
+            var popped = Array.prototype.pop.call(proxy);
+            [pushed, popped, target.length, log.join(",")].join("|");
+        "#),
+        Value::String(Arc::from(
+            "4294967296|boundary|4294967295|get:length,set:4294967295,set:length,get:length,get:4294967295,delete:4294967295,set:length"
+        ))
     );
 }
 

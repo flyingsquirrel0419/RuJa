@@ -95,6 +95,50 @@ fn bench_array_index_set(c: &mut Criterion) {
     });
 }
 
+fn bench_native_indexed_loops(c: &mut Criterion) {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        var indexedArray = [];
+        for (var i = 0; i < 10000; i++) indexedArray.push(i);
+        function reverseArrayIndexed() {
+            return indexedArray.reverse().length;
+        }
+        function consumeArrayIterator() {
+            var iterator = indexedArray.values();
+            var count = 0;
+            while (!iterator.next().done) count++;
+            return count;
+        }
+
+        var indexedTypedArray = new Uint32Array(65536);
+        function reverseTypedArrayIndexed() {
+            return indexedTypedArray.reverse().length;
+        }
+        "#,
+    )
+    .expect("native indexed-loop fixtures failed");
+
+    for (name, function_name) in [
+        ("array_reverse_indexed_10k", "reverseArrayIndexed"),
+        ("array_iterator_values_10k", "consumeArrayIterator"),
+        (
+            "typed_array_reverse_indexed_64k",
+            "reverseTypedArrayIndexed",
+        ),
+    ] {
+        let function = vm.get_global(function_name);
+        c.bench_function(name, |b| {
+            b.iter(|| {
+                black_box(
+                    vm.call_function(&function, &[], None)
+                        .expect("native indexed-loop benchmark failed"),
+                )
+            })
+        });
+    }
+}
+
 fn bench_property_key_maps(c: &mut Criterion) {
     const KEY_COUNT: u32 = 10_000;
     let numeric_keys: Vec<_> = (0..KEY_COUNT).map(PropertyKey::from_array_index).collect();
@@ -386,6 +430,7 @@ criterion_group!(
     bench_tight_loop,
     bench_array_push,
     bench_array_index_set,
+    bench_native_indexed_loops,
     bench_property_key_maps,
     bench_computed_references,
     bench_inline_cache,

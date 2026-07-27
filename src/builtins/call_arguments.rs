@@ -42,7 +42,8 @@ pub(crate) fn create_list_from_array_like(
     let mut list = Vec::with_capacity(len);
     let mut pin_count = 0;
     for index in 0..len {
-        let item = match vm.get_property(value, &index.to_string()) {
+        let key = PropertyKey::from_integer_index(index as u64);
+        let item = match vm.get_property_by_key(value, &key) {
             Ok(item) => item,
             Err(error) => {
                 vm.unpin_many(pin_count);

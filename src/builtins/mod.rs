@@ -6556,7 +6556,8 @@ fn proxy_own_keys_from_array_like(
         let mut keys = Vec::new();
         for index in 0..length {
             vm.consume_fuel()?;
-            let item = vm.get_property(key_list, &index.to_string())?;
+            let key = PropertyKey::from_integer_index(index as u64);
+            let item = vm.get_property_by_key(key_list, &key)?;
             let key = match item {
                 Value::String(value) => PropertyKey::from_rc(value),
                 Value::Symbol(id) => PropertyKey::symbol(id),

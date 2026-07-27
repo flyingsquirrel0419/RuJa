@@ -499,8 +499,8 @@ pub(crate) fn regexp_symbol_split(
 
                 for capture_index in 1..=capture_count {
                     vm.consume_fuel()?;
-                    let next_capture =
-                        vm.get_property(&match_result, capture_index.to_string().as_str())?;
+                    let key = PropertyKey::from_integer_index(capture_index as u64);
+                    let next_capture = vm.get_property_by_key(&match_result, &key)?;
                     let capture_pin = vm.pin(&next_capture);
                     let append_result = regexp_split_append(vm, &array, length_a, next_capture);
                     vm.unpin_many(capture_pin);
@@ -862,8 +862,8 @@ pub(crate) fn regexp_symbol_replace(
             let mut captures = Vec::with_capacity(captures_count);
             for capture_number in 1..=captures_count {
                 vm.consume_fuel()?;
-                let capture_value =
-                    vm.get_property(match_result, capture_number.to_string().as_str())?;
+                let key = PropertyKey::from_integer_index(capture_number as u64);
+                let capture_value = vm.get_property_by_key(match_result, &key)?;
                 if capture_value.is_undefined() {
                     captures.push(None);
                 } else {

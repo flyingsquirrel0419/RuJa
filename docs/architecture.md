@@ -2264,7 +2264,38 @@ JavaScript Strings only at the observable result boundary.
 - 검토한 주요 대안: Keep allocation and add a test-only failure shim, claim String/Arc construction is fallible, add an 11-byte decimal enum variant, use unsafe tagged pointer storage, globally intern property strings, or nest u32 Index/Symbol forms behind a private compact representation.
 - 선택한 방식: Store canonical indices as u32 in a private inline variant shared with Symbols on 64-bit targets, retain the previous Arc-backed index form on 32-bit targets, use a stack decimal view at string boundaries, preserve string-compatible Hash/Eq, and route simple object computed Get/Set directly through PropertyKey.
 - 다른 대안 대신 이 방식을 선택한 이유: A failure shim does not harden real host OOM; stable Arc allocation cannot report failure; the decimal enum grew PropertyKey from 16 to 24 bytes; unsafe pointer tagging was unjustified; global interning retains attacker-controlled names; and the nested representation remains safe Rust and two words.
-- 장점, 단점 및 영향: Canonical key creation and storage allocate no string on 64-bit targets, PropertyKey size is unchanged on both target widths, public representation is no longer exhaustively matchable, and own-key/JSON/Proxy boundaries retain exact text. Hashing an inline index formats at most ten stack bytes; 32-bit canonical keys, JS-visible String materialization, non-index Number formatting, Reference record boxes, and many native Array/TypedArray read/write loops remain explicit follow-ups.
+- 장점, 단점 및 영향: Canonical key creation and storage allocate no string on 64-bit targets, PropertyKey size is unchanged on both target widths, public representation is no longer exhaustively matchable, and own-key/JSON/Proxy boundaries retain exact text. Hashing an inline index formats at most ten stack bytes; 32-bit canonical keys, JS-visible String materialization, non-index Number formatting, Reference record boxes, and native indexed callers were explicit follow-ups. The native-caller follow-up is recorded below.
+```
+
+## Native indexed property-key pipelines
+
+Native Array, TypedArray, call-argument, JSON, RegExp, and Proxy array-like
+loops create `PropertyKey::from_integer_index` from numeric cursors when the
+operation consumes a structured key. Strict `Set`, Array iterator `Get`, and
+Array search `HasProperty`/`Get` instead format the cursor into an owned stack
+view and enter their established string dispatch. Those exceptions preserve
+specialized exotic, primitive String, receiver, strict-error, and inline-cache
+behavior without a temporary Rust `String` or a prebuilt Arc-backed key.
+
+`from_integer_index` is required rather than a narrowing `u32` cast because
+generic Array methods and Array iterators can observe decimal names through
+`Number.MAX_SAFE_INTEGER`. On 64-bit targets names through `4294967294` stay
+inline and allocation-free. Larger integer names remain Arc-backed strings,
+and 32-bit targets retain the existing Arc-backed representation for every
+numeric key; both now build the Arc directly from stack digits without an
+intermediate `String`. Array iterator `Get` retains the established
+`get_property` call shape after a direct structured-dispatch diagnostic showed
+a repeatable regression on the shared host. The diagnostic is not retained as
+release benchmark evidence.
+
+```text
+[Decision Log]
+- 목적과 의도: Remove temporary native-loop integer-name Strings without narrowing ECMAScript property-name range, changing observable property operations, or accepting a measured iterator regression.
+- 기존 구현 및 제약 조건: Ninety native numeric property-name sites formatted a cursor with to_string before the operation. Generic Array and iterator lengths reach Number.MAX_SAFE_INTEGER, TypedArray indices are currently buffer-capped, Proxy traps observe exact String keys, and strict Set plus primitive String search have specialized dispatch and error-order paths.
+- 검토한 주요 대안: Keep all formatting, cast every cursor to u32, add method-specific fast paths, route every operation through structured APIs, replace the full Set implementation, or combine structured keys with the existing dispatch shape where measurement requires it.
+- 선택한 방식: Use from_integer_index for structured operations, format every u64 fallback directly into stack digits, and pass stack views to strict Set, Array iterator Get, and Array search operations that retain string dispatch.
+- 다른 대안 대신 이 방식을 선택한 이유: Keeping formatting preserves avoidable host allocation; u32 casts corrupt names at 4294967295 and above; per-method shortcuts duplicate semantics; rewriting Set expands risk across exotics; and performance evidence rejected a semantically correct but slower iterator variant.
+- 장점, 단점 및 영향: Native integer names avoid temporary Rust String allocation, all safe-integer names and Proxy observations remain exact, and focused 7800-file Test262 output is byte-identical. Shared-host wall-time diagnostics found no regression but are not release benchmark evidence. Above-array-index names and all 32-bit numeric keys still allocate Arc strings; wasm32 type-checks this path but does not execute 32-bit tests. JS-visible key materialization and non-index Number formatting remain separate scopes.
 ```
 
 ## Computed read-modify-write property references
@@ -2289,7 +2320,7 @@ remain separate paths.
 - 검토한 주요 대안: Change every raw Reference, remove CheckNullBase, add a new opcode, redesign boxed Reference records, or route only the three ordinary computed read-modify-write forms directly through existing MakePropertyRef.
 - 선택한 방식: Remove the redundant ToPropertyKey opcode only from ordinary computed compound/logical/update lowering, retain CheckNullBase, and keep every deferred, super, private, and environment Reference path unchanged.
 - 다른 대안 대신 이 방식을 선택한 이유: Existing MakePropertyRef already pins base/key and performs Symbol-preserving structured coercion; broad raw-Reference changes would alter simple-assignment/delete timing; a new opcode duplicates existing behavior; Reference boxing is a separate allocation and clone problem.
-- 장점, 단점 및 영향: Canonical numeric keys avoid temporary String and Arc allocation on 64-bit targets. wasm32 removes the redundant opcode and Value::String handoff but retains its final Arc-backed numeric key allocation. Focused Test262 output is byte-identical and direct tests cover opcode shape, boundaries, null bases, Proxy order, and forced GC. Boxed Reference records, non-index key formatting, JavaScript-visible key Strings, and native indexed loops remain.
+- 장점, 단점 및 영향: Canonical numeric keys avoid temporary String and Arc allocation on 64-bit targets. wasm32 removes the redundant opcode and Value::String handoff but retains its final Arc-backed numeric key allocation. Focused Test262 output is byte-identical and direct tests cover opcode shape, boundaries, null bases, Proxy order, and forced GC. Boxed Reference records, non-index key formatting, and JavaScript-visible key Strings remain; native indexed callers are covered by the following completed unit above.
 ```
 
 ## Borrowed Reference consumption and root traversal

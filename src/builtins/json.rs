@@ -174,7 +174,8 @@ fn json_stringify_property_list(vm: &mut Vm, replacer: &Value) -> error::Result<
     };
     let mut property_list = Vec::new();
     for index in 0..length {
-        let item = vm.get_property(replacer, &index.to_string())?;
+        let key = PropertyKey::from_integer_index(index as u64);
+        let item = vm.get_property_by_key(replacer, &key)?;
         let name = match &item {
             Value::String(string) => Some(string.to_string()),
             Value::Number(number) => Some(crate::value::num_to_string(*number)),
@@ -603,7 +604,8 @@ fn attach_json_source_values(
         JsonSourceKind::Primitive(_) => {}
         JsonSourceKind::Array(children) => {
             for (index, child) in children.iter_mut().enumerate() {
-                let value = vm.get_property(value, &index.to_string())?;
+                let key = PropertyKey::from_integer_index(index as u64);
+                let value = vm.get_property_by_key(value, &key)?;
                 attach_json_source_values(vm, &value, child, pins)?;
             }
         }

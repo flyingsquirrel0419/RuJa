@@ -12,17 +12,15 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, AtomicUsize, Ordering};
 use std::fmt;
 use std::sync::Arc;
 
-/// Stack storage for formatting a canonical ECMAScript array-index string.
 #[derive(Clone, Copy, Debug)]
-struct ArrayIndexKey {
-    bytes: [u8; 10],
+struct DecimalKey<const N: usize> {
+    bytes: [u8; N],
     len: u8,
 }
 
-impl ArrayIndexKey {
-    fn new(value: u32) -> Self {
-        debug_assert!(value < u32::MAX);
-        let mut bytes = [0; 10];
+impl<const N: usize> DecimalKey<N> {
+    fn new(value: u64) -> Self {
+        let mut bytes = [0; N];
         let mut cursor = bytes.len();
         let mut remaining = value;
         loop {
@@ -44,6 +42,26 @@ impl ArrayIndexKey {
     fn as_str(&self) -> &str {
         std::str::from_utf8(&self.bytes[..self.len as usize])
             .expect("array-index digits are valid UTF-8")
+    }
+}
+
+type ArrayIndexKey = DecimalKey<10>;
+type IntegerIndexKey = DecimalKey<20>;
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct IntegerIndexStr(IntegerIndexKey);
+
+impl std::ops::Deref for IntegerIndexStr {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        self.0.as_str()
+    }
+}
+
+impl AsRef<str> for IntegerIndexStr {
+    fn as_ref(&self) -> &str {
+        self
     }
 }
 
@@ -157,7 +175,7 @@ impl PropertyKey {
         #[cfg(target_pointer_width = "32")]
         {
             PropertyKey(PropertyKeyRepr::Str(Arc::from(
-                ArrayIndexKey::new(index).as_str(),
+                ArrayIndexKey::new(index as u64).as_str(),
             )))
         }
     }
@@ -166,8 +184,14 @@ impl PropertyKey {
         if index < u32::MAX as u64 {
             PropertyKey::from_array_index(index as u32)
         } else {
-            PropertyKey::from_string(index.to_string())
+            PropertyKey(PropertyKeyRepr::Str(Arc::from(
+                IntegerIndexKey::new(index).as_str(),
+            )))
         }
+    }
+
+    pub(crate) fn integer_index_str(index: u64) -> IntegerIndexStr {
+        IntegerIndexStr(IntegerIndexKey::new(index))
     }
 
     pub fn symbol(id: u32) -> Self {
@@ -182,7 +206,7 @@ impl PropertyKey {
             }
             #[cfg(target_pointer_width = "64")]
             PropertyKeyRepr::Inline(InlinePropertyKey::Index(index)) => Some(PropertyKeyStr(
-                PropertyKeyStrRepr::Index(ArrayIndexKey::new(*index)),
+                PropertyKeyStrRepr::Index(ArrayIndexKey::new(*index as u64)),
             )),
             PropertyKeyRepr::Inline(InlinePropertyKey::Symbol(_)) => None,
         }
@@ -214,7 +238,7 @@ impl PropertyKey {
             PropertyKeyRepr::Str(value) => Some(value.clone()),
             #[cfg(target_pointer_width = "64")]
             PropertyKeyRepr::Inline(InlinePropertyKey::Index(index)) => {
-                Some(Arc::from(ArrayIndexKey::new(*index).as_str()))
+                Some(Arc::from(ArrayIndexKey::new(*index as u64).as_str()))
             }
             PropertyKeyRepr::Inline(InlinePropertyKey::Symbol(_)) => None,
         }
@@ -225,7 +249,7 @@ impl PropertyKey {
             PropertyKeyRepr::Str(value) => Some(value),
             #[cfg(target_pointer_width = "64")]
             PropertyKeyRepr::Inline(InlinePropertyKey::Index(index)) => {
-                Some(Arc::from(ArrayIndexKey::new(index).as_str()))
+                Some(Arc::from(ArrayIndexKey::new(index as u64).as_str()))
             }
             PropertyKeyRepr::Inline(InlinePropertyKey::Symbol(_)) => None,
         }
@@ -268,7 +292,7 @@ impl std::hash::Hash for PropertyKey {
             #[cfg(target_pointer_width = "64")]
             PropertyKeyRepr::Inline(InlinePropertyKey::Index(index)) => {
                 0u8.hash(state);
-                ArrayIndexKey::new(*index).as_str().hash(state);
+                ArrayIndexKey::new(*index as u64).as_str().hash(state);
             }
             PropertyKeyRepr::Inline(InlinePropertyKey::Symbol(id)) => {
                 1u8.hash(state);
@@ -374,6 +398,23 @@ mod property_key_tests {
             std::mem::size_of::<PropertyKey>(),
             std::mem::size_of::<Arc<str>>()
         );
+    }
+
+    #[test]
+    fn integer_index_keys_preserve_array_index_and_named_boundaries() {
+        for (index, text, array_index) in [
+            (4_294_967_294, "4294967294", Some(4_294_967_294)),
+            (4_294_967_295, "4294967295", None),
+            (4_294_967_296, "4294967296", None),
+            (9_007_199_254_740_990, "9007199254740990", None),
+            (u64::MAX, "18446744073709551615", None),
+        ] {
+            let key = PropertyKey::from_integer_index(index);
+            assert_eq!(key.as_str().as_deref(), Some(text));
+            assert_eq!(PropertyKey::integer_index_str(index).as_ref(), text);
+            assert_eq!(key.array_index(), array_index);
+            assert_eq!(key, PropertyKey::from(text));
+        }
     }
 }
 

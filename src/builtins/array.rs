@@ -192,7 +192,8 @@ fn array_from_async_define_and_continue(
     } else if frame.index >= frame.length {
         array_from_async_finish(vm, frame)
     } else {
-        let next = match vm.get_property(&frame.source, &frame.index.to_string()) {
+        let key = PropertyKey::from_integer_index(frame.index as u64);
+        let next = match vm.get_property_by_key(&frame.source, &key) {
             Ok(value) => value,
             Err(error) => return reject_array_from_async_error(vm, &frame, &error),
         };
@@ -698,7 +699,8 @@ pub(crate) fn array_from(vm: &mut Vm, args: &[Value], this: Option<Value>) -> er
     let mut pin_count = vm.pin(&target);
     let result = (|| -> error::Result<Value> {
         for index in 0..len {
-            let mut value = vm.get_property(&src_val, &index.to_string())?;
+            let key = PropertyKey::from_integer_index(index as u64);
+            let mut value = vm.get_property_by_key(&src_val, &key)?;
             if let Some(mapper) = &map_fn {
                 value = vm.call_function(
                     mapper,
@@ -773,7 +775,7 @@ pub(crate) fn array_push(vm: &mut Vm, args: &[Value], this: Option<Value>) -> er
 
         for (index, item) in (len..new_len).zip(args.iter()) {
             vm.consume_fuel()?;
-            vm.set_property_strict(&object, &index.to_string(), item.clone())?;
+            vm.set_integer_index_strict(&object, index, item.clone())?;
         }
         vm.set_property_strict(&object, "length", Value::Number(new_len as f64))?;
         Ok(Value::Number(new_len as f64))
@@ -794,8 +796,8 @@ pub(crate) fn array_pop(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> er
         }
 
         let new_len = len - 1;
-        let key = new_len.to_string();
-        let element = vm.get_property(&object, &key)?;
+        let key = PropertyKey::from_integer_index(new_len);
+        let element = vm.get_property_by_key(&object, &key)?;
         pin_count += vm.pin(&element);
         delete_property_or_throw(vm, &object, &key)?;
         vm.set_property_strict(&object, "length", Value::Number(new_len as f64))?;
@@ -859,7 +861,8 @@ pub(crate) fn array_to_locale_string(
                     append(&mut result, ",")?;
                 }
 
-                let element = vm.get_property(&object, &index.to_string())?;
+                let key = PropertyKey::from_integer_index(index);
+                let element = vm.get_property_by_key(&object, &key)?;
                 if !element.is_nullish() {
                     let element_pin = vm.pin(&element);
                     let element_result: error::Result<Arc<str>> = (|| {
@@ -931,7 +934,8 @@ pub(crate) fn array_join(vm: &mut Vm, args: &[Value], this: Option<Value>) -> er
                 if index > 0 {
                     append(&mut result, &separator)?;
                 }
-                let element = vm.get_property(&object, &index.to_string())?;
+                let key = PropertyKey::from_integer_index(index);
+                let element = vm.get_property_by_key(&object, &key)?;
                 if !element.is_nullish() {
                     let element_pin = vm.pin(&element);
                     let element_string = vm.to_string(&element);
@@ -971,9 +975,9 @@ pub(crate) fn array_map(vm: &mut Vm, args: &[Value], this: Option<Value>) -> err
         let mut index = 0u64;
         while index < len {
             vm.consume_fuel()?;
-            let key = index.to_string();
-            if vm.has_property(&object, &key)? {
-                let value = vm.get_property(&object, &key)?;
+            let key = PropertyKey::from_integer_index(index);
+            if vm.has_property_key(&object, &key)? {
+                let value = vm.get_property_by_key(&object, &key)?;
                 let value_pin = vm.pin(&value);
                 let mapped = vm.call_function(
                     &callback,
@@ -983,11 +987,8 @@ pub(crate) fn array_map(vm: &mut Vm, args: &[Value], this: Option<Value>) -> err
                 vm.unpin(value_pin);
                 let mapped = mapped?;
                 let mapped_pin = vm.pin(&mapped);
-                let define = vm.define_own_property_or_throw(
-                    &result,
-                    PropertyKey::from(key),
-                    PropertyDescriptor::data(mapped),
-                );
+                let define =
+                    vm.define_own_property_or_throw(&result, key, PropertyDescriptor::data(mapped));
                 vm.unpin(mapped_pin);
                 define?;
             }
@@ -1022,9 +1023,9 @@ pub(crate) fn array_filter(
         let mut target_index = 0u64;
         while source_index < len {
             vm.consume_fuel()?;
-            let source_key = source_index.to_string();
-            if vm.has_property(&object, &source_key)? {
-                let value = vm.get_property(&object, &source_key)?;
+            let source_key = PropertyKey::from_integer_index(source_index);
+            if vm.has_property_key(&object, &source_key)? {
+                let value = vm.get_property_by_key(&object, &source_key)?;
                 let value_pin = vm.pin(&value);
                 let selected = vm.call_function(
                     &callback,
@@ -1087,9 +1088,9 @@ pub(crate) fn array_reduce(
             let mut found = None;
             while index < len {
                 vm.consume_fuel()?;
-                let key = index.to_string();
-                if vm.has_property(&object, &key)? {
-                    found = Some(vm.get_property(&object, &key)?);
+                let key = PropertyKey::from_integer_index(index);
+                if vm.has_property_key(&object, &key)? {
+                    found = Some(vm.get_property_by_key(&object, &key)?);
                     index += 1;
                     break;
                 }
@@ -1101,9 +1102,9 @@ pub(crate) fn array_reduce(
 
         while index < len {
             vm.consume_fuel()?;
-            let key = index.to_string();
-            if vm.has_property(&object, &key)? {
-                let value = vm.get_property(&object, &key)?;
+            let key = PropertyKey::from_integer_index(index);
+            if vm.has_property_key(&object, &key)? {
+                let value = vm.get_property_by_key(&object, &key)?;
                 let value_pin = vm.pin(&value);
                 let next = vm.call_function(
                     &callback,
@@ -1208,15 +1209,15 @@ fn collect_sort_indexed_properties(
     let completion = (|| {
         for index in 0..len {
             vm.consume_fuel()?;
-            let key = index.to_string();
+            let key = PropertyKey::from_integer_index(index as u64);
             let read = match mode {
-                SortIndexedPropertiesMode::SkipHoles => vm.has_property(object, &key)?,
+                SortIndexedPropertiesMode::SkipHoles => vm.has_property_key(object, &key)?,
                 SortIndexedPropertiesMode::ReadThroughHoles => true,
             };
             if !read {
                 continue;
             }
-            let value = vm.get_property(object, &key)?;
+            let value = vm.get_property_by_key(object, &key)?;
             // A later HasProperty/Get can remove the source edge and collect.
             pin_count += vm.pin(&value);
             items.push(value);
@@ -1373,9 +1374,9 @@ pub(crate) fn array_reduce_right(
             while index > 0 {
                 index -= 1;
                 vm.consume_fuel()?;
-                let key = index.to_string();
-                if vm.has_property(&object, &key)? {
-                    found = Some(vm.get_property(&object, &key)?);
+                let key = PropertyKey::from_integer_index(index);
+                if vm.has_property_key(&object, &key)? {
+                    found = Some(vm.get_property_by_key(&object, &key)?);
                     break;
                 }
             }
@@ -1386,9 +1387,9 @@ pub(crate) fn array_reduce_right(
         while index > 0 {
             index -= 1;
             vm.consume_fuel()?;
-            let key = index.to_string();
-            if vm.has_property(&object, &key)? {
-                let value = vm.get_property(&object, &key)?;
+            let key = PropertyKey::from_integer_index(index);
+            if vm.has_property_key(&object, &key)? {
+                let value = vm.get_property_by_key(&object, &key)?;
                 let value_pin = vm.pin(&value);
                 let next = vm.call_function(
                     &callback,
@@ -1436,7 +1437,8 @@ pub(crate) fn array_to_reversed(
         while index < len {
             vm.consume_fuel()?;
             let from = len - index - 1;
-            let value = vm.get_property(&object, &from.to_string())?;
+            let key = PropertyKey::from_integer_index(from);
+            let value = vm.get_property_by_key(&object, &key)?;
             let value_pin = vm.pin(&value);
             let define = vm.define_own_property_or_throw(
                 &result,
@@ -1538,7 +1540,8 @@ pub(crate) fn array_to_spliced(
         let mut write_index = 0u64;
         while write_index < actual_start {
             vm.consume_fuel()?;
-            let value = vm.get_property(&object, &write_index.to_string())?;
+            let key = PropertyKey::from_integer_index(write_index);
+            let value = vm.get_property_by_key(&object, &key)?;
             let value_pin = vm.pin(&value);
             let define = vm.define_own_property_or_throw(
                 &result,
@@ -1563,7 +1566,8 @@ pub(crate) fn array_to_spliced(
         let mut read_index = actual_start + actual_skip_count;
         while write_index < new_len {
             vm.consume_fuel()?;
-            let value = vm.get_property(&object, &read_index.to_string())?;
+            let key = PropertyKey::from_integer_index(read_index);
+            let value = vm.get_property_by_key(&object, &key)?;
             let value_pin = vm.pin(&value);
             let define = vm.define_own_property_or_throw(
                 &result,
@@ -1612,7 +1616,8 @@ pub(crate) fn array_with(vm: &mut Vm, args: &[Value], this: Option<Value>) -> er
             let value = if index == actual_index {
                 replacement.clone()
             } else {
-                vm.get_property(&object, &index.to_string())?
+                let key = PropertyKey::from_integer_index(index);
+                vm.get_property_by_key(&object, &key)?
             };
             let value_pin = vm.pin(&value);
             let define = vm.define_own_property_or_throw(
@@ -1651,9 +1656,9 @@ pub(crate) fn array_for_each(
         let mut index = 0u64;
         while index < len {
             vm.consume_fuel()?;
-            let key = index.to_string();
-            if vm.has_property(&object, &key)? {
-                let value = vm.get_property(&object, &key)?;
+            let key = PropertyKey::from_integer_index(index);
+            if vm.has_property_key(&object, &key)? {
+                let value = vm.get_property_by_key(&object, &key)?;
                 let value_pin = vm.pin(&value);
                 let callback_result = vm.call_function(
                     &callback,
@@ -1837,13 +1842,16 @@ fn is_concat_spreadable(vm: &mut Vm, value: &Value) -> error::Result<bool> {
     is_array_or_throw(vm, value)
 }
 
-fn delete_property_or_throw(vm: &mut Vm, object: &Value, key: &str) -> error::Result<()> {
-    if vm.delete_property(object, key)? {
+fn delete_property_or_throw(vm: &mut Vm, object: &Value, key: &PropertyKey) -> error::Result<()> {
+    if vm.delete_property_key(object, key)? {
         Ok(())
     } else {
+        let name = key
+            .as_str()
+            .expect("Array indexed operations use string property keys");
         Err(Error::type_err(format!(
             "Cannot delete property '{}' of object",
-            key
+            name
         )))
     }
 }
@@ -1870,7 +1878,8 @@ fn array_find_object_and_callback(
 }
 
 fn array_find_value_at(vm: &mut Vm, object: &Value, index: usize) -> error::Result<Value> {
-    vm.get_property(object, &index.to_string())
+    let key = PropertyKey::from_integer_index(index as u64);
+    vm.get_property_by_key(object, &key)
 }
 
 pub(crate) fn array_search_start(
@@ -1928,7 +1937,7 @@ pub(crate) fn array_index_of(
         return Ok(Value::Number(-1.0));
     };
     for i in start..len {
-        let key = i.to_string();
+        let key = PropertyKey::integer_index_str(i as u64);
         if array_search_has_property(vm, &object, &key)? {
             let value = vm.get_property(&object, &key)?;
             if vm.strict_eq(&value, &target) {
@@ -1951,8 +1960,8 @@ pub(crate) fn array_includes(
     };
     // includes uses SameValueZero and intentionally reads holes as undefined.
     for i in start..len {
-        let key = i.to_string();
-        let value = vm.get_property(&object, &key)?;
+        let key = PropertyKey::from_integer_index(i as u64);
+        let value = vm.get_property_by_key(&object, &key)?;
         if value.same_value_zero(&target) {
             return Ok(Value::Bool(true));
         }
@@ -1989,9 +1998,9 @@ pub(crate) fn array_slice(
         let mut target_index = 0;
         while source_index < end {
             vm.consume_fuel()?;
-            let source_key = source_index.to_string();
-            if vm.has_property(&object, &source_key)? {
-                let value = vm.get_property(&object, &source_key)?;
+            let source_key = PropertyKey::from_integer_index(source_index);
+            if vm.has_property_key(&object, &source_key)? {
+                let value = vm.get_property_by_key(&object, &source_key)?;
                 let value_pin = vm.pin(&value);
                 let define = vm.define_own_property_or_throw(
                     &result,
@@ -2043,9 +2052,9 @@ pub(crate) fn array_concat(
                 let mut source_index = 0u64;
                 while source_index < length {
                     vm.consume_fuel()?;
-                    let source_key = source_index.to_string();
-                    if vm.has_property(item, &source_key)? {
-                        let value = vm.get_property(item, &source_key)?;
+                    let source_key = PropertyKey::from_integer_index(source_index);
+                    if vm.has_property_key(item, &source_key)? {
+                        let value = vm.get_property_by_key(item, &source_key)?;
                         let value_pin = vm.pin(&value);
                         let define = vm.define_own_property_or_throw(
                             &result,
@@ -2096,22 +2105,22 @@ pub(crate) fn array_reverse(
         for lower in 0..middle {
             vm.consume_fuel()?;
             let upper = len - lower - 1;
-            let lower_key = lower.to_string();
-            let upper_key = upper.to_string();
+            let lower_key = PropertyKey::from_integer_index(lower);
+            let upper_key = PropertyKey::from_integer_index(upper);
             let mut pair_pins = 0;
             let pair_result: error::Result<()> = (|| {
-                let lower_exists = vm.has_property(&object, &lower_key)?;
+                let lower_exists = vm.has_property_key(&object, &lower_key)?;
                 let lower_value = if lower_exists {
-                    let value = vm.get_property(&object, &lower_key)?;
+                    let value = vm.get_property_by_key(&object, &lower_key)?;
                     pair_pins += vm.pin(&value);
                     Some(value)
                 } else {
                     None
                 };
 
-                let upper_exists = vm.has_property(&object, &upper_key)?;
+                let upper_exists = vm.has_property_key(&object, &upper_key)?;
                 let upper_value = if upper_exists {
-                    let value = vm.get_property(&object, &upper_key)?;
+                    let value = vm.get_property_by_key(&object, &upper_key)?;
                     pair_pins += vm.pin(&value);
                     Some(value)
                 } else {
@@ -2120,16 +2129,16 @@ pub(crate) fn array_reverse(
 
                 match (lower_value, upper_value) {
                     (Some(lower_value), Some(upper_value)) => {
-                        vm.set_property_strict(&object, &lower_key, upper_value)?;
-                        vm.set_property_strict(&object, &upper_key, lower_value)?;
+                        vm.set_integer_index_strict(&object, lower, upper_value)?;
+                        vm.set_integer_index_strict(&object, upper, lower_value)?;
                     }
                     (None, Some(upper_value)) => {
-                        vm.set_property_strict(&object, &lower_key, upper_value)?;
+                        vm.set_integer_index_strict(&object, lower, upper_value)?;
                         delete_property_or_throw(vm, &object, &upper_key)?;
                     }
                     (Some(lower_value), None) => {
                         delete_property_or_throw(vm, &object, &lower_key)?;
-                        vm.set_property_strict(&object, &upper_key, lower_value)?;
+                        vm.set_integer_index_strict(&object, upper, lower_value)?;
                     }
                     (None, None) => {}
                 }
@@ -2163,11 +2172,12 @@ pub(crate) fn array_sort(vm: &mut Vm, args: &[Value], this: Option<Value>) -> er
         let item_count = items.len();
         for (index, item) in items.into_iter().enumerate() {
             vm.consume_fuel()?;
-            vm.set_property_strict(&object, &index.to_string(), item)?;
+            vm.set_integer_index_strict(&object, index as u64, item)?;
         }
         for index in item_count..len {
             vm.consume_fuel()?;
-            if !vm.delete_property(&object, &index.to_string())? {
+            let key = PropertyKey::from_integer_index(index as u64);
+            if !vm.delete_property_key(&object, &key)? {
                 return Err(Error::type_err(format!(
                     "Cannot delete array index '{}' during sort",
                     index
@@ -2201,12 +2211,12 @@ pub(crate) fn array_shift(
         let mut index = 1;
         while index < len {
             vm.consume_fuel()?;
-            let from_key = index.to_string();
-            let to_key = (index - 1).to_string();
-            if vm.has_property(&object, &from_key)? {
-                let value = vm.get_property(&object, &from_key)?;
+            let from_key = PropertyKey::from_integer_index(index);
+            let to_key = PropertyKey::from_integer_index(index - 1);
+            if vm.has_property_key(&object, &from_key)? {
+                let value = vm.get_property_by_key(&object, &from_key)?;
                 let value_pin = vm.pin(&value);
-                let set = vm.set_property_strict(&object, &to_key, value);
+                let set = vm.set_integer_index_strict(&object, index - 1, value);
                 vm.unpin(value_pin);
                 set?;
             } else {
@@ -2214,7 +2224,8 @@ pub(crate) fn array_shift(
             }
             index += 1;
         }
-        delete_property_or_throw(vm, &object, &(len - 1).to_string())?;
+        let last_key = PropertyKey::from_integer_index(len - 1);
+        delete_property_or_throw(vm, &object, &last_key)?;
         vm.set_property_strict(&object, "length", Value::Number((len - 1) as f64))?;
         Ok(first)
     })();
@@ -2244,12 +2255,12 @@ pub(crate) fn array_unshift(
             let mut index = len;
             while index > 0 {
                 vm.consume_fuel()?;
-                let from_key = (index - 1).to_string();
-                let to_key = (index + arg_count - 1).to_string();
-                if vm.has_property(&object, &from_key)? {
-                    let value = vm.get_property(&object, &from_key)?;
+                let from_key = PropertyKey::from_integer_index(index - 1);
+                let to_key = PropertyKey::from_integer_index(index + arg_count - 1);
+                if vm.has_property_key(&object, &from_key)? {
+                    let value = vm.get_property_by_key(&object, &from_key)?;
                     let value_pin = vm.pin(&value);
-                    let set = vm.set_property_strict(&object, &to_key, value);
+                    let set = vm.set_integer_index_strict(&object, index + arg_count - 1, value);
                     vm.unpin(value_pin);
                     set?;
                 } else {
@@ -2259,7 +2270,7 @@ pub(crate) fn array_unshift(
             }
             for (index, item) in args.iter().enumerate() {
                 vm.consume_fuel()?;
-                vm.set_property_strict(&object, &index.to_string(), item.clone())?;
+                vm.set_integer_index_strict(&object, index as u64, item.clone())?;
             }
         }
         vm.set_property_strict(&object, "length", Value::Number(new_len as f64))?;
@@ -2311,9 +2322,9 @@ pub(crate) fn array_splice(
         let mut removed_index = 0;
         while removed_index < actual_delete_count {
             vm.consume_fuel()?;
-            let source_key = (actual_start + removed_index).to_string();
-            if vm.has_property(&object, &source_key)? {
-                let value = vm.get_property(&object, &source_key)?;
+            let source_key = PropertyKey::from_integer_index(actual_start + removed_index);
+            if vm.has_property_key(&object, &source_key)? {
+                let value = vm.get_property_by_key(&object, &source_key)?;
                 let value_pin = vm.pin(&value);
                 let define = vm.define_own_property_or_throw(
                     &removed,
@@ -2336,12 +2347,12 @@ pub(crate) fn array_splice(
             let shift_end = len - actual_delete_count;
             while index < shift_end {
                 vm.consume_fuel()?;
-                let from_key = (index + actual_delete_count).to_string();
-                let to_key = (index + insert_count).to_string();
-                if vm.has_property(&object, &from_key)? {
-                    let value = vm.get_property(&object, &from_key)?;
+                let from_key = PropertyKey::from_integer_index(index + actual_delete_count);
+                let to_key = PropertyKey::from_integer_index(index + insert_count);
+                if vm.has_property_key(&object, &from_key)? {
+                    let value = vm.get_property_by_key(&object, &from_key)?;
                     let value_pin = vm.pin(&value);
-                    let set = vm.set_property_strict(&object, &to_key, value);
+                    let set = vm.set_integer_index_strict(&object, index + insert_count, value);
                     vm.unpin(value_pin);
                     set?;
                 } else {
@@ -2352,19 +2363,20 @@ pub(crate) fn array_splice(
             let mut index = len;
             while index > new_len {
                 vm.consume_fuel()?;
-                delete_property_or_throw(vm, &object, &(index - 1).to_string())?;
+                let key = PropertyKey::from_integer_index(index - 1);
+                delete_property_or_throw(vm, &object, &key)?;
                 index -= 1;
             }
         } else if insert_count > actual_delete_count {
             let mut index = len - actual_delete_count;
             while index > actual_start {
                 vm.consume_fuel()?;
-                let from_key = (index + actual_delete_count - 1).to_string();
-                let to_key = (index + insert_count - 1).to_string();
-                if vm.has_property(&object, &from_key)? {
-                    let value = vm.get_property(&object, &from_key)?;
+                let from_key = PropertyKey::from_integer_index(index + actual_delete_count - 1);
+                let to_key = PropertyKey::from_integer_index(index + insert_count - 1);
+                if vm.has_property_key(&object, &from_key)? {
+                    let value = vm.get_property_by_key(&object, &from_key)?;
                     let value_pin = vm.pin(&value);
-                    let set = vm.set_property_strict(&object, &to_key, value);
+                    let set = vm.set_integer_index_strict(&object, index + insert_count - 1, value);
                     vm.unpin(value_pin);
                     set?;
                 } else {
@@ -2378,7 +2390,7 @@ pub(crate) fn array_splice(
             vm.consume_fuel()?;
             let offset = u64::try_from(offset)
                 .map_err(|_| Error::type_err("Array.prototype.splice result is too large"))?;
-            vm.set_property_strict(&object, &(actual_start + offset).to_string(), item.clone())?;
+            vm.set_integer_index_strict(&object, actual_start + offset, item.clone())?;
         }
         vm.set_property_strict(&object, "length", Value::Number(new_len as f64))?;
         Ok(removed.clone())
@@ -2421,7 +2433,7 @@ pub(crate) fn array_last_index_of(
         }
     };
     for i in (0..=start).rev() {
-        let key = i.to_string();
+        let key = PropertyKey::integer_index_str(i as u64);
         if array_search_has_property(vm, &object, &key)? {
             let value = vm.get_property(&object, &key)?;
             if vm.strict_eq(&value, &target) {
@@ -2457,7 +2469,8 @@ pub(crate) fn array_at(vm: &mut Vm, args: &[Value], this: Option<Value>) -> erro
     if k < 0.0 || k >= len as f64 {
         return Ok(Value::Undefined);
     }
-    vm.get_property(&object, &(k as usize).to_string())
+    let key = PropertyKey::from_integer_index(k as u64);
+    vm.get_property_by_key(&object, &key)
 }
 pub(crate) fn array_flat(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let receiver = this.unwrap_or(Value::Undefined);
@@ -2565,12 +2578,12 @@ fn flatten_into_array(
         let source = frame.source.clone();
         let frame_depth = frame.depth;
         let apply_mapper = frame.apply_mapper;
-        let source_key = source_index.to_string();
-        if !vm.has_property(&source, &source_key)? {
+        let source_key = PropertyKey::from_integer_index(source_index);
+        if !vm.has_property_key(&source, &source_key)? {
             continue;
         }
 
-        let mut element = vm.get_property(&source, &source_key)?;
+        let mut element = vm.get_property_by_key(&source, &source_key)?;
         let mut element_pins = vm.pin(&element);
         active_pins += element_pins;
         if apply_mapper {
@@ -2702,12 +2715,12 @@ pub(crate) fn array_copy_within(
 
         while count > 0 {
             vm.consume_fuel()?;
-            let from_key = from.to_string();
-            let to_key = to.to_string();
-            if vm.has_property(&object, &from_key)? {
-                let value = vm.get_property(&object, &from_key)?;
+            let from_key = PropertyKey::from_integer_index(from as u64);
+            let to_key = PropertyKey::from_integer_index(to as u64);
+            if vm.has_property_key(&object, &from_key)? {
+                let value = vm.get_property_by_key(&object, &from_key)?;
                 let value_pin = vm.pin(&value);
-                let set = vm.set_property_strict(&object, &to_key, value);
+                let set = vm.set_integer_index_strict(&object, to as u64, value);
                 vm.unpin(value_pin);
                 set?;
             } else {
@@ -2921,7 +2934,7 @@ pub(crate) fn array_fill(vm: &mut Vm, args: &[Value], this: Option<Value>) -> er
 
         while index < final_index {
             vm.consume_fuel()?;
-            vm.set_property_strict(&object, &index.to_string(), value.clone())?;
+            vm.set_integer_index_strict(&object, index, value.clone())?;
             index += 1;
         }
         Ok(object)
@@ -2932,7 +2945,7 @@ pub(crate) fn array_fill(vm: &mut Vm, args: &[Value], this: Option<Value>) -> er
 pub(crate) fn array_some(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let (object, len, callback, this_arg) = array_find_object_and_callback(vm, args, this)?;
     for i in 0..len {
-        let key = i.to_string();
+        let key = PropertyKey::integer_index_str(i as u64);
         if !array_search_has_property(vm, &object, &key)? {
             continue;
         }
@@ -2955,7 +2968,7 @@ pub(crate) fn array_every(
 ) -> error::Result<Value> {
     let (object, len, callback, this_arg) = array_find_object_and_callback(vm, args, this)?;
     for i in 0..len {
-        let key = i.to_string();
+        let key = PropertyKey::integer_index_str(i as u64);
         if !array_search_has_property(vm, &object, &key)? {
             continue;
         }

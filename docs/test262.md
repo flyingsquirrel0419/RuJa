@@ -11339,6 +11339,41 @@ pinned worktree were deleted after comparison.
 - 장점, 단점 및 영향: Focused coverage gains exactly two passes and full CI gains two independent result shards without runtime or supported-subset movement. The policy depends on pinned staging layout and intentionally fails preflight if upstream changes either directory; post-push artifacts prove exactly +2 pass/+2 total/+2 run after correcting Annex B contention.
 ```
 
+## Native indexed PropertyKey pipelines
+
+This representation-only unit changes no Test262 admission. Current and
+preceding release binaries run these pinned families with byte-identical output:
+
+- `built-ins/Array`
+- `built-ins/ArrayIteratorPrototype`
+- `built-ins/TypedArray`
+- `built-ins/TypedArrayConstructors`
+- `built-ins/JSON`
+- `built-ins/RegExp`
+- `built-ins/Proxy`
+- `built-ins/Reflect`
+
+The combined result is **6712 pass / 6 fail / 1082 skip / 0 timeout / 0 error /
+7800 total / 6718 run**. Direct regressions separately prove integer-name text
+and ArrayIndex classification at `4294967294`, `4294967295`, `4294967296`, and
+`9007199254740990`; primitive String search behavior; Proxy get/set/delete key
+identity; and Array iterator values/entries at the first non-ArrayIndex name.
+The unchanged pinned supported subset is **12761 pass / 0 fail / 7678 skip /
+20439 total**, and the runner/tooling contract remains **135/135**.
+A post-review combined rerun had one transient TypedArray timeout; an immediate
+same-binary TypedArray rerun passed **1446/1446**, restoring the corrected
+combined result above.
+
+```text
+[Decision Log]
+- 목적과 의도: Prove that eliminating native indexed-loop temporary Strings preserves the exact affected built-in behavior rather than relying on aggregate full-suite stability.
+- 기존 구현 및 제약 조건: The change removes 90 native numeric property-name formatting sites across multiple built-in families, Test262 cannot observe Rust host allocation directly, equal totals can hide offsetting movement, and admission changes would confound representation evidence.
+- 검토한 주요 대안: Run only Rust tests, run one Array method, compare aggregate counts, widen admission, run the whole corpus without a preceding binary, or compare every directly affected built-in family with fixed policy and binaries.
+- 선택한 방식: Keep admission fixed, add direct boundary and Proxy/iterator regressions, run eight affected pinned families on both release binaries, and require byte-identical complete output.
+- 다른 대안 대신 이 방식을 선택한 이유: Rust tests prove representation boundaries but not broad observable behavior; one method misses TypedArray/JSON/RegExp/Proxy consumers; totals are weaker than exact output; and one binary cannot isolate the implementation.
+- 장점, 단점 및 영향: The unit has exact 7800-file A/B identity plus direct safe-integer boundary coverage. Full-matrix and post-push evidence remain required; unsupported failures and skips are unchanged rather than hidden.
+```
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is
