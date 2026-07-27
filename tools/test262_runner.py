@@ -70,6 +70,10 @@ try:
         REGEXP_UNICODE_SETS_FEATURES,
         REGEXP_UNICODE_SETS_FILES,
     )
+    from test262_regexp_uv_flags_admission import (
+        REGEXP_UV_FLAGS_FEATURES,
+        REGEXP_UV_FLAGS_FILES,
+    )
     from test262_proxy_get_admission import PROXY_GET_FEATURES, PROXY_GET_FILES
     from test262_proxy_has_admission import PROXY_HAS_FEATURES, PROXY_HAS_FILES
     from test262_proxy_delete_admission import (
@@ -237,6 +241,10 @@ except ModuleNotFoundError:
     from tools.test262_regexp_unicode_sets_admission import (
         REGEXP_UNICODE_SETS_FEATURES,
         REGEXP_UNICODE_SETS_FILES,
+    )
+    from tools.test262_regexp_uv_flags_admission import (
+        REGEXP_UV_FLAGS_FEATURES,
+        REGEXP_UV_FLAGS_FILES,
     )
     from tools.test262_proxy_get_admission import PROXY_GET_FEATURES, PROXY_GET_FILES
     from tools.test262_proxy_has_admission import PROXY_HAS_FEATURES, PROXY_HAS_FILES
@@ -3073,6 +3081,13 @@ def regexp_unicode_sets_features(path):
         return frozenset()
     return REGEXP_UNICODE_SETS_FEATURES.get(rel.as_posix(), frozenset())
 
+def regexp_uv_flags_features(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except (OSError, ValueError):
+        return frozenset()
+    return REGEXP_UV_FLAGS_FEATURES.get(rel.as_posix(), frozenset())
+
 def generator_function_path(path):
     try:
         rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
@@ -3266,6 +3281,7 @@ def should_skip(meta, path=None):
         feats.difference_update(regexp_match_indices_features(path))
         feats.difference_update(regexp_duplicate_named_groups_features(path))
         feats.difference_update(regexp_unicode_sets_features(path))
+        feats.difference_update(regexp_uv_flags_features(path))
     if path is not None and generator_function_path(path):
         feats.difference_update(generator_function_features(path))
     if path is not None and async_generator_realm_path(path):

@@ -1,0 +1,3 @@
+# Frozen Test262 RegExp u/v mutual-exclusion files.
+built-ins/RegExp/prototype/unicodeSets/uv-flags-constructor.js
+built-ins/RegExp/prototype/unicodeSets/uv-flags.js

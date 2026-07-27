@@ -4,6 +4,12 @@
 
 ### Changed
 
+- RegExp flags `u` and `v` are now mutually exclusive in the common source
+  validator. Literals fail during parsing and `RegExp` construction fails
+  during initialization, while invalid and duplicate flag diagnostics retain
+  precedence. Exact Test262 admission is limited to the literal and
+  constructor mutual-exclusion files.
+
 - RegExp `v` patterns now use Unicode pattern semantics consistently when
   normalizing decimal escapes, identity escapes, and dot atoms. In particular,
   `\p{...}` escapes retain their backslash for the backend and `.` consumes one

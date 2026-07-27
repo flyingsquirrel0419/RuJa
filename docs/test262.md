@@ -11694,6 +11694,35 @@ total files and **37059** executions.
 - 장점, 단점 및 영향: Supported RegExp coverage grows by 48 passing executions without weakening skip policy. The manifest's 4×3×4 Cartesian scope and live metadata are tooling invariants, while 66 string-valued generated cases and complex iv word classes remain visible follow-up scope.
 ```
 
+## RegExp `u`/`v` flag mutual exclusion
+
+Pinned Test262 `020cb74075849d1e404bbcdb62feb7a02e6966db` has two files for
+the rule that `u` and `v` cannot appear together:
+`prototype/unicodeSets/uv-flags.js` is parse-negative, while
+`uv-flags-constructor.js` requires a constructor-time `SyntaxError`. Both now
+pass. The containing directory is **2 pass / 0 fail / 36 skip / 0 timeout / 0
+error**; only these two exact paths remove `regexp-v-flag`.
+
+The complete `built-ins/RegExp` diagnostic is **1093 pass / 0 fail / 786 skip /
+0 timeout / 0 error** over 1,879 files, exactly **+2 pass / -2 skip** from the
+preceding fixed-checkout result. Direct tests cover both flag orders, mixed
+valid flags, invalid and duplicate diagnostic precedence, literal parsing,
+constructor initialization, and unchanged standalone `u` and `v` behavior.
+
+The immediately preceding `0a880f3` release under the new two-file policy is
+**1091 pass / 2 fail / 786 skip / 0 timeout / 0 error**. The current release is
+**1093/0/786/0/0** under the same policy, proving exact two-file movement.
+
+```text
+[Decision Log]
+- 목적과 의도: Prove the shared u/v exclusivity rule without weakening the broad regexp-v-flag support boundary.
+- 기존 구현 및 제약 조건: One test requires parse-time failure, one requires constructor-time failure, and all other v-feature files include behavior outside this unit.
+- 검토한 주요 대안: Rely only on Rust tests, admit the entire prototype/unicodeSets directory, admit all regexp-v-flag files, or freeze the exact literal and constructor pair.
+- 선택한 방식: Freeze two paths, require their live metadata to be exactly regexp-v-flag, share the feature removal in runner and analyzer, and reject synthetic future and outside paths.
+- 다른 대안 대신 이 방식을 선택한 이유: Direct tests do not measure admission, directory admission includes unrelated Unicode-set semantics, and global admission would expose known unsupported strings and word classes. Two paths exactly match the implemented specification rule.
+- 장점, 단점 및 영향: Supported RegExp coverage gains two passing executions with no new failures. Future Test262 siblings remain skipped until independently audited.
+```
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is

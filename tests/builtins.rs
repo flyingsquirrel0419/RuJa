@@ -19879,6 +19879,35 @@ fn regexp_v_flag_uses_unicode_pattern_semantics() {
 }
 
 #[test]
+fn regexp_u_and_v_flags_are_mutually_exclusive() {
+    for source in ["/./uv;", "/./vu;", "if (false) /a/uv;", "if (false) /a/vu;"] {
+        assert!(
+            run_err(source).contains("flags 'u' and 'v'"),
+            "source: {source}"
+        );
+    }
+
+    for flags in ["uv", "vu", "duvy", "vuid"] {
+        let source = format!(r#"new RegExp(".", "{flags}");"#);
+        assert!(
+            run_err(&source).contains("flags 'u' and 'v'"),
+            "flags: {flags}"
+        );
+    }
+
+    assert!(run_err(r#"RegExp(".", "uv");"#).contains("flags 'u' and 'v'"));
+    assert!(
+        run_err(r#"new RegExp("a**", "uv");"#).contains("flags 'u' and 'v'"),
+        "flag-set validation must precede pattern validation"
+    );
+    assert!(run_err(r#"new RegExp(".", "uvv");"#).contains("duplicate regular expression flag"));
+    assert!(run_err(r#"new RegExp(".", "uvG");"#).contains("invalid regular expression flag"));
+
+    assert_eq!(run("new RegExp('.', 'u').unicode;"), Value::Bool(true));
+    assert_eq!(run("new RegExp('.', 'v').unicodeSets;"), Value::Bool(true));
+}
+
+#[test]
 fn regexp_quantifier_without_atom_reports_early_error() {
     for source in [
         "/?/;",

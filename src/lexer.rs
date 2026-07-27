@@ -2133,6 +2133,9 @@ fn validate_regex_flags(flags: &str) -> Result<(), String> {
         }
         seen.push(ch);
     }
+    if seen.contains(&'u') && seen.contains(&'v') {
+        return Err("regular expression flags 'u' and 'v' cannot be used together".to_string());
+    }
     Ok(())
 }
 
@@ -3642,6 +3645,20 @@ mod tests {
         assert!(matches!(
             Lexer::new("/./gig").tokens()[0].kind,
             LexError(ref msg) if msg.contains("regular expression flag")
+        ));
+        for source in ["/./uv", "/./vu", "/./duvy"] {
+            assert!(matches!(
+                Lexer::new(source).tokens()[0].kind,
+                LexError(ref msg) if msg.contains("flags 'u' and 'v'")
+            ));
+        }
+        assert!(matches!(
+            Lexer::new("/./uvv").tokens()[0].kind,
+            LexError(ref msg) if msg.contains("duplicate regular expression flag 'v'")
+        ));
+        assert!(matches!(
+            Lexer::new("/./uvG").tokens()[0].kind,
+            LexError(ref msg) if msg.contains("invalid regular expression flag 'G'")
         ));
         assert!(matches!(
             Lexer::new("/(?i-i:a)/").tokens()[0].kind,

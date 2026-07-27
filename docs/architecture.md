@@ -608,6 +608,31 @@ class still exceeds ECMAScript WordCharacters.
 - 장점, 단점 및 영향: The 48-file character-only matrix runs at 100% while legacy and u behavior share existing paths. The admission manifest requires maintenance when Test262 changes, and 66 generated string-valued cases remain explicit follow-up work.
 ```
 
+### RegExp Unicode mode flag exclusivity
+
+`u` and `v` both select Unicode-aware pattern parsing, but `v` is not an
+additive extension that can be combined with `u`: the flag set containing both
+is invalid. Literal scanning, parser fallback, and the `RegExp` constructor all
+call `validate_regex_literal`, so exclusivity belongs in its shared flag
+validator rather than in either backend compiler.
+
+The validator first completes the existing allowed-character and duplicate
+checks, then rejects a set containing both modes. This preserves deterministic
+diagnostic precedence for sources such as `uvv` and `uvG`. Exact Test262
+admission contains only the parse-negative literal and constructor files; the
+rest of the broad `regexp-v-flag` feature remains governed by its own bounded
+admissions.
+
+```text
+[Decision Log]
+- 목적과 의도: Reject the statically invalid simultaneous u and v RegExp modes at the shared specification boundary for literals and constructors.
+- 기존 구현 및 제약 조건: Both modes were accepted independently, all source paths already converge on one validator, and Test262 labels this two-file rule with the same broad feature used by unsupported Unicode-set syntax.
+- 검토한 주요 대안: Let the backend choose a mode, reject only literals, reject only constructor flags, special-case the two tests, or add one shared post-scan exclusivity invariant with exact admission.
+- 선택한 방식: Preserve invalid and duplicate scans, reject seen u plus v afterward, exercise both orders and mixed flags directly, and remove regexp-v-flag only for two frozen paths.
+- 다른 대안 대신 이 방식을 선택한 이유: Backend selection occurs too late for parse-negative literals, path-local checks can diverge, and broad feature admission would run unsupported set syntax. The common validator already owns all flag-set early errors.
+- 장점, 단점 및 영향: Literal and constructor behavior become consistent with no matcher or runtime cost. Two skips become passes; the admission manifest and tooling guard are additional maintenance, while all remaining v behavior stays independently gated.
+```
+
 `MakeClosure` follows the same rule for an ordinary function's fresh
 `.prototype`: the prototype is pinned before a named-function environment or
 the function object can allocate, then released only after the function owns
