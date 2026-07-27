@@ -11295,6 +11295,39 @@ sparse pinned worktree were deleted after comparison.
 - 장점, 단점 및 영향: The unit has exact five-file, directory-delta, remaining-failure, ordinary-CI, and corrected full-matrix file-identity evidence. Oversized quantifiers, nullable capture-prefilter disagreement, and broader nested-v syntax remain separate scopes.
 ```
 
+## Nullable RegExp quantifier boundaries
+
+`CaptureCorrected` keeps its linear Rust prefilter for failed searches and
+leftmost candidate discovery, but no longer treats the prefilter's end offset
+as ECMAScript semantics. The bounded ECMAScript matcher now supplies the match
+end and captures after both backends agree on the leftmost start. Builtin callers
+use that authoritative end for global iteration, replacement spans, and
+`lastIndex`. This closes the valid
+`(a?b??)*` case where RepeatMatcher consumes `a` and `b` in separate
+iterations while the linear backend stops after `a`.
+
+On Test262 `020cb74075849d1e404bbcdb62feb7a02e6966db`, the exact
+`built-ins/RegExp/nullable-quantifier.js` file moves from fail to pass. The
+complete 1,879-file RegExp directory moves from **1041 pass / 2 fail / 836
+skip / 0 timeout / 0 error** to **1042 / 1 / 836 / 0 / 0**, exactly **+1 pass
+/ -1 fail** over the unchanged **1,043 run**. The sole remaining failure is
+`quantifier-integer-limit.js`; admission policy is unchanged.
+
+Direct regressions cover unanchored and prefixed matches, capture state,
+global/sticky `lastIndex`, global match and replacement iteration, and both
+Unicode-scalar and legacy UTF-16 compositions. Existing repeated-capture,
+duplicate-name, and lookaround suites remain green.
+
+```text
+[Decision Log]
+- 목적과 의도: Close the nullable RepeatMatcher boundary failure without moving hostile no-match probes onto a backtracking-only path.
+- 기존 구현 및 제약 조건: Both backends agreed that a match began at zero but selected different valid ends; exact end equality turned the ECMAScript result into an internal error and fast-only find iteration propagated the wrong boundary.
+- 검토한 주요 대안: Remove the prefilter, force identical end offsets, rewrite nullable patterns, or retain only its rejection and leftmost-start evidence.
+- 선택한 방식: Require start agreement, then use the bounded ECMAScript result for match end, captures, iteration progress, replacement, and lastIndex.
+- 다른 대안 대신 이 방식을 선택한 이유: Broad backtracking routing weakens the established linear no-match defense, while end equality and source rewriting override or incompletely approximate RepeatMatcher semantics.
+- 장점, 단점 및 영향: One existing failure closes with no admission change and unchanged RegExp execution count. Successful repeated-capture matches retain bounded backend cost; the wider host-independent oversized-quantifier representation remains isolated.
+```
+
 ## Variable-length TypedArray preventExtensions staging admission
 
 The shared extensibility manifest now admits exactly these two pinned staging

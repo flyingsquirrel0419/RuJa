@@ -214,21 +214,24 @@ impl CompiledRegex {
         start: usize,
     ) -> error::Result<Option<CompiledMatch<'t>>> {
         match self {
-            CompiledRegex::Rust(re) | CompiledRegex::CaptureCorrected { fast: re, .. } => {
-                Ok(re.find_at(input, start).map(CompiledMatch::from))
-            }
+            CompiledRegex::Rust(re) => Ok(re.find_at(input, start).map(CompiledMatch::from)),
             CompiledRegex::Fancy(re) => re
                 .find_from_pos(input, start)
                 .map(|m| m.map(CompiledMatch::from))
                 .map_err(regex_runtime_error),
+            CompiledRegex::CaptureCorrected { fast, captures } => {
+                let Some(candidate) = fast.find_at(input, start) else {
+                    return Ok(None);
+                };
+                let corrected = corrected_captures(captures, input, candidate.start())?;
+                Ok(corrected.get(0))
+            }
         }
     }
 
     fn find_iter<'t>(&self, input: &'t str) -> error::Result<Vec<CompiledMatch<'t>>> {
         match self {
-            CompiledRegex::Rust(re) | CompiledRegex::CaptureCorrected { fast: re, .. } => {
-                Ok(re.find_iter(input).map(CompiledMatch::from).collect())
-            }
+            CompiledRegex::Rust(re) => Ok(re.find_iter(input).map(CompiledMatch::from).collect()),
             CompiledRegex::Fancy(re) => {
                 let mut matches = Vec::new();
                 let mut pos = 0;
@@ -250,6 +253,11 @@ impl CompiledRegex {
                 }
                 Ok(matches)
             }
+            CompiledRegex::CaptureCorrected { .. } => Ok(self
+                .captures_iter(input)?
+                .into_iter()
+                .filter_map(|caps| caps.get(0))
+                .collect()),
         }
     }
 
@@ -272,7 +280,7 @@ impl CompiledRegex {
                 let Some(expected) = fast.find_at(input, start) else {
                     return Ok(None);
                 };
-                corrected_captures(captures, input, expected.start(), expected.end()).map(Some)
+                corrected_captures(captures, input, expected.start()).map(Some)
             }
         }
     }
@@ -309,12 +317,29 @@ impl CompiledRegex {
                 }
                 Ok(captures)
             }
-            CompiledRegex::CaptureCorrected { fast, captures } => fast
-                .find_iter(input)
-                .map(|expected| {
-                    corrected_captures(captures, input, expected.start(), expected.end())
-                })
-                .collect(),
+            CompiledRegex::CaptureCorrected { fast, captures } => {
+                let mut matches = Vec::new();
+                let mut pos = 0;
+                while pos <= input.len() {
+                    let Some(candidate) = fast.find_at(input, pos) else {
+                        break;
+                    };
+                    let corrected = corrected_captures(captures, input, candidate.start())?;
+                    let actual = corrected.get(0).ok_or_else(|| {
+                        Error::internal("capture backend omitted RegExp group zero")
+                    })?;
+                    matches.push(corrected);
+                    if actual.end() == actual.start() {
+                        let Some(ch) = input[actual.end()..].chars().next() else {
+                            break;
+                        };
+                        pos = actual.end() + ch.len_utf8();
+                    } else {
+                        pos = actual.end();
+                    }
+                }
+                Ok(matches)
+            }
         }
     }
 
@@ -369,7 +394,6 @@ fn corrected_captures<'t>(
     re: &fancy_regex::Regex,
     input: &'t str,
     expected_start: usize,
-    expected_end: usize,
 ) -> error::Result<CompiledCaptures<'t>> {
     let caps = re
         .captures_from_pos(input, expected_start)
@@ -378,12 +402,100 @@ fn corrected_captures<'t>(
     let actual = caps
         .get(0)
         .ok_or_else(|| Error::internal("capture backend omitted RegExp group zero"))?;
-    if actual.start() != expected_start || actual.end() != expected_end {
+    if actual.start() != expected_start {
         return Err(Error::internal(
-            "capture backend disagreed with the prefiltered RegExp match",
+            "capture backend disagreed with the prefiltered RegExp start",
         ));
     }
     Ok(CompiledCaptures::from(caps))
+}
+
+#[cfg(test)]
+mod compiled_regex_tests {
+    use super::*;
+
+    #[test]
+    fn capture_corrected_apis_use_ecmascript_ends_and_iteration() {
+        let re = compile_regex("(a?b??)*", "").expect("nullable capture pattern should compile");
+
+        let found = re
+            .find_at("ab", 0)
+            .expect("find_at should execute")
+            .expect("find_at should match");
+        assert_eq!((found.as_str(), found.start(), found.end()), ("ab", 0, 2));
+
+        let found_iter = re.find_iter("ab").expect("find_iter should execute");
+        assert_eq!(
+            found_iter
+                .iter()
+                .map(|matched| (matched.as_str(), matched.start(), matched.end()))
+                .collect::<Vec<_>>(),
+            vec![("ab", 0, 2), ("", 2, 2)]
+        );
+
+        let captures = re
+            .captures_at("ab", 0)
+            .expect("captures_at should execute")
+            .expect("captures_at should match");
+        assert_eq!(captures.get(0).map(CompiledMatch::as_str), Some("ab"));
+        assert_eq!(captures.get(1).map(CompiledMatch::as_str), Some("b"));
+
+        let captures_iter = re
+            .captures_iter("ab")
+            .expect("captures_iter should execute");
+        assert_eq!(
+            captures_iter
+                .iter()
+                .map(|captures| captures.get(0).map(CompiledMatch::as_str))
+                .collect::<Vec<_>>(),
+            vec![Some("ab"), Some("")]
+        );
+
+        let empty = compile_regex("(a?)*?", "").expect("empty capture pattern should compile");
+        let empty_find_iter = empty.find_iter("😀x").expect("find_iter should advance");
+        assert_eq!(
+            empty_find_iter
+                .iter()
+                .map(|matched| (matched.start(), matched.end()))
+                .collect::<Vec<_>>(),
+            vec![(0, 0), (4, 4), (5, 5)]
+        );
+        let empty_captures_iter = empty
+            .captures_iter("😀x")
+            .expect("captures_iter should advance");
+        assert_eq!(
+            empty_captures_iter
+                .iter()
+                .map(|captures| {
+                    let matched = captures.get(0).expect("group zero should exist");
+                    (matched.start(), matched.end())
+                })
+                .collect::<Vec<_>>(),
+            vec![(0, 0), (4, 4), (5, 5)]
+        );
+    }
+
+    #[test]
+    fn capture_corrected_no_match_stays_on_the_linear_prefilter() {
+        let re = compile_regex("(a+)+$", "").expect("nested repeat should compile");
+        let input = format!("{}!", "a".repeat(4_096));
+        let CompiledRegex::CaptureCorrected { captures, .. } = &re else {
+            panic!("nested quantified capture should use the hybrid backend");
+        };
+        assert!(
+            matches!(
+                captures.find(&input),
+                Err(fancy_regex::Error::RuntimeError(
+                    fancy_regex::RuntimeError::BacktrackLimitExceeded
+                ))
+            ),
+            "the bounded capture backend should hit its exact work-limit error"
+        );
+        assert!(re
+            .find(&input)
+            .expect("the linear prefilter should reject without a backend error")
+            .is_none());
+    }
 }
 
 impl<'t> From<regex::Match<'t>> for CompiledMatch<'t> {

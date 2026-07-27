@@ -370,10 +370,14 @@ same number of scalar values as the capture and use Unicode simple folding for
 
 Patterns with backreferences use the bounded backend directly. Ordinary
 patterns with repeated captures use `CaptureCorrected`: the linear Rust
-matcher establishes whether and where a match exists, then the ECMAScript
-backend reconstructs captures only at those successful boundaries. This keeps
-no-match probes on the linear path while removing the old post-match heuristic
-that could mistake trailing text for the final quantified iteration. All fork
+matcher establishes whether and at which leftmost start a match exists, then
+the ECMAScript backend supplies the match end and captures; callers use that
+end for subsequent iteration and `lastIndex`. End positions cannot be shared:
+nullable quantifiers may select a
+longer ECMAScript match than the linear backend while keeping the same leftmost
+start. This keeps no-match probes on the linear path while removing the old
+post-match heuristic that could mistake trailing text for the final quantified
+iteration. All fork
 behavior is gated by `ecmascript_mode`; mode-off analysis retains upstream
 delegation. Because Cargo substitutes a registry dependency when packaging a
 path dependency, crates.io publication remains disabled until the fork is
@@ -387,6 +391,16 @@ upstreamed or published separately.
 - 선택한 방식: Share a structural early-error scanner, retain ordered occurrences plus one index table per name, lower references to ID-based BackrefSet instructions, clear captures transactionally in the VM, prefilter ordinary matches linearly, and gate the fork behind explicit ECMAScript options and a finite work budget.
 - 다른 대안 대신 이 방식을 선택한 이유: Conditional expansion and repeated name scans are quadratic, post-processing is observably wrong, broad backtracking routing regresses hostile no-match patterns, and a replacement engine is too broad for this conformance unit. Backend state is the only point that can clear captures with correct backtracking restoration.
 - 장점, 단점 및 영향: Exact duplicate-name syntax, groups, indices, replacement, backreference, Unicode case-fold, and quantified-state semantics are directly tested with linear source/table growth and bounded runtime work. The tradeoffs are a maintained backend fork and disabled crates.io publication until that fork has a registry path. The once-remaining hard variable-lookbehind case is closed by the directional matcher below.
+```
+
+```text
+[Decision Log]
+- 목적과 의도: Preserve linear rejection of hostile no-match inputs while making nullable quantified captures use ECMAScript match boundaries everywhere.
+- 기존 구현 및 제약 조건: The Rust prefilter and ECMAScript matcher can agree on the leftmost start but legitimately choose different ends; exec, iteration, replacement, and lastIndex must all follow one authoritative result.
+- 검토한 주요 대안: Require identical start/end boundaries, remove the prefilter, special-case one nullable pattern, or use the prefilter only to reject and locate a candidate start.
+- 선택한 방식: Keep the prefilter as a no-match and leftmost-start oracle, require only start agreement, and use the bounded ECMAScript matcher for the end, captures, and next iteration position.
+- 다른 대안 대신 이 방식을 선택한 이유: End equality rejects valid RepeatMatcher behavior, removing the prefilter regresses no-match complexity, and pattern-specific rewriting cannot cover composed nullable quantifiers. Start agreement retains the linear search boundary without overriding matcher semantics.
+- 장점, 단점 및 영향: All capture-bearing APIs now share the ECMAScript boundary and global progress while failed probes remain linear. Each successful repeated-capture match pays one bounded backend execution; direct find APIs now use that result instead of returning the prefilter boundary.
 ```
 
 ### RegExp directional lookaround

@@ -19536,6 +19536,35 @@ fn regexp_repeated_capture_clears_nonparticipating_groups() {
 }
 
 #[test]
+fn regexp_nullable_quantifier_uses_ecmascript_match_boundaries() {
+    assert_eq!(
+        run(r#"
+            var plain = /(a?b??)*/.exec("ab");
+            var prefixed = /z(a?b??)*/.exec("zab");
+            var sticky = /(a?b??)*/gy;
+            var stickyMatch = sticky.exec("ab");
+            var unicode = /((?:😀)?x??)*/u.exec("😀x");
+            var legacy = /((?:😀)?x??)*/.exec("😀x");
+            [
+              plain[0], plain[1],
+              prefixed[0], prefixed[1],
+              stickyMatch[0], stickyMatch[1], sticky.lastIndex,
+              unicode[0], unicode[1],
+              legacy[0], legacy[1],
+              "ab".match(/(a?b??)*/g).map(JSON.stringify).join(","),
+              "ab".replace(/(a?b??)*/g, "<$1>"),
+              !/(a+)+$/.test("a".repeat(4096) + "!"),
+              Array.from("😀".matchAll(/(a?)*?/gu), function(m) { return m.index; }).join(","),
+              Array.from("😀".matchAll(/(a?)*?/g), function(m) { return m.index; }).join(",")
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "ab|b|zab|b|ab|b|2|😀x|x|😀x|x|\"ab\",\"\"|<b><>|true|0,2|0,1,2"
+        ))
+    );
+}
+
+#[test]
 fn regex_exec_no_match() {
     assert_eq!(run("/zzz/.exec('abc');"), Value::Null);
 }

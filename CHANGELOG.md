@@ -4,6 +4,16 @@
 
 ### Changed
 
+- Repeated-capture RegExp matching now uses the linear backend only to reject
+  no-match inputs and locate the leftmost candidate start. The bounded
+  ECMAScript backend supplies the authoritative match end and capture state;
+  builtin iteration and `lastIndex` updates consume that end. This preserves
+  `RepeatMatcher` semantics when nullable
+  quantifiers legitimately consume farther than the linear prefilter.
+  `exec`, global/sticky matching, replacement, and Unicode/legacy compositions
+  share the corrected boundary behavior while hostile no-match probes retain
+  their linear prefilter.
+
 - Deferred computed property names now store object and Proxy identities as a
   direct `GcIdx` instead of allocating an inner `Box<Value>`. Primitive and
   internal recursive names remain boxed, and the outer Reference box remains
