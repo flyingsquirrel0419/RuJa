@@ -575,6 +575,39 @@ cannot equal either exact slice.
 - 장점, 단점 및 영향: Five existing Test262 failures become passes with exact +5/-5 movement, literals and constructors share one path, and direct tests cover flags, quantifiers, UTF-16, Unicode, v mode, and escaped brackets. The oversized quantifier, nullable hybrid boundary, and broader valid nested-v set syntax remain independent RegExp units.
 ```
 
+### RegExp character-only Unicode set algebra
+
+Both `u` and `v` select Unicode pattern semantics even though only `v` enables
+set operations. The normalizer previously used the shared `unicode_mode` flag
+for some transformations but tested only literal `u` for decimal escapes,
+identity escapes, and dot lowering. That split stripped the backslash from
+valid `\p{...}` operands in `v` classes and lowered `.` as a legacy UTF-16
+atom. These branches now consume the shared mode decision. Unicode dot lowers
+to an exact one-scalar class excluding LF, CR, U+2028, and U+2029; active
+dotAll, including inline modifiers, lowers to an explicit scalar dot-all atom.
+The separate
+`u`-specific negated-property ignore-case workaround remains unchanged because
+`v` defines a different complement and case-folding order.
+
+Admission freezes the complete 48-file generated matrix whose operands are
+single characters, nested character classes, character-class escapes, or
+character property escapes. Every union, intersection, and subtraction pair
+in that character-only `/v` matrix runs. Files involving properties of strings
+or `\q{...}` string literals stay feature-gated; admitting the character
+matrix does not claim support for variable-length set elements. Complex `/iv`
+sets containing `\w` or `\W` also remain separate because their backend word
+class still exceeds ECMAScript WordCharacters.
+
+```text
+[Decision Log]
+- 목적과 의도: Make v-mode normalization obey Unicode pattern semantics and expose the complete supported character-only set algebra without admitting string-valued elements.
+- 기존 구현 및 제약 조건: The normalizer already computed u-or-v Unicode mode but several branches retested only u, the Rust backend supports character set algebra and character properties, and Test262 applies one broad regexp-v-flag feature to both character and string-valued matrices.
+- 검토한 주요 대안: Keep all v tests skipped, patch only property spellings, route every v pattern to a new engine, admit the complete regexp-v-flag feature, or correct the shared mode boundary and freeze the exact character-only matrix.
+- 선택한 방식: Use unicode_mode for decimal, identity-escape, and exact LineTerminator-aware dot normalization; preserve the u-only negated-property case-folding rule; and remove v/property feature gates only for 48 exact generated character-set files.
+- 다른 대안 대신 이 방식을 선택한 이유: Source spelling patches miss constructors and dot semantics, a new engine is disproportionate to a normalization split, and broad admission would hide unsupported string properties and q-string operands. Exact admission ties policy to behavior already exercised exhaustively by generated tests.
+- 장점, 단점 및 영향: The 48-file character-only matrix runs at 100% while legacy and u behavior share existing paths. The admission manifest requires maintenance when Test262 changes, and 66 generated string-valued cases remain explicit follow-up work.
+```
+
 `MakeClosure` follows the same rule for an ordinary function's fresh
 `.prototype`: the prototype is pinned before a named-function environment or
 the function object can allocate, then released only after the function owns

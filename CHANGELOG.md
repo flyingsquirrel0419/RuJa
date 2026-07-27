@@ -4,6 +4,17 @@
 
 ### Changed
 
+- RegExp `v` patterns now use Unicode pattern semantics consistently when
+  normalizing decimal escapes, identity escapes, and dot atoms. In particular,
+  `\p{...}` escapes retain their backslash for the backend and `.` consumes one
+  Unicode code point while excluding all four ECMAScript LineTerminators
+  unless dotAll is active.
+
+  The frozen character-only Unicode set-operation matrix admits 48 generated
+  Test262 files covering union, intersection, and subtraction across literal
+  characters, nested character classes, class escapes, and character property
+  escapes. String properties and `\q{...}` string operands remain excluded.
+
 - RegExp quantifier bounds are now parsed independently of host pointer width.
   Finite values through `u128` stay inline, larger values retain canonical
   decimal text, and infinity remains a distinct bound. Analysis uses

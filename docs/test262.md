@@ -11650,6 +11650,40 @@ total files and **37011** executions.
 - 장점, 단점 및 영향: RegExp reaches 1043/0 on the pinned admitted corpus with one-file movement. Additional maintained backend code and exact-count tests are required, while broader unadmitted nested-v and other RegExp syntax remain tracked separately.
 ```
 
+## Character-only RegExp Unicode sets
+
+Pinned Test262 `020cb74075849d1e404bbcdb62feb7a02e6966db` contains a
+114-file generated Unicode-set matrix. RuJa now admits the exact 48 files whose
+operands are characters, nested character classes, class escapes, or character
+property escapes. All union, intersection, and subtraction combinations in
+that character-only matrix pass; the remaining 66 files use string properties
+or `\q{...}` string literals and remain skipped.
+
+The complete `built-ins/RegExp` diagnostic is **1091 pass / 0 fail / 788 skip /
+0 timeout / 0 error** over 1,879 files after this admission, an exact **+48
+pass / -48 skip** movement with no admission outside the frozen manifest.
+Direct tests cover literal and constructor property escapes, nested set
+intersection and subtraction, Unicode-scalar dot consumption, and rejected
+Unicode identity and decimal escapes. Dot coverage includes LF, CR, U+2028,
+U+2029, global dotAll, and local dotAll removal.
+
+The immediately preceding `68d5b2b` release under the new 48-file policy is
+**1075 pass / 16 fail / 788 skip / 0 timeout / 0 error**. The current release
+is **1091/0/788/0/0** under the same policy, proving the normalization fix
+moves exactly the 16 property-operand files. The preceding release under its
+original policy was **1043/0/836/0/0**; the other 32 character-only set files
+already passed and are now admitted as part of the complete semantic matrix.
+
+```text
+[Decision Log]
+- 목적과 의도: Turn the already bounded character-only v-mode behavior into exact conformance evidence while fixing the normalization split that blocked property operands.
+- 기존 구현 및 제약 조건: Test262 marks character sets and unsupported string-valued sets with the same regexp-v-flag feature, so removing that feature globally would run behavior RuJa does not implement.
+- 검토한 주요 대안: Keep the whole feature skipped, admit only the 16 newly fixed property files, admit all v files, or freeze the complete generated character-only operand matrix.
+- 선택한 방식: Freeze 48 exact paths, remove only each path's declared v/property features in both runner and analyzer, and test future and string-operand paths remain gated.
+- 다른 대안 대신 이 방식을 선택한 이유: Sixteen files would understate the cohesive supported surface, global admission would produce known failures, and generated operand names provide a stable semantic boundary that is also verified against live metadata.
+- 장점, 단점 및 영향: Supported RegExp coverage grows by 48 passing executions without weakening skip policy. The manifest's 4×3×4 Cartesian scope and live metadata are tooling invariants, while 66 string-valued generated cases and complex iv word classes remain visible follow-up scope.
+```
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is

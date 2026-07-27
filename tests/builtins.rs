@@ -19853,6 +19853,32 @@ fn regexp_modifiers_empty_remove_list_compiles() {
 }
 
 #[test]
+fn regexp_v_flag_uses_unicode_pattern_semantics() {
+    assert_eq!(
+        run(r#"
+            /^\p{ASCII_Hex_Digit}+$/v.test("B09") &&
+              !/^\p{ASCII_Hex_Digit}+$/v.test("G") &&
+              /^[\d&&\p{ASCII_Hex_Digit}]$/v.test("7") &&
+              !/^[\d&&\p{ASCII_Hex_Digit}]$/v.test("B") &&
+              /^[\p{ASCII_Hex_Digit}--\d]$/v.test("B") &&
+              !/^[\p{ASCII_Hex_Digit}--\d]$/v.test("7") &&
+              /^.$/v.test("😀") &&
+              !/^.$/v.test("\n") && !/^.$/v.test("\r") &&
+              !/^.$/v.test("\u2028") && !/^.$/v.test("\u2029") &&
+              !/^.$/u.test("\r") && !/^.$/u.test("\u2028") &&
+              /^.$/sv.test("\r") && /(?s:.)/v.test("\u2029") &&
+              /(?-s:.)/sv.test("A") && !/(?-s:.)/sv.test("\r") &&
+              new RegExp("^\\p{ASCII_Hex_Digit}+$", "v").test("B09");
+            "#),
+        Value::Bool(true)
+    );
+
+    for source in [r#"new RegExp("\\a", "v");"#, r#"new RegExp("\\1", "v");"#] {
+        assert!(run_err(source).contains("SyntaxError"), "source: {source}");
+    }
+}
+
+#[test]
 fn regexp_quantifier_without_atom_reports_early_error() {
     for source in [
         "/?/;",

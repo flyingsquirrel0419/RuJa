@@ -83,6 +83,10 @@ from test262_regexp_duplicate_named_groups_admission import (
     REGEXP_DUPLICATE_NAMED_GROUPS_FEATURES,
     REGEXP_DUPLICATE_NAMED_GROUPS_FILES,
 )
+from test262_regexp_unicode_sets_admission import (
+    REGEXP_UNICODE_SETS_FEATURES,
+    REGEXP_UNICODE_SETS_FILES,
+)
 from test262_proxy_get_admission import PROXY_GET_FEATURES, PROXY_GET_FILES
 from test262_proxy_has_admission import PROXY_HAS_FEATURES, PROXY_HAS_FILES
 from test262_proxy_delete_admission import (
@@ -5520,6 +5524,76 @@ class RegExpDuplicateNamedGroupsAdmissionTests(unittest.TestCase):
                         self.assertTrue(
                             tool.should_skip(
                                 {"features": ["regexp-duplicate-named-groups"]},
+                                path,
+                            )
+                        )
+                finally:
+                    tool.TEST262 = original_root
+
+
+class RegExpUnicodeSetsAdmissionTests(unittest.TestCase):
+    def test_manifest_is_exact_live_and_shared(self):
+        self.assertEqual(len(REGEXP_UNICODE_SETS_FILES), 48)
+        self.assertEqual(
+            frozenset(REGEXP_UNICODE_SETS_FEATURES),
+            REGEXP_UNICODE_SETS_FILES,
+        )
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        try:
+            test_root_available = test_root.is_dir()
+        except OSError:
+            test_root_available = False
+        if test_root_available:
+            for relative in REGEXP_UNICODE_SETS_FILES:
+                path = test_root / relative
+                self.assertTrue(path.is_file(), relative)
+                features = set(
+                    test262_runner.parse_meta(path.read_text()).get("features", [])
+                )
+                self.assertEqual(
+                    REGEXP_UNICODE_SETS_FEATURES[relative],
+                    features,
+                    relative,
+                )
+                for tool in (test262_runner, test262_analyze):
+                    self.assertFalse(
+                        tool.should_skip({"features": list(features)}, path),
+                        relative,
+                    )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            future = (
+                root
+                / "test/built-ins/RegExp/unicodeSets/generated/character-union-future.js"
+            )
+            string_operand = (
+                root
+                / "test/built-ins/RegExp/unicodeSets/generated/character-union-string-literal.js"
+            )
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for relative, admitted in REGEXP_UNICODE_SETS_FEATURES.items():
+                        path = root / "test" / relative
+                        self.assertEqual(
+                            tool.regexp_unicode_sets_features(path),
+                            admitted,
+                            relative,
+                        )
+                        self.assertFalse(
+                            tool.should_skip({"features": list(admitted)}, path),
+                            relative,
+                        )
+                    for path in (future, string_operand):
+                        self.assertEqual(
+                            tool.regexp_unicode_sets_features(path), frozenset()
+                        )
+                        self.assertTrue(
+                            tool.should_skip(
+                                {"features": ["regexp-v-flag"]},
                                 path,
                             )
                         )

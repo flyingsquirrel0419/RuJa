@@ -1112,7 +1112,7 @@ fn normalize_regex_for_backend(
                     } else {
                         out.push_str(&digits);
                     }
-                } else if flags.contains('u') {
+                } else if unicode_mode {
                     out.push_str(&digits);
                 } else {
                     out.pop();
@@ -1282,7 +1282,7 @@ fn normalize_regex_for_backend(
                     out.push(ch);
                     out.push_str(&hex);
                 }
-            } else if !flags.contains('u') && !regex_backend_escape_passthrough(ch, chars.peek()) {
+            } else if !unicode_mode && !regex_backend_escape_passthrough(ch, chars.peek()) {
                 out.pop();
                 if !in_class
                     && !unicode_mode
@@ -1368,8 +1368,14 @@ fn normalize_regex_for_backend(
             continue;
         }
 
-        if !in_class && ch == '.' && !flags.contains('u') {
-            if modifier_stack.last().is_some_and(|state| state.dot_all) {
+        if !in_class && ch == '.' {
+            if unicode_mode {
+                if modifier_stack.last().is_some_and(|state| state.dot_all) {
+                    out.push_str("(?s:.)");
+                } else {
+                    out.push_str(r"[^\n\r\u{2028}\u{2029}]");
+                }
+            } else if modifier_stack.last().is_some_and(|state| state.dot_all) {
                 out.push_str(r"[\x00-\u{ffff}\u{f0000}-\u{f07ff}]");
             } else {
                 out.push_str(

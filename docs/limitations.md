@@ -156,14 +156,14 @@ guarantees are required.
 - RegExp construction, `IsRegExp`, Realm fallback, the String-symbol methods,
   character-class escapes, active-ignoreCase `\w`/`\W` lowering, and `d`-flag
   match indices are implemented and audited, but full RegExp conformance is
-  not complete. The current `built-ins/RegExp` diagnostic is **1043 pass / 0
-  fail / 836 skip / 0 timeout** over the admitted 1,043 executions.
+  not complete. The current `built-ins/RegExp` diagnostic is **1091 pass / 0
+  fail / 788 skip / 0 timeout** over the admitted 1,091 executions.
   Quantifier integers are represented independently of host width and compile
   to bounded non-expanding counters. The complete lookbehind subtree is
   **17/17**. Embedded empty classes now lower
-  through exact class boundaries in legacy, `u`, and `v` modes; broader valid
-  nested-`v` set syntax such as `[[]]` remains outside the admitted corpus and
-  can still be rejected by the backend.
+  through exact class boundaries in legacy, `u`, and `v` modes. Character-only
+  `v` unions, intersections, and subtractions are admitted across characters,
+  nested classes, class escapes, and character property escapes.
 
   Source validation now models one quantifier plus an optional lazy marker,
   legacy UTF-16 class ranges and Annex B escapes, Unicode scalar ranges,
@@ -189,8 +189,10 @@ guarantees are required.
   lookbehind. Unicode `iu`/`iv` `\b`/`\B` on linear-backend patterns still
   inherits Rust's broader Unicode word boundary instead of the ECMAScript
   WordCharacters set. Valid scalars in `U+F0000..U+F07FF` collide with the
-  internal UTF-16 sentinel representation, and nested `v` set
-  subtraction/intersection and string properties remain incomplete. The
+  internal UTF-16 sentinel representation, and string-valued `v` set elements
+  using string properties or `\q{...}` remain incomplete. Complex `iv` sets
+  containing `\w` or `\W` can still inherit the backend's broader Unicode
+  word class instead of ECMAScript WordCharacters. The
   backend also rejects some grammar-valid legacy forms, including empty
   classes, invalid-brace Annex B literals, and non-BMP code-unit ranges such as
   `[💩-\uFFFF]`; statement-list RegExp fallback still mishandles nearby lazy
