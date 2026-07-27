@@ -4,6 +4,23 @@
 
 ### Changed
 
+- RegExp quantifier bounds are now parsed independently of host pointer width.
+  Finite values through `u128` stay inline, larger values retain canonical
+  decimal text, and infinity remains a distinct bound. Analysis uses
+  saturating sizes, while compilation emits one counter instruction rather
+  than expanding the repeated expression.
+
+  Quantifiers above the Rust backend's `u32` range route directly to the
+  bounded ECMAScript counter VM. Validated braced repeats that hit
+  `CompiledTooBig` use the same fallback, including patterns already using
+  lookaround or backreferences; syntax errors do not. Forced routing
+  marks every repeat subtree without short-circuiting sibling traversal and
+  preserves legacy literal braces and quantified empty groups. Exact, open,
+  bounded, lazy, nullable, capture, Unicode, legacy, and arbitrary-precision
+  cases are covered. On pinned Test262 `020cb740`, complete
+  `built-ins/RegExp` improves from **1042 pass / 1 fail / 836 skip** to
+  **1043 / 0 / 836**; `quantifier-integer-limit.js` is the only changed file.
+
 - Repeated-capture RegExp matching now uses the linear backend only to reject
   no-match inputs and locate the leftmost candidate start. The bounded
   ECMAScript backend supplies the authoritative match end and capture state;
@@ -2696,7 +2713,7 @@
   ECMAScript mode.
 
   ECMAScript matcher work is explicitly bounded even on successful paths:
-  branch creation, repeat dispatch, and repeated-capture clearing share one
+  branch creation, attempted repeat iterations, and repeated-capture clearing share one
   finite work budget, and the branch stack is capped at **100,000** entries.
   Mode-off `fancy-regex` behavior retains upstream failed-backtrack accounting
   and its existing stack limit. Stress probes for a 100-million zero-width

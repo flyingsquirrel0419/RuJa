@@ -445,8 +445,9 @@ an ECMAScript empty-iteration failure mode, allowing child alternatives to
 backtrack while preserving the required capture from completed iterations.
 
 Resource accounting is also mode-specific. Every ECMAScript branch push,
-repeat dispatch, and repeated-capture clear consumes the same finite work
-budget, including paths that succeed without failed backtracking. The
+attempted repeat iteration, and repeated-capture clear consumes the same finite
+work budget, including paths that succeed without failed backtracking. A
+terminal bound or no-progress check does not charge another iteration. The
 ECMAScript branch stack is capped at 100,000 entries. Mode-off callers retain
 upstream's one-million-entry stack and failed-backtrack counter, so the fork
 does not silently tighten the public crate's ordinary semantics.
@@ -456,7 +457,7 @@ does not silently tighten the public crate's ordinary semantics.
 - 목적과 의도: Implement ECMAScript lookahead, lookbehind, backward captures and backreferences, and Annex B quantified-lookahead semantics without an unbounded backtracking path.
 - 기존 구현 및 제약 조건: Rust regex cannot express variable-length lookbehind or assertion capture semantics, upstream fancy-regex searched lookbehind prefixes forward, successful zero-width repetitions could bypass the failed-backtrack counter, and broad backend routing would weaken RuJa's resource boundary.
 - 검토한 주요 대안: Continue translating assertions to Rust regex, enumerate candidate lookbehind starts, post-process captures, replace the complete matcher, or add directional instructions and explicit ECMAScript accounting to the maintained backend.
-- 선택한 방식: Detect assertions at the RuJa boundary, normalize JavaScript case and UTF-16 semantics first, compile lookbehind backward with atomic cursor restoration, implement the legacy RepeatMatcher exception in the parser/VM, and charge every ECMAScript branch, repeat, and capture-clear operation to one bounded budget with a 100,000-entry stack cap.
+- 선택한 방식: Detect assertions at the RuJa boundary, normalize JavaScript case and UTF-16 semantics first, compile lookbehind backward with atomic cursor restoration, implement the legacy RepeatMatcher exception in the parser/VM, and charge every ECMAScript branch, attempted repeat iteration, and capture-clear operation to one bounded budget with a 100,000-entry stack cap.
 - 다른 대안 대신 이 방식을 선택한 이유: Translation cannot preserve assertion capture/backreference order, prefix enumeration changes greediness and scales with input length, post-processing cannot reconstruct transactional matcher state, and a new engine is too broad for this unit. Directional compilation follows the specification directly while reusing the audited VM state model.
 - 장점, 단점 및 영향: The complete Test262 lookbehind subtree passes, hard duplicate-name lookbehind works, positive assertions remain atomic, and hostile successful zero-width or branch-growth patterns terminate under explicit limits. The cost is a larger maintained backend fork. At this historical decision boundary, unrelated RegExp grammar, empty-class, sentinel, nested-v, and linear-boundary work remained separate; the following sections record the later grammar and empty-class closures.
 ```
@@ -499,6 +500,51 @@ RegExp source + flags
 - 선택한 방식: Use a small quantifier state machine, syntax-aware escape boundaries, a UTF-16 legacy class tokenizer, scalar Unicode endpoints with surrogate-pair composition, and explicit nested-v/subtraction checks before compilation.
 - 다른 대안 대신 이 방식을 선택한 이유: Backend acceptance is observably wrong even for unexecuted literals, path-specific patches hide equivalent constructors, and a replacement parser is too broad for this unit. Mode-specific validators map directly to the relevant grammar invariants and can be differential-tested against Node.
 - 장점, 단점 및 영향: Twelve failures become passes with no matrix movement outside built-ins; malformed quantifiers and ranges fail consistently for literals and constructors, and 1,219 class differentials show no regression. At this historical boundary, full v set algebra, Annex B backend lowering, empty-class execution, large-count policy, and hybrid nullable matching remained separate; the next section records the empty-class closure.
+```
+
+### RegExp host-independent quantifier bounds
+
+The RegExp grammar scanner records each syntactically valid braced
+quantifier's decimal spans while it performs the existing atom/prefix early
+error pass. It compares canonical decimal lengths and digits directly, so
+`min > max` is rejected without converting either side to a machine integer.
+Bounds above `u32::MAX`, the maximum accepted by the linear Rust parser, are
+routed directly to the ECMAScript counter backend. A linear-backend
+`CompiledTooBig` error retries that backend only when the scanner already
+proved the source contains a valid braced repeat; syntax errors never retry.
+The backend does not expose which subtree exceeded its limit, so this guard
+proves that counter compilation is applicable rather than attributing the
+error to one repeat. The retry remains bounded and may also rescue a valid
+pattern whose non-repeat subtree triggered the original limit.
+
+The vendored AST stores a finite count as `Small(u128)` or canonical decimal
+`Big(Arc<str>)`, and represents infinity as a separate enum variant. Analysis
+uses saturating size arithmetic. Compilation lowers each count to whether it
+is reachable by the host's `usize` execution counter; an unreachable finite
+minimum cannot be completed by any host-sized input and is stopped by the
+same VM work budget as other hostile repeats. The repeated body is emitted
+once, so compile time and program size remain O(AST), independent of the
+decimal value. Forced routing recursively marks every repeat subtree and all
+its ancestors hard, preventing an oversized sibling from being delegated
+back to the linear compiler.
+
+```text
+RegExp source + flags
+  -> class/escape-aware quantifier scan
+  -> exact decimal range comparison
+  -> ordinary linear backend when representable
+  -> direct or CompiledTooBig counter fallback when required
+  -> one bounded repeat instruction plus one body
+```
+
+```text
+[Decision Log]
+- 목적과 의도: Accept every ECMAScript DecimalDigits quantifier value without host-width truncation, source-size expansion, or an unbounded execution path.
+- 기존 구현 및 제약 조건: The vendored parser stored bounds in usize, the linear backend rejects values above u32 and can reject large representable repeats as CompiledTooBig, and broad fallback could accidentally reinterpret backend syntax errors.
+- 검토한 주요 대안: Clamp at u32 or Number.MAX_SAFE_INTEGER, expand the repeated body, parse into f64, route every RegExp through the counter VM, or preserve exact bounds and select the counter path only when required.
+- 선택한 방식: Store exact finite decimal values separately from infinity, compare ranges as canonical digits, saturate static size analysis, emit one counter loop, route above-u32 values directly, and retry only validated braced CompiledTooBig patterns.
+- 다른 대안 대신 이 방식을 선택한 이유: Clamping and f64 lose specified integer identity, expansion makes compile cost proportional to the numeric value, and broad VM routing weakens the established linear fast path. Exact AST bounds plus selective routing preserve semantics and resource limits.
+- 장점, 단점 및 영향: The final RegExp diagnostic failure becomes a pass with O(AST) compilation and bounded runtime work. The vendored backend gains a maintained exact-count type and routing option; finite values beyond host reach intentionally terminate by resource limit when their nullable body cannot fail earlier.
 ```
 
 ### RegExp empty-class lowering

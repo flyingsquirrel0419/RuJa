@@ -156,11 +156,11 @@ guarantees are required.
 - RegExp construction, `IsRegExp`, Realm fallback, the String-symbol methods,
   character-class escapes, active-ignoreCase `\w`/`\W` lowering, and `d`-flag
   match indices are implemented and audited, but full RegExp conformance is
-  not complete. The current `built-ins/RegExp` diagnostic is **1042 pass / 1
-  fail / 836 skip / 0 timeout**. The sole remaining failure is
-  `quantifier-integer-limit.js`; its host-independent bound representation and
-  non-expanding counter compilation remain a separate wider unit. The
-  complete lookbehind subtree is **17/17**. Embedded empty classes now lower
+  not complete. The current `built-ins/RegExp` diagnostic is **1043 pass / 0
+  fail / 836 skip / 0 timeout** over the admitted 1,043 executions.
+  Quantifier integers are represented independently of host width and compile
+  to bounded non-expanding counters. The complete lookbehind subtree is
+  **17/17**. Embedded empty classes now lower
   through exact class boundaries in legacy, `u`, and `v` modes; broader valid
   nested-`v` set syntax such as `[[]]` remains outside the admitted corpus and
   can still be rejected by the backend.
@@ -178,9 +178,10 @@ guarantees are required.
   greediness. Positive assertions are atomic and preserve their captures while
   restoring the outer cursor; negative assertions restore transactional state.
   Legacy quantified lookahead is enabled only outside `u`/`v`. ECMAScript mode
-  charges branch creation, repeat dispatch, and capture clearing to one finite
-  work budget and caps the branch stack at **100,000** entries. Ordinary
-  mode-off `fancy-regex` callers retain upstream failed-backtrack accounting.
+  charges branch creation, attempted repeat iterations, and capture clearing
+  to one finite work budget and caps the branch stack at **100,000** entries.
+  Ordinary mode-off `fancy-regex` callers retain upstream failed-backtrack
+  accounting.
 
   Named groups support Unicode identifiers, escaped names, structurally
   disjoint duplicate names, participating-capture selection, and

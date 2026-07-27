@@ -3,7 +3,7 @@
 This directory vendors `fancy-regex` 0.18.0 (upstream revision
 `895301dadc30cbf466ba845c063a4158619a09b5`) under its MIT license.
 
-RuJa carries six backend changes behind `RegexBuilder::ecmascript_mode(true)`:
+RuJa carries seven backend changes behind `RegexBuilder::ecmascript_mode(true)`:
 
 1. A repeated expression clears all descendant capture start/end slots before
    each iteration. The VM writes `usize::MAX` through its copy-on-write
@@ -34,18 +34,30 @@ RuJa carries six backend changes behind `RegexBuilder::ecmascript_mode(true)`:
    required by Annex B `RepeatMatcher`. ECMAScript mode also retains trailing
    positive lookahead instead of applying an optimizer that can discard local
    flag normalization.
-6. ECMAScript execution charges every branch push, repeat dispatch, and capture
-   clear to one work budget, including successful zero-width paths. Its branch
-   stack is capped at 100,000 entries. Mode-off execution retains upstream's
+6. ECMAScript execution charges every branch push, attempted repeat iteration,
+   and capture clear to one work budget, including successful zero-width paths.
+   A terminal bound or no-progress check does not consume another iteration.
+   Its branch stack is capped at 100,000 entries. Mode-off execution retains upstream's
    failed-backtrack accounting and one-million-entry stack limit.
+7. Braced repeat bounds use an exact host-independent finite representation,
+   with infinity kept separate. Static size arithmetic saturates, and the
+   hidden `ecmascript_non_delegated_repeats` option marks every repeat subtree
+   for one-body counter compilation. Values unreachable by the host counter
+   remain finite in the AST and consume the existing bounded work budget at
+   runtime. ECMAScript mode also accepts quantified empty groups, rejects
+   recognized `min > max` ranges, and keeps lower-bound-less legacy braces as
+   literals; mode-off parser behavior remains unchanged.
 
 The mode is disabled by default. This preserves upstream Oniguruma behavior,
-lookaround optimization, unmatched-backreference behavior, repeat parsing,
-work accounting, and stack limits, and keeps the internal atom unavailable to
-ordinary `fancy-regex` callers. RuJa additionally rejects the atom's spelling
-during ECMAScript source validation; only named-backreference lowering can
-produce it. A separate internal parser flag records whether ECMAScript Unicode
-mode is active so the Annex B quantifier exception cannot leak into `u`/`v`.
+lookaround optimization, unmatched-backreference behavior, work accounting,
+and stack limits, and keeps the internal atom unavailable to ordinary
+`fancy-regex` callers. Mode-off repeat parsing retains its existing `usize`
+acceptance boundary; exact arbitrary-width parsing, range checks, empty-group
+handling, and legacy-brace rules are ECMAScript-gated. RuJa additionally
+rejects the internal atom's spelling during ECMAScript source validation;
+only named-backreference lowering can produce it. A separate internal parser
+flag records whether ECMAScript Unicode mode is active so the Annex B
+quantifier exception cannot leak into `u`/`v`.
 
 Three upstream trailing/terminal whitespace instances are removed so the
 vendored tree satisfies RuJa's repository-wide `git diff --check` gate; these
@@ -65,8 +77,9 @@ When updating the vendored crate:
 
 1. Copy the new upstream release and retain its license and provenance files.
 2. Reapply the mode, ID-based `BackrefSet`, case mode, directional assertions,
-   legacy quantified-lookahead parsing, work accounting, stack cap, and
-   backtracking-aware repeat clearing.
+   legacy quantified-lookahead parsing, exact repeat bounds, non-delegated
+   counter routing, work accounting, stack cap, and backtracking-aware repeat
+   clearing.
 3. Run `cargo test --manifest-path vendor/fancy-regex/Cargo.toml --all-features`.
 4. Run RuJa's complete Rust, Test262, formatting, Clippy, release, and wasm32
    gates before changing the path dependency version.

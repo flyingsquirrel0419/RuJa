@@ -8037,8 +8037,9 @@ trailing positive-lookahead optimizer because removing the assertion can lose
 locally normalized case flags.
 
 The backend limit is a work limit rather than only a failed-backtrack count.
-Every ECMAScript branch push, repeat dispatch, and capture clear shares that
-budget, and the branch stack has a 100,000-entry hard cap. A 100-million
+Every ECMAScript branch push, attempted repeat iteration, and capture clear
+shares that budget. Terminal bound and no-progress checks are free, and the
+branch stack has a 100,000-entry hard cap. A 100-million
 successful zero-width-repeat probe terminates at the work limit in about
 **0.26 s / 14 MB** in reviewer verification. A path that formerly grew toward
 one million branch entries terminates at the stack limit in about **0.18 s /
@@ -11611,6 +11612,34 @@ python3 tools/test262_runner.py language/statements language/expressions
 - 선택한 방식: Keep admission fixed; require direct opcode, GC, Proxy, Symbol, super, and reservation tests; compare complete six-directory logs byte-for-byte; and repeat the complete supported statements/expressions subset with both release binaries.
 - 다른 대안 대신 이 방식을 선택한 이유: Direct tests prove storage but not broad semantics; totals can hide regressions; one family misses delete, super, optional, and loop consumers; and two independently built binaries isolate the representation patch.
 - 장점, 단점 및 영향: Exact 1,552-file and 20,439-file A/B identity proves no conformance movement while deterministic Rust tests cover the internal allocation boundary. The unit adds no Test262 support and makes no pass-rate improvement claim.
+```
+
+## Host-independent RegExp quantifier integers
+
+Pinned Test262 `020cb74075849d1e404bbcdb62feb7a02e6966db` now passes the
+exact `built-ins/RegExp/quantifier-integer-limit.js` test. The complete
+1,879-file `built-ins/RegExp` directory moves from **1042 pass / 1 fail / 836
+skip / 0 timeout / 0 error** to **1043 / 0 / 836 / 0 / 0**, exactly **+1 pass
+/ -1 fail** over the unchanged 1,043 executions. Admission policy is
+unchanged and the admitted RegExp diagnostic is now 100%.
+
+Direct tests cover `2^32 - 1`, `2^32`, `2^53 - 1`, `u128::MAX + 1`, a
+1,000-digit count, leading zeros, exact/open/bounded/lazy forms, ordered range
+errors, multiple sibling repeats, successful captures/backreferences/
+lookaround, empty groups, nullable work limits, legacy/`u`/`v` supplementary
+and lone-surrogate input, escaped/class braces, and both linear and fancy
+delegate `CompiledTooBig` fallback. The vendored full suite and
+doctests remain green, and wasm32 compilation verifies that parsing is not
+tied to the native pointer width.
+
+```text
+[Decision Log]
+- 목적과 의도: Close the final admitted RegExp failure while preserving exact DecimalDigits semantics and sandbox resource bounds.
+- 기존 구현 및 제약 조건: usize parsing made acceptance target-dependent, regex-automata rejects above-u32 counts and may reject million-sized compilation, and expanding a repeat would exhaust memory before execution limits could apply.
+- 검토한 주요 대안: Raise one integer limit, special-case Number.MAX_SAFE_INTEGER, clamp huge counts, expand finite repeats, or add an exact AST bound and bounded counter route.
+- 선택한 방식: Parse exact finite counts, preserve infinity separately, compare ranges as decimal digits, keep analysis saturating, emit a single counter loop, and use direct/CompiledTooBig routing guarded by validated quantifier metadata.
+- 다른 대안 대신 이 방식을 선택한 이유: Numeric caps are not part of the ECMAScript grammar, expansion violates O(AST) compilation, and unguarded fallback can change invalid-source behavior. The selected path retains exact syntax and existing work limits.
+- 장점, 단점 및 영향: RegExp reaches 1043/0 on the pinned admitted corpus with one-file movement. Additional maintained backend code and exact-count tests are required, while broader unadmitted nested-v and other RegExp syntax remain tracked separately.
 ```
 
 ## Why the full-suite rate is not higher

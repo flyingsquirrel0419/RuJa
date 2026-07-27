@@ -100,7 +100,7 @@ use crate::Assertion;
 use crate::Error;
 use crate::Formatter;
 use crate::Result;
-use crate::{codepoint_len, HardRegexRuntimeOptions};
+use crate::{codepoint_len, HardRegexRuntimeOptions, RepeatBound, RepeatCount};
 
 /// Enable tracing of VM execution. Only for debugging/investigating.
 const OPTION_TRACE: u32 = 1 << 0;
@@ -220,6 +220,42 @@ impl core::fmt::Debug for ReverseBackwardsDelegate {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct VmRepeatCount(pub(crate) Option<usize>);
+
+impl VmRepeatCount {
+    pub(crate) fn from_repeat_count(value: &RepeatCount) -> Self {
+        Self(value.to_usize())
+    }
+
+    fn reached(self, repetitions: usize) -> bool {
+        self.0 == Some(repetitions)
+    }
+
+    fn minimum_satisfied(self, repetitions: usize) -> bool {
+        self.0.map_or(false, |minimum| repetitions >= minimum)
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum VmRepeatBound {
+    Finite(VmRepeatCount),
+    Infinity,
+}
+
+impl VmRepeatBound {
+    pub(crate) fn from_repeat_bound(value: &RepeatBound) -> Self {
+        match value {
+            RepeatBound::Finite(value) => Self::Finite(VmRepeatCount::from_repeat_count(value)),
+            RepeatBound::Infinity => Self::Infinity,
+        }
+    }
+
+    fn reached(self, repetitions: usize) -> bool {
+        matches!(self, Self::Finite(value) if value.reached(repetitions))
+    }
+}
+
 /// Instruction of the VM.
 #[derive(Debug)]
 pub enum Insn {
@@ -279,9 +315,9 @@ pub enum Insn {
     /// Repeat greedily (match as much as possible)
     RepeatGr {
         /// Minimum number of matches
-        lo: usize,
+        lo: VmRepeatCount,
         /// Maximum number of matches
-        hi: usize,
+        hi: VmRepeatBound,
         /// The instruction after the repeat
         next: usize,
         /// The slot for keeping track of the number of repetitions
@@ -290,9 +326,9 @@ pub enum Insn {
     /// Repeat non-greedily (prefer matching as little as possible)
     RepeatNg {
         /// Minimum number of matches
-        lo: usize,
+        lo: VmRepeatCount,
         /// Maximum number of matches
-        hi: usize,
+        hi: VmRepeatBound,
         /// The instruction after the repeat
         next: usize,
         /// The slot for keeping track of the number of repetitions
@@ -301,9 +337,9 @@ pub enum Insn {
     /// Repeat greedily and prevent infinite loops from empty matches
     RepeatEpsilonGr {
         /// Minimum number of matches
-        lo: usize,
+        lo: VmRepeatCount,
         /// Maximum number of matches
-        hi: usize,
+        hi: VmRepeatBound,
         /// The instruction after the repeat
         next: usize,
         /// The slot for keeping track of the number of repetitions
@@ -316,9 +352,9 @@ pub enum Insn {
     /// Repeat non-greedily and prevent infinite loops from empty matches
     RepeatEpsilonNg {
         /// Minimum number of matches
-        lo: usize,
+        lo: VmRepeatCount,
         /// Maximum number of matches
-        hi: usize,
+        hi: VmRepeatBound,
         /// The instruction after the repeat
         next: usize,
         /// The slot for keeping track of the number of repetitions
@@ -1031,16 +1067,19 @@ pub(crate) fn run(
                     next,
                     repeat,
                 } => {
-                    if prog.ecmascript_mode {
-                        charge_work(&mut work_count, 1, options.backtrack_limit)?;
-                    }
                     let repcount = state.get(repeat);
-                    if repcount == hi {
+                    if hi.reached(repcount) {
                         pc = next;
                         continue;
                     }
-                    state.save(repeat, repcount + 1);
-                    if repcount >= lo {
+                    if prog.ecmascript_mode {
+                        charge_work(&mut work_count, 1, options.backtrack_limit)?;
+                    }
+                    let next_count = repcount
+                        .checked_add(1)
+                        .ok_or(Error::RuntimeError(RuntimeError::BacktrackLimitExceeded))?;
+                    state.save(repeat, next_count);
+                    if lo.minimum_satisfied(repcount) {
                         push_branch(
                             &mut state,
                             next,
@@ -1057,16 +1096,19 @@ pub(crate) fn run(
                     next,
                     repeat,
                 } => {
-                    if prog.ecmascript_mode {
-                        charge_work(&mut work_count, 1, options.backtrack_limit)?;
-                    }
                     let repcount = state.get(repeat);
-                    if repcount == hi {
+                    if hi.reached(repcount) {
                         pc = next;
                         continue;
                     }
-                    state.save(repeat, repcount + 1);
-                    if repcount >= lo {
+                    if prog.ecmascript_mode {
+                        charge_work(&mut work_count, 1, options.backtrack_limit)?;
+                    }
+                    let next_count = repcount
+                        .checked_add(1)
+                        .ok_or(Error::RuntimeError(RuntimeError::BacktrackLimitExceeded))?;
+                    state.save(repeat, next_count);
+                    if lo.minimum_satisfied(repcount) {
                         push_branch(
                             &mut state,
                             pc + 1,
@@ -1087,9 +1129,6 @@ pub(crate) fn run(
                     check,
                     fail_on_empty,
                 } => {
-                    if prog.ecmascript_mode {
-                        charge_work(&mut work_count, 1, options.backtrack_limit)?;
-                    }
                     let repcount = state.get(repeat);
                     if repcount > 0 && state.get(check) == ix {
                         if fail_on_empty {
@@ -1098,12 +1137,18 @@ pub(crate) fn run(
                         pc = next;
                         continue;
                     }
-                    if repcount == hi {
+                    if hi.reached(repcount) {
                         pc = next;
                         continue;
                     }
-                    state.save(repeat, repcount + 1);
-                    if repcount >= lo {
+                    if prog.ecmascript_mode {
+                        charge_work(&mut work_count, 1, options.backtrack_limit)?;
+                    }
+                    let next_count = repcount
+                        .checked_add(1)
+                        .ok_or(Error::RuntimeError(RuntimeError::BacktrackLimitExceeded))?;
+                    state.save(repeat, next_count);
+                    if lo.minimum_satisfied(repcount) {
                         state.save(check, ix);
                         push_branch(
                             &mut state,
@@ -1123,9 +1168,6 @@ pub(crate) fn run(
                     check,
                     fail_on_empty,
                 } => {
-                    if prog.ecmascript_mode {
-                        charge_work(&mut work_count, 1, options.backtrack_limit)?;
-                    }
                     let repcount = state.get(repeat);
                     if repcount > 0 && state.get(check) == ix {
                         if fail_on_empty {
@@ -1134,12 +1176,18 @@ pub(crate) fn run(
                         pc = next;
                         continue;
                     }
-                    if repcount == hi {
+                    if hi.reached(repcount) {
                         pc = next;
                         continue;
                     }
-                    state.save(repeat, repcount + 1);
-                    if repcount >= lo {
+                    if prog.ecmascript_mode {
+                        charge_work(&mut work_count, 1, options.backtrack_limit)?;
+                    }
+                    let next_count = repcount
+                        .checked_add(1)
+                        .ok_or(Error::RuntimeError(RuntimeError::BacktrackLimitExceeded))?;
+                    state.save(repeat, next_count);
+                    if lo.minimum_satisfied(repcount) {
                         state.save(check, ix);
                         push_branch(
                             &mut state,

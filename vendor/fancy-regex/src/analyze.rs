@@ -147,7 +147,7 @@ impl<'a> Analyzer<'a> {
     ) -> Result<Info<'a>> {
         let start_group = self.next_group_number;
         let mut children = Vec::new();
-        let mut min_size = 0;
+        let mut min_size = 0usize;
         let mut const_size = false;
         let mut hard = false;
         match *expr {
@@ -180,10 +180,10 @@ impl<'a> Analyzer<'a> {
                 for child in v {
                     let child_info =
                         self.visit(child, pos_in_group, inside_zero_rep, enclosing_group)?;
-                    min_size += child_info.min_size;
+                    min_size = min_size.saturating_add(child_info.min_size);
                     const_size &= child_info.const_size;
                     hard |= child_info.hard;
-                    pos_in_group += child_info.min_size;
+                    pos_in_group = pos_in_group.saturating_add(child_info.min_size);
                     children.push(child_info);
                 }
             }
@@ -241,24 +241,29 @@ impl<'a> Analyzer<'a> {
                 children.push(child_info);
             }
             Expr::Repeat {
-                ref child, lo, hi, ..
+                ref child,
+                ref lo,
+                ref hi,
+                ..
             } => {
                 // If lo and hi are both 0, we're in a zero-repetition (unreachable)
-                let child_inside_zero_rep = if lo == 0 && hi == 0 {
-                    true
-                } else {
-                    inside_zero_rep
-                };
+                let child_inside_zero_rep =
+                    if lo.is_zero() && hi.as_finite().map_or(false, |hi| hi.is_zero()) {
+                        true
+                    } else {
+                        inside_zero_rep
+                    };
                 let child_info = self.visit(
                     child,
                     min_pos_in_group,
                     child_inside_zero_rep,
                     enclosing_group,
                 )?;
-                min_size = child_info.min_size * lo;
-                const_size = child_info.const_size && lo == hi;
+                min_size = lo.saturating_mul_usize(child_info.min_size);
+                const_size = child_info.const_size && hi.as_finite() == Some(lo);
                 let repeats_captures = self.ecmascript_mode
-                    && hi > 1
+                    && (hi.is_infinite()
+                        || hi.as_finite().map_or(false, |hi| hi.greater_than_one()))
                     && child_info.start_group() < child_info.end_group();
                 hard = child_info.hard || repeats_captures;
                 children.push(child_info);
@@ -350,7 +355,7 @@ impl<'a> Analyzer<'a> {
                 )?;
                 let child_info_truth = self.visit(
                     true_branch,
-                    min_pos_in_group + child_info_condition.min_size,
+                    min_pos_in_group.saturating_add(child_info_condition.min_size),
                     inside_zero_rep,
                     enclosing_group,
                 )?;
@@ -361,13 +366,17 @@ impl<'a> Analyzer<'a> {
                     enclosing_group,
                 )?;
 
-                min_size = child_info_condition.min_size
-                    + min(child_info_truth.min_size, child_info_false.min_size);
+                min_size = child_info_condition
+                    .min_size
+                    .saturating_add(min(child_info_truth.min_size, child_info_false.min_size));
                 const_size = child_info_condition.const_size
                     && child_info_truth.const_size
                     && child_info_false.const_size
                     // if the condition's size plus the truth branch's size is equal to the false branch's size then it's const size
-                    && child_info_condition.min_size + child_info_truth.min_size == child_info_false.min_size;
+                    && child_info_condition
+                        .min_size
+                        .saturating_add(child_info_truth.min_size)
+                        == child_info_false.min_size;
 
                 children.push(child_info_condition);
                 children.push(child_info_truth);
@@ -647,7 +656,7 @@ impl<'a> Analyzer<'a> {
                 self.expr_can_terminate(child, root_expr, recursion_stack, memo)
             }
             Expr::Repeat { child, lo, .. } => {
-                *lo == 0 || self.expr_can_terminate(child, root_expr, recursion_stack, memo)
+                lo.is_zero() || self.expr_can_terminate(child, root_expr, recursion_stack, memo)
             }
             Expr::Conditional {
                 condition,

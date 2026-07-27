@@ -56,6 +56,7 @@ mod expand;
 mod optimize;
 mod parse;
 mod parse_flags;
+mod repeat;
 mod replacer;
 mod vm;
 
@@ -69,6 +70,7 @@ use crate::vm::{Prog, OPTION_FIND_NOT_EMPTY, OPTION_SKIPPED_EMPTY_MATCH};
 
 pub use crate::error::{CompileError, Error, ParseError, Result, RuntimeError};
 pub use crate::expand::Expander;
+pub use crate::repeat::{RepeatBound, RepeatCount};
 pub use crate::replacer::{NoExpand, Replacer, ReplacerRef};
 
 const MAX_RECURSION: usize = 64;
@@ -397,6 +399,18 @@ impl<'r, 'h> Iterator for SplitN<'r, 'h> {
 
 impl<'r, 'h> core::iter::FusedIterator for SplitN<'r, 'h> {}
 
+fn mark_repeat_subtrees_hard(info: &mut analyze::Info<'_>) -> bool {
+    let mut child_contains_repeat = false;
+    for child in &mut info.children {
+        child_contains_repeat |= mark_repeat_subtrees_hard(child);
+    }
+    let contains_repeat = matches!(info.expr, Expr::Repeat { .. }) || child_contains_repeat;
+    if contains_repeat {
+        info.hard = true;
+    }
+    contains_repeat
+}
+
 #[derive(Clone, Debug, Default)]
 struct RegexOptions {
     syntaxc: SyntaxConfig,
@@ -406,6 +420,7 @@ struct RegexOptions {
     ecmascript_mode: bool,
     ecmascript_unicode_mode: bool,
     ecmascript_backref_sets: Vec<Vec<usize>>,
+    ecmascript_non_delegated_repeats: bool,
     ignore_numbered_groups_when_named_groups_exist: bool,
     hard_regex_runtime_options: HardRegexRuntimeOptions,
 }
@@ -568,6 +583,13 @@ impl RegexOptionsBuilder {
     /// Default is `1_000_000` (1 million).
     pub fn backtrack_limit(&mut self, limit: usize) -> &mut Self {
         self.options.hard_regex_runtime_options.backtrack_limit = limit;
+        self
+    }
+
+    /// Force repeat nodes through the counter VM in ECMAScript mode.
+    #[doc(hidden)]
+    pub fn ecmascript_non_delegated_repeats(&mut self, yes: bool) -> &mut Self {
+        self.options.ecmascript_non_delegated_repeats = yes;
         self
     }
 
@@ -786,6 +808,13 @@ impl RegexBuilder {
         self
     }
 
+    /// See [`RegexOptionsBuilder::ecmascript_non_delegated_repeats`].
+    #[doc(hidden)]
+    pub fn ecmascript_non_delegated_repeats(&mut self, yes: bool) -> &mut Self {
+        self.options.ecmascript_non_delegated_repeats(yes);
+        self
+    }
+
     /// See [`RegexOptionsBuilder::crlf`]
     pub fn crlf(&mut self, yes: bool) -> &mut Self {
         self.options.crlf(yes);
@@ -856,7 +885,7 @@ impl Regex {
             // with a fixup of the capture groups
             optimize(&mut tree)
         };
-        let info = analyze(
+        let mut info = analyze(
             &tree,
             AnalyzeContext {
                 explicit_capture_group_0: requires_capture_group_fixup,
@@ -864,6 +893,10 @@ impl Regex {
                 ecmascript_mode: options.ecmascript_mode,
             },
         )?;
+
+        if options.ecmascript_mode && options.ecmascript_non_delegated_repeats {
+            mark_repeat_subtrees_hard(&mut info);
+        }
 
         if find_not_empty && info.const_size && info.min_size == 0 {
             return Err(CompileError::PatternCanNeverMatch.into());
@@ -1728,9 +1761,9 @@ pub enum Expr {
         /// The expression that is being repeated
         child: Box<Expr>,
         /// The minimum number of repetitions
-        lo: usize,
-        /// The maximum number of repetitions (or `usize::MAX`)
-        hi: usize,
+        lo: RepeatCount,
+        /// The maximum number of repetitions, or infinity.
+        hi: RepeatBound,
         /// Greedy means as much as possible is matched, e.g. `.*b` would match all of `abab`.
         /// Non-greedy means as little as possible, e.g. `.*?b` would match only `ab` in `abab`.
         greedy: bool,
@@ -1930,17 +1963,6 @@ impl<'r> Iterator for CaptureNames<'r> {
 
     fn next(&mut self) -> Option<Self::Item> {
         self.0.next()
-    }
-}
-
-// silly to write my own, but this is super-fast for the common 1-digit
-// case.
-fn push_usize(s: &mut String, x: usize) {
-    if x >= 10 {
-        push_usize(s, x / 10);
-        s.push((b'0' + (x % 10) as u8) as char);
-    } else {
-        s.push((b'0' + (x as u8)) as char);
     }
 }
 
@@ -2282,29 +2304,30 @@ impl Expr {
             }
             Expr::Repeat {
                 ref child,
-                lo,
-                hi,
+                ref lo,
+                ref hi,
                 greedy,
             } => {
                 if precedence > 2 {
                     buf.push_str("(?:");
                 }
                 child.to_str(buf, 3);
-                match (lo, hi) {
-                    (0, 1) => buf.push('?'),
-                    (0, usize::MAX) => buf.push('*'),
-                    (1, usize::MAX) => buf.push('+'),
-                    (lo, hi) => {
-                        buf.push('{');
-                        push_usize(buf, lo);
-                        if lo != hi {
-                            buf.push(',');
-                            if hi != usize::MAX {
-                                push_usize(buf, hi);
-                            }
+                if lo.is_zero() && hi.as_finite().map_or(false, |hi| hi.is_one()) {
+                    buf.push('?');
+                } else if lo.is_zero() && hi.is_infinite() {
+                    buf.push('*');
+                } else if lo.is_one() && hi.is_infinite() {
+                    buf.push('+');
+                } else {
+                    buf.push('{');
+                    lo.write_decimal(buf);
+                    if hi.as_finite() != Some(lo) {
+                        buf.push(',');
+                        if let Some(hi) = hi.as_finite() {
+                            hi.write_decimal(buf);
                         }
-                        buf.push('}');
                     }
+                    buf.push('}');
                 }
                 if !greedy {
                     buf.push('?');
@@ -2421,7 +2444,7 @@ mod tests {
     use alloc::{format, vec};
 
     use crate::parse::{make_group, make_literal};
-    use crate::{Absent, Expr, Regex, RegexImpl};
+    use crate::{Absent, Expr, Regex, RegexBuilder, RegexImpl, RepeatBound, RuntimeError};
 
     //use detect_possible_backref;
 
@@ -2431,6 +2454,91 @@ mod tests {
         let mut s = String::new();
         e.to_str(&mut s, 0);
         s
+    }
+
+    fn ecmascript_counter_regex(pattern: &str) -> Regex {
+        let mut builder = RegexBuilder::new(pattern);
+        builder
+            .ecmascript_mode(true)
+            .ecmascript_non_delegated_repeats(true);
+        builder.build().unwrap()
+    }
+
+    #[test]
+    fn ecmascript_counter_repeats_keep_arbitrary_bounds_compact() {
+        let ordinary = ecmascript_counter_regex("a{4294967296}");
+        let arbitrary = ecmascript_counter_regex(
+            "a{9999999999999999999999999999999999999999999999999999999999999999}",
+        );
+        let body_len = |regex: &Regex| match &regex.inner {
+            RegexImpl::Fancy { prog, .. } => prog.body.len(),
+            RegexImpl::Wrap { .. } => panic!("counter repeat was delegated"),
+        };
+
+        assert_eq!(body_len(&ordinary), body_len(&arbitrary));
+        assert!(!ordinary.is_match("").unwrap());
+        assert!(!arbitrary.is_match("a").unwrap());
+        assert!(ecmascript_counter_regex("a{0,9007199254740991}")
+            .is_match("")
+            .unwrap());
+        assert!(ecmascript_counter_regex("a{0,9007199254740991}?")
+            .is_match("")
+            .unwrap());
+        assert!(ecmascript_counter_regex("a{9007199254740991}|b")
+            .is_match("b")
+            .unwrap());
+
+        let siblings = ecmascript_counter_regex("a{4294967296}b{9007199254740991}");
+        match &siblings.inner {
+            RegexImpl::Fancy { prog, .. } => assert_eq!(
+                prog.body
+                    .iter()
+                    .filter(|instruction| matches!(
+                        instruction,
+                        crate::vm::Insn::RepeatGr { .. } | crate::vm::Insn::RepeatNg { .. }
+                    ))
+                    .count(),
+                2
+            ),
+            RegexImpl::Wrap { .. } => panic!("counter repeats were delegated"),
+        }
+    }
+
+    #[test]
+    fn ecmascript_counter_repeats_reject_ranges_and_bound_nullable_work() {
+        let mut invalid = RegexBuilder::new("a{9007199254740992,9007199254740991}");
+        invalid
+            .ecmascript_mode(true)
+            .ecmascript_non_delegated_repeats(true);
+        assert!(invalid.build().is_err());
+
+        let mut nullable = RegexBuilder::new("(a?){4294967296}");
+        nullable
+            .ecmascript_mode(true)
+            .ecmascript_non_delegated_repeats(true)
+            .backtrack_limit(32);
+        assert!(matches!(
+            nullable.build().unwrap().is_match(""),
+            Err(crate::Error::RuntimeError(
+                RuntimeError::BacktrackLimitExceeded
+            ))
+        ));
+
+        assert!(ecmascript_counter_regex("(?:){0,4294967296}")
+            .is_match("")
+            .unwrap());
+        assert!(!ecmascript_counter_regex("a{,2}|b{1000000}")
+            .is_match("aa")
+            .unwrap());
+
+        let mut exact_budget = RegexBuilder::new("^a{3}$");
+        exact_budget
+            .ecmascript_mode(true)
+            .ecmascript_non_delegated_repeats(true)
+            .backtrack_limit(3);
+        assert!(exact_budget.build().unwrap().is_match("aaa").unwrap());
+
+        assert!(Regex::new("()\\1{999999999999999999999999999999999999999}").is_ok());
     }
 
     #[test]
@@ -2446,8 +2554,8 @@ mod tests {
     fn to_str_rep_concat() {
         let e = Expr::Repeat {
             child: Box::new(Expr::Concat(vec![make_literal("a"), make_literal("b")])),
-            lo: 2,
-            hi: 3,
+            lo: 2.into(),
+            hi: RepeatBound::finite(3),
             greedy: true,
         };
         assert_eq!(to_str(e), "(?:ab){2,3}");
@@ -2489,8 +2597,12 @@ mod tests {
         fn repeat(lo: usize, hi: usize, greedy: bool) -> Expr {
             Expr::Repeat {
                 child: Box::new(make_literal("a")),
-                lo,
-                hi,
+                lo: lo.into(),
+                hi: if hi == usize::MAX {
+                    RepeatBound::Infinity
+                } else {
+                    RepeatBound::finite(hi)
+                },
                 greedy,
             }
         }
@@ -2632,8 +2744,8 @@ mod tests {
         );
         assert!(!Expr::Repeat {
             child: Box::new(make_literal("a")),
-            lo: 0,
-            hi: 1,
+            lo: 0.into(),
+            hi: RepeatBound::finite(1),
             greedy: true
         }
         .is_leaf_node());
@@ -2656,8 +2768,8 @@ mod tests {
                     newline: true,
                     crlf: false
                 }),
-                lo: 0,
-                hi: usize::MAX,
+                lo: 0.into(),
+                hi: RepeatBound::Infinity,
                 greedy: true
             })
         })
@@ -2687,8 +2799,8 @@ mod tests {
 
         let expr = Expr::Repeat {
             child: Box::new(child.clone()),
-            lo: 0,
-            hi: 1,
+            lo: 0.into(),
+            hi: RepeatBound::finite(1),
             greedy: true,
         };
         let children: Vec<_> = expr.children_iter().collect();
@@ -2730,8 +2842,8 @@ mod tests {
                     newline: true,
                     crlf: false,
                 }),
-                lo: 0,
-                hi: usize::MAX,
+                lo: 0.into(),
+                hi: RepeatBound::Infinity,
                 greedy: true,
             }),
         });

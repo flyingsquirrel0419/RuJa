@@ -43,7 +43,7 @@ use std::collections::HashMap as Map;
 use crate::analyze::Info;
 #[cfg(feature = "variable-lookbehinds")]
 use crate::vm::{CachePoolFn, ReverseBackwardsDelegate};
-use crate::vm::{CaptureGroupRange, Delegate, Insn, Prog};
+use crate::vm::{CaptureGroupRange, Delegate, Insn, Prog, VmRepeatBound, VmRepeatCount};
 use crate::LookAround::*;
 use crate::{
     Absent, BacktrackingControlVerb, CompileError, Error, Expr, LookAround, RegexOptions, Result,
@@ -247,7 +247,12 @@ impl<'a> Compiler<'a> {
                     self.b.add(Insn::Save(group * 2));
                 }
             }
-            Expr::Repeat { lo, hi, greedy, .. } => {
+            Expr::Repeat {
+                ref lo,
+                ref hi,
+                greedy,
+                ..
+            } => {
                 self.compile_repeat(info, lo, hi, greedy, hard)?;
             }
             Expr::LookAround(_, la) => {
@@ -532,8 +537,8 @@ impl<'a> Compiler<'a> {
         self.b.add(Insn::Save0(repeat));
         let loop_pc = self.b.pc();
         self.b.add(Insn::RepeatEpsilonGr {
-            lo: 0,
-            hi: usize::MAX,
+            lo: VmRepeatCount::from_repeat_count(&crate::RepeatCount::zero()),
+            hi: VmRepeatBound::Infinity,
             next: usize::MAX,
             repeat,
             check,
@@ -609,27 +614,29 @@ impl<'a> Compiler<'a> {
     fn compile_repeat(
         &mut self,
         info: &Info<'_>,
-        lo: usize,
-        hi: usize,
+        lo: &crate::RepeatCount,
+        hi: &crate::RepeatBound,
         greedy: bool,
         hard: bool,
     ) -> Result<()> {
         let child = &info.children[0];
-        if lo == 0 && hi == 0 {
+        if lo.is_zero() && hi.as_finite().map_or(false, |hi| hi.is_zero()) {
             // zero repetition, matches empty string without executing child
             // This can happen with patterns like (abc){0}, which should match but never
             // execute the child expression or its capture groups
             return Ok(());
         }
-        if child.min_size == 0 && (self.ecmascript_mode || hi == usize::MAX) {
+        if child.min_size == 0 && (self.ecmascript_mode || hi.is_infinite()) {
             let repeat = self.b.newsave();
             let check = self.b.newsave();
             self.b.add(Insn::Save0(repeat));
             let pc = self.b.pc();
+            let vm_lo = VmRepeatCount::from_repeat_count(lo);
+            let vm_hi = VmRepeatBound::from_repeat_bound(hi);
             if greedy {
                 self.b.add(Insn::RepeatEpsilonGr {
-                    lo,
-                    hi,
+                    lo: vm_lo,
+                    hi: vm_hi,
                     next: usize::MAX,
                     repeat,
                     check,
@@ -637,8 +644,8 @@ impl<'a> Compiler<'a> {
                 });
             } else {
                 self.b.add(Insn::RepeatEpsilonNg {
-                    lo,
-                    hi,
+                    lo: vm_lo,
+                    hi: vm_hi,
                     next: usize::MAX,
                     repeat,
                     check,
@@ -651,7 +658,7 @@ impl<'a> Compiler<'a> {
             self.b.set_repeat_target(pc, next_pc);
             return Ok(());
         }
-        if lo == 0 && hi == 1 {
+        if lo.is_zero() && hi.as_finite().map_or(false, |hi| hi.is_one()) {
             // e?
             let pc = self.b.pc();
             self.b.add(Insn::Split(pc + 1, pc + 1));
@@ -664,7 +671,7 @@ impl<'a> Compiler<'a> {
             return Ok(());
         }
         let hard = hard | info.hard;
-        if lo == 0 && hi == usize::MAX {
+        if lo.is_zero() && hi.is_infinite() {
             // e*
             let pc = self.b.pc();
             self.b.add(Insn::Split(pc + 1, pc + 1));
@@ -672,7 +679,7 @@ impl<'a> Compiler<'a> {
             self.b.add(Insn::Jmp(pc));
             let next_pc = self.b.pc();
             self.b.set_split_target(pc, next_pc, greedy);
-        } else if lo == 1 && hi == usize::MAX {
+        } else if lo.is_one() && hi.is_infinite() {
             // e+
             let pc = self.b.pc();
             self.compile_repeat_iteration(child, hard)?;
@@ -683,17 +690,19 @@ impl<'a> Compiler<'a> {
             let repeat = self.b.newsave();
             self.b.add(Insn::Save0(repeat));
             let pc = self.b.pc();
+            let vm_lo = VmRepeatCount::from_repeat_count(lo);
+            let vm_hi = VmRepeatBound::from_repeat_bound(hi);
             if greedy {
                 self.b.add(Insn::RepeatGr {
-                    lo,
-                    hi,
+                    lo: vm_lo,
+                    hi: vm_hi,
                     next: usize::MAX,
                     repeat,
                 });
             } else {
                 self.b.add(Insn::RepeatNg {
-                    lo,
-                    hi,
+                    lo: vm_lo,
+                    hi: vm_hi,
                     next: usize::MAX,
                     repeat,
                 });
@@ -845,7 +854,7 @@ impl<'a> Compiler<'a> {
                                     )?;
                                     delegate_nodes.clear();
 
-                                    go_back += child.min_size;
+                                    go_back = go_back.saturating_add(child.min_size);
                                     if go_back > 0 {
                                         self.b.add(Insn::GoBack(go_back));
                                     }
@@ -1207,7 +1216,7 @@ impl DelegateBuilder {
         // TODO: might want to detect case of a group with no captures
         //  inside, so we can run find() instead of captures()
 
-        self.min_size += info.min_size;
+        self.min_size = self.min_size.saturating_add(info.min_size);
         self.const_size &= info.const_size;
         if self.capture_groups.is_none() {
             self.capture_groups = Some(info.capture_groups);
@@ -1715,8 +1724,8 @@ mod tests {
         assert_matches!(
             prog[8],
             RepeatEpsilonGr {
-                lo: 0,
-                hi: usize::MAX,
+                lo: VmRepeatCount(Some(0)),
+                hi: VmRepeatBound::Infinity,
                 next: 18,
                 repeat: 4,
                 check: 5,

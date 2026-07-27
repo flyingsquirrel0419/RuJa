@@ -19565,6 +19565,75 @@ fn regexp_nullable_quantifier_uses_ecmascript_match_boundaries() {
 }
 
 #[test]
+fn regexp_quantifier_integer_bounds_are_host_independent() {
+    assert_eq!(
+        run(r#"
+            var maxSafe = Number.MAX_SAFE_INTEGER;
+            var results = [
+              new RegExp("b{" + maxSafe + "}", "u").test(""),
+              new RegExp("b{" + maxSafe + ",}?").test("a"),
+              new RegExp("b{" + maxSafe + "," + maxSafe + "}").test("b"),
+              /b{4294967295}/.test("b"),
+              /b{4294967296}/.test("b"),
+              /b{9007199254740991}/u.test("b"),
+              new RegExp("b{340282366920938463463374607431768211456}").test("b"),
+              new RegExp("b{0,340282366920938463463374607431768211456}").test(""),
+              new RegExp("b{0,340282366920938463463374607431768211456}?").test(""),
+              new RegExp("b{340282366920938463463374607431768211456}|a").test("a"),
+              new RegExp("(b){4294967296}").exec("b") === null,
+              new RegExp("(?:){0,4294967296}").test(""),
+              new RegExp("(?:){4294967296}").source === "(?:){4294967296}",
+              new RegExp("a{,2}|b{4294967296}").test("aa"),
+              new RegExp("a{,}|b{4294967296}").test("a"),
+              new RegExp("😀{4294967296}", "u").test("😀"),
+              new RegExp("😀{4294967296}").test("😀"),
+              new RegExp("(a){1,4294967296}").exec("a")[1],
+              new RegExp("(a){1,4294967296}\\1").test("aa"),
+              new RegExp("a{1,4294967296}(?=b)").test("ab"),
+              new RegExp("😀{1,4294967296}").test("😀"),
+              new RegExp("😀{1,4294967296}", "u").test("😀"),
+              new RegExp("😀{1,4294967296}", "v").test("😀"),
+              new RegExp(".{1,4294967296}").test("\uD83D"),
+              new RegExp(".{1,4294967296}", "u").test("\uD83D"),
+              new RegExp(".{1,4294967296}", "v").test("\uD83D")
+            ];
+            results.join(",");
+        "#),
+        Value::String(Arc::from(
+            "false,false,false,false,false,false,false,true,true,true,true,true,true,false,false,false,false,a,true,true,true,true,true,true,true,true"
+        ))
+    );
+
+    for source in [
+        r#"new RegExp("a{9007199254740992,9007199254740991}");"#,
+        r#"new RegExp("a{340282366920938463463374607431768211457,340282366920938463463374607431768211456}", "u");"#,
+        "/a{4294967296,4294967295}/;",
+    ] {
+        assert!(
+            run_err(source).contains("SyntaxError"),
+            "expected range error for {source}"
+        );
+    }
+}
+
+#[test]
+fn regexp_compiled_too_big_repeat_uses_bounded_counter_backend() {
+    assert_eq!(run("/b{1000000}/.test('b');"), Value::Bool(false));
+    assert_eq!(
+        run(r#"
+            [
+              new RegExp("a{1,1000000}(?=b)").test("ab"),
+              new RegExp("(a)\\1a{1,1000000}").test("aaa"),
+              new RegExp("(a){1,1000000}").exec("a")[1]
+            ].join(",");
+        "#),
+        Value::String(Arc::from("true,true,a"))
+    );
+    assert!(run_err("new RegExp('a{2,1}');").contains("SyntaxError"));
+    assert!(run_err("new RegExp('[');").contains("SyntaxError"));
+}
+
+#[test]
 fn regex_exec_no_match() {
     assert_eq!(run("/zzz/.exec('abc');"), Value::Null);
 }

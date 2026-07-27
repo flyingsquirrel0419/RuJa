@@ -31,7 +31,9 @@ use bit_set::BitSet;
 use regex_syntax::escape_into;
 
 use crate::parse_flags::*;
-use crate::{codepoint_len, Error, Expr, ParseError, Result, MAX_RECURSION};
+use crate::{
+    codepoint_len, Error, Expr, ParseError, RepeatBound, RepeatCount, Result, MAX_RECURSION,
+};
 use crate::{
     Absent, Assertion, AstNode, BacktrackingControlVerb, CaptureGroupTarget, LookAround::*,
 };
@@ -186,12 +188,17 @@ impl<'a> Parser<'a> {
         if ix < self.re.len() {
             // fail when child is empty?
             let (lo, hi) = match self.re.as_bytes()[ix] {
-                b'?' => (0, 1),
-                b'*' => (0, usize::MAX),
-                b'+' => (1, usize::MAX),
+                b'?' => (RepeatCount::zero(), RepeatBound::finite(1)),
+                b'*' => (RepeatCount::zero(), RepeatBound::Infinity),
+                b'+' => (RepeatCount::one(), RepeatBound::Infinity),
                 b'{' => {
                     match self.parse_repeat(ix) {
                         Ok((next, lo, hi)) => {
+                            if self.flag(FLAG_ECMASCRIPT_MODE)
+                                && hi.as_finite().map_or(false, |hi| hi < &lo)
+                            {
+                                return Err(Error::ParseError(ix, ParseError::InvalidRepeat));
+                            }
                             ix = next - 1;
                             (lo, hi)
                         }
@@ -205,13 +212,18 @@ impl<'a> Parser<'a> {
             };
             let mut skip = false;
             if !self.is_repeatable(&child) {
+                let ecmascript_empty_group =
+                    child == Expr::Empty && ix > start && self.flag(FLAG_ECMASCRIPT_MODE);
                 // In Oniguruma mode, `(?:)` followed by a quantifier is a
                 // zero-width no-op that Oniguruma silently accepts. Skip
                 // past the quantifier and its modifiers, returning Empty.
                 // We check `ix > start` to ensure the atom actually consumed
                 // input (e.g. a `(?:)` group), as opposed to a bare
                 // quantifier with no preceding atom.
-                if child == Expr::Empty && ix > start && self.flag(FLAG_ONIGURUMA_MODE) {
+                if ecmascript_empty_group {
+                    // ECMAScript permits quantifying an empty group. Keep the
+                    // repeat so its finite bounds and resource limit remain observable.
+                } else if child == Expr::Empty && ix > start && self.flag(FLAG_ONIGURUMA_MODE) {
                     skip = true;
                 } else {
                     return Err(Error::ParseError(ix, ParseError::TargetNotRepeatable));
@@ -265,7 +277,7 @@ impl<'a> Parser<'a> {
     }
 
     // ix, lo, hi
-    fn parse_repeat(&self, ix: usize) -> Result<(usize, usize, usize)> {
+    fn parse_repeat(&self, ix: usize) -> Result<(usize, RepeatCount, RepeatBound)> {
         let ix = self.optional_whitespace(ix + 1)?; // skip opening '{'
         let bytes = self.re.as_bytes();
         if ix == self.re.len() {
@@ -273,8 +285,11 @@ impl<'a> Parser<'a> {
         }
         let mut end = ix;
         let lo = if bytes[ix] == b',' {
-            0
-        } else if let Some((next, lo)) = parse_usize(self.re, ix) {
+            if self.flag(FLAG_ECMASCRIPT_MODE) {
+                return Err(Error::ParseError(ix, ParseError::InvalidRepeat));
+            }
+            RepeatCount::zero()
+        } else if let Some((next, lo)) = self.parse_repeat_count(ix) {
             end = next;
             lo
         } else {
@@ -286,14 +301,14 @@ impl<'a> Parser<'a> {
         }
         end = ix;
         let hi = match bytes[ix] {
-            b'}' => lo,
+            b'}' => RepeatBound::Finite(lo.clone()),
             b',' => {
                 end = self.optional_whitespace(ix + 1)?; // past ','
-                if let Some((next, hi)) = parse_usize(self.re, end) {
+                if let Some((next, hi)) = self.parse_repeat_count(end) {
                     end = next;
-                    hi
+                    RepeatBound::Finite(hi)
                 } else {
-                    usize::MAX
+                    RepeatBound::Infinity
                 }
             }
             _ => return Err(Error::ParseError(ix, ParseError::InvalidRepeat)),
@@ -303,6 +318,17 @@ impl<'a> Parser<'a> {
             return Err(Error::ParseError(ix, ParseError::InvalidRepeat));
         }
         Ok((ix + 1, lo, hi))
+    }
+
+    fn parse_repeat_count(&self, ix: usize) -> Option<(usize, RepeatCount)> {
+        if !self.flag(FLAG_ECMASCRIPT_MODE) {
+            return parse_usize(self.re, ix).map(|(end, value)| (end, value.into()));
+        }
+        let mut end = ix;
+        while end < self.re.len() && self.re.as_bytes()[end].is_ascii_digit() {
+            end += 1;
+        }
+        RepeatCount::parse(&self.re[ix..end]).map(|value| (end, value))
     }
 
     fn parse_atom(&mut self, ix: usize, depth: usize) -> Result<(usize, Expr)> {
@@ -1812,7 +1838,7 @@ mod tests {
         make_group, make_literal, make_literal_case_insensitive, parse_id, parse_unrestricted_name,
         remap_unicode_property_if_necessary,
     };
-    use crate::{Absent, Assertion, BacktrackingControlVerb, Expr};
+    use crate::{Absent, Assertion, BacktrackingControlVerb, Expr, RepeatBound};
     use crate::{LookAround::*, RegexOptions, SyntaxConfig};
 
     fn p(s: &str) -> Expr {
@@ -2022,8 +2048,8 @@ mod tests {
             p("{{2}"),
             Expr::Repeat {
                 child: Box::new(make_literal("{")),
-                lo: 2,
-                hi: 2,
+                lo: 2.into(),
+                hi: RepeatBound::finite(2),
                 greedy: true
             }
         );
@@ -2182,8 +2208,8 @@ mod tests {
             p("(a){2}"),
             Expr::Repeat {
                 child: Box::new(make_group(make_literal("a"))),
-                lo: 2,
-                hi: 2,
+                lo: 2.into(),
+                hi: RepeatBound::finite(2),
                 greedy: true
             }
         );
@@ -2195,8 +2221,8 @@ mod tests {
             p("a{2,42}"),
             Expr::Repeat {
                 child: Box::new(make_literal("a")),
-                lo: 2,
-                hi: 42,
+                lo: 2.into(),
+                hi: RepeatBound::finite(42),
                 greedy: true
             }
         );
@@ -2204,8 +2230,8 @@ mod tests {
             p("a{2,}"),
             Expr::Repeat {
                 child: Box::new(make_literal("a")),
-                lo: 2,
-                hi: usize::MAX,
+                lo: 2.into(),
+                hi: RepeatBound::Infinity,
                 greedy: true
             }
         );
@@ -2213,8 +2239,8 @@ mod tests {
             p("a{2}"),
             Expr::Repeat {
                 child: Box::new(make_literal("a")),
-                lo: 2,
-                hi: 2,
+                lo: 2.into(),
+                hi: RepeatBound::finite(2),
                 greedy: true
             }
         );
@@ -2222,8 +2248,8 @@ mod tests {
             p("a{,2}"),
             Expr::Repeat {
                 child: Box::new(make_literal("a")),
-                lo: 0,
-                hi: 2,
+                lo: 0.into(),
+                hi: RepeatBound::finite(2),
                 greedy: true
             }
         );
@@ -2232,8 +2258,8 @@ mod tests {
             p("a{2,42}?"),
             Expr::Repeat {
                 child: Box::new(make_literal("a")),
-                lo: 2,
-                hi: 42,
+                lo: 2.into(),
+                hi: RepeatBound::finite(42),
                 greedy: false
             }
         );
@@ -2241,8 +2267,8 @@ mod tests {
             p("a{2,}?"),
             Expr::Repeat {
                 child: Box::new(make_literal("a")),
-                lo: 2,
-                hi: usize::MAX,
+                lo: 2.into(),
+                hi: RepeatBound::Infinity,
                 greedy: false
             }
         );
@@ -2250,8 +2276,8 @@ mod tests {
             p("a{2}?"),
             Expr::Repeat {
                 child: Box::new(make_literal("a")),
-                lo: 2,
-                hi: 2,
+                lo: 2.into(),
+                hi: RepeatBound::finite(2),
                 greedy: false
             }
         );
@@ -2259,8 +2285,8 @@ mod tests {
             p("a{,2}?"),
             Expr::Repeat {
                 child: Box::new(make_literal("a")),
-                lo: 0,
-                hi: 2,
+                lo: 0.into(),
+                hi: RepeatBound::finite(2),
                 greedy: false
             }
         );
@@ -2321,8 +2347,8 @@ mod tests {
             p(r"\b{1}"),
             Expr::Repeat {
                 child: Box::new(Expr::Assertion(Assertion::WordBoundary)),
-                lo: 1,
-                hi: 1,
+                lo: 1.into(),
+                hi: RepeatBound::finite(1),
                 greedy: true
             }
         );
@@ -2330,8 +2356,8 @@ mod tests {
             p(r"\B{2}"),
             Expr::Repeat {
                 child: Box::new(Expr::Assertion(Assertion::NotWordBoundary)),
-                lo: 2,
-                hi: 2,
+                lo: 2.into(),
+                hi: RepeatBound::finite(2),
                 greedy: true
             }
         );
@@ -2339,8 +2365,8 @@ mod tests {
             p(r"^{3}"),
             Expr::Repeat {
                 child: Box::new(Expr::Assertion(Assertion::StartText)),
-                lo: 3,
-                hi: 3,
+                lo: 3.into(),
+                hi: RepeatBound::finite(3),
                 greedy: true
             }
         );
@@ -2348,8 +2374,8 @@ mod tests {
             p(r"${1,5}"),
             Expr::Repeat {
                 child: Box::new(Expr::Assertion(Assertion::EndText)),
-                lo: 1,
-                hi: 5,
+                lo: 1.into(),
+                hi: RepeatBound::finite(5),
                 greedy: true
             }
         );
@@ -2357,8 +2383,8 @@ mod tests {
             p(r"\A*"),
             Expr::Repeat {
                 child: Box::new(Expr::Assertion(Assertion::StartText)),
-                lo: 0,
-                hi: usize::MAX,
+                lo: 0.into(),
+                hi: RepeatBound::Infinity,
                 greedy: true
             }
         );
@@ -2366,8 +2392,8 @@ mod tests {
             p(r"\z+"),
             Expr::Repeat {
                 child: Box::new(Expr::Assertion(Assertion::EndText)),
-                lo: 1,
-                hi: usize::MAX,
+                lo: 1.into(),
+                hi: RepeatBound::Infinity,
                 greedy: true
             }
         );
@@ -2375,8 +2401,8 @@ mod tests {
             p(r"^?"),
             Expr::Repeat {
                 child: Box::new(Expr::Assertion(Assertion::StartText)),
-                lo: 0,
-                hi: 1,
+                lo: 0.into(),
+                hi: RepeatBound::finite(1),
                 greedy: true
             }
         );
@@ -2384,8 +2410,8 @@ mod tests {
             p(r"${2}"),
             Expr::Repeat {
                 child: Box::new(Expr::Assertion(Assertion::EndText)),
-                lo: 2,
-                hi: 2,
+                lo: 2.into(),
+                hi: RepeatBound::finite(2),
                 greedy: true
             }
         );
@@ -2393,8 +2419,8 @@ mod tests {
             p(r"(?m)^?"),
             Expr::Repeat {
                 child: Box::new(Expr::Assertion(Assertion::StartLine { crlf: false })),
-                lo: 0,
-                hi: 1,
+                lo: 0.into(),
+                hi: RepeatBound::finite(1),
                 greedy: true
             }
         );
@@ -2402,8 +2428,8 @@ mod tests {
             p(r"(?m)${2}"),
             Expr::Repeat {
                 child: Box::new(Expr::Assertion(Assertion::EndLine { crlf: false })),
-                lo: 2,
-                hi: 2,
+                lo: 2.into(),
+                hi: RepeatBound::finite(2),
                 greedy: true
             }
         );
@@ -2411,8 +2437,8 @@ mod tests {
             p(r"\b+"),
             Expr::Repeat {
                 child: Box::new(Expr::Assertion(Assertion::WordBoundary)),
-                lo: 1,
-                hi: usize::MAX,
+                lo: 1.into(),
+                hi: RepeatBound::Infinity,
                 greedy: true
             }
         );
@@ -2800,8 +2826,8 @@ mod tests {
                         inner: String::from("[a-zA-Z0-9_]"),
                         casei: false
                     }),
-                    lo: 0,
-                    hi: usize::MAX,
+                    lo: 0.into(),
+                    hi: RepeatBound::Infinity,
                     greedy: true
                 },
                 Expr::LookAround(Box::new(make_literal("'")), LookAheadNeg),
@@ -2872,8 +2898,8 @@ mod tests {
             p("a++"),
             Expr::AtomicGroup(Box::new(Expr::Repeat {
                 child: Box::new(make_literal("a")),
-                lo: 1,
-                hi: usize::MAX,
+                lo: 1.into(),
+                hi: RepeatBound::Infinity,
                 greedy: true
             }))
         );
@@ -2881,8 +2907,8 @@ mod tests {
             p("a*+"),
             Expr::AtomicGroup(Box::new(Expr::Repeat {
                 child: Box::new(make_literal("a")),
-                lo: 0,
-                hi: usize::MAX,
+                lo: 0.into(),
+                hi: RepeatBound::Infinity,
                 greedy: true
             }))
         );
@@ -2890,8 +2916,8 @@ mod tests {
             p("a?+"),
             Expr::AtomicGroup(Box::new(Expr::Repeat {
                 child: Box::new(make_literal("a")),
-                lo: 0,
-                hi: 1,
+                lo: 0.into(),
+                hi: RepeatBound::finite(1),
                 greedy: true
             }))
         );
@@ -3153,8 +3179,8 @@ mod tests {
             Expr::Concat(vec![
                 Expr::Repeat {
                     child: Box::new(make_group(make_literal("h"))),
-                    lo: 0,
-                    hi: 1,
+                    lo: 0.into(),
+                    hi: RepeatBound::finite(1),
                     greedy: true
                 },
                 Expr::BackrefExistsCondition {
@@ -3168,8 +3194,8 @@ mod tests {
             Expr::Concat(vec![
                 Expr::Repeat {
                     child: Box::new(make_group(make_literal("h"))),
-                    lo: 0,
-                    hi: 1,
+                    lo: 0.into(),
+                    hi: RepeatBound::finite(1),
                     greedy: true
                 },
                 Expr::BackrefExistsCondition {
@@ -3294,8 +3320,8 @@ mod tests {
             Expr::Concat(vec![
                 Expr::Repeat {
                     child: Box::new(make_group(make_literal("h"))),
-                    lo: 0,
-                    hi: 1,
+                    lo: 0.into(),
+                    hi: RepeatBound::finite(1),
                     greedy: true
                 },
                 Expr::Conditional {
@@ -3314,8 +3340,8 @@ mod tests {
             Expr::Concat(vec![
                 Expr::Repeat {
                     child: Box::new(make_group(make_literal("h"))),
-                    lo: 0,
-                    hi: 1,
+                    lo: 0.into(),
+                    hi: RepeatBound::finite(1),
                     greedy: true
                 },
                 Expr::Conditional {
@@ -3334,8 +3360,8 @@ mod tests {
             Expr::Concat(vec![
                 Expr::Repeat {
                     child: Box::new(make_group(make_literal("h"))),
-                    lo: 0,
-                    hi: 1,
+                    lo: 0.into(),
+                    hi: RepeatBound::finite(1),
                     greedy: true
                 },
                 Expr::Conditional {
@@ -3359,8 +3385,8 @@ mod tests {
             Expr::Concat(vec![
                 Expr::Repeat {
                     child: Box::new(make_group(make_literal("h"))),
-                    lo: 0,
-                    hi: 1,
+                    lo: 0.into(),
+                    hi: RepeatBound::finite(1),
                     greedy: true
                 },
                 Expr::Conditional {
@@ -3543,8 +3569,8 @@ mod tests {
                     make_literal("b"),
                     Expr::Repeat {
                         child: Box::new(make_group(make_literal("c"))),
-                        lo: 0,
-                        hi: 1,
+                        lo: 0.into(),
+                        hi: RepeatBound::finite(1),
                         greedy: true
                     }
                 ])
@@ -3556,8 +3582,8 @@ mod tests {
             Expr::Concat(vec![
                 Expr::Repeat {
                     child: Box::new(make_group(make_literal("a"))),
-                    lo: 0,
-                    hi: 1,
+                    lo: 0.into(),
+                    hi: RepeatBound::finite(1),
                     greedy: true
                 },
                 Expr::SubroutineCall(2),
@@ -3805,8 +3831,8 @@ mod tests {
                     newline: true,
                     crlf: false
                 }),
-                lo: 0,
-                hi: usize::MAX,
+                lo: 0.into(),
+                hi: RepeatBound::Infinity,
                 greedy: true
             })
         );
@@ -3826,8 +3852,8 @@ mod tests {
                     newline: true,
                     crlf: false
                 }),
-                lo: 0,
-                hi: usize::MAX,
+                lo: 0.into(),
+                hi: RepeatBound::Infinity,
                 greedy: true
             })
         );
@@ -3848,8 +3874,8 @@ mod tests {
                         newline: true,
                         crlf: false
                     }),
-                    lo: 0,
-                    hi: usize::MAX,
+                    lo: 0.into(),
+                    hi: RepeatBound::Infinity,
                     greedy: true
                 }),
                 Expr::LookAround(
@@ -4336,8 +4362,8 @@ mod tests {
                         inner: "\\d".to_string(),
                         casei: false
                     }),
-                    lo: 1,
-                    hi: usize::MAX,
+                    lo: 1.into(),
+                    hi: RepeatBound::Infinity,
                     greedy: true
                 }),
             })
@@ -4371,8 +4397,8 @@ mod tests {
                         inner: "\\w".to_string(),
                         casei: false,
                     }),
-                    lo: 1,
-                    hi: usize::MAX,
+                    lo: 1.into(),
+                    hi: RepeatBound::Infinity,
                     greedy: true,
                 })),
             }
@@ -4390,8 +4416,8 @@ mod tests {
                             inner: "\\w".to_string(),
                             casei: false,
                         }),
-                        lo: 1,
-                        hi: usize::MAX,
+                        lo: 1.into(),
+                        hi: RepeatBound::Infinity,
                         greedy: true,
                     })),
                 },

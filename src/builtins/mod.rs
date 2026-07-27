@@ -145,7 +145,9 @@ fn compile_regex_with_input_mode(
     );
     let uses_lookaround = regex_uses_lookaround(&rewritten_source);
     let needs_capture_correction = regex_contains_quantified_capture_group(&rewritten_source);
-    if uses_backreference || uses_lookaround {
+    let quantifiers = crate::lexer::regex_quantifier_metadata(source, flags)?;
+    let requires_counter_backend = quantifiers.requires_counter_backend;
+    if uses_backreference || uses_lookaround || requires_counter_backend {
         let normalized = normalize_regex_for_backend(
             &rewritten_source,
             flags,
@@ -154,17 +156,13 @@ fn compile_regex_with_input_mode(
             true,
             &capture_indices,
         )?;
-        let mut b = fancy_regex::RegexBuilder::new(&normalized.source);
-        b.case_insensitive(flags.contains('i'));
-        b.multi_line(flags.contains('m'));
-        b.dot_matches_new_line(flags.contains('s'));
-        b.ecmascript_mode(true);
-        b.ecmascript_unicode_mode(flags.contains('u') || flags.contains('v'));
-        b.ecmascript_backref_sets(normalized.backref_sets);
-        return b
-            .build()
-            .map(CompiledRegex::Fancy)
-            .map_err(|e| e.to_string());
+        return build_fancy_regex_with_repeat_fallback(
+            &normalized,
+            flags,
+            requires_counter_backend,
+            quantifiers.has_braced,
+        )
+        .map(CompiledRegex::Fancy);
     }
 
     let rust_normalized = normalize_regex_for_backend(
@@ -179,7 +177,23 @@ fn compile_regex_with_input_mode(
     b.case_insensitive(flags.contains('i'));
     b.multi_line(flags.contains('m'));
     b.dot_matches_new_line(flags.contains('s'));
-    let fast = b.build().map_err(|e| e.to_string())?;
+    let fast = match b.build() {
+        Ok(regex) => regex,
+        Err(regex::Error::CompiledTooBig(_)) if quantifiers.has_braced => {
+            let normalized = normalize_regex_for_backend(
+                &rewritten_source,
+                flags,
+                capture_count,
+                code_unit_input,
+                true,
+                &capture_indices,
+            )?;
+            return build_fancy_regex(&normalized, flags, true)
+                .map(CompiledRegex::Fancy)
+                .map_err(|error| error.to_string());
+        }
+        Err(error) => return Err(error.to_string()),
+    };
     if !needs_capture_correction {
         return Ok(CompiledRegex::Rust(fast));
     }
@@ -192,15 +206,58 @@ fn compile_regex_with_input_mode(
         true,
         &capture_indices,
     )?;
-    let mut b = fancy_regex::RegexBuilder::new(&capture_normalized.source);
+    let captures = build_fancy_regex_with_repeat_fallback(
+        &capture_normalized,
+        flags,
+        false,
+        quantifiers.has_braced,
+    )?;
+    Ok(CompiledRegex::CaptureCorrected { fast, captures })
+}
+
+fn build_fancy_regex(
+    normalized: &NormalizedRegex,
+    flags: &str,
+    non_delegated_repeats: bool,
+) -> Result<fancy_regex::Regex, fancy_regex::Error> {
+    let mut b = fancy_regex::RegexBuilder::new(&normalized.source);
     b.case_insensitive(flags.contains('i'));
     b.multi_line(flags.contains('m'));
     b.dot_matches_new_line(flags.contains('s'));
     b.ecmascript_mode(true);
     b.ecmascript_unicode_mode(flags.contains('u') || flags.contains('v'));
-    b.ecmascript_backref_sets(capture_normalized.backref_sets);
-    let captures = b.build().map_err(|e| e.to_string())?;
-    Ok(CompiledRegex::CaptureCorrected { fast, captures })
+    b.ecmascript_backref_sets(normalized.backref_sets.clone());
+    b.ecmascript_non_delegated_repeats(non_delegated_repeats);
+    b.build()
+}
+
+fn build_fancy_regex_with_repeat_fallback(
+    normalized: &NormalizedRegex,
+    flags: &str,
+    non_delegated_repeats: bool,
+    has_braced_repeat: bool,
+) -> Result<fancy_regex::Regex, String> {
+    match build_fancy_regex(normalized, flags, non_delegated_repeats) {
+        Ok(regex) => Ok(regex),
+        Err(error)
+            if !non_delegated_repeats
+                && has_braced_repeat
+                && fancy_regex_size_limit_exceeded(&error) =>
+        {
+            build_fancy_regex(normalized, flags, true).map_err(|error| error.to_string())
+        }
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+fn fancy_regex_size_limit_exceeded(error: &fancy_regex::Error) -> bool {
+    let fancy_regex::Error::CompileError(error) = error else {
+        return false;
+    };
+    let fancy_regex::CompileError::InnerError(error) = error.as_ref() else {
+        return false;
+    };
+    error.size_limit().is_some()
 }
 
 impl CompiledRegex {

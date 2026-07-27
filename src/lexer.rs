@@ -2062,7 +2062,7 @@ pub(crate) fn validate_regex_literal(pattern: &str, flags: &str) -> Result<(), S
     validate_regex_named_groups(pattern, flags)?;
     validate_regex_unicode_mode_syntax(pattern, flags)?;
     validate_regex_class_ranges(pattern, flags)?;
-    validate_regex_quantifier_positions(pattern, flags)?;
+    regex_quantifier_metadata(pattern, flags)?;
     validate_regex_assertion_quantifiers(pattern, flags)?;
     validate_regex_modifier_groups(pattern)
 }
@@ -2688,7 +2688,23 @@ enum RegexQuantifierState {
     Prefix,
 }
 
-fn validate_regex_quantifier_positions(pattern: &str, flags: &str) -> Result<(), String> {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct RegexQuantifierMetadata {
+    pub(crate) has_braced: bool,
+    pub(crate) requires_counter_backend: bool,
+}
+
+pub(crate) fn regex_quantifier_metadata(
+    pattern: &str,
+    flags: &str,
+) -> Result<RegexQuantifierMetadata, String> {
+    scan_regex_quantifier_positions(pattern, flags)
+}
+
+fn scan_regex_quantifier_positions(
+    pattern: &str,
+    flags: &str,
+) -> Result<RegexQuantifierMetadata, String> {
     let chars: Vec<char> = pattern.chars().collect();
     let unicode_mode = flags.contains('u') || flags.contains('v');
     let unicode_sets_mode = flags.contains('v');
@@ -2696,6 +2712,8 @@ fn validate_regex_quantifier_positions(pattern: &str, flags: &str) -> Result<(),
     let mut i = 0usize;
     let mut class_depth = 0usize;
     let mut state = RegexQuantifierState::NoAtom;
+    let mut requires_counter_backend = false;
+    let mut has_braced = false;
 
     while i < chars.len() {
         let ch = chars[i];
@@ -2767,12 +2785,22 @@ fn validate_regex_quantifier_positions(pattern: &str, flags: &str) -> Result<(),
                 i += 1;
             }
             '{' => {
-                if let Some(end) = braced_quantifier_end(&chars, i) {
+                if let Some(quantifier) = braced_quantifier(&chars, i) {
                     if state != RegexQuantifierState::Atom {
                         return Err("invalid regular expression quantifier".to_string());
                     }
+                    has_braced = true;
+                    if quantifier.max_digits.is_some_and(|max| {
+                        compare_decimal_digits(&chars, quantifier.min_digits, max).is_gt()
+                    }) {
+                        return Err("invalid regular expression quantifier range".to_string());
+                    }
+                    requires_counter_backend |= decimal_exceeds_u32(&chars, quantifier.min_digits)
+                        || quantifier
+                            .max_digits
+                            .is_some_and(|digits| decimal_exceeds_u32(&chars, digits));
                     state = RegexQuantifierState::Prefix;
-                    i = end + 1;
+                    i = quantifier.end + 1;
                 } else {
                     state = RegexQuantifierState::Atom;
                     i += 1;
@@ -2789,7 +2817,10 @@ fn validate_regex_quantifier_positions(pattern: &str, flags: &str) -> Result<(),
         return Err("unterminated regular expression character class".to_string());
     }
 
-    Ok(())
+    Ok(RegexQuantifierMetadata {
+        has_braced,
+        requires_counter_backend,
+    })
 }
 
 fn regex_escape_end_for_quantifier(
@@ -2880,6 +2911,17 @@ fn regex_group_body_start(chars: &[char], start: usize) -> usize {
 }
 
 fn braced_quantifier_end(chars: &[char], start: usize) -> Option<usize> {
+    braced_quantifier(chars, start).map(|quantifier| quantifier.end)
+}
+
+#[derive(Clone, Copy)]
+struct BracedQuantifier {
+    end: usize,
+    min_digits: (usize, usize),
+    max_digits: Option<(usize, usize)>,
+}
+
+fn braced_quantifier(chars: &[char], start: usize) -> Option<BracedQuantifier> {
     debug_assert_eq!(chars.get(start), Some(&'{'));
     let mut idx = start + 1;
     let first_digits_start = idx;
@@ -2892,20 +2934,63 @@ fn braced_quantifier_end(chars: &[char], start: usize) -> Option<usize> {
     }
 
     match chars.get(idx).copied() {
-        Some('}') => Some(idx),
+        Some('}') => Some(BracedQuantifier {
+            end: idx,
+            min_digits: (first_digits_start, idx),
+            max_digits: Some((first_digits_start, idx)),
+        }),
         Some(',') => {
+            let first_digits_end = idx;
             idx += 1;
+            let second_digits_start = idx;
             while chars.get(idx).is_some_and(|ch| ch.is_ascii_digit()) {
                 idx += 1;
             }
             if chars.get(idx) == Some(&'}') {
-                Some(idx)
+                Some(BracedQuantifier {
+                    end: idx,
+                    min_digits: (first_digits_start, first_digits_end),
+                    max_digits: (second_digits_start != idx).then_some((second_digits_start, idx)),
+                })
             } else {
                 None
             }
         }
         _ => None,
     }
+}
+
+fn canonical_decimal_digits(chars: &[char], digits: (usize, usize)) -> (usize, usize) {
+    let (mut start, end) = digits;
+    while start + 1 < end && chars[start] == '0' {
+        start += 1;
+    }
+    (start, end)
+}
+
+fn compare_decimal_digits(
+    chars: &[char],
+    left: (usize, usize),
+    right: (usize, usize),
+) -> std::cmp::Ordering {
+    let left = canonical_decimal_digits(chars, left);
+    let right = canonical_decimal_digits(chars, right);
+    let left_len = left.1 - left.0;
+    let right_len = right.1 - right.0;
+    left_len.cmp(&right_len).then_with(|| {
+        chars[left.0..left.1]
+            .iter()
+            .cmp(chars[right.0..right.1].iter())
+    })
+}
+
+fn decimal_exceeds_u32(chars: &[char], digits: (usize, usize)) -> bool {
+    chars[digits.0..digits.1]
+        .iter()
+        .try_fold(0u32, |value, ch| {
+            value.checked_mul(10)?.checked_add(ch.to_digit(10)?)
+        })
+        .is_none()
 }
 
 fn validate_regex_assertion_quantifiers(pattern: &str, flags: &str) -> Result<(), String> {
@@ -3360,6 +3445,55 @@ mod tests {
             .into_iter()
             .map(|t| t.kind)
             .collect()
+    }
+
+    #[test]
+    fn regex_quantifier_metadata_preserves_arbitrary_integer_bounds() {
+        let at_u32 = regex_quantifier_metadata("a{4294967295}", "").unwrap();
+        assert!(at_u32.has_braced);
+        assert!(!at_u32.requires_counter_backend);
+
+        for pattern in [
+            "a{4294967296}",
+            "a{9007199254740991,}",
+            "a{1,340282366920938463463374607431768211456}",
+            "a{00000000000000000000000000004294967296}",
+        ] {
+            let metadata = regex_quantifier_metadata(pattern, "").unwrap();
+            assert!(
+                metadata.has_braced,
+                "expected braced quantifier for {pattern}"
+            );
+            assert!(
+                metadata.requires_counter_backend,
+                "expected counter backend for {pattern}"
+            );
+        }
+
+        let leading_zero = regex_quantifier_metadata("a{000000004294967295}", "").unwrap();
+        assert!(!leading_zero.requires_counter_backend);
+        assert!(
+            regex_quantifier_metadata("a{100000000000000000000,99999999999999999999}", "")
+                .unwrap_err()
+                .contains("quantifier range")
+        );
+        assert!(regex_quantifier_metadata("a{0002,0001}", "")
+            .unwrap_err()
+            .contains("quantifier range"));
+    }
+
+    #[test]
+    fn regex_quantifier_metadata_ignores_literal_braces() {
+        for pattern in [
+            r"a\{4294967296\}",
+            r"[a{4294967296}]",
+            r"a{4294967296x}",
+            r"a{,4294967296}",
+        ] {
+            let metadata = regex_quantifier_metadata(pattern, "").unwrap();
+            assert!(!metadata.has_braced, "unexpected quantifier in {pattern}");
+            assert!(!metadata.requires_counter_backend);
+        }
     }
 
     #[test]
