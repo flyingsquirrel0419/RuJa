@@ -11530,6 +11530,16 @@ Direct Rust tests separately prove the unobservable storage boundary, both
 production opcodes, exact root identity, Proxy/Symbol coercion, super receiver
 identity, and root-reservation failure recovery.
 
+Implementation commit `942be9b` passes ordinary CI `30285088249` and all 35
+jobs in full run `30285089340`. Thirty-one of 32 result files match preceding
+run `30276195375` byte-for-byte. The only immediate difference is Annex B:
+the preceding run's one contention timeout returns to **201 pass / 811 fail /
+74 skip / 0 timeout / 0 error**, byte-identical with SHA-256
+`410da6b0d17c7cdd50df356717c298529ca9bcb63be12c77143ec2a1b966153a`
+to clean run `30269385090`. With that transient normalized, all 32 artifacts
+match and the aggregate remains **31901 pass / 5110 fail / 11455 skip / 3
+timeout / 0 error / 48469 total / 37011 run**.
+
 ```sh
 export TEST262=/path/to/test262-at-9e61c128
 python3 tools/test262_runner.py \

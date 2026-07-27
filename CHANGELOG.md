@@ -37,6 +37,14 @@
   at **12761 pass / 0 fail / 7678 skip**, SHA-256
   `c59b10015e636a164867edd718fc2b0f018e5bcf2d0ed969fa0df136ade46dfc`.
 
+  Implementation commit `942be9b` passes ordinary CI `30285088249` and all
+  35 jobs in full Test262 run `30285089340`. Thirty-one result artifacts are
+  byte-identical to preceding run `30276195375`; its one Annex B contention
+  timeout returns to the clean **201/811/74/0/0** result, byte-identical to
+  clean run `30269385090`. The corrected 32-file aggregate remains **31901
+  pass / 5110 fail / 11455 skip / 3 timeout / 0 error** over **48469** tests
+  and **37011** pass-or-fail executions.
+
 - References resolved through a `with` object environment now store the
   binding object's `GcIdx` directly instead of allocating an inner
   `Box<Value>`. The dedicated `ObjectEnvironment` variant remains separate
