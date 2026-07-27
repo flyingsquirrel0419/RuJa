@@ -145,7 +145,9 @@ use crate::bytecode::{Chunk, Op};
 use crate::environment as env;
 use crate::error::{self, Error};
 use crate::gc::Heap;
-use crate::value::{GcIdx, HeapObj, PropertyKey, Value};
+use crate::value::{
+    GcIdx, HeapObj, PropertyKey, ReferenceBase, ReferenceRecord, ReferencedName, Value,
+};
 use indexmap::IndexMap;
 use num_traits::Zero;
 use parking_lot::Mutex;
@@ -230,6 +232,30 @@ pub(crate) struct ExecutionContext {
     pub(crate) kind: ExecutionContextKind,
 }
 
+struct VacantReferenceBox(Box<ReferenceRecord>);
+
+impl VacantReferenceBox {
+    fn new(mut record: Box<ReferenceRecord>) -> Self {
+        *record = ReferenceRecord {
+            base: ReferenceBase::Unresolvable,
+            name: ReferencedName::Property(PropertyKey::symbol(u32::MAX)),
+            strict: false,
+            this_value: None,
+        };
+        debug_assert!({
+            let mut roots = 0usize;
+            record.visit_gc_roots(&mut |_| roots += 1);
+            roots == 0
+        });
+        Self(record)
+    }
+
+    fn fill(mut self, record: ReferenceRecord) -> Box<ReferenceRecord> {
+        *self.0 = record;
+        self.0
+    }
+}
+
 #[allow(dead_code)]
 pub struct Vm {
     pub(crate) heap: Heap,
@@ -285,6 +311,15 @@ pub struct Vm {
     /// Rust locals (e.g. a Promise handler while `call_function` runs, which
     /// may itself trigger a GC). Push indices on entry, pop on exit.
     pub(crate) gc_pins: Vec<usize>,
+    /// One rootless outer Reference allocation retained for sequential reuse.
+    /// Checked-out records are never present here during observable re-entry.
+    reference_box_cache: Option<VacantReferenceBox>,
+    #[cfg(test)]
+    reference_box_allocation_count: usize,
+    #[cfg(test)]
+    reference_box_reuse_count: usize,
+    #[cfg(test)]
+    reference_box_discard_count: usize,
     #[cfg(test)]
     pub(crate) fail_next_gc_pin_reservation: bool,
     #[cfg(test)]
@@ -712,6 +747,114 @@ impl Default for Vm {
 }
 
 impl Vm {
+    fn make_reference_value(&mut self, record: ReferenceRecord) -> Value {
+        let record = if let Some(vacant) = self.reference_box_cache.take() {
+            #[cfg(test)]
+            {
+                self.reference_box_reuse_count += 1;
+            }
+            vacant.fill(record)
+        } else {
+            #[cfg(test)]
+            {
+                self.reference_box_allocation_count += 1;
+            }
+            Box::new(record)
+        };
+        Value::Reference(record)
+    }
+
+    fn recycle_reference_value(&mut self, value: Value) {
+        let Value::Reference(record) = value else {
+            return;
+        };
+        if self.reference_box_cache.is_none() {
+            self.reference_box_cache = Some(VacantReferenceBox::new(record));
+        } else {
+            #[cfg(test)]
+            {
+                self.reference_box_discard_count += 1;
+            }
+        }
+    }
+
+    fn recycle_reference_values(&mut self, mut values: Vec<Value>) {
+        #[cfg(test)]
+        {
+            while let Some(value) = values.pop() {
+                self.recycle_reference_value(value);
+            }
+        }
+
+        #[cfg(not(test))]
+        if self.reference_box_cache.is_none() {
+            if let Some(index) = values
+                .iter()
+                .rposition(|value| matches!(value, Value::Reference(_)))
+            {
+                self.recycle_reference_value(values.swap_remove(index));
+            }
+        }
+    }
+
+    fn truncate_stack_recycling_references(&mut self, len: usize) {
+        if self.stack.len() <= len {
+            return;
+        }
+
+        #[cfg(test)]
+        while self.stack.len() > len {
+            let value = self.stack.pop().expect("stack length checked before pop");
+            self.recycle_reference_value(value);
+        }
+
+        #[cfg(not(test))]
+        {
+            if self.reference_box_cache.is_none() {
+                if let Some(offset) = self.stack[len..]
+                    .iter()
+                    .rposition(|value| matches!(value, Value::Reference(_)))
+                {
+                    let value = self.stack.swap_remove(len + offset);
+                    self.recycle_reference_value(value);
+                }
+            }
+            self.stack.truncate(len);
+        }
+    }
+
+    fn restore_stack_recycling_references(&mut self, stack: Vec<Value>) {
+        let discarded = std::mem::replace(&mut self.stack, stack);
+        self.recycle_reference_values(discarded);
+    }
+
+    #[cfg(test)]
+    fn reset_reference_box_cache_metrics(&mut self) {
+        self.reference_box_cache = None;
+        self.reference_box_allocation_count = 0;
+        self.reference_box_reuse_count = 0;
+        self.reference_box_discard_count = 0;
+    }
+
+    #[cfg(test)]
+    fn reference_box_cache_metrics(&self) -> (usize, usize, usize, bool) {
+        (
+            self.reference_box_allocation_count,
+            self.reference_box_reuse_count,
+            self.reference_box_discard_count,
+            self.reference_box_cache.is_some(),
+        )
+    }
+
+    #[cfg(test)]
+    fn reference_box_cache_root_count(&self) -> usize {
+        let mut roots = 0usize;
+        if let Some(vacant) = &self.reference_box_cache {
+            vacant.0.visit_gc_roots(&mut |_| roots += 1);
+        }
+        roots
+    }
+
     fn offset_function_indices(chunk: &mut Chunk, base: usize) {
         if base == 0 {
             return;
@@ -838,6 +981,13 @@ impl Vm {
             ic: std::collections::HashMap::new(),
             ic_entry_count: 0,
             gc_pins: Vec::new(),
+            reference_box_cache: None,
+            #[cfg(test)]
+            reference_box_allocation_count: 0,
+            #[cfg(test)]
+            reference_box_reuse_count: 0,
+            #[cfg(test)]
+            reference_box_discard_count: 0,
             #[cfg(test)]
             fail_next_gc_pin_reservation: false,
             #[cfg(test)]
@@ -1201,6 +1351,7 @@ impl Vm {
     ) -> error::Result<Value> {
         let chunk = Arc::new(chunk);
         let stack_base = self.stack.len();
+        let frame_depth = self.frames.len();
         self.frames.push(CallFrame::new(
             chunk.clone(),
             0,
@@ -1209,7 +1360,10 @@ impl Vm {
             env,
             this_val,
         ));
-        self.interpret()
+        let result = self.interpret();
+        self.frames.truncate(frame_depth);
+        self.truncate_stack_recycling_references(stack_base);
+        result
     }
 
     pub(crate) fn instantiate_module_chunk(
@@ -1229,11 +1383,11 @@ impl Vm {
         let target_depth = self.frames.len() - 1;
         if let Err(error) = self.interpret_to_depth_until_ip(target_depth, chunk.body_start_ip) {
             self.frames.truncate(target_depth);
-            self.stack.truncate(stack_base);
+            self.truncate_stack_recycling_references(stack_base);
             return Err(error);
         }
         self.frames.truncate(target_depth);
-        self.stack.truncate(stack_base);
+        self.truncate_stack_recycling_references(stack_base);
         Ok(())
     }
 
@@ -1254,7 +1408,7 @@ impl Vm {
         ));
         let result = self.interpret();
         self.frames.truncate(frame_depth);
-        self.stack.truncate(stack_base);
+        self.truncate_stack_recycling_references(stack_base);
         result
     }
 
@@ -1292,7 +1446,7 @@ impl Vm {
         let depth_before = self.frames.len();
         let result = self.interpret();
         // Restore caller stack to its pre-eval state, then push the result.
-        self.stack.truncate(stack_depth);
+        self.truncate_stack_recycling_references(stack_depth);
         // Pop any frames we pushed for the eval (Halt leaves it; Return popped it).
         while self.frames.len() >= depth_before && self.frames.len() > 1 {
             let top_is_ours = self
@@ -1778,7 +1932,7 @@ impl Vm {
             if self.frames.len() > target_depth {
                 self.frames.truncate(target_depth);
             }
-            self.stack.truncate(stack_base);
+            self.truncate_stack_recycling_references(stack_base);
             return Err(err);
         }
 
@@ -2053,7 +2207,7 @@ impl Vm {
                     g.args.lock().clone(),
                     g.ip.load(Ordering::Relaxed),
                     g.locals.lock().clone(),
-                    g.stack.lock().clone(),
+                    std::mem::take(&mut *g.stack.lock()),
                     g.catch_stack.lock().clone(),
                     g.finally_stack.lock().clone(),
                     g.guard_seq.load(Ordering::Relaxed),
@@ -2114,7 +2268,8 @@ impl Vm {
                     }
                 }
                 ip = 0;
-                stack.clear();
+                let discarded = std::mem::take(&mut stack);
+                self.recycle_reference_values(discarded);
                 catch_stack.clear();
                 finally_stack.clear();
             }
@@ -2230,6 +2385,7 @@ impl Vm {
                     g.async_delegate_await_kind.store(0, Ordering::Relaxed);
                 }
             });
+            self.recycle_reference_values(gen_stack);
             return Err(e.clone());
         }
 
@@ -2293,6 +2449,7 @@ impl Vm {
                     g.async_delegate_await_kind.store(0, Ordering::Relaxed);
                 }
             });
+            self.recycle_reference_values(gen_stack);
             let ret = result.unwrap_or(Value::Undefined);
             Ok((ret, true, false, false))
         }
@@ -2606,7 +2763,7 @@ impl Vm {
                             frame.env = saved_env;
                             frame.stack_base + saved_stack_depth
                         };
-                        self.stack.truncate(stack_target);
+                        self.truncate_stack_recycling_references(stack_target);
                         self.stack.push(thrown);
                         self.current_frame_mut()?.ip = handler;
                         continue;

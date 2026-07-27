@@ -113,7 +113,7 @@ impl Vm {
                 }
                 Err(error) if !error.catchable() => {
                     self.frames.truncate(target_depth);
-                    self.stack.truncate(stack_base);
+                    self.truncate_stack_recycling_references(stack_base);
                     self.unpin_many(capability_pins);
                     return Err(error);
                 }
@@ -124,7 +124,7 @@ impl Vm {
         if self.frames.len() > target_depth {
             self.frames.truncate(target_depth);
         }
-        self.stack.truncate(stack_base);
+        self.truncate_stack_recycling_references(stack_base);
         self.unpin_many(capability_pins);
         settled?;
         Ok((promise, completion))
@@ -430,27 +430,22 @@ impl Vm {
         let settled = if suspended {
             self.begin_async_function_await(target_depth, capability)
         } else {
+            if self.frames.len() > target_depth {
+                self.frames.truncate(target_depth);
+            }
+            self.truncate_stack_recycling_references(stack_base);
             match result {
                 Ok(value) => self.resolve_promise_capability_value(&capability, value),
                 Err(error) if !error.catchable() => {
-                    if self.frames.len() > target_depth {
-                        self.frames.truncate(target_depth);
-                    }
                     self.unpin_many(capability_pins);
                     return Err(error);
                 }
-                Err(error) => {
-                    let rejected = self.reject_promise_capability_error(&capability, &error);
-                    if self.frames.len() > target_depth {
-                        self.frames.truncate(target_depth);
-                    }
-                    rejected
-                }
+                Err(error) => self.reject_promise_capability_error_in_env(&capability, &error, env),
             }
         };
         if suspended && settled.is_err() {
             self.frames.truncate(target_depth);
-            self.stack.truncate(stack_base);
+            self.truncate_stack_recycling_references(stack_base);
         }
         self.unpin_many(capability_pins);
         settled?;
@@ -549,7 +544,7 @@ impl Vm {
                     if self.frames.len() > target_depth {
                         self.frames.truncate(target_depth);
                     }
-                    self.stack = caller_stack;
+                    self.restore_stack_recycling_references(caller_stack);
                     self.unpin_many(capability_pins);
                     self.unpin(source_pin);
                     return Err(error);
@@ -573,7 +568,7 @@ impl Vm {
                 self.frames.truncate(target_depth);
             }
         }
-        self.stack = caller_stack;
+        self.restore_stack_recycling_references(caller_stack);
         self.unpin_many(capability_pins);
         self.unpin(source_pin);
         settled

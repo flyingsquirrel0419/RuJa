@@ -431,10 +431,16 @@ guarantees are required.
   a fused opcode instead of cloning it; root reservation and pin publication
   still scan the complete record before observable re-entry, and raw names
   reserve two simultaneously live root suffixes for shared key coercion.
+  The VM reuses one rootless outer Reference box across sequential operations;
+  nested re-entry allocates independently, and an occupied cache drops the
+  overflow box. Terminal, abrupt, async, and generator stack disposal return
+  eligible records, while suspended generator stacks retain their live record
+  by move.
   Native indexed loops now pass numeric cursors through structured PropertyKey
   APIs; canonical indices avoid temporary Strings on 64-bit targets. Remaining
-  nearby hard-host-OOM scopes include the outer Reference record plus
-  primitive-base, raw-name, super-receiver, and with-object boxes. Object
+  nearby hard-host-OOM scopes include simultaneously live or re-entrant outer
+  Reference records plus primitive-base, raw-name, super-receiver, and
+  with-object boxes. Object
   property bases now store their `GcIdx` directly. Other scopes include final
   non-index/shared-String key creation, integer names above `4294967294`, every
   numeric key on 32-bit targets, Proxy trap descriptor

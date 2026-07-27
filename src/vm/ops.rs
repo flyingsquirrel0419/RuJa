@@ -206,7 +206,7 @@ impl Vm {
                         continue;
                     }
                 }
-                self.stack.truncate(stack_base);
+                self.truncate_stack_recycling_references(stack_base);
                 self.frames.pop();
                 if self.frames.is_empty() {
                     return Ok(ret);
@@ -239,7 +239,7 @@ impl Vm {
                     } else {
                         Value::Undefined
                     };
-                    self.stack.truncate(stack_base);
+                    self.truncate_stack_recycling_references(stack_base);
                     return Ok(v);
                 }
                 Op::ToString => {
@@ -977,8 +977,10 @@ impl Vm {
                             crate::value::PropertyKey::from(name.as_str()),
                             strict,
                         )?;
-                        let r#ref = Value::Reference(Box::new(r#ref));
-                        self.put_value(&r#ref, value)?;
+                        let r#ref = self.make_reference_value(r#ref);
+                        let result = self.put_value(&r#ref, value);
+                        self.recycle_reference_value(r#ref);
+                        result?;
                     }
                     self.stack.push(Value::Undefined);
                 }
@@ -998,7 +1000,8 @@ impl Vm {
                     };
                     let strict = self.current_strict();
                     let r#ref = self.resolve_identifier_reference(name, strict)?;
-                    self.stack.push(Value::Reference(Box::new(r#ref)));
+                    let r#ref = self.make_reference_value(r#ref);
+                    self.stack.push(r#ref);
                 }
                 Op::MakePropertyRef => {
                     let key = self.stack.pop().unwrap_or(Value::Undefined);
@@ -1014,38 +1017,38 @@ impl Vm {
                     self.unpin_many(pin_count);
                     let name = name_result?;
                     let strict = self.current_strict();
-                    self.stack
-                        .push(Value::Reference(Box::new(crate::value::ReferenceRecord {
-                            base: crate::value::ReferenceBase::from_value(base),
-                            name: name.into(),
-                            strict,
-                            this_value: None,
-                        })));
+                    let reference = self.make_reference_value(crate::value::ReferenceRecord {
+                        base: crate::value::ReferenceBase::from_value(base),
+                        name: name.into(),
+                        strict,
+                        this_value: None,
+                    });
+                    self.stack.push(reference);
                 }
                 Op::MakeRawPropertyRef => {
                     let key = self.stack.pop().unwrap_or(Value::Undefined);
                     let base = self.stack.pop().unwrap_or(Value::Undefined);
                     let strict = self.current_strict();
-                    self.stack
-                        .push(Value::Reference(Box::new(crate::value::ReferenceRecord {
-                            base: crate::value::ReferenceBase::from_value(base),
-                            name: crate::value::ReferencedName::UncoercedProperty(Box::new(key)),
-                            strict,
-                            this_value: None,
-                        })));
+                    let reference = self.make_reference_value(crate::value::ReferenceRecord {
+                        base: crate::value::ReferenceBase::from_value(base),
+                        name: crate::value::ReferencedName::UncoercedProperty(Box::new(key)),
+                        strict,
+                        this_value: None,
+                    });
+                    self.stack.push(reference);
                 }
                 Op::MakeSuperPropertyRef => {
                     let key = self.stack.pop().unwrap_or(Value::Undefined);
                     let base = self.stack.pop().unwrap_or(Value::Undefined);
                     let this_value = self.stack.pop().unwrap_or(Value::Undefined);
                     let strict = self.current_strict();
-                    self.stack
-                        .push(Value::Reference(Box::new(crate::value::ReferenceRecord {
-                            base: crate::value::ReferenceBase::from_value(base),
-                            name: crate::value::ReferencedName::UncoercedProperty(Box::new(key)),
-                            strict,
-                            this_value: Some(Box::new(this_value)),
-                        })));
+                    let reference = self.make_reference_value(crate::value::ReferenceRecord {
+                        base: crate::value::ReferenceBase::from_value(base),
+                        name: crate::value::ReferencedName::UncoercedProperty(Box::new(key)),
+                        strict,
+                        this_value: Some(Box::new(this_value)),
+                    });
+                    self.stack.push(reference);
                 }
                 Op::ResolvePropertyRef => {
                     let reference = self.stack.pop().unwrap_or(Value::Undefined);
@@ -1054,13 +1057,20 @@ impl Vm {
                     };
                     if matches!(&record.base, crate::value::ReferenceBase::Value(base) if base.is_nullish())
                     {
+                        self.recycle_reference_value(Value::Reference(record));
                         return Err(Error::type_err("Cannot access null super base"));
                     }
                     if let crate::value::ReferencedName::UncoercedProperty(name) = &record.name {
                         let pin_count = self.pin_reference(&record);
                         let name_result = self.coerce_property_key_record(name);
                         self.unpin_many(pin_count);
-                        record.name = name_result?.into();
+                        match name_result {
+                            Ok(name) => record.name = name.into(),
+                            Err(error) => {
+                                self.recycle_reference_value(Value::Reference(record));
+                                return Err(error);
+                            }
+                        }
                     }
                     self.stack.push(Value::Reference(record));
                 }
@@ -1075,17 +1085,19 @@ impl Vm {
                     };
                     let base = self.stack.pop().unwrap_or(Value::Undefined);
                     let strict = self.current_strict();
-                    self.stack
-                        .push(Value::Reference(Box::new(crate::value::ReferenceRecord {
-                            base: crate::value::ReferenceBase::from_value(base),
-                            name: crate::value::ReferencedName::Private(name),
-                            strict,
-                            this_value: None,
-                        })));
+                    let reference = self.make_reference_value(crate::value::ReferenceRecord {
+                        base: crate::value::ReferenceBase::from_value(base),
+                        name: crate::value::ReferencedName::Private(name),
+                        strict,
+                        this_value: None,
+                    });
+                    self.stack.push(reference);
                 }
                 Op::GetValue => {
                     let v = self.stack.pop().unwrap_or(Value::Undefined);
-                    let resolved = self.get_value(&v)?;
+                    let resolved = self.get_value(&v);
+                    self.recycle_reference_value(v);
+                    let resolved = resolved?;
                     self.stack.push(resolved);
                 }
                 Op::GetValueKeepReference => self.op_get_value_keep_reference()?,
@@ -1093,7 +1105,9 @@ impl Vm {
                     // Stack: [value, ref] (ref on top). Pop ref, then value.
                     let r#ref = self.stack.pop().unwrap_or(Value::Undefined);
                     let value = self.stack.pop().unwrap_or(Value::Undefined);
-                    self.put_value(&r#ref, value.clone())?;
+                    let result = self.put_value(&r#ref, value.clone());
+                    self.recycle_reference_value(r#ref);
+                    result?;
                     // Push the stored value back as the expression result.
                     self.stack.push(value);
                 }
@@ -1112,7 +1126,8 @@ impl Vm {
                 Op::Pop => {
                     let stack_base = self.current_frame()?.stack_base;
                     if self.stack.len() > stack_base {
-                        self.stack.pop();
+                        let value = self.stack.pop().expect("stack length checked before pop");
+                        self.recycle_reference_value(value);
                     }
                 }
                 Op::PushScope => {
@@ -1428,7 +1443,7 @@ impl Vm {
                             continue;
                         }
                     }
-                    self.stack.truncate(stack_base);
+                    self.truncate_stack_recycling_references(stack_base);
                     self.frames.pop();
                     if self.frames.is_empty() {
                         return Ok(v);
@@ -1442,7 +1457,7 @@ impl Vm {
                 }
                 Op::ReturnUndefined => {
                     let stack_base = self.current_frame()?.stack_base;
-                    self.stack.truncate(stack_base);
+                    self.truncate_stack_recycling_references(stack_base);
                     self.frames.pop();
                     if self.frames.is_empty() {
                         return Ok(Value::Undefined);
@@ -1766,7 +1781,9 @@ impl Vm {
                 }
                 Op::DeleteValue => {
                     let reference = self.stack.pop().unwrap_or(Value::Undefined);
-                    let deleted = self.delete_value(&reference)?;
+                    let deleted = self.delete_value(&reference);
+                    self.recycle_reference_value(reference);
+                    let deleted = deleted?;
                     self.stack.push(Value::Bool(deleted));
                 }
                 Op::ValidateExtends => {
@@ -1911,7 +1928,7 @@ impl Vm {
                         }
                     }
                     if let Some(stack_target) = catch_stack_target {
-                        self.stack.truncate(stack_target);
+                        self.truncate_stack_recycling_references(stack_target);
                         self.stack.push(v);
                         continue;
                     }
@@ -2143,7 +2160,7 @@ impl Vm {
                                 }
                             };
                             if let Some(stack_target) = catch_stack_target {
-                                self.stack.truncate(stack_target);
+                                self.truncate_stack_recycling_references(stack_target);
                                 self.stack.push(val);
                                 continue;
                             }
@@ -2547,7 +2564,10 @@ impl Vm {
                     let val = if matches!(r#ref.base, crate::value::ReferenceBase::Unresolvable) {
                         None
                     } else {
-                        Some(self.get_value(&Value::Reference(Box::new(r#ref)))?)
+                        let r#ref = self.make_reference_value(r#ref);
+                        let result = self.get_value(&r#ref);
+                        self.recycle_reference_value(r#ref);
+                        Some(result?)
                     };
                     let t = if let Some(v) = val {
                         if let Value::Object(idx) = &v {
@@ -3043,6 +3063,7 @@ impl Vm {
         let callee = self.stack.pop().unwrap_or(Value::Undefined);
         let r#ref = self.stack.pop().unwrap_or(Value::Undefined);
         let this = self.this_value_from_reference(&r#ref);
+        self.recycle_reference_value(r#ref);
         let result = self.call_function(&callee, &args, Some(this))?;
         self.stack.push(result);
         Ok(())
@@ -3159,11 +3180,17 @@ impl Vm {
         let callee = self.stack.pop().unwrap_or(Value::Undefined);
         let r#ref = self.stack.pop().unwrap_or(Value::Undefined);
         let caller_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
-        let result = if self.is_current_realm_eval(&callee, caller_env) {
+        let is_direct_eval = self.is_current_realm_eval(&callee, caller_env);
+        let this = (!is_direct_eval).then(|| self.this_value_from_reference(&r#ref));
+        self.recycle_reference_value(r#ref);
+        let result = if is_direct_eval {
             self.call_direct_eval_from_args(&args, in_class_field_initializer)?
         } else {
-            let this = self.this_value_from_reference(&r#ref);
-            self.call_function(&callee, &args, Some(this))?
+            self.call_function(
+                &callee,
+                &args,
+                Some(this.expect("non-direct eval Reference has a receiver")),
+            )?
         };
         self.stack.push(result);
         Ok(())
@@ -3220,6 +3247,7 @@ impl Vm {
             });
         }
         let this = self.this_value_from_reference(&r#ref);
+        self.recycle_reference_value(r#ref);
         let result = self.call_function(&callee, &args, Some(this))?;
         self.stack.push(result);
         Ok(())
@@ -3272,11 +3300,17 @@ impl Vm {
             });
         }
         let caller_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
-        let result = if self.is_current_realm_eval(&callee, caller_env) {
+        let is_direct_eval = self.is_current_realm_eval(&callee, caller_env);
+        let this = (!is_direct_eval).then(|| self.this_value_from_reference(&r#ref));
+        self.recycle_reference_value(r#ref);
+        let result = if is_direct_eval {
             self.call_direct_eval_from_args(&args, in_class_field_initializer)?
         } else {
-            let this = self.this_value_from_reference(&r#ref);
-            self.call_function(&callee, &args, Some(this))?
+            self.call_function(
+                &callee,
+                &args,
+                Some(this.expect("non-direct eval Reference has a receiver")),
+            )?
         };
         self.stack.push(result);
         Ok(())

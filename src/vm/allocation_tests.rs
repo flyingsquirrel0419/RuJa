@@ -8,13 +8,333 @@ use super::{
     ProxyOwnKeysReservationSite, Vm,
 };
 use crate::value::{
-    ArrayData, FunctionData, FunctionKind, HeapObj, NativeConstructMode, PromiseStatus,
+    ArrayData, FunctionData, FunctionKind, GcIdx, HeapObj, NativeConstructMode, PromiseStatus,
     PropertyDescriptor, PropertyKey, ReferenceBase, ReferenceRecord, ReferencedName,
 };
 use crate::Value;
 use indexmap::{IndexMap, IndexSet};
 use std::fs;
 use std::sync::Arc;
+
+fn cache_test_reference(base: ReferenceBase) -> ReferenceRecord {
+    ReferenceRecord {
+        base,
+        name: ReferencedName::Property(PropertyKey::symbol(u32::MAX)),
+        strict: false,
+        this_value: None,
+    }
+}
+
+#[test]
+fn reference_box_cache_reuses_one_rootless_allocation() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.reset_reference_box_cache_metrics();
+    let hidden_roots = [
+        GcIdx(usize::MAX - 17),
+        GcIdx(usize::MAX - 18),
+        GcIdx(usize::MAX - 19),
+        GcIdx(usize::MAX - 20),
+    ];
+    let nested = Value::Reference(Box::new(ReferenceRecord {
+        base: ReferenceBase::Environment(hidden_roots[0]),
+        name: ReferencedName::Property(PropertyKey::from("nested")),
+        strict: true,
+        this_value: None,
+    }));
+
+    let first = vm.make_reference_value(ReferenceRecord {
+        base: ReferenceBase::ObjectEnvironment(Box::new(nested)),
+        name: ReferencedName::UncoercedProperty(Box::new(Value::Object(hidden_roots[1]))),
+        strict: true,
+        this_value: Some(Box::new(Value::Reference(Box::new(ReferenceRecord {
+            base: ReferenceBase::Value(Box::new(Value::Object(hidden_roots[2]))),
+            name: ReferencedName::Property(PropertyKey::from("this")),
+            strict: false,
+            this_value: Some(Box::new(Value::Object(hidden_roots[3]))),
+        })))),
+    });
+    let Value::Reference(first) = first else {
+        panic!("factory must return a Reference");
+    };
+    let first_address = std::ptr::from_ref(first.as_ref());
+    vm.recycle_reference_value(Value::Reference(first));
+    assert_eq!(vm.reference_box_cache_metrics(), (1, 0, 0, true));
+    assert_eq!(vm.reference_box_cache_root_count(), 0);
+    let roots = vm.collect_roots();
+    assert!(hidden_roots.iter().all(|root| !roots.contains(&root.0)));
+
+    let second = vm.make_reference_value(cache_test_reference(ReferenceBase::Unresolvable));
+    let Value::Reference(second) = second else {
+        panic!("factory must return a Reference");
+    };
+    assert_eq!(std::ptr::from_ref(second.as_ref()), first_address);
+    assert_eq!(vm.reference_box_cache_metrics(), (1, 1, 0, false));
+    vm.recycle_reference_value(Value::Reference(second));
+    assert_eq!(vm.reference_box_cache_metrics(), (1, 1, 0, true));
+    assert_eq!(vm.reference_box_cache_root_count(), 0);
+}
+
+#[test]
+fn reference_box_cache_handles_sequential_and_reentrant_records() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        var cacheSequential = { value: 0 };
+        var cacheInner = { value: 0 };
+        var cacheOuter = {
+            get value() { cacheInner.value += 1; return 1; },
+            set value(next) {}
+        };
+        "#,
+    )
+    .expect("failed to install Reference cache fixtures");
+
+    vm.reset_reference_box_cache_metrics();
+    assert_eq!(
+        vm.run(
+            "cacheSequential.value += 1; \
+             cacheSequential.value += 1; \
+             cacheSequential.value"
+        )
+        .expect("sequential References should complete"),
+        Value::Number(2.0)
+    );
+    assert_eq!(vm.reference_box_cache_metrics(), (1, 5, 0, true));
+    assert_eq!(vm.reference_box_cache_root_count(), 0);
+
+    vm.reset_reference_box_cache_metrics();
+    assert_eq!(
+        vm.run("cacheOuter.value += 1; cacheInner.value")
+            .expect("reentrant References should complete"),
+        Value::Number(1.0)
+    );
+    assert_eq!(vm.reference_box_cache_metrics(), (2, 4, 1, true));
+    assert_eq!(vm.reference_box_cache_root_count(), 0);
+}
+
+#[test]
+fn reference_box_cache_recycles_terminal_errors_and_stack_unwind() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        var cacheThrowingGet = { get value() { throw new Error("get"); } };
+        var cacheThrowingSet = { set value(next) { throw new Error("set"); } };
+        var cacheThrowingDelete = new Proxy({}, {
+            deleteProperty: function() { throw new Error("delete"); }
+        });
+        function cacheThrowingCall() { throw new Error("call"); }
+        var cacheCallTarget = { method: function(value) { return value; } };
+        function cacheArgumentThrow() { throw new Error("argument"); }
+        "#,
+    )
+    .expect("failed to install Reference error fixtures");
+
+    for (source, expected_allocations) in [
+        ("try { cacheThrowingGet.value; } catch (error) {}", 2),
+        ("try { cacheThrowingSet.value = 1; } catch (error) {}", 2),
+        (
+            "try { delete cacheThrowingDelete.value; } catch (error) {}",
+            2,
+        ),
+        ("try { cacheThrowingCall(); } catch (error) {}", 1),
+    ] {
+        vm.reset_reference_box_cache_metrics();
+        vm.run(source).expect("Reference error should be catchable");
+        let (allocations, _, _, cached) = vm.reference_box_cache_metrics();
+        assert_eq!(allocations, expected_allocations, "{source}");
+        assert!(cached, "{source}");
+        assert_eq!(vm.reference_box_cache_root_count(), 0, "{source}");
+    }
+
+    vm.reset_reference_box_cache_metrics();
+    vm.run("try { cacheCallTarget.method(cacheArgumentThrow()); } catch (error) {}")
+        .expect("argument failure should unwind the retained Reference");
+    assert_eq!(vm.reference_box_cache_metrics(), (2, 2, 1, true));
+    assert_eq!(vm.reference_box_cache_root_count(), 0);
+}
+
+#[test]
+fn reference_box_cache_cleans_uncaught_and_async_abrupt_stacks() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        var cacheUncaughtTarget = { get value() { throw 1; } };
+        var cacheAsyncTarget = { get value() { throw 2; } };
+        async function cacheAsyncFailure() { cacheAsyncTarget.value += 1; }
+        "#,
+    )
+    .expect("failed to install abrupt Reference fixtures");
+    let stack_base = vm.stack.len();
+
+    vm.reset_reference_box_cache_metrics();
+    let error = vm
+        .run("cacheUncaughtTarget.value += 1")
+        .expect_err("uncaught getter failure must escape");
+    assert_eq!(error.thrown_value, Some(Value::Number(1.0)));
+    assert_eq!(vm.stack.len(), stack_base);
+    assert!(vm.reference_box_cache_metrics().3);
+    assert_eq!(vm.reference_box_cache_root_count(), 0);
+
+    vm.reset_reference_box_cache_metrics();
+    let promise = vm
+        .run("cacheAsyncFailure()")
+        .expect("async failure must return a rejected Promise");
+    let (status, reason) = promise_state_and_result(&vm, promise);
+    assert!(status == PromiseStatus::Rejected);
+    assert_eq!(reason, Value::Number(2.0));
+    assert_eq!(vm.stack.len(), stack_base);
+    assert!(vm.reference_box_cache_metrics().3);
+    assert_eq!(vm.reference_box_cache_root_count(), 0);
+    assert_eq!(
+        vm.run("40 + 2")
+            .expect("VM must remain reusable after failures"),
+        Value::Number(42.0)
+    );
+
+    vm.run(
+        r#"
+            var cacheAsyncRealmGlobal = $262.createRealm().global;
+            var cacheAsyncRealmFunction = cacheAsyncRealmGlobal.eval(
+                "(async function () { null.missing; })"
+            );
+            cacheAsyncRealmFunction().catch(function (error) {
+                globalThis.cacheAsyncRealmReason = error;
+            });
+            "#,
+    )
+    .expect("cross-Realm async failure must schedule rejection");
+    assert_eq!(
+        vm.run("cacheAsyncRealmReason instanceof cacheAsyncRealmGlobal.TypeError")
+            .expect("async rejection must use the function Realm"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn reference_box_cache_moves_generator_stack_and_recycles_on_completion() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    let iterator = vm
+        .run(
+            r#"
+            var cacheGeneratorTarget = { value: 0 };
+            function* cacheGenerator() {
+                cacheGeneratorTarget.value += yield 1;
+            }
+            cacheGenerator();
+            "#,
+        )
+        .expect("failed to create generator fixture");
+
+    vm.reset_reference_box_cache_metrics();
+    let first = call_iterator_next_result(&mut vm, &iterator)
+        .expect("generator must suspend with retained Reference");
+    assert_eq!(
+        vm.get_property(&first, "value").unwrap(),
+        Value::Number(1.0)
+    );
+    let (allocations, reuses, discards, cached) = vm.reference_box_cache_metrics();
+    assert_eq!(allocations, 1);
+    assert!(reuses > 0);
+    assert_eq!(discards, 0);
+    assert!(!cached);
+
+    let next = vm.get_property(&iterator, "next").unwrap();
+    let second = vm
+        .call_function(&next, &[Value::Number(2.0)], Some(iterator.clone()))
+        .expect("generator must complete after retained PutValue");
+    assert_eq!(vm.get_property(&second, "done").unwrap(), Value::Bool(true));
+    assert_eq!(
+        vm.reference_box_cache_metrics(),
+        (allocations, reuses, discards, true)
+    );
+    assert_eq!(vm.reference_box_cache_root_count(), 0);
+    assert_eq!(
+        vm.get_property(&vm.get_global("cacheGeneratorTarget"), "value")
+            .unwrap(),
+        Value::Number(2.0)
+    );
+
+    let Value::Object(generator) = iterator else {
+        panic!("generator fixture must be an object");
+    };
+    vm.heap.with_obj(generator.0, |object| {
+        let HeapObj::LazyGenerator(data) = object else {
+            panic!("generator fixture must use LazyGenerator storage");
+        };
+        assert!(data.stack.lock().is_empty());
+    });
+}
+
+#[test]
+fn reference_box_cache_recycles_resumed_async_and_generator_error_stacks() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        var cacheAwaitTarget = { value: 0 };
+        var cacheAwaitResolve;
+        var cacheAwaitGate = new Promise(function (resolve) {
+            cacheAwaitResolve = resolve;
+        });
+        async function cacheAwaitFunction() {
+            cacheAwaitTarget.value += await cacheAwaitGate;
+        }
+
+        var cacheErrorTarget = { value: 0 };
+        var cacheErrorOperand = { valueOf() { throw 9; } };
+        function* cacheErrorGenerator() {
+            cacheErrorTarget.value += yield 1;
+        }
+        var cacheErrorIterator = cacheErrorGenerator();
+        "#,
+    )
+    .expect("failed to install suspended Reference fixtures");
+
+    vm.reset_reference_box_cache_metrics();
+    let async_function = vm.get_global("cacheAwaitFunction");
+    let promise = vm
+        .call_function(&async_function, &[], Some(Value::Undefined))
+        .expect("async function must suspend at await");
+    assert!(promise_state_and_result(&vm, promise.clone()).0 == PromiseStatus::Pending);
+    assert_eq!(vm.reference_box_cache_root_count(), 0);
+
+    let resolve = vm.get_global("cacheAwaitResolve");
+    vm.call_function(&resolve, &[Value::Number(2.0)], Some(Value::Undefined))
+        .expect("await gate must resolve");
+    vm.run_microtasks()
+        .expect("async continuation must complete");
+    assert!(promise_state_and_result(&vm, promise).0 == PromiseStatus::Fulfilled);
+    assert_eq!(
+        vm.get_property(&vm.get_global("cacheAwaitTarget"), "value")
+            .unwrap(),
+        Value::Number(2.0)
+    );
+    assert!(vm.reference_box_cache_metrics().3);
+    assert_eq!(vm.reference_box_cache_root_count(), 0);
+
+    vm.reset_reference_box_cache_metrics();
+    let iterator = vm.get_global("cacheErrorIterator");
+    call_iterator_next_result(&mut vm, &iterator)
+        .expect("generator must suspend with retained Reference");
+    let next = vm.get_property(&iterator, "next").unwrap();
+    let operand = vm.get_global("cacheErrorOperand");
+    let error = vm
+        .call_function(&next, &[operand], Some(iterator.clone()))
+        .expect_err("resumed coercion error must escape generator");
+    assert_eq!(error.thrown_value, Some(Value::Number(9.0)));
+    assert!(vm.reference_box_cache_metrics().3);
+    assert_eq!(vm.reference_box_cache_root_count(), 0);
+
+    let Value::Object(generator) = iterator else {
+        panic!("generator fixture must be an object");
+    };
+    vm.heap.with_obj(generator.0, |object| {
+        let HeapObj::LazyGenerator(data) = object else {
+            panic!("generator fixture must use LazyGenerator storage");
+        };
+        assert!(data.stack.lock().is_empty());
+        assert!(data.done.load(std::sync::atomic::Ordering::Relaxed));
+    });
+}
 
 #[test]
 fn reference_root_visitor_count_and_pin_share_one_complete_walk() {
@@ -18383,7 +18703,7 @@ fn promise_and_async_fuel_aborts_restore_gc_pin_depth() {
         assert_eq!(vm.gc_pins.len(), pin_depth, "pin leak after {source}");
         assert_eq!(
             vm.frames.len(),
-            frame_depth + 1,
+            frame_depth,
             "async frame leak after {source}"
         );
         vm.set_fuel(None);
@@ -18423,7 +18743,7 @@ fn async_await_fuel_aborts_restore_suspended_frame_and_stack() {
         assert_eq!(vm.gc_pins.len(), pin_depth, "pin leak after {source}");
         assert_eq!(
             vm.frames.len(),
-            frame_depth + 1,
+            frame_depth,
             "suspended frame leak after {source}"
         );
         assert_eq!(vm.stack.len(), stack_depth, "stack leak after {source}");

@@ -11440,6 +11440,34 @@ pass / 5110 fail / 11455 skip / 3 timeout / 0 error** over **48469** total and
 - 장점, 단점 및 영향: The 15,650-file comparison is exact with no admission change, while deterministic Rust tests prove the unobservable allocation boundary. The unit adds no Test262 support and makes no conformance-rate claim.
 ```
 
+## VM-local outer Reference box reuse
+
+This allocation-lifetime unit changes no Test262 admission. Current and
+preceding release binaries run pinned `language/expressions`,
+`language/statements/class`, and `language/statements/with` with byte-identical
+complete output: **10290 pass / 0 fail / 5360 skip / 0 timeout / 0 error /
+15650 total / 10290 run**. Both logs have SHA-256
+`9334343e68ac0571407ea9886c67643fb0c5ec7512696dd74afca5ef506172e5`.
+
+The current release also reruns complete pinned `language/expressions` and
+`language/statements` at **12761 pass / 0 fail / 7678 skip / 0 timeout / 0
+error / 20439 total / 12761 run**. Its complete output has SHA-256
+`0552a3a77bc3cc4fc8aa7754eb9e132b40da0a9095a96107eefdae0e011fb986`.
+Direct Rust tests provide exact pointer reuse, complete root-bearing record
+replacement, zero cached roots, re-entry overflow, terminal and catch unwind,
+uncaught top-level cleanup, async rejection and resumed-await cleanup, and
+generator stack move plus completion/error recycling.
+
+```text
+[Decision Log]
+- 목적과 의도: Prove that outer Reference box reuse changes native allocation lifetime only and preserves the complete affected JavaScript behavior across normal, abrupt, re-entrant, async, and generator execution.
+- 기존 구현 및 제약 조건: Test262 cannot observe Rust Box identity, a passing aggregate can hide offsetting files, retained References cross user code and suspension, and admission changes would confound allocation evidence with support-policy movement.
+- 검토한 주요 대안: Rely only on counters, run only compound assignment, compare aggregate totals, widen admission, omit the preceding binary, or infer async/generator ownership from synchronous tests.
+- 선택한 방식: Keep admission fixed; add deterministic cache/root/stack lifecycle tests; compare complete expressions/class/with output byte-for-byte against the preceding release; and rerun the entire supported language subset with the final current binary.
+- 다른 대안 대신 이 방식을 선택한 이유: Internal counters prove allocation but not semantics; one expression family misses calls, eval, private/super, with, async, and generators; totals are weaker than exact logs; one binary cannot isolate the patch; and support-policy changes would obscure regressions.
+- 장점, 단점 및 영향: The unit has exact 15,650-file A/B identity and a green 20,439-file supported subset plus deterministic ownership coverage. It adds no conformance admission and makes no supported-rate claim. Post-push full-matrix artifact identity remains separate CI evidence.
+```
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is

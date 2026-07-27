@@ -4,6 +4,26 @@
 
 ### Changed
 
+- The VM now retains one rootless vacant `Box<ReferenceRecord>` and reuses it
+  for sequential identifier, property, super, and private References. Every
+  checkout happens before observable re-entry; terminal get, put, delete,
+  call, eval, `typeof`, stack-pop, and unwind paths return the allocation.
+  Concurrent re-entry allocates independently and drops the overflow record
+  when the one-entry cache is already occupied.
+
+  The vacant sentinel replaces the complete record and has no GC roots, so it
+  is intentionally absent from root enumeration. Top-level and async abrupt
+  completion now restore their incoming frame/stack depths, and generator
+  operand stacks move instead of cloning retained Reference boxes. Direct
+  tests cover sequential reuse, re-entry, every root-bearing field, errors,
+  async rejection/resumption, and generator suspension/completion/error.
+  Pinned current and preceding Test262 output is byte-identical over **15,650**
+  affected files at **10290 pass / 0 fail / 5360 skip**; the supported language
+  subset remains **12761 / 0 / 7678**. Forced-rebuild Criterion smoke samples
+  place numeric computed References at 94.802-96.313 ms current versus 98.159
+  ms preceding, and the string control at 95.122-99.862 ms versus 96.140 ms;
+  Criterion reports no significant change.
+
 - Object-backed property, raw, super, and private References now store their
   `GcIdx` directly in `ReferenceBase`. Their outer `ReferenceRecord` is the
   only base-related Box; primitive bases retain boxed `Value` storage. `Value`,

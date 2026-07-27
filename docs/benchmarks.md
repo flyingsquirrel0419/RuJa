@@ -173,6 +173,18 @@ versus **93.394 ms**. Criterion reported no significant change. The evidence
 is therefore the deterministic constructor/ABI assertions and removed Box,
 not a throughput claim.
 
+The VM-local outer-box cache reuses one `Box<ReferenceRecord>` across
+sequential operations. Two final-source `--quick` samples measured numeric
+computed References at **94.802-96.313 ms** versus **98.159 ms** on the
+preceding source. String control measured **95.122-99.862 ms** versus **96.140
+ms**. The repeated current run reported no significant change for either
+fixture. Treat these mixed shared-host results only as no-regression smoke
+evidence. Deterministic proof comes from one allocation followed by reuse in
+direct counters, rootless cache state, bounded re-entry overflow, and exact
+Test262 A/B output. Normal frame cleanup scans the existing tail only when the
+cache slot is empty, takes at most one Reference in place, and truncates without
+allocating a second buffer or adding a per-value pop loop.
+
 ## Non-index Number PropertyKey checks
 
 `non_index_numeric_property_key_30k` performs 30,000 `in` conversions using

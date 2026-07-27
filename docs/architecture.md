@@ -2435,7 +2435,44 @@ boxed, and the object index to appear once in the shared root visitor.
 - 검토한 주요 대안: Keep all allocations, add a VM-local one-entry outer-box cache, split Value into specialized identifier/property Reference handles, place all Reference fields inline, convert records to Arc, or add one direct object-base enum variant.
 - 선택한 방식: Store object property bases directly as GcIdx, retain boxed Value for non-object bases and ObjectEnvironment for with resolution, share get/put helpers across both property-base forms, and extend the single root visitor plus retained-root reservation to the new variant.
 - 다른 대안 대신 이 방식을 선택한 이유: An outer cache adds lifecycle and sentinel state while leaving inner boxes; split handles change every consumer API; blanket inlining grows common identifier records from 64 to about 120 bytes on x86_64; Arc retains allocation and adds atomic traffic. The direct variant removes one allocation across resolved, raw, super, and private object References with unchanged top-level ABI.
-- 장점, 단점 및 영향: Object-backed References lose one host allocation and one deallocation each, all target-width layout assertions hold, and 15,650 pinned Test262 files are byte-identical. Primitive bases, raw names, super receivers, with-object bases, and the outer Reference record still allocate where their recursive or semantic boundary requires it. A one-entry outer-record cache remains an independent follow-up.
+- 장점, 단점 및 영향: Object-backed References lose one host allocation and one deallocation each, all target-width layout assertions hold, and 15,650 pinned Test262 files are byte-identical. Primitive bases, raw names, super receivers, and with-object bases still allocate where their recursive or semantic boundary requires it. Cold and simultaneously live outer Reference records remain separate from this representation change and are addressed by the following VM-local cache unit.
+```
+
+## VM-local outer Reference box reuse
+
+Each `Vm` owns one optional vacant `Box<ReferenceRecord>`. Creating a
+Reference takes that allocation before the record can participate in key
+coercion, getters, Proxy traps, calls, eval, or any other observable re-entry.
+Recycling replaces the complete record with an unresolvable Symbol-name
+sentinel whose root visitor is empty. The cache is therefore omitted from GC
+root enumeration; no stale base, raw name, receiver, Realm, or private name can
+survive through it.
+
+Terminal `GetValue`, `PutValue`, delete, call/eval, immediate environment
+store, `typeof`, explicit pop, catch/frame unwind, and isolated async/generator
+stack disposal return boxes. `GetValueKeepReference` and successful raw-name
+resolution keep ownership because later bytecode still needs the same record.
+Generator suspension moves its operand stack into the generator object and
+moves it back on resume instead of cloning recursive boxes. Completion and
+error recycle discarded generator values. Top-level and async execution
+restore their incoming frame and stack depths on every exit.
+
+Observable re-entry is safe without a global pool or `unsafe`: a checked-out
+record is absent from the cache, so nested execution either consumes an older
+vacant box or allocates another. When nested execution fills the one slot, the
+outer record is dropped on return. Bulk stack cleanup scans the discarded tail
+only while the slot is vacant, removes its last Reference in place, and then
+truncates the original Vec. It preserves LIFO preference without allocating a
+second buffer or looping over every discarded value.
+
+```text
+[Decision Log]
+- 목적과 의도: Reuse the remaining outer Reference allocation across sequential bytecode operations while preserving exclusive ownership, GC liveness, re-entry, abrupt completion, and generator suspension semantics.
+- 기존 구현 및 제약 조건: Every VM-created Reference allocated a fresh outer Box. Records may contain environment/object roots, boxed primitive bases, raw keys, explicit super receivers, or nested internal References; retained reads cross observable calls; generator and async execution temporarily own isolated operand stacks.
+- 검토한 주요 대안: Keep allocating, use a global or thread-local pool, convert the public payload to Arc, inline records into Value, cache rooted records, add a multi-entry allocator, or retain one VM-local rootless allocation.
+- 선택한 방식: Add one private VM-local vacant box; overwrite the whole record with a rootless sentinel before storage; check it out before re-entry; return terminal and discarded records explicitly; move suspended generator stacks; and restore top-level/async stacks through recycling cleanup.
+- 다른 대안 대신 이 방식을 선택한 이유: Global pools cross VM and Realm lifetimes; Arc retains allocation and adds atomic traffic; inlining enlarges every Value; rooted cache state complicates tracing and stale-lifetime proofs; multiple entries need a capacity policy. One rootless slot captures sequential locality and naturally bounds re-entrant retention.
+- 장점, 단점 및 영향: Sequential References reuse one allocation, nested execution remains ownership-safe, cached state contributes zero roots, and uncaught/async/generator cleanup is deterministic. Simultaneously live References still allocate; a full slot drops overflow; primitive bases, raw names, super receivers, and with-object payloads retain their required inner boxes; host allocation failure remains infallible.
 ```
 
 ---
