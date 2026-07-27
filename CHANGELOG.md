@@ -22,7 +22,9 @@
   subset remains **12761 / 0 / 7678**. Forced-rebuild Criterion smoke samples
   place numeric computed References at 94.802-96.313 ms current versus 98.159
   ms preceding, and the string control at 95.122-99.862 ms versus 96.140 ms;
-  Criterion reports no significant change.
+  Criterion reports no significant change. Commit `6caf259` passes ordinary
+  CI and all 34 full-matrix jobs. All 32 Test262 result artifacts are
+  byte-identical to the preceding run.
 
 - Object-backed property, raw, super, and private References now store their
   `GcIdx` directly in `ReferenceBase`. Their outer `ReferenceRecord` is the

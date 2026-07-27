@@ -11458,6 +11458,12 @@ replacement, zero cached roots, re-entry overflow, terminal and catch unwind,
 uncaught top-level cleanup, async rejection and resumed-await cleanup, and
 generator stack move plus completion/error recycling.
 
+Implementation commit `6caf259` passes ordinary CI run `30266752935` and all
+34 jobs in full run `30266753068`. Its 32 result artifacts are byte-identical
+to preceding run `30261135576`; aggregate results therefore remain **31901
+pass / 5110 fail / 11455 skip / 3 timeout / 0 error** over **48469** total and
+**37011** pass-or-fail executions.
+
 ```text
 [Decision Log]
 - 목적과 의도: Prove that outer Reference box reuse changes native allocation lifetime only and preserves the complete affected JavaScript behavior across normal, abrupt, re-entrant, async, and generator execution.
