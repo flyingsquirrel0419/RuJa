@@ -17,7 +17,8 @@
   Test262 output is byte-identical at **4789 pass / 0 fail / 194 skip / 4983
   total**. Sequential Criterion A/B places 30,000 `in` conversions at 65.796
   ms current versus 70.611 ms preceding, with string controls at 65.932 ms
-  versus 66.754 ms; no significant performance change was detected.
+  versus 66.754 ms; no significant performance change was detected. All 32
+  post-push full-matrix artifacts are byte-identical to the preceding run.
 
 - Ninety numeric property-name formatting sites across Array, TypedArray,
   Array iterators, call argument materialization, JSON, RegExp, Proxy own-key
