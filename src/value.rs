@@ -576,20 +576,23 @@ impl From<PropertyKey> for ReferencedName {
 
 /// The base of a Reference: either an environment record (for identifier
 /// references) or a value (Object, primitive wrapper, etc.) for property
-/// references. `Value` is boxed to break the recursive type size.
+/// references. Non-object `Value` bases are boxed to break the recursive type
+/// size.
 #[derive(Clone, Debug)]
 pub enum ReferenceBase {
     /// No binding/property was found when the reference was created.
     Unresolvable,
     /// An environment record (heap index of an `EnvironmentData`).
     Environment(GcIdx),
-    /// A property reached through an object environment record (`with` or
-    /// global object identifier resolution), not a normal member expression.
-    ObjectEnvironment(Box<Value>),
+    /// A property reached through a `with` object environment record, not a
+    /// normal member expression. `with` applies ToObject before creating the
+    /// environment, so the binding object can be stored directly.
+    ObjectEnvironment(GcIdx),
     /// An object property base stored directly by heap index. Most property
     /// References use this form so their outer record is the only Box.
     Object(GcIdx),
-    /// A value base (Object, primitive wrapper, etc.) for property references.
+    /// A non-object value base (primitive, nullish, etc.) for property
+    /// references.
     Value(Box<Value>),
 }
 
@@ -621,7 +624,7 @@ mod reference_base_tests {
     use super::{GcIdx, PropertyKey, ReferenceBase, ReferenceRecord, ReferencedName, Value};
 
     #[test]
-    fn object_property_bases_avoid_nested_value_boxes() {
+    fn object_reference_bases_avoid_nested_value_boxes() {
         assert!(matches!(
             ReferenceBase::from_value(Value::Object(GcIdx(41))),
             ReferenceBase::Object(GcIdx(41))
@@ -640,6 +643,16 @@ mod reference_base_tests {
         let mut roots = Vec::new();
         record.visit_gc_roots(&mut |index| roots.push(index));
         assert_eq!(roots, [41]);
+
+        let record = ReferenceRecord {
+            base: ReferenceBase::ObjectEnvironment(GcIdx(42)),
+            name: ReferencedName::Property(PropertyKey::from("binding")),
+            strict: false,
+            this_value: None,
+        };
+        let mut roots = Vec::new();
+        record.visit_gc_roots(&mut |index| roots.push(index));
+        assert_eq!(roots, [42]);
     }
 }
 
@@ -661,10 +674,10 @@ impl ReferenceRecord {
         match &self.base {
             ReferenceBase::Unresolvable => {}
             ReferenceBase::Environment(environment) => visit(environment.0),
-            ReferenceBase::ObjectEnvironment(base) | ReferenceBase::Value(base) => {
-                base.visit_gc_roots(visit)
+            ReferenceBase::ObjectEnvironment(index) | ReferenceBase::Object(index) => {
+                visit(index.0)
             }
-            ReferenceBase::Object(index) => visit(index.0),
+            ReferenceBase::Value(base) => base.visit_gc_roots(visit),
         }
         if let Some(this_value) = &self.this_value {
             this_value.visit_gc_roots(visit);

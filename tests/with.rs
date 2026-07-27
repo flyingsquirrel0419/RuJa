@@ -177,6 +177,66 @@ fn with_proxy_compound_assignment_preserves_reference() {
 }
 
 #[test]
+fn with_proxy_reference_survives_gc_across_get_set_delete_and_call() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+
+    assert_eq!(
+        vm.run(
+            r#"
+            var target = {
+                x: 1,
+                method: function() { "use strict"; return this === proxy; }
+            };
+            var counts = { has: 0, get: 0, set: 0, delete: 0 };
+            var proxy = new Proxy(target, {
+                has: function(t, key) {
+                    forceGc();
+                    counts.has++;
+                    return Reflect.has(t, key);
+                },
+                get: function(t, key, receiver) {
+                    forceGc();
+                    counts.get++;
+                    return Reflect.get(t, key, receiver);
+                },
+                set: function(t, key, value, receiver) {
+                    forceGc();
+                    counts.set++;
+                    return Reflect.set(t, key, value, receiver);
+                },
+                deleteProperty: function(t, key) {
+                    forceGc();
+                    counts.delete++;
+                    return Reflect.deleteProperty(t, key);
+                }
+            });
+            var read, receiver, deleted;
+            with (proxy) {
+                read = x;
+                x += 2;
+                receiver = method();
+                deleted = delete x;
+            }
+            read === 1 && receiver && deleted && target.x === undefined &&
+                counts.has > 0 && counts.get > 0 && counts.set === 1 &&
+                counts.delete === 1;
+            "#,
+        )
+        .expect("object-environment Proxy operations should survive GC"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn strict_with_proxy_set_false_throws_for_assignment_forms() {
     let src = r#"
         var target = { x: 1 };
@@ -258,6 +318,22 @@ fn with_boxes_primitive_binding_object() {
         r;
     "#;
     assert_eq!(run(src), Value::Number(3.0));
+}
+
+#[test]
+fn with_boxes_primitive_in_the_execution_realm() {
+    let src = r#"
+        var other = $262.createRealm().global;
+        other.eval(`
+            String.prototype.realmMarker = "other";
+            (function() {
+                var result;
+                with ("abc") { result = realmMarker + ":" + length; }
+                return result;
+            })();
+        `);
+    "#;
+    assert_eq!(run(src), Value::String(Arc::from("other:3")));
 }
 
 #[test]
@@ -794,6 +870,20 @@ fn with_this_not_set_when_name_not_on_object() {
             r = g();
         }
         r;
+    "#;
+    assert_eq!(run(src), Value::Bool(true));
+}
+
+#[test]
+fn with_global_fallback_keeps_strict_unqualified_call_this_undefined() {
+    let src = r#"
+        function globalStrictReceiver() { "use strict"; return this; }
+        var o = {};
+        var result;
+        with (o) {
+            result = globalStrictReceiver() === undefined;
+        }
+        result;
     "#;
     assert_eq!(run(src), Value::Bool(true));
 }

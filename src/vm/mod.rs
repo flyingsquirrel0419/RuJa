@@ -3118,7 +3118,12 @@ impl Vm {
             if has_with {
                 if let Some(with_obj) = with_obj_val {
                     if self.with_object_has_binding(&with_obj, &name_str)? {
-                        base = crate::value::ReferenceBase::ObjectEnvironment(Box::new(with_obj));
+                        let Value::Object(index) = with_obj else {
+                            return Err(Error::internal(
+                                "object environment binding object is not an object",
+                            ));
+                        };
+                        base = crate::value::ReferenceBase::ObjectEnvironment(index);
                         break;
                     }
                 }
@@ -3405,25 +3410,31 @@ impl Vm {
                     crate::value::ReferenceBase::Value(base) => {
                         self.get_value_from_property_reference(v, r, base)
                     }
-                    crate::value::ReferenceBase::ObjectEnvironment(base) => match &r.name {
-                        crate::value::ReferencedName::Property(key) => {
-                            if let Some(id) = key.symbol_id() {
-                                return self.get_property(base, &format!("[Symbol {}]", id));
-                            }
-                            let s = key.as_str().expect("string property keys have text");
-                            if !self.has_property(base, &s)? {
-                                if r.strict {
-                                    return Err(Error::reference(format!("{} is not defined", s)));
+                    crate::value::ReferenceBase::ObjectEnvironment(index) => {
+                        let base = Value::Object(*index);
+                        match &r.name {
+                            crate::value::ReferencedName::Property(key) => {
+                                if let Some(id) = key.symbol_id() {
+                                    return self.get_property(&base, &format!("[Symbol {}]", id));
                                 }
-                                return Ok(Value::Undefined);
+                                let s = key.as_str().expect("string property keys have text");
+                                if !self.has_property(&base, &s)? {
+                                    if r.strict {
+                                        return Err(Error::reference(format!(
+                                            "{} is not defined",
+                                            s
+                                        )));
+                                    }
+                                    return Ok(Value::Undefined);
+                                }
+                                self.get_property(&base, &s)
                             }
-                            self.get_property(base, &s)
+                            crate::value::ReferencedName::UncoercedProperty(_)
+                            | crate::value::ReferencedName::Private(_) => Err(Error::internal(
+                                "invalid reference name for an object environment base",
+                            )),
                         }
-                        crate::value::ReferencedName::UncoercedProperty(_)
-                        | crate::value::ReferencedName::Private(_) => Err(Error::internal(
-                            "invalid reference name for an object environment base",
-                        )),
-                    },
+                    }
                 }
             }
             _ => Ok(v.clone()),
@@ -3563,7 +3574,8 @@ impl Vm {
                     .ok_or_else(|| Error::internal("invalid environment reference name"))?;
                 return self.delete_environment_reference(*env_idx, &name);
             }
-            crate::value::ReferenceBase::ObjectEnvironment(base) => {
+            crate::value::ReferenceBase::ObjectEnvironment(index) => {
+                let base = Value::Object(*index);
                 let key = match &reference.name {
                     crate::value::ReferencedName::Property(key) => key.clone(),
                     crate::value::ReferencedName::UncoercedProperty(_)
@@ -3572,7 +3584,7 @@ impl Vm {
                     }
                 };
                 let pin_count = self.pin(v);
-                let result = self.delete_property_key(base, &key);
+                let result = self.delete_property_key(&base, &key);
                 self.unpin_many(pin_count);
                 let deleted = result?;
                 if !deleted && reference.strict {
@@ -3919,30 +3931,33 @@ impl Vm {
                     crate::value::ReferenceBase::Value(base) => {
                         return self.put_property_reference_value(r, base, value);
                     }
-                    crate::value::ReferenceBase::ObjectEnvironment(base) => match &r.name {
-                        crate::value::ReferencedName::Property(key) => {
-                            if let Some(id) = key.symbol_id() {
-                                self.set_property_key(base, &Value::Symbol(id), value)?;
-                            } else {
-                                let s = key.as_str().expect("string property keys have text");
-                                if !self.has_property(base, &s)? {
-                                    if r.strict {
-                                        return Err(Error::reference(format!(
-                                            "{} is not defined",
-                                            s
-                                        )));
+                    crate::value::ReferenceBase::ObjectEnvironment(index) => {
+                        let base = Value::Object(*index);
+                        match &r.name {
+                            crate::value::ReferencedName::Property(key) => {
+                                if let Some(id) = key.symbol_id() {
+                                    self.set_property_key(&base, &Value::Symbol(id), value)?;
+                                } else {
+                                    let s = key.as_str().expect("string property keys have text");
+                                    if !self.has_property(&base, &s)? {
+                                        if r.strict {
+                                            return Err(Error::reference(format!(
+                                                "{} is not defined",
+                                                s
+                                            )));
+                                        }
                                     }
+                                    self.set_object_environment_property(&base, &s, value)?
                                 }
-                                self.set_object_environment_property(base, &s, value)?
+                            }
+                            crate::value::ReferencedName::UncoercedProperty(_)
+                            | crate::value::ReferencedName::Private(_) => {
+                                return Err(Error::internal(
+                                    "invalid reference name for an object environment base",
+                                ));
                             }
                         }
-                        crate::value::ReferencedName::UncoercedProperty(_)
-                        | crate::value::ReferencedName::Private(_) => {
-                            return Err(Error::internal(
-                                "invalid reference name for an object environment base",
-                            ));
-                        }
-                    },
+                    }
                 }
                 Ok(())
             }

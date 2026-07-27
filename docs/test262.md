@@ -11440,6 +11440,33 @@ pass / 5110 fail / 11455 skip / 3 timeout / 0 error** over **48469** total and
 - 장점, 단점 및 영향: The 15,650-file comparison is exact with no admission change, while deterministic Rust tests prove the unobservable allocation boundary. The unit adds no Test262 support and makes no conformance-rate claim.
 ```
 
+## Direct with-object Reference bases
+
+This representation-only unit changes no Test262 admission. Current and
+preceding release binaries run pinned `language/expressions`,
+`language/statements/class`, and `language/statements/with` with byte-identical
+complete output: **10290 pass / 0 fail / 5360 skip / 0 timeout / 0 error /
+15650 total / 10290 run**. Both logs have SHA-256
+`9334343e68ac0571407ea9886c67643fb0c5ec7512696dd74afca5ef506172e5`.
+
+The final current release reruns complete pinned `language/expressions` and
+`language/statements` at **12761 pass / 0 fail / 7678 skip / 0 timeout / 0
+error / 20439 total / 12761 run**. Direct tests separately prove that the
+production resolver stores the exact Proxy binding-object index, the shared
+visitor reports it once, malformed non-object environment data is rejected,
+and get/set/delete/call behavior survives Proxy-triggered GC. Cross-Realm
+primitive boxing and strict global fallback remain distinct and green.
+
+```text
+[Decision Log]
+- 목적과 의도: Prove that direct GcIdx storage for with-object Reference bases changes only native allocation ownership and leaves Object Environment Record behavior unchanged.
+- 기존 구현 및 제약 조건: Test262 cannot observe a Rust Box; the affected path spans identifier reads, writes, deletes, calls, direct eval, Proxy traps, primitive ToObject, global fallback, and retained References. Aggregate totals can hide offsetting changes.
+- 검토한 주요 대안: Rely on compilation, run only language/statements/with, compare aggregate counts, trust direct Rust tests, or compare the full adjacent Reference cohort byte-for-byte and rerun the supported language subset.
+- 선택한 방식: Keep admission fixed; add production-constructor, invariant, exact-root, forced-GC Proxy, Realm, and strict-global tests; compare complete expressions/class/with logs from independently built binaries; and rerun the full supported subset.
+- 다른 대안 대신 이 방식을 선택한 이유: Direct tests prove the unobservable representation but not broad semantic stability; the full fixed-corpus comparison covers every adjacent Reference form and exact output identity rules out hidden pass/fail swaps.
+- 장점, 단점 및 영향: The unit has exact 15,650-file A/B identity, a green 20,439-file supported subset, and no admission movement. It removes one inner allocation per resolved with binding without making a conformance-rate claim.
+```
+
 ## VM-local outer Reference box reuse
 
 This allocation-lifetime unit changes no Test262 admission. Current and

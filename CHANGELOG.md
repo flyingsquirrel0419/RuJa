@@ -4,6 +4,26 @@
 
 ### Changed
 
+- References resolved through a `with` object environment now store the
+  binding object's `GcIdx` directly instead of allocating an inner
+  `Box<Value>`. The dedicated `ObjectEnvironment` variant remains separate
+  from ordinary object property References because its missing-binding,
+  delete, assignment, and implicit call-receiver rules differ.
+
+  Reference creation validates that the environment payload is an Object,
+  get/set/delete/call paths reconstruct a non-allocating `Value::Object` view,
+  and GC tracing visits the direct binding-object root exactly once. Direct
+  tests cover the production resolver, malformed internal payloads, Proxy
+  identity and forced GC across all consumers, cross-Realm primitive boxing,
+  strict global-call fallback, and retained ABI sizes.
+
+  Current and preceding release binaries produce byte-identical output over
+  the 15,650-file expressions/class/with cohort at **10290 pass / 0 fail /
+  5360 skip**. The current supported language subset remains **12761 / 0 /
+  7678**. A new 30,000-operation `with` Reference benchmark measured 203.78
+  ms on the preceding source and 201.83-208.30 ms on repeated current runs;
+  Criterion reports no significant change.
+
 - The VM now retains one rootless vacant `Box<ReferenceRecord>` and reuses it
   for sequential identifier, property, super, and private References. Every
   checkout happens before observable re-entry; terminal get, put, delete,

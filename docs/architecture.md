@@ -2433,9 +2433,48 @@ boxed, and the object index to appear once in the shared root visitor.
 - 목적과 의도: Remove the redundant inner base Box from object-backed References without changing bytecode, outer Reference ownership, GC identity, or JavaScript evaluation order.
 - 기존 구현 및 제약 조건: Every property Reference allocated an outer 64-byte record and a second Box<Value> even when the base was only a GcIdx. Raw names and super receivers have additional required recursive boxes; primitive property bases must preserve their original Value and Realm-sensitive boxing behavior.
 - 검토한 주요 대안: Keep all allocations, add a VM-local one-entry outer-box cache, split Value into specialized identifier/property Reference handles, place all Reference fields inline, convert records to Arc, or add one direct object-base enum variant.
-- 선택한 방식: Store object property bases directly as GcIdx, retain boxed Value for non-object bases and ObjectEnvironment for with resolution, share get/put helpers across both property-base forms, and extend the single root visitor plus retained-root reservation to the new variant.
+- 선택한 방식: Store object property bases directly as GcIdx, retain boxed Value for non-object bases, keep ObjectEnvironment semantically distinct for a later representation unit, share get/put helpers across both property-base forms, and extend the single root visitor plus retained-root reservation to the new variant.
 - 다른 대안 대신 이 방식을 선택한 이유: An outer cache adds lifecycle and sentinel state while leaving inner boxes; split handles change every consumer API; blanket inlining grows common identifier records from 64 to about 120 bytes on x86_64; Arc retains allocation and adds atomic traffic. The direct variant removes one allocation across resolved, raw, super, and private object References with unchanged top-level ABI.
-- 장점, 단점 및 영향: Object-backed References lose one host allocation and one deallocation each, all target-width layout assertions hold, and 15,650 pinned Test262 files are byte-identical. Primitive bases, raw names, super receivers, and with-object bases still allocate where their recursive or semantic boundary requires it. Cold and simultaneously live outer Reference records remain separate from this representation change and are addressed by the following VM-local cache unit.
+- 장점, 단점 및 영향: Object-backed References lose one host allocation and one deallocation each, all target-width layout assertions hold, and 15,650 pinned Test262 files are byte-identical. Primitive bases, raw names, and super receivers still allocate where their recursive boundary requires it; with-object base storage remained a separate follow-up, now recorded below. Cold and simultaneously live outer Reference records remain separate from this representation change and are addressed by the following VM-local cache unit.
+```
+
+## Direct with-object Reference bases
+
+Identifier References resolved through a `with` object environment use
+`ReferenceBase::ObjectEnvironment(GcIdx)`. `PushWithEnv` performs `ToObject`
+before creating the environment, so every valid binding object already has a
+stable heap index. The resolver validates this invariant when it creates the
+Reference; malformed internal environment data returns an internal error
+instead of silently changing identifier resolution.
+
+The dedicated variant remains distinct from `ReferenceBase::Object`. A normal
+object property Reference and a `with` binding differ when the property is
+deleted after resolution, when strict assignment observes a missing binding,
+and when an unqualified call derives its `this` value. Global identifier
+resolution uses `ReferenceBase::Environment`, not this variant. GetValue,
+PutValue, delete, and call-receiver extraction reconstruct a temporary
+`Value::Object` view from the index without allocation or observable work.
+The shared root visitor publishes the index once. Proxy wrapper identity and
+cross-Realm primitive wrapper identity are therefore retained unchanged.
+
+The target-width layout contracts remain unchanged: `Value`, `ReferenceBase`,
+and `ReferenceRecord` are 32/16/64 bytes on x86_64 and 24/8/40 bytes on
+wasm32.
+
+Production-constructor and malformed-payload tests, forced-GC Proxy
+get/set/delete/call tests, a foreign-Realm primitive test, and a strict global
+fallback test cover the semantic boundary directly. Current and preceding
+release binaries also produce byte-identical output over the complete pinned
+expressions/class/with cohort.
+
+```text
+[Decision Log]
+- 목적과 의도: Remove the redundant inner Box<Value> from every with-object identifier Reference while preserving Object Environment Record semantics, Proxy identity, Realm-sensitive primitive boxing, and GC reachability.
+- 기존 구현 및 제약 조건: PushWithEnv already applies ToObject, but EnvironmentData stores a general Value and the resolver previously boxed that Value again. Object-environment get, put, delete, missing-binding, and call-this behavior differs from ordinary property References; global identifiers use a declarative Environment base.
+- 검토한 주요 대안: Keep the allocation, merge ObjectEnvironment with the ordinary Object variant, store the complete environment index, specialize EnvironmentData itself, or retain a dedicated variant with a direct binding-object index.
+- 선택한 방식: Retain a dedicated ObjectEnvironment variant, store its validated GcIdx directly, rebuild temporary Value::Object views at the four consumers, and trace the index through the shared Reference root visitor.
+- 다른 대안 대신 이 방식을 선택한 이유: Merging variants loses semantic dispatch; storing the environment keeps an unnecessarily broad object graph and adds a heap lookup; changing EnvironmentData expands the unit beyond Reference representation. Direct GcIdx storage follows the existing ToObject invariant and removes the allocation at its only production constructor.
+- 장점, 단점 및 영향: Each resolved with identifier loses one inner allocation, including copies through temporary environment bindings. ABI size and JavaScript behavior stay fixed. The resolver now has one explicit internal invariant check; ordinary environment storage still uses Value and simultaneously live outer Reference records still allocate independently.
 ```
 
 ## VM-local outer Reference box reuse
@@ -2472,7 +2511,7 @@ second buffer or looping over every discarded value.
 - 검토한 주요 대안: Keep allocating, use a global or thread-local pool, convert the public payload to Arc, inline records into Value, cache rooted records, add a multi-entry allocator, or retain one VM-local rootless allocation.
 - 선택한 방식: Add one private VM-local vacant box; overwrite the whole record with a rootless sentinel before storage; check it out before re-entry; return terminal and discarded records explicitly; move suspended generator stacks; and restore top-level/async stacks through recycling cleanup.
 - 다른 대안 대신 이 방식을 선택한 이유: Global pools cross VM and Realm lifetimes; Arc retains allocation and adds atomic traffic; inlining enlarges every Value; rooted cache state complicates tracing and stale-lifetime proofs; multiple entries need a capacity policy. One rootless slot captures sequential locality and naturally bounds re-entrant retention.
-- 장점, 단점 및 영향: Sequential References reuse one allocation, nested execution remains ownership-safe, cached state contributes zero roots, and uncaught/async/generator cleanup is deterministic. Simultaneously live References still allocate; a full slot drops overflow; primitive bases, raw names, super receivers, and with-object payloads retain their required inner boxes; host allocation failure remains infallible.
+- 장점, 단점 및 영향: Sequential References reuse one allocation, nested execution remains ownership-safe, cached state contributes zero roots, and uncaught/async/generator cleanup is deterministic. Simultaneously live References still allocate; a full slot drops overflow; primitive bases, raw names, and super receivers retain their required inner boxes; with-object base storage remained a separate follow-up, now recorded above; host allocation failure remains infallible.
 ```
 
 ---

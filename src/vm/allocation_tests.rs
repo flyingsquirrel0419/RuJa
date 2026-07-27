@@ -35,15 +35,8 @@ fn reference_box_cache_reuses_one_rootless_allocation() {
         GcIdx(usize::MAX - 19),
         GcIdx(usize::MAX - 20),
     ];
-    let nested = Value::Reference(Box::new(ReferenceRecord {
-        base: ReferenceBase::Environment(hidden_roots[0]),
-        name: ReferencedName::Property(PropertyKey::from("nested")),
-        strict: true,
-        this_value: None,
-    }));
-
     let first = vm.make_reference_value(ReferenceRecord {
-        base: ReferenceBase::ObjectEnvironment(Box::new(nested)),
+        base: ReferenceBase::ObjectEnvironment(hidden_roots[0]),
         name: ReferencedName::UncoercedProperty(Box::new(Value::Object(hidden_roots[1]))),
         strict: true,
         this_value: Some(Box::new(Value::Reference(Box::new(ReferenceRecord {
@@ -363,6 +356,65 @@ fn reference_root_visitor_count_and_pin_share_one_complete_walk() {
     assert_eq!(&vm.gc_pins[baseline..], visited);
     vm.unpin_many(count);
     assert_eq!(vm.gc_pins.len(), baseline);
+}
+
+#[test]
+fn object_environment_reference_constructor_stores_the_binding_object_index() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run("var objectEnvironmentProbe = new Proxy({ binding: 1 }, {});")
+        .expect("failed to install object-environment probe");
+    let proxy = vm.get_global("objectEnvironmentProbe");
+    let Value::Object(proxy_index) = proxy else {
+        panic!("object-environment probe must be an object");
+    };
+    let with_env =
+        crate::environment::new_with_env(&vm.heap, vm.global, Value::Object(proxy_index))
+            .expect("failed to allocate object environment");
+    vm.frames.push(super::CallFrame::new(
+        Arc::new(crate::bytecode::Chunk::default()),
+        0,
+        0,
+        Vec::new(),
+        with_env,
+        Value::Undefined,
+    ));
+
+    let reference = vm
+        .resolve_identifier_reference(PropertyKey::from("binding"), true)
+        .expect("binding resolution should succeed");
+    vm.frames.pop();
+    assert!(matches!(
+        reference.base,
+        ReferenceBase::ObjectEnvironment(index) if index == proxy_index
+    ));
+    let mut roots = Vec::new();
+    reference.visit_gc_roots(&mut |root| roots.push(root));
+    assert_eq!(roots, [proxy_index.0]);
+}
+
+#[test]
+fn malformed_object_environment_payload_is_rejected_at_reference_creation() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    let with_env =
+        crate::environment::new_with_env(&vm.heap, vm.global, Value::String(Arc::from("x")))
+            .expect("failed to allocate malformed object environment");
+    vm.frames.push(super::CallFrame::new(
+        Arc::new(crate::bytecode::Chunk::default()),
+        0,
+        0,
+        Vec::new(),
+        with_env,
+        Value::Undefined,
+    ));
+
+    let error = vm
+        .resolve_identifier_reference(PropertyKey::from("length"), false)
+        .expect_err("non-object binding payload must be rejected");
+    vm.frames.pop();
+    assert_eq!(error.kind, crate::error::ErrorKind::Internal);
+    assert!(error
+        .message
+        .contains("object environment binding object is not an object"));
 }
 
 #[test]

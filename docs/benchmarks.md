@@ -185,6 +185,25 @@ Test262 A/B output. Normal frame cleanup scans the existing tail only when the
 cache slot is empty, takes at most one Reference in place, and truncates without
 allocating a second buffer or adding a per-value pop loop.
 
+`with_object_environment_reference_30k` reuses one VM and one precompiled
+function. Each call performs 10,000 `with`-resolved compound writes, reads,
+and strict method calls, while setup asserts both the final value and implicit
+call-receiver semantics. It isolates the dedicated Object Environment Reference
+constructor and consumers from ordinary computed property References. Use the
+same fixture on both source revisions when comparing direct `GcIdx` storage
+with the preceding inner-`Box<Value>` representation.
+
+One forced-rebuild sequential sample measured the preceding representation at
+**203.78 ms** and the direct-index representation at **208.30 ms**. An
+immediate current rerun measured **201.83 ms** and Criterion reported no
+significant change. The mixed range is shared-host noise, not a throughput
+claim. Deterministic evidence is the removed allocation, production-constructor
+assertion, exact root visitor, and byte-identical Test262 output.
+
+```sh
+cargo bench --bench basic -- with_object_environment_reference_30k --quick
+```
+
 ## Non-index Number PropertyKey checks
 
 `non_index_numeric_property_key_30k` performs 30,000 `in` conversions using

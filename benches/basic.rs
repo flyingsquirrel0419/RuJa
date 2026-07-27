@@ -196,6 +196,22 @@ fn bench_computed_references(c: &mut Criterion) {
             }
             return object["0"] + object["1"] + object["2"];
         }
+        var objectEnvironmentFixture = {
+            value: 0,
+            method: function() { "use strict"; return this === objectEnvironmentFixture; }
+        };
+        function objectEnvironmentReferences() {
+            objectEnvironmentFixture.value = 0;
+            var receiverChecks = 0;
+            with (objectEnvironmentFixture) {
+                for (var i = 0; i < 10000; i++) {
+                    value += 1;
+                    receiverChecks += method();
+                    value;
+                }
+            }
+            return objectEnvironmentFixture.value + receiverChecks;
+        }
         function nonIndexNumericPropertyKeys() {
             var object = { "-1": 1, "1.5": 1, "1e+21": 1 };
             var found = 0;
@@ -236,6 +252,21 @@ fn bench_computed_references(c: &mut Criterion) {
             black_box(
                 vm.call_function(&string, &[], None)
                     .expect("string computed References failed"),
+            )
+        })
+    });
+
+    let object_environment = vm.get_global("objectEnvironmentReferences");
+    assert_eq!(
+        vm.call_function(&object_environment, &[], None)
+            .expect("object-environment Reference fixture failed"),
+        Value::Number(20_000.0)
+    );
+    c.bench_function("with_object_environment_reference_30k", |b| {
+        b.iter(|| {
+            black_box(
+                vm.call_function(&object_environment, &[], None)
+                    .expect("object-environment References failed"),
             )
         })
     });

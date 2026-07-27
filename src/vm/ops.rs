@@ -2894,9 +2894,9 @@ impl Vm {
                 return this_value.as_ref().clone();
             }
             match &record.base {
-                crate::value::ReferenceBase::ObjectEnvironment(base)
-                | crate::value::ReferenceBase::Value(base) => return base.as_ref().clone(),
-                crate::value::ReferenceBase::Object(index) => return Value::Object(*index),
+                crate::value::ReferenceBase::ObjectEnvironment(index)
+                | crate::value::ReferenceBase::Object(index) => return Value::Object(*index),
+                crate::value::ReferenceBase::Value(base) => return base.as_ref().clone(),
                 crate::value::ReferenceBase::Unresolvable
                 | crate::value::ReferenceBase::Environment(_) => {}
             }
