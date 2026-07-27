@@ -195,7 +195,7 @@ impl Vm {
             Value::Undefined => Arc::from("undefined"),
             Value::Null => Arc::from("null"),
             Value::Bool(b) => Arc::from(b.to_string().as_str()),
-            Value::Number(n) => Arc::from(crate::value::num_to_string(*n).as_str()),
+            Value::Number(n) => Arc::from(crate::value::number_to_string(*n).as_ref()),
             Value::String(s) => s.clone(),
             Value::BigInt(n) => Arc::from(n.to_string().as_str()),
             Value::Object(idx) => {

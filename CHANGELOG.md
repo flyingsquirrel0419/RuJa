@@ -4,6 +4,21 @@
 
 ### Changed
 
+- Runtime Number-to-String conversion now formats into a fixed 32-byte stack
+  buffer. Dynamic non-index numeric property keys allocate only their required
+  final `Arc<str>` instead of first creating a temporary Rust `String`;
+  JavaScript-visible `num_to_string` keeps its owned `String` API.
+
+  The stack formatter is byte-identical to the preceding algorithm over its
+  semantic edge table and 20,000 deterministic random `f64` bit patterns.
+  Proxy regressions cover negative, fractional, ArrayIndex-boundary,
+  exponential, NaN, and infinite keys as exact JavaScript Strings. Pinned
+  assignment/delete/relational/property-accessor and Object/Proxy/Reflect
+  Test262 output is byte-identical at **4789 pass / 0 fail / 194 skip / 4983
+  total**. Sequential Criterion A/B places 30,000 `in` conversions at 65.796
+  ms current versus 70.611 ms preceding, with string controls at 65.932 ms
+  versus 66.754 ms; no significant performance change was detected.
+
 - Ninety numeric property-name formatting sites across Array, TypedArray,
   Array iterators, call argument materialization, JSON, RegExp, Proxy own-key
   validation, and adjacent array-like constructors no longer create temporary

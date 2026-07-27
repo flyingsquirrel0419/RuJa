@@ -2298,6 +2298,37 @@ release benchmark evidence.
 - 장점, 단점 및 영향: Native integer names avoid temporary Rust String allocation, all safe-integer names and Proxy observations remain exact, and focused 7800-file Test262 output is byte-identical. Shared-host wall-time diagnostics found no regression but are not release benchmark evidence. Above-array-index names and all 32-bit numeric keys still allocate Arc strings; wasm32 type-checks this path but does not execute 32-bit tests. JS-visible key materialization and non-index Number formatting remain separate scopes.
 ```
 
+## Stack-backed non-index Number property keys
+
+Runtime Number-to-String conversion writes into a fixed 32-byte
+`NumberString` buffer. Canonical array indices still use the compact
+`PropertyKey` path above; this unit covers values such as `-1`, `1.5`,
+`4294967295`, `1e21`, `NaN`, and infinities. Fixed and exponential forms
+preserve the previous ECMAScript-facing spelling, including signed exponent
+normalization and negative-zero handling. Converting the final view to a
+runtime String still allocates the required `Arc<str>`, but no temporary Rust
+`String` is created first.
+
+The 32-byte capacity has headroom over Rust's shortest finite `f64` output
+and the normalized exponent sign. Boundary cases plus 20,000 deterministic
+raw `f64` bit patterns compare the stack formatter against the preceding
+implementation. Proxy get, set, has, and delete tests verify that observable
+property names remain exact. The public `num_to_string` helper retains its
+owned `String` return type for API compatibility. Parser/compiler static
+numeric property names therefore inherit the stack normalization internally,
+but retain their final owned `String` and existing output behavior. Object
+`ToPrimitive`/Symbol ordering is unchanged.
+
+```text
+[Decision Log]
+- 목적과 의도: Remove temporary heap allocation from runtime non-index Number property-key formatting without changing observable ECMAScript key text or public conversion APIs.
+- 기존 구현 및 제약 조건: Runtime Number conversion formatted into an owned String and then copied into the final Arc<str>; exponential normalization created a second temporary String. Canonical indices already have a separate inline path, while JavaScript-visible Strings still require shared runtime storage.
+- 검토한 주요 대안: Keep the temporary String, add a general small-string crate, intern numeric names globally, change public num_to_string to return a borrowed view, specialize parser/static-name callers separately, or broadly unbox Reference records.
+- 선택한 방식: Use a fixed 32-byte fmt::Write buffer for the existing fixed/exponential algorithm, expose it only inside the crate, retain the owned public wrapper, and allocate only the final Arc<str> at the runtime String boundary.
+- 다른 대안 대신 이 방식을 선택한 이유: The bounded shortest-f64 representation needs no general allocator or interner; changing the public helper expands API impact; parser callers still need owned constants; object coercion has separate ordering constraints; and broad Reference unboxing approximately doubles the common record layout on both audited target widths.
+- 장점, 단점 및 영향: Non-index runtime Number keys lose one temporary allocation, or two during exponent normalization. Owned public and static-name callers retain one final String but also avoid the raw exponential temporary. Exact text, Proxy observations, wasm32 compilation, and the public API remain stable. Final Arc allocation, JavaScript-visible String materialization, and specialized Reference representation remain separate scopes.
+```
+
 ## Computed read-modify-write property references
 
 Ordinary computed compound, logical, and update expressions evaluate the base

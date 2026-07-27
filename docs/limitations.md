@@ -404,8 +404,10 @@ guarantees are required.
   insertion reserves its key and object/property maps best-effort and skips the
   cache entry on failure. These guarantees are limited to those directly owned
   containers and existing keys: BigInt/value preparation, boxed-String
-  canonicalization, non-index Number formatting, JavaScript-visible key String
-  materialization, and other shared representation paths remain infallible.
+  canonicalization, final non-index/shared-String key allocation,
+  JavaScript-visible key String materialization, and other shared
+  representation paths remain infallible. Runtime Number formatting itself is
+  stack-backed and no longer creates an intermediate Rust `String`.
   Canonical array-index PropertyKeys avoid this boundary with compact inline
   storage on 64-bit targets. Ordinary non-index Set
   receiver publication also preflights actual property-map growth and borrows
@@ -432,7 +434,7 @@ guarantees are required.
   Native indexed loops now pass numeric cursors through structured PropertyKey
   APIs; canonical indices avoid temporary Strings on 64-bit targets. Remaining
   nearby hard-host-OOM scopes include initial Reference record/base/name/
-  receiver boxes, non-index/shared-String key creation, integer names above
+  receiver boxes, final non-index/shared-String key creation, integer names above
   `4294967294`, every numeric key on 32-bit targets, Proxy trap descriptor
   values, TypedArray byte conversion, JSON caller containers, unrelated direct
   `ArrayData::new` constructors, Error strings, GC root enumeration, and mark

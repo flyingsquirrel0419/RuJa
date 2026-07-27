@@ -11379,6 +11379,29 @@ preceding run `30225015795`. The aggregate therefore remains **31901 pass /
 - 장점, 단점 및 영향: The unit has exact 7800-file A/B identity plus direct safe-integer boundary coverage. Post-push full-matrix artifacts are byte-identical across all 32 shards, so unsupported failures and skips are unchanged rather than hidden.
 ```
 
+## Stack-backed non-index Number property keys
+
+The runtime formatter changes no Test262 admission. Current and preceding
+release binaries run the pinned assignment, compound/logical-assignment,
+delete, property-accessor, relational, Object, Proxy, and Reflect paths with
+byte-identical output: **4789 pass / 0 fail / 194 skip / 0 timeout / 0 error /
+4983 total**.
+
+Direct tests separately compare the stack formatter with the preceding owned
+algorithm over semantic boundaries and 20,000 deterministic random `f64` bit
+patterns. Proxy traps require exact String keys for negative, fractional,
+`4294967295`, exponential, NaN, and infinite Number inputs.
+
+```text
+[Decision Log]
+- 목적과 의도: Remove the temporary Rust String from dynamic non-index Number property-key conversion without changing ECMAScript Number spelling, coercion order, Proxy observations, or PropertyKey layout.
+- 기존 구현 및 제약 조건: Number ToString formatted an owned String and then copied it into the final Arc<str>; exponential values could allocate a raw and normalized String. The final Arc remains required by PropertyKey, while object ToPrimitive and Symbol handling are observable.
+- 검토한 주요 대안: Keep the temporary String, add an inline f64 PropertyKey variant, unbox every Reference field first, add an external formatting dependency, or preserve the formatter algorithm in fixed stack storage.
+- 선택한 방식: Format Display/LowerExp into a 32-byte stack writer, normalize exponential text into a second stack writer, keep public num_to_string ownership, and let Vm::to_string copy Number text directly into the final Arc.
+- 다른 대안 대신 이 방식을 선택한 이유: Inline f64 keys complicate equality/hash/string materialization and 32-bit size; blanket Reference unboxing nearly doubles common identifier records; a new dependency is unnecessary because the existing algorithm already has exact behavior. Stack storage changes only ownership, not spelling.
+- 장점, 단점 및 영향: Dynamic Number keys lose one temporary allocation, or two for exponential normalization, with 4983-file A/B identity and no measured regression. The final Arc allocation remains infallible. JavaScript-visible and parser/compiler static-name callers still allocate their required owned result, but inherit stack-backed exponential normalization through the compatible public wrapper.
+```
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is

@@ -165,6 +165,24 @@ inspection proving 24 eliminated boxed-Reference clones is deterministic.
 cargo bench --bench basic -- computed_reference --quick
 ```
 
+## Non-index Number PropertyKey checks
+
+`non_index_numeric_property_key_30k` performs 30,000 `in` conversions using
+`-1`, `1.5`, and `1e21`; the string-key twin controls operator and map lookup
+cost. Setup requires both fixtures to return 30,000 before timing. The fixture
+is applied unchanged to both source revisions.
+
+One sequential forced-rebuild A/B measured numeric conversion at **65.796 ms**
+with the stack formatter versus **70.611 ms** on the preceding source. String
+control measured **65.932 ms** versus **66.754 ms**. Criterion reported no
+significant change; the deterministic evidence is removal of the intermediate
+`String`, exact differential formatting over 20,000 bit patterns, and pinned
+Test262 identity rather than a throughput claim.
+
+```sh
+cargo bench --bench basic -- non_index_ --quick
+```
+
 ## Reproducing
 
 ```sh

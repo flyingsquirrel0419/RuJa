@@ -196,6 +196,26 @@ fn bench_computed_references(c: &mut Criterion) {
             }
             return object["0"] + object["1"] + object["2"];
         }
+        function nonIndexNumericPropertyKeys() {
+            var object = { "-1": 1, "1.5": 1, "1e+21": 1 };
+            var found = 0;
+            for (var i = 0; i < 10000; i++) {
+                found += -1 in object;
+                found += 1.5 in object;
+                found += 1e21 in object;
+            }
+            return found;
+        }
+        function nonIndexStringPropertyKeys() {
+            var object = { "-1": 1, "1.5": 1, "1e+21": 1 };
+            var found = 0;
+            for (var i = 0; i < 10000; i++) {
+                found += "-1" in object;
+                found += "1.5" in object;
+                found += "1e+21" in object;
+            }
+            return found;
+        }
         "#,
     )
     .expect("computed Reference fixtures failed");
@@ -216,6 +236,36 @@ fn bench_computed_references(c: &mut Criterion) {
             black_box(
                 vm.call_function(&string, &[], None)
                     .expect("string computed References failed"),
+            )
+        })
+    });
+
+    let numeric_non_index = vm.get_global("nonIndexNumericPropertyKeys");
+    assert_eq!(
+        vm.call_function(&numeric_non_index, &[], None)
+            .expect("non-index numeric PropertyKey fixture failed"),
+        Value::Number(30_000.0)
+    );
+    c.bench_function("non_index_numeric_property_key_30k", |b| {
+        b.iter(|| {
+            black_box(
+                vm.call_function(&numeric_non_index, &[], None)
+                    .expect("non-index numeric PropertyKeys failed"),
+            )
+        })
+    });
+
+    let string_non_index = vm.get_global("nonIndexStringPropertyKeys");
+    assert_eq!(
+        vm.call_function(&string_non_index, &[], None)
+            .expect("non-index string PropertyKey fixture failed"),
+        Value::Number(30_000.0)
+    );
+    c.bench_function("non_index_string_property_key_30k", |b| {
+        b.iter(|| {
+            black_box(
+                vm.call_function(&string_non_index, &[], None)
+                    .expect("non-index string PropertyKeys failed"),
             )
         })
     });

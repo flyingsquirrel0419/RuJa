@@ -1642,6 +1642,53 @@ fn numeric_computed_references_preserve_property_key_boundaries() {
 }
 
 #[test]
+fn non_index_numeric_keys_reach_proxies_as_exact_strings() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            var target = {};
+            var proxy = new Proxy(target, {
+              get: function(t, key, receiver) {
+                log.push("get:" + typeof key + ":" + key);
+                return Reflect.get(t, key, receiver);
+              },
+              set: function(t, key, value, receiver) {
+                log.push("set:" + typeof key + ":" + key);
+                return Reflect.set(t, key, value, receiver);
+              },
+              has: function(t, key) {
+                log.push("has:" + typeof key + ":" + key);
+                return Reflect.has(t, key);
+              },
+              deleteProperty: function(t, key) {
+                log.push("delete:" + typeof key + ":" + key);
+                return Reflect.deleteProperty(t, key);
+              }
+            });
+
+            proxy[-1] = 1;
+            proxy[1.5] = 2;
+            proxy[4294967295] = 3;
+            proxy[1e21] = 4;
+            proxy[5e-17] = 5;
+            proxy[NaN] = 6;
+            proxy[Infinity] = 7;
+            proxy[-Infinity] = 8;
+            var read = proxy[5e-17];
+            var present = 1e21 in proxy;
+            var deleted = delete proxy[-Infinity];
+            [read, present, deleted, log.join("|")].join(";");
+        "#),
+        Value::String(Arc::from(concat!(
+            "5;true;true;set:string:-1|set:string:1.5|set:string:4294967295|",
+            "set:string:1e+21|set:string:5e-17|set:string:NaN|",
+            "set:string:Infinity|set:string:-Infinity|get:string:5e-17|",
+            "has:string:1e+21|delete:string:-Infinity"
+        )))
+    );
+}
+
+#[test]
 fn computed_read_modify_write_null_base_skips_key_coercion_and_rhs() {
     for source in ["base[prop] += rhs();", "base[prop]++;", "++base[prop];"] {
         let err = run_err(&format!(

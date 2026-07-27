@@ -10,6 +10,7 @@ use parking_lot::{Condvar, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, AtomicUsize, Ordering};
 
 use std::fmt;
+use std::fmt::Write as _;
 use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug)]
@@ -1735,35 +1736,86 @@ impl HeapObj {
     }
 }
 
-/// Render an f64 the way JS `String(n)` would.
-pub fn num_to_string(n: f64) -> String {
+// Rust's shortest f64 Display/LowerExp forms fit in 25 bytes; retain headroom
+// for ECMAScript's explicit exponent sign without doubling the hot stack copy.
+const NUMBER_STRING_CAPACITY: usize = 32;
+
+#[derive(Clone, Debug)]
+pub(crate) struct NumberString {
+    bytes: [u8; NUMBER_STRING_CAPACITY],
+    len: u8,
+}
+
+impl NumberString {
+    fn new() -> Self {
+        Self {
+            bytes: [0; NUMBER_STRING_CAPACITY],
+            len: 0,
+        }
+    }
+
+    fn from_static(value: &str) -> Self {
+        let mut result = Self::new();
+        result
+            .write_str(value)
+            .expect("static Number string fits stack storage");
+        result
+    }
+
+    fn truncate(&mut self, len: usize) {
+        self.len = len as u8;
+    }
+
+    fn as_str(&self) -> &str {
+        std::str::from_utf8(&self.bytes[..self.len as usize])
+            .expect("Number formatting emits valid UTF-8")
+    }
+}
+
+impl fmt::Write for NumberString {
+    fn write_str(&mut self, value: &str) -> fmt::Result {
+        let start = self.len as usize;
+        let end = start.checked_add(value.len()).ok_or(fmt::Error)?;
+        let destination = self.bytes.get_mut(start..end).ok_or(fmt::Error)?;
+        destination.copy_from_slice(value.as_bytes());
+        self.len = end as u8;
+        Ok(())
+    }
+}
+
+impl AsRef<str> for NumberString {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+pub(crate) fn number_to_string(n: f64) -> NumberString {
     if n.is_nan() {
-        return "NaN".to_string();
+        return NumberString::from_static("NaN");
     }
     if n == f64::INFINITY {
-        return "Infinity".to_string();
+        return NumberString::from_static("Infinity");
     }
     if n == f64::NEG_INFINITY {
-        return "-Infinity".to_string();
+        return NumberString::from_static("-Infinity");
     }
     if n == 0.0 {
         // ES ToString: both +0 and -0 stringify to "0".
-        return "0".to_string();
+        return NumberString::from_static("0");
     }
     // ECMAScript uses exponential notation outside [1e-6, 1e21).
     let abs = n.abs();
     if !(1e-6..1e21).contains(&abs) {
-        return format_exponential(n, abs);
+        return format_exponential(n);
     }
-    let s = format!("{}", n);
-    if s.ends_with(".0") {
-        s[..s.len() - 2].to_string()
-    } else {
-        s
+    let mut result = NumberString::new();
+    write!(&mut result, "{n}").expect("finite Number string fits stack storage");
+    if result.as_str().ends_with(".0") {
+        result.truncate(result.as_str().len() - 2);
     }
+    result
 }
 
-/// Format a number in ECMAScript exponential notation (e.g. `1e+21`, `1e-7`).
 /// Format a number in ECMAScript exponential notation (e.g. `1e+21`, `5e-17`).
 ///
 /// Uses Rust's `{:e}` formatting, which already emits a correctly-rounded
@@ -1772,11 +1824,13 @@ pub fn num_to_string(n: f64) -> String {
 /// `4.999999999999999e-17`). The only adjustment needed for ECMAScript is to
 /// always emit an explicit exponent sign (`e+21` not `e21`), strip trailing
 /// zeros from the mantissa, and strip leading zeros from the exponent digits.
-fn format_exponential(n: f64, _abs: f64) -> String {
-    let s = format!("{:e}", n);
+fn format_exponential(n: f64) -> NumberString {
+    let mut raw = NumberString::new();
+    write!(&mut raw, "{n:e}").expect("exponential Number string fits stack storage");
+    let s = raw.as_str();
     let epos = match s.find('e') {
         Some(p) => p,
-        None => return s, // should not happen for finite non-zero inputs
+        None => return raw, // should not happen for finite non-zero inputs
     };
     let (mant, rest) = s.split_at(epos);
     let exp_str = &rest[1..]; // skip the 'e'
@@ -1800,7 +1854,103 @@ fn format_exponential(n: f64, _abs: f64) -> String {
     // not produce an empty token.
     let mant = if mant.is_empty() { "0" } else { mant };
     let digits = if digits.is_empty() { "0" } else { digits };
-    format!("{}e{}{}", mant, sign, digits)
+    let mut result = NumberString::new();
+    write!(&mut result, "{mant}e{sign}{digits}")
+        .expect("normalized exponential Number string fits stack storage");
+    result
+}
+
+/// Render an f64 the way JS `String(n)` would.
+pub fn num_to_string(n: f64) -> String {
+    number_to_string(n).as_ref().to_owned()
+}
+
+#[cfg(test)]
+mod number_string_tests {
+    use super::number_to_string;
+
+    fn legacy_exponential(number: f64) -> String {
+        let raw = format!("{number:e}");
+        let Some(position) = raw.find('e') else {
+            return raw;
+        };
+        let (mantissa, exponent) = raw.split_at(position);
+        let mantissa = mantissa.trim_end_matches('0').trim_end_matches('.');
+        let exponent = &exponent[1..];
+        let (sign, digits) = if let Some(digits) = exponent.strip_prefix('-') {
+            ("-", digits)
+        } else if let Some(digits) = exponent.strip_prefix('+') {
+            ("+", digits)
+        } else {
+            ("+", exponent)
+        };
+        let digits = digits.trim_start_matches('0');
+        format!(
+            "{}e{}{}",
+            if mantissa.is_empty() { "0" } else { mantissa },
+            sign,
+            if digits.is_empty() { "0" } else { digits }
+        )
+    }
+
+    fn legacy(number: f64) -> String {
+        if number.is_nan() {
+            return "NaN".to_string();
+        }
+        if number == f64::INFINITY {
+            return "Infinity".to_string();
+        }
+        if number == f64::NEG_INFINITY {
+            return "-Infinity".to_string();
+        }
+        if number == 0.0 {
+            return "0".to_string();
+        }
+        if !(1e-6..1e21).contains(&number.abs()) {
+            return legacy_exponential(number);
+        }
+        let result = format!("{number}");
+        if let Some(result) = result.strip_suffix(".0") {
+            result.to_owned()
+        } else {
+            result
+        }
+    }
+
+    #[test]
+    fn stack_number_format_matches_preceding_algorithm() {
+        assert_eq!(std::mem::size_of::<super::NumberString>(), 33);
+        let edges = [
+            0.0,
+            -0.0,
+            1.0,
+            -1.0,
+            1.5,
+            1e-6,
+            -0.0000010000000000000002,
+            5e-7,
+            1e21,
+            5e-17,
+            f64::MIN_POSITIVE,
+            f64::MAX,
+            f64::MIN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NAN,
+        ];
+        for number in edges {
+            assert_eq!(number_to_string(number).as_ref(), legacy(number));
+        }
+
+        let mut bits = 0x9e37_79b9_7f4a_7c15u64;
+        for _ in 0..20_000 {
+            bits ^= bits << 13;
+            bits ^= bits >> 7;
+            bits ^= bits << 17;
+            let number = f64::from_bits(bits);
+            assert_eq!(number_to_string(number).as_ref(), legacy(number));
+        }
+    }
 }
 
 // =========================================================================
