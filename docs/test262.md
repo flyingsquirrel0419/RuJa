@@ -11632,6 +11632,14 @@ delegate `CompiledTooBig` fallback. The vendored full suite and
 doctests remain green, and wasm32 compilation verifies that parsing is not
 tied to the native pointer width.
 
+Implementation commit `d5b4c1c513920c7df250e5f95392807081fe504d`
+passes both jobs in ordinary CI run `30298239835` and all **35/35** jobs in
+full run `30298239883`. Against immediately preceding full run `30292332875`,
+31 of 32 result artifacts are byte-identical. Only `built-ins` changes, by
+exactly **+1 pass / -1 fail**, and the complete matrix aggregate is now
+**31903 pass / 5108 fail / 11455 skip / 3 timeout / 0 error** over **48469**
+total files and **37011** executions.
+
 ```text
 [Decision Log]
 - 목적과 의도: Close the final admitted RegExp failure while preserving exact DecimalDigits semantics and sandbox resource bounds.
