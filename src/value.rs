@@ -538,7 +538,8 @@ pub enum PrivateSlotKey {
 #[derive(Clone, Debug)]
 pub struct ReferenceRecord {
     /// The base value: an environment record (GcIdx) for identifier references,
-    /// or a Value (Object/with) for property references.
+    /// a direct object index for object-backed property/with references, or a
+    /// boxed Value for primitive and nullish property bases.
     pub base: ReferenceBase,
     /// The referenced name (property key or lexically resolved private name).
     pub name: ReferencedName,
@@ -549,17 +550,46 @@ pub struct ReferenceRecord {
     pub this_value: Option<Box<Value>>,
 }
 
+/// A deferred computed property name. Object identity fits inline; other
+/// Values require indirection because a Reference is itself a Value.
+#[derive(Clone, Debug)]
+pub enum UncoercedPropertyName {
+    Object(GcIdx),
+    Value(Box<Value>),
+}
+
+impl UncoercedPropertyName {
+    fn from_value(value: Value) -> Self {
+        match value {
+            Value::Object(index) => Self::Object(index),
+            value => Self::Value(Box::new(value)),
+        }
+    }
+
+    fn visit_gc_roots(&self, visit: &mut impl FnMut(usize)) {
+        match self {
+            Self::Object(index) => visit(index.0),
+            Self::Value(value) => value.visit_gc_roots(visit),
+        }
+    }
+}
+
 /// The [[ReferencedName]] component of a Reference Record.
 #[derive(Clone, Debug)]
 pub enum ReferencedName {
     Property(PropertyKey),
     /// A computed property name whose ToPropertyKey operation is deferred
-    /// until GetValue/PutValue. Assignment and delete can observe that delay.
-    UncoercedProperty(Box<Value>),
+    /// until GetValue/PutValue. Object names store their heap index directly;
+    /// other Values remain boxed to break recursive type size.
+    UncoercedProperty(UncoercedPropertyName),
     Private(PrivateNameKey),
 }
 
 impl ReferencedName {
+    pub(crate) fn from_uncoerced_value(value: Value) -> Self {
+        Self::UncoercedProperty(UncoercedPropertyName::from_value(value))
+    }
+
     pub fn as_str(&self) -> Option<PropertyKeyStr<'_>> {
         match self {
             ReferencedName::Property(key) => key.as_str(),
@@ -608,6 +638,8 @@ impl ReferenceBase {
 #[cfg(target_arch = "wasm32")]
 const _: () = {
     assert!(std::mem::size_of::<Value>() == 24);
+    assert!(std::mem::size_of::<UncoercedPropertyName>() == 8);
+    assert!(std::mem::size_of::<ReferencedName>() == 24);
     assert!(std::mem::size_of::<ReferenceBase>() == 8);
     assert!(std::mem::size_of::<ReferenceRecord>() == 40);
 };
@@ -615,16 +647,21 @@ const _: () = {
 #[cfg(target_arch = "x86_64")]
 const _: () = {
     assert!(std::mem::size_of::<Value>() == 32);
+    assert!(std::mem::size_of::<UncoercedPropertyName>() == 16);
+    assert!(std::mem::size_of::<ReferencedName>() == 32);
     assert!(std::mem::size_of::<ReferenceBase>() == 16);
     assert!(std::mem::size_of::<ReferenceRecord>() == 64);
 };
 
 #[cfg(test)]
 mod reference_base_tests {
-    use super::{GcIdx, PropertyKey, ReferenceBase, ReferenceRecord, ReferencedName, Value};
+    use super::{
+        GcIdx, PropertyKey, ReferenceBase, ReferenceRecord, ReferencedName, UncoercedPropertyName,
+        Value,
+    };
 
     #[test]
-    fn object_reference_bases_avoid_nested_value_boxes() {
+    fn object_reference_bases_and_names_avoid_nested_value_boxes() {
         assert!(matches!(
             ReferenceBase::from_value(Value::Object(GcIdx(41))),
             ReferenceBase::Object(GcIdx(41))
@@ -632,6 +669,15 @@ mod reference_base_tests {
         assert!(matches!(
             ReferenceBase::from_value(Value::String("primitive".into())),
             ReferenceBase::Value(base) if matches!(base.as_ref(), Value::String(value) if value.as_ref() == "primitive")
+        ));
+        assert!(matches!(
+            ReferencedName::from_uncoerced_value(Value::Object(GcIdx(42))),
+            ReferencedName::UncoercedProperty(UncoercedPropertyName::Object(GcIdx(42)))
+        ));
+        assert!(matches!(
+            ReferencedName::from_uncoerced_value(Value::String("key".into())),
+            ReferencedName::UncoercedProperty(UncoercedPropertyName::Value(value))
+                if matches!(value.as_ref(), Value::String(key) if key.as_ref() == "key")
         ));
 
         let record = ReferenceRecord {
@@ -682,8 +728,9 @@ impl ReferenceRecord {
         if let Some(this_value) = &self.this_value {
             this_value.visit_gc_roots(visit);
         }
-        if let ReferencedName::UncoercedProperty(name) = &self.name {
-            name.visit_gc_roots(visit);
+        match &self.name {
+            ReferencedName::UncoercedProperty(name) => name.visit_gc_roots(visit),
+            ReferencedName::Property(_) | ReferencedName::Private(_) => {}
         }
     }
 }

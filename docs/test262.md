@@ -568,8 +568,9 @@ dynamic super base in `[[Base]]` and the current method receiver in a distinct
 longer needed.
 
 For computed properties, the compiler first obtains the current `this`, then
-evaluates the key expression, obtains the HomeObject prototype, and finally
-coerces the key while constructing the Reference. This preserves the required
+evaluates the key expression, obtains the HomeObject prototype, and constructs
+a Reference with the raw key. `GetValue` or `ResolvePropertyRef` performs the
+later coercion at the operation-specific boundary. This preserves the required
 ordering when the key expression or its coercion changes the HomeObject
 prototype. Null super bases throw before property lookup for both string and
 Symbol keys, while optional calls still skip their arguments only after a
@@ -11509,6 +11510,46 @@ pass / 5110 fail / 11455 skip / 3 timeout / 0 error** over **48469** total and
 - 선택한 방식: Keep admission fixed; add deterministic cache/root/stack lifecycle tests; compare complete expressions/class/with output byte-for-byte against the preceding release; and rerun the entire supported language subset with the final current binary.
 - 다른 대안 대신 이 방식을 선택한 이유: Internal counters prove allocation but not semantics; one expression family misses calls, eval, private/super, with, async, and generators; totals are weaker than exact logs; one binary cannot isolate the patch; and support-policy changes would obscure regressions.
 - 장점, 단점 및 영향: The unit has exact 15,650-file A/B identity and a green 20,439-file supported subset plus deterministic ownership coverage. It adds no conformance admission and makes no supported-rate claim. Post-push full-matrix artifact identity remains separate CI evidence.
+```
+
+## Direct deferred object-key Reference storage
+
+This representation-only unit changes no Test262 admission. Against pinned
+test262 `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, independently built current
+and preceding release binaries produce byte-identical complete output for the
+directly affected assignment, delete, optional chaining, super, for-in, and
+for-of directories: **1343 pass / 0 fail / 209 skip / 0 timeout / 0 error /
+1552 total / 1343 run**. Both logs have SHA-256
+`3e4263f9e2b4ce015ce68dcb2ef988a467a9cede897c61c624ae31ac356032ab`.
+
+The complete supported `language/statements` and `language/expressions`
+outputs are also byte-identical at **12761 pass / 0 fail / 7678 skip / 0
+timeout / 0 error / 20439 total / 12761 run**, SHA-256
+`c59b10015e636a164867edd718fc2b0f018e5bcf2d0ed969fa0df136ade46dfc`.
+Direct Rust tests separately prove the unobservable storage boundary, both
+production opcodes, exact root identity, Proxy/Symbol coercion, super receiver
+identity, and root-reservation failure recovery.
+
+```sh
+export TEST262=/path/to/test262-at-9e61c128
+python3 tools/test262_runner.py \
+  language/expressions/assignment \
+  language/expressions/delete \
+  language/expressions/optional-chaining \
+  language/expressions/super \
+  language/statements/for-in \
+  language/statements/for-of
+python3 tools/test262_runner.py language/statements language/expressions
+```
+
+```text
+[Decision Log]
+- 목적과 의도: Prove that direct GcIdx storage for deferred object/Proxy names changes native allocation ownership only and preserves every affected observable Reference behavior.
+- 기존 구현 및 제약 조건: Test262 cannot observe a Rust Box, deferred names span assignment/delete/optional/super/loop ordering, aggregate totals can hide offsetting status movement, and admission changes would confound representation evidence.
+- 검토한 주요 대안: Rely on Rust tests, compare only totals, run one assignment directory, widen admission, or compare both the directly affected cohort and complete supported subset file-for-file with fixed policy and binaries.
+- 선택한 방식: Keep admission fixed; require direct opcode, GC, Proxy, Symbol, super, and reservation tests; compare complete six-directory logs byte-for-byte; and repeat the complete supported statements/expressions subset with both release binaries.
+- 다른 대안 대신 이 방식을 선택한 이유: Direct tests prove storage but not broad semantics; totals can hide regressions; one family misses delete, super, optional, and loop consumers; and two independently built binaries isolate the representation patch.
+- 장점, 단점 및 영향: Exact 1,552-file and 20,439-file A/B identity proves no conformance movement while deterministic Rust tests cover the internal allocation boundary. The unit adds no Test262 support and makes no pass-rate improvement claim.
 ```
 
 ## Why the full-suite rate is not higher

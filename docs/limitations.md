@@ -439,9 +439,10 @@ guarantees are required.
   Native indexed loops now pass numeric cursors through structured PropertyKey
   APIs; canonical indices avoid temporary Strings on 64-bit targets. Remaining
   nearby hard-host-OOM scopes include simultaneously live or re-entrant outer
-  Reference records plus primitive-base, raw-name, and super-receiver boxes.
-  Object property and `with` binding-object bases now store their `GcIdx`
-  directly. Other scopes include final
+  Reference records plus primitive-base, non-object raw-name, and
+  super-receiver boxes. Object property bases, `with` binding-object bases,
+  and deferred object/Proxy names now store their `GcIdx` directly. Other
+  scopes include final
   non-index/shared-String key creation, integer names above `4294967294`, every
   numeric key on 32-bit targets, Proxy trap descriptor
   values, TypedArray byte conversion, JSON caller containers, unrelated direct

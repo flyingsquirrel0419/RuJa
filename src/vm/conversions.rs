@@ -353,6 +353,26 @@ impl Vm {
         }
     }
 
+    pub(crate) fn coerce_reference_name(
+        &mut self,
+        name: &crate::value::ReferencedName,
+    ) -> error::Result<crate::value::PropertyKey> {
+        match name {
+            crate::value::ReferencedName::Property(key) => Ok(key.clone()),
+            crate::value::ReferencedName::UncoercedProperty(value) => match value {
+                crate::value::UncoercedPropertyName::Object(index) => {
+                    self.coerce_property_key_record(&Value::Object(*index))
+                }
+                crate::value::UncoercedPropertyName::Value(value) => {
+                    self.coerce_property_key_record(value)
+                }
+            },
+            crate::value::ReferencedName::Private(_) => Err(Error::internal(
+                "cannot coerce a private Reference name to a property key",
+            )),
+        }
+    }
+
     /// Get a property by a `Value` key, supporting string keys (via the
     /// existing `get_property(&str)` path) and Symbol keys (looked up directly
     /// through their structured `PropertyKey`).

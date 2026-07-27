@@ -212,6 +212,30 @@ fn bench_computed_references(c: &mut Criterion) {
             }
             return objectEnvironmentFixture.value + receiverChecks;
         }
+        var deferredObjectKeyTarget = { value: 0 };
+        var deferredObjectKeyCoercions = 0;
+        var deferredObjectKey = {
+            [Symbol.toPrimitive]: function() {
+                deferredObjectKeyCoercions++;
+                return "value";
+            }
+        };
+        function deferredObjectKeyReferences() {
+            deferredObjectKeyTarget.value = 0;
+            deferredObjectKeyCoercions = 0;
+            for (var i = 0; i < 30000; i++) {
+                deferredObjectKeyTarget[deferredObjectKey] = i;
+            }
+            return deferredObjectKeyTarget.value;
+        }
+        var deferredStringKeyTarget = { value: 0 };
+        function deferredStringKeyReferences() {
+            deferredStringKeyTarget.value = 0;
+            for (var i = 0; i < 30000; i++) {
+                deferredStringKeyTarget["value"] = i;
+            }
+            return deferredStringKeyTarget.value;
+        }
         function nonIndexNumericPropertyKeys() {
             var object = { "-1": 1, "1.5": 1, "1e+21": 1 };
             var found = 0;
@@ -267,6 +291,40 @@ fn bench_computed_references(c: &mut Criterion) {
             black_box(
                 vm.call_function(&object_environment, &[], None)
                     .expect("object-environment References failed"),
+            )
+        })
+    });
+
+    let deferred_object_key = vm.get_global("deferredObjectKeyReferences");
+    assert_eq!(
+        vm.call_function(&deferred_object_key, &[], None)
+            .expect("deferred object-key Reference fixture failed"),
+        Value::Number(29_999.0)
+    );
+    assert_eq!(
+        vm.get_global("deferredObjectKeyCoercions"),
+        Value::Number(30_000.0)
+    );
+    c.bench_function("deferred_object_key_reference_30k", |b| {
+        b.iter(|| {
+            black_box(
+                vm.call_function(&deferred_object_key, &[], None)
+                    .expect("deferred object-key References failed"),
+            )
+        })
+    });
+
+    let deferred_string_key = vm.get_global("deferredStringKeyReferences");
+    assert_eq!(
+        vm.call_function(&deferred_string_key, &[], None)
+            .expect("deferred string-key Reference fixture failed"),
+        Value::Number(29_999.0)
+    );
+    c.bench_function("deferred_string_key_reference_30k", |b| {
+        b.iter(|| {
+            black_box(
+                vm.call_function(&deferred_string_key, &[], None)
+                    .expect("deferred string-key References failed"),
             )
         })
     });

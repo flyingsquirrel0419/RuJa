@@ -530,6 +530,56 @@ fn deferred_super_reference_names_survive_gc() {
 }
 
 #[test]
+fn super_object_key_to_symbol_survives_gc_and_coerces_once() {
+    let mut vm = ruja::Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+
+    assert_eq!(
+        vm.run(
+            r#"
+            var coercions = 0;
+            var symbol = Symbol("super-key");
+            var keyTarget = {
+                [Symbol.toPrimitive]: function() {
+                    forceGc();
+                    coercions++;
+                    return this === key ? symbol : "wrong";
+                }
+            };
+            var key = new Proxy(keyTarget, {
+                get: function(target, property, receiver) {
+                    forceGc();
+                    return Reflect.get(target, property, receiver);
+                }
+            });
+            var parent = {};
+            Object.defineProperty(parent, symbol, {
+                get: function() { return this.current; },
+                set: function(value) { this.current = value; }
+            });
+            var home = {
+                update() { return super[key] += (forceGc(), 2); }
+            };
+            Object.setPrototypeOf(home, parent);
+            var receiver = Object.create(home);
+            receiver.current = 1;
+            receiver.update() + ":" + receiver.current + ":" + coercions;
+            "#,
+        )
+        .expect("super object key should preserve Symbol and receiver across GC"),
+        Value::String(Arc::from("3:3:1"))
+    );
+}
+
+#[test]
 fn class_super_capture_is_per_class() {
     assert_eq!(
         run("class B{static get x(){return 2;}} class C extends B{static m(){return super.x;}} class D{} C.m();"),

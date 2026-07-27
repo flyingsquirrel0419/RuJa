@@ -1535,6 +1535,64 @@ fn deferred_member_assignment_references_survive_gc() {
 }
 
 #[test]
+fn deferred_proxy_object_key_observes_rhs_mutation_after_gc() {
+    let mut vm = ruja::Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+
+    assert_eq!(
+        vm.run(
+            r#"
+            var log = [];
+            var symbol = Symbol("deferred");
+            var keyTarget = {
+                [Symbol.toPrimitive]: function() {
+                    log.push("old");
+                    return "old";
+                }
+            };
+            var key = new Proxy(keyTarget, {
+                get: function(target, property, receiver) {
+                    forceGc();
+                    if (property === Symbol.toPrimitive) {
+                        log.push("get:" + (receiver === key));
+                    }
+                    return Reflect.get(target, property, receiver);
+                }
+            });
+            var target = {};
+            var proxy = new Proxy(target, {
+                set: function(target, property, value, receiver) {
+                    log.push("set:" + (property === symbol) + ":" + (receiver === proxy));
+                    target[property] = value;
+                    return true;
+                }
+            });
+            proxy[key] = (
+                keyTarget[Symbol.toPrimitive] = function() {
+                    forceGc();
+                    log.push("new:" + (this === key));
+                    return symbol;
+                },
+                forceGc(),
+                9
+            );
+            target[symbol] + ":" + target.old + ":" + log.join("|");
+            "#,
+        )
+        .expect("deferred Proxy object key should survive GC and RHS mutation"),
+        Value::String(Arc::from("9:undefined:get:true|new:true|set:true:true"))
+    );
+}
+
+#[test]
 fn destructuring_member_assignment_uses_property_reference_for_set() {
     assert_eq!(
         run(r#"

@@ -185,6 +185,26 @@ Test262 A/B output. Normal frame cleanup scans the existing tail only when the
 cache slot is empty, takes at most one Reference in place, and truncates without
 allocating a second buffer or adding a per-value pop loop.
 
+`deferred_object_key_reference_30k` exercises simple assignment, where an
+object key remains uncoerced until `PutValue`. Its setup independently requires
+the final property value to be 29,999 and the observable coercion count to be
+30,000. `deferred_string_key_reference_30k` uses the same raw-Reference path
+with an unchanged primitive String payload as a control. Both reuse one VM and
+precompiled functions.
+
+A sequential forced-rebuild smoke comparison measured object keys at
+**413.89-423.33 ms** with direct `GcIdx` storage and **436.25-462.47 ms** with
+the preceding boxed object name. The String control measured **138.27-143.33
+ms** current and **142.13-147.63 ms** preceding. These short shared-host
+samples show no regression; the deterministic evidence is the removed Box,
+independent fixture assertions, direct opcode/root tests, and exact Test262 A/B.
+
+```sh
+# Run from each independently built source revision with the identical fixture.
+cargo bench --bench basic deferred_ -- \
+  --sample-size 10 --warm-up-time 0.1 --measurement-time 0.1
+```
+
 `with_object_environment_reference_30k` reuses one VM and one precompiled
 function. Each call performs 10,000 `with`-resolved compound writes, reads,
 and strict method calls, while setup asserts both the final value and implicit

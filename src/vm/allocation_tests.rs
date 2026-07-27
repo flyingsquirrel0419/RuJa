@@ -7,9 +7,11 @@ use super::{
     ProxyDefinePropertyReservationSite, ProxyDescriptorReservationSite,
     ProxyOwnKeysReservationSite, Vm,
 };
+use crate::bytecode::{Chunk, Op};
 use crate::value::{
     ArrayData, FunctionData, FunctionKind, GcIdx, HeapObj, NativeConstructMode, PromiseStatus,
     PropertyDescriptor, PropertyKey, ReferenceBase, ReferenceRecord, ReferencedName,
+    UncoercedPropertyName,
 };
 use crate::Value;
 use indexmap::{IndexMap, IndexSet};
@@ -25,6 +27,83 @@ fn cache_test_reference(base: ReferenceBase) -> ReferenceRecord {
     }
 }
 
+fn reference_created_by_opcode(
+    vm: &mut Vm,
+    opcode: Op,
+    operands: impl IntoIterator<Item = Value>,
+) -> Box<ReferenceRecord> {
+    let stack_base = vm.stack.len();
+    vm.stack.extend(operands);
+    let mut chunk = Chunk::default();
+    chunk.emit(opcode, 1);
+    let frame_depth = vm.frames.len();
+    vm.frames.push(super::CallFrame::new(
+        Arc::new(chunk),
+        0,
+        stack_base,
+        Vec::new(),
+        vm.global,
+        Value::Undefined,
+    ));
+    vm.interpret_inner_raw(None, Some((frame_depth, 1)))
+        .expect("Reference-creation opcode should complete");
+    vm.frames.pop();
+    let value = vm
+        .stack
+        .pop()
+        .expect("Reference-creation opcode must push a value");
+    assert_eq!(vm.stack.len(), stack_base);
+    let Value::Reference(reference) = value else {
+        panic!("Reference-creation opcode must push a Reference");
+    };
+    reference
+}
+
+#[test]
+fn raw_and_super_opcodes_store_object_names_without_value_boxes() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    let base = vm.new_object().expect("failed to allocate base object");
+    let raw_key = vm.new_object().expect("failed to allocate raw key");
+    let raw = reference_created_by_opcode(
+        &mut vm,
+        Op::MakeRawPropertyRef,
+        [Value::Object(base), Value::Object(raw_key)],
+    );
+    assert!(matches!(raw.base, ReferenceBase::Object(index) if index == base));
+    assert!(matches!(
+        raw.name,
+        ReferencedName::UncoercedProperty(UncoercedPropertyName::Object(index))
+            if index == raw_key
+    ));
+    assert!(raw.this_value.is_none());
+
+    let this_value = vm.new_object().expect("failed to allocate super receiver");
+    let super_base = vm.new_object().expect("failed to allocate super base");
+    let super_key = vm.new_object().expect("failed to allocate super key");
+    let super_reference = reference_created_by_opcode(
+        &mut vm,
+        Op::MakeSuperPropertyRef,
+        [
+            Value::Object(this_value),
+            Value::Object(super_base),
+            Value::Object(super_key),
+        ],
+    );
+    assert!(matches!(
+        super_reference.base,
+        ReferenceBase::Object(index) if index == super_base
+    ));
+    assert!(matches!(
+        super_reference.name,
+        ReferencedName::UncoercedProperty(UncoercedPropertyName::Object(index))
+            if index == super_key
+    ));
+    assert!(matches!(
+        super_reference.this_value.as_deref(),
+        Some(Value::Object(index)) if *index == this_value
+    ));
+}
+
 #[test]
 fn reference_box_cache_reuses_one_rootless_allocation() {
     let mut vm = Vm::new().expect("failed to initialize VM");
@@ -37,7 +116,7 @@ fn reference_box_cache_reuses_one_rootless_allocation() {
     ];
     let first = vm.make_reference_value(ReferenceRecord {
         base: ReferenceBase::ObjectEnvironment(hidden_roots[0]),
-        name: ReferencedName::UncoercedProperty(Box::new(Value::Object(hidden_roots[1]))),
+        name: ReferencedName::UncoercedProperty(UncoercedPropertyName::Object(hidden_roots[1])),
         strict: true,
         this_value: Some(Box::new(Value::Reference(Box::new(ReferenceRecord {
             base: ReferenceBase::Value(Box::new(Value::Object(hidden_roots[2]))),
@@ -339,7 +418,9 @@ fn reference_root_visitor_count_and_pin_share_one_complete_walk() {
     }));
     let reference = ReferenceRecord {
         base: ReferenceBase::Value(Box::new(nested)),
-        name: ReferencedName::UncoercedProperty(Box::new(Value::Object(crate::value::GcIdx(43)))),
+        name: ReferencedName::UncoercedProperty(UncoercedPropertyName::Object(
+            crate::value::GcIdx(43),
+        )),
         strict: true,
         this_value: Some(Box::new(Value::Object(crate::value::GcIdx(42)))),
     };
@@ -511,12 +592,15 @@ fn retained_reference_move_reserves_roots_before_get_and_restores_pins() {
     let raw_key = vm
         .get_property(&global, "retainedMoveRawKey")
         .expect("raw Reference key should exist");
+    let Value::Object(raw_key_index) = raw_key else {
+        panic!("raw Reference key must be an object");
+    };
     let Value::Object(global_index) = global else {
         panic!("global this must be an object");
     };
     let raw_reference = Value::Reference(Box::new(ReferenceRecord {
         base: ReferenceBase::Object(global_index),
-        name: ReferencedName::UncoercedProperty(Box::new(raw_key)),
+        name: ReferencedName::from_uncoerced_value(Value::Object(raw_key_index)),
         strict: true,
         this_value: Some(Box::new(Value::Object(global_index))),
     }));
@@ -545,6 +629,11 @@ fn retained_reference_move_reserves_roots_before_get_and_restores_pins() {
         vm.stack.pop(),
         Some(Value::Reference(record))
             if matches!(record.base, ReferenceBase::Object(index) if index == global_index)
+                && matches!(
+                    record.name,
+                    ReferencedName::UncoercedProperty(UncoercedPropertyName::Object(index))
+                        if index == raw_key_index
+                )
     ));
     assert_eq!(
         vm.run("retainedMoveRawCoercions === 1")

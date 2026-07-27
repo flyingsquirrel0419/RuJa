@@ -1031,7 +1031,7 @@ impl Vm {
                     let strict = self.current_strict();
                     let reference = self.make_reference_value(crate::value::ReferenceRecord {
                         base: crate::value::ReferenceBase::from_value(base),
-                        name: crate::value::ReferencedName::UncoercedProperty(Box::new(key)),
+                        name: crate::value::ReferencedName::from_uncoerced_value(key),
                         strict,
                         this_value: None,
                     });
@@ -1044,7 +1044,7 @@ impl Vm {
                     let strict = self.current_strict();
                     let reference = self.make_reference_value(crate::value::ReferenceRecord {
                         base: crate::value::ReferenceBase::from_value(base),
-                        name: crate::value::ReferencedName::UncoercedProperty(Box::new(key)),
+                        name: crate::value::ReferencedName::from_uncoerced_value(key),
                         strict,
                         this_value: Some(Box::new(this_value)),
                     });
@@ -1060,9 +1060,12 @@ impl Vm {
                         self.recycle_reference_value(Value::Reference(record));
                         return Err(Error::type_err("Cannot access null super base"));
                     }
-                    if let crate::value::ReferencedName::UncoercedProperty(name) = &record.name {
+                    if matches!(
+                        &record.name,
+                        crate::value::ReferencedName::UncoercedProperty(_)
+                    ) {
                         let pin_count = self.pin_reference(&record);
-                        let name_result = self.coerce_property_key_record(name);
+                        let name_result = self.coerce_reference_name(&record.name);
                         self.unpin_many(pin_count);
                         match name_result {
                             Ok(name) => record.name = name.into(),

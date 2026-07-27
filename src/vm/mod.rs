@@ -3458,12 +3458,12 @@ impl Vm {
                     self.get_property_reference_value(base, name)
                 }
             }
-            crate::value::ReferencedName::UncoercedProperty(name) => {
+            crate::value::ReferencedName::UncoercedProperty(_) => {
                 if base.is_nullish() {
                     return Err(Error::type_err("Cannot read property from null super base"));
                 }
                 let pin_count = self.pin(reference);
-                let name_result = self.coerce_property_key_record(name);
+                let name_result = self.coerce_reference_name(&record.name);
                 self.unpin_many(pin_count);
                 let name = name_result?;
                 if let Some(receiver) = &record.this_value {
@@ -3618,8 +3618,8 @@ impl Vm {
         pin_count += self.pin(&object);
         let key_result = match &reference.name {
             crate::value::ReferencedName::Property(key) => Ok(key.clone()),
-            crate::value::ReferencedName::UncoercedProperty(name) => {
-                self.coerce_property_key_record(name)
+            crate::value::ReferencedName::UncoercedProperty(_) => {
+                self.coerce_reference_name(&reference.name)
             }
             crate::value::ReferencedName::Private(_) => unreachable!(),
         };
@@ -3979,10 +3979,10 @@ impl Vm {
         }
         let name = match &record.name {
             crate::value::ReferencedName::Property(name) => name.clone(),
-            crate::value::ReferencedName::UncoercedProperty(name) => {
+            crate::value::ReferencedName::UncoercedProperty(_) => {
                 let mut pin_count = self.pin_reference(record);
                 pin_count += self.pin(&value);
-                let name_result = self.coerce_property_key_record(name);
+                let name_result = self.coerce_reference_name(&record.name);
                 self.unpin_many(pin_count);
                 name_result?
             }

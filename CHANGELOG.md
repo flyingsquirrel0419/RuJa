@@ -4,6 +4,39 @@
 
 ### Changed
 
+- Deferred computed property names now store object and Proxy identities as a
+  direct `GcIdx` instead of allocating an inner `Box<Value>`. Primitive and
+  internal recursive names remain boxed, and the outer Reference box remains
+  unchanged. `MakeRawPropertyRef` and `MakeSuperPropertyRef` use the compact
+  representation; GetValue, PutValue, delete, and `ResolvePropertyRef` share
+  one coercion path. This changes the public Rust payload shape of
+  `ReferencedName::UncoercedProperty` from `Box<Value>` to
+  `UncoercedPropertyName`; the crate does not promise a stable Rust ABI, while
+  compile-time assertions keep the audited target-width size budgets fixed.
+
+  `ToPropertyKey` remains deferred: simple assignment evaluates its RHS first,
+  nullish/delete paths keep their existing rejection order, and computed super
+  read-modify-write resolves a key once. Direct tests cover both production
+  opcodes, exact root identity, allocation-failure retention, Proxy key
+  mutation after RHS evaluation, forced GC, Symbol conversion, and super
+  receiver identity. Layout assertions retain 32/64-byte
+  `ReferencedName`/`ReferenceRecord` sizes on x86_64 and 24/40 bytes on wasm32.
+  A paired 30,000-operation benchmark isolates object-key simple assignment
+  beside an unchanged primitive String-key control and verifies all 30,000
+  coercions before sampling. Forced-rebuild shared-host smoke samples measured
+  object keys at 413.89-423.33 ms on current source versus 436.25-462.47 ms on
+  preceding source; the String control measured 138.27-143.33 ms versus
+  142.13-147.63 ms. These short samples show no regression but are not treated
+  as a stable throughput claim.
+
+  On pinned Test262 `9e61c128`, current and preceding release binaries produce
+  byte-identical output for the 1,552-file assignment/delete/optional/super/
+  for-in/for-of cohort at **1343 pass / 0 fail / 209 skip**, SHA-256
+  `3e4263f9e2b4ce015ce68dcb2ef988a467a9cede897c61c624ae31ac356032ab`.
+  The complete supported statements/expressions subset is also byte-identical
+  at **12761 pass / 0 fail / 7678 skip**, SHA-256
+  `c59b10015e636a164867edd718fc2b0f018e5bcf2d0ed969fa0df136ade46dfc`.
+
 - References resolved through a `with` object environment now store the
   binding object's `GcIdx` directly instead of allocating an inner
   `Box<Value>`. The dedicated `ObjectEnvironment` variant remains separate

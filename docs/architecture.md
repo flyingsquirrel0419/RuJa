@@ -2431,11 +2431,11 @@ boxed, and the object index to appear once in the shared root visitor.
 ```text
 [Decision Log]
 - 목적과 의도: Remove the redundant inner base Box from object-backed References without changing bytecode, outer Reference ownership, GC identity, or JavaScript evaluation order.
-- 기존 구현 및 제약 조건: Every property Reference allocated an outer 64-byte record and a second Box<Value> even when the base was only a GcIdx. Raw names and super receivers have additional required recursive boxes; primitive property bases must preserve their original Value and Realm-sensitive boxing behavior.
+- 기존 구현 및 제약 조건: Every property Reference allocated an outer 64-byte record and a second Box<Value> even when the base was only a GcIdx. Non-object raw names and super receivers require recursive boxes; object raw names were later specialized below. Primitive property bases must preserve their original Value and Realm-sensitive boxing behavior.
 - 검토한 주요 대안: Keep all allocations, add a VM-local one-entry outer-box cache, split Value into specialized identifier/property Reference handles, place all Reference fields inline, convert records to Arc, or add one direct object-base enum variant.
 - 선택한 방식: Store object property bases directly as GcIdx, retain boxed Value for non-object bases, keep ObjectEnvironment semantically distinct for a later representation unit, share get/put helpers across both property-base forms, and extend the single root visitor plus retained-root reservation to the new variant.
 - 다른 대안 대신 이 방식을 선택한 이유: An outer cache adds lifecycle and sentinel state while leaving inner boxes; split handles change every consumer API; blanket inlining grows common identifier records from 64 to about 120 bytes on x86_64; Arc retains allocation and adds atomic traffic. The direct variant removes one allocation across resolved, raw, super, and private object References with unchanged top-level ABI.
-- 장점, 단점 및 영향: Object-backed References lose one host allocation and one deallocation each, all target-width layout assertions hold, and 15,650 pinned Test262 files are byte-identical. Primitive bases, raw names, and super receivers still allocate where their recursive boundary requires it; with-object base storage remained a separate follow-up, now recorded below. Cold and simultaneously live outer Reference records remain separate from this representation change and are addressed by the following VM-local cache unit.
+- 장점, 단점 및 영향: Object-backed References lose one host allocation and one deallocation each, all target-width layout assertions hold, and 15,650 pinned Test262 files are byte-identical. Primitive bases, non-object raw names, and super receivers still allocate where their recursive boundary requires it; with-object base storage and object raw-name storage are recorded below. Cold and simultaneously live outer Reference records remain separate from this representation change and are addressed by the following VM-local cache unit.
 ```
 
 ## Direct with-object Reference bases
@@ -2477,6 +2477,48 @@ expressions/class/with cohort.
 - 장점, 단점 및 영향: Each resolved with identifier loses one inner allocation, including copies through temporary environment bindings. ABI size and JavaScript behavior stay fixed. The resolver now has one explicit internal invariant check; ordinary environment storage still uses Value and simultaneously live outer Reference records still allocate independently.
 ```
 
+## Direct object storage for deferred property names
+
+Computed names whose `ToPropertyKey` must occur after later evaluation use
+`UncoercedPropertyName`. Object and Proxy identities are represented directly
+as `Object(GcIdx)`; primitive String, Number, BigInt, Boolean, Symbol, nullish,
+and internal recursive Values retain `Value(Box<Value>)`. This removes an
+inner allocation without coercing early or changing the outer
+`Box<ReferenceRecord>` ownership boundary.
+
+`MakeRawPropertyRef` and `MakeSuperPropertyRef` are the only production
+constructors. GetValue, PutValue, delete, and `ResolvePropertyRef` share one
+coercion helper that reconstructs a temporary `Value::Object` view from the
+index. The reconstruction performs no observable operation. Existing
+null-base checks and pin scopes remain in place, so simple assignment still
+evaluates its RHS before key coercion, delete and optional-chain paths retain
+their specified ordering, and read-modify-write super names resolve exactly
+once. The shared Reference root visitor traces a direct object name exactly as
+it traced the former boxed Value.
+
+The nested representation preserves the audited top-level size budget:
+`UncoercedPropertyName`, `ReferencedName`, and `ReferenceRecord` are 16/32/64
+bytes on x86_64 and 8/24/40 bytes on wasm32. A 30,000-operation object-key
+simple-assignment benchmark measures the changed path beside a primitive
+String control and asserts both the final property value and all 30,000
+observable key coercions before sampling. Short forced-rebuild samples show no
+regression and are retained only as shared-host smoke evidence. Pinned current
+and preceding release binaries are byte-identical over both the six directly
+affected Test262 directories and the complete supported statements/expressions
+subset. The public Rust payload of `ReferencedName::UncoercedProperty` changes
+from `Box<Value>` to `UncoercedPropertyName`; RuJa does not promise a stable
+Rust enum ABI, and the assertions cover size only.
+
+```text
+[Decision Log]
+- 목적과 의도: Remove the redundant inner Box<Value> from deferred object-key References while preserving exact ToPropertyKey timing, object/Proxy identity, GC reachability, and super receiver behavior.
+- 기존 구현 및 제약 조건: Simple assignment, destructuring and loop targets, delete, optional delete, and computed super References retain a pre-coercion key across later evaluation. ReferencedName must break recursive Value size, object keys may invoke observable Proxy and @@toPrimitive code only at their consumer, and retained raw reads reserve a two-copy root peak before re-entry.
+- 검토한 주요 대안: Keep every raw name boxed, coerce object keys at Reference creation, add a new top-level ReferencedName variant, use Arc<Value>, store every deferred Value inline, or introduce a nested payload that specializes only object identity.
+- 선택한 방식: Keep one UncoercedProperty variant and give it an UncoercedPropertyName payload with direct Object(GcIdx) and boxed Value alternatives; centralize consumer coercion; retain all existing null checks, root reservations, and pin boundaries; assert target-width sizes on x86_64 and wasm32.
+- 다른 대안 대신 이 방식을 선택한 이유: Early coercion violates assignment and delete ordering; a top-level variant does not improve the established enum size budget and broadens every match; Arc retains allocation and adds atomic traffic; inline Value is recursively impossible. The nested payload changes only storage while leaving compiler bytecode and Reference semantics stable.
+- 장점, 단점 및 영향: Each deferred object or Proxy name loses one allocation/deallocation, and environment-stored temporary Reference clones avoid copying that inner Box. Object identity, Symbol results, abrupt completion, and the retained two-suffix reservation remain unchanged. The public Rust variant payload changes source shape, but audited target-width sizes stay fixed; no stable enum ABI is promised. Primitive and internal non-object names plus explicit super receivers still require recursive boxes; simultaneously live outer records and host allocation failure remain separate scopes.
+```
+
 ## VM-local outer Reference box reuse
 
 Each `Vm` owns one optional vacant `Box<ReferenceRecord>`. Creating a
@@ -2511,7 +2553,7 @@ second buffer or looping over every discarded value.
 - 검토한 주요 대안: Keep allocating, use a global or thread-local pool, convert the public payload to Arc, inline records into Value, cache rooted records, add a multi-entry allocator, or retain one VM-local rootless allocation.
 - 선택한 방식: Add one private VM-local vacant box; overwrite the whole record with a rootless sentinel before storage; check it out before re-entry; return terminal and discarded records explicitly; move suspended generator stacks; and restore top-level/async stacks through recycling cleanup.
 - 다른 대안 대신 이 방식을 선택한 이유: Global pools cross VM and Realm lifetimes; Arc retains allocation and adds atomic traffic; inlining enlarges every Value; rooted cache state complicates tracing and stale-lifetime proofs; multiple entries need a capacity policy. One rootless slot captures sequential locality and naturally bounds re-entrant retention.
-- 장점, 단점 및 영향: Sequential References reuse one allocation, nested execution remains ownership-safe, cached state contributes zero roots, and uncaught/async/generator cleanup is deterministic. Simultaneously live References still allocate; a full slot drops overflow; primitive bases, raw names, and super receivers retain their required inner boxes; with-object base storage remained a separate follow-up, now recorded above; host allocation failure remains infallible.
+- 장점, 단점 및 영향: Sequential References reuse one allocation, nested execution remains ownership-safe, cached state contributes zero roots, and uncaught/async/generator cleanup is deterministic. Simultaneously live References still allocate; a full slot drops overflow; primitive bases, non-object raw names, and super receivers retain their required inner boxes; direct with-object bases and object raw names are recorded above; host allocation failure remains infallible.
 ```
 
 ---
