@@ -11364,6 +11364,11 @@ A post-review combined rerun had one transient TypedArray timeout; an immediate
 same-binary TypedArray rerun passed **1446/1446**, restoring the corrected
 combined result above.
 
+Implementation commit `9554cc3` passes ordinary CI `30228832557` and every job
+in full run `30228832584`. All 32 full result files are byte-identical to the
+preceding run `30225015795`. The aggregate therefore remains **31901 pass /
+5110 fail / 11455 skip / 3 timeout / 0 error / 48469 total / 37011 run**.
+
 ```text
 [Decision Log]
 - 목적과 의도: Prove that eliminating native indexed-loop temporary Strings preserves the exact affected built-in behavior rather than relying on aggregate full-suite stability.
@@ -11371,7 +11376,7 @@ combined result above.
 - 검토한 주요 대안: Run only Rust tests, run one Array method, compare aggregate counts, widen admission, run the whole corpus without a preceding binary, or compare every directly affected built-in family with fixed policy and binaries.
 - 선택한 방식: Keep admission fixed, add direct boundary and Proxy/iterator regressions, run eight affected pinned families on both release binaries, and require byte-identical complete output.
 - 다른 대안 대신 이 방식을 선택한 이유: Rust tests prove representation boundaries but not broad observable behavior; one method misses TypedArray/JSON/RegExp/Proxy consumers; totals are weaker than exact output; and one binary cannot isolate the implementation.
-- 장점, 단점 및 영향: The unit has exact 7800-file A/B identity plus direct safe-integer boundary coverage. Full-matrix and post-push evidence remain required; unsupported failures and skips are unchanged rather than hidden.
+- 장점, 단점 및 영향: The unit has exact 7800-file A/B identity plus direct safe-integer boundary coverage. Post-push full-matrix artifacts are byte-identical across all 32 shards, so unsupported failures and skips are unchanged rather than hidden.
 ```
 
 ## Why the full-suite rate is not higher
