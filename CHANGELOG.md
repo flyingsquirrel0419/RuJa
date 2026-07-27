@@ -15,7 +15,8 @@
   tests remain green. Pinned `language/expressions`, class, and `with` Test262
   output is byte-identical to the preceding release at **10290 pass / 0 fail /
   5360 skip / 15650 total**. Forced-rebuild Criterion A/B found no significant
-  change in the existing 30,000-operation computed-Reference workloads.
+  change in the existing 30,000-operation computed-Reference workloads. All 32
+  post-push full-matrix artifacts are byte-identical to the preceding run.
 
 - Runtime Number-to-String conversion now formats into a fixed 32-byte stack
   buffer. Dynamic non-index numeric property keys allocate only their required

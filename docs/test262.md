@@ -11424,6 +11424,12 @@ Existing root-reservation failpoints verify
 that raw direct-object References still reserve the two simultaneously live
 root suffixes before key coercion.
 
+Implementation commit `df80aa9` passes ordinary CI run `30259064592` and all
+34 jobs in full run `30259064604`. Its 32 result artifacts are byte-identical
+to preceding run `30255588286`; aggregate results therefore remain **31901
+pass / 5110 fail / 11455 skip / 3 timeout / 0 error** over **48469** total and
+**37011** pass-or-fail executions.
+
 ```text
 [Decision Log]
 - 목적과 의도: Prove that direct GcIdx storage changes only native Reference ownership and leaves the full affected JavaScript behavior unchanged.
