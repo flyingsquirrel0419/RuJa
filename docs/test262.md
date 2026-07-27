@@ -11674,6 +11674,16 @@ moves exactly the 16 property-operand files. The preceding release under its
 original policy was **1043/0/836/0/0**; the other 32 character-only set files
 already passed and are now admitted as part of the complete semantic matrix.
 
+Feature commit `eb65de67df4bc0fea6838f6b4d480a629f21ab6c` passes both jobs
+in ordinary CI run `30303993941` and all **35/35** jobs in full run
+`30303993914`. Against immediate predecessor `30300832056`, 30 of 32 result
+artifacts are byte-identical. `built-ins` moves exactly **+48 pass / -48 skip**
+to **16330/4297/3038/3/0**. Annex B has one shared-runner contention timeout;
+the same release independently reproduces the clean baseline
+**201/811/74/0/0**. After normalizing that transient, the complete aggregate is
+**31951 pass / 5108 fail / 11407 skip / 3 timeout / 0 error** over **48469**
+total files and **37059** executions.
+
 ```text
 [Decision Log]
 - 목적과 의도: Turn the already bounded character-only v-mode behavior into exact conformance evidence while fixing the normalization split that blocked property operands.
