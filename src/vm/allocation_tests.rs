@@ -139,11 +139,14 @@ fn retained_reference_move_reserves_roots_before_get_and_restores_pins() {
     let raw_key = vm
         .get_property(&global, "retainedMoveRawKey")
         .expect("raw Reference key should exist");
+    let Value::Object(global_index) = global else {
+        panic!("global this must be an object");
+    };
     let raw_reference = Value::Reference(Box::new(ReferenceRecord {
-        base: ReferenceBase::Value(Box::new(global.clone())),
+        base: ReferenceBase::Object(global_index),
         name: ReferencedName::UncoercedProperty(Box::new(raw_key)),
         strict: true,
-        this_value: Some(Box::new(global)),
+        this_value: Some(Box::new(Value::Object(global_index))),
     }));
     let stack_baseline = vm.stack.len();
     vm.stack.push(raw_reference);
@@ -166,7 +169,11 @@ fn retained_reference_move_reserves_roots_before_get_and_restores_pins() {
         .expect("raw Reference operation should retry");
     assert_eq!(vm.stack.len(), stack_baseline + 2);
     assert_eq!(vm.stack.pop(), Some(Value::Number(7.0)));
-    assert!(matches!(vm.stack.pop(), Some(Value::Reference(_))));
+    assert!(matches!(
+        vm.stack.pop(),
+        Some(Value::Reference(record))
+            if matches!(record.base, ReferenceBase::Object(index) if index == global_index)
+    ));
     assert_eq!(
         vm.run("retainedMoveRawCoercions === 1")
             .expect("raw Reference key should be coerced once on retry"),

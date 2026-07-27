@@ -4,6 +4,19 @@
 
 ### Changed
 
+- Object-backed property, raw, super, and private References now store their
+  `GcIdx` directly in `ReferenceBase`. Their outer `ReferenceRecord` is the
+  only base-related Box; primitive bases retain boxed `Value` storage. `Value`,
+  `ReferenceBase`, and `ReferenceRecord` sizes remain 32/16/64 bytes on
+  x86_64 and 24/8/40 bytes on wasm32.
+
+  GC tracing visits direct object bases exactly once. Existing object,
+  primitive, super, private, Proxy, `with`, retained-root, and abrupt-cleanup
+  tests remain green. Pinned `language/expressions`, class, and `with` Test262
+  output is byte-identical to the preceding release at **10290 pass / 0 fail /
+  5360 skip / 15650 total**. Forced-rebuild Criterion A/B found no significant
+  change in the existing 30,000-operation computed-Reference workloads.
+
 - Runtime Number-to-String conversion now formats into a fixed 32-byte stack
   buffer. Dynamic non-index numeric property keys allocate only their required
   final `Arc<str>` instead of first creating a temporary Rust `String`;

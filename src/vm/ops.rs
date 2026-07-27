@@ -1016,7 +1016,7 @@ impl Vm {
                     let strict = self.current_strict();
                     self.stack
                         .push(Value::Reference(Box::new(crate::value::ReferenceRecord {
-                            base: crate::value::ReferenceBase::Value(Box::new(base)),
+                            base: crate::value::ReferenceBase::from_value(base),
                             name: name.into(),
                             strict,
                             this_value: None,
@@ -1028,7 +1028,7 @@ impl Vm {
                     let strict = self.current_strict();
                     self.stack
                         .push(Value::Reference(Box::new(crate::value::ReferenceRecord {
-                            base: crate::value::ReferenceBase::Value(Box::new(base)),
+                            base: crate::value::ReferenceBase::from_value(base),
                             name: crate::value::ReferencedName::UncoercedProperty(Box::new(key)),
                             strict,
                             this_value: None,
@@ -1041,7 +1041,7 @@ impl Vm {
                     let strict = self.current_strict();
                     self.stack
                         .push(Value::Reference(Box::new(crate::value::ReferenceRecord {
-                            base: crate::value::ReferenceBase::Value(Box::new(base)),
+                            base: crate::value::ReferenceBase::from_value(base),
                             name: crate::value::ReferencedName::UncoercedProperty(Box::new(key)),
                             strict,
                             this_value: Some(Box::new(this_value)),
@@ -1077,7 +1077,7 @@ impl Vm {
                     let strict = self.current_strict();
                     self.stack
                         .push(Value::Reference(Box::new(crate::value::ReferenceRecord {
-                            base: crate::value::ReferenceBase::Value(Box::new(base)),
+                            base: crate::value::ReferenceBase::from_value(base),
                             name: crate::value::ReferencedName::Private(name),
                             strict,
                             this_value: None,
@@ -2830,11 +2830,13 @@ impl Vm {
         let reference = self.stack.pop().unwrap_or(Value::Undefined);
         let peak_root_copies = match &reference {
             Value::Reference(record)
-                if matches!(&record.base, crate::value::ReferenceBase::Value(_))
-                    && matches!(
-                        &record.name,
-                        crate::value::ReferencedName::UncoercedProperty(_)
-                    ) =>
+                if matches!(
+                    &record.base,
+                    crate::value::ReferenceBase::Object(_) | crate::value::ReferenceBase::Value(_)
+                ) && matches!(
+                    &record.name,
+                    crate::value::ReferencedName::UncoercedProperty(_)
+                ) =>
             {
                 2usize
             }
@@ -2874,6 +2876,7 @@ impl Vm {
             match &record.base {
                 crate::value::ReferenceBase::ObjectEnvironment(base)
                 | crate::value::ReferenceBase::Value(base) => return base.as_ref().clone(),
+                crate::value::ReferenceBase::Object(index) => return Value::Object(*index),
                 crate::value::ReferenceBase::Unresolvable
                 | crate::value::ReferenceBase::Environment(_) => {}
             }

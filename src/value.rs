@@ -586,8 +586,61 @@ pub enum ReferenceBase {
     /// A property reached through an object environment record (`with` or
     /// global object identifier resolution), not a normal member expression.
     ObjectEnvironment(Box<Value>),
+    /// An object property base stored directly by heap index. Most property
+    /// References use this form so their outer record is the only Box.
+    Object(GcIdx),
     /// A value base (Object, primitive wrapper, etc.) for property references.
     Value(Box<Value>),
+}
+
+impl ReferenceBase {
+    pub(crate) fn from_value(value: Value) -> Self {
+        match value {
+            Value::Object(index) => Self::Object(index),
+            value => Self::Value(Box::new(value)),
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+const _: () = {
+    assert!(std::mem::size_of::<Value>() == 24);
+    assert!(std::mem::size_of::<ReferenceBase>() == 8);
+    assert!(std::mem::size_of::<ReferenceRecord>() == 40);
+};
+
+#[cfg(target_arch = "x86_64")]
+const _: () = {
+    assert!(std::mem::size_of::<Value>() == 32);
+    assert!(std::mem::size_of::<ReferenceBase>() == 16);
+    assert!(std::mem::size_of::<ReferenceRecord>() == 64);
+};
+
+#[cfg(test)]
+mod reference_base_tests {
+    use super::{GcIdx, PropertyKey, ReferenceBase, ReferenceRecord, ReferencedName, Value};
+
+    #[test]
+    fn object_property_bases_avoid_nested_value_boxes() {
+        assert!(matches!(
+            ReferenceBase::from_value(Value::Object(GcIdx(41))),
+            ReferenceBase::Object(GcIdx(41))
+        ));
+        assert!(matches!(
+            ReferenceBase::from_value(Value::String("primitive".into())),
+            ReferenceBase::Value(base) if matches!(base.as_ref(), Value::String(value) if value.as_ref() == "primitive")
+        ));
+
+        let record = ReferenceRecord {
+            base: ReferenceBase::Object(GcIdx(41)),
+            name: ReferencedName::Property(PropertyKey::from("field")),
+            strict: true,
+            this_value: None,
+        };
+        let mut roots = Vec::new();
+        record.visit_gc_roots(&mut |index| roots.push(index));
+        assert_eq!(roots, [41]);
+    }
 }
 
 impl Value {
@@ -611,6 +664,7 @@ impl ReferenceRecord {
             ReferenceBase::ObjectEnvironment(base) | ReferenceBase::Value(base) => {
                 base.visit_gc_roots(visit)
             }
+            ReferenceBase::Object(index) => visit(index.0),
         }
         if let Some(this_value) = &self.this_value {
             this_value.visit_gc_roots(visit);

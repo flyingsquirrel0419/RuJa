@@ -2409,6 +2409,35 @@ separate operations.
 - 장점, 단점 및 영향: Twenty-four deep Box clones disappear with no public layout or JavaScript semantic change. Direct failpoints prove reservation before ordinary getters and raw super key coercion, retry, thrown-getter cleanup, and restoration of the incoming pin depth; the shared Reference-root test separately proves exact root count and order. Focused Test262 output remains byte-identical. The opcode still scans and pins roots before re-entry, raw names reserve a two-suffix transient peak, and initial Reference creation boxes remain independent work.
 ```
 
+## Direct object Reference bases
+
+Property, raw-property, super, and private References store an object base as
+`ReferenceBase::Object(GcIdx)`. The outer `Box<ReferenceRecord>` already breaks
+the recursive `Value` type, so wrapping the same object identity in another
+`Box<Value>` was unnecessary. Primitive and nullish bases retain
+`ReferenceBase::Value(Box<Value>)`; this preserves primitive receiver identity,
+boxing Realm, and nullish error timing. `ObjectEnvironment` remains distinct
+because `with` identifier resolution has different get, put, delete, and
+missing-binding behavior.
+
+GetValue, PutValue, delete, call-receiver extraction, root visitation, and the
+retained-read peak reservation reconstruct a temporary `Value::Object` view
+from the direct index. No observable operation occurs during reconstruction.
+The representation preserves `Value`, `ReferenceBase`, and `ReferenceRecord`
+sizes at 32/16/64 bytes on x86_64 and 24/8/40 bytes on wasm32. Direct tests
+require object bases to use the compact variant, primitive bases to remain
+boxed, and the object index to appear once in the shared root visitor.
+
+```text
+[Decision Log]
+- 목적과 의도: Remove the redundant inner base Box from object-backed References without changing bytecode, outer Reference ownership, GC identity, or JavaScript evaluation order.
+- 기존 구현 및 제약 조건: Every property Reference allocated an outer 64-byte record and a second Box<Value> even when the base was only a GcIdx. Raw names and super receivers have additional required recursive boxes; primitive property bases must preserve their original Value and Realm-sensitive boxing behavior.
+- 검토한 주요 대안: Keep all allocations, add a VM-local one-entry outer-box cache, split Value into specialized identifier/property Reference handles, place all Reference fields inline, convert records to Arc, or add one direct object-base enum variant.
+- 선택한 방식: Store object property bases directly as GcIdx, retain boxed Value for non-object bases and ObjectEnvironment for with resolution, share get/put helpers across both property-base forms, and extend the single root visitor plus retained-root reservation to the new variant.
+- 다른 대안 대신 이 방식을 선택한 이유: An outer cache adds lifecycle and sentinel state while leaving inner boxes; split handles change every consumer API; blanket inlining grows common identifier records from 64 to about 120 bytes on x86_64; Arc retains allocation and adds atomic traffic. The direct variant removes one allocation across resolved, raw, super, and private object References with unchanged top-level ABI.
+- 장점, 단점 및 영향: Object-backed References lose one host allocation and one deallocation each, all target-width layout assertions hold, and 15,650 pinned Test262 files are byte-identical. Primitive bases, raw names, super receivers, with-object bases, and the outer Reference record still allocate where their recursive or semantic boundary requires it. A one-entry outer-record cache remains an independent follow-up.
+```
+
 ---
 
 **Next:** [Features](features.md) · [Known limitations](limitations.md) · [Back to README](../README.md)

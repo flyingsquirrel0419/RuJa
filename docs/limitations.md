@@ -433,9 +433,11 @@ guarantees are required.
   reserve two simultaneously live root suffixes for shared key coercion.
   Native indexed loops now pass numeric cursors through structured PropertyKey
   APIs; canonical indices avoid temporary Strings on 64-bit targets. Remaining
-  nearby hard-host-OOM scopes include initial Reference record/base/name/
-  receiver boxes, final non-index/shared-String key creation, integer names above
-  `4294967294`, every numeric key on 32-bit targets, Proxy trap descriptor
+  nearby hard-host-OOM scopes include the outer Reference record plus
+  primitive-base, raw-name, super-receiver, and with-object boxes. Object
+  property bases now store their `GcIdx` directly. Other scopes include final
+  non-index/shared-String key creation, integer names above `4294967294`, every
+  numeric key on 32-bit targets, Proxy trap descriptor
   values, TypedArray byte conversion, JSON caller containers, unrelated direct
   `ArrayData::new` constructors, Error strings, GC root enumeration, and mark
   worklists.

@@ -165,6 +165,14 @@ inspection proving 24 eliminated boxed-Reference clones is deterministic.
 cargo bench --bench basic -- computed_reference --quick
 ```
 
+The direct object-base representation removes one inner `Box<Value>` from
+each object-backed computed Reference. A sequential forced-rebuild A/B of the
+same 30,000-operation fixtures measured numeric References at **90.825 ms**
+current versus **89.879 ms** preceding, and string References at **92.025 ms**
+versus **93.394 ms**. Criterion reported no significant change. The evidence
+is therefore the deterministic constructor/ABI assertions and removed Box,
+not a throughput claim.
+
 ## Non-index Number PropertyKey checks
 
 `non_index_numeric_property_key_30k` performs 30,000 `in` conversions using

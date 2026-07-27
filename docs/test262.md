@@ -11408,6 +11408,32 @@ pass / 5110 fail / 11455 skip / 3 timeout / 0 error** over **48469** total and
 - 장점, 단점 및 영향: Dynamic Number keys lose one temporary allocation, or two for exponential normalization, with 4983-file A/B identity and no measured regression. The final Arc allocation remains infallible. JavaScript-visible and parser/compiler static-name callers still allocate their required owned result, but inherit stack-backed exponential normalization through the compatible public wrapper.
 ```
 
+## Direct object Reference bases
+
+Current and preceding release binaries run pinned `language/expressions`,
+`language/statements/class`, and `language/statements/with` with byte-identical
+output: **10290 pass / 0 fail / 5360 skip / 0 timeout / 0 error / 15650
+total**. This range covers resolved and raw object properties, primitive bases,
+super receivers, private names, Proxy re-entry, retained References, and the
+unchanged ObjectEnvironment path.
+
+Direct Rust tests separately require the object-base constructor to avoid its
+inner Box, preserve primitive boxing, and visit the exact object root;
+target-specific compile-time assertions retain x86_64 and wasm32 ABI sizes.
+Existing root-reservation failpoints verify
+that raw direct-object References still reserve the two simultaneously live
+root suffixes before key coercion.
+
+```text
+[Decision Log]
+- 목적과 의도: Prove that direct GcIdx storage changes only native Reference ownership and leaves the full affected JavaScript behavior unchanged.
+- 기존 구현 및 제약 조건: Test262 cannot observe a Rust Box directly; object and primitive property bases share GetValue/PutValue behavior but differ in storage and ToObject requirements; raw, super, private, Proxy, and with paths add observable ordering constraints.
+- 검토한 주요 대안: Rely on compilation, run only the computed-reference benchmark, compare aggregate counts, test one assignment family, or compare the complete affected expressions/class/with range with fixed policy and binaries.
+- 선택한 방식: Add representation, ABI, and exact-root assertions; retain existing forced-GC and Proxy regressions; and require byte-identical output from both pinned release binaries over all three affected Test262 families.
+- 다른 대안 대신 이 방식을 선택한 이유: Compilation proves exhaustiveness but not behavior; throughput cannot prove semantics; totals can hide offsetting movement; and one assignment family misses private, super, call, delete, and ObjectEnvironment edges.
+- 장점, 단점 및 영향: The 15,650-file comparison is exact with no admission change, while deterministic Rust tests prove the unobservable allocation boundary. The unit adds no Test262 support and makes no conformance-rate claim.
+```
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is

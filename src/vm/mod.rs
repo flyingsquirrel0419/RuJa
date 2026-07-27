@@ -3241,39 +3241,13 @@ impl Vm {
                             Err(Error::reference(format!("{} is not defined", name)))
                         }
                     }
-                    crate::value::ReferenceBase::Value(base) => match &r.name {
-                        crate::value::ReferencedName::Property(name) => {
-                            if let Some(receiver) = &r.this_value {
-                                if base.is_nullish() {
-                                    return Err(Error::type_err(
-                                        "Cannot read property from null super base",
-                                    ));
-                                }
-                                self.get_property_key_rx(base, name, receiver.as_ref().clone())
-                            } else {
-                                self.get_property_reference_value(base, name)
-                            }
-                        }
-                        crate::value::ReferencedName::UncoercedProperty(name) => {
-                            if base.is_nullish() {
-                                return Err(Error::type_err(
-                                    "Cannot read property from null super base",
-                                ));
-                            }
-                            let pin_count = self.pin(v);
-                            let name_result = self.coerce_property_key_record(name);
-                            self.unpin_many(pin_count);
-                            let name = name_result?;
-                            if let Some(receiver) = &r.this_value {
-                                self.get_property_key_rx(base, &name, receiver.as_ref().clone())
-                            } else {
-                                self.get_property_reference_value(base, &name)
-                            }
-                        }
-                        crate::value::ReferencedName::Private(name) => {
-                            self.get_private_value(base, name)
-                        }
-                    },
+                    crate::value::ReferenceBase::Object(index) => {
+                        let base = Value::Object(*index);
+                        self.get_value_from_property_reference(v, r, &base)
+                    }
+                    crate::value::ReferenceBase::Value(base) => {
+                        self.get_value_from_property_reference(v, r, base)
+                    }
                     crate::value::ReferenceBase::ObjectEnvironment(base) => match &r.name {
                         crate::value::ReferencedName::Property(key) => {
                             if let Some(id) = key.symbol_id() {
@@ -3296,6 +3270,41 @@ impl Vm {
                 }
             }
             _ => Ok(v.clone()),
+        }
+    }
+
+    fn get_value_from_property_reference(
+        &mut self,
+        reference: &Value,
+        record: &crate::value::ReferenceRecord,
+        base: &Value,
+    ) -> error::Result<Value> {
+        match &record.name {
+            crate::value::ReferencedName::Property(name) => {
+                if let Some(receiver) = &record.this_value {
+                    if base.is_nullish() {
+                        return Err(Error::type_err("Cannot read property from null super base"));
+                    }
+                    self.get_property_key_rx(base, name, receiver.as_ref().clone())
+                } else {
+                    self.get_property_reference_value(base, name)
+                }
+            }
+            crate::value::ReferencedName::UncoercedProperty(name) => {
+                if base.is_nullish() {
+                    return Err(Error::type_err("Cannot read property from null super base"));
+                }
+                let pin_count = self.pin(reference);
+                let name_result = self.coerce_property_key_record(name);
+                self.unpin_many(pin_count);
+                let name = name_result?;
+                if let Some(receiver) = &record.this_value {
+                    self.get_property_key_rx(base, &name, receiver.as_ref().clone())
+                } else {
+                    self.get_property_reference_value(base, &name)
+                }
+            }
+            crate::value::ReferencedName::Private(name) => self.get_private_value(base, name),
         }
     }
 
@@ -3387,6 +3396,7 @@ impl Vm {
         if reference.this_value.is_some() {
             return Err(Error::reference("Cannot delete super property"));
         }
+        let object_base;
         let base = match &reference.base {
             crate::value::ReferenceBase::Unresolvable => return Ok(true),
             crate::value::ReferenceBase::Environment(env_idx) => {
@@ -3413,7 +3423,11 @@ impl Vm {
                 }
                 return Ok(deleted);
             }
-            crate::value::ReferenceBase::Value(base) => base,
+            crate::value::ReferenceBase::Object(index) => {
+                object_base = Value::Object(*index);
+                &object_base
+            }
+            crate::value::ReferenceBase::Value(base) => base.as_ref(),
         };
         if base.is_nullish() {
             return Err(Error::type_err(
@@ -3741,81 +3755,12 @@ impl Vm {
                         let global_this = self.realm_global_for_env(*env_idx);
                         self.set_property(&global_this, &name, value)?;
                     }
+                    crate::value::ReferenceBase::Object(index) => {
+                        let base = Value::Object(*index);
+                        return self.put_property_reference_value(r, &base, value);
+                    }
                     crate::value::ReferenceBase::Value(base) => {
-                        if let crate::value::ReferencedName::Private(name) = &r.name {
-                            return self.set_private_value(base, name, value);
-                        }
-                        if base.is_nullish() {
-                            return Err(Error::type_err(
-                                "Cannot set property of primitive".to_string(),
-                            ));
-                        }
-                        let name = match &r.name {
-                            crate::value::ReferencedName::Property(name) => name.clone(),
-                            crate::value::ReferencedName::UncoercedProperty(name) => {
-                                let mut pin_count = self.pin_reference(r);
-                                pin_count += self.pin(&value);
-                                let name_result = self.coerce_property_key_record(name);
-                                self.unpin_many(pin_count);
-                                name_result?
-                            }
-                            crate::value::ReferencedName::Private(_) => unreachable!(),
-                        };
-                        if let Some(receiver) = &r.this_value {
-                            let base_obj = if matches!(base.as_ref(), Value::Object(_)) {
-                                base.as_ref().clone()
-                            } else {
-                                self.to_object(base)?
-                            };
-                            let success = self.try_set_property_key_with_receiver(
-                                &base_obj, &name, value, receiver,
-                            )?;
-                            if success {
-                                if let (Value::Object(idx), Some(key)) =
-                                    (receiver.as_ref(), name.as_str())
-                                {
-                                    self.ic_invalidate(idx.0, &key);
-                                }
-                            }
-                            if !success && r.strict {
-                                return Err(Error::type_err("Cannot assign to super property"));
-                            }
-                            return Ok(());
-                        }
-                        let success = if matches!(base.as_ref(), Value::Object(_)) {
-                            self.try_set_property_key_with_receiver(base, &name, value, base)?
-                        } else {
-                            let boxed = self.to_object(base)?;
-                            self.try_set_property_key_with_receiver(&boxed, &name, value, base)?
-                        };
-                        if success {
-                            if let (Value::Object(idx), Some(s)) = (base.as_ref(), name.as_str()) {
-                                let is_global_this = self.heap.with_obj(idx.0, |o| {
-                                    matches!(
-                                        o,
-                                        HeapObj::Object(od)
-                                            if od.class_name.as_deref() == Some("global")
-                                    )
-                                });
-                                self.mirror_global_property_to_binding(
-                                    *idx,
-                                    &s,
-                                    true,
-                                    is_global_this,
-                                );
-                            }
-                        }
-                        if !success && r.strict {
-                            if let Some(s) = name.as_str() {
-                                return Err(Error::type_err(format!(
-                                    "Cannot assign to read only property '{}' of object",
-                                    s
-                                )));
-                            }
-                            return Err(Error::type_err(
-                                "Cannot assign to read only Symbol property",
-                            ));
-                        }
+                        return self.put_property_reference_value(r, base, value);
                     }
                     crate::value::ReferenceBase::ObjectEnvironment(base) => match &r.name {
                         crate::value::ReferencedName::Property(key) => {
@@ -3846,6 +3791,78 @@ impl Vm {
             }
             _ => Ok(()),
         }
+    }
+
+    fn put_property_reference_value(
+        &mut self,
+        record: &crate::value::ReferenceRecord,
+        base: &Value,
+        value: Value,
+    ) -> error::Result<()> {
+        if let crate::value::ReferencedName::Private(name) = &record.name {
+            return self.set_private_value(base, name, value);
+        }
+        if base.is_nullish() {
+            return Err(Error::type_err("Cannot set property of primitive"));
+        }
+        let name = match &record.name {
+            crate::value::ReferencedName::Property(name) => name.clone(),
+            crate::value::ReferencedName::UncoercedProperty(name) => {
+                let mut pin_count = self.pin_reference(record);
+                pin_count += self.pin(&value);
+                let name_result = self.coerce_property_key_record(name);
+                self.unpin_many(pin_count);
+                name_result?
+            }
+            crate::value::ReferencedName::Private(_) => unreachable!(),
+        };
+        if let Some(receiver) = &record.this_value {
+            let base_obj = if matches!(base, Value::Object(_)) {
+                base.clone()
+            } else {
+                self.to_object(base)?
+            };
+            let success =
+                self.try_set_property_key_with_receiver(&base_obj, &name, value, receiver)?;
+            if success {
+                if let (Value::Object(index), Some(key)) = (receiver.as_ref(), name.as_str()) {
+                    self.ic_invalidate(index.0, &key);
+                }
+            }
+            if !success && record.strict {
+                return Err(Error::type_err("Cannot assign to super property"));
+            }
+            return Ok(());
+        }
+        let success = if matches!(base, Value::Object(_)) {
+            self.try_set_property_key_with_receiver(base, &name, value, base)?
+        } else {
+            let boxed = self.to_object(base)?;
+            self.try_set_property_key_with_receiver(&boxed, &name, value, base)?
+        };
+        if success {
+            if let (Value::Object(index), Some(key)) = (base, name.as_str()) {
+                let is_global_this = self.heap.with_obj(index.0, |object| {
+                    matches!(
+                        object,
+                        HeapObj::Object(data) if data.class_name.as_deref() == Some("global")
+                    )
+                });
+                self.mirror_global_property_to_binding(*index, &key, true, is_global_this);
+            }
+        }
+        if !success && record.strict {
+            if let Some(key) = name.as_str() {
+                return Err(Error::type_err(format!(
+                    "Cannot assign to read only property '{}' of object",
+                    key
+                )));
+            }
+            return Err(Error::type_err(
+                "Cannot assign to read only Symbol property",
+            ));
+        }
+        Ok(())
     }
 
     /// Build a frozen tagged-template object and its frozen `raw` array per
