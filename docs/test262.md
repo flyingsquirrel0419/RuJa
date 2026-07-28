@@ -11752,6 +11752,13 @@ language-valid start where repeated capture correction is required, and
 anchored full-haystack matching owns group-zero bounds, sticky position, and
 corrected captures.
 
+Feature commit `86482be` passed ordinary CI `30316291488` (**2/2 jobs**) and
+full matrix `30316291511` (**35/35 jobs**). The 32 result artifacts aggregate
+to **31,953 pass / 5,108 fail / 11,405 skip / 3 timeout / 0 error / 48,469
+total**, with **37,061** pass-or-fail executions. Compared with prior full run
+`30310182698`, 31 result files are byte-identical; Annex B changes by exactly
+**+1 pass / -1 timeout**, with failures, skips, errors, and total unchanged.
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is
