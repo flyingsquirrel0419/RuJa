@@ -1,0 +1,2 @@
+# Exact feature-gated Object.groupBy coverage.
+built-ins/Object/groupBy/iterator-next-throws.js

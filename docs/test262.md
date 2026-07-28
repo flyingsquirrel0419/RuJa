@@ -4350,13 +4350,15 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   earlier checkout and policy boundary, the focused run was **11 pass / 0 fail
   / 14 skip**; the complete iterator-protocol unit documented below supersedes
   that partial count.
-- **`Object.groupBy` static grouping** —
+- **Earlier `Object.groupBy` static-grouping unit** —
   `Object.groupBy` is now exposed as a static built-in, iterates arbitrary
   sync iterables, calls the grouping callback with `(value, index)`, converts
   callback results with `ToPropertyKey`, preserves Symbol group keys, returns
   a null-prototype result object, and closes custom iterators when
-  callback/key coercion abruptly completes. This closes the focused
-  `built-ins/Object/groupBy` run at **13 pass / 0 fail / 1 skip**.
+  callback/key coercion abruptly completes. At that earlier policy boundary,
+  the focused `built-ins/Object/groupBy` run was **13 pass / 0 fail / 1
+  skip**; the complete iterator/resource unit documented below supersedes
+  that partial claim.
 - **Native Error constructor shape** —
   Native Error constructors now inherit from `%Error%` instead of directly
   from `%Function.prototype%`, expose own non-enumerable `name`/`length`
@@ -11992,6 +11994,49 @@ two additional passes and two fewer skips with no failure movement. Aggregate
 is **31955 pass / 5108 fail / 11403 skip / 3 timeout / 0 error / 48469 total /
 37063 run**. The sorted 32-artifact evidence hash is
 `990bcf4a214a9df0e9e1fe279c79c4961be2403c513dc6d1332c4db3a9589781`.
+
+## `Object.groupBy` direct iterator and resource pipeline
+
+Pinned Test262 `020cb74075849d1e404bbcdb62feb7a02e6966db` contains 14 files in
+`built-ins/Object/groupBy`. Before this unit, ordinary policy reported **13
+pass / 0 fail / 1 skip** because `iterator-next-throws.js` retained the broad
+`Symbol.iterator` gate. Forced execution was already **14/14**: the official
+directory does not inspect the observable `HasProperty` probe, zero-argument
+`next` call, built-in iterator overrides, close-error precedence, Fuel policy,
+safe-index limit, forced-GC roots, or host allocation failures repaired here.
+
+The final implementation remains **14/14** under forced policy and reaches
+**14 pass / 0 fail / 0 skip** under ordinary policy. A frozen one-path
+manifest removes exactly the live `{ array-grouping, Symbol.iterator }`
+metadata for `iterator-next-throws.js`. Shared runner/analyzer tooling verifies
+exact metadata, disjointness, rejection of future/outside paths, retention of
+additional unsupported features, and inaccessible-checkout behavior.
+
+Direct Rust tests cover one observable `@@iterator` Get, no Proxy `has` trap,
+cached zero-argument `next`, overridden Array/Map/Set/generator iterators,
+step-error non-close, done-before-value order, callback and key-conversion
+close precedence, Realm-local Arrays, null-prototype descriptors, and forced
+GC at acquisition, stepping, callback, and coercion. VM tests inject input
+root, new-group, existing-group, safe-index, result-property, and Fuel
+failures, checking exact close boundaries, LIFO pin restoration, output-group
+fuel, heap-cap GC during result allocation, foreign-Realm index errors, and
+close-time heap-cap changes after native-error materialization, plus clean
+retry.
+Local gates pass **307/307** library, **561/561** builtins, **62/62** `with`,
+**304/304** release-library, and **140/140** tooling tests, together with all
+targets/features, rustfmt, warnings-denied Clippy, release build, and wasm32.
+Two independent GPT-5.6 final reviews are clean after their rooting,
+materialization, deterministic-failpoint, and step-Fuel findings were fixed.
+
+```text
+[Decision Log]
+- 목적과 의도: Admit the complete Object.groupBy directory only after repairing and directly testing the GroupBy boundaries that its official tests do not observe.
+- 기존 구현 및 제약 조건: One Symbol.iterator-tagged file remained skipped, while forced 14/14 gave false confidence because the directory omitted iterator Has/call arity, built-in overrides, close completion priority, non-catchable Fuel, GC roots, safe-index overflow, and allocation failure.
+- 검토한 주요 대안: Keep the skip, remove Symbol.iterator globally, admit the whole directory by prefix, rely on forced Test262 alone, or freeze the one gated path and pair it with direct Rust/resource tests.
+- 선택한 방식: Freeze iterator-next-throws.js and its complete live feature set in a runner/analyzer-shared manifest; require ordinary 13/0/1 to 14/0/0, forced 14/0 stability, and direct tests for every unrepresented iterator/resource boundary.
+- 다른 대안 대신 이 방식을 선택한 이유: Global feature removal overstates unrelated iterator support, prefix admission silently accepts future files, and forced green results cannot prove behavior the tests never inspect. Exact admission plus direct deterministic failures separates policy movement from runtime hardening.
+- 장점, 단점 및 영향: The directory becomes fully admitted without broadening Symbol.iterator policy. Official movement is one skip-to-pass; runtime repairs are evidenced independently. Map.groupBy remains a separate shared-GroupBy follow-up rather than being inferred from Object.groupBy results.
+```
 
 ## `Object.fromEntries` iterator protocol
 

@@ -47,6 +47,10 @@ from test262_object_from_entries_admission import (
     OBJECT_FROM_ENTRIES_FEATURES,
     OBJECT_FROM_ENTRIES_FILES,
 )
+from test262_object_group_by_admission import (
+    OBJECT_GROUP_BY_FEATURES,
+    OBJECT_GROUP_BY_FILES,
+)
 from test262_native_construct_admission import (
     NATIVE_CONSTRUCT_FEATURES,
     NATIVE_CONSTRUCT_FILES,
@@ -1452,6 +1456,87 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                         self.assertFalse(tool.object_from_entries_path(path))
                         self.assertTrue(
                             tool.should_skip({"features": ["Symbol.iterator"]}, path)
+                        )
+                finally:
+                    tool.TEST262 = original_root
+
+    def test_object_group_by_manifest_is_exact_live_disjoint_and_shared(self):
+        expected = {
+            "built-ins/Object/groupBy/iterator-next-throws.js": {
+                "array-grouping",
+                "Symbol.iterator",
+            }
+        }
+        self.assertEqual(OBJECT_GROUP_BY_FILES, frozenset(expected))
+        self.assertEqual(
+            OBJECT_GROUP_BY_FEATURES,
+            {path: frozenset(features) for path, features in expected.items()},
+        )
+
+        tools_dir = Path(__file__).resolve().parent
+        for manifest in tools_dir.glob("test262_*_admission.txt"):
+            if manifest.name == "test262_object_group_by_admission.txt":
+                continue
+            existing = {
+                line
+                for raw_line in manifest.read_text().splitlines()
+                if (line := raw_line.strip()) and not line.startswith("#")
+            }
+            self.assertFalse(OBJECT_GROUP_BY_FILES & existing, manifest.name)
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        try:
+            test_root_available = test_root.is_dir()
+        except OSError:
+            test_root_available = False
+        if test_root_available:
+            for relative, features in OBJECT_GROUP_BY_FEATURES.items():
+                path = test_root / relative
+                self.assertTrue(path.is_file(), relative)
+                metadata = test262_runner.parse_meta(path.read_text())
+                self.assertEqual(
+                    frozenset(metadata.get("features", [])), features, relative
+                )
+                self.assertEqual(metadata.get("flags", []), [], relative)
+                self.assertIsNone(metadata.get("negative"), relative)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            admitted = root / "test/built-ins/Object/groupBy/iterator-next-throws.js"
+            future = root / "test/built-ins/Object/groupBy/future.js"
+            outside = root / "test/built-ins/Map/groupBy/iterator-next-throws.js"
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    self.assertTrue(tool.object_group_by_path(admitted))
+                    self.assertEqual(
+                        tool.object_group_by_features(admitted),
+                        expected["built-ins/Object/groupBy/iterator-next-throws.js"],
+                    )
+                    self.assertFalse(
+                        tool.should_skip(
+                            {"features": sorted(OBJECT_GROUP_BY_FEATURES[next(iter(expected))])},
+                            admitted,
+                        )
+                    )
+                    self.assertTrue(
+                        tool.should_skip(
+                            {
+                                "features": sorted(
+                                    OBJECT_GROUP_BY_FEATURES[next(iter(expected))]
+                                    | {"Proxy"}
+                                )
+                            },
+                            admitted,
+                        )
+                    )
+                    for path in (future, outside):
+                        self.assertFalse(tool.object_group_by_path(path))
+                        self.assertTrue(
+                            tool.should_skip(
+                                {"features": ["Symbol.iterator"]}, path
+                            )
                         )
                 finally:
                     tool.TEST262 = original_root

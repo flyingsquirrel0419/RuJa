@@ -2502,7 +2502,40 @@ iterator record.
 - 검토한 주요 대안: Extend the Array snapshot with array-like fallback, reuse Vm::make_iterator, build a hidden JavaScript adder function literally, iterate entry objects themselves, or use the existing direct iterator-record and ordinary property helpers.
 - 선택한 방식: Reserve input/result roots before allocation, create the result first, acquire a direct synchronous iterator record with one Symbol.iterator Get and cached next, use the shared iterator-step helper, root each yielded entry/key/value, apply Get(0), Get(1), ToPropertyKey, and fallible DefineOwnProperty in order, close catchable post-step entry-processing errors through the shared abrupt-completion-preserving helper, and propagate host Fuel without user cleanup re-entry.
 - 다른 대안 대신 이 방식을 선택한 이유: Snapshots and array-like fallback do not implement the iterable contract; Vm::make_iterator adds an observable HasProperty probe for ordinary objects; a materialized hidden adder adds heap and rooting complexity without an observable function identity; iterating entries violates indexed Get semantics; and raw map insertion bypasses reservation failure and shared descriptor behavior.
-- 장점, 단점 및 영향: Arbitrary iterables, exact ordering, duplicate-key order, Symbol keys, define semantics, close precedence, foreign Realms, forced GC, and retryable reservation failures now have direct evidence. The loop consumes one native fuel unit per iterator step through the shared helper; unrelated Object.groupBy iterator cleanup remains a separate implementation audit.
+- 장점, 단점 및 영향: Arbitrary iterables, exact ordering, duplicate-key order, Symbol keys, define semantics, close precedence, foreign Realms, forced GC, and retryable reservation failures now have direct evidence. The loop consumes one native fuel unit per iterator step through the shared helper; Object.groupBy is documented in its completed pipeline below.
+```
+
+## `Object.groupBy` iterator and grouping pipeline
+
+`Object.groupBy` validates inputs before acquiring one direct synchronous
+iterator record. The cached `next` method is called without arguments and each
+step consumes native fuel. A yielded value and callback result are rooted
+through callback execution and `ToPropertyKey`; every accumulated value stays
+rooted until its Realm-local group Array is published on the null-prototype
+result. The result is created only after iteration completes, as required by
+`GroupBy` followed by `Object.groupBy`.
+
+Errors from `next`, result validation, `done`, or `value` propagate without
+closing. Catchable callback, key conversion, safe-index-limit, and host group
+storage errors close the active iterator while preserving the original abrupt
+completion. Native errors become rooted method-Realm error objects before
+`return`, so close-time heap-limit changes cannot alter later materialization.
+A non-catchable Fuel abort never invokes user `return`. Group map
+and element vectors reserve before mutation; result properties use the
+fallible ordinary define path after the iterator is already complete.
+Materialization consumes one fuel unit per group. Because temporary roots are
+LIFO, cleanup keeps iterator roots beneath accumulated-value roots until every
+result Array/property operation finishes, then releases values before the
+iterator record.
+
+```text
+[Decision Log]
+- 목적과 의도: Implement the complete property-key GroupBy and Object.groupBy algorithms with exact iterator observability, abrupt-completion boundaries, Realm provenance, GC safety, and fallible host storage.
+- 기존 구현 및 제약 조건: The previous implementation wrapped Vm::make_iterator, which added HasProperty, bypassed overrides on several built-in iterables, and called next(undefined). Callback/key errors used a normal-close helper that could replace the original throw and re-enter cleanup on Fuel. Host grouping vectors and result properties grew through unchecked or raw insertion paths.
+- 검토한 주요 대안: Patch Vm::make_iterator globally, retain the wrapper and special-case close precedence, share a new generic GroupBy abstraction with Map.groupBy immediately, or use the existing direct iterator record and add Object-specific fallible group storage.
+- 선택한 방식: Pin items and callback, acquire and pin a direct iterator record, step through the shared zero-argument metered helper, root each value/key and every accumulated value, materialize native errors in the method Realm before closing catchable post-step grouping failures through the original-completion-preserving helper, reserve group/element storage before mutation, then meter each output group, build Realm-local Arrays, and publish them through DefineOwnProperty after normal iterator completion. Preserve LIFO root order by releasing accumulated values before the iterator record.
+- 다른 대안 대신 이 방식을 선택한 이유: Global iterator-wrapper changes have a much larger behavioral surface; wrapper special cases retain its wrong observability; combining Map.groupBy would mix collection-key and property-key semantics into this narrow unit. The direct helpers already encode the required step and close boundaries used by Object.fromEntries.
+- 장점, 단점 및 영향: Proxy order, next arity/cache, built-in iterator overrides, close precedence, step/output Fuel, safe-index limit, forced heap-cap GC, allocation failure, clean retry, descriptors, null prototype, and foreign-Realm Arrays/errors now have direct evidence. Accumulated values and the completed iterator record remain pinned until output publication, trading root-set size for explicit GC correctness. Map.groupBy retains a separate follow-up audit.
 ```
 
 ## Object integrity levels

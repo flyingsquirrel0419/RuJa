@@ -1,11 +1,11 @@
 use super::property::MAX_PROXY_CYCLE_REPLAYS;
 use super::{
     ArrayLengthReservationSite, DescriptorMaterializationReservationSite, ExternalPromiseJob,
-    ForInKeyReservationSite, GetPrototypeReservationSite, InlineCacheReservationSite, Microtask,
-    OrdinaryOwnKeysReservationSite, OrdinaryPropertyStorageReservationSite,
-    OwnKeyConsumerReservationSite, PropertyTraversalReservationSite,
-    ProxyDefinePropertyReservationSite, ProxyDescriptorReservationSite,
-    ProxyOwnKeysReservationSite, Vm,
+    ForInKeyReservationSite, GetPrototypeReservationSite, GroupByReservationSite,
+    InlineCacheReservationSite, Microtask, OrdinaryOwnKeysReservationSite,
+    OrdinaryPropertyStorageReservationSite, OwnKeyConsumerReservationSite,
+    PropertyTraversalReservationSite, ProxyDefinePropertyReservationSite,
+    ProxyDescriptorReservationSite, ProxyOwnKeysReservationSite, Vm,
 };
 use crate::bytecode::{Chunk, Op};
 use crate::value::{
@@ -18459,6 +18459,365 @@ fn object_from_entries_reservation_failures_are_ordered_closed_and_retryable() {
     assert_eq!(vm.gc_pins.len(), baseline_pins);
     assert_eq!(
         vm.run("fuelClosed;")
+            .expect("Fuel close counter should remain readable"),
+        Value::Number(0.0)
+    );
+}
+
+#[test]
+fn object_group_by_reservations_close_only_active_iterators_and_restore_pins() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "groupByNativeNext",
+        |vm, _, _| {
+            vm.group_by_native_next_calls += 1;
+            vm.group_by_native_next_result
+                .clone()
+                .ok_or_else(|| crate::error::Error::internal("missing groupBy native step result"))
+        },
+        0,
+    )
+    .expect("native next probe should register");
+    vm.run(
+        r#"
+        var iteratorGets = 0;
+        var nextCalls = 0;
+        var closed = 0;
+        var index = 0;
+        var closeResult = {};
+        var values = [
+          { marker: 1 }, { marker: 2 }, { marker: 3 },
+          { marker: 4 }, { marker: 5 }
+        ];
+        var steps = [
+          { done: false, value: values[0] },
+          { done: false, value: values[1] },
+          { done: false, value: values[2] },
+          { done: false, value: values[3] },
+          { done: false, value: values[4] }
+        ];
+        var doneStep = { done: true };
+        var iterator = {
+          next: function() {
+            nextCalls++;
+            if (index >= 5) return doneStep;
+            return steps[index++];
+          },
+          return: function() { closed++; return closeResult; }
+        };
+        var iterable = {
+          get [Symbol.iterator]() {
+            iteratorGets++;
+            return function() {
+              index = 0;
+              return iterator;
+            };
+          }
+        };
+        var groupByDoneStep = { done: true };
+        var nativeStepIterable = {
+          [Symbol.iterator]: function() {
+            return { next: groupByNativeNext };
+          }
+        };
+        "#,
+    )
+    .expect("grouping fixture should initialize");
+    vm.group_by_native_next_result = Some(
+        vm.run("groupByDoneStep;")
+            .expect("native next result should remain live"),
+    );
+    vm.gc();
+    let baseline_live = vm.heap.live_count();
+    let baseline_pins = vm.gc_pins.len();
+
+    vm.group_by_zero_fuel_before_step = true;
+    let error = vm
+        .run("Object.groupBy(nativeStepIterable, function() { return 'same'; });")
+        .expect_err("the first iterator step should consume fuel");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert!(!vm.group_by_zero_fuel_before_step);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    vm.set_fuel(None);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.group_by_native_next_calls, 0);
+
+    vm.fail_group_by_reservation = Some((GroupByReservationSite::InputRoots, 0));
+    let error = vm
+        .run("Object.groupBy(iterable, function() { return 'same'; });")
+        .expect_err("input-root reservation should fail before GetIterator");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fail_group_by_reservation, None);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(
+        vm.run("iteratorGets + ':' + nextCalls + ':' + closed;")
+            .expect("pre-acquisition counters should remain readable"),
+        Value::String(Arc::from("0:0:0"))
+    );
+
+    vm.fail_group_by_reservation = Some((GroupByReservationSite::IteratorRoots, 0));
+    let error = vm
+        .run("Object.groupBy(iterable, function() { return 'same'; });")
+        .expect_err("iterator-root reservation should fail before GetIterator");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fail_group_by_reservation, None);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(
+        vm.run("iteratorGets + ':' + nextCalls + ':' + closed;")
+            .expect("iterator-root counters should remain readable"),
+        Value::String(Arc::from("0:0:0"))
+    );
+
+    vm.fail_group_by_reservation = Some((GroupByReservationSite::ValueRoots, 0));
+    let error = vm
+        .run("Object.groupBy(iterable, function() { return 'same'; });")
+        .expect_err("value-root reservation should close the active iterator");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fail_group_by_reservation, None);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(
+        vm.run("iteratorGets + ':' + nextCalls + ':' + closed;")
+            .expect("value-root counters should remain readable"),
+        Value::String(Arc::from("1:1:1"))
+    );
+
+    vm.run("iteratorGets = nextCalls = closed = 0;")
+        .expect("counters should reset");
+    vm.fail_group_by_reservation = Some((GroupByReservationSite::KeyRoots, 0));
+    let error = vm
+        .run("Object.groupBy(iterable, function() { return { key: 'same' }; });")
+        .expect_err("key-root reservation should close the active iterator");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fail_group_by_reservation, None);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(
+        vm.run("iteratorGets + ':' + nextCalls + ':' + closed;")
+            .expect("key-root counters should remain readable"),
+        Value::String(Arc::from("1:1:1"))
+    );
+
+    vm.run("iteratorGets = nextCalls = closed = 0;")
+        .expect("counters should reset");
+
+    vm.fail_group_by_reservation = Some((GroupByReservationSite::Groups, 0));
+    let error = vm
+        .run("Object.groupBy(iterable, function(value, i) { return '' + i; });")
+        .expect_err("new-group storage should be fallible");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fail_group_by_reservation, None);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(
+        vm.run("iteratorGets + ':' + nextCalls + ':' + closed;")
+            .expect("new-group close counters should remain readable"),
+        Value::String(Arc::from("1:1:1"))
+    );
+
+    vm.run("iteratorGets = nextCalls = closed = 0;")
+        .expect("counters should reset");
+    vm.fail_group_by_reservation = Some((GroupByReservationSite::Elements, 0));
+    let error = vm
+        .run("Object.groupBy(iterable, function() { return 'same'; });")
+        .expect_err("first element-vector allocation should be fallible");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fail_group_by_reservation, None);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(
+        vm.run("iteratorGets + ':' + nextCalls + ':' + closed;")
+            .expect("first-element close counters should remain readable"),
+        Value::String(Arc::from("1:1:1"))
+    );
+
+    vm.run("iteratorGets = nextCalls = closed = 0;")
+        .expect("counters should reset");
+    vm.fail_group_by_reservation = Some((GroupByReservationSite::Elements, 1));
+    let error = vm
+        .run("Object.groupBy(iterable, function() { return 'same'; });")
+        .expect_err("existing-group logical append reservation should be fallible");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fail_group_by_reservation, None);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(
+        vm.run("iteratorGets + ':' + nextCalls + ':' + closed;")
+            .expect("element close counters should remain readable"),
+        Value::String(Arc::from("1:2:1"))
+    );
+
+    vm.run("iteratorGets = nextCalls = closed = 0;")
+        .expect("counters should reset");
+    vm.group_by_index_override = Some(9_007_199_254_740_991);
+    let error = vm
+        .run("Object.groupBy(iterable, function() { return 'same'; });")
+        .expect_err("safe-integer boundary should close before stepping");
+    assert_eq!(error.kind, crate::error::ErrorKind::Type);
+    assert_eq!(vm.group_by_index_override, None);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(
+        vm.run("iteratorGets + ':' + nextCalls + ':' + closed;")
+            .expect("index-limit counters should remain readable"),
+        Value::String(Arc::from("1:0:1"))
+    );
+
+    vm.run("iteratorGets = nextCalls = closed = 0;")
+        .expect("counters should reset");
+    vm.fail_ordinary_property_storage_reservation =
+        Some((OrdinaryPropertyStorageReservationSite::PropertyStorage, 0));
+    let error = vm
+        .run("Object.groupBy(iterable, function() { return 'same'; });")
+        .expect_err("result property publication should be fallible");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fail_ordinary_property_storage_reservation, None);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(
+        vm.run("iteratorGets + ':' + nextCalls + ':' + closed;")
+            .expect("completed-iterator counters should remain readable"),
+        Value::String(Arc::from("1:6:0"))
+    );
+    vm.gc();
+    assert_eq!(vm.heap.live_count(), baseline_live);
+
+    assert_eq!(
+        vm.run(
+            "var grouped = Object.groupBy(iterable, function() { return 'same'; }); grouped.same.length + ':' + grouped.same[4].marker;"
+        )
+        .expect("a clean retry should group all values"),
+        Value::String(Arc::from("5:5"))
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    vm.run("grouped = undefined;")
+        .expect("retry result should be releasable");
+    vm.gc();
+    assert_eq!(vm.heap.live_count(), baseline_live);
+
+    vm.register_fn(
+        "capDuringGroupClose",
+        |vm, _, _| {
+            vm.set_max_heap_objects(Some(vm.heap.live_count()));
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("close-time heap-cap hook should register");
+    vm.run(
+        r#"
+        var other = $262.createRealm().global;
+        iterator.return = function() { closed++; return capDuringGroupClose(); };
+        closed = 0;
+        "#,
+    )
+    .expect("foreign-Realm safe-index fixture should initialize");
+    let foreign_group_by = vm
+        .run("other.Object.groupBy;")
+        .expect("foreign Object.groupBy should exist");
+    let iterable_value = vm.run("iterable;").expect("iterable should remain live");
+    let object_constructor = vm.run("Object;").expect("Object constructor should exist");
+    vm.group_by_index_override = Some(9_007_199_254_740_991);
+    let error = vm
+        .call_function(
+            &foreign_group_by,
+            &[iterable_value, object_constructor.clone()],
+            Some(Value::Undefined),
+        )
+        .expect_err("safe-index boundary should remain abrupt");
+    vm.set_max_heap_objects(None);
+    assert_eq!(error.kind, crate::error::ErrorKind::Type);
+    let thrown = error
+        .thrown_value
+        .clone()
+        .expect("safe-index TypeError should materialize before close");
+    let foreign_type_error_prototype = vm
+        .run("other.TypeError.prototype;")
+        .expect("foreign TypeError prototype should exist");
+    assert_eq!(
+        vm.get_prototype_of(&thrown)
+            .expect("materialized TypeError prototype should be readable"),
+        Some(foreign_type_error_prototype)
+    );
+    assert_eq!(
+        vm.run("closed;")
+            .expect("close counter should remain readable"),
+        Value::Number(1.0)
+    );
+    assert_eq!(vm.group_by_index_override, None);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    vm.run("iterator.return = function() { closed++; return closeResult; }; closed = 0;")
+        .expect("ordinary close fixture should restore");
+
+    vm.register_fn(
+        "armGroupHeapCap",
+        |vm, _, _| {
+            vm.set_max_heap_objects(Some(vm.heap.live_count() + 1));
+            Ok(Value::String(Arc::from("key")))
+        },
+        0,
+    )
+    .expect("heap-cap hook should register");
+    let capped_result = vm.run(
+        r#"
+        var capIndex = 0;
+        var capIterable = {
+          [Symbol.iterator]: function() {
+            return {
+              next: function() {
+                if (capIndex++ === 0) {
+                  return { done: false, value: { marker: 9 } };
+                }
+                return { done: true };
+              }
+            };
+          }
+        };
+        Object.groupBy(capIterable, armGroupHeapCap).key[0].marker;
+        "#,
+    );
+    vm.set_max_heap_objects(None);
+    assert_eq!(
+        capped_result.expect("grouped value should survive output-allocation GC"),
+        Value::Number(9.0)
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    vm.run(
+        r#"
+        var fuelItems = [{ key: "same" }, { key: "same" }, { key: "same" }];
+        function fuelGroupKey(value) { return value.key; }
+        "#,
+    )
+    .expect("output-fuel fixture should initialize");
+    vm.set_fuel(Some(100_000));
+    vm.run("Object.groupBy(fuelItems, fuelGroupKey);")
+        .expect("single-group fuel measurement should complete");
+    let single_group_fuel = 100_000 - vm.fuel_remaining().expect("fuel should remain bounded");
+    vm.set_fuel(None);
+    vm.run("fuelItems[1].key = 'second'; fuelItems[2].key = 'third';")
+        .expect("distinct group keys should install");
+    vm.set_fuel(Some(100_000));
+    vm.run("Object.groupBy(fuelItems, fuelGroupKey);")
+        .expect("three-group fuel measurement should complete");
+    let three_group_fuel = 100_000 - vm.fuel_remaining().expect("fuel should remain bounded");
+    assert_eq!(three_group_fuel, single_group_fuel + 2);
+    vm.set_fuel(Some(three_group_fuel - 1));
+    let error = vm
+        .run("Object.groupBy(fuelItems, fuelGroupKey);")
+        .expect_err("one fewer fuel unit should abort output materialization");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    vm.set_fuel(None);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    vm.register_fn(
+        "abortFuel",
+        |_, _, _| Err(crate::error::Error::fuel("test fuel abort")),
+        0,
+    )
+    .expect("Fuel hook should register");
+    vm.run("closed = 0;").expect("close counter should reset");
+    let error = vm
+        .run("Object.groupBy(iterable, abortFuel);")
+        .expect_err("host Fuel must abort callback processing");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(
+        vm.run("closed;")
             .expect("Fuel close counter should remain readable"),
         Value::Number(0.0)
     );

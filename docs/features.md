@@ -217,7 +217,12 @@
   `getOwnPropertyDescriptor`/`getOwnPropertyDescriptors`,
   `getOwnPropertyNames`; static methods, their Array/Object results, Proxy
   descriptor objects, primitive wrappers, and generated errors use the method
-  Realm and survive callback/coercion GC. `preventExtensions`, integrity-level
+  Realm and survive callback/coercion GC. `groupBy` uses a cached direct
+  iterator record with zero-argument metered steps,
+  original-completion-preserving close semantics, fallible group storage, and
+  Realm-local error/result objects. Native errors materialize before close and
+  output is metered per group; step errors and host Fuel do not invoke user
+  cleanup. `preventExtensions`, integrity-level
   tests, sealing, and freezing cover every observable exotic object; Proxy
   forwarding is iterative, fuel-metered, GC-rooted, and validates truthy traps
   through the target's complete nested `[[IsExtensible]]`. Prototype get/set

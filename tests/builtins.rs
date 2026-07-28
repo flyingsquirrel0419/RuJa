@@ -15607,6 +15607,233 @@ fn object_statics() {
 }
 
 #[test]
+fn object_group_by_observes_iterator_record_close_priority_and_gc_roots() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("GC hook should register");
+
+    assert_eq!(
+        vm.run(
+            r#"
+            var effects = [];
+            var hasCalls = 0;
+            var iteratorGets = 0;
+            var iteratorThis = false;
+            var iteratorArgs = -1;
+            var nextGets = 0;
+            var nextThis = true;
+            var nextArgs = [];
+            var callbackThis = true;
+            var callbackArgs = [];
+            var kept = { marker: 7 };
+            var key = {
+              [Symbol.toPrimitive]: function(hint) {
+                effects.push("key:" + hint);
+                forceGc();
+                return "all";
+              }
+            };
+            var iteratorTarget = {
+              count: 0,
+              next: function() {
+                nextThis = nextThis && this === iterator;
+                nextArgs.push(arguments.length);
+                effects.push("next:" + this.count);
+                forceGc();
+                return this.count++ === 0
+                  ? { done: false, value: kept }
+                  : { done: true };
+              }
+            };
+            var iterator = new Proxy(iteratorTarget, {
+              get: function(target, property, receiver) {
+                if (property === "next") {
+                  nextGets++;
+                  effects.push("next-get");
+                }
+                return Reflect.get(target, property, receiver);
+              }
+            });
+            var iterable = new Proxy({}, {
+              has: function() { hasCalls++; return true; },
+              get: function(target, property) {
+                if (property === Symbol.iterator) {
+                  iteratorGets++;
+                  effects.push("iterator-get");
+                  forceGc();
+                  return function() {
+                  effects.push("iterator-call");
+                  iteratorThis = this === iterable;
+                  iteratorArgs = arguments.length;
+                    forceGc();
+                    return iterator;
+                  };
+                }
+                return target[property];
+              }
+            });
+            var grouped = Object.groupBy(iterable, function(value, index) {
+              "use strict";
+              callbackThis = callbackThis && this === undefined;
+              callbackArgs.push(arguments.length + ":" + index);
+              effects.push("callback:" + index);
+              forceGc();
+              return key;
+            });
+            var descriptor = Object.getOwnPropertyDescriptor(grouped, "all");
+            [
+              effects.join(","), hasCalls, iteratorGets, nextGets,
+              iteratorThis, iteratorArgs,
+              nextThis, nextArgs.join(":"), callbackThis,
+              callbackArgs.join(":"), grouped.all[0] === kept,
+              Object.getPrototypeOf(grouped) === null,
+              descriptor.writable, descriptor.enumerable, descriptor.configurable
+            ].join("|");
+            "#,
+        )
+        .expect("grouping should preserve direct iterator and GC roots"),
+        Value::String(Arc::from(
+            "iterator-get,iterator-call,next-get,next:0,callback:0,key:string,next:1|0|1|1|true|0|true|0:0|true|2:0|true|true|true|true|true"
+        ))
+    );
+
+    assert_eq!(
+        vm.run(
+            r#"
+            function closeCase(kind, keyFailure) {
+              var original = {};
+              var replacement = {};
+              var calls = 0;
+              var iterator = {
+                next: function() { return { done: false, value: 1 }; }
+              };
+              if (kind === "null") {
+                iterator.return = null;
+              } else if (kind === "getter") {
+                Object.defineProperty(iterator, "return", {
+                  get: function() { forceGc(); throw replacement; }
+                });
+              } else if (kind === "noncallable") {
+                iterator.return = 1;
+              } else if (kind === "throw") {
+                iterator.return = function() {
+                  calls++;
+                  forceGc();
+                  throw replacement;
+                };
+              } else if (kind === "primitive") {
+                iterator.return = function() { calls++; forceGc(); return 1; };
+              }
+              var iterable = { [Symbol.iterator]: function() { return iterator; } };
+              try {
+                Object.groupBy(iterable, function() {
+                  if (!keyFailure) throw original;
+                  return { [Symbol.toPrimitive]: function() { throw original; } };
+                });
+              } catch (error) {
+                return (error === original) + ":" + calls;
+              }
+            }
+            [
+              closeCase("absent", false), closeCase("null", false),
+              closeCase("getter", false), closeCase("noncallable", false),
+              closeCase("throw", false), closeCase("primitive", false),
+              closeCase("throw", true)
+            ].join(",");
+            "#,
+        )
+        .expect("IteratorClose must preserve the original grouping error"),
+        Value::String(Arc::from(
+            "true:0,true:0,true:0,true:0,true:1,true:1,true:1"
+        ))
+    );
+
+    assert_eq!(
+        vm.run(
+            r#"
+            function noCloseCase(kind) {
+              var original = {};
+              var closed = 0;
+              var iterator = { return: function() { closed++; return {}; } };
+              if (kind === "uncallable") iterator.next = null;
+              if (kind === "nonobject") iterator.next = function() { return null; };
+              if (kind === "next") iterator.next = function() { throw original; };
+              if (kind === "done") iterator.next = function() {
+                return { get done() { throw original; } };
+              };
+              if (kind === "value") iterator.next = function() {
+                return { done: false, get value() { throw original; } };
+              };
+              if (kind === "complete") iterator.next = function() {
+                return { done: true, get value() { throw original; } };
+              };
+              try {
+                var result = Object.groupBy(
+                  { [Symbol.iterator]: function() { return iterator; } },
+                  function() { return "k"; }
+                );
+                return (kind === "complete" && Object.keys(result).length === 0) +
+                  ":" + closed;
+              } catch (error) {
+                return (kind === "uncallable" || kind === "nonobject"
+                  ? error instanceof TypeError
+                  : error === original) + ":" + closed;
+              }
+            }
+            ["uncallable", "nonobject", "next", "done", "value", "complete"]
+              .map(noCloseCase).join(",");
+            "#,
+        )
+        .expect("IteratorStepValue failures must not close the iterator"),
+        Value::String(Arc::from("true:0,true:0,true:0,true:0,true:0,true:0"))
+    );
+
+    assert_eq!(
+        vm.run(
+            r#"
+            function override(value) {
+              return function() {
+                var done = false;
+                return {
+                  next: function() {
+                    if (done) return { done: true };
+                    done = true;
+                    return { done: false, value: value };
+                  }
+                };
+              };
+            }
+            function groupedValue(iterable) {
+              return Object.groupBy(iterable, function() { return "k"; }).k[0];
+            }
+            var array = ["native"];
+            var map = new Map([["native", 1]]);
+            var set = new Set(["native"]);
+            function* source() { yield "native"; }
+            var generator = source();
+            array[Symbol.iterator] = override("array");
+            map[Symbol.iterator] = override("map");
+            set[Symbol.iterator] = override("set");
+            generator[Symbol.iterator] = override("generator");
+            [
+              groupedValue(array), groupedValue(map),
+              groupedValue(set), groupedValue(generator)
+            ].join(",");
+            "#,
+        )
+        .expect("Object.groupBy must observe every overridden iterator method"),
+        Value::String(Arc::from("array,map,set,generator"))
+    );
+}
+
+#[test]
 fn object_from_entries_observes_iterator_order_close_priority_and_gc_roots() {
     let mut vm = Vm::new().expect("failed to initialize VM");
     vm.register_fn(

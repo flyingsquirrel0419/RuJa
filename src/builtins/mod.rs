@@ -7202,6 +7202,95 @@ fn object_entries(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::R
     result
 }
 
+#[cfg(test)]
+fn take_group_by_reservation_failure(vm: &mut Vm, site: crate::vm::GroupByReservationSite) -> bool {
+    let Some((configured_site, remaining)) = vm.fail_group_by_reservation else {
+        return false;
+    };
+    if configured_site != site {
+        return false;
+    }
+    if remaining != 0 {
+        vm.fail_group_by_reservation = Some((configured_site, remaining - 1));
+        return false;
+    }
+    vm.fail_group_by_reservation = None;
+    true
+}
+
+fn reserve_group_by_groups(
+    vm: &mut Vm,
+    groups: &mut IndexMap<PropertyKey, Vec<Value>>,
+) -> error::Result<()> {
+    let _ = &vm;
+    #[cfg(test)]
+    if take_group_by_reservation_failure(vm, crate::vm::GroupByReservationSite::Groups) {
+        return Err(Error::range("Object.groupBy group list is too large"));
+    }
+    if groups.len() < groups.capacity() {
+        return Ok(());
+    }
+    groups
+        .try_reserve(1)
+        .map_err(|_| Error::range("Object.groupBy group list is too large"))
+}
+
+fn reserve_group_by_elements(vm: &mut Vm, values: &mut Vec<Value>) -> error::Result<()> {
+    let _ = &vm;
+    // Test injection is per logical append so the existing-group path does
+    // not depend on the allocator's unspecified spare Vec capacity.
+    #[cfg(test)]
+    if take_group_by_reservation_failure(vm, crate::vm::GroupByReservationSite::Elements) {
+        return Err(Error::range("Object.groupBy element list is too large"));
+    }
+    if values.len() < values.capacity() {
+        return Ok(());
+    }
+    values
+        .try_reserve(1)
+        .map_err(|_| Error::range("Object.groupBy element list is too large"))
+}
+
+fn reserve_group_by_value_roots(
+    vm: &mut Vm,
+    values: &[Value],
+    #[cfg(test)] site: crate::vm::GroupByReservationSite,
+) -> error::Result<()> {
+    #[cfg(test)]
+    if take_group_by_reservation_failure(vm, site) {
+        return Err(Error::range(
+            "Object.groupBy temporary root set is too large",
+        ));
+    }
+    vm.try_reserve_value_roots(values)
+}
+
+fn reserve_group_by_root_slots(
+    vm: &mut Vm,
+    additional: usize,
+    #[cfg(test)] site: crate::vm::GroupByReservationSite,
+) -> error::Result<()> {
+    #[cfg(test)]
+    if take_group_by_reservation_failure(vm, site) {
+        return Err(Error::range(
+            "Object.groupBy temporary root set is too large",
+        ));
+    }
+    vm.try_reserve_gc_pins(additional)
+}
+
+fn close_group_by_after_error<T>(
+    vm: &mut Vm,
+    iterator: &Value,
+    error: Arc<Error>,
+    realm: GcIdx,
+) -> error::Result<T> {
+    // GroupBy creates native Type/Range errors before IteratorClose. Give them
+    // their Realm object now so user return code cannot alter later materialization.
+    let error = vm.materialize_error_in_realm(error, realm);
+    close_iterator_after_error(vm, iterator, error)
+}
+
 fn object_group_by(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
     let items = args.first().cloned().unwrap_or(Value::Undefined);
     if items.is_nullish() {
@@ -7213,77 +7302,149 @@ fn object_group_by(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::
     if !is_callable(&callback, &vm.heap) {
         return Err(Error::type_err("Object.groupBy callback must be callable"));
     }
+    let realm = vm.current_realm_global_env();
 
-    let iterator = vm.make_iterator(&items)?;
-    let iterator_pin = vm.pin(&iterator);
-    let mut groups: IndexMap<PropertyKey, Vec<Value>> = IndexMap::new();
-    let mut group_pins = 0;
-    let result = (|| {
-        let mut k = 0usize;
-        loop {
-            let (value, done) = vm.iterator_next(&iterator)?;
-            if done {
-                break;
+    reserve_group_by_value_roots(
+        vm,
+        &[items.clone(), callback.clone()],
+        #[cfg(test)]
+        crate::vm::GroupByReservationSite::InputRoots,
+    )?;
+    let input_pins = vm.pin_many(&[items.clone(), callback.clone()]);
+    let result = (|| -> error::Result<Value> {
+        // Iterator record, current value, and callback-produced key can all be
+        // live at once across observable calls.
+        reserve_group_by_root_slots(
+            vm,
+            4,
+            #[cfg(test)]
+            crate::vm::GroupByReservationSite::IteratorRoots,
+        )?;
+        let iterator = get_sync_iterator(vm, items)?;
+        let iterator_pins = vm.pin_many(&[iterator.iterator.clone(), iterator.next_method.clone()]);
+        let mut groups: IndexMap<PropertyKey, Vec<Value>> = IndexMap::new();
+        let mut group_pins = 0;
+        let grouping = (|| -> error::Result<()> {
+            #[cfg(test)]
+            let mut k = vm.group_by_index_override.take().unwrap_or(0);
+            #[cfg(not(test))]
+            let mut k = 0u64;
+            loop {
+                if k >= 9_007_199_254_740_991 {
+                    return close_group_by_after_error(
+                        vm,
+                        &iterator.iterator,
+                        Error::type_err("Object.groupBy index exceeds the safe integer limit"),
+                        realm,
+                    );
+                }
+                // IteratorStepValue failures propagate without IteratorClose.
+                #[cfg(test)]
+                if std::mem::take(&mut vm.group_by_zero_fuel_before_step) {
+                    vm.set_fuel(Some(0));
+                }
+                let Some(value) =
+                    iterator_helper_step(vm, &iterator.iterator, &iterator.next_method, true)?
+                else {
+                    return Ok(());
+                };
+
+                let mut value_pin = 0;
+                let mut key_pin = 0;
+                let process = (|| -> error::Result<PropertyKey> {
+                    reserve_group_by_value_roots(
+                        vm,
+                        std::slice::from_ref(&value),
+                        #[cfg(test)]
+                        crate::vm::GroupByReservationSite::ValueRoots,
+                    )?;
+                    value_pin = vm.pin(&value);
+                    let key_value = vm.call_function(
+                        &callback,
+                        &[value.clone(), Value::Number(k as f64)],
+                        Some(Value::Undefined),
+                    )?;
+                    reserve_group_by_value_roots(
+                        vm,
+                        std::slice::from_ref(&key_value),
+                        #[cfg(test)]
+                        crate::vm::GroupByReservationSite::KeyRoots,
+                    )?;
+                    key_pin = vm.pin(&key_value);
+                    to_property_key_descriptor(vm, &key_value)
+                })();
+                let key = match process {
+                    Ok(key) => key,
+                    Err(error) => {
+                        vm.unpin_many(value_pin + key_pin);
+                        if !error.catchable() {
+                            return Err(error);
+                        }
+                        return close_group_by_after_error(vm, &iterator.iterator, error, realm);
+                    }
+                };
+                vm.unpin_many(key_pin);
+
+                let storage = if let Some(values) = groups.get_mut(&key) {
+                    reserve_group_by_elements(vm, values).map(|()| values.push(value))
+                } else {
+                    reserve_group_by_groups(vm, &mut groups).and_then(|()| {
+                        let mut values = Vec::new();
+                        reserve_group_by_elements(vm, &mut values)?;
+                        values.push(value);
+                        groups.insert(key, values);
+                        Ok(())
+                    })
+                };
+                if let Err(error) = storage {
+                    vm.unpin_many(value_pin);
+                    return close_group_by_after_error(vm, &iterator.iterator, error, realm);
+                }
+                group_pins += value_pin;
+                k += 1;
             }
-            group_pins += vm.pin(&value);
-            let key_value = match vm.call_function(
-                &callback,
-                &[value.clone(), Value::Number(k as f64)],
-                Some(Value::Undefined),
-            ) {
-                Ok(value) => value,
-                Err(err) => {
-                    vm.iterator_close(&iterator)?;
-                    return Err(err);
-                }
-            };
-            group_pins += vm.pin(&key_value);
-            let key = match to_property_key_descriptor(vm, &key_value) {
-                Ok(key) => key,
-                Err(err) => {
-                    vm.iterator_close(&iterator)?;
-                    return Err(err);
-                }
-            };
-            groups.entry(key).or_default().push(value);
-            k += 1;
+        })();
+        if let Err(error) = grouping {
+            vm.unpin_many(group_pins);
+            vm.unpin_many(iterator_pins);
+            return Err(error);
         }
 
-        let realm = vm.current_realm_global_env();
-        let obj_idx = vm.alloc(HeapObj::Object(ObjectData {
-            props: Mutex::new(IndexMap::new()),
-            proto: Mutex::new(None),
-            extensible: AtomicBool::new(true),
-            class_name: Some(Arc::from("Object")),
-            private_fields: Mutex::new(std::collections::HashMap::new()),
-            primitive: Mutex::new(None),
-        }))?;
-        let result = Value::Object(obj_idx);
-        let result_pin = vm.pin(&result);
-        let completion = (|| {
-            for (key, values) in groups {
-                let array = create_array_from_values_in_realm(vm, values, realm)?;
-                vm.heap.with_obj(obj_idx.0, |o| {
-                    o.props().lock().insert(
+        let output = (|| -> error::Result<Value> {
+            vm.try_reserve_gc_pins(2)?;
+            let obj_idx = vm.alloc(HeapObj::Object(ObjectData {
+                props: Mutex::new(IndexMap::new()),
+                proto: Mutex::new(None),
+                extensible: AtomicBool::new(true),
+                class_name: Some(Arc::from("Object")),
+                private_fields: Mutex::new(std::collections::HashMap::new()),
+                primitive: Mutex::new(None),
+            }))?;
+            let result = Value::Object(obj_idx);
+            let result_pin = vm.pin(&result);
+            let completion = (|| -> error::Result<Value> {
+                for (key, values) in groups {
+                    vm.consume_fuel()?;
+                    let array = create_array_from_values_in_realm(vm, values, realm)?;
+                    let array_pin = vm.pin(&array);
+                    let publication = vm.define_own_property_or_throw(
+                        &result,
                         key,
-                        PropertyDescriptor {
-                            value: array,
-                            writable: true,
-                            enumerable: true,
-                            configurable: true,
-                            get: None,
-                            set: None,
-                            is_accessor: false,
-                        },
+                        PropertyDescriptor::data(array),
                     );
-                });
-            }
-            Ok(result)
+                    vm.unpin_many(array_pin);
+                    publication?;
+                }
+                Ok(result)
+            })();
+            vm.unpin_many(result_pin);
+            completion
         })();
-        vm.unpin_many(result_pin);
-        completion
+        vm.unpin_many(group_pins);
+        vm.unpin_many(iterator_pins);
+        output
     })();
-    vm.unpin_many(group_pins + iterator_pin);
+    vm.unpin_many(input_pins);
     result
 }
 

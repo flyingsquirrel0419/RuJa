@@ -4,6 +4,31 @@
 
 ### Changed
 
+- `Object.groupBy` now executes the complete property-key `GroupBy` pipeline
+  through a direct synchronous iterator record. It performs no `HasProperty`
+  probe, caches `next`, calls it with zero arguments, observes overridden
+  Array/Map/Set/generator iterators, meters every step, and enforces the
+  `2^53 - 1` index limit before advancing. Catchable callback, key-conversion,
+  and group-storage errors close the active iterator while preserving the
+  original completion; native errors are materialized and rooted in the method
+  Realm before user `return` runs. Non-catchable host Fuel and
+  `IteratorStepValue` errors do not re-enter user cleanup. Input, iterator,
+  callback, accumulated values,
+  keys, result arrays, and the null-prototype result remain rooted across
+  observable calls. Group/element growth and result property publication are
+  fallible and retryable; result materialization consumes one fuel unit per
+  group. LIFO cleanup releases accumulated-value roots before iterator roots.
+  Exact Test262 admission moves
+  `built-ins/Object/groupBy` from **13 pass / 0 fail / 1 skip** to **14 pass /
+  0 fail / 0 skip**; forced execution remains **14/14**, while direct tests
+  cover the iterator and resource boundaries absent from that directory.
+  Local validation passes **307/307** library, **561/561** builtins,
+  **62/62** `with`, **304/304** release-library, and **140/140** tooling tests,
+  plus all targets/features, rustfmt, warnings-denied Clippy, release build, and
+  wasm32 checking. Two independent GPT-5.6 final reviews are clean after LIFO
+  rooting, pre-close error materialization, deterministic root/storage
+  failpoints, and native step-Fuel probes were added.
+
 - `Object.fromEntries` now consumes every synchronous iterable through a
   cached iterator record instead of snapshotting only raw Array storage. It
   observes `next`, entry `0`, entry `1`, `ToPropertyKey`, and property creation

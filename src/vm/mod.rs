@@ -67,6 +67,17 @@ pub(crate) enum OwnKeyConsumerReservationSite {
 
 #[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum GroupByReservationSite {
+    InputRoots,
+    IteratorRoots,
+    ValueRoots,
+    KeyRoots,
+    Groups,
+    Elements,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ProxyDescriptorReservationSite {
     OperationRoot,
     LayerRoots,
@@ -343,6 +354,16 @@ pub struct Vm {
     pub(crate) fail_ordinary_own_keys_reservation: Option<(OrdinaryOwnKeysReservationSite, usize)>,
     #[cfg(test)]
     pub(crate) fail_own_key_consumer_reservation: Option<(OwnKeyConsumerReservationSite, usize)>,
+    #[cfg(test)]
+    pub(crate) fail_group_by_reservation: Option<(GroupByReservationSite, usize)>,
+    #[cfg(test)]
+    pub(crate) group_by_index_override: Option<u64>,
+    #[cfg(test)]
+    pub(crate) group_by_zero_fuel_before_step: bool,
+    #[cfg(test)]
+    pub(crate) group_by_native_next_result: Option<Value>,
+    #[cfg(test)]
+    pub(crate) group_by_native_next_calls: usize,
     #[cfg(test)]
     pub(crate) fail_proxy_descriptor_reservation: Option<(ProxyDescriptorReservationSite, usize)>,
     #[cfg(test)]
@@ -1011,6 +1032,16 @@ impl Vm {
             fail_ordinary_own_keys_reservation: None,
             #[cfg(test)]
             fail_own_key_consumer_reservation: None,
+            #[cfg(test)]
+            fail_group_by_reservation: None,
+            #[cfg(test)]
+            group_by_index_override: None,
+            #[cfg(test)]
+            group_by_zero_fuel_before_step: false,
+            #[cfg(test)]
+            group_by_native_next_result: None,
+            #[cfg(test)]
+            group_by_native_next_calls: 0,
             #[cfg(test)]
             fail_proxy_descriptor_reservation: None,
             #[cfg(test)]
