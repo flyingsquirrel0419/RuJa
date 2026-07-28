@@ -18,7 +18,10 @@
   Local validation passes **306/306** library, **560/560** builtins,
   **62/62** `with`, **303/303** release-library, and **139/139** tooling tests,
   plus all targets/features, rustfmt, warnings-denied Clippy, release build, and
-  wasm32 checking. Two independent GPT-5.6 final reviews are clean.
+  wasm32 checking. The optional live-metadata tooling probe also tolerates an
+  absent or inaccessible configured Test262 checkout while retaining its
+  unconditional frozen-manifest checks. Two independent GPT-5.6 final reviews
+  are clean.
 
 - Every Realm's `%Array.prototype%[Symbol.unscopables]` now holds its own
   null-prototype object with the exact 16 standard Array method names. Its

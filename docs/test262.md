@@ -12007,6 +12007,9 @@ policy. A frozen 13-path manifest removes only each file's live `Symbol`,
 `Symbol.iterator`, or `Reflect.construct` gate. Tooling verifies exact path and
 metadata equality, disjointness from every other admission, rejection of
 future and outside paths, and retention of any additional unsupported feature.
+The optional live-checkout metadata probe treats an inaccessible configured
+checkout like an absent checkout, matching the other exact-admission tests;
+the frozen manifest and synthetic closure checks still run in every CI job.
 Direct Rust tests additionally cover forced GC at iterator acquisition,
 `next`, both entry getters, and key conversion; original-throw precedence when
 `return` throws; no close after a `next` throw; root-reservation ordering; and
