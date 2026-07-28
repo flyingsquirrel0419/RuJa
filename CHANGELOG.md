@@ -28,6 +28,14 @@
   RegExp **38/38**, plus all targets/features, rustfmt, warnings-denied Clippy,
   wasm32 and doctest; the complete pinned 383-file Set sweep reports
   **344 pass / 2 fail / 37 skip**.
+  Independent GPT-5.6 runtime and tooling reviews are closed; their GC-evidence
+  and wording findings are addressed. Implementation commit `4ee6c3a` passes
+  ordinary CI `30403723434` (**2/2 jobs**) and full Test262 run `30403723369`
+  (**36/36 jobs**). Against preceding run `30397512891`, 31 of 32 result
+  artifacts are byte-identical; `built-ins` alone moves **+4 pass / -4 skip**
+  to **16461/4293/2911/3/0**. Aggregate is **32082/5104/11280/3/0** over
+  **48469** total and **37186** run; sorted content-set hash
+  `2b8d17790183867e4425c58403bd6fcd15d2d8f8c9366f8256a04f7f08a2b78a`.
 
 - `new Map(iterable)` now uses the shared direct cached synchronous iterator
   record instead of allocating a wrapper iterator. It performs one
