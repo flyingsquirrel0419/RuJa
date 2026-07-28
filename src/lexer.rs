@@ -848,7 +848,7 @@ impl<'a> Lexer<'a> {
                                             let cp =
                                                 0x10000 + (((cp - 0xD800) << 10) | (low - 0xDC00));
                                             if let Some(ch) = char::from_u32(cp) {
-                                                s.push(ch);
+                                                crate::value::push_utf16_scalar(&mut s, ch);
                                                 continue;
                                             }
                                         }
@@ -860,7 +860,7 @@ impl<'a> Lexer<'a> {
                                 self.last_string_not_well_formed = true;
                                 s.push_str(&crate::value::utf16_to_string(&[cp as u16]));
                             } else if let Some(ch) = char::from_u32(cp) {
-                                s.push(ch);
+                                crate::value::push_utf16_scalar(&mut s, ch);
                             } else {
                                 return TokenKind::LexError(
                                     "invalid unicode escape sequence".to_string(),
@@ -874,7 +874,7 @@ impl<'a> Lexer<'a> {
                         }
                     },
                     Some(c) => match self.read_char_from_first_byte(c) {
-                        Some(ch) => s.push(ch),
+                        Some(ch) => crate::value::push_utf16_scalar(&mut s, ch),
                         None => {
                             return TokenKind::LexError(
                                 "invalid utf-8 in string literal".to_string(),
@@ -889,7 +889,7 @@ impl<'a> Lexer<'a> {
                 // corrupt supplementary characters (emoji etc.).
                 self.advance();
                 match self.read_char_from_first_byte(c) {
-                    Some(ch) => s.push(ch),
+                    Some(ch) => crate::value::push_utf16_scalar(&mut s, ch),
                     None => {
                         return TokenKind::LexError("invalid utf-8 in string literal".to_string());
                     }
@@ -1655,7 +1655,7 @@ impl<'a> Lexer<'a> {
                 }
                 pattern.push('\\');
                 if let Some(ch) = self.read_regex_pattern_char() {
-                    pattern.push(ch);
+                    crate::value::push_utf16_scalar(&mut pattern, ch);
                 }
                 continue;
             }
@@ -1677,7 +1677,7 @@ impl<'a> Lexer<'a> {
                 break;
             }
             if let Some(ch) = self.read_regex_pattern_char() {
-                pattern.push(ch);
+                crate::value::push_utf16_scalar(&mut pattern, ch);
             }
         }
         if !closed {
@@ -1782,7 +1782,7 @@ impl<'a> Lexer<'a> {
     /// Read a unicode escape (\uXXXX or \u{X...}) for a template literal.
     /// Returns None for malformed escapes; only valid hex digits and a closing
     /// brace (for the braced form) are consumed.
-    fn read_template_unicode_escape(&mut self) -> Option<char> {
+    fn read_template_unicode_escape(&mut self) -> Option<u32> {
         if self.peek() == Some(b'{') {
             self.advance(); // consume {
             let mut value = 0u32;
@@ -1794,7 +1794,7 @@ impl<'a> Lexer<'a> {
                         if count == 0 || count > 6 {
                             return None;
                         }
-                        return char::from_u32(value);
+                        return (value <= 0x10ffff).then_some(value);
                     }
                     Some(b) => {
                         let d = (b as char).to_digit(16)?;
@@ -1816,7 +1816,7 @@ impl<'a> Lexer<'a> {
                 value = value * 16 + d;
                 self.advance();
             }
-            char::from_u32(value)
+            Some(value)
         }
     }
 
@@ -1933,8 +1933,30 @@ impl<'a> Lexer<'a> {
             Some(b'u') => {
                 self.advance();
                 match self.read_template_unicode_escape() {
-                    Some(ch) => {
-                        cooked.push(ch);
+                    Some(mut cp) => {
+                        if (0xd800..=0xdbff).contains(&cp) {
+                            let save = self.pos;
+                            if self.peek() == Some(b'\\') && self.peek_at(1) == Some(b'u') {
+                                self.advance();
+                                self.advance();
+                                if let Some(low) = self
+                                    .read_template_unicode_escape()
+                                    .filter(|low| (0xdc00..=0xdfff).contains(low))
+                                {
+                                    cp = 0x10000 + (((cp - 0xd800) << 10) | (low - 0xdc00));
+                                } else {
+                                    self.pos = save;
+                                }
+                            }
+                        }
+                        if (0xd800..=0xdfff).contains(&cp) {
+                            cooked.push_str(&crate::value::utf16_to_string(&[cp as u16]));
+                        } else {
+                            crate::value::push_utf16_scalar(
+                                cooked,
+                                char::from_u32(cp).expect("validated template Unicode scalar"),
+                            );
+                        }
                         raw.push_str(
                             std::str::from_utf8(&self.src[raw_start..self.pos]).unwrap_or(""),
                         );
@@ -1950,9 +1972,17 @@ impl<'a> Lexer<'a> {
             Some(c) => {
                 // NonEscapeCharacter (e.g. \\z): represents the char itself.
                 self.advance();
-                cooked.push(c as char);
-                raw.push('\\');
-                raw.push(c as char);
+                match self.read_char_from_first_byte(c) {
+                    Some(ch) => {
+                        crate::value::push_utf16_scalar(cooked, ch);
+                        raw.push('\\');
+                        crate::value::push_utf16_scalar(raw, ch);
+                    }
+                    None => {
+                        raw.push('\\');
+                        *valid = false;
+                    }
+                }
             }
             None => {
                 raw.push('\\');
@@ -2019,8 +2049,10 @@ impl<'a> Lexer<'a> {
                         }
                     }
                     if let Ok(st) = std::str::from_utf8(&buf) {
-                        cooked.push_str(st);
-                        raw.push_str(st);
+                        for ch in st.chars() {
+                            crate::value::push_utf16_scalar(&mut cooked, ch);
+                            crate::value::push_utf16_scalar(&mut raw, ch);
+                        }
                     }
                 }
             }
@@ -2498,9 +2530,14 @@ fn validate_regex_legacy_class_ranges(chars: &[char]) -> Result<(), String> {
                     continue;
                 }
                 if let Some(escaped) = chars.get(i + 1).copied().filter(|ch| !ch.is_ascii()) {
-                    let mut encoded = [0u16; 2];
-                    for unit in escaped.encode_utf16(&mut encoded).iter().copied() {
+                    if let Some(unit) = crate::value::utf16_single_unit_from_internal_char(escaped)
+                    {
                         items.push(RegexLegacyClassItem::Character(u32::from(unit)));
+                    } else {
+                        let mut encoded = [0u16; 2];
+                        for unit in escaped.encode_utf16(&mut encoded).iter().copied() {
+                            items.push(RegexLegacyClassItem::Character(u32::from(unit)));
+                        }
                     }
                     i += 2;
                     continue;
@@ -2515,6 +2552,9 @@ fn validate_regex_legacy_class_ranges(chars: &[char]) -> Result<(), String> {
 
             if chars[i] == '-' {
                 items.push(RegexLegacyClassItem::Hyphen);
+            } else if let Some(unit) = crate::value::utf16_single_unit_from_internal_char(chars[i])
+            {
+                items.push(RegexLegacyClassItem::Character(u32::from(unit)));
             } else {
                 let mut encoded = [0u16; 2];
                 for unit in chars[i].encode_utf16(&mut encoded).iter().copied() {
@@ -2664,11 +2704,22 @@ fn regex_class_atom_at(chars: &[char], idx: usize) -> Option<RegexClassAtom> {
             })
         }
         ']' => None,
-        ch => Some(RegexClassAtom {
-            end: idx + 1,
-            is_character_set: false,
-            value: Some(ch as u32),
-        }),
+        ch => {
+            let paired_scalar = crate::value::utf16_single_unit_from_internal_char(ch)
+                .filter(|unit| (0xd800..=0xdbff).contains(unit))
+                .and_then(|high| {
+                    crate::value::utf16_single_unit_from_internal_char(*chars.get(idx + 1)?)
+                        .filter(|low| (0xdc00..=0xdfff).contains(low))
+                        .map(|low| {
+                            0x10000 + (((high as u32 - 0xd800) << 10) | (low as u32 - 0xdc00))
+                        })
+                });
+            Some(RegexClassAtom {
+                end: idx + usize::from(paired_scalar.is_some()) + 1,
+                is_character_set: false,
+                value: paired_scalar.or(Some(ch as u32)),
+            })
+        }
     }
 }
 

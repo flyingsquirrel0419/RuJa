@@ -11800,6 +11800,34 @@ total**, with **37,061** pass-or-fail executions. Compared with prior full run
 `30310182698`, 31 result files are byte-identical; Annex B changes by exactly
 **+1 pass / -1 timeout**, with failures, skips, errors, and total unchanged.
 
+## Canonical sentinel-range scalar ingress
+
+This unit changes no Test262 admission. It repairs the representation boundary
+before RegExp execution: well-formed UTF-8 scalars in `U+F0000..U+F07FF` now
+enter JavaScript as their two UTF-16 code units. Focused engine tests cover raw
+source text, braced Unicode escapes, both range endpoints, code-unit access,
+template cooked/raw strings, raw and escaped `JSON.parse` input, serde values
+and keys in both directions, lone-surrogate serde export, and JSON/text data
+modules. Direct RegExp tests also pin raw, class, and constructor scalar
+self-matches after canonical pattern storage. Direct module tests cover static
+and dynamic imports whose host filename contains a sentinel-range scalar, and
+the public string-output regression prevents host round trips from expanding
+two UTF-16 units into four.
+
+On pinned Test262 `020cb74075849d1e404bbcdb62feb7a02e6966db`, the combined
+`built-ins/JSON/parse`, `language/expressions/template-literal`, and
+`language/expressions/tagged-template` run is **157 pass / 0 fail / 4 skip /
+0 timeout / 0 error** over 161 files. The complete `built-ins/RegExp` run
+remains **1093/0/786/0/0** over 1,879 files. Python tooling passes **136/137**;
+the sole failure is the known absent staging TypedArray fixture in the pinned
+external checkout.
+
+The change deliberately does not claim the Unicode RegExp collision closed.
+When matching a lone surrogate, the current backend still sees the private-use
+sentinel as a Unicode scalar. A logical-symbol matcher must distinguish scalar
+values from surrogate code points before property, class, capture, global, and
+sticky RegExp paths can be admitted safely.
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is

@@ -70,20 +70,24 @@ impl ModuleRecord {
 }
 
 fn resolve_specifier(referrer: &Path, specifier: &str) -> error::Result<PathBuf> {
-    if !(specifier.starts_with("./") || specifier.starts_with("../")) {
-        return Err(Error::syntax(format!(
+    let host_specifier = crate::value::utf16_to_scalar_string(specifier)
+        .map_err(|_| Error::syntax("Module specifier contains a lone surrogate".to_string()))?;
+    if !(host_specifier.starts_with("./") || host_specifier.starts_with("../")) {
+        let message = format!(
             "Unsupported module specifier '{}': only relative paths are supported",
-            specifier
-        )));
+            host_specifier
+        );
+        return Err(Error::syntax_host(message));
     }
     let parent = referrer.parent().unwrap_or_else(|| Path::new("."));
-    parent.join(specifier).canonicalize().map_err(|err| {
-        Error::syntax(format!(
+    parent.join(&host_specifier).canonicalize().map_err(|err| {
+        let message = format!(
             "Cannot resolve module '{}' from '{}': {}",
-            specifier,
+            host_specifier,
             referrer.display(),
             err
-        ))
+        );
+        Error::syntax_host(message)
     })
 }
 
@@ -104,7 +108,7 @@ fn load_graph(
         return Ok(());
     }
     let source = std::fs::read_to_string(&path).map_err(|err| {
-        Error::syntax(format!("Cannot read module '{}': {}", path.display(), err))
+        Error::syntax_host(format!("Cannot read module '{}': {}", path.display(), err))
     })?;
     load_graph_from_source(vm, path, &source, graph)
 }
@@ -165,19 +169,26 @@ fn data_module_cache_key(target: &Path, import_type: &str) -> PathBuf {
     PathBuf::from(key)
 }
 
+fn internal_path_display(path: &Path) -> String {
+    crate::value::utf16_from_scalar_str(&path.display().to_string())
+}
+
+fn missing_export_error(module: &Path, export_name: &str) -> Arc<Error> {
+    Error::syntax(format!(
+        "Module '{}' does not provide an export named '{}'",
+        internal_path_display(module),
+        export_name
+    ))
+}
+
 fn resolve_export(
     graph: &HashMap<PathBuf, ModuleRecord>,
     module: &Path,
     export_name: &str,
     seen: &mut HashSet<(PathBuf, Arc<str>)>,
 ) -> error::Result<(GcIdx, Arc<str>)> {
-    resolve_export_optional(graph, module, export_name, seen)?.ok_or_else(|| {
-        Error::syntax(format!(
-            "Module '{}' does not provide an export named '{}'",
-            module.display(),
-            export_name
-        ))
-    })
+    resolve_export_optional(graph, module, export_name, seen)?
+        .ok_or_else(|| missing_export_error(module, export_name))
 }
 
 fn resolve_export_optional(
@@ -236,7 +247,7 @@ fn resolve_export_optional(
                         return Err(Error::syntax(format!(
                             "Ambiguous star export '{}' in module '{}'",
                             export_name,
-                            module.display()
+                            internal_path_display(module)
                         )));
                     }
                 } else {
@@ -959,7 +970,7 @@ impl Vm {
             let virtual_target = data_module_cache_key(&target, import_type);
             if !self.module_records.contains_key(&virtual_target) {
                 let source = std::fs::read_to_string(&target).map_err(|error| {
-                    Error::syntax(format!(
+                    Error::syntax_host(format!(
                         "Cannot read {} module '{}': {}",
                         import_type,
                         target.display(),
@@ -967,9 +978,10 @@ impl Vm {
                     ))
                 })?;
                 let value = if import_type == "json" {
+                    let source = crate::value::utf16_from_scalar_str(&source);
                     crate::builtins::json::parse_json_text(self, &source)?
                 } else {
-                    Value::String(Arc::from(source))
+                    Value::from_string(&source)
                 };
                 let value_pin = self.pin(&value);
                 let mut graph = HashMap::new();
@@ -1019,7 +1031,7 @@ impl Vm {
     /// Parse, resolve, and instantiate a module graph without evaluating it.
     pub fn link_module_file(&mut self, path: impl AsRef<Path>) -> error::Result<()> {
         let root = path.as_ref().canonicalize().map_err(|err| {
-            Error::syntax(format!(
+            Error::syntax_host(format!(
                 "Cannot resolve entry module '{}': {}",
                 path.as_ref().display(),
                 err
@@ -1055,7 +1067,7 @@ impl Vm {
         drain_microtasks: bool,
     ) -> error::Result<Value> {
         let root = path.canonicalize().map_err(|err| {
-            Error::syntax(format!(
+            Error::syntax_host(format!(
                 "Cannot resolve entry module '{}': {}",
                 path.display(),
                 err
@@ -1112,5 +1124,28 @@ impl Vm {
         self.unpin_many(pinned_result);
         microtask_result?;
         result
+    }
+}
+
+#[cfg(test)]
+mod scalar_error_tests {
+    use super::*;
+
+    #[test]
+    fn mixed_module_error_preserves_host_path_and_internal_export_name() {
+        let scalar = "\u{F0000}";
+        let path = PathBuf::from(format!("/tmp/module-{scalar}.js"));
+        let export_name = crate::value::utf16_from_scalar_str(scalar);
+        let error = missing_export_error(&path, &export_name);
+
+        let units = crate::value::utf16_from_str(&error.message);
+        assert_eq!(
+            units
+                .windows(2)
+                .filter(|pair| pair[0] == 0xDB80 && pair[1] == 0xDC00)
+                .count(),
+            2
+        );
+        assert_eq!(error.to_string().matches(scalar).count(), 2);
     }
 }

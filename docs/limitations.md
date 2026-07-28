@@ -188,16 +188,28 @@ guarantees are required.
   disjoint duplicate names, participating-capture selection, and
   Unicode/legacy ignore-case backreferences, including hard variable-length
   lookbehind. Unicode `iu`/`iv` `\b`/`\B` now use the ECMAScript
-  WordCharacters set on both linear-prefiltered and hard routes. Valid scalars
-  in `U+F0000..U+F07FF` collide with the
-  internal UTF-16 sentinel representation, and string-valued `v` set elements
-  using string properties or `\q{...}` remain incomplete. Complex `iv` sets
+  WordCharacters set on both linear-prefiltered and hard routes. External
+  well-formed UTF-8 scalar ingress now canonicalizes `U+F0000..U+F07FF` to
+  their two UTF-16 code units. Unicode RegExp execution still maps a lone
+  surrogate sentinel onto that private-use scalar range in the backend, so
+  literal and property matching can still confuse the two logical symbols.
+  String-valued `v` set elements using string properties or `\q{...}` also
+  remain incomplete. Complex `iv` sets
   now lower `\w` and `\W` operands to ECMAScript WordCharacters before the
   backend performs set algebra. The backend also rejects some grammar-valid
   legacy forms, including
   invalid-brace Annex B literals and non-BMP code-unit ranges such as
   `[💩-\uFFFF]`; statement-list RegExp fallback still mishandles nearby lazy
   quantifiers.
+- Direct construction of public `Value::String` and low-level `PropertyKey`
+  string variants bypasses the audited host Unicode boundary. Embedders should
+  use `Value::from_string` and serde conversion for external UTF-8. Serde
+  export replaces lone surrogate values and keys with U+FFFD; distinct object
+  keys that collapse under that replacement cannot both survive a
+  `serde_json::Map` conversion, so the later key in internal property order
+  wins. Public `Vm::to_string` and `Vm::to_property_key` return canonical
+  internal text; host output must use `Vm::to_string_pub`. Native callbacks
+  must select a host-marked `Error` constructor for host Unicode messages.
 - Execution fuel is **cooperative, not preemptive**: `Vm::set_fuel(Some(n))`
   bounds execution to ~n opcodes (exhaustion throws a `RangeError` that is
   *not* catchable by user `try/catch`, so untrusted code cannot swallow it).

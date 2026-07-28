@@ -754,7 +754,7 @@ impl Value {
         Value::Number(n)
     }
     pub fn from_string(s: &str) -> Self {
-        Value::String(Arc::from(s))
+        Value::String(Arc::from(utf16_from_scalar_str(s)))
     }
 
     pub fn is_undefined(&self) -> bool {
@@ -2116,6 +2116,51 @@ pub fn utf16_from_str(s: &str) -> Vec<u16> {
         }
     }
     units
+}
+
+/// Append one well-formed Unicode scalar to RuJa's canonical JS string
+/// representation. Scalars in the private sentinel range must pass through
+/// UTF-16 so they cannot be mistaken for lone surrogate code units.
+pub(crate) fn push_utf16_scalar(out: &mut String, ch: char) {
+    let cp = ch as u32;
+    if !(SURROGATE_SENTINEL_BASE..=SURROGATE_SENTINEL_BASE + 0x7FF).contains(&cp) {
+        out.push(ch);
+        return;
+    }
+
+    let mut units = [0; 2];
+    out.push_str(&utf16_to_string(ch.encode_utf16(&mut units)));
+}
+
+/// Convert well-formed UTF-8 text at an external boundary into RuJa's
+/// canonical JS UTF-16 representation.
+pub fn utf16_from_scalar_str(s: &str) -> String {
+    if !s.chars().any(|ch| {
+        let cp = ch as u32;
+        (SURROGATE_SENTINEL_BASE..=SURROGATE_SENTINEL_BASE + 0x7FF).contains(&cp)
+    }) {
+        return s.to_string();
+    }
+
+    let mut out = String::with_capacity(s.len() + 4);
+    for ch in s.chars() {
+        push_utf16_scalar(&mut out, ch);
+    }
+    out
+}
+
+/// Convert an internal JS string to well-formed Unicode text for host APIs
+/// that cannot represent lone UTF-16 surrogates. Valid pairs are combined and
+/// lone surrogates use the standard replacement character.
+pub(crate) fn utf16_to_scalar_string_lossy(s: &str) -> String {
+    String::from_utf16_lossy(&utf16_from_str(s))
+}
+
+/// Convert an internal JS string to host Unicode text without replacement.
+/// Host boundaries that require well-formed UTF-8 use this to reject lone
+/// surrogates rather than resolving a different path or identifier.
+pub(crate) fn utf16_to_scalar_string(s: &str) -> Result<String, std::string::FromUtf16Error> {
+    String::from_utf16(&utf16_from_str(s))
 }
 
 /// Decode a sequence of UTF-16 code units back into a Rust `String`. Lone

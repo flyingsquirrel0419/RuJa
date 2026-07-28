@@ -283,7 +283,16 @@
 - The optional `serde` Cargo feature converts between RuJa values and
   `serde_json::Value`; arrays and enumerable string-keyed object properties are
   traversed recursively. Undefined, symbols, unsupported heap objects, and
-  internal-only values become `null`; BigInts become decimal strings.
+  internal-only values become `null`; BigInts become decimal strings. Valid
+  UTF-16 pairs round-trip through host Unicode, while lone surrogates export as
+  U+FFFD because `serde_json::String` cannot represent them. Host strings
+  should enter through `Value::from_string`; constructing the public
+  `Value::String` variant directly bypasses canonicalization. `Vm::to_string`
+  and `Vm::to_property_key` expose canonical internal text for engine-facing
+  integrations; host display/export code must use `Vm::to_string_pub`. Native
+  callbacks returning host-written errors use `Error::host`,
+  `Error::syntax_host`, or `Error::type_err_host`; ordinary error constructors
+  accept canonical internal text. Both forms display as ordinary host Unicode.
 - `cargo run --example embed --features serde` demonstrates sandbox limits,
   native Rust function registration, script execution, and JSON conversion.
 - CI builds, tests, and runs clippy across all Cargo targets and features.

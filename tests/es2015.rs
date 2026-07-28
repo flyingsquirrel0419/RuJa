@@ -726,6 +726,44 @@ fn template_multi() {
 }
 
 #[test]
+fn template_unicode_scalars_preserve_utf16_identity() {
+    assert_eq!(
+        run(concat!(
+            "function inspect(strings) {",
+            " return [strings[0].length, strings.raw[0].length,",
+            " strings[0] === String.fromCodePoint(0xF0000),",
+            " strings.raw[0] === String.fromCodePoint(0xF0000)].join('|');",
+            "}",
+            "inspect`\u{F0000}`;"
+        )),
+        Value::String(Arc::from("2|2|true|true"))
+    );
+    assert_eq!(
+        run("[`\\u{F0000}`.length, `\\u{F0000}` === String.fromCodePoint(0xF0000)].join('|');"),
+        Value::String(Arc::from("2|true"))
+    );
+    assert_eq!(
+        run("[`\\uDB80\\uDC00`.length, `\\uDB80\\uDC00` === String.fromCodePoint(0xF0000)].join('|');"),
+        Value::String(Arc::from("2|true"))
+    );
+    assert_eq!(
+        run(concat!(
+            "function inspectEscape(strings) {",
+            " return [strings[0].length, strings.raw[0].length,",
+            " strings[0] === String.fromCodePoint(0xF0000),",
+            " strings.raw[0].charCodeAt(0),",
+            " strings.raw[0].slice(1) === String.fromCodePoint(0xF0000)]",
+            " .join('|');",
+            "}",
+            "inspectEscape`\\",
+            "\u{F0000}",
+            "`;"
+        )),
+        Value::String(Arc::from("2|3|true|92|true"))
+    );
+}
+
+#[test]
 fn tagged_template_member_preserves_this() {
     assert_eq!(
         run("var context; var obj={fn:function(){context=this;}}; obj.fn`x`; context===obj;"),

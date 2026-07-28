@@ -26,6 +26,7 @@ impl std::convert::From<HeapLimitExceeded> for std::sync::Arc<crate::error::Erro
             stack: Vec::new(),
             thrown_value: None,
             line: None,
+            text_is_host_unicode: false,
         })
     }
 }

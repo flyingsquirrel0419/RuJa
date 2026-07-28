@@ -94,7 +94,9 @@ fn normalize_raw_json_for_validation(text: &str) -> String {
 }
 
 fn json_raw_json(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
-    let text = vm.to_string_pub(args.first().unwrap_or(&Value::Undefined))?;
+    let text = vm
+        .to_string(args.first().unwrap_or(&Value::Undefined))?
+        .to_string();
     if text.is_empty()
         || text
             .as_bytes()
@@ -151,7 +153,7 @@ fn json_stringify_gap(vm: &mut Vm, mut space: Value) -> error::Result<String> {
         });
         space = match primitive {
             Some(Value::Number(_)) => Value::Number(vm.to_number(&space)?),
-            Some(Value::String(_)) => Value::String(Arc::from(vm.to_string_pub(&space)?)),
+            Some(Value::String(_)) => Value::String(vm.to_string(&space)?),
             _ => space,
         };
     }
@@ -186,7 +188,7 @@ fn json_stringify_property_list(vm: &mut Vm, replacer: &Value) -> error::Result<
                 });
                 match primitive {
                     Some(Value::String(_) | Value::Number(_)) => {
-                        Some(vm.to_string_pub(&item)?.to_string())
+                        Some(vm.to_string(&item)?.to_string())
                     }
                     _ => None,
                 }
@@ -263,7 +265,7 @@ fn unbox_json_primitive(vm: &mut Vm, value: Value) -> error::Result<Value> {
     });
     match primitive {
         Some(Value::Number(_)) => Ok(Value::Number(vm.to_number(&value)?)),
-        Some(Value::String(_)) => Ok(Value::String(Arc::from(vm.to_string_pub(&value)?))),
+        Some(Value::String(_)) => Ok(Value::String(vm.to_string(&value)?)),
         Some(Value::Bool(value)) => Ok(Value::Bool(value)),
         Some(Value::BigInt(value)) => Ok(Value::BigInt(value)),
         _ => Ok(value),
@@ -424,7 +426,7 @@ fn serialize_json_value(
 
 pub(crate) fn json_parse(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     let input = args.first().cloned().unwrap_or(Value::Undefined);
-    let s = vm.to_string_pub(&input)?;
+    let s = vm.to_string(&input)?.to_string();
     let reviver = args.get(1).cloned();
     let is_reviver_fn = reviver
         .as_ref()
@@ -548,12 +550,14 @@ impl<'a> JsonSourceParser<'a> {
                 if self.source.as_bytes().get(self.offset) != Some(&b'}') {
                     loop {
                         let key_source = self.scan_string()?;
-                        let key: String = serde_json::from_str(key_source)
-                            .map_err(|error| Error::syntax(format!("Invalid JSON key: {error}")))?;
+                        let mut key_chars = key_source[1..].chars().peekable();
+                        let Value::String(key) = parse_json_str(&mut key_chars)? else {
+                            unreachable!("JSON string parser must return a string")
+                        };
                         self.skip_whitespace();
                         self.offset += 1;
                         let child = self.parse_node()?;
-                        children.push((Arc::from(key), child));
+                        children.push((key, child));
                         self.skip_whitespace();
                         if self.source.as_bytes().get(self.offset) == Some(&b'}') {
                             break;
@@ -939,7 +943,7 @@ fn parse_json_str(chars: &mut std::iter::Peekable<std::str::Chars>) -> error::Re
                     let decoded = char::from_u32(value).ok_or_else(|| {
                         Error::syntax("Unsupported lone surrogate in JSON string")
                     })?;
-                    s.push(decoded);
+                    crate::value::push_utf16_scalar(&mut s, decoded);
                 }
                 Some(_) => return Err(Error::syntax("Invalid JSON escape")),
                 None => break,

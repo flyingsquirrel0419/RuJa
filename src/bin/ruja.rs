@@ -32,7 +32,10 @@ fn print_value(vm: &mut Vm, v: &Value) {
         Value::Bool(b) => println!("{}", b),
         Value::Number(n) => println!("{}", ruja::value::num_to_string(*n)),
         Value::BigInt(n) => println!("{}n", n),
-        Value::String(s) => println!("{}", s),
+        Value::String(_) => match vm.to_string_pub(v) {
+            Ok(s) => println!("{}", s),
+            Err(_) => println!(),
+        },
         Value::Object(_) => match vm.to_string_pub(v) {
             Ok(s) => println!("{}", s),
             Err(_) => println!("[object Object]"),

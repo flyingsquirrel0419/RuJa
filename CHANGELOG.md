@@ -4,6 +4,23 @@
 
 ### Changed
 
+- Well-formed UTF-8 entering JavaScript strings now passes through one
+  canonical UTF-16 boundary. Source string and RegExp literals, template
+  cooked/raw text, `JSON.parse` escapes, serde ingress, and JSON/text data
+  modules preserve `U+F0000..U+F07FF` as surrogate pairs instead of confusing
+  those valid scalars with RuJa's lone-surrogate sentinels. The remaining
+  Unicode RegExp matcher transport collision is tracked separately. Serde
+  export reconstructs valid pairs as Unicode scalars and replaces lone
+  surrogates with U+FFFD because `serde_json::String` must be well formed.
+  Unicode RegExp normalization recombines canonical adjacent surrogate units,
+  preserving scalar literal, class, and constructor self-matches. Module
+  specifiers and public/CLI string output decode canonical UTF-16 before
+  crossing host UTF-8 boundaries. Native errors carry explicit host/internal
+  text provenance, so OS and callback messages canonicalize exactly once while
+  messages containing existing JavaScript strings remain unchanged. Host error
+  display decodes internal text and preserves host text, including mixed
+  module-link diagnostics with Unicode paths and JavaScript export names.
+
 - Complex `iv` RegExp classes now lower `\w` and `\W` operands to the exact
   ECMAScript WordCharacters inventory before native set algebra. Nested
   intersection, subtraction, union, complement, lookaround, and backreference

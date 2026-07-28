@@ -1898,6 +1898,29 @@ fn normalize_regex_for_backend(
             escaped = true;
             continue;
         }
+
+        // Canonical internal strings keep scalars that overlap the sentinel
+        // range as two sentinel-backed UTF-16 units. Unicode patterns consume
+        // that valid pair as one code point, including inside character
+        // classes. Adjacent lone high/low surrogates have the same JS string
+        // value and therefore follow the same rule.
+        if unicode_mode {
+            if let Some(high) = crate::value::utf16_single_unit_from_internal_char(ch)
+                .filter(|unit| (0xd800..=0xdbff).contains(unit))
+            {
+                if let Some(low) = chars
+                    .peek()
+                    .and_then(|next| crate::value::utf16_single_unit_from_internal_char(*next))
+                    .filter(|unit| (0xdc00..=0xdfff).contains(unit))
+                {
+                    chars.next();
+                    let scalar = 0x10000 + (((high as u32 - 0xd800) << 10) | (low as u32 - 0xdc00));
+                    out.push(char::from_u32(scalar).expect("valid surrogate pair scalar"));
+                    continue;
+                }
+            }
+        }
+
         if ch == '[' {
             if in_class && flags.contains('v') {
                 unicode_sets_class_depth += 1;

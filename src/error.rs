@@ -10,6 +10,7 @@ pub struct Error {
     pub stack: Vec<String>,
     pub thrown_value: Option<Value>,
     pub line: Option<usize>,
+    pub(crate) text_is_host_unicode: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -50,6 +51,7 @@ impl Error {
             stack: self.stack.clone(),
             thrown_value: self.thrown_value.clone(),
             line: new_line,
+            text_is_host_unicode: self.text_is_host_unicode,
         })
     }
     pub fn with_thrown_value(&self, thrown_value: Value) -> Arc<Error> {
@@ -59,71 +61,55 @@ impl Error {
             stack: self.stack.clone(),
             thrown_value: Some(thrown_value),
             line: self.line,
+            text_is_host_unicode: self.text_is_host_unicode,
         })
     }
-    pub fn syntax(msg: impl Into<String>) -> Arc<Error> {
+    fn new(kind: ErrorKind, msg: impl Into<String>, text_is_host_unicode: bool) -> Arc<Error> {
         Arc::new(Error {
-            kind: ErrorKind::Syntax,
+            kind,
             message: msg.into(),
             stack: Vec::new(),
             thrown_value: None,
             line: None,
+            text_is_host_unicode,
         })
+    }
+
+    pub fn syntax(msg: impl Into<String>) -> Arc<Error> {
+        Self::new(ErrorKind::Syntax, msg, false)
     }
     pub fn reference(msg: impl Into<String>) -> Arc<Error> {
-        Arc::new(Error {
-            kind: ErrorKind::Reference,
-            message: msg.into(),
-            stack: Vec::new(),
-            thrown_value: None,
-            line: None,
-        })
+        Self::new(ErrorKind::Reference, msg, false)
     }
     pub fn type_err(msg: impl Into<String>) -> Arc<Error> {
-        Arc::new(Error {
-            kind: ErrorKind::Type,
-            message: msg.into(),
-            stack: Vec::new(),
-            thrown_value: None,
-            line: None,
-        })
+        Self::new(ErrorKind::Type, msg, false)
     }
     pub fn range(msg: impl Into<String>) -> Arc<Error> {
-        Arc::new(Error {
-            kind: ErrorKind::Range,
-            message: msg.into(),
-            stack: Vec::new(),
-            thrown_value: None,
-            line: None,
-        })
+        Self::new(ErrorKind::Range, msg, false)
     }
     pub fn uri(msg: impl Into<String>) -> Arc<Error> {
-        Arc::new(Error {
-            kind: ErrorKind::Uri,
-            message: msg.into(),
-            stack: Vec::new(),
-            thrown_value: None,
-            line: None,
-        })
+        Self::new(ErrorKind::Uri, msg, false)
     }
     /// A non-catchable fuel-exhaustion abort (displayed as RangeError).
     pub fn fuel(msg: impl Into<String>) -> Arc<Error> {
-        Arc::new(Error {
-            kind: ErrorKind::Fuel,
-            message: msg.into(),
-            stack: Vec::new(),
-            thrown_value: None,
-            line: None,
-        })
+        Self::new(ErrorKind::Fuel, msg, false)
     }
     pub fn internal(msg: impl Into<String>) -> Arc<Error> {
-        Arc::new(Error {
-            kind: ErrorKind::Internal,
-            message: msg.into(),
-            stack: Vec::new(),
-            thrown_value: None,
-            line: None,
-        })
+        Self::new(ErrorKind::Internal, msg, false)
+    }
+
+    /// Create an error whose message and stack are well-formed host Unicode.
+    /// Native callbacks and OS adapters use this before text enters JS.
+    pub fn host(kind: ErrorKind, msg: impl Into<String>) -> Arc<Error> {
+        Self::new(kind, msg, true)
+    }
+
+    pub fn syntax_host(msg: impl Into<String>) -> Arc<Error> {
+        Self::host(ErrorKind::Syntax, msg)
+    }
+
+    pub fn type_err_host(msg: impl Into<String>) -> Arc<Error> {
+        Self::host(ErrorKind::Type, msg)
     }
     pub fn thrown(v: Value, heap: &crate::gc::Heap) -> Arc<Error> {
         let msg = value_to_message(&v, heap);
@@ -134,6 +120,7 @@ impl Error {
             stack: Vec::new(),
             thrown_value: Some(v),
             line: None,
+            text_is_host_unicode: false,
         })
     }
 }
@@ -264,10 +251,15 @@ impl fmt::Display for Error {
             ErrorKind::Internal => "InternalError",
             ErrorKind::Fuel => "RangeError",
         };
-        if let Some(line) = self.line {
-            write!(f, "{}: {} (at line {})", name, self.message, line)
+        let message = if self.text_is_host_unicode {
+            std::borrow::Cow::Borrowed(self.message.as_str())
         } else {
-            write!(f, "{}: {}", name, self.message)
+            std::borrow::Cow::Owned(crate::value::utf16_to_scalar_string_lossy(&self.message))
+        };
+        if let Some(line) = self.line {
+            write!(f, "{}: {} (at line {})", name, message, line)
+        } else {
+            write!(f, "{}: {}", name, message)
         }
     }
 }

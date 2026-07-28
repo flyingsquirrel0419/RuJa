@@ -980,8 +980,13 @@ fn dynamic_import_post_await_fuel_marks_the_module_errored() {
 #[test]
 fn dynamic_import_attributes_load_data_without_executing_or_colliding() {
     let dir = module_fixture_dir("dynamic-import-attributes");
-    fs::write(dir.join("data.json"), r#"{"answer":42}"#).expect("JSON module should be written");
-    fs::write(dir.join("note.txt"), "first\nsecond").expect("text module should be written");
+    fs::write(
+        dir.join("data.json"),
+        concat!(r#"{"answer":42,"scalar":""#, "\u{F0000}", r#""}"#),
+    )
+    .expect("JSON module should be written");
+    fs::write(dir.join("note.txt"), concat!("first\nsecond", "\u{F0000}"))
+        .expect("text module should be written");
     fs::write(
         dir.join("payload.json"),
         "0); globalThis.dataModuleExecuted = true; (0",
@@ -998,9 +1003,13 @@ fn dynamic_import_attributes_load_data_without_executing_or_colliding() {
         globalThis.dataModuleExecuted = false;
         import('./data.json', { with: { type: 'json' } }).then(ns => {
             globalThis.jsonModuleValue = ns.default.answer;
+            globalThis.jsonModuleScalar = ns.default.scalar.length === 2 &&
+              ns.default.scalar === String.fromCodePoint(0xF0000);
         });
         import('./note.txt', { with: { type: 'text' } }).then(ns => {
             globalThis.textModuleValue = ns.default;
+            globalThis.textModuleScalar = ns.default.length === 14 &&
+              ns.default.codePointAt(12) === 0xF0000;
         });
         import('./data.json.__ruja_import_type_json__').then(ns => {
             globalThis.collisionModuleValue = ns.default;
@@ -1023,13 +1032,98 @@ fn dynamic_import_attributes_load_data_without_executing_or_colliding() {
         .expect("data module imports should settle");
     assert_eq!(
         vm.run(
-            "[jsonModuleValue, textModuleValue, collisionModuleValue, dataModuleExecuted, invalidJsonIsSyntaxError, unknownAttributeIsTypeError, unknownTypeIsTypeError].join('|')"
+            "[jsonModuleValue, textModuleValue.length, jsonModuleScalar, textModuleScalar, collisionModuleValue, dataModuleExecuted, invalidJsonIsSyntaxError, unknownAttributeIsTypeError, unknownTypeIsTypeError].join('|')"
         )
         .expect("data module results should be readable"),
         Value::String(Arc::from(
-            "42|first\nsecond|7|false|true|true|true"
+            "42|14|true|true|7|false|true|true|true"
         ))
     );
+    fs::remove_dir_all(dir).expect("module fixtures should be removed");
+}
+
+#[test]
+fn module_specifiers_decode_canonical_utf16_for_host_paths() {
+    let dir = module_fixture_dir("unicode-scalar-specifier");
+    let dependency_name = concat!("dependency-", "\u{F0000}", ".js");
+    fs::write(
+        dir.join(dependency_name),
+        "export default 42; export const named = 7;",
+    )
+    .expect("Unicode dependency should be written");
+    fs::create_dir(dir.join(concat!("broken-", "\u{F0000}", ".js")))
+        .expect("Unicode module directory should be created");
+    fs::create_dir(dir.join(concat!("broken-", "\u{F0000}", ".txt")))
+        .expect("Unicode data-module directory should be created");
+    fs::write(
+        dir.join(concat!("broken-link-", "\u{F0000}", ".js")),
+        concat!(
+            "export { missing } from './dependency-",
+            "\u{F0000}",
+            ".js';"
+        ),
+    )
+    .expect("Unicode link-error module should be written");
+    fs::write(
+        dir.join("entry.js"),
+        concat!(
+            "import value from './dependency-",
+            "\u{F0000}",
+            ".js';",
+            "globalThis.staticUnicodeSpecifier = value;",
+            "import('./dependency-",
+            "\u{F0000}",
+            ".js').then(ns => { globalThis.dynamicUnicodeSpecifier = ns.named; });",
+            "import('./missing-",
+            "\u{F0000}",
+            ".js').catch(error => {",
+            " var offset = error.message.indexOf('missing-') + 8;",
+            " globalThis.unicodeSpecifierError =",
+            "   error.message.codePointAt(offset) === 0xF0000;",
+            "});",
+            "import('./broken-",
+            "\u{F0000}",
+            ".js').catch(error => {",
+            " var offset = error.message.indexOf('broken-') + 7;",
+            " globalThis.unicodeModuleReadError =",
+            "   error.message.codePointAt(offset) === 0xF0000;",
+            "});",
+            "import('./broken-",
+            "\u{F0000}",
+            ".txt', { with: { type: 'text' } }).catch(error => {",
+            " var offset = error.message.indexOf('broken-') + 7;",
+            " globalThis.unicodeDataReadError =",
+            "   error.message.codePointAt(offset) === 0xF0000;",
+            "});",
+            "import('./broken-link-",
+            "\u{F0000}",
+            ".js').catch(error => {",
+            " var marker = error.message.indexOf('dependency-') >= 0",
+            "   ? 'dependency-' : 'broken-link-';",
+            " var offset = error.message.indexOf(marker) + marker.length;",
+            " globalThis.unicodeModuleLinkError =",
+            "   error.message.codePointAt(offset) === 0xF0000;",
+            "});"
+        ),
+    )
+    .expect("Unicode import entry should be written");
+
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.run_module_file(dir.join("entry.js"))
+        .expect("Unicode module specifiers should resolve");
+    assert_eq!(
+        vm.run(
+            "[staticUnicodeSpecifier, dynamicUnicodeSpecifier, unicodeSpecifierError, unicodeModuleReadError, unicodeDataReadError, unicodeModuleLinkError].join('|')",
+        )
+            .expect("module results should be readable"),
+        Value::String(Arc::from("42|7|true|true|true|true"))
+    );
+
+    let mut display_vm = Vm::new().expect("display VM should initialize");
+    let link_error = display_vm
+        .run_module_file(dir.join(concat!("broken-link-", "\u{F0000}", ".js")))
+        .expect_err("missing Unicode export should fail linking");
+    assert!(link_error.to_string().contains('\u{F0000}'));
     fs::remove_dir_all(dir).expect("module fixtures should be removed");
 }
 

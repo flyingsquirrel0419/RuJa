@@ -305,6 +305,39 @@ strings, and `d`-flag ranges must remain measured in the original two code
 units. A Unicode `lastIndex` inside that pair maps to the code point's starting
 boundary, matching `GetStringIndex` behavior.
 
+Well-formed UTF-8 is canonicalized only where it crosses into a JavaScript
+string. `utf16_from_scalar_str` has a direct single-copy path for text that
+does not use the sentinel range; `push_utf16_scalar` expands a scalar in
+`U+F0000..U+F07FF` through its UTF-16 pair. The lexer applies this to source
+string and RegExp literals plus template cooked/raw text. Serde and data-module
+boundaries use the same conversion. `JSON.parse` copies raw input as an already
+canonical JavaScript string and applies the helper only to newly decoded
+Unicode escapes, avoiding double conversion. Serde export performs the inverse
+UTF-16 decoding for valid pairs and replaces lone surrogates with U+FFFD because
+its host string type cannot represent them. When two object keys collapse to
+the same replacement string, serde export deterministically retains the later
+key in internal property order. Unicode RegExp normalization
+recombines adjacent sentinel-backed high/low units into one scalar atom before
+backend compilation; non-Unicode mode retains separate code-unit atoms. Native
+errors carry an explicit host/internal text-provenance bit. Ordinary error
+constructors retain canonical internal text; `Error::host`, `syntax_host`, and
+`type_err_host` mark OS or callback Unicode for one conversion during error
+materialization. Module and script filesystem failures use the host path, so
+paths cannot reintroduce an ambiguous raw scalar while errors containing
+existing JavaScript strings are not converted twice. Mixed module-link errors
+canonicalize only the host path fragment. `Error::Display` performs the inverse
+operation for internal text and leaves host-tagged text unchanged.
+
+```text
+[Decision Log]
+- 목적과 의도: Preserve valid Unicode scalars whose values overlap RuJa's internal lone-surrogate sentinel range at each audited well-formed UTF-8 ingress boundary.
+- 기존 구현 및 제약 조건: Rust String cannot contain surrogate code points; RuJa stores each lone surrogate as U+F0000..U+F07FF, while valid scalars in that same range require two JavaScript UTF-16 code units. Applying conversion to an already-internal string would expand sentinel code units twice.
+- 검토한 주요 대안: Replace every string with Vec<u16>, reserve a different private-use range, canonicalize every Arc<str> construction, or canonicalize only external scalar-producing boundaries.
+- 선택한 방식: Keep the compact existing representation, add one scalar-ingress helper with a no-collision fast path, call it from source lexing, template lexing, serde, decoded JSON escapes, and JSON/text data-module loading, decode internal UTF-16 when exporting serde strings and keys, and tag native errors by host/internal text provenance.
+- 다른 대안 대신 이 방식을 선택한 이유: No Unicode scalar range can also encode all lone surrogates injectively; a global Arc<str> rewrite cannot distinguish external UTF-8 from already-canonical internal text; and Vec<u16> would change every string consumer before the RegExp-specific matcher issue is solved.
+- 장점, 단점 및 영향: String length, equality, code-unit access, templates, JSON, constructor-based embedding, module paths, CLI output, and data modules now agree for both sentinel-range endpoints. Ordinary ingress performs one direct copy; serde export is lossless for valid pairs and necessarily lossy for lone surrogates. Public enum construction remains an unchecked low-level escape hatch, and Unicode RegExp matching still needs a logical-symbol backend because its current scalar alphabet identifies a lone surrogate sentinel with a private-use scalar.
+```
+
 After matching, all capture endpoints are converted in one ordered pass and
 reused for result strings, named `groups`, `lastIndex`, and match indices.
 With the internal `[[RegExpHasIndices]]` flag set, exec allocates one

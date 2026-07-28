@@ -155,6 +155,9 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, AtomicUsize, Ordering};
 use std::sync::Arc;
 
+/// Native callback entry point. Errors containing host Unicode must be built
+/// with [`Error::host`], [`Error::syntax_host`], or [`Error::type_err_host`];
+/// ordinary constructors accept RuJa's canonical internal string encoding.
 pub type NativeFn = fn(&mut Vm, &[Value], Option<Value>) -> error::Result<Value>;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -1215,14 +1218,14 @@ impl Vm {
     /// Run a Script source file while preserving its canonical host referrer.
     pub fn run_file(&mut self, path: impl AsRef<std::path::Path>) -> error::Result<Value> {
         let canonical = path.as_ref().canonicalize().map_err(|err| {
-            Error::syntax(format!(
+            Error::syntax_host(format!(
                 "Cannot resolve script '{}': {}",
                 path.as_ref().display(),
                 err
             ))
         })?;
         let src = std::fs::read_to_string(&canonical).map_err(|err| {
-            Error::syntax(format!(
+            Error::syntax_host(format!(
                 "Cannot read script '{}': {}",
                 canonical.display(),
                 err
@@ -2525,13 +2528,24 @@ impl Vm {
             crate::value::PropertyKey::from("name"),
             PropertyDescriptor::data(Value::String(Arc::from(ctor_name))),
         );
+        let message = if e.text_is_host_unicode {
+            crate::value::utf16_from_scalar_str(&e.message)
+        } else {
+            e.message.clone()
+        };
+        let stack = e.stack.join("\n");
+        let stack = if e.text_is_host_unicode {
+            crate::value::utf16_from_scalar_str(&stack)
+        } else {
+            stack
+        };
         props.insert(
             crate::value::PropertyKey::from("message"),
-            PropertyDescriptor::data(Value::String(Arc::from(e.message.as_str()))),
+            PropertyDescriptor::data(Value::String(Arc::from(message))),
         );
         props.insert(
             crate::value::PropertyKey::from("stack"),
-            PropertyDescriptor::data(Value::String(Arc::from(e.stack.join("\n").as_str()))),
+            PropertyDescriptor::data(Value::String(Arc::from(stack))),
         );
         let proto_pin = self.pin(&proto);
         let obj = HeapObj::Object(ObjectData {
@@ -2814,7 +2828,9 @@ enum FuncCallInfo {
 
 impl Vm {
     pub fn to_string_pub(&mut self, v: &Value) -> error::Result<String> {
-        Ok(self.to_string(v)?.to_string())
+        Ok(crate::value::utf16_to_scalar_string_lossy(
+            &self.to_string(v)?,
+        ))
     }
 
     pub(crate) fn with_execution_context<T>(

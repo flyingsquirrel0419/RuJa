@@ -3010,7 +3010,7 @@ impl Vm {
             .current_frame()
             .ok()
             .and_then(|frame| frame.chunk.source_path.clone());
-        let settlement = match self.to_string_pub(&specifier) {
+        let settlement = match self.to_string(&specifier).map(|value| value.to_string()) {
             Ok(specifier) => match self.dynamic_import_type_from_options(&options) {
                 Ok(import_type) => {
                     if let Some(referrer) = referrer {

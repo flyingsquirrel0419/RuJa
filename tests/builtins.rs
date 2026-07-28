@@ -3830,6 +3830,131 @@ fn global_uri_functions_follow_percent_encoding_rules() {
 }
 
 #[test]
+fn source_and_json_unicode_scalars_do_not_alias_surrogate_sentinels() {
+    assert_eq!(
+        run(concat!(
+            "var raw = '\u{F0000}';",
+            "var escaped = '\\u{F0000}';",
+            "var pairEscaped = '\\uDB80\\uDC00';",
+            "var made = String.fromCodePoint(0xF0000);",
+            "[raw.length, escaped.length, pairEscaped.length, made.length,",
+            " raw === escaped, pairEscaped === made,",
+            " escaped === made, raw.charCodeAt(0).toString(16),",
+            " raw.charCodeAt(1).toString(16)].join('|');"
+        )),
+        Value::String(Arc::from("2|2|2|2|true|true|true|db80|dc00"))
+    );
+    assert_eq!(
+        run(concat!(
+            "var raw = '\u{F07FF}';",
+            "var escaped = '\\u{F07FF}';",
+            "var made = String.fromCodePoint(0xF07FF);",
+            "[raw.length, escaped.length, raw === made,",
+            " raw.charCodeAt(0).toString(16),",
+            " raw.charCodeAt(1).toString(16)].join('|');"
+        )),
+        Value::String(Arc::from("2|2|true|db81|dfff"))
+    );
+    assert_eq!(
+        run(concat!(
+            "var raw = JSON.parse('\"\u{F0000}\"');",
+            "var escaped = JSON.parse('\"\\uDB80\\uDC00\"');",
+            "[raw.length, escaped.length, raw === escaped,",
+            " raw === String.fromCodePoint(0xF0000)].join('|');"
+        )),
+        Value::String(Arc::from("2|2|true|true"))
+    );
+    assert_eq!(
+        run(concat!(
+            "var regex = /\u{F0000}/u;",
+            "[regex.source.length,",
+            " regex.source === String.fromCodePoint(0xF0000),",
+            " regex.test(String.fromCodePoint(0xF0000)),",
+            " /[\u{F0000}]/u.test(String.fromCodePoint(0xF0000)),",
+            " new RegExp(String.fromCodePoint(0xF0000), 'u')",
+            "   .test(String.fromCodePoint(0xF0000))].join('|');"
+        )),
+        Value::String(Arc::from("2|true|true|true|true"))
+    );
+    assert_eq!(
+        run(concat!(
+            "var lower = String.fromCodePoint(0xF0000);",
+            "var upper = String.fromCodePoint(0xF07FF);",
+            "[new RegExp(lower, 'v').test(lower),",
+            " new RegExp(upper, 'u').test(upper),",
+            " new RegExp(upper, 'v').test(upper),",
+            " new RegExp(lower).test(lower),",
+            " new RegExp(upper).test(upper),",
+            " new RegExp('[' + lower + '-' + upper + ']', 'u').test(upper),",
+            " new RegExp('[' + lower + '-' + upper + ']', 'v').test(lower)]",
+            " .join('|');"
+        )),
+        Value::String(Arc::from("true|true|true|true|true|true|true"))
+    );
+    assert_eq!(
+        run(r#"
+            var scalar = String.fromCodePoint(0xF0000);
+            var source;
+            var result = JSON.parse('{"\\uDB80\\uDC00":1}', function(key, value, context) {
+              if (key === scalar) source = context.source;
+              return value;
+            });
+            [source, result[scalar]].join('|');
+        "#),
+        Value::String(Arc::from("1|1"))
+    );
+}
+
+#[test]
+fn public_string_output_decodes_canonical_utf16() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    let value = vm
+        .run(concat!("'", "\u{F0000}", "';"))
+        .expect("source scalar should evaluate");
+    let host = vm
+        .to_string_pub(&value)
+        .expect("public string conversion should succeed");
+    assert_eq!(host, "\u{F0000}");
+    let Value::String(round_trip) = Value::from_string(&host) else {
+        panic!("expected string value");
+    };
+    assert_eq!(ruja::value::utf16_from_str(&round_trip), [0xDB80, 0xDC00]);
+
+    assert_eq!(
+        vm.run(concat!(
+            "var scalar = String.fromCodePoint(0xF0000);",
+            "try { BigInt(scalar); } catch (error) {",
+            " error.message.includes(scalar);",
+            "}"
+        ))
+        .expect("internal-string error should evaluate"),
+        Value::Bool(true)
+    );
+    let internal_error = vm
+        .run("BigInt(String.fromCodePoint(0xF0000));")
+        .expect_err("invalid BigInt input should fail");
+    assert!(internal_error.to_string().contains('\u{F0000}'));
+
+    vm.register_fn(
+        "hostUnicodeError",
+        |_vm, _args, _this| Err(ruja::error::Error::type_err_host("\u{F0000}")),
+        0,
+    )
+    .expect("host error function should register");
+    assert_eq!(
+        vm.run(
+            "try { hostUnicodeError(); } catch (error) { error.message === String.fromCodePoint(0xF0000); }",
+        )
+        .expect("host error should be catchable"),
+        Value::Bool(true)
+    );
+    let host_error = vm
+        .run("hostUnicodeError();")
+        .expect_err("uncaught host error should escape");
+    assert!(host_error.to_string().contains('\u{F0000}'));
+}
+
+#[test]
 fn array_search_methods_use_array_like_property_access() {
     assert_eq!(
         run("var obj = {0:'x', 1:true, length:2}; Array.prototype.indexOf.call(obj, true);"),
