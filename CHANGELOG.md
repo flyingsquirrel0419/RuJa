@@ -4,6 +4,14 @@
 
 ### Changed
 
+- Complex `iv` RegExp classes now lower `\w` and `\W` operands to the exact
+  ECMAScript WordCharacters inventory before native set algebra. Nested
+  intersection, subtraction, union, complement, lookaround, and backreference
+  paths no longer inherit Rust's broader Unicode word class. Whole-class HIR
+  materialization remains limited to ordinary classes, preserving complex
+  `v` syntax and bounded backend execution. String properties, `\q{...}`, and
+  the UTF-16 sentinel collision remain separate limitations.
+
 - Unicode `u`/`v` RegExp word boundaries under active ignore-case now use the
   exact ECMAScript WordCharacters set on every backend route. Vendored
   `regex-syntax` and `regex-automata` lower dedicated ECMAScript boundary HIR

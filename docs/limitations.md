@@ -192,13 +192,12 @@ guarantees are required.
   in `U+F0000..U+F07FF` collide with the
   internal UTF-16 sentinel representation, and string-valued `v` set elements
   using string properties or `\q{...}` remain incomplete. Complex `iv` sets
-  containing `\w` or `\W` can still inherit the backend's broader Unicode
-  word class instead of ECMAScript WordCharacters. The
-  backend also rejects some grammar-valid legacy forms, including empty
-  classes, invalid-brace Annex B literals, and non-BMP code-unit ranges such as
+  now lower `\w` and `\W` operands to ECMAScript WordCharacters before the
+  backend performs set algebra. The backend also rejects some grammar-valid
+  legacy forms, including
+  invalid-brace Annex B literals and non-BMP code-unit ranges such as
   `[💩-\uFFFF]`; statement-list RegExp fallback still mishandles nearby lazy
-  quantifiers. Moving every boundary onto the backtracking backend remains
-  rejected; the general boundary fix needs a linear operation.
+  quantifiers.
 - Execution fuel is **cooperative, not preemptive**: `Vm::set_fuel(Some(n))`
   bounds execution to ~n opcodes (exhaustion throws a `RangeError` that is
   *not* catchable by user `try/catch`, so untrusted code cannot swallow it).

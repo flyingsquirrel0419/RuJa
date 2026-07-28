@@ -608,6 +608,36 @@ class still exceeds ECMAScript WordCharacters.
 - 장점, 단점 및 영향: The 48-file character-only matrix runs at 100% while legacy and u behavior share existing paths. The admission manifest requires maintenance when Test262 changes, and 66 generated string-valued cases remain explicit follow-up work.
 ```
 
+### RegExp Unicode-set word operands
+
+Complex `v` classes remain in the backend's native set-algebra syntax because
+the ordinary whole-class materializer does not parse nested intersection or
+subtraction. That fallback previously left active-ignoreCase `\w` and `\W`
+unchanged, allowing Rust's broader Unicode word inventory to enter otherwise
+valid ECMAScript intersections, differences, unions, and complements.
+
+The normalizer now separates two decisions. Every active-ignoreCase word
+escape is lowered in place to the exact ECMAScript inventory: ASCII letters,
+digits, underscore, U+017F, and U+212A, with the complement represented as a
+nested negated class. Only ordinary classes set the flag that requests
+whole-class HIR materialization. Complex `v` classes retain their structure,
+so the backend performs the existing algebra over exact word operands instead
+of reparsing or flattening the source.
+
+This closes word-operand leakage through nested classes and through both the
+linear and hard backreference/lookaround routes. String-valued properties and
+`\q{...}` remain separate architecture work.
+
+```text
+[Decision Log]
+- 목적과 의도: Remove Rust-only Unicode word characters from every complex iv set operand without replacing the existing bounded set-algebra backend.
+- 기존 구현 및 제약 조건: Ordinary ignore-case classes are materialized as complete HIR sets, while nested v intersection and subtraction deliberately retain backend syntax. One shared guard disabled both whole-class materialization and the smaller word-escape rewrite, so Rust's Unicode word inventory leaked into complex sets.
+- 검토한 주요 대안: Keep the documented mismatch, hand-parse all v algebra in the normalizer, add a second complete RegExp AST, replace the backend, or separate per-escape lowering from whole-class materialization.
+- 선택한 방식: Always rewrite active-ignoreCase w/W operands to exact nested ECMAScript classes, but mark only ordinary classes for whole-class HIR materialization; retain native nested-v operators and existing execution routing.
+- 다른 대안 대신 이 방식을 선택한 이유: The escape is an atomic grammar operand and can be replaced without interpreting surrounding algebra, while reparsing or replacing the full backend would combine word semantics with property folding and string-valued sets. Separating the two decisions fixes the proven leak at its source and preserves current resource bounds.
+- 장점, 단점 및 영향: Direct tests cover word/property and word/literal intersections, differences, unions, nested complements, lookaround, and backreferences for Rust-only word characters and the two ECMAScript Unicode additions. A bounded Node word/literal probe is secondary evidence; current ECMA-262 remains authoritative where engines differ. Sentinel-range scalars and string-valued v operands remain explicit independent units.
+```
+
 ### RegExp Unicode mode flag exclusivity
 
 `u` and `v` both select Unicode-aware pattern parsing, but `v` is not an

@@ -11730,6 +11730,40 @@ total files and **37061** executions.
 - 장점, 단점 및 영향: Supported RegExp coverage gains two passing executions with no new failures. Future Test262 siblings remain skipped until independently audited.
 ```
 
+## Exact word operands in complex Unicode sets
+
+This unit changes no Test262 admission. The generated Unicode-set matrix does
+not exercise `\w` or `\W` operands under `iv`, so direct engine tests carry
+the maintained conformance evidence. Pinned Test262
+`020cb74075849d1e404bbcdb62feb7a02e6966db` remains **1093 pass / 0 fail /
+786 skip / 0 timeout / 0 error** over all 1,879 `built-ins/RegExp` files.
+
+Before the fix, complex classes kept native backend syntax and therefore used
+Rust's Unicode word inventory. Patterns such as
+`[\w&&\p{Letter}]/iv` incorrectly matched `é` and CJK, while
+`[\W&&\p{Letter}]/iv` incorrectly rejected them. The normalizer now rewrites
+each active-ignoreCase word operand to the exact ECMAScript set while retaining
+the surrounding union, intersection, subtraction, and nested-complement
+operators.
+
+Focused coverage checks ASCII words, U+017F, U+212A, `é`, CJK, Arabic digits,
+join controls, both subtraction operand positions, union, nested set
+operations, outer negation, lookahead routing, and backreferences. A bounded
+manual Node 24 probe agrees for the word/literal matrix and is secondary to
+the current ECMA-262 algorithms where engines differ. Direct coverage also
+pins the specified `/^\p{ASCII}$/iv` long-s match. String properties and
+`\q{...}` remain gated.
+
+```text
+[Decision Log]
+- 목적과 의도: Add direct conformance evidence for complex iv word operands that the current Test262 generated matrix does not cover.
+- 기존 구현 및 제약 조건: The runner correctly skips no newly supported file because regexp-v-flag spans character and string-valued behavior, and existing direct tests covered only a few ASCII/long-s/Kelvin examples that did not expose Rust-only word characters.
+- 검토한 주요 대안: Broaden regexp-v-flag admission, claim the generated character matrix as evidence, test only one intersection, or add a differential matrix across nested algebra and both execution backends.
+- 선택한 방식: Keep admission unchanged; add public regressions for Rust-only word characters, ECMAScript additions, complements, union, both subtraction operand positions, nesting, lookaround, and backreferences; manually compare a bounded word/literal matrix with Node.
+- 다른 대안 대신 이 방식을 선택한 이유: Broad admission would execute unsupported string sets, generated tests contain no word operands, and one happy path would miss complement and hard-backend routing. Direct regression coverage plus the bounded manual probe measure the corrected semantic boundary without overstating property support.
+- 장점, 단점 및 영향: The documented word-operand leak is closed with no support-policy weakening, and the complete pinned RegExp totals remain 1093/0/786/0/0. String-valued sets remain separately measurable work.
+```
+
 ## Exact Unicode ignore-case word boundaries
 
 This architecture unit changes no Test262 admission. Pinned Test262

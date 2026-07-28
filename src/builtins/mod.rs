@@ -1719,9 +1719,10 @@ fn normalize_regex_for_backend(
             } else if in_class
                 && matches!(ch, 'w' | 'W')
                 && modifier_stack.last().is_some_and(|state| state.ignore_case)
-                && materialize_current_word_class
             {
-                class_has_active_word_escape = true;
+                // Complex v-classes stay as backend set algebra, but each word
+                // operand must still use ECMAScript's narrow inventory.
+                class_has_active_word_escape |= materialize_current_word_class;
                 push_ecmascript_word_escape_for_backend(&mut out, ch, true, unicode_mode);
             } else if !in_class
                 && matches!(ch, 'w' | 'W')

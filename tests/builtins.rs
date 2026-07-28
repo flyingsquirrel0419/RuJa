@@ -18947,6 +18947,51 @@ fn regexp_ignore_case_word_characters_follow_ecmascript_canonicalization() {
             "#),
         Value::Bool(true)
     );
+
+    assert_eq!(
+        run(r#"
+            var rustOnlyWords = ["é", "中", "\u0660", "\u200C", "\u200D"];
+            var wordLetter = new RegExp("^[\\w&&\\p{Letter}]$", "iv");
+            var nonWordLetter = new RegExp("^[\\W&&\\p{Letter}]$", "iv");
+            var nestedWord = new RegExp("^[[\\w]&&[[^a]--[b]]]$", "iv");
+            var nestedNonWord = new RegExp("^[[\\W]&&[[^a]--[b]]]$", "iv");
+            var unionNonWord = new RegExp("^[[\\W][a]]$", "iv");
+            var subtractWord = new RegExp("^[[\\p{Letter}]--[\\w]]$", "iv");
+            var negatedDifference = new RegExp("^[^[\\w]--[a]]$", "iv");
+            var ok = true;
+
+            for (var i = 0; i < rustOnlyWords.length; i++) {
+              var value = rustOnlyWords[i];
+              ok = ok && !wordLetter.test(value) &&
+                (value === "é" || value === "中" ? nonWordLetter.test(value) : true) &&
+                !nestedWord.test(value) && nestedNonWord.test(value) &&
+                unionNonWord.test(value) && negatedDifference.test(value);
+            }
+
+            ok && wordLetter.test("S") && wordLetter.test("\u017F") &&
+              wordLetter.test("\u212A") && !nonWordLetter.test("\u017F") &&
+              new RegExp("^\\p{ASCII}$", "iv").test("\u017F") &&
+              subtractWord.test("é") && subtractWord.test("中") &&
+              !subtractWord.test("S") && !subtractWord.test("\u017F") &&
+              nestedWord.test("S") && nestedWord.test("\u017F") &&
+              !nestedWord.test("a") && !nestedWord.test("b") &&
+              !negatedDifference.test("S") && negatedDifference.test("a");
+            "#),
+        Value::Bool(true)
+    );
+
+    assert_eq!(
+        run(r#"
+            var hardWord = new RegExp("^(?=.)[[\\w]&&[a-z]]$", "iv");
+            var hardNonWord = new RegExp("^(?=.)[[\\W]&&[^a]]$", "iv");
+            var repeated = new RegExp("^([[\\w]--[a]])\\1$", "iv");
+            hardWord.test("S") && hardWord.test("\u017F") &&
+              !hardWord.test("é") && hardNonWord.test("é") &&
+              !hardNonWord.test("S") && repeated.test("SS") &&
+              repeated.test("\u017F\u017F") && !repeated.test("éé");
+            "#),
+        Value::Bool(true)
+    );
 }
 
 #[test]
