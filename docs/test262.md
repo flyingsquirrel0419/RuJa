@@ -11830,6 +11830,15 @@ remains **1093/0/786/0/0** over 1,879 files. Python tooling passes **136/137**;
 the sole failure is the known absent staging TypedArray fixture in the pinned
 external checkout.
 
+Implementation commits `e04f833` and `c504f61` pass ordinary CI
+`30332410250` and all **35/35** jobs in full run `30332410263`. The first full
+run `30329907125` exposed six internal-eval source regressions during artifact
+comparison despite green jobs; the explicit source-provenance follow-up
+restored all six. All 32 fixed result artifacts are byte-identical to clean
+baseline `30325163916`. Aggregate remains
+**31953/5108/11405/3/0** over **48469** total and **37061** run; the sorted
+artifact evidence hash is `204943da73e6ce948c7b77e29165c806ea412c14cabd8312c06418c05fa1ea73`.
+
 The change deliberately does not claim the Unicode RegExp collision closed.
 When matching a lone surrogate, the current backend still sees the private-use
 sentinel as a Unicode scalar. A logical-symbol matcher must distinguish scalar
