@@ -4,6 +4,31 @@
 
 ### Changed
 
+- `new Set(iterable)` now uses a direct cached synchronous iterator record
+  instead of allocating a wrapper. It performs one `@@iterator` Get without a
+  `HasProperty` probe, calls cached `next` with zero arguments, observes
+  Array/Map/Set/generator overrides, and meters each step. Step/result/done/
+  value failures and non-catchable host Fuel do not close; catchable adder
+  failures close while preserving and rooting the original completion, with
+  native errors materialized in the constructor Realm. Every Realm now owns
+  immutable Set, Set prototype, and Set Iterator prototype identities. Set
+  allocation uses the GC-retrying VM path, and native `Set.prototype.add`
+  reserves new `[[SetData]]` storage before mutation without reserving for a
+  duplicate. Exact four-file Test262 admission moves pinned top-level Set from
+  ordinary **16 pass / 0 fail / 6 skip** to **20 pass / 0 fail / 2 skip** and
+  forced execution from **20 pass / 2 fail** to **22 pass / 0 fail**. Full Set
+  moves from **340/2/41** to **344/2/37**; its two failures remain independent
+  `Set.prototype[Symbol.toStringTag]` tests. Direct tests cover iterator/adder
+  cache and arity, Proxy order, built-in overrides, close priority, foreign
+  Realm identities, forced GC, all reservation sites, duplicate insertion,
+  Fuel, exact heap-cap retry, pin cleanup, and clean retry.
+  Local gates pass default debug/release library **309/309**, all-feature
+  library **312/312**, es2015 **138/138**, `with` **62/62**, Python tooling
+  **143/143** with four optional absent-checkout probes skipped, and vendored
+  RegExp **38/38**, plus all targets/features, rustfmt, warnings-denied Clippy,
+  wasm32 and doctest; the complete pinned 383-file Set sweep reports
+  **344 pass / 2 fail / 37 skip**.
+
 - `new Map(iterable)` now uses the shared direct cached synchronous iterator
   record instead of allocating a wrapper iterator. It performs one
   `@@iterator` Get with no `HasProperty` probe, calls cached `next` with zero

@@ -5,7 +5,7 @@ use super::{
     InlineCacheReservationSite, MapReservationSite, Microtask, OrdinaryOwnKeysReservationSite,
     OrdinaryPropertyStorageReservationSite, OwnKeyConsumerReservationSite,
     PropertyTraversalReservationSite, ProxyDefinePropertyReservationSite,
-    ProxyDescriptorReservationSite, ProxyOwnKeysReservationSite, Vm,
+    ProxyDescriptorReservationSite, ProxyOwnKeysReservationSite, SetReservationSite, Vm,
 };
 use crate::bytecode::{Chunk, Op};
 use crate::value::{
@@ -890,6 +890,7 @@ const NON_CONSTRUCTIBLE_NATIVE_FUNCTION_SOURCES: &[&str] = &[
 const FOREIGN_EAGER_NATIVE_CONSTRUCTOR_SOURCES: &[&str] = &[
     "Array",
     "Map",
+    "Set",
     "Error",
     "EvalError",
     "RangeError",
@@ -900,7 +901,7 @@ const FOREIGN_EAGER_NATIVE_CONSTRUCTOR_SOURCES: &[&str] = &[
     "AggregateError",
 ];
 
-fn realm_registry_counts(vm: &Vm) -> [usize; 36] {
+fn realm_registry_counts(vm: &Vm) -> [usize; 38] {
     [
         vm.realm_globals.len(),
         vm.realm_object_prototypes.len(),
@@ -911,6 +912,7 @@ fn realm_registry_counts(vm: &Vm) -> [usize; 36] {
         vm.realm_promise_constructors.len(),
         vm.realm_promise_prototypes.len(),
         vm.realm_map_prototypes.len(),
+        vm.realm_set_prototypes.len(),
         vm.realm_generator_prototypes.len(),
         vm.realm_generator_function_constructors.len(),
         vm.realm_generator_function_prototypes.len(),
@@ -928,6 +930,7 @@ fn realm_registry_counts(vm: &Vm) -> [usize; 36] {
         vm.realm_iterator_prototypes.len(),
         vm.realm_array_iterator_prototypes.len(),
         vm.realm_map_iterator_prototypes.len(),
+        vm.realm_set_iterator_prototypes.len(),
         vm.realm_wrap_for_valid_iterator_prototypes.len(),
         vm.realm_string_iterator_prototypes.len(),
         vm.realm_iterator_helper_prototypes.len(),
@@ -978,7 +981,7 @@ fn assert_main_realm_range_error(vm: &Vm, error: &crate::error::Error) {
 fn assert_failed_realm_attempt(
     vm: &mut Vm,
     baseline_live: usize,
-    baseline_registries: [usize; 36],
+    baseline_registries: [usize; 38],
     baseline_pins: usize,
     extra_capacity: usize,
 ) {
@@ -18811,6 +18814,418 @@ fn map_constructor_allocation_retries_at_the_exact_heap_cap() {
         expected_prototype
     );
     assert_eq!(vm.heap.live_count(), baseline_live + 1);
+    vm.set_max_heap_objects(None);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+}
+
+#[test]
+fn set_constructor_roots_storage_fuel_and_cleanup_are_retryable() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("GC hook should register");
+    vm.register_fn(
+        "abortSetFuel",
+        |_, _, _| Err(crate::error::Error::fuel("test Set constructor fuel abort")),
+        0,
+    )
+    .expect("Fuel hook should register");
+    vm.register_fn(
+        "throwFreshSetValue",
+        |vm, _, _| {
+            let index = vm.alloc(HeapObj::Set(crate::value::SetData {
+                items: parking_lot::Mutex::new(IndexSet::new()),
+                props: parking_lot::Mutex::new(IndexMap::new()),
+                proto: parking_lot::Mutex::new(Some(vm.object_proto.clone())),
+                extensible: std::sync::atomic::AtomicBool::new(true),
+            }))?;
+            vm.set_constructor_fresh_index = Some(index);
+            Err(crate::error::Error::thrown(Value::Object(index), &vm.heap))
+        },
+        0,
+    )
+    .expect("fresh Set throw hook should register");
+
+    vm.run(
+        "var setRealm = $262.createRealm().global; \
+         setRealm.eval('Set = null; Iterator = null;');",
+    )
+    .expect("foreign Set registry fixture should initialize");
+    let foreign_realm = vm
+        .realm_set_prototypes
+        .keys()
+        .copied()
+        .find(|realm| *realm != vm.global.0)
+        .expect("created Realm should publish a Set prototype registry entry");
+    let Value::Object(foreign_set_prototype) = vm.realm_set_prototypes[&foreign_realm] else {
+        panic!("Set prototype registry entry must be an object");
+    };
+    let Value::Object(foreign_set_iterator_prototype) =
+        vm.realm_set_iterator_prototypes[&foreign_realm]
+    else {
+        panic!("Set Iterator prototype registry entry must be an object");
+    };
+    vm.gc();
+    assert!(vm.heap.with_obj(foreign_set_prototype.0, |object| {
+        object
+            .props()
+            .lock()
+            .contains_key(&PropertyKey::from("add"))
+    }));
+    assert!(vm
+        .heap
+        .with_obj(foreign_set_iterator_prototype.0, |object| {
+            object
+                .props()
+                .lock()
+                .contains_key(&PropertyKey::from("next"))
+        }));
+
+    assert_eq!(
+        vm.run(
+            r#"
+            var originalSetAdd = Set.prototype.add;
+            var rootAddGets = 0;
+            Object.defineProperty(Set.prototype, "add", {
+              configurable: true,
+              get: function() {
+                rootAddGets++;
+                forceGc();
+                return function(value) {
+                  forceGc();
+                  return originalSetAdd.call(this, value);
+                };
+              }
+            });
+            var rootedSet = new Set({
+              get [Symbol.iterator]() {
+                forceGc();
+                return function() {
+                  forceGc();
+                  var index = 0;
+                  return {
+                    get next() {
+                      forceGc();
+                      return function() {
+                        forceGc();
+                        if (index++ !== 0) {
+                          return { get done() { forceGc(); return true; } };
+                        }
+                        return {
+                          get done() { forceGc(); return false; },
+                          get value() { forceGc(); return { marker: 9 }; }
+                        };
+                      };
+                    }
+                  };
+                };
+              }
+            });
+            Object.defineProperty(Set.prototype, "add", {
+              value: originalSetAdd, writable: true, configurable: true
+            });
+            [rootAddGets, rootedSet.values().next().value.marker].join("|");
+            "#,
+        )
+        .expect("Set constructor values should survive every observable GC"),
+        Value::String(Arc::from("1|9"))
+    );
+
+    vm.run(
+        r#"
+        var setConstructorIteratorGets = 0;
+        var setConstructorNextCalls = 0;
+        var setConstructorClosed = 0;
+        var setConstructorIndex = 0;
+        var setConstructorValue = { marker: 7 };
+        var setConstructorIterator = {
+          next: function() {
+            setConstructorNextCalls++;
+            if (setConstructorIndex++ === 0) {
+              return { done: false, value: setConstructorValue };
+            }
+            return { done: true };
+          },
+          return: function() { setConstructorClosed++; return {}; }
+        };
+        var setConstructorIterable = {
+          get [Symbol.iterator]() {
+            setConstructorIteratorGets++;
+            return function() {
+              setConstructorIndex = 0;
+              return setConstructorIterator;
+            };
+          }
+        };
+        "#,
+    )
+    .expect("Set constructor failure fixture should initialize");
+    vm.gc();
+    let baseline_pins = vm.gc_pins.len();
+
+    vm.fail_set_reservation = Some((SetReservationSite::ConstructorRoots, 0));
+    let error = vm
+        .run("new Set(setConstructorIterable);")
+        .expect_err("Set constructor root reservation should fail before allocation");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fail_set_reservation, None);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(
+        vm.run("setConstructorIteratorGets + ':' + setConstructorClosed;")
+            .expect("pre-allocation counters should remain readable"),
+        Value::String(Arc::from("0:0"))
+    );
+
+    vm.run("var directSetStorage = new Set();")
+        .expect("direct Set storage fixture should initialize");
+    vm.fail_set_reservation = Some((SetReservationSite::EntryStorage, 0));
+    let error = vm
+        .run("directSetStorage.add('direct');")
+        .expect_err("direct Set insertion should expose reservation failure");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fail_set_reservation, None);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(
+        vm.run("directSetStorage.has('direct');")
+            .expect("failed Set insertion should remain observable"),
+        Value::Bool(false)
+    );
+    assert_eq!(
+        vm.run("directSetStorage.add('direct').has('direct');")
+            .expect("direct Set insertion should retry cleanly"),
+        Value::Bool(true)
+    );
+    vm.fail_set_reservation = Some((SetReservationSite::EntryStorage, 0));
+    assert_eq!(
+        vm.run("directSetStorage.add('direct').size;")
+            .expect("duplicate Set insertion must not reserve storage"),
+        Value::Number(1.0)
+    );
+    assert_eq!(
+        vm.fail_set_reservation,
+        Some((SetReservationSite::EntryStorage, 0))
+    );
+    vm.fail_set_reservation = None;
+
+    vm.fail_set_reservation = Some((SetReservationSite::IteratorRoots, 0));
+    let error = vm
+        .run("new Set(setConstructorIterable);")
+        .expect_err("Set iterator-root reservation should fail before iteration");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fail_set_reservation, None);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(
+        vm.run("setConstructorIteratorGets + ':' + setConstructorClosed;")
+            .expect("pre-iterator counters should remain readable"),
+        Value::String(Arc::from("0:0"))
+    );
+
+    vm.fail_set_reservation = Some((SetReservationSite::EntryStorage, 0));
+    let error = vm
+        .run("new Set(setConstructorIterable);")
+        .expect_err("Set entry reservation should fail atomically");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fail_set_reservation, None);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(
+        vm.run(
+            "setConstructorIteratorGets + ':' + setConstructorNextCalls + ':' + setConstructorClosed;"
+        )
+        .expect("entry failure counters should remain readable"),
+        Value::String(Arc::from("1:1:1"))
+    );
+    assert_eq!(
+        vm.run("new Set(setConstructorIterable).values().next().value.marker;")
+            .expect("clean Set constructor retry should succeed"),
+        Value::Number(7.0)
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    vm.run("setConstructorIteratorGets = setConstructorNextCalls = setConstructorClosed = 0;")
+        .expect("Set counters should reset");
+    vm.set_constructor_zero_fuel_before_step = true;
+    let error = vm
+        .run("new Set(setConstructorIterable);")
+        .expect_err("Set constructor must meter before the first iterator step");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert!(!vm.set_constructor_zero_fuel_before_step);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    vm.set_fuel(None);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(
+        vm.run(
+            "setConstructorIteratorGets + ':' + setConstructorNextCalls + ':' + setConstructorClosed;"
+        )
+        .expect("step-Fuel counters should remain readable"),
+        Value::String(Arc::from("1:0:0"))
+    );
+
+    vm.run(
+        r#"
+        var setFuelClosed = 0;
+        var savedSetAdd = Set.prototype.add;
+        Set.prototype.add = function() { abortSetFuel(); };
+        var setFuelIterable = {
+          [Symbol.iterator]: function() {
+            return {
+              next: function() { return { done: false, value: 1 }; },
+              return: function() { setFuelClosed++; return {}; }
+            };
+          }
+        };
+        "#,
+    )
+    .expect("post-step Fuel fixture should initialize");
+    let error = vm
+        .run("new Set(setFuelIterable);")
+        .expect_err("post-step host Fuel must remain non-catchable");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    vm.run("Set.prototype.add = savedSetAdd;")
+        .expect("Set add should be restored after host Fuel");
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(
+        vm.run("setFuelClosed;")
+            .expect("post-step Fuel close counter should remain readable"),
+        Value::Number(0.0)
+    );
+
+    vm.run(
+        r#"
+        var closeSetFuelCalls = 0;
+        var closeSetOriginalAdd = Set.prototype.add;
+        Set.prototype.add = function() { throw new Error("original"); };
+        var closeSetFuelIterable = {
+          [Symbol.iterator]: function() {
+            return {
+              next: function() { return { done: false, value: 1 }; },
+              return: function() { closeSetFuelCalls++; abortSetFuel(); }
+            };
+          }
+        };
+        "#,
+    )
+    .expect("close-time Fuel fixture should initialize");
+    let error = vm
+        .run("new Set(closeSetFuelIterable);")
+        .expect_err("close-time Fuel must override a catchable add throw");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    vm.run("Set.prototype.add = closeSetOriginalAdd;")
+        .expect("Set add should be restored after close Fuel");
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(
+        vm.run("closeSetFuelCalls;")
+            .expect("close-time Fuel call count should remain readable"),
+        Value::Number(1.0)
+    );
+
+    vm.run(
+        r#"
+        var preservedSetClosed = 0;
+        var preservedSetOriginalAdd = Set.prototype.add;
+        Set.prototype.add = throwFreshSetValue;
+        var preservedSetIterable = {
+          [Symbol.iterator]: function() {
+            return {
+              next: function() { return { done: false, value: 1 }; },
+              return: function() { preservedSetClosed++; forceGc(); return {}; }
+            };
+          }
+        };
+        "#,
+    )
+    .expect("ephemeral Set throw fixture should initialize");
+    let error = vm
+        .run("new Set(preservedSetIterable);")
+        .expect_err("ephemeral thrown object should survive IteratorClose GC");
+    vm.run("Set.prototype.add = preservedSetOriginalAdd;")
+        .expect("Set add should be restored after ephemeral throw");
+    let thrown_index = vm
+        .set_constructor_fresh_index
+        .take()
+        .expect("throw hook should record its ephemeral object");
+    assert_eq!(error.thrown_value, Some(Value::Object(thrown_index)));
+    assert!(vm
+        .heap
+        .with_obj(thrown_index.0, |object| matches!(object, HeapObj::Set(_))));
+    assert_eq!(
+        vm.run("preservedSetClosed;")
+            .expect("ephemeral throw close counter should remain readable"),
+        Value::Number(1.0)
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+}
+
+#[test]
+fn set_constructor_allocation_retries_at_the_exact_heap_cap() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "freshSetPrototype",
+        |vm, _, _| {
+            let index = vm.alloc(HeapObj::Set(crate::value::SetData {
+                items: parking_lot::Mutex::new(IndexSet::new()),
+                props: parking_lot::Mutex::new(IndexMap::new()),
+                proto: parking_lot::Mutex::new(Some(vm.object_proto.clone())),
+                extensible: std::sync::atomic::AtomicBool::new(true),
+            }))?;
+            vm.set_constructor_fresh_index = Some(index);
+            Ok(Value::Object(index))
+        },
+        0,
+    )
+    .expect("fresh Set prototype hook should register");
+    vm.run(
+        "var SetCapNewTarget = new Proxy(function () {}, { \
+           get: function(target, key, receiver) { \
+             if (key === 'prototype') return freshSetPrototype(); \
+             return Reflect.get(target, key, receiver); \
+           } \
+         });",
+    )
+    .expect("Set heap-cap fixture should initialize");
+    let set_constructor = vm.get_global("Set");
+    let new_target = vm.get_global("SetCapNewTarget");
+    vm.gc();
+    let baseline_live = vm.heap.live_count();
+    let baseline_pins = vm.gc_pins.len();
+    let heap_cap = baseline_live + 8;
+    vm.set_max_heap_objects(Some(heap_cap));
+    vm.set_constructor_garbage_before_allocation = true;
+
+    let set = vm
+        .construct_with_new_target(&set_constructor, &[], &new_target)
+        .expect("Set allocation should retain an ephemeral prototype at the exact cap");
+    assert!(!vm.set_constructor_garbage_before_allocation);
+    assert_eq!(
+        vm.set_constructor_live_before_allocation.take(),
+        Some(heap_cap)
+    );
+    let expected_prototype = vm
+        .set_constructor_fresh_index
+        .take()
+        .expect("prototype getter should record its ephemeral object");
+    let Value::Object(set_index) = set else {
+        panic!("Set construction must return an object");
+    };
+    assert_eq!(
+        vm.heap.with_obj(set_index.0, |object| {
+            let HeapObj::Set(set) = object else {
+                return Value::Undefined;
+            };
+            set.proto.lock().clone().unwrap_or(Value::Null)
+        }),
+        Value::Object(expected_prototype)
+    );
+    assert!(vm.heap.with_obj(expected_prototype.0, |object| matches!(
+        object,
+        HeapObj::Set(_)
+    )));
+    assert!(vm.heap.live_count() <= heap_cap);
     vm.set_max_heap_objects(None);
     assert_eq!(vm.gc_pins.len(), baseline_pins);
 }

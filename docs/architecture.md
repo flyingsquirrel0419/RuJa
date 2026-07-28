@@ -2572,6 +2572,40 @@ and both upsert methods without charging replacements for unused capacity.
 - 장점, 단점 및 영향: Direct evidence covers Proxy order, next/adder cache and arity, Array/Map/Set/generator overrides, step non-close, entry/adder close priority, foreign errors, close-time GC, host Fuel, root and entry reservation, pin restoration, and retry. Each active constructor reserves a small fixed temporary-root budget; replacements avoid unnecessary MapData growth. Set/WeakMap/WeakSet constructor wrappers remain separate later audits.
 ```
 
+## Set constructor iterator, Realm, and storage pipeline
+
+The Set constructor follows the same direct synchronous iterator boundary as
+Map, but each successful step passes one rooted value to the cached observable
+`add` method. Prototype, iterable, result Set, adder, iterator, cached `next`,
+and current value have explicit nested root lifetimes. Iterator-step failures
+propagate without close; catchable adder failures materialize native errors in
+the constructor Realm and close while preserving the original completion.
+Host Fuel never enters user cleanup, while a close-time Fuel failure overrides
+the catchable completion that initiated close.
+
+Set, Set prototype, and Set Iterator prototype are installed per Realm and
+stored in GC-rooted transactional registries. Constructor fallback and iterator
+creation use those immutable identities after observable global/prototype links
+are replaced or deleted. Failed provisional Realm construction removes both
+new registries with the rest of the intrinsic graph.
+
+Native `Set.prototype.add` canonicalizes through `MapKey`, checks whether the
+key is new, reserves `IndexSet` capacity, and mutates only after reservation.
+Duplicate insertion needs no capacity and therefore cannot fail at that
+boundary. Set composition algorithms retain their existing separate storage
+pipeline; broad algebra iterator/root/storage hardening is intentionally not
+mixed into this constructor unit.
+
+```text
+[Decision Log]
+- 목적과 의도: Complete the Set constructor iterable pipeline with exact iterator observability, close priority, Realm provenance, GC safety, Fuel bounds, and atomic native insertion.
+- 기존 구현 및 제약 조건: The constructor used Vm::make_iterator, adding Proxy HasProperty, bypassing built-in overrides, allocating a wrapper, and calling next(undefined). Set/result/adder/iterator/value roots were incomplete, close could replace the original throw, Set allocation and IndexSet growth bypassed retry/reservation, and created Realms had no Set or Set Iterator intrinsics.
+- 검토한 주요 대안: Patch the global wrapper, clone Map behavior without Realm registries, harden all Set algebra storage in the same unit, or reuse the proven direct iterator/close helpers and isolate constructor/native-add storage.
+- 선택한 방식: Install Realm-local Set and Set Iterator intrinsics, root prototype/iterable before VM allocation, reserve the maximum live constructor roots, cache the adder and direct iterator record, use zero-argument metered steps, close only catchable post-step adder failures, and reserve native Set storage before mutation.
+- 다른 대안 대신 이 방식을 선택한 이유: Global wrapper changes affect unfinished consumers; main-Realm fallback fails foreign construction; broad Set algebra hardening adds independent iterator-close/root problems. The narrow shared helpers repair the complete constructor boundary without introducing partial composition semantics.
+- 장점, 단점 및 영향: Direct evidence covers Proxy order, cache/receiver/arity, built-in overrides, close and non-close precedence, foreign Set/iterator/error identities, registry GC survival and rollback, forced GC, all root/storage failure sites, duplicate no-reserve insertion, host Fuel, exact-cap allocation, pin restoration, and retry. Set algebra and WeakSet remain explicit adjacent audits.
+```
+
 ## `Map.groupBy` iterator, Realm, and collection pipeline
 
 `Map.groupBy` shares the direct synchronous iterator-record boundary with

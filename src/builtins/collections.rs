@@ -46,9 +46,9 @@ pub(crate) fn new_collection_iterator(
             vm.realm_map_iterator_prototypes[&realm.0].clone()
         }
         CollectionIteratorKind::SetEntries | CollectionIteratorKind::SetValues
-            if matches!(vm.set_iterator_proto, Value::Object(_)) =>
+            if vm.realm_set_iterator_prototypes.contains_key(&realm.0) =>
         {
-            vm.set_iterator_proto.clone()
+            vm.realm_set_iterator_prototypes[&realm.0].clone()
         }
         _ => vm.object_proto.clone(),
     };
@@ -263,16 +263,8 @@ pub(crate) fn setup_array_iterator_proto_in_env(
 
 pub(crate) fn setup_map_set_iterator_protos(vm: &mut Vm) -> error::Result<()> {
     let iterator_base = vm.iterator_base_proto.clone();
-    setup_map_iterator_proto_in_env(vm, vm.global, iterator_base)?;
-
-    let set_next = vm.new_native_function("next", set_iterator_next, 0)?;
-    let set_proto = collection_iterator_proto(
-        vm,
-        Value::Object(set_next),
-        "Set Iterator",
-        vm.iterator_base_proto.clone(),
-    )?;
-    vm.set_iterator_proto = Value::Object(set_proto);
+    setup_map_iterator_proto_in_env(vm, vm.global, iterator_base.clone())?;
+    setup_set_iterator_proto_in_env(vm, vm.global, iterator_base)?;
     Ok(())
 }
 
@@ -289,6 +281,23 @@ pub(crate) fn setup_map_iterator_proto_in_env(
         .insert(realm.0, prototype.clone());
     if realm == vm.global {
         vm.map_iterator_proto = prototype.clone();
+    }
+    Ok(prototype)
+}
+
+pub(crate) fn setup_set_iterator_proto_in_env(
+    vm: &mut Vm,
+    realm: GcIdx,
+    iterator_base: Value,
+) -> error::Result<Value> {
+    let set_next = vm.new_native_function_in_env("next", set_iterator_next, 0, realm)?;
+    let set_proto =
+        collection_iterator_proto(vm, Value::Object(set_next), "Set Iterator", iterator_base)?;
+    let prototype = Value::Object(set_proto);
+    vm.realm_set_iterator_prototypes
+        .insert(realm.0, prototype.clone());
+    if realm == vm.global {
+        vm.set_iterator_proto = prototype.clone();
     }
     Ok(prototype)
 }
@@ -606,6 +615,74 @@ fn new_empty_set(vm: &mut Vm) -> error::Result<Value> {
         extensible: AtomicBool::new(true),
     }))?;
     Ok(Value::Object(GcIdx(obj_idx)))
+}
+
+#[cfg(test)]
+fn take_set_reservation_failure(vm: &mut Vm, site: crate::vm::SetReservationSite) -> bool {
+    let Some((configured_site, remaining)) = vm.fail_set_reservation else {
+        return false;
+    };
+    if configured_site != site {
+        return false;
+    }
+    if remaining != 0 {
+        vm.fail_set_reservation = Some((configured_site, remaining - 1));
+        return false;
+    }
+    vm.fail_set_reservation = None;
+    true
+}
+
+fn reserve_set_root_slots(
+    vm: &mut Vm,
+    additional: usize,
+    #[cfg(test)] site: crate::vm::SetReservationSite,
+) -> error::Result<()> {
+    #[cfg(test)]
+    if take_set_reservation_failure(vm, site) {
+        return Err(Error::range("Set temporary root set is too large"));
+    }
+    vm.try_reserve_gc_pins(additional)
+}
+
+fn reserve_set_entry(vm: &mut Vm, idx: GcIdx, key: &MapKey) -> error::Result<()> {
+    let needs_entry = vm.heap.with_obj(idx.0, |obj| {
+        let HeapObj::Set(set) = obj else {
+            return false;
+        };
+        !set.items.lock().contains(key)
+    });
+    if !needs_entry {
+        return Ok(());
+    }
+    #[cfg(test)]
+    if take_set_reservation_failure(vm, crate::vm::SetReservationSite::EntryStorage) {
+        return Err(Error::range("Set entry storage is too large"));
+    }
+    vm.heap.with_obj(idx.0, |obj| {
+        let HeapObj::Set(set) = obj else {
+            return Err(Error::internal("Set entry target lost its Set data"));
+        };
+        let mut items = set.items.lock();
+        if items.len() == items.capacity() {
+            items
+                .try_reserve(1)
+                .map_err(|_| Error::range("Set entry storage is too large"))?;
+        }
+        Ok(())
+    })
+}
+
+fn insert_set_entry(vm: &mut Vm, idx: GcIdx, value: Value) -> error::Result<()> {
+    let key = MapKey::new(value);
+    reserve_set_entry(vm, idx, &key)?;
+    vm.heap.with_obj(idx.0, |obj| {
+        let HeapObj::Set(set) = obj else {
+            return Err(Error::internal("Set entry target lost its Set data"));
+        };
+        set.items.lock().insert(key);
+        Ok(())
+    })
 }
 
 fn set_insert_direct(vm: &mut Vm, set: &Value, value: Value) {
@@ -1944,11 +2021,7 @@ fn require_set_receiver(vm: &Vm, this: Option<Value>, name: &str) -> error::Resu
 pub(crate) fn set_add(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let val = args.first().cloned().unwrap_or(Value::Undefined);
     let idx = require_set_receiver(vm, this.clone(), "Set.prototype.add")?;
-    vm.heap.with_obj(idx.0, |obj| {
-        if let HeapObj::Set(s) = obj {
-            s.items.lock().insert(MapKey::new(val));
-        }
-    });
+    insert_set_entry(vm, idx, val)?;
     Ok(this.unwrap_or(Value::Undefined))
 }
 pub(crate) fn set_has(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
@@ -2017,10 +2090,6 @@ pub(crate) fn set_entries(
 ) -> error::Result<Value> {
     let idx = require_set_receiver(vm, this, "Set.prototype.entries")?;
     new_collection_iterator(vm, Value::Object(idx), CollectionIteratorKind::SetEntries)
-}
-pub(crate) fn set_keys(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let idx = require_set_receiver(vm, this, "Set.prototype.keys")?;
-    new_collection_iterator(vm, Value::Object(idx), CollectionIteratorKind::SetValues)
 }
 pub(crate) fn set_values(
     vm: &mut Vm,
@@ -2323,41 +2392,110 @@ pub(crate) fn set_is_disjoint_from(
 
 pub(crate) fn set_constructor(
     vm: &mut Vm,
-    _args: &[Value],
+    args: &[Value],
     _this: Option<Value>,
 ) -> error::Result<Value> {
     if vm.current_native_new_target().is_none() {
         return Err(Error::type_err("Set constructor must be called with new"));
     }
-    let proto = native_constructor_prototype_with_default(vm, "Set", vm.set_proto.clone())?;
-    let obj_idx = vm.heap.allocate(HeapObj::Set(SetData {
+    let realm = vm.current_realm_global_env();
+    let iterable = args.first().cloned().unwrap_or(Value::Undefined);
+    let fallback = vm.set_prototype_for_env(realm);
+    let proto = native_constructor_prototype_with_default(vm, "Set", fallback)?;
+    let initial_roots = Vm::value_root_count(&proto)
+        .checked_add(Vm::value_root_count(&iterable))
+        .and_then(|count| count.checked_add(1))
+        .ok_or_else(|| Error::range("Set temporary root set is too large"))?;
+    reserve_set_root_slots(
+        vm,
+        initial_roots,
+        #[cfg(test)]
+        crate::vm::SetReservationSite::ConstructorRoots,
+    )?;
+    let mut initial_pins = vm.pin_many(&[proto.clone(), iterable.clone()]);
+    #[cfg(test)]
+    if std::mem::take(&mut vm.set_constructor_garbage_before_allocation) {
+        while vm.max_heap_objects > 0 && vm.heap.live_count() < vm.max_heap_objects {
+            if let Err(error) = vm.new_object() {
+                vm.unpin_many(initial_pins);
+                return Err(error);
+            }
+        }
+        vm.set_constructor_live_before_allocation = Some(vm.heap.live_count());
+    }
+    let allocation = vm.alloc(HeapObj::Set(SetData {
         items: Mutex::new(IndexSet::new()),
         props: Mutex::new(IndexMap::new()),
         proto: Mutex::new(Some(proto)),
         extensible: AtomicBool::new(true),
-    }))?;
-    let set = Value::Object(GcIdx(obj_idx));
-    // Initialize from an optional iterable.
-    if let Some(iterable) = _args.first() {
-        if !iterable.is_undefined() && !iterable.is_null() {
-            let add = vm.get_property(&set, "add")?;
-            if !is_callable(&add, &vm.heap) {
-                return Err(Error::type_err("Set add is not callable"));
-            }
-            let it = vm.make_iterator(iterable)?;
-            loop {
-                let (v, done) = vm.iterator_next(&it)?;
-                if done {
-                    break;
-                }
-                if let Err(err) = vm.call_function(&add, &[v], Some(set.clone())) {
-                    vm.iterator_close(&it)?;
-                    return Err(err);
-                }
-            }
+    }));
+    let set = match allocation {
+        Ok(index) => Value::Object(index),
+        Err(error) => {
+            vm.unpin_many(initial_pins);
+            return Err(error);
         }
-    }
-    Ok(set)
+    };
+    initial_pins += vm.pin(&set);
+
+    let result = (|| -> error::Result<Value> {
+        if iterable.is_nullish() {
+            return Ok(set.clone());
+        }
+
+        reserve_set_root_slots(
+            vm,
+            4,
+            #[cfg(test)]
+            crate::vm::SetReservationSite::IteratorRoots,
+        )?;
+        let add = vm.get_property(&set, "add")?;
+        if !is_callable(&add, &vm.heap) {
+            return Err(Error::type_err("Set add is not callable"));
+        }
+        let add_pin = vm.pin(&add);
+        let iterator_result = get_sync_iterator(vm, iterable.clone());
+        let iterator = match iterator_result {
+            Ok(iterator) => iterator,
+            Err(error) => {
+                vm.unpin_many(add_pin);
+                return Err(error);
+            }
+        };
+        let iterator_pins = vm.pin_many(&[iterator.iterator.clone(), iterator.next_method.clone()]);
+        let iteration = (|| -> error::Result<Value> {
+            loop {
+                #[cfg(test)]
+                if std::mem::take(&mut vm.set_constructor_zero_fuel_before_step) {
+                    vm.set_fuel(Some(0));
+                }
+                let Some(value) =
+                    iterator_helper_step(vm, &iterator.iterator, &iterator.next_method, true)?
+                else {
+                    return Ok(set.clone());
+                };
+                let value_pin = vm.pin(&value);
+                let add_result = vm.call_function(&add, &[value], Some(set.clone()));
+                vm.unpin_many(value_pin);
+                if let Err(error) = add_result {
+                    if !error.catchable() {
+                        return Err(error);
+                    }
+                    return close_iterator_after_error_in_realm(
+                        vm,
+                        &iterator.iterator,
+                        error,
+                        realm,
+                    );
+                }
+            }
+        })();
+        vm.unpin_many(iterator_pins);
+        vm.unpin_many(add_pin);
+        iteration
+    })();
+    vm.unpin_many(initial_pins);
+    result
 }
 
 // =========================================================================

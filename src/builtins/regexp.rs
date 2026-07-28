@@ -3027,12 +3027,13 @@ pub(crate) fn install_map_intrinsic_in_env(
     Ok((map_ctor, map_proto))
 }
 
-pub fn setup_collections(vm: &mut Vm) -> error::Result<()> {
-    setup_map_set_iterator_protos(vm)?;
-    let main_realm = vm.global;
-    install_map_intrinsic_in_env(vm, main_realm, None)?;
-    // Set
-    let (set_ctor, set_proto) = make_builtin_constructor_with(
+pub(crate) fn install_set_intrinsic_in_env(
+    vm: &mut Vm,
+    env: GcIdx,
+    realm_global: Option<&Value>,
+) -> error::Result<(GcIdx, GcIdx)> {
+    let realm = crate::environment::global_env_root(&vm.heap, env);
+    let (set_ctor, set_proto) = make_builtin_constructor_with_in_env(
         vm,
         "Set",
         0,
@@ -3044,7 +3045,6 @@ pub fn setup_collections(vm: &mut Vm) -> error::Result<()> {
             ("delete", set_delete, 1),
             ("clear", set_clear, 0),
             ("entries", set_entries, 0),
-            ("keys", set_keys, 0),
             ("values", set_values, 0),
             ("forEach", set_for_each, 1),
             ("union", set_union, 1),
@@ -3055,42 +3055,61 @@ pub fn setup_collections(vm: &mut Vm) -> error::Result<()> {
             ("isSupersetOf", set_is_superset_of, 1),
             ("isDisjointFrom", set_is_disjoint_from, 1),
         ],
+        realm,
     )?;
-    vm.set_proto = Value::Object(set_proto);
-    define_global(vm, "Set", Value::Object(set_ctor));
-    let set_size_getter = vm.new_native_function("get size", set_size, 0)?;
-    vm.heap.with_obj(set_proto.0, |obj| {
-        obj.props().lock().insert(
-            PropertyKey::from("size"),
-            accessor_get_prop(Value::Object(set_size_getter)),
-        );
-    });
-    let set_species_getter =
-        vm.new_native_function("get [Symbol.species]", promise_species_get, 0)?;
-    vm.heap.with_obj(set_ctor.0, |obj| {
-        obj.props().lock().insert(
-            PropertyKey::symbol(vm.well_known_symbols.species),
-            accessor_get_prop(Value::Object(set_species_getter)),
-        );
-    });
-    // Set.prototype.keys === Set.prototype.values and @@iterator is values.
-    if let Value::Object(sp) = vm.set_proto.clone() {
-        vm.heap.with_obj(sp.0, |o| {
-            let values = o
+    let constructor = Value::Object(set_ctor);
+    let prototype = Value::Object(set_proto);
+    vm.try_reserve_value_roots(&[constructor.clone(), prototype.clone()])?;
+    let pin_count = vm.pin_many(&[constructor.clone(), prototype.clone()]);
+    let result = (|| -> error::Result<()> {
+        let size_getter = vm.new_native_function_in_env("get size", set_size, 0, realm)?;
+        vm.heap.with_obj(set_proto.0, |object| {
+            object.props().lock().insert(
+                PropertyKey::from("size"),
+                accessor_get_prop(Value::Object(size_getter)),
+            );
+        });
+        let species_getter =
+            vm.new_native_function_in_env("get [Symbol.species]", promise_species_get, 0, realm)?;
+        vm.heap.with_obj(set_ctor.0, |object| {
+            object.props().lock().insert(
+                PropertyKey::symbol(vm.well_known_symbols.species),
+                accessor_get_prop(Value::Object(species_getter)),
+            );
+        });
+        vm.heap.with_obj(set_proto.0, |object| {
+            let values = object
                 .props()
                 .lock()
                 .get(&PropertyKey::from("values"))
-                .map(|desc| desc.value.clone())
+                .map(|descriptor| descriptor.value.clone())
                 .unwrap_or(Value::Undefined);
-            o.props()
-                .lock()
-                .insert(PropertyKey::from("keys"), data_prop(values.clone()));
-            o.props().lock().insert(
+            let mut properties = object.props().lock();
+            properties.insert(PropertyKey::from("keys"), data_prop(values.clone()));
+            properties.insert(
                 PropertyKey::symbol(vm.well_known_symbols.iterator),
                 data_prop(values),
             );
         });
-    }
+        vm.realm_set_prototypes.insert(realm.0, prototype.clone());
+        if realm == vm.global {
+            vm.set_proto = prototype.clone();
+            define_global(vm, "Set", constructor.clone());
+        } else if let Some(global) = realm_global {
+            define_realm_global(vm, realm, global, "Set", constructor.clone());
+        }
+        Ok(())
+    })();
+    vm.unpin_many(pin_count);
+    result?;
+    Ok((set_ctor, set_proto))
+}
+
+pub fn setup_collections(vm: &mut Vm) -> error::Result<()> {
+    setup_map_set_iterator_protos(vm)?;
+    let main_realm = vm.global;
+    install_map_intrinsic_in_env(vm, main_realm, None)?;
+    install_set_intrinsic_in_env(vm, main_realm, None)?;
     // WeakMap / WeakSet: true weak-reference semantics. Keys are object
     // heap indices held weakly; GC sweeps entries whose key was collected.
     let (weakmap_ctor, weakmap_proto) = make_builtin_constructor_with(

@@ -1171,6 +1171,13 @@ impl Vm {
                 .cloned()
                 .unwrap_or(fallback));
         }
+        if intrinsic == "Set" {
+            return Ok(self
+                .realm_set_prototypes
+                .get(&realm.0)
+                .cloned()
+                .unwrap_or(fallback));
+        }
         if intrinsic == "Function" {
             return Ok(self
                 .realm_function_prototypes

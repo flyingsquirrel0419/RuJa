@@ -2355,6 +2355,203 @@ fn map_group_by_observes_iterator_close_realm_and_gc_boundaries() {
 }
 
 #[test]
+fn set_constructor_observes_direct_iterator_close_and_realm_boundaries() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            var nextGets = 0;
+            var nextReceiver = false;
+            var addGets = 0;
+            var addReceiver = false;
+            var step = 0;
+            var originalAdd = Set.prototype.add;
+            Object.defineProperty(Set.prototype, "add", {
+              configurable: true,
+              get: function() {
+                addGets++;
+                log.push("get-add");
+                return function(value) {
+                  addReceiver = this instanceof Set;
+                  log.push("add:" + arguments.length);
+                  return originalAdd.call(this, value);
+                };
+              }
+            });
+            var iterator = {};
+            Object.defineProperty(iterator, "next", {
+              configurable: true,
+              get: function() {
+                nextGets++;
+                return function() {
+                  nextReceiver = this === iterator;
+                  log.push("next:" + arguments.length);
+                  Object.defineProperty(iterator, "next", {
+                    value: function() { throw new Error("must use cached next"); },
+                    configurable: true
+                  });
+                  return step++ === 0
+                    ? { done: false, value: "direct" }
+                    : { done: true };
+                };
+              }
+            });
+            var iterable = new Proxy({
+              [Symbol.iterator]: function() {
+                Object.defineProperty(Set.prototype, "add", {
+                  value: function() { throw new Error("must use cached add"); },
+                  writable: true, configurable: true
+                });
+                return iterator;
+              }
+            }, {
+              has: function(target, key) { log.push("has"); return key in target; },
+              get: function(target, key, receiver) {
+                log.push(typeof key === "symbol" ? "get-symbol" : "get-" + key);
+                return Reflect.get(target, key, receiver);
+              }
+            });
+            var direct = new Set(iterable);
+            Object.defineProperty(Set.prototype, "add", {
+              value: originalAdd, writable: true, configurable: true
+            });
+
+            function override(value) {
+              return function() {
+                var done = false;
+                return { next: function() {
+                  if (done) return { done: true };
+                  done = true;
+                  return { done: false, value: value };
+                } };
+              };
+            }
+            var array = ["array-original"];
+            var map = new Map([["map-original", 1]]);
+            var set = new Set(["set-original"]);
+            function* source() { yield "generator-original"; }
+            var generator = source();
+            array[Symbol.iterator] = override("array");
+            map[Symbol.iterator] = override("map");
+            set[Symbol.iterator] = override("set");
+            generator[Symbol.iterator] = override("generator");
+            [
+              log.join(","), nextGets, nextReceiver, addGets, addReceiver,
+              direct.has("direct"),
+              new Set(array).has("array"), new Set(map).has("map"),
+              new Set(set).has("set"), new Set(generator).has("generator")
+            ].join("|");
+            "#,),
+        Value::String(Arc::from(
+            "get-add,get-symbol,next:0,add:1,next:0|1|true|1|true|true|true|true|true|true"
+        ))
+    );
+
+    assert_eq!(
+        run(
+            r#"
+            function closeCount(kind) {
+              var closed = 0;
+              var iterator = {
+                next: function() {
+                  if (kind === "next") throw new Error("next-error");
+                  if (kind === "result") return 1;
+                  if (kind === "done") return {
+                    get done() { throw new Error("done-error"); }
+                  };
+                  if (kind === "value") return {
+                    done: false,
+                    get value() { throw new Error("value-error"); }
+                  };
+                  return { done: false, value: 1 };
+                },
+                return: function() { closed++; throw new Error("close-error"); }
+              };
+              var originalAdd = Set.prototype.add;
+              if (kind === "adder") Set.prototype.add = function() {
+                throw new Error("adder-error");
+              };
+              var message;
+              try {
+                new Set({ [Symbol.iterator]: function() { return iterator; } });
+              } catch (error) { message = error.message; }
+              Set.prototype.add = originalAdd;
+              return kind + ":" + closed + ":" + message;
+            }
+            ["next", "result", "done", "value", "adder"]
+              .map(closeCount).join("|");
+            "#,
+        ),
+        Value::String(Arc::from(
+            "next:0:next-error|result:0:Iterator result is not an object|done:0:done-error|value:0:value-error|adder:1:adder-error"
+        ))
+    );
+
+    assert_eq!(
+        run(r#"
+            function preservesOriginal(mode) {
+              var original = { mode: mode };
+              var iterator = {
+                next: function() { return { done: false, value: 1 }; }
+              };
+              if (mode === "null") iterator.return = null;
+              if (mode === "getter") Object.defineProperty(iterator, "return", {
+                get: function() { throw new Error("return-getter"); }
+              });
+              if (mode === "noncallable") iterator.return = 1;
+              if (mode === "throw") iterator.return = function() {
+                throw new Error("return-call");
+              };
+              if (mode === "primitive") iterator.return = function() { return 1; };
+              if (mode === "object") iterator.return = function() { return {}; };
+              var originalAdd = Set.prototype.add;
+              Set.prototype.add = function() { throw original; };
+              try {
+                new Set({ [Symbol.iterator]: function() { return iterator; } });
+              } catch (error) {
+                Set.prototype.add = originalAdd;
+                return error === original;
+              }
+              Set.prototype.add = originalAdd;
+              return false;
+            }
+            ["absent", "null", "getter", "noncallable", "throw", "primitive", "object"]
+              .map(preservesOriginal).join("|");
+            "#,),
+        Value::String(Arc::from("true|true|true|true|true|true|true"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var OtherSet = other.Set;
+            var OtherSetPrototype = OtherSet.prototype;
+            var otherIterator = new OtherSet([1]).values();
+            var OtherSetIteratorPrototype = Object.getPrototypeOf(otherIterator);
+            var NewTarget = new other.Function();
+            NewTarget.prototype = null;
+            var BoundNewTarget = NewTarget.bind(null);
+            other.Set = null;
+            other.Object = null;
+            var fallback = Object.getPrototypeOf(
+              Reflect.construct(OtherSet, [], BoundNewTarget)
+            ) === OtherSetPrototype;
+            OtherSetPrototype.add = null;
+            var error;
+            try { new OtherSet([1]); } catch (caught) { error = caught; }
+            [fallback, error instanceof other.TypeError,
+              error instanceof TypeError,
+              OtherSetIteratorPrototype !==
+                Object.getPrototypeOf(new Set().values()),
+              Object.getPrototypeOf(OtherSetIteratorPrototype) ===
+                other.Iterator.prototype,
+              OtherSetIteratorPrototype.next instanceof other.Function,
+              !(OtherSetIteratorPrototype.next instanceof Function)].join("|");
+            "#,),
+        Value::String(Arc::from("true|true|false|true|true|true|true"))
+    );
+}
+
+#[test]
 fn set_basic() {
     assert_eq!(
         run("let s = new Set(); s.add(1); s.add(2); s.add(1); s.size;"),

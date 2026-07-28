@@ -12048,6 +12048,51 @@ timeout / 0 error / 48469 total / 37171 run**. The sorted content-set hash is
 - 장점, 단점 및 영향: The directory becomes fully admitted without broadening Symbol.iterator policy. Official movement is one skip-to-pass; runtime repairs are evidenced independently. Map.groupBy is verified independently in the adjacent collection-key pipeline below rather than inferred from Object.groupBy results.
 ```
 
+## Set constructor direct iterator, Realm, and resource pipeline
+
+Pinned Test262 `9e61c12835c5e4a3bdba93850427e6742c4f64c4` contains 22 top-level
+files in `built-ins/Set`. Before this unit, ordinary policy reports **16 pass /
+0 fail / 6 skip** and forced execution reports **20 pass / 2 fail**. The exact
+admission covers three `{ Symbol.iterator }` iterator files and
+`proto-from-ctor-realm.js` with `{ cross-realm, Reflect }`. Independent
+`is-a-constructor.js` and mixed BigInt/Symbol/TypedArray/WeakRef
+`valid-values.js` remain skipped.
+
+The repaired runtime and admission report **20 pass / 0 fail / 2 skip** under
+ordinary policy and **22/22** when forced. Shared runner/analyzer tooling
+freezes the four paths and complete live metadata, proves disjointness from all
+other admissions, rejects future/outside paths, and retains any additional
+unsupported feature. The complete 383-file Set directory moves from
+**340/2/41** to **344/2/37**. Its two unchanged failures are the independent
+`Set.prototype[Symbol.toStringTag]` tests.
+
+Direct Rust tests cover Get-only Proxy order, cached zero-argument `next`,
+cached adder receiver/arity, Array/Map/Set/generator overrides, step/result/
+done/value non-close, adder close with original-error priority, Realm-local Set,
+Set Iterator and native errors, immutable foreign fallback, registry survival
+after observable-link deletion and GC, forced GC through every constructor
+stage, constructor/iterator/storage failure injection, duplicate no-reserve
+insertion, pre/post-step and close-time Fuel, thrown identity, pin cleanup,
+exact heap-cap retry, and clean retry.
+
+Local validation passes default debug/release library **309/309**, all-feature
+library **312/312**, es2015 **138/138**, `with` **62/62**, Python tooling
+**143/143** with four optional absent-checkout live probes skipped, and
+vendored RegExp **38/38**. All targets/features, rustfmt, warnings-denied
+Clippy, wasm32, and doctest also pass. The complete pinned 383-file Set sweep
+reports **344 pass / 2 fail / 37 skip** with the two independent failures
+identified above.
+
+```text
+[Decision Log]
+- 목적과 의도: Admit only the Set constructor iterator and Realm files after directly proving their hidden iterator, Realm, GC, Fuel, allocation, and storage boundaries.
+- 기존 구현 및 제약 조건: Six top-level files were skipped; two of 22 failed when forced. The wrapper added HasProperty, passed next(undefined), ignored overrides, closed with wrong completion priority, used main-Realm Set identities, and relied on raw allocation and unchecked IndexSet growth.
+- 검토한 주요 대안: Keep all skips, remove Symbol.iterator/Reflect/cross-realm globally, admit every top-level Set file, include constructibility and mixed-value tests, or freeze only the four files whose behavior this pipeline proves.
+- 선택한 방식: Freeze the three iterator files plus constructor-Realm prototype file and exact live metadata; require ordinary 16/0/6 to 20/0/2, forced 20/2 to 22/0, and direct deterministic tests for every unrepresented runtime/resource boundary.
+- 다른 대안 대신 이 방식을 선택한 이유: Global feature removal overclaims unrelated support, directory admission accepts future files, and the retained files exercise independent constructibility and mixed unsupported value families. Forced Test262 alone omits most root, Fuel, and allocation behavior.
+- 장점, 단점 및 영향: Official movement is exactly four skips replaced by passes and two forced failures repaired, without broad policy changes. Full Set gains four passes with unchanged independent failures. Set algebra and WeakSet constructor behavior remain separately reviewable.
+```
+
 ## Map constructor direct iterator, Realm, and resource pipeline
 
 Pinned Test262 `9e61c12835c5e4a3bdba93850427e6742c4f64c4` contains 30 top-level

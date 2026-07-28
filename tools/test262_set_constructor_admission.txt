@@ -1,0 +1,4 @@
+built-ins/Set/proto-from-ctor-realm.js
+built-ins/Set/set-iterator-close-after-add-failure.js
+built-ins/Set/set-iterator-next-failure.js
+built-ins/Set/set-iterator-value-failure.js
