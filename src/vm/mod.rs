@@ -1210,9 +1210,14 @@ impl Vm {
         self.fuel
     }
 
-    /// Run a source string and return the value of the last top-level expression.
+    /// Run well-formed host Unicode source and return the last top-level value.
+    /// Do not pass canonical internal text returned by `Vm::to_string`.
     pub fn run(&mut self, src: &str) -> error::Result<Value> {
-        self.run_with_source_path(src, None)
+        self.run_with_source_path(src, None, false)
+    }
+
+    pub(crate) fn run_internal_source(&mut self, src: &str) -> error::Result<Value> {
+        self.run_with_source_path(src, None, true)
     }
 
     /// Run a Script source file while preserving its canonical host referrer.
@@ -1231,15 +1236,20 @@ impl Vm {
                 err
             ))
         })?;
-        self.run_with_source_path(&src, Some(Arc::new(canonical)))
+        self.run_with_source_path(&src, Some(Arc::new(canonical)), false)
     }
 
     fn run_with_source_path(
         &mut self,
         src: &str,
         source_path: Option<Arc<std::path::PathBuf>>,
+        source_is_internal: bool,
     ) -> error::Result<Value> {
-        let program = crate::parser::Parser::parse(src)?;
+        let program = if source_is_internal {
+            crate::parser::Parser::parse_internal(src)?
+        } else {
+            crate::parser::Parser::parse(src)?
+        };
         self.check_global_declaration_instantiation(&program, self.global, &self.global_this)?;
         let mut compiler = crate::compiler::Compiler::new();
         let (chunk, funcs) = compiler.compile_program(&program)?;
@@ -1286,7 +1296,7 @@ impl Vm {
         result
     }
 
-    /// Evaluate source text with the ECMAScript Module source goal.
+    /// Evaluate well-formed host Unicode text with the Module source goal.
     /// A later module-graph layer will add import/export linking; this entry
     /// point establishes the strict, declarative module execution context.
     pub fn run_module(&mut self, src: &str) -> error::Result<Value> {
@@ -1466,18 +1476,19 @@ impl Vm {
         result
     }
 
-    /// Evaluate a source string as an *indirect* eval in the current Realm's
-    /// global scope. Non-string inputs are handled by the eval builtin before
-    /// this method is called.
+    /// Evaluate well-formed host Unicode source as an *indirect* eval in the
+    /// current Realm's global scope. Canonical internal text from
+    /// `Vm::to_string` must enter through the language eval builtin instead.
     pub fn eval_indirect(&mut self, src: &str) -> error::Result<Value> {
-        self.eval_indirect_in(self.global, self.global_this.clone(), src)
+        let src = crate::value::utf16_from_scalar_str(src);
+        self.eval_indirect_in(self.global, self.global_this.clone(), &src)
     }
 
     /// Evaluate a test262 host `evalScript` string as script code in the
     /// current Realm's global scope. Unlike indirect eval, script global
     /// declarations use non-configurable global bindings.
     pub(crate) fn eval_script_global(&mut self, src: &str) -> error::Result<Value> {
-        let program = crate::parser::Parser::parse(src)?;
+        let program = crate::parser::Parser::parse_internal(src)?;
         self.check_global_declaration_instantiation(&program, self.global, &self.global_this)?;
         let mut compiler = crate::compiler::Compiler::new();
         let (chunk, funcs) = compiler.compile_program(&program)?;
@@ -1512,7 +1523,7 @@ impl Vm {
         global_this: Value,
         src: &str,
     ) -> error::Result<Value> {
-        let program = crate::parser::Parser::parse(src)?;
+        let program = crate::parser::Parser::parse_internal(src)?;
         let is_strict = program.is_strict;
         let (_, var_names, _) = crate::compiler::Compiler::collect_global_declaration_names(
             &program.body,

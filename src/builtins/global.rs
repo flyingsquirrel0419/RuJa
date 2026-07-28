@@ -376,7 +376,7 @@ fn parse_dynamic_function_source(
         (false, true) => format!("function* _f({params_src}\n) {{\n{body_src}\n}}"),
         (false, false) => format!("function _f({params_src}\n) {{\n{body_src}\n}}"),
     };
-    let program = crate::parser::Parser::parse(&wrapped)?;
+    let program = crate::parser::Parser::parse_internal(&wrapped)?;
     let mut statements = program.body.into_iter();
     let Some(statement) = statements.next() else {
         return Err(error::Error::syntax("invalid Function body".to_string()));

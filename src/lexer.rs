@@ -385,6 +385,7 @@ fn read_ident_escape(src: &[u8]) -> Option<(char, usize)> {
 
 pub struct Lexer<'a> {
     src: &'a [u8],
+    source_is_internal: bool,
     pos: usize,
     line: usize,
     col: usize,
@@ -423,9 +424,20 @@ pub struct Lexer<'a> {
 }
 
 impl<'a> Lexer<'a> {
+    /// Lex well-formed host Unicode source. Canonical internal strings from
+    /// `Vm::to_string` must use the crate-private internal-source boundary.
     pub fn new(src: &'a str) -> Self {
+        Self::with_source_provenance(src, false)
+    }
+
+    pub(crate) fn new_internal(src: &'a str) -> Self {
+        Self::with_source_provenance(src, true)
+    }
+
+    fn with_source_provenance(src: &'a str, source_is_internal: bool) -> Self {
         Lexer {
             src: src.as_bytes(),
+            source_is_internal,
             pos: 0,
             line: 1,
             col: 1,
@@ -441,6 +453,14 @@ impl<'a> Lexer<'a> {
             last_string_had_escape: false,
             last_string_had_legacy_escape: false,
             last_string_not_well_formed: false,
+        }
+    }
+
+    fn push_source_char(&self, out: &mut String, ch: char) {
+        if self.source_is_internal {
+            out.push(ch);
+        } else {
+            crate::value::push_utf16_scalar(out, ch);
         }
     }
 
@@ -874,7 +894,7 @@ impl<'a> Lexer<'a> {
                         }
                     },
                     Some(c) => match self.read_char_from_first_byte(c) {
-                        Some(ch) => crate::value::push_utf16_scalar(&mut s, ch),
+                        Some(ch) => self.push_source_char(&mut s, ch),
                         None => {
                             return TokenKind::LexError(
                                 "invalid utf-8 in string literal".to_string(),
@@ -889,7 +909,7 @@ impl<'a> Lexer<'a> {
                 // corrupt supplementary characters (emoji etc.).
                 self.advance();
                 match self.read_char_from_first_byte(c) {
-                    Some(ch) => crate::value::push_utf16_scalar(&mut s, ch),
+                    Some(ch) => self.push_source_char(&mut s, ch),
                     None => {
                         return TokenKind::LexError("invalid utf-8 in string literal".to_string());
                     }
@@ -1655,7 +1675,7 @@ impl<'a> Lexer<'a> {
                 }
                 pattern.push('\\');
                 if let Some(ch) = self.read_regex_pattern_char() {
-                    crate::value::push_utf16_scalar(&mut pattern, ch);
+                    self.push_source_char(&mut pattern, ch);
                 }
                 continue;
             }
@@ -1677,7 +1697,7 @@ impl<'a> Lexer<'a> {
                 break;
             }
             if let Some(ch) = self.read_regex_pattern_char() {
-                crate::value::push_utf16_scalar(&mut pattern, ch);
+                self.push_source_char(&mut pattern, ch);
             }
         }
         if !closed {
@@ -1974,9 +1994,9 @@ impl<'a> Lexer<'a> {
                 self.advance();
                 match self.read_char_from_first_byte(c) {
                     Some(ch) => {
-                        crate::value::push_utf16_scalar(cooked, ch);
+                        self.push_source_char(cooked, ch);
                         raw.push('\\');
-                        crate::value::push_utf16_scalar(raw, ch);
+                        self.push_source_char(raw, ch);
                     }
                     None => {
                         raw.push('\\');
@@ -2050,8 +2070,8 @@ impl<'a> Lexer<'a> {
                     }
                     if let Ok(st) = std::str::from_utf8(&buf) {
                         for ch in st.chars() {
-                            crate::value::push_utf16_scalar(&mut cooked, ch);
-                            crate::value::push_utf16_scalar(&mut raw, ch);
+                            self.push_source_char(&mut cooked, ch);
+                            self.push_source_char(&mut raw, ch);
                         }
                     }
                 }

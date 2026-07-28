@@ -11813,6 +11813,14 @@ self-matches after canonical pattern storage. Direct module tests cover static
 and dynamic imports whose host filename contains a sentinel-range scalar, and
 the public string-output regression prevents host round trips from expanding
 two UTF-16 units into four.
+Direct, indirect, and dynamic-Function source tests also prove that strings
+already inside JavaScript retain lone surrogate code units when reparsed;
+external source canonicalization is not applied a second time.
+Cross-Realm eval, `$262.evalScript`, and `$262.agent.start` use the same
+explicit internal-source boundary. The six full-matrix regressions found by
+artifact comparison now pass exactly: the four
+`language/literals/regexp/S7.8.5_A{1,2}.{1,4}_T2.js` cases and Annex B
+`RegExp-leading-escape-BMP.js` plus `RegExp-trailing-escape-BMP.js` (**6/0**).
 
 On pinned Test262 `020cb74075849d1e404bbcdb62feb7a02e6966db`, the combined
 `built-ins/JSON/parse`, `language/expressions/template-literal`, and

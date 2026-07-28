@@ -151,6 +151,8 @@ impl Parser {
         }
     }
 
+    /// Parse well-formed host Unicode Script source. Already-canonical
+    /// JavaScript strings must use an internal-source parser entry point.
     pub fn parse(src: &str) -> error::Result<Program> {
         let mut lx = crate::lexer::Lexer::new(src);
         let tokens = lx.tokens();
@@ -158,6 +160,14 @@ impl Parser {
         p.parse_program()
     }
 
+    pub(crate) fn parse_internal(src: &str) -> error::Result<Program> {
+        let mut lx = crate::lexer::Lexer::new_internal(src);
+        let tokens = lx.tokens();
+        let mut p = Parser::new(tokens);
+        p.parse_program()
+    }
+
+    /// Parse well-formed host Unicode Module source.
     pub fn parse_module(src: &str) -> error::Result<Program> {
         let mut lx = crate::lexer::Lexer::new(src);
         let tokens = lx.tokens();
@@ -167,9 +177,9 @@ impl Parser {
         p.parse_program()
     }
 
-    /// Parse with an inherited strict-mode flag (used by direct eval in a
-    /// strict caller context). The parser enforces strict-mode early errors
-    /// even without an explicit "use strict" directive in the source.
+    /// Parse well-formed host Unicode source with an inherited strict-mode flag. Direct eval uses
+    /// `parse_direct_eval_inherited` because its input is already an internal
+    /// JavaScript string.
     pub fn parse_strict_inherited(src: &str, inherited: bool) -> error::Result<Program> {
         let mut lx = crate::lexer::Lexer::new(src);
         let tokens = lx.tokens();
@@ -180,7 +190,7 @@ impl Parser {
         p.parse_program()
     }
 
-    pub fn parse_direct_eval_inherited(
+    pub(crate) fn parse_direct_eval_inherited(
         src: &str,
         inherited_strict: bool,
         super_allowed: bool,
@@ -188,7 +198,7 @@ impl Parser {
         new_target_allowed: bool,
         inherited_private_names: &[Arc<str>],
     ) -> error::Result<Program> {
-        let mut lx = crate::lexer::Lexer::new(src);
+        let mut lx = crate::lexer::Lexer::new_internal(src);
         let tokens = lx.tokens();
         let mut p = Parser::new(tokens);
         if inherited_strict {

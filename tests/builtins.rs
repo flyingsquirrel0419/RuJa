@@ -3903,6 +3903,41 @@ fn source_and_json_unicode_scalars_do_not_alias_surrogate_sentinels() {
         "#),
         Value::String(Arc::from("1|1"))
     );
+    assert_eq!(
+        run(r#"
+            var high = String.fromCharCode(0xDB80);
+            var low = String.fromCharCode(0xDC00);
+            var scalar = String.fromCodePoint(0xF0000);
+            var direct = eval('/' + high + '/').source;
+            var escaped = eval('/\\' + high + '/').source;
+            var indirect = (0, eval)('/' + high + '/').source;
+            var other = $262.createRealm().global;
+            var crossRealm = other.eval('/' + high + '/').source;
+            var template = eval('`' + low + '`');
+            var scalarSource = eval('/' + scalar + '/').source;
+            var dynamic = Function("return '" + high + "'.charCodeAt(0)")();
+            var GeneratorFunction = (function*() {}).constructor;
+            var generated = GeneratorFunction(
+              "return '" + low + "'.charCodeAt(0)"
+            )().next().value;
+            $262.evalScript(
+              "globalThis.evalScriptUnit = /" + low + "/.source.charCodeAt(0);"
+            );
+            [direct.charCodeAt(0).toString(16),
+             escaped.charCodeAt(1).toString(16),
+             indirect.charCodeAt(0).toString(16),
+             crossRealm.charCodeAt(0).toString(16),
+             template.charCodeAt(0).toString(16),
+             scalarSource.length,
+             scalarSource.codePointAt(0).toString(16),
+             dynamic,
+             generated,
+             evalScriptUnit].join('|');
+        "#),
+        Value::String(Arc::from(
+            "db80|db80|db80|db80|dc00|2|f0000|56192|56320|56320"
+        ))
+    );
 }
 
 #[test]
@@ -3915,6 +3950,14 @@ fn public_string_output_decodes_canonical_utf16() {
         .to_string_pub(&value)
         .expect("public string conversion should succeed");
     assert_eq!(host, "\u{F0000}");
+    let indirect = vm
+        .eval_indirect(concat!("'", "\u{F0000}", "';"))
+        .expect("public indirect eval should accept host Unicode source");
+    assert_eq!(
+        vm.to_string_pub(&indirect)
+            .expect("indirect eval result should decode for the host"),
+        "\u{F0000}"
+    );
     let Value::String(round_trip) = Value::from_string(&host) else {
         panic!("expected string value");
     };
@@ -22031,6 +22074,24 @@ fn test262_agents_share_sab_and_notify_wakes_waiters() {
             [Atomics.load(view, 1), report, notified].join("|");
         "#),
         Value::String(Arc::from("1|ok|1"))
+    );
+}
+
+#[test]
+fn test262_agent_source_preserves_internal_utf16() {
+    assert_eq!(
+        run(r#"
+            var lone = String.fromCharCode(0xDB80);
+            $262.agent.start(
+              "$262.agent.report(eval('/" + lone + "/').source.charCodeAt(0).toString(16));"
+            );
+            var report;
+            while ((report = $262.agent.getReport()) === null) {
+              $262.agent.sleep(1);
+            }
+            report;
+        "#),
+        Value::String(Arc::from("db80"))
     );
 }
 

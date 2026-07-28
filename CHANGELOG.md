@@ -20,6 +20,8 @@
   messages containing existing JavaScript strings remain unchanged. Host error
   display decodes internal text and preserves host text, including mixed
   module-link diagnostics with Unicode paths and JavaScript export names.
+  Lexer source provenance keeps direct/indirect eval, test host/agent eval,
+  and dynamic Function source from canonicalizing existing JS strings twice.
 
 - Complex `iv` RegExp classes now lower `\w` and `\W` operands to the exact
   ECMAScript WordCharacters inventory before native set algebra. Nested
