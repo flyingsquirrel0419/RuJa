@@ -11754,6 +11754,13 @@ the current ECMA-262 algorithms where engines differ. Direct coverage also
 pins the specified `/^\p{ASCII}$/iv` long-s match. String properties and
 `\q{...}` remain gated.
 
+Feature commit `719743f828025c6e4effdf556fde1db80f7c5922` passes both jobs
+in ordinary CI run `30323528176` and all **35/35** jobs in full run
+`30323528182`. Its 32 Test262 result artifacts are byte-identical to the
+immediately preceding docs-only clean run `30317896191`. Both aggregates are
+**31,953 pass / 5,108 fail / 11,405 skip / 3 timeout / 0 error** over
+**48,469** files, with **37,061** pass-or-fail executions.
+
 ```text
 [Decision Log]
 - 목적과 의도: Add direct conformance evidence for complex iv word operands that the current Test262 generated matrix does not cover.
