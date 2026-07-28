@@ -2948,10 +2948,13 @@ pub(crate) fn async_generator_throw(
     }
 }
 
-pub fn setup_collections(vm: &mut Vm) -> error::Result<()> {
-    setup_map_set_iterator_protos(vm)?;
-    // Map
-    let (map_ctor, map_proto) = make_builtin_constructor_with(
+pub(crate) fn install_map_intrinsic_in_env(
+    vm: &mut Vm,
+    env: GcIdx,
+    realm_global: Option<&Value>,
+) -> error::Result<(GcIdx, GcIdx)> {
+    let realm = crate::environment::global_env_root(&vm.heap, env);
+    let (map_ctor, map_proto) = make_builtin_constructor_with_in_env(
         vm,
         "Map",
         0,
@@ -2970,45 +2973,64 @@ pub fn setup_collections(vm: &mut Vm) -> error::Result<()> {
             ("getOrInsert", map_get_or_insert, 2),
             ("getOrInsertComputed", map_get_or_insert_computed, 2),
         ],
+        realm,
     )?;
-    vm.map_proto = Value::Object(map_proto);
-    define_global(vm, "Map", Value::Object(map_ctor));
-    let map_size_getter = vm.new_native_function("get size", map_size, 0)?;
-    vm.heap.with_obj(map_proto.0, |obj| {
-        obj.props().lock().insert(
-            PropertyKey::from("size"),
-            accessor_get_prop(Value::Object(map_size_getter)),
-        );
-    });
-    let map_species_getter =
-        vm.new_native_function("get [Symbol.species]", promise_species_get, 0)?;
-    let map_group_by_fn = vm.new_native_function("groupBy", map_group_by, 2)?;
-    vm.heap.with_obj(map_ctor.0, |obj| {
-        let mut props = obj.props().lock();
-        props.insert(
-            PropertyKey::symbol(vm.well_known_symbols.species),
-            accessor_get_prop(Value::Object(map_species_getter)),
-        );
-        props.insert(
-            PropertyKey::from("groupBy"),
-            data_prop(Value::Object(map_group_by_fn)),
-        );
-    });
-    // Map.prototype[Symbol.iterator] === Map.prototype.entries
-    if let Value::Object(mp) = vm.map_proto.clone() {
-        vm.heap.with_obj(mp.0, |o| {
-            let entries = o
+    let constructor = Value::Object(map_ctor);
+    let prototype = Value::Object(map_proto);
+    vm.try_reserve_value_roots(&[constructor.clone(), prototype.clone()])?;
+    let pin_count = vm.pin_many(&[constructor.clone(), prototype.clone()]);
+    let result = (|| -> error::Result<()> {
+        let map_size_getter = vm.new_native_function_in_env("get size", map_size, 0, realm)?;
+        vm.heap.with_obj(map_proto.0, |object| {
+            object.props().lock().insert(
+                PropertyKey::from("size"),
+                accessor_get_prop(Value::Object(map_size_getter)),
+            );
+        });
+        let map_species_getter =
+            vm.new_native_function_in_env("get [Symbol.species]", promise_species_get, 0, realm)?;
+        let map_group_by_fn = vm.new_native_function_in_env("groupBy", map_group_by, 2, realm)?;
+        vm.heap.with_obj(map_ctor.0, |object| {
+            let mut props = object.props().lock();
+            props.insert(
+                PropertyKey::symbol(vm.well_known_symbols.species),
+                accessor_get_prop(Value::Object(map_species_getter)),
+            );
+            props.insert(
+                PropertyKey::from("groupBy"),
+                data_prop(Value::Object(map_group_by_fn)),
+            );
+        });
+        vm.heap.with_obj(map_proto.0, |object| {
+            let entries = object
                 .props()
                 .lock()
                 .get(&PropertyKey::from("entries"))
                 .map(|desc| desc.value.clone())
                 .unwrap_or(Value::Undefined);
-            o.props().lock().insert(
+            object.props().lock().insert(
                 PropertyKey::symbol(vm.well_known_symbols.iterator),
                 data_prop(entries),
             );
         });
-    }
+        vm.realm_map_prototypes.insert(realm.0, prototype.clone());
+        if realm == vm.global {
+            vm.map_proto = prototype.clone();
+            define_global(vm, "Map", constructor.clone());
+        } else if let Some(global) = realm_global {
+            define_realm_global(vm, realm, global, "Map", constructor.clone());
+        }
+        Ok(())
+    })();
+    vm.unpin_many(pin_count);
+    result?;
+    Ok((map_ctor, map_proto))
+}
+
+pub fn setup_collections(vm: &mut Vm) -> error::Result<()> {
+    setup_map_set_iterator_protos(vm)?;
+    let main_realm = vm.global;
+    install_map_intrinsic_in_env(vm, main_realm, None)?;
     // Set
     let (set_ctor, set_proto) = make_builtin_constructor_with(
         vm,

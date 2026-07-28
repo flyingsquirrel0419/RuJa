@@ -3629,13 +3629,15 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   exposed with SameValueZero key canonicalization and computed-callback
   overwrite semantics. The focused `built-ins/Map built-ins/Set` run now
   closes at **449 pass / 0 fail / 138 skip**.
-- **`Map.groupBy` static grouping** —
+- **Earlier shallow `Map.groupBy` static-grouping unit** —
   `Map.groupBy` is now exposed as a static built-in, iterates arbitrary sync
   iterables, calls the grouping callback with `(value, index)`, stores group
   keys with SameValueZero Map-key semantics rather than `ToPropertyKey`,
   returns a real Map instance, and closes custom iterators when the callback
-  abruptly completes. This closes the focused `built-ins/Map/groupBy` run at
-  **14 pass / 0 fail / 0 skip**.
+  abruptly completes. Its then-current focused run reported **14 pass / 0 fail
+  / 0 skip**, but it did not prove direct iterator observability, close
+  precedence, Realm-local output, GC roots, Fuel, or allocation failure. The
+  later pipeline audit below supersedes that evidence.
 - **Map/Set feature lift** —
   `Map` and `Set` are removed from the test262 unsupported-feature skip list
   after the expanded `built-ins/Map built-ins/Set` diagnostic verifies at
@@ -12043,7 +12045,55 @@ timeout / 0 error / 48469 total / 37171 run**. The sorted content-set hash is
 - 검토한 주요 대안: Keep the skip, remove Symbol.iterator globally, admit the whole directory by prefix, rely on forced Test262 alone, or freeze the one gated path and pair it with direct Rust/resource tests.
 - 선택한 방식: Freeze iterator-next-throws.js and its complete live feature set in a runner/analyzer-shared manifest; require ordinary 13/0/1 to 14/0/0, forced 14/0 stability, and direct tests for every unrepresented iterator/resource boundary.
 - 다른 대안 대신 이 방식을 선택한 이유: Global feature removal overstates unrelated iterator support, prefix admission silently accepts future files, and forced green results cannot prove behavior the tests never inspect. Exact admission plus direct deterministic failures separates policy movement from runtime hardening.
-- 장점, 단점 및 영향: The directory becomes fully admitted without broadening Symbol.iterator policy. Official movement is one skip-to-pass; runtime repairs are evidenced independently. Map.groupBy remains a separate shared-GroupBy follow-up rather than being inferred from Object.groupBy results.
+- 장점, 단점 및 영향: The directory becomes fully admitted without broadening Symbol.iterator policy. Official movement is one skip-to-pass; runtime repairs are evidenced independently. Map.groupBy is verified independently in the adjacent collection-key pipeline below rather than inferred from Object.groupBy results.
+```
+
+## `Map.groupBy` direct iterator, Realm, and resource pipeline
+
+Pinned Test262 `9e61c12835c5e4a3bdba93850427e6742c4f64c4` contains 14 files in
+`built-ins/Map/groupBy`. The `origin/main` binary and policy report **12 pass /
+0 fail / 2 skip** under ordinary policy and **14 pass / 0 fail** when all
+feature gates are forced. The two skipped files are exactly
+`groupLength.js` and `iterator-next-throws.js`, both with live metadata
+`{ array-grouping, Map, Symbol.iterator }`.
+
+The repaired runtime and exact admission report **14 pass / 0 fail / 0 skip**
+under ordinary policy and remain **14/0** when forced. A frozen two-path
+manifest removes only each file's complete live feature set. Shared
+runner/analyzer tooling verifies exact metadata, disjointness from every other
+manifest, rejection of future/outside paths, and retention of any additional
+unsupported feature. The forced A/B proves the policy movement is two
+skip-to-pass changes; runtime hardening is evidenced by direct tests because
+the official directory does not cover most repaired boundaries.
+
+Direct Rust tests cover one `@@iterator` Get with no Proxy `has`, cached
+zero-argument `next`, strict callback receiver/arity, overridden
+Array/Map/Set/generator iterators, done-before-value, step-error non-close,
+callback close precedence, SameValueZero for object, `NaN`, and zero keys,
+method-Realm Map/Array/Map Iterator objects, immutable foreign constructor
+fallback, and internal publication that bypasses `set`, species, and mutable
+global Map. VM tests inject input/iterator/value/key roots, first and repeated
+element storage, group storage, safe-index, output-root, result-Map,
+result-Array, Array-presence, and result-entry failures. They verify close
+boundaries, foreign-Realm error materialization, distinct-key-only root
+pressure, forced-GC survival, per-group output Fuel, non-catchable callback
+Fuel, pin/live cleanup, and clean retry.
+
+Local gates pass debug and release library **308/308**, builtins **561/561**,
+es2015 **136/136**, `with` **62/62**, Python tooling **141/141** with four
+optional live-checkout probes skipped when the checkout is absent, and
+vendored RegExp **38/38**. All targets/features, rustfmt, warnings-denied
+Clippy, release build, wasm32, doctest, and ordinary/forced focused Test262
+**14/14** also pass.
+
+```text
+[Decision Log]
+- 목적과 의도: Admit the complete Map.groupBy directory only after repairing and directly proving the collection-key GroupBy boundaries omitted by its official tests.
+- 기존 구현 및 제약 조건: Two live feature-gated files were hidden under ordinary policy, while forced 14/14 concealed a wrapper iterator with wrong Has/call arity, incomplete override handling, incorrect close priority, main-Realm output, unrooted values/object keys, and unchecked host allocation paths. Test262 Realms lacked Map intrinsics.
+- 검토한 주요 대안: Keep both skips, remove Map/Symbol.iterator globally, admit the whole directory by prefix, trust the old forced-green result, or freeze the exact files after a fixed-policy A/B and pair them with deterministic direct tests.
+- 선택한 방식: Freeze the two paths and full live metadata in shared tooling; require ordinary 12/0/2 to 14/0/0 and forced 14/0 stability; install Realm-local Map and Map Iterator intrinsics; and directly test iterator, SameValueZero, close, root, Fuel, allocation, publication, and retry boundaries.
+- 다른 대안 대신 이 방식을 선택한 이유: Global feature removal overstates unrelated support, prefix admission silently accepts future files, and forced Test262 cannot prove behavior it does not assert. Exact policy evidence plus direct deterministic failures separates admission from runtime correctness.
+- 장점, 단점 및 영향: The directory is fully admitted without broadening global Map or Symbol.iterator policy. Official aggregate movement is exactly two passes replacing two skips; the larger semantic and resource repair remains independently reviewable. Map constructor iterable behavior is not inferred from this static method and remains a separate pipeline.
 ```
 
 ## `Object.fromEntries` iterator protocol

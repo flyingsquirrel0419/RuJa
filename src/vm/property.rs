@@ -4908,6 +4908,9 @@ impl Vm {
         for v in self.realm_promise_prototypes.values() {
             Self::push_value_roots(&mut roots, v);
         }
+        for v in self.realm_map_prototypes.values() {
+            Self::push_value_roots(&mut roots, v);
+        }
         for v in self.realm_generator_prototypes.values() {
             Self::push_value_roots(&mut roots, v);
         }
@@ -4954,6 +4957,9 @@ impl Vm {
             Self::push_value_roots(&mut roots, v);
         }
         for v in self.realm_array_iterator_prototypes.values() {
+            Self::push_value_roots(&mut roots, v);
+        }
+        for v in self.realm_map_iterator_prototypes.values() {
             Self::push_value_roots(&mut roots, v);
         }
         for v in self.realm_wrap_for_valid_iterator_prototypes.values() {

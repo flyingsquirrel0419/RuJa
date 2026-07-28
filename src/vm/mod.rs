@@ -74,6 +74,10 @@ pub(crate) enum GroupByReservationSite {
     KeyRoots,
     Groups,
     Elements,
+    MapGroups,
+    MapElements,
+    MapResultArrays,
+    MapResultEntries,
 }
 
 #[cfg(test)]
@@ -365,6 +369,8 @@ pub struct Vm {
     #[cfg(test)]
     pub(crate) group_by_native_next_calls: usize,
     #[cfg(test)]
+    pub(crate) map_group_by_output_pin_depth: Option<usize>,
+    #[cfg(test)]
     pub(crate) fail_proxy_descriptor_reservation: Option<(ProxyDescriptorReservationSite, usize)>,
     #[cfg(test)]
     pub(crate) fail_descriptor_materialization_reservation:
@@ -422,6 +428,7 @@ pub struct Vm {
     /// identities rather than mutable global bindings.
     pub(crate) realm_promise_constructors: HashMap<usize, Value>,
     pub(crate) realm_promise_prototypes: HashMap<usize, Value>,
+    pub(crate) realm_map_prototypes: HashMap<usize, Value>,
     /// Realm global environment -> synchronous generator intrinsics.
     pub(crate) realm_generator_prototypes: HashMap<usize, Value>,
     pub(crate) realm_generator_function_constructors: HashMap<usize, Value>,
@@ -458,6 +465,7 @@ pub struct Vm {
     pub(crate) realm_iterator_constructors: HashMap<usize, Value>,
     pub(crate) realm_iterator_prototypes: HashMap<usize, Value>,
     pub(crate) realm_array_iterator_prototypes: HashMap<usize, Value>,
+    pub(crate) realm_map_iterator_prototypes: HashMap<usize, Value>,
     pub(crate) realm_wrap_for_valid_iterator_prototypes: HashMap<usize, Value>,
     pub(crate) realm_string_iterator_prototypes: HashMap<usize, Value>,
     pub(crate) realm_iterator_helper_prototypes: HashMap<usize, Value>,
@@ -1043,6 +1051,8 @@ impl Vm {
             #[cfg(test)]
             group_by_native_next_calls: 0,
             #[cfg(test)]
+            map_group_by_output_pin_depth: None,
+            #[cfg(test)]
             fail_proxy_descriptor_reservation: None,
             #[cfg(test)]
             fail_descriptor_materialization_reservation: None,
@@ -1089,6 +1099,7 @@ impl Vm {
             realm_array_values_functions: HashMap::new(),
             realm_promise_constructors: HashMap::new(),
             realm_promise_prototypes: HashMap::new(),
+            realm_map_prototypes: HashMap::new(),
             realm_generator_prototypes: HashMap::new(),
             realm_generator_function_constructors: HashMap::new(),
             realm_generator_function_prototypes: HashMap::new(),
@@ -1105,6 +1116,7 @@ impl Vm {
             realm_iterator_constructors: HashMap::new(),
             realm_iterator_prototypes: HashMap::new(),
             realm_array_iterator_prototypes: HashMap::new(),
+            realm_map_iterator_prototypes: HashMap::new(),
             realm_wrap_for_valid_iterator_prototypes: HashMap::new(),
             realm_string_iterator_prototypes: HashMap::new(),
             realm_iterator_helper_prototypes: HashMap::new(),
@@ -2665,6 +2677,7 @@ impl Vm {
         self.realm_array_values_functions.remove(&realm);
         self.realm_promise_constructors.remove(&realm);
         self.realm_promise_prototypes.remove(&realm);
+        self.realm_map_prototypes.remove(&realm);
         self.realm_generator_prototypes.remove(&realm);
         self.realm_generator_function_constructors.remove(&realm);
         self.realm_generator_function_prototypes.remove(&realm);
@@ -2684,6 +2697,7 @@ impl Vm {
         self.realm_iterator_constructors.remove(&realm);
         self.realm_iterator_prototypes.remove(&realm);
         self.realm_array_iterator_prototypes.remove(&realm);
+        self.realm_map_iterator_prototypes.remove(&realm);
         self.realm_wrap_for_valid_iterator_prototypes.remove(&realm);
         self.realm_string_iterator_prototypes.remove(&realm);
         self.realm_iterator_helper_prototypes.remove(&realm);
@@ -3008,6 +3022,14 @@ impl Vm {
             .get(&realm.0)
             .cloned()
             .unwrap_or_else(|| self.array_proto.clone())
+    }
+
+    pub(crate) fn map_prototype_for_env(&self, env: GcIdx) -> Value {
+        let realm = crate::environment::global_env_root(&self.heap, env);
+        self.realm_map_prototypes
+            .get(&realm.0)
+            .cloned()
+            .unwrap_or_else(|| self.map_proto.clone())
     }
 
     pub(crate) fn error_prototype_for_env(&self, name: &str, env: GcIdx) -> Value {

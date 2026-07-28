@@ -889,6 +889,7 @@ const NON_CONSTRUCTIBLE_NATIVE_FUNCTION_SOURCES: &[&str] = &[
 
 const FOREIGN_EAGER_NATIVE_CONSTRUCTOR_SOURCES: &[&str] = &[
     "Array",
+    "Map",
     "Error",
     "EvalError",
     "RangeError",
@@ -899,7 +900,7 @@ const FOREIGN_EAGER_NATIVE_CONSTRUCTOR_SOURCES: &[&str] = &[
     "AggregateError",
 ];
 
-fn realm_registry_counts(vm: &Vm) -> [usize; 34] {
+fn realm_registry_counts(vm: &Vm) -> [usize; 36] {
     [
         vm.realm_globals.len(),
         vm.realm_object_prototypes.len(),
@@ -909,6 +910,7 @@ fn realm_registry_counts(vm: &Vm) -> [usize; 34] {
         vm.realm_array_values_functions.len(),
         vm.realm_promise_constructors.len(),
         vm.realm_promise_prototypes.len(),
+        vm.realm_map_prototypes.len(),
         vm.realm_generator_prototypes.len(),
         vm.realm_generator_function_constructors.len(),
         vm.realm_generator_function_prototypes.len(),
@@ -925,6 +927,7 @@ fn realm_registry_counts(vm: &Vm) -> [usize; 34] {
         vm.realm_iterator_constructors.len(),
         vm.realm_iterator_prototypes.len(),
         vm.realm_array_iterator_prototypes.len(),
+        vm.realm_map_iterator_prototypes.len(),
         vm.realm_wrap_for_valid_iterator_prototypes.len(),
         vm.realm_string_iterator_prototypes.len(),
         vm.realm_iterator_helper_prototypes.len(),
@@ -975,7 +978,7 @@ fn assert_main_realm_range_error(vm: &Vm, error: &crate::error::Error) {
 fn assert_failed_realm_attempt(
     vm: &mut Vm,
     baseline_live: usize,
-    baseline_registries: [usize; 34],
+    baseline_registries: [usize; 36],
     baseline_pins: usize,
     extra_capacity: usize,
 ) {
@@ -18819,6 +18822,498 @@ fn object_group_by_reservations_close_only_active_iterators_and_restore_pins() {
     assert_eq!(
         vm.run("closed;")
             .expect("Fuel close counter should remain readable"),
+        Value::Number(0.0)
+    );
+}
+
+#[test]
+fn map_group_by_storage_fuel_and_output_roots_are_ordered_and_retryable() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "mapGroupByNativeNext",
+        |vm, _, _| {
+            vm.group_by_native_next_calls += 1;
+            vm.group_by_native_next_result
+                .clone()
+                .ok_or_else(|| crate::error::Error::internal("missing Map group step result"))
+        },
+        0,
+    )
+    .expect("native next probe should register");
+    vm.register_fn(
+        "failNextMapRootReservation",
+        |vm, _, _| {
+            vm.fail_next_gc_pin_reservation = true;
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("Map output-root failure hook should register");
+    vm.register_fn(
+        "saturateMapGroupHeap",
+        |vm, _, _| {
+            vm.set_max_heap_objects(Some(1));
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("Map output-allocation failure hook should register");
+    vm.run(
+        r#"
+        var mapIteratorGets = 0;
+        var mapNextCalls = 0;
+        var mapClosed = 0;
+        var mapIndex = 0;
+        var mapValues = [{ marker: 1 }, { marker: 2 }, { marker: 3 }];
+        var mapSteps = [
+          { done: false, value: mapValues[0] },
+          { done: false, value: mapValues[1] },
+          { done: false, value: mapValues[2] }
+        ];
+        var mapDoneStep = { done: true };
+        var mapCloseResult = {};
+        var mapIterator = {
+          next: function() {
+            mapNextCalls++;
+            if (mapIndex >= mapSteps.length) return mapDoneStep;
+            return mapSteps[mapIndex++];
+          },
+          return: function() { mapClosed++; return mapCloseResult; }
+        };
+        var mapIterable = {
+          get [Symbol.iterator]() {
+            mapIteratorGets++;
+            return function() { mapIndex = 0; return mapIterator; };
+          }
+        };
+        var mapNativeStepIterable = {
+          [Symbol.iterator]: function() {
+            return { next: mapGroupByNativeNext };
+          }
+        };
+        var mapOutputMode = "normal";
+        var mapOutputClosed = 0;
+        var mapOutputValueStep = { done: false, value: mapValues[0] };
+        var mapOutputDoneStep = { get done() {
+          if (mapOutputMode === "root") failNextMapRootReservation();
+          if (mapOutputMode === "heap") saturateMapGroupHeap();
+          return true;
+        } };
+        var mapOutputIterable = {
+          [Symbol.iterator]: function() {
+            var index = 0;
+            return {
+              next: function() {
+                if (index++ === 0) return mapOutputValueStep;
+                return mapOutputDoneStep;
+              },
+              return: function() { mapOutputClosed++; return {}; }
+            };
+          }
+        };
+        "#,
+    )
+    .expect("Map grouping fixture should initialize");
+    vm.group_by_native_next_result = Some(
+        vm.run("mapDoneStep;")
+            .expect("native Map step result should remain live"),
+    );
+    vm.gc();
+    let baseline_live = vm.heap.live_count();
+    let baseline_pins = vm.gc_pins.len();
+
+    vm.group_by_zero_fuel_before_step = true;
+    let error = vm
+        .run("Map.groupBy(mapNativeStepIterable, function() { return 'same'; });")
+        .expect_err("Map.groupBy first step should consume fuel");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert!(!vm.group_by_zero_fuel_before_step);
+    assert_eq!(vm.group_by_native_next_calls, 0);
+    vm.set_fuel(None);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    vm.fail_group_by_reservation = Some((GroupByReservationSite::InputRoots, 0));
+    let error = vm
+        .run("Map.groupBy(mapIterable, function() { return 'same'; });")
+        .expect_err("Map input-root reservation should fail before GetIterator");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fail_group_by_reservation, None);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(
+        vm.run("mapIteratorGets + ':' + mapNextCalls + ':' + mapClosed;")
+            .expect("Map pre-acquisition counters should remain readable"),
+        Value::String(Arc::from("0:0:0"))
+    );
+
+    vm.fail_group_by_reservation = Some((GroupByReservationSite::IteratorRoots, 0));
+    let error = vm
+        .run("Map.groupBy(mapIterable, function() { return 'same'; });")
+        .expect_err("Map iterator-root reservation should fail before GetIterator");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fail_group_by_reservation, None);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(
+        vm.run("mapIteratorGets + ':' + mapNextCalls + ':' + mapClosed;")
+            .expect("Map iterator-root counters should remain readable"),
+        Value::String(Arc::from("0:0:0"))
+    );
+
+    vm.fail_group_by_reservation = Some((GroupByReservationSite::ValueRoots, 0));
+    let error = vm
+        .run("Map.groupBy(mapIterable, function() { return 'same'; });")
+        .expect_err("Map value-root reservation should close the active iterator");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fail_group_by_reservation, None);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(
+        vm.run("mapIteratorGets + ':' + mapNextCalls + ':' + mapClosed;")
+            .expect("Map value-root counters should remain readable"),
+        Value::String(Arc::from("1:1:1"))
+    );
+
+    vm.run("mapIteratorGets = mapNextCalls = mapClosed = 0;")
+        .expect("Map counters should reset");
+    vm.fail_group_by_reservation = Some((GroupByReservationSite::KeyRoots, 0));
+    let error = vm
+        .run("Map.groupBy(mapIterable, function() { return { key: 'same' }; });")
+        .expect_err("Map key-root reservation should close the active iterator");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fail_group_by_reservation, None);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(
+        vm.run("mapIteratorGets + ':' + mapNextCalls + ':' + mapClosed;")
+            .expect("Map key-root counters should remain readable"),
+        Value::String(Arc::from("1:1:1"))
+    );
+
+    vm.run("mapIteratorGets = mapNextCalls = mapClosed = 0;")
+        .expect("Map counters should reset");
+    assert_eq!(
+        vm.run(
+            "var repeatedMapKey = {}; Map.groupBy(mapValues, function() { return repeatedMapKey; }).size;"
+        )
+        .expect("repeated object Map key should group all values"),
+        Value::Number(1.0)
+    );
+    let repeated_key_depth = vm
+        .map_group_by_output_pin_depth
+        .expect("repeated-key output pin depth should be recorded");
+    assert_eq!(
+        vm.run("Map.groupBy(mapValues, function() { return {}; }).size;")
+            .expect("distinct object Map keys should form distinct groups"),
+        Value::Number(3.0)
+    );
+    assert_eq!(
+        vm.map_group_by_output_pin_depth,
+        Some(repeated_key_depth + 2),
+        "repeated keys should retain one identity root instead of one per value"
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    vm.fail_group_by_reservation = Some((GroupByReservationSite::MapGroups, 0));
+    let error = vm
+        .run("Map.groupBy(mapIterable, function(value, i) { return i; });")
+        .expect_err("Map group storage should be fallible");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fail_group_by_reservation, None);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(
+        vm.run("mapIteratorGets + ':' + mapNextCalls + ':' + mapClosed;")
+            .expect("Map group close counters should remain readable"),
+        Value::String(Arc::from("1:1:1"))
+    );
+
+    vm.run("mapIteratorGets = mapNextCalls = mapClosed = 0;")
+        .expect("Map counters should reset");
+    vm.fail_group_by_reservation = Some((GroupByReservationSite::MapElements, 0));
+    let error = vm
+        .run("Map.groupBy(mapIterable, function() { return 'same'; });")
+        .expect_err("first Map group element allocation should be fallible");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fail_group_by_reservation, None);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(
+        vm.run("mapIteratorGets + ':' + mapNextCalls + ':' + mapClosed;")
+            .expect("first Map element counters should remain readable"),
+        Value::String(Arc::from("1:1:1"))
+    );
+
+    vm.run("mapIteratorGets = mapNextCalls = mapClosed = 0;")
+        .expect("Map counters should reset");
+    vm.fail_group_by_reservation = Some((GroupByReservationSite::MapElements, 1));
+    let error = vm
+        .run("Map.groupBy(mapIterable, function() { return 'same'; });")
+        .expect_err("existing Map group append should be fallible");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fail_group_by_reservation, None);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(
+        vm.run("mapIteratorGets + ':' + mapNextCalls + ':' + mapClosed;")
+            .expect("Map element close counters should remain readable"),
+        Value::String(Arc::from("1:2:1"))
+    );
+
+    vm.run("mapIteratorGets = mapNextCalls = mapClosed = 0;")
+        .expect("Map counters should reset");
+    vm.group_by_index_override = Some(9_007_199_254_740_991);
+    let error = vm
+        .run("Map.groupBy(mapIterable, function() { return 'same'; });")
+        .expect_err("Map safe-index boundary should close before stepping");
+    assert_eq!(error.kind, crate::error::ErrorKind::Type);
+    assert_eq!(vm.group_by_index_override, None);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(
+        vm.run("mapIteratorGets + ':' + mapNextCalls + ':' + mapClosed;")
+            .expect("Map index-limit counters should remain readable"),
+        Value::String(Arc::from("1:0:1"))
+    );
+
+    vm.register_fn(
+        "capDuringMapGroupClose",
+        |vm, _, _| {
+            vm.set_max_heap_objects(Some(vm.heap.live_count()));
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("Map close-time heap-cap hook should register");
+    vm.run(
+        r#"
+        var mapOther = $262.createRealm().global;
+        mapIterator.return = function() {
+          mapClosed++;
+          return capDuringMapGroupClose();
+        };
+        mapClosed = 0;
+        "#,
+    )
+    .expect("foreign-Realm Map safe-index fixture should initialize");
+    let foreign_group_by = vm
+        .run("mapOther.Map.groupBy;")
+        .expect("foreign Map.groupBy should exist");
+    let iterable_value = vm
+        .run("mapIterable;")
+        .expect("Map iterable should remain live");
+    let object_constructor = vm.run("Object;").expect("Object constructor should exist");
+    vm.group_by_index_override = Some(9_007_199_254_740_991);
+    let error = vm
+        .call_function(
+            &foreign_group_by,
+            &[iterable_value, object_constructor],
+            Some(Value::Undefined),
+        )
+        .expect_err("foreign Map safe-index boundary should remain abrupt");
+    vm.set_max_heap_objects(None);
+    assert_eq!(error.kind, crate::error::ErrorKind::Type);
+    let thrown = error
+        .thrown_value
+        .clone()
+        .expect("Map safe-index TypeError should materialize before close");
+    let foreign_type_error_prototype = vm
+        .run("mapOther.TypeError.prototype;")
+        .expect("foreign TypeError prototype should exist");
+    assert_eq!(
+        vm.get_prototype_of(&thrown)
+            .expect("Map safe-index TypeError prototype should be readable"),
+        Some(foreign_type_error_prototype)
+    );
+    assert_eq!(
+        vm.run("mapClosed;")
+            .expect("Map close counter should remain readable"),
+        Value::Number(1.0)
+    );
+    assert_eq!(vm.group_by_index_override, None);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    vm.run(
+        "mapIterator.return = function() { mapClosed++; return mapCloseResult; }; mapClosed = 0;",
+    )
+    .expect("ordinary Map close fixture should restore");
+    vm.gc();
+    let baseline_live = vm.heap.live_count();
+
+    vm.run("mapOutputMode = 'root'; mapOutputClosed = 0;")
+        .expect("Map output-root fixture should arm");
+    let error = vm
+        .run("Map.groupBy(mapOutputIterable, function() { return 'same'; });")
+        .expect_err("Map output-root reservation should be fallible");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range, "{error:?}");
+    assert!(!vm.fail_next_gc_pin_reservation);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(
+        vm.run("mapOutputClosed;")
+            .expect("Map output-root close counter should remain readable"),
+        Value::Number(0.0)
+    );
+    vm.gc();
+    assert_eq!(vm.heap.live_count(), baseline_live);
+
+    vm.run("mapOutputMode = 'heap'; mapOutputClosed = 0;")
+        .expect("Map result-allocation fixture should arm");
+    let error = vm
+        .run("Map.groupBy(mapOutputIterable, function() { return 'same'; });")
+        .expect_err("saturated heap should reject the result Map allocation");
+    vm.set_max_heap_objects(None);
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(
+        vm.run("mapOutputClosed;")
+            .expect("Map result-allocation close counter should remain readable"),
+        Value::Number(0.0)
+    );
+    vm.gc();
+    assert_eq!(vm.heap.live_count(), baseline_live);
+
+    vm.run("mapOutputMode = 'normal'; mapOutputClosed = 0;")
+        .expect("Map group-Array allocation fixture should arm");
+    vm.fail_group_by_reservation = Some((GroupByReservationSite::MapResultArrays, 0));
+    let error = vm
+        .run("Map.groupBy(mapOutputIterable, function() { return 'same'; });")
+        .expect_err("Map group Array allocation should be fallible");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fail_group_by_reservation, None);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(
+        vm.run("mapOutputClosed;")
+            .expect("Map group-Array allocation close counter should remain readable"),
+        Value::Number(0.0)
+    );
+    vm.gc();
+    assert_eq!(vm.heap.live_count(), baseline_live);
+
+    vm.run("mapOutputMode = 'normal'; mapOutputClosed = 0;")
+        .expect("Map group-Array fixture should arm");
+    vm.fail_own_key_consumer_reservation = Some((OwnKeyConsumerReservationSite::ArrayPresence, 0));
+    let error = vm
+        .run("Map.groupBy(mapOutputIterable, function() { return 'same'; });")
+        .expect_err("Map group Array presence storage should be fallible");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fail_own_key_consumer_reservation, None);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(
+        vm.run("mapOutputClosed;")
+            .expect("Map group-Array close counter should remain readable"),
+        Value::Number(0.0)
+    );
+    vm.gc();
+    assert_eq!(vm.heap.live_count(), baseline_live);
+
+    vm.run("mapIteratorGets = mapNextCalls = mapClosed = 0;")
+        .expect("Map counters should reset");
+    vm.fail_group_by_reservation = Some((GroupByReservationSite::MapResultEntries, 0));
+    let error = vm
+        .run("Map.groupBy(mapIterable, function() { return 'same'; });")
+        .expect_err("Map result entry storage should be fallible");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fail_group_by_reservation, None);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(
+        vm.run("mapIteratorGets + ':' + mapNextCalls + ':' + mapClosed;")
+            .expect("completed Map iterator counters should remain readable"),
+        Value::String(Arc::from("1:4:0"))
+    );
+    vm.gc();
+    assert_eq!(vm.heap.live_count(), baseline_live);
+
+    assert_eq!(
+        vm.run(
+            "var mapGrouped = Map.groupBy(mapIterable, function() { return 'same'; }); mapGrouped.get('same').length + ':' + mapGrouped.get('same')[2].marker;"
+        )
+        .expect("clean Map grouping retry should complete"),
+        Value::String(Arc::from("3:3"))
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    vm.run("mapGrouped = undefined;")
+        .expect("Map retry result should be releasable");
+    vm.gc();
+    assert_eq!(vm.heap.live_count(), baseline_live);
+
+    vm.register_fn(
+        "armMapGroupHeapCap",
+        |vm, _, _| {
+            vm.set_max_heap_objects(Some(vm.heap.live_count() + 1));
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("Map heap-cap hook should register");
+    let capped = vm.run(
+        r#"
+        var mapCapIndex = 0;
+        var mapCapIterable = {
+          [Symbol.iterator]: function() {
+            return { next: function() {
+              if (mapCapIndex++ === 0) {
+                return { done: false, value: { marker: 9 } };
+              }
+              return { done: true };
+            } };
+          }
+        };
+        var mapCapResult = Map.groupBy(mapCapIterable, function() {
+          var key = { marker: 8 };
+          armMapGroupHeapCap();
+          return key;
+        });
+        mapCapResult;
+        "#,
+    );
+    vm.set_max_heap_objects(None);
+    capped.expect("Map key/value should survive output-allocation GC");
+    assert_eq!(
+        vm.run(
+            "var mapCapKey = mapCapResult.keys().next().value; mapCapKey.marker + ':' + mapCapResult.get(mapCapKey)[0].marker;"
+        )
+        .expect("capped Map group should retain key and value"),
+        Value::String(Arc::from("8:9"))
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    vm.run(
+        r#"
+        var mapFuelItems = [
+          { key: "same" }, { key: "same" }, { key: "same" }
+        ];
+        function mapFuelGroupKey(value) { return value.key; }
+        "#,
+    )
+    .expect("Map output-fuel fixture should initialize");
+    vm.set_fuel(Some(100_000));
+    vm.run("Map.groupBy(mapFuelItems, mapFuelGroupKey);")
+        .expect("single Map group fuel measurement should complete");
+    let single_group_fuel = 100_000 - vm.fuel_remaining().expect("Map fuel should remain bounded");
+    vm.set_fuel(None);
+    vm.run("mapFuelItems[1].key = 'second'; mapFuelItems[2].key = 'third';")
+        .expect("distinct Map group keys should install");
+    vm.set_fuel(Some(100_000));
+    vm.run("Map.groupBy(mapFuelItems, mapFuelGroupKey);")
+        .expect("three Map group fuel measurement should complete");
+    let three_group_fuel = 100_000 - vm.fuel_remaining().expect("Map fuel should remain bounded");
+    assert_eq!(three_group_fuel, single_group_fuel + 2);
+    vm.set_fuel(Some(three_group_fuel - 1));
+    let error = vm
+        .run("Map.groupBy(mapFuelItems, mapFuelGroupKey);")
+        .expect_err("one fewer Map fuel unit should abort output materialization");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    vm.set_fuel(None);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    vm.register_fn(
+        "abortMapGroupFuel",
+        |_, _, _| Err(crate::error::Error::fuel("test Map group fuel abort")),
+        0,
+    )
+    .expect("Map Fuel hook should register");
+    vm.run("mapClosed = 0;")
+        .expect("Map close counter should reset");
+    let error = vm
+        .run("Map.groupBy(mapIterable, abortMapGroupFuel);")
+        .expect_err("Map callback Fuel must remain non-catchable");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(
+        vm.run("mapClosed;")
+            .expect("Map Fuel close counter should remain readable"),
         Value::Number(0.0)
     );
 }

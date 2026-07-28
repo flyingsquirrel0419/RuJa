@@ -846,7 +846,7 @@ allocation through final wrapper attachment. It records the incoming
 the intrinsic graph, allocates the host wrapper, and attaches the Realm global.
 A successful commit releases only the transaction's pins. Any error first
 truncates the complete transaction-owned pin suffix and then removes that
-environment's entries from all 33 rooted per-Realm registry families and the
+environment's entries from all 35 rooted per-Realm registry families and the
 non-rooting `%Object.prototype%` reverse identity index. Native error
 materialization runs afterward in the calling Realm, so its collecting retry
 can reclaim the abandoned graph.
@@ -862,7 +862,7 @@ logical rollback surface.
 ```text
 [Decision Log]
 - 목적과 의도: Make failed test262 Realm construction leave no inaccessible GC roots while preserving exact heap-cap and error-Realm behavior.
-- 기존 구현 및 제약 조건: Intrinsic installers publish 33 families of Realm roots incrementally and use fallible LIFO temporary pins; wrapper allocation remains fallible after every registry has been populated.
+- 기존 구현 및 제약 조건: Intrinsic installers publish 35 families of Realm roots incrementally and use fallible LIFO temporary pins; wrapper allocation remains fallible after every registry has been populated.
 - 검토한 주요 대안: Publish nothing until setup completes; clean only the last inserted map; make every installer independently error-safe; or own all provisional roots and pins in one outer transaction.
 - 선택한 방식: Keep provisional registry publication, pin the fresh environment, capture the incoming pin depth, include wrapper attachment in the transaction, truncate the owned pin suffix on every result, and remove every Realm registry entry on error.
 - 다른 대안 대신 이 방식을 선택한 이유: Later installers require earlier intrinsic identities, map-specific cleanup misses other roots, and duplicating rollback in every installer creates drift. One lexical owner matches the actual observability boundary.
@@ -2535,7 +2535,44 @@ iterator record.
 - 검토한 주요 대안: Patch Vm::make_iterator globally, retain the wrapper and special-case close precedence, share a new generic GroupBy abstraction with Map.groupBy immediately, or use the existing direct iterator record and add Object-specific fallible group storage.
 - 선택한 방식: Pin items and callback, acquire and pin a direct iterator record, step through the shared zero-argument metered helper, root each value/key and every accumulated value, materialize native errors in the method Realm before closing catchable post-step grouping failures through the original-completion-preserving helper, reserve group/element storage before mutation, then meter each output group, build Realm-local Arrays, and publish them through DefineOwnProperty after normal iterator completion. Preserve LIFO root order by releasing accumulated values before the iterator record.
 - 다른 대안 대신 이 방식을 선택한 이유: Global iterator-wrapper changes have a much larger behavioral surface; wrapper special cases retain its wrong observability; combining Map.groupBy would mix collection-key and property-key semantics into this narrow unit. The direct helpers already encode the required step and close boundaries used by Object.fromEntries.
-- 장점, 단점 및 영향: Proxy order, next arity/cache, built-in iterator overrides, close precedence, step/output Fuel, safe-index limit, forced heap-cap GC, allocation failure, clean retry, descriptors, null prototype, and foreign-Realm Arrays/errors now have direct evidence. Accumulated values and the completed iterator record remain pinned until output publication, trading root-set size for explicit GC correctness. Map.groupBy retains a separate follow-up audit.
+- 장점, 단점 및 영향: Proxy order, next arity/cache, built-in iterator overrides, close precedence, step/output Fuel, safe-index limit, forced heap-cap GC, allocation failure, clean retry, descriptors, null prototype, and foreign-Realm Arrays/errors now have direct evidence. Accumulated values and the completed iterator record remain pinned until output publication, trading root-set size for explicit GC correctness. The adjacent Map.groupBy collection-key pipeline is documented below.
+```
+
+## `Map.groupBy` iterator, Realm, and collection pipeline
+
+`Map.groupBy` shares the direct synchronous iterator-record boundary with
+`Object.groupBy`: it performs one `@@iterator` Get, caches `next`, calls it
+without arguments, meters each step, checks the `2^53 - 1` limit before
+advancing, and never closes for `IteratorStepValue` failures. Catchable
+callback, root-reservation, and group-storage failures close while preserving
+the original completion. Native Type/Range errors are materialized in the
+method Realm before user `return`; non-catchable Fuel does not re-enter user
+cleanup.
+
+Keys remain full ECMAScript values. `MapKey` applies SameValueZero, including
+`NaN` equality and `-0` canonicalization, without `ToPropertyKey`. Every
+accumulated value and each stored object-key identity stays rooted through
+output. A repeated object key releases its redundant callback root after the
+existing group is found. Group maps, element vectors, result Arrays, and
+result Map entries expose deterministic fallible boundaries; output consumes
+one fuel unit per group and starts only after normal iterator completion.
+
+Each Realm now installs and roots its own `%Map%`, `%Map.prototype%`, and
+`%MapIteratorPrototype%`. Constructor fallback, static `groupBy`, prototype
+methods, result Maps, group Arrays, iterator objects, and iterator result
+objects therefore use immutable intrinsic identities from the active method
+or constructor Realm rather than mutable globals. Result publication inserts
+directly into internal `[[MapData]]`; overridden `Map.prototype.set`,
+`Symbol.species`, and the global `Map` binding are not observed.
+
+```text
+[Decision Log]
+- 목적과 의도: Implement the complete collection-key GroupBy and Map.groupBy algorithms with exact iterator observability, SameValueZero identity, Realm provenance, GC safety, and bounded host storage.
+- 기존 구현 및 제약 조건: The prior implementation used Vm::make_iterator, which added an observable HasProperty probe, bypassed several built-in iterator overrides, and called next(undefined). Close errors could replace the original callback throw, Fuel could invoke cleanup, object keys and accumulated values were not fully rooted, output used the main Realm Map/Array prototypes, and raw allocation/insertion bypassed fallible resource boundaries. Test262 Realms did not install Map at all.
+- 검토한 주요 대안: Patch Vm::make_iterator globally, retain the wrapper with Map-specific exceptions, coerce keys and reuse Object.groupBy storage, construct output through observable new Map/set/species paths, or use the established direct iterator helpers with Map-specific rooted storage and intrinsic registries.
+- 선택한 방식: Pin inputs and the cached iterator record, step through the zero-argument metered helper, root each value and callback key, group with MapKey SameValueZero semantics, release redundant occupied-group key roots, preserve original abrupt completions through the shared close helper, meter output groups, create Realm-local Arrays and an intrinsic Map after completion, and publish through fallible internal MapData insertion. Install Realm-local Map and Map Iterator intrinsics and route constructor fallback through their immutable registries.
+- 다른 대안 대신 이 방식을 선택한 이유: A global wrapper rewrite has a much larger behavior surface; wrapper exceptions retain wrong observability; property-key coercion changes Map semantics; observable constructor/set/species calls violate Map.groupBy; and main-Realm fallbacks violate method-Realm allocation. The direct helpers and explicit registries preserve the specification boundaries while keeping this unit narrow.
+- 장점, 단점 및 영향: Direct evidence covers Proxy order, callback arity/receiver, Array/Map/Set/generator overrides, SameValueZero object/NaN/zero keys, close and non-close precedence, safe-index errors, step/output Fuel, root/storage/result failures, forced GC, clean retry, foreign Map/Array/iterator/error identities, immutable constructor fallback, and internal publication. Root pressure scales with retained values plus distinct object keys, which is required until output publication. Map constructor iteration remains a separate adjacent audit.
 ```
 
 ## Object integrity levels

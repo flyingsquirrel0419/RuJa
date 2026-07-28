@@ -271,7 +271,12 @@
   duplicate names across structurally disjoint alternatives with
   participating-capture selection, and the String-symbol
   match/search/split/replace/matchAll operations
-- **Map/Set**: full key/value collections with iteration
+- **Map/Set**: full key/value collections with iteration. `Map.groupBy` uses a
+  cached zero-argument iterator record, SameValueZero keys without
+  `ToPropertyKey`, original-completion-preserving close semantics, metered and
+  fallible storage/output, and Realm-local Map, Array, and Map Iterator
+  intrinsics. Result publication bypasses mutable global `Map`, species, and
+  overridden `set`
 - **Error**: `Error`/`TypeError`/`RangeError`/`ReferenceError`/`SyntaxError`
 
 ## Type coercion

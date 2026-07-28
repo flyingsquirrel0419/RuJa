@@ -1,0 +1,3 @@
+# Exact feature-gated Map.groupBy coverage.
+built-ins/Map/groupBy/groupLength.js
+built-ins/Map/groupBy/iterator-next-throws.js

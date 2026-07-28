@@ -4,6 +4,29 @@
 
 ### Changed
 
+- `Map.groupBy` now executes the complete collection-key `GroupBy` pipeline
+  through a direct cached synchronous iterator record. It performs no
+  `HasProperty` probe, calls `next` with zero arguments, observes overridden
+  Array/Map/Set/generator iterators, meters each step, and enforces the safe
+  integer index limit. Catchable callback/root/storage failures close while
+  preserving the original completion; step failures and host Fuel do not
+  close. SameValueZero keys retain object identity, merge `NaN`, canonicalize
+  `-0`, and never run `ToPropertyKey`. Distinct object keys and all values stay
+  rooted until fallible, per-group-metered output publication. Every Realm now
+  owns Map and Map Iterator intrinsics; result Maps, group Arrays, iterator
+  objects, native errors, and constructor fallback use immutable method-Realm
+  identities. Internal publication bypasses overridden `set`, species, and
+  mutable global Map. Exact Test262 admission moves the pinned 14-file
+  directory from ordinary **12 pass / 0 fail / 2 skip** to **14 pass / 0 fail
+  / 0 skip**, while forced execution remains **14/14**. Direct tests cover
+  iterator/close order, SameValueZero, cross-Realm identities, root pressure,
+  Fuel, deterministic storage/result failures, forced GC, cleanup, and retry.
+  Local gates pass debug and release library **308/308**, builtins **561/561**,
+  es2015 **136/136**, `with` **62/62**, Python tooling **141/141** with four
+  optional absent-checkout live probes skipped, and vendored RegExp **38/38**,
+  plus all targets/features, rustfmt, warnings-denied Clippy, release build,
+  wasm32, doctest, and ordinary/forced focused Test262 **14/14**.
+
 - `Object.groupBy` now executes the complete property-key `GroupBy` pipeline
   through a direct synchronous iterator record. It performs no `HasProperty`
   probe, caches `next`, calls it with zero arguments, observes overridden
@@ -6507,12 +6530,16 @@ Current supported subset count: **9838 pass / 0 fail / 10601 skip / 0 timeout**.
   SameValueZero key canonicalization and computed-callback overwrite
   semantics. The focused `built-ins/Map built-ins/Set` run now closes at
   **449 pass / 0 fail / 138 skip**.
-- **`Map.groupBy` static grouping**: `Map.groupBy` is now exposed as a static
+- **Earlier shallow `Map.groupBy` static-grouping unit**: `Map.groupBy` was
+  exposed as a static
   built-in, iterates arbitrary sync iterables, calls the grouping callback with
   `(value, index)`, stores group keys with SameValueZero Map-key semantics
   instead of `ToPropertyKey`, returns a real Map instance, and closes custom
-  iterators when the callback abruptly completes. The focused
-  `built-ins/Map/groupBy` run now closes at **14 pass / 0 fail / 0 skip**.
+  iterators when the callback abruptly completes. Forced execution of the
+  focused `built-ins/Map/groupBy` directory was **14 pass / 0 fail**; ordinary
+  policy at the current pin remains **12 pass / 0 fail / 2 skip**. The direct
+  iterator/Realm/resource audit in the current Unreleased section supersedes
+  this shallow evidence and admits the two exact skipped files.
 - **Map/Set feature lift**: `Map` and `Set` are removed from the test262
   unsupported-feature skip list after the expanded `built-ins/Map
   built-ins/Set` diagnostic verifies at **473 pass / 0 fail / 114 skip**.

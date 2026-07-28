@@ -5246,6 +5246,8 @@ fn populate_test262_realm(vm: &mut Vm, realm_env: GcIdx) -> error::Result<Value>
     )?;
     install_array_intrinsic_in_env(vm, realm_env, Some(&global))?;
     setup_array_iterator_proto_in_env(vm, realm_env, realm_iterator_proto.clone())?;
+    setup_map_iterator_proto_in_env(vm, realm_env, realm_iterator_proto.clone())?;
+    install_map_intrinsic_in_env(vm, realm_env, Some(&global))?;
     let (str_ctor, str_proto) = make_builtin_constructor_with_in_env(
         vm,
         "String",
@@ -7258,9 +7260,7 @@ fn reserve_group_by_value_roots(
 ) -> error::Result<()> {
     #[cfg(test)]
     if take_group_by_reservation_failure(vm, site) {
-        return Err(Error::range(
-            "Object.groupBy temporary root set is too large",
-        ));
+        return Err(Error::range("GroupBy temporary root set is too large"));
     }
     vm.try_reserve_value_roots(values)
 }
@@ -7272,9 +7272,7 @@ fn reserve_group_by_root_slots(
 ) -> error::Result<()> {
     #[cfg(test)]
     if take_group_by_reservation_failure(vm, site) {
-        return Err(Error::range(
-            "Object.groupBy temporary root set is too large",
-        ));
+        return Err(Error::range("GroupBy temporary root set is too large"));
     }
     vm.try_reserve_gc_pins(additional)
 }
