@@ -2215,7 +2215,15 @@ pub fn utf16_len(s: &str) -> usize {
     if s.is_ascii() {
         s.len()
     } else {
-        utf16_from_str(s).len()
+        s.chars()
+            .map(|ch| {
+                if sentinel_to_surrogate(ch).is_some() {
+                    1
+                } else {
+                    ch.len_utf16()
+                }
+            })
+            .sum()
     }
 }
 

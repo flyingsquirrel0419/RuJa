@@ -11839,11 +11839,59 @@ baseline `30325163916`. Aggregate remains
 **31953/5108/11405/3/0** over **48469** total and **37061** run; the sorted
 artifact evidence hash is `204943da73e6ce948c7b77e29165c806ea412c14cabd8312c06418c05fa1ea73`.
 
-The change deliberately does not claim the Unicode RegExp collision closed.
-When matching a lone surrogate, the current backend still sees the private-use
-sentinel as a Unicode scalar. A logical-symbol matcher must distinguish scalar
-values from surrogate code points before property, class, capture, global, and
-sticky RegExp paths can be admitted safely.
+The scalar-ingress change alone did not close the Unicode RegExp collision.
+The logical UTF-16 fallback below closes that separate matcher boundary.
+
+## Logical UTF-16 RegExp scalar/surrogate separation
+
+Pinned Test262 `020cb74075849d1e404bbcdb62feb7a02e6966db` contains exactly
+two generated property files whose expected sets distinguish lone surrogates
+from RuJa's colliding sentinel-range scalars:
+
+- `General_Category_-_Private_Use.js`
+- `General_Category_-_Surrogate.js`
+
+A frozen manifest removes only `regexp-unicode-property-escapes` from these
+two paths in both runner and analyzer. Live metadata, exact path count, future
+generated names, and outside paths are tooling invariants. Each admitted file
+gets a path-specific 30-second limit because it constructs and repeatedly
+matches strings spanning most of Unicode; all other property files retain the
+default skip and timeout policy. The separate 66 string-valued `v`-set files
+remain gated.
+
+Both exact files pass independently in final release mode at **14.90s** and
+**14.92s**. The final complete 1,879-file RegExp run reports **1095 pass / 0
+fail / 784 skip / 0 timeout / 0 error**. Earlier 30-second exact timeouts
+normalized to the same 15-second standalone results and were host contention.
+A clean aggregate and CI artifact comparison remain required before final
+evidence is recorded.
+
+Direct tests cover the four sentinel collisions `D800/F0000`, `DBFF/F03FF`,
+`DC00/F0400`, and `DFFF/F07FF`, negative scalar/surrogate cross-matches, `u` and character-only
+`v`, `Co`/`Cs` positive and complement properties, dot width, quantifiers,
+captures, backreferences, global iteration, sticky pair-interior `lastIndex`,
+`d` indices, String search/replace, and final LF/CRLF end assertions. Vendored
+tests separately prove native UTF-16 ranges, bounded exhaustion, and exact
+sticky candidate selection.
+Additional structural guards cover all four sentinel collision pairs,
+backreferences that would otherwise consume half of `U+10000`, conditional
+duplicate-name backreferences, construction-time and escape-aware source
+limits, bounded named-capture preprocessing and expansion, incremental
+global-result fuel, generic `Symbol.match` getter order, operand-first
+`iv` word/property intersection, a 4,097-arm flat alternation, and 20,001
+global logical matches with batched endpoint conversion. Python tooling is
+**137/138**; the sole failure remains the external pinned checkout's absent
+staging TypedArray fixture.
+
+```text
+[Decision Log]
+- 목적과 의도: Admit only the conformance files that prove the repaired scalar/surrogate distinction and keep broad Unicode-property policy measurable.
+- 기존 구현 및 제약 조건: regexp-unicode-property-escapes gates hundreds of generated files, but a static Unicode-set comparison identifies only Co and Cs as collision-sensitive. The generated files scan very large Unicode strings and exceed the ordinary eight-second runner limit on this host.
+- 검토한 주요 대안: Keep both skipped, remove the feature globally, admit every generated property file, rely only on direct tests, or freeze the exact Co/Cs pair with a bounded extended timeout.
+- 선택한 방식: Freeze two exact paths and their live feature metadata, share feature removal between runner/analyzer, assign only those paths 30 seconds, and retain direct structural coverage for literals, offsets, captures, duplicate-name backreferences, bounded iteration, and v mode.
+- 다른 대안 대신 이 방식을 선택한 이유: Global admission overstates unrelated property support, direct tests alone omit the generated Unicode matrices, and the default timeout misclassifies deterministic 15-16 second passes. Exact admission records the coherent repaired surface without weakening adjacent gates.
+- 장점, 단점 및 영향: Two skips move into the supported corpus with no admitted failures. The full-directory run exposed one contention timeout that must be normalized in final CI evidence; unrelated property escapes and all string-valued v sets remain explicitly skipped.
+```
 
 ## Why the full-suite rate is not higher
 

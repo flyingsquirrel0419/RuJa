@@ -108,6 +108,26 @@ The following resource limits are enforced:
   hybrid: the linear matcher prefilters match boundaries, and the bounded
   backend reconstructs captures only for successful matches. Capture clearing
   is charged per slot and uses bitset-backed copy-on-write state. Native
+  Unicode matching over sentinel-backed UTF-16 uses a vendored `regress`
+  fallback. Its bounded DFS charges instructions, candidate/state allocation,
+  capture/loop state copies, and backreference code units against one shared
+  input-scaled budget, caps aggregate live alternative state across recursive
+  lookarounds at 64 MiB, and uses exact-start execution for sticky regexes.
+  String-valued `v` sets remain unsupported. Logical pattern source length is
+  scanned without allocation and capped at 262,144 UTF-16 units before general
+  regex validation; 64 real property operands are checked before compilation.
+  Every `u`/`v` pattern receives these logical
+  resource checks at construction; full fallback compilation stays lazy.
+  Named-capture preprocessing is separately capped at 1,024 named groups, 64
+  duplicates per name, 65,536 stored path segments, 1,000,000 comparison
+  units, and 16,384 duplicate-backreference alternatives.
+  Direct repeated global `RegExp.prototype.exec`
+  still prepares the logical input from its current `lastIndex` on each call;
+  hosts should set VM fuel or an external deadline for very large manual exec
+  loops. Unmodified non-sticky Unicode `Symbol.match` uses a single prepared
+  iterator, while observable custom-exec paths retain specification re-entry.
+  Logical UTF-16 exhaustion is a non-catchable fuel abort; the older fancy
+  backend reports `Invalid regex match`. Native
   matching is still cooperative rather than preemptible, so hosts that need a
   hard wall-clock deadline must use a separately killable process.
 - **String/array caps**: `"x".repeat(n)` is capped at 256 MiB output.
@@ -138,10 +158,11 @@ guarantees are required.
 
 - No `eval`/`with` process-level security sandbox (local-trust execution model)
 - Crates.io publication is disabled with `package.publish = false` while RuJa
-  depends on a vendored `fancy-regex` fork. Cargo rewrites path dependencies to
-  their registry versions when packaging, which would silently remove RuJa's
-  required backend API and semantics. Publication can be re-enabled only after
-  these patches are upstream or the fork is published as a distinct dependency.
+  depends on vendored `fancy-regex` and `regress` forks. Cargo rewrites path
+  dependencies to their registry versions when packaging, which would silently
+  remove RuJa's required backend APIs and semantics. Publication can be
+  re-enabled only after these patches are upstream or the forks are published
+  as distinct dependencies.
 - Dynamic Function constructors (`Function`, `AsyncFunction`,
   `GeneratorFunction`, and `AsyncGeneratorFunction`) follow the observable
   CreateDynamicFunction conversion, grammar, Realm, and allocation protocol,

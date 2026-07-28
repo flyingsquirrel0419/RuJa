@@ -2808,4 +2808,91 @@ second buffer or looping over every discarded value.
 
 ---
 
+## Logical UTF-16 Unicode RegExp fallback
+
+RuJa's internal lone-surrogate representation uses `U+F0000..U+F07FF`
+sentinels. A Rust `char` backend cannot distinguish those sentinels from the
+legal Unicode scalars with the same values. Unicode `u`/`v` execution therefore
+uses a vendored `regress` 0.11.1 fallback whenever the input contains a
+sentinel-backed code unit. The fallback parses the canonical pattern as logical
+`u32` symbols, reads the input as native UTF-16, combines only valid surrogate
+pairs, and leaves lone surrogates in `D800..DFFF`. Existing Rust and
+`fancy-regex` paths remain the default for ordinary inputs.
+
+The same fallback validates and executes Unicode patterns that the existing
+backend cannot compile, including `General_Category=Surrogate`. `v` explicitly
+enables both Unicode and UnicodeSets modes. `RegExpBuiltinExec` preserves the
+original internal string and records logical UTF-16 boundaries, so a
+`lastIndex` inside a valid pair rewinds to the pair start while captures,
+`index`, `indices`, and `lastIndex` remain UTF-16 offsets. String search,
+replace, and match entry points share the input-aware compiler.
+
+Case-sensitive backreferences compare logical UTF-16 symbols rather than raw
+code-unit slices, so a captured lone high surrogate cannot consume the leading
+half of a valid pair. Duplicate-name backreferences try only participating
+captures and match empty only when every same-name capture is unmatched. In
+`iv` classes each character, range, escape, property,
+and nested set is case-closed before union, intersection, subtraction, or
+complement. Flat alternations are built as a balanced IR tree, preventing a
+large legal disjunction from creating parser/optimizer recursion proportional
+to its arm count. Logical compilation explicitly rejects string-valued
+properties and `\q{...}`.
+
+The vendored PikeVM exposes bounded search and exact-start UTF-16 APIs. Sticky
+matching executes one candidate only. Instruction dispatch, candidate state,
+state clones, capture/loop slots, and backreference code units consume one
+shared budget; aggregate live alternative state across nested lookarounds is
+capped at a conservative 64 MiB and
+compiled state cost at 1,000,000 units. Input-dependent work grows linearly up to 32,000,000 units.
+Greedy one-character loops followed only by an end assertion do not retain an
+alternative per symbol, which keeps generated full-Unicode property tests at
+constant live-state memory. Lookarounds share the same budget. Exhaustion is a
+non-catchable fuel abort, never a false no-match result. This is cooperative
+resource control, not an OS deadline.
+
+Logical input is metered once per symbol and converted to UTF-16 once per
+backend operation. Match and capture endpoints are collected, sorted, and
+mapped to internal byte boundaries in one input scan rather than rescanning
+from the beginning per endpoint. `RegExpBackendInput` computes the one
+`lastIndex` start boundary without retaining a tuple per character. Default
+global `Symbol.match` on an unmodified realm RegExp prototype uses the existing
+single-compile iterator and consumes VM fuel before retaining each result; own,
+Proxy, accessor, and modified-prototype `exec`
+paths retain the observable RegExpExec loop.
+
+Logical source length is scanned without allocation and capped at 262,144
+UTF-16 units before the general regex validator can materialize pattern copies;
+64 escape-parity-aware property operands are checked after syntax validation. Every
+Unicode RegExp validates these logical-backend resource preconditions at
+construction, while full logical compilation remains lazy to avoid compiling
+ordinary generated patterns twice. Post-compile accounting includes instructions, capture and
+loop state, group names, and bracket intervals. Sequential candidate state is
+charged by slot count; only actual retained branch clones use conservative byte
+cost, and the live-state check accounts for `Vec` capacity across the complete
+lookaround recursion tree. This lets
+large linear generated matrices complete without weakening branch-memory
+bounds.
+
+Named-capture prepass work is bounded before path and duplicate-reference IR
+materialization: at most 1,024 named groups, 64 groups sharing one name, 65,536
+stored alternative-path segments, 1,000,000 path-comparison units, and 16,384
+duplicate-backreference alternatives. These limits prevent legal-size source
+from turning duplicate-name analysis into quadratic allocation or CPU work.
+
+The vendored crate retains its upstream MIT OR Apache-2.0 license files.
+String-valued `v` properties and `\q{...}` remain a separate 66-file unit and
+are not claimed by this fallback.
+
+```text
+[Decision Log]
+- 목적과 의도: Distinguish every legal Unicode scalar from every lone UTF-16 surrogate during u/v matching without changing RuJa's canonical JavaScript String representation.
+- 기존 구현 및 제약 조건: Rust strings cannot contain surrogate scalar values, RuJa stores lone surrogates in a private-use sentinel range that is also legal JavaScript text, and the existing Rust/fancy backends therefore collapse two distinct logical symbols. Replacing the sentinel range cannot solve an injectivity problem over the complete Unicode scalar domain.
+- 검토한 주요 대안: Move the sentinel range, globally prefix-encode every regex symbol, rewrite only Co/Cs properties, replace every regex backend, use regress's unbounded classical UTF-16 API, or route only collision-bearing Unicode inputs through a bounded native UTF-16 executor.
+- 선택한 방식: Vendor regress 0.11.1; validate logical resource preconditions for every u/v pattern at construction; lazily compile canonical pattern code points and native UTF-16 input; route sentinel-bearing u/v inputs and existing-backend compile fallbacks through a bounded PikeVM; add bounded named-capture prepass/lowering, exact sticky execution, logical-symbol and duplicate-name backreferences, operand-first iv folding, balanced alternation IR, shared byte-based state/backreference accounting, metered global collection, batched offset conversion, and UTF-16 boundary preservation.
+- 다른 대안 대신 이 방식을 선택한 이유: Sentinel relocation is mathematically insufficient; prefix encoding requires complete rewrites of literals, classes, properties, complements, lookarounds, and captures; property-only repair leaves literals and dot wrong; global replacement widens performance and compatibility risk; the upstream UTF-16 backtracker has no sandbox bound. A narrow native UTF-16 fallback preserves the established fast path and supplies the required logical domain directly.
+- 장점, 단점 및 영향: Lone surrogates and U+F0000..U+F07FF scalars now differ across literals, properties, complements, dot, captures, backreferences, global/sticky matching, and d indices. Two exact generated Test262 files become admissible. Large flat alternatives have logarithmic IR depth, endpoint conversion is linear, and live branch state has a byte cap. The fallback maintains a second parser for its bounded domain and remains cooperative DFS under explicit work and state limits; string-valued v sets are rejected and remain excluded.
+```
+
+---
+
 **Next:** [Features](features.md) · [Known limitations](limitations.md) · [Back to README](../README.md)

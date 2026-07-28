@@ -106,6 +106,7 @@ impl<'t> CompiledCaptures<'t> {
 enum CompiledRegex {
     Rust(RustRegex),
     Fancy(fancy_regex::Regex),
+    LogicalUtf16(regress::Regex),
     // Assertion erasure is rejection-only. The capture-erased exact linear
     // matcher may select language bounds, but never supplies capture slots.
     PrefilteredExact {
@@ -132,6 +133,119 @@ struct RegexModifierState {
 /// the regex engine here and are handled by the caller.
 fn compile_regex(source: &str, flags: &str) -> Result<CompiledRegex, String> {
     compile_regex_with_input_mode(source, flags, false)
+}
+
+fn compile_regex_for_input(
+    source: &str,
+    flags: &str,
+    input: &str,
+) -> Result<CompiledRegex, String> {
+    let unicode_mode = flags.contains('u') || flags.contains('v');
+    let contains_surrogate_backing = input.chars().any(|ch| {
+        crate::value::utf16_single_unit_from_internal_char(ch)
+            .is_some_and(|unit| (0xd800..=0xdfff).contains(&unit))
+    });
+    if !unicode_mode {
+        return compile_regex(source, flags);
+    }
+
+    if !contains_surrogate_backing {
+        return compile_regex(source, flags)
+            .or_else(|_| compile_logical_utf16_regex(source, flags));
+    }
+
+    compile_logical_utf16_regex(source, flags)
+}
+
+fn validate_logical_utf16_source_length(source: &str) -> Result<(), String> {
+    let mut utf16_units = 0usize;
+    for ch in source.chars() {
+        utf16_units = utf16_units.saturating_add(
+            crate::value::utf16_single_unit_from_internal_char(ch).map_or(ch.len_utf16(), |_| 1),
+        );
+        if utf16_units > REGEX_LOGICAL_UTF16_SOURCE_LIMIT {
+            return Err("logical UTF-16 regex program is too large".to_string());
+        }
+    }
+    Ok(())
+}
+
+fn validate_logical_utf16_source(source: &str) -> Result<(), String> {
+    validate_logical_utf16_source_length(source)?;
+
+    let bytes = source.as_bytes();
+    let mut property_escapes = 0usize;
+    for index in 1..bytes.len().saturating_sub(1) {
+        if !matches!(bytes[index], b'p' | b'P') || bytes[index + 1] != b'{' {
+            continue;
+        }
+        let preceding_slashes = bytes[..index]
+            .iter()
+            .rev()
+            .take_while(|byte| **byte == b'\\')
+            .count();
+        if preceding_slashes % 2 == 1 {
+            property_escapes += 1;
+            if property_escapes > REGEX_LOGICAL_UTF16_PROPERTY_LIMIT {
+                return Err("logical UTF-16 regex has too many property operands".to_string());
+            }
+        }
+    }
+    Ok(())
+}
+
+fn logical_utf16_pattern_code_points(source: &str) -> Vec<u32> {
+    let units = crate::value::utf16_from_str(source);
+    let mut code_points = Vec::with_capacity(units.len());
+    let mut index = 0;
+    while index < units.len() {
+        let high = units[index];
+        if (0xd800..=0xdbff).contains(&high)
+            && units
+                .get(index + 1)
+                .is_some_and(|low| (0xdc00..=0xdfff).contains(low))
+        {
+            let low = units[index + 1];
+            code_points.push(0x10000 + (((high as u32 - 0xd800) << 10) | (low as u32 - 0xdc00)));
+            index += 2;
+        } else {
+            code_points.push(high as u32);
+            index += 1;
+        }
+    }
+    code_points
+}
+
+fn logical_utf16_flags(flags: &str) -> regress::Flags {
+    let mut logical_flags = regress::Flags::from(flags);
+    if flags.contains('v') {
+        logical_flags.unicode = true;
+        logical_flags.unicode_sets = true;
+        logical_flags.disable_string_sets = true;
+    }
+    logical_flags
+}
+
+fn validate_logical_utf16_construction_limits(source: &str, flags: &str) -> Result<(), String> {
+    validate_logical_utf16_source(source)?;
+    let code_points = logical_utf16_pattern_code_points(source);
+    regress::Regex::validate_unicode_resource_limits(
+        code_points.into_iter(),
+        logical_utf16_flags(flags),
+    )
+    .map_err(|error| error.to_string())
+}
+
+fn compile_logical_utf16_regex(source: &str, flags: &str) -> Result<CompiledRegex, String> {
+    validate_logical_utf16_source(source)?;
+    let code_points = logical_utf16_pattern_code_points(source);
+    let logical_flags = logical_utf16_flags(flags);
+    let regex = regress::Regex::from_unicode(code_points.into_iter(), logical_flags)
+        .map_err(|error| error.to_string())?;
+    if regex.bounded_execution_state_cost() > REGEX_LOGICAL_UTF16_WORK_LIMIT {
+        return Err("logical UTF-16 regex program is too large".to_string());
+    }
+    Ok(CompiledRegex::LogicalUtf16(regex))
 }
 
 fn compile_regex_for_code_units(source: &str, flags: &str) -> Result<CompiledRegex, String> {
@@ -340,6 +454,9 @@ impl CompiledRegex {
     ) -> error::Result<Option<CompiledMatch<'t>>> {
         match self {
             CompiledRegex::Rust(re) => Ok(re.find_at(input, start).map(CompiledMatch::from)),
+            CompiledRegex::LogicalUtf16(_) => {
+                Ok(self.captures_at(input, start)?.and_then(|caps| caps.get(0)))
+            }
             CompiledRegex::Fancy(re) => re
                 .find_from_pos(input, start)
                 .map(|m| m.map(CompiledMatch::from))
@@ -381,6 +498,11 @@ impl CompiledRegex {
     fn find_iter<'t>(&self, input: &'t str) -> error::Result<Vec<CompiledMatch<'t>>> {
         match self {
             CompiledRegex::Rust(re) => Ok(re.find_iter(input).map(CompiledMatch::from).collect()),
+            CompiledRegex::LogicalUtf16(_) => Ok(self
+                .captures_iter(input)?
+                .into_iter()
+                .filter_map(|caps| caps.get(0))
+                .collect()),
             CompiledRegex::Fancy(re) => fancy_find_iter(re, input),
             CompiledRegex::PrefilteredExact {
                 prefilter,
@@ -420,6 +542,41 @@ impl CompiledRegex {
         }
     }
 
+    fn find_iter_metered<'t, F>(
+        &self,
+        input: &'t str,
+        mut before_push: F,
+    ) -> error::Result<Vec<CompiledMatch<'t>>>
+    where
+        F: FnMut() -> error::Result<()>,
+    {
+        if let CompiledRegex::LogicalUtf16(regex) = self {
+            return Ok(
+                logical_utf16_captures_iter_metered(regex, input, before_push)?
+                    .into_iter()
+                    .filter_map(|captures| captures.get(0))
+                    .collect(),
+            );
+        }
+
+        let mut matches = Vec::new();
+        let mut position = 0usize;
+        while position <= input.len() {
+            let Some(matched) = self.find_at(input, position)? else {
+                break;
+            };
+            before_push()?;
+            let Some(next) = next_regex_iteration_position(input, matched.start(), matched.end())
+            else {
+                matches.push(matched);
+                break;
+            };
+            matches.push(matched);
+            position = next;
+        }
+        Ok(matches)
+    }
+
     fn captures<'t>(&self, input: &'t str) -> error::Result<Option<CompiledCaptures<'t>>> {
         self.captures_at(input, 0)
     }
@@ -431,6 +588,15 @@ impl CompiledRegex {
     ) -> error::Result<Option<CompiledCaptures<'t>>> {
         match self {
             CompiledRegex::Rust(re) => Ok(re.captures_at(input, start).map(CompiledCaptures::from)),
+            CompiledRegex::LogicalUtf16(re) => {
+                let units = crate::value::utf16_from_str(input);
+                let start = crate::value::utf16_len(&input[..start]);
+                let mut work_remaining = logical_utf16_work_limit(units.len());
+                re.find_from_utf16_bounded(&units, start, &mut work_remaining)
+                    .map_err(logical_utf16_runtime_error)?
+                    .map(|matched| logical_utf16_captures(input, matched))
+                    .transpose()
+            }
             CompiledRegex::Fancy(re) => re
                 .captures_from_pos(input, start)
                 .map(|caps| caps.map(CompiledCaptures::from))
@@ -474,6 +640,7 @@ impl CompiledRegex {
                 .captures_iter(input)
                 .map(CompiledCaptures::from)
                 .collect()),
+            CompiledRegex::LogicalUtf16(re) => logical_utf16_captures_iter(re, input),
             CompiledRegex::Fancy(re) => fancy_captures_iter(re, input),
             CompiledRegex::PrefilteredExact {
                 prefilter,
@@ -519,6 +686,15 @@ impl CompiledRegex {
                         .is_some_and(|matched| matched.start() == start)
                 })
                 .map(CompiledCaptures::from)),
+            CompiledRegex::LogicalUtf16(re) => {
+                let units = crate::value::utf16_from_str(input);
+                let start = crate::value::utf16_len(&input[..start]);
+                let mut work_remaining = logical_utf16_work_limit(units.len());
+                re.find_at_utf16_bounded(&units, start, &mut work_remaining)
+                    .map_err(logical_utf16_runtime_error)?
+                    .map(|matched| logical_utf16_captures(input, matched))
+                    .transpose()
+            }
             CompiledRegex::Fancy(re) => re
                 .captures_at_pos(input, start)
                 .map(|captures| captures.map(CompiledCaptures::from))
@@ -558,6 +734,7 @@ impl CompiledRegex {
         match self {
             CompiledRegex::Rust(re) => Ok(re.replace(input, replacement)),
             CompiledRegex::Fancy(_)
+            | CompiledRegex::LogicalUtf16(_)
             | CompiledRegex::PrefilteredExact { .. }
             | CompiledRegex::CaptureCorrected { .. } => {
                 self.replace_fancy(input, replacement, false)
@@ -569,6 +746,7 @@ impl CompiledRegex {
         match self {
             CompiledRegex::Rust(re) => Ok(re.replace_all(input, replacement)),
             CompiledRegex::Fancy(_)
+            | CompiledRegex::LogicalUtf16(_)
             | CompiledRegex::PrefilteredExact { .. }
             | CompiledRegex::CaptureCorrected { .. } => {
                 self.replace_fancy(input, replacement, true)
@@ -614,6 +792,193 @@ impl CompiledRegex {
         result.push_str(&input[last_end..]);
         Ok(Cow::Owned(result))
     }
+}
+
+const REGEX_LOGICAL_UTF16_WORK_LIMIT: usize = 1_000_000;
+const REGEX_LOGICAL_UTF16_MAX_WORK_LIMIT: usize = 32_000_000;
+const REGEX_LOGICAL_UTF16_SOURCE_LIMIT: usize = 262_144;
+const REGEX_LOGICAL_UTF16_PROPERTY_LIMIT: usize = 64;
+
+fn logical_utf16_work_limit(input_units: usize) -> usize {
+    REGEX_LOGICAL_UTF16_WORK_LIMIT
+        .saturating_add(input_units.saturating_mul(256))
+        .min(REGEX_LOGICAL_UTF16_MAX_WORK_LIMIT)
+}
+
+fn meter_logical_regex_input(vm: &mut Vm, regex: &CompiledRegex, input: &str) -> error::Result<()> {
+    if !matches!(regex, CompiledRegex::LogicalUtf16(_)) {
+        return Ok(());
+    }
+    let mut chars = input.chars().peekable();
+    while let Some(ch) = chars.next() {
+        vm.consume_fuel()?;
+        if crate::value::utf16_single_unit_from_internal_char(ch)
+            .is_some_and(|unit| (0xd800..=0xdbff).contains(&unit))
+            && chars.peek().is_some_and(|next| {
+                crate::value::utf16_single_unit_from_internal_char(*next)
+                    .is_some_and(|unit| (0xdc00..=0xdfff).contains(&unit))
+            })
+        {
+            chars.next();
+        }
+    }
+    Ok(())
+}
+
+fn logical_utf16_runtime_error(error: regress::RuntimeError) -> Arc<Error> {
+    Error::fuel(format!("Invalid regex match: {error}"))
+}
+
+fn logical_utf16_match<'t>(
+    input: &'t str,
+    range: regress::Range,
+    byte_offsets: &std::collections::HashMap<usize, usize>,
+) -> error::Result<CompiledMatch<'t>> {
+    let start = byte_offsets
+        .get(&range.start)
+        .copied()
+        .ok_or_else(|| Error::internal("logical RegExp returned an invalid UTF-16 match start"))?;
+    let end = byte_offsets
+        .get(&range.end)
+        .copied()
+        .ok_or_else(|| Error::internal("logical RegExp returned an invalid UTF-16 match end"))?;
+    Ok(CompiledMatch {
+        text: &input[start..end],
+        start,
+        end,
+    })
+}
+
+fn logical_utf16_captures<'t>(
+    input: &'t str,
+    matched: regress::Match,
+) -> error::Result<CompiledCaptures<'t>> {
+    logical_utf16_captures_many(input, vec![matched])?
+        .pop()
+        .ok_or_else(|| Error::internal("logical RegExp omitted a successful match"))
+}
+
+fn logical_utf16_captures_many<'t>(
+    input: &'t str,
+    matches: Vec<regress::Match>,
+) -> error::Result<Vec<CompiledCaptures<'t>>> {
+    let mut endpoints: Vec<usize> = matches
+        .iter()
+        .flat_map(|matched| {
+            std::iter::once(&matched.range)
+                .chain(matched.captures.iter().filter_map(Option::as_ref))
+                .flat_map(|range| [range.start, range.end])
+        })
+        .collect();
+    endpoints.sort_unstable();
+    endpoints.dedup();
+
+    let mut byte_offsets = std::collections::HashMap::with_capacity(endpoints.len());
+    let mut endpoint_index = 0usize;
+    let mut utf16 = 0usize;
+    for (byte, ch) in input.char_indices() {
+        while endpoints.get(endpoint_index) == Some(&utf16) {
+            byte_offsets.insert(utf16, byte);
+            endpoint_index += 1;
+        }
+        if endpoints
+            .get(endpoint_index)
+            .is_some_and(|endpoint| *endpoint < utf16)
+        {
+            return Err(Error::internal(
+                "logical RegExp returned a non-boundary UTF-16 offset",
+            ));
+        }
+        utf16 += crate::value::utf16_single_unit_from_internal_char(ch)
+            .map_or_else(|| ch.len_utf16(), |_| 1);
+    }
+    while endpoints.get(endpoint_index) == Some(&utf16) {
+        byte_offsets.insert(utf16, input.len());
+        endpoint_index += 1;
+    }
+    if endpoint_index != endpoints.len() {
+        return Err(Error::internal(
+            "logical RegExp returned an out-of-range UTF-16 offset",
+        ));
+    }
+
+    matches
+        .into_iter()
+        .map(|matched| {
+            let mut groups = Vec::with_capacity(matched.captures.len() + 1);
+            groups.push(Some(logical_utf16_match(
+                input,
+                matched.range,
+                &byte_offsets,
+            )?));
+            groups.extend(
+                matched
+                    .captures
+                    .into_iter()
+                    .map(|range| {
+                        range
+                            .map(|range| logical_utf16_match(input, range, &byte_offsets))
+                            .transpose()
+                    })
+                    .collect::<error::Result<Vec<_>>>()?,
+            );
+            Ok(CompiledCaptures { groups })
+        })
+        .collect()
+}
+
+fn next_logical_utf16_position(units: &[u16], position: usize) -> Option<usize> {
+    let high = *units.get(position)?;
+    if (0xd800..=0xdbff).contains(&high)
+        && units
+            .get(position + 1)
+            .is_some_and(|low| (0xdc00..=0xdfff).contains(low))
+    {
+        Some(position + 2)
+    } else {
+        Some(position + 1)
+    }
+}
+
+fn logical_utf16_captures_iter<'t>(
+    regex: &regress::Regex,
+    input: &'t str,
+) -> error::Result<Vec<CompiledCaptures<'t>>> {
+    logical_utf16_captures_iter_metered(regex, input, || Ok(()))
+}
+
+fn logical_utf16_captures_iter_metered<'t, F>(
+    regex: &regress::Regex,
+    input: &'t str,
+    mut before_push: F,
+) -> error::Result<Vec<CompiledCaptures<'t>>>
+where
+    F: FnMut() -> error::Result<()>,
+{
+    let units = crate::value::utf16_from_str(input);
+    let mut matches = Vec::new();
+    let mut position = 0;
+    let mut work_remaining = logical_utf16_work_limit(units.len());
+    while position <= units.len() {
+        let Some(matched) = regex
+            .find_from_utf16_bounded(&units, position, &mut work_remaining)
+            .map_err(logical_utf16_runtime_error)?
+        else {
+            break;
+        };
+        let start = matched.range.start;
+        let end = matched.range.end;
+        before_push()?;
+        matches.push(matched);
+        if start != end {
+            position = end;
+        } else if let Some(next) = next_logical_utf16_position(&units, end) {
+            position = next;
+        } else {
+            break;
+        }
+    }
+    logical_utf16_captures_many(input, matches)
 }
 
 fn next_regex_iteration_position(input: &str, start: usize, end: usize) -> Option<usize> {
@@ -804,6 +1169,23 @@ mod compiled_regex_tests {
             hir.kind(),
             HirKind::Look(regex_syntax::hir::Look::WordEcmaUnicodeIgnoreCase)
         ));
+    }
+
+    #[test]
+    fn logical_utf16_source_limits_are_escape_aware() {
+        let properties = r"\p{Letter}".repeat(REGEX_LOGICAL_UTF16_PROPERTY_LIMIT + 1);
+        assert!(validate_logical_utf16_source(&properties)
+            .expect_err("too many property operands must be rejected")
+            .contains("too many property operands"));
+
+        let escaped_literals = r"\\p{2}".repeat(REGEX_LOGICAL_UTF16_PROPERTY_LIMIT + 1);
+        validate_logical_utf16_source(&escaped_literals)
+            .expect("escaped property-like literals are not property operands");
+
+        let oversized = "é".repeat(REGEX_LOGICAL_UTF16_SOURCE_LIMIT + 1);
+        assert!(validate_logical_utf16_source(&oversized)
+            .expect_err("oversized non-ASCII sources must be rejected")
+            .contains("too large"));
     }
 
     #[test]

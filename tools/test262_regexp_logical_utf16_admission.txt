@@ -1,0 +1,3 @@
+# Frozen collision-sensitive Unicode RegExp property files.
+built-ins/RegExp/property-escapes/generated/General_Category_-_Private_Use.js
+built-ins/RegExp/property-escapes/generated/General_Category_-_Surrogate.js

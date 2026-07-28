@@ -107,6 +107,20 @@ fn regexp_symbol_split_native_loops_consume_fuel() {
 }
 
 #[test]
+fn regexp_symbol_match_global_collection_consumes_fuel_incrementally() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run("globalThis.longInput = 'a'.repeat(10000); globalThis.global = /./gu;")
+        .expect("RegExp match fuel fixture should initialize");
+    vm.set_fuel(Some(50));
+
+    let error = vm
+        .run("longInput.match(global);")
+        .expect_err("global match collection must consume fuel per result");
+    assert_eq!(error.kind, ruja::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+}
+
+#[test]
 fn regexp_symbol_replace_native_loops_consume_fuel() {
     let mut vm = Vm::new().expect("failed to initialize VM");
     vm.run(

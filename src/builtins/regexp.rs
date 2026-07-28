@@ -224,9 +224,17 @@ fn regexp_initialize(
             vm.to_string(&flags)?.to_string()
         };
 
+        if flags.contains('u') || flags.contains('v') {
+            validate_logical_utf16_source_length(&pattern)
+                .map_err(|e| Error::syntax(format!("Invalid regex: {}", e)))?;
+        }
         crate::lexer::validate_regex_literal(&pattern, &flags).map_err(Error::syntax)?;
         // Validate the pattern eagerly so bad regexes throw at construction time.
-        compile_regex(&pattern, &flags)
+        if flags.contains('u') || flags.contains('v') {
+            validate_logical_utf16_construction_limits(&pattern, &flags)
+                .map_err(|e| Error::syntax(format!("Invalid regex: {}", e)))?;
+        }
+        compile_regex_for_input(&pattern, &flags, "")
             .map_err(|e| Error::syntax(format!("Invalid regex: {}", e)))?;
         let Value::Object(object_idx) = object else {
             unreachable!("RegExpAlloc must return an object");
@@ -339,6 +347,17 @@ pub(crate) fn regexp_symbol_match(
     }
 
     let full_unicode = flags.contains('u') || flags.contains('v');
+    if full_unicode
+        && !flags.contains('y')
+        && has_unmodified_intrinsic_regexp_exec(vm, &rx)
+        && flags == read_regexp_flags(vm, &Some(rx.clone()))?
+    {
+        set_regexp_last_index(vm, &rx, 0.0)?;
+        let result = super::string::regexp_match_internal(vm, rx.clone(), &s)?;
+        set_regexp_last_index(vm, &rx, 0.0)?;
+        return Ok(result);
+    }
+
     set_regexp_last_index(vm, &rx, 0.0)?;
     let mut matches = Vec::new();
 
@@ -360,6 +379,54 @@ pub(crate) fn regexp_symbol_match(
         }
         matches.push(Value::String(Arc::from(matched.as_str())));
     }
+}
+
+fn has_unmodified_intrinsic_regexp_exec(vm: &Vm, rx: &Value) -> bool {
+    let Value::Object(rx_idx) = rx else {
+        return false;
+    };
+    let prototype = vm.heap.with_obj(rx_idx.0, |object| {
+        let HeapObj::Object(data) = object else {
+            return None;
+        };
+        if data.class_name.as_deref() != Some("RegExp")
+            || data.props.lock().contains_key(&PropertyKey::from("exec"))
+        {
+            return None;
+        }
+        data.proto.lock().clone()
+    });
+    let Some(Value::Object(prototype_idx)) = prototype else {
+        return false;
+    };
+    if !vm
+        .realm_regexp_prototypes
+        .values()
+        .any(|value| value == &Value::Object(prototype_idx))
+    {
+        return false;
+    }
+    let exec = vm.heap.with_obj(prototype_idx.0, |prototype| {
+        prototype
+            .props()
+            .lock()
+            .get(&PropertyKey::from("exec"))
+            .and_then(|descriptor| (!descriptor.is_accessor).then(|| descriptor.value.clone()))
+    });
+    let Some(Value::Object(exec_idx)) = exec else {
+        return false;
+    };
+    vm.heap.with_obj(exec_idx.0, |object| {
+        matches!(
+            object,
+            HeapObj::Function(function)
+                if matches!(
+                    &function.kind,
+                    FunctionKind::Native { func, .. }
+                        if std::ptr::fn_addr_eq(*func, regexp_exec as NativeFn)
+                )
+        )
+    })
 }
 
 pub(crate) fn regexp_symbol_match_all(
@@ -1218,6 +1285,7 @@ pub(crate) fn regexp_sticky_get(
 struct RegExpBackendInput<'a> {
     text: std::borrow::Cow<'a, str>,
     byte_to_utf16: Option<Vec<(usize, usize)>>,
+    logical_unicode: bool,
 }
 
 impl RegExpBackendInput<'_> {
@@ -1233,6 +1301,31 @@ impl RegExpBackendInput<'_> {
     }
 
     fn byte_index_for_utf16(&self, offset: usize) -> Option<usize> {
+        if self.logical_unicode {
+            let mut chars = self.as_str().char_indices().peekable();
+            let mut utf16 = 0usize;
+            while let Some((byte, ch)) = chars.next() {
+                if utf16 == offset {
+                    return Some(byte);
+                }
+                let unit = crate::value::utf16_single_unit_from_internal_char(ch);
+                let width = if unit.is_some_and(|unit| (0xd800..=0xdbff).contains(&unit))
+                    && chars.peek().is_some_and(|(_, next)| {
+                        crate::value::utf16_single_unit_from_internal_char(*next)
+                            .is_some_and(|unit| (0xdc00..=0xdfff).contains(&unit))
+                    }) {
+                    chars.next();
+                    2
+                } else {
+                    unit.map_or_else(|| ch.len_utf16(), |_| 1)
+                };
+                if utf16 < offset && offset < utf16 + width {
+                    return Some(byte);
+                }
+                utf16 += width;
+            }
+            return (utf16 == offset).then_some(self.as_str().len());
+        }
         if let Some(boundaries) = &self.byte_to_utf16 {
             return match boundaries.binary_search_by_key(&offset, |(_, utf16)| *utf16) {
                 Ok(index) => Some(boundaries[index].0),
@@ -1283,15 +1376,20 @@ pub(crate) fn regexp_exec(
         .to_string(args.first().unwrap_or(&Value::Undefined))?
         .to_string();
     let flags = read_regexp_flags(vm, &this).unwrap_or_default();
-    let backend_input = regexp_backend_input(vm, &input, &flags)?;
     let re = if flags.contains('u') || flags.contains('v') {
-        compile_regex(&source, &flags)
+        compile_regex_for_input(&source, &flags, &input)
     } else {
         // The non-Unicode matcher runs on a sentinel-backed UTF-16 view so
         // lastIndex may address either half of a supplementary code point.
         compile_regex_for_code_units(&source, &flags)
     }
     .map_err(|e| Error::syntax(format!("Invalid regex: {}", e)))?;
+    let backend_input = regexp_backend_input(
+        vm,
+        &input,
+        &flags,
+        matches!(re, CompiledRegex::LogicalUtf16(_)),
+    )?;
     let capture_names = regex_capture_names(&source, &flags).map_err(Error::syntax)?;
     let global = flags.contains('g');
     let sticky = flags.contains('y');
@@ -1610,8 +1708,30 @@ fn regexp_backend_input<'a>(
     vm: &mut Vm,
     input: &'a str,
     flags: &str,
+    preserve_logical_utf16: bool,
 ) -> error::Result<RegExpBackendInput<'a>> {
     if flags.contains('u') || flags.contains('v') {
+        if preserve_logical_utf16 {
+            let mut chars = input.char_indices().peekable();
+            while let Some((_, ch)) = chars.next() {
+                vm.consume_fuel()?;
+                let unit = crate::value::utf16_single_unit_from_internal_char(ch);
+                if unit.is_some_and(|unit| (0xd800..=0xdbff).contains(&unit))
+                    && chars.peek().is_some_and(|(_, next)| {
+                        crate::value::utf16_single_unit_from_internal_char(*next)
+                            .is_some_and(|unit| (0xdc00..=0xdfff).contains(&unit))
+                    })
+                {
+                    chars.next();
+                }
+            }
+            return Ok(RegExpBackendInput {
+                text: std::borrow::Cow::Borrowed(input),
+                byte_to_utf16: None,
+                logical_unicode: true,
+            });
+        }
+
         let mut previous_high_surrogate = false;
         let has_split_surrogate_pair = input.chars().any(|ch| {
             let unit = crate::value::utf16_single_unit_from_internal_char(ch);
@@ -1624,6 +1744,7 @@ fn regexp_backend_input<'a>(
             return Ok(RegExpBackendInput {
                 text: std::borrow::Cow::Borrowed(input),
                 byte_to_utf16: None,
+                logical_unicode: false,
             });
         }
 
@@ -1652,6 +1773,7 @@ fn regexp_backend_input<'a>(
         return Ok(RegExpBackendInput {
             text: std::borrow::Cow::Owned(backend),
             byte_to_utf16: Some(boundaries),
+            logical_unicode: false,
         });
     }
 
@@ -1664,6 +1786,7 @@ fn regexp_backend_input<'a>(
         return Ok(RegExpBackendInput {
             text: std::borrow::Cow::Borrowed(input),
             byte_to_utf16: None,
+            logical_unicode: false,
         });
     }
 
@@ -1675,6 +1798,7 @@ fn regexp_backend_input<'a>(
     Ok(RegExpBackendInput {
         text: std::borrow::Cow::Owned(backend),
         byte_to_utf16: None,
+        logical_unicode: false,
     })
 }
 

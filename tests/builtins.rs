@@ -19309,6 +19309,27 @@ fn regexp_create_uses_raw_pattern_and_the_immutable_intrinsic() {
 }
 
 #[test]
+fn regexp_symbol_match_global_generic_exec_getter_runs_after_last_index_reset() {
+    assert_eq!(
+        run(r#"
+            var marker = {};
+            var receiver = { flags: "g", global: true, lastIndex: 7 };
+            Object.defineProperty(receiver, "exec", {
+              get: function () { throw marker; }
+            });
+            var caught;
+            try {
+              RegExp.prototype[Symbol.match].call(receiver, "");
+            } catch (error) {
+              caught = error;
+            }
+            caught === marker && receiver.lastIndex === 0;
+        "#),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn regex_exec_captures() {
     let r = run("/(\\w+)@(\\w+)/.exec('user@host');");
     assert!(matches!(r, Value::Object(_)));
@@ -20560,6 +20581,115 @@ fn regexp_unicode_surrogate_pair_escapes_match_scalar() {
 }
 
 #[test]
+fn regexp_unicode_distinguishes_lone_surrogates_from_private_use_scalars() {
+    assert_eq!(
+        run(r#"
+            var lowScalar = String.fromCodePoint(0xF0000);
+            var highScalar = String.fromCodePoint(0xF07FF);
+            var lowLone = String.fromCharCode(0xD800);
+            var highLone = String.fromCharCode(0xDFFF);
+            var collisionMatrix = [0xD800, 0xDBFF, 0xDC00, 0xDFFF].every(
+              function(surrogate, index) {
+                var scalar = String.fromCodePoint(
+                  [0xF0000, 0xF03FF, 0xF0400, 0xF07FF][index]
+                );
+                var lone = String.fromCharCode(surrogate);
+                return new RegExp(lone, "u").test(lone) &&
+                  !new RegExp(lone, "u").test(scalar) &&
+                  new RegExp(scalar, "u").test(scalar) &&
+                  !new RegExp(scalar, "u").test(lone);
+              }
+            );
+            [
+              collisionMatrix,
+              /^\uD800$/u.test(lowLone),
+              /^\uD800$/u.test(lowScalar),
+              new RegExp(lowScalar, "u").test(lowScalar),
+              new RegExp(lowScalar, "u").test(lowLone),
+              /^\uDFFF$/u.test(highLone),
+              /^\uDFFF$/u.test(highScalar),
+              new RegExp(highScalar, "u").test(highScalar),
+              new RegExp(highScalar, "u").test(highLone),
+              new RegExp(lowScalar, "v").test(lowScalar),
+              /^\uD800$/v.test(lowLone),
+              /^\uD800$/v.test(lowScalar),
+              /^\p{General_Category=Surrogate}$/v.test(lowLone),
+              /^\uD800[\W&&\p{Letter}]$/iv.test(lowLone + "\u017F"),
+              /^\uD800[\w&&\p{Letter}]$/iv.test(lowLone + "\u017F"),
+              /^\p{General_Category=Surrogate}$/u.test(lowLone),
+              /^\p{General_Category=Surrogate}$/u.test(lowScalar),
+              /^\p{General_Category=Private_Use}$/u.test(lowScalar),
+              /^\p{General_Category=Private_Use}$/u.test(lowLone),
+              /^\P{General_Category=Surrogate}$/u.test(lowScalar),
+              /^\P{General_Category=Private_Use}$/u.test(lowLone)
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "true|true|false|true|false|true|false|true|false|true|true|false|true|false|true|true|false|true|false|true|true"
+        ))
+    );
+}
+
+#[test]
+fn regexp_unicode_logical_utf16_preserves_captures_iteration_and_indices() {
+    assert_eq!(
+        run(r#"
+            var lone = String.fromCharCode(0xD800);
+            var scalar = String.fromCodePoint(0xF0000);
+            var capture = /^(\uD800)(.)\1$/du.exec(lone + scalar + lone);
+            var global = Array.from((lone + scalar).matchAll(/./dgu), function(match) {
+              return match[0].length + ":" + match.indices[0].join("-");
+            }).join(",");
+            var sticky = /./duy;
+            sticky.lastIndex = 1;
+            var stickyMatch = sticky.exec(scalar);
+            [
+              capture[0] === lone + scalar + lone,
+              capture[1] === lone,
+              capture[2] === scalar,
+              !/(.)\1/u.test(lone + scalar),
+              !/^(\uD800)\1.$/u.test(lone + String.fromCodePoint(0x10000)),
+              /(?:(?<q>a)|(?<q>b))\k<q>/u.exec(lone + "bb")[0] === "bb",
+              !/(?:(?<q>a)|(?<q>b))\k<q>/u.test(lone + "bc"),
+              capture.indices[1].join("-"),
+              capture.indices[2].join("-"),
+              global,
+              stickyMatch.index,
+              stickyMatch[0] === scalar,
+              sticky.lastIndex,
+              lone.search(/\uD800/u),
+              lone.replace(/\uD800/u, "x"),
+              /\uD800$/u.test(lone + "\n"),
+              /\uD800$/u.test(lone + "\r\n")
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "true|true|true|true|true|true|true|0-1|1-3|1:0-1,2:1-3|0|true|2|0|x|false|false"
+        ))
+    );
+}
+
+#[test]
+fn regexp_unicode_logical_utf16_scales_flat_alternation_and_global_offsets() {
+    assert_eq!(
+        run(r#"
+            var lone = String.fromCharCode(0xD800);
+            var source = "^(?:" + "a|".repeat(4096) + "a)$";
+            var matches = (lone + "a".repeat(20000)).match(/./gu);
+            var emptyMatches = (lone + String.fromCodePoint(0xF0000)).match(/(?:)/gu);
+            [
+              !new RegExp(source, "u").test(lone),
+              matches.length,
+              matches[0] === lone,
+              matches[20000],
+              emptyMatches.length
+            ].join("|");
+        "#),
+        Value::String(Arc::from("true|20001|true|a|3"))
+    );
+}
+
+#[test]
 fn regexp_non_unicode_surrogate_escapes_match_code_units() {
     assert_eq!(run("/\\udf06/.test('\\udf06');"), Value::Bool(true));
     assert_eq!(run("/\\udf06/i.test('\\udf06');"), Value::Bool(true));
@@ -20774,6 +20904,20 @@ fn regexp_symbol_replace_uses_generic_exec_results_and_utf16_positions() {
                r[Symbol.replace]("a", "x");"#
     )
     .contains("flags-order"));
+}
+
+#[test]
+fn unicode_regexp_resource_limits_are_validated_at_construction() {
+    assert!(run_err(r#"new RegExp("\\p{Letter}".repeat(65), "u");"#)
+        .contains("too many property operands"));
+    assert_eq!(
+        run(r#"new RegExp("\\\\p{2}".repeat(65), "u") instanceof RegExp;"#),
+        Value::Bool(true)
+    );
+    assert!(
+        run_err(r#"new RegExp("(?:" + "(?<q>a)|".repeat(64) + "(?<q>a))", "u");"#)
+            .contains("Too many capture groups share one name")
+    );
 }
 
 #[test]

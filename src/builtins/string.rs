@@ -354,8 +354,9 @@ fn regexp_search_internal(vm: &mut Vm, regexp: Value, s: &str) -> error::Result<
     let regexp = Some(regexp);
     let source = read_regexp_source(vm, &regexp)?;
     let flags = read_regexp_flags(vm, &regexp).unwrap_or_default();
-    let re = compile_regex(&source, &flags)
+    let re = compile_regex_for_input(&source, &flags, s)
         .map_err(|e| Error::syntax(format!("Invalid regex: {}", e)))?;
+    meter_logical_regex_input(vm, &re, s)?;
     let matched = if flags.contains('y') {
         re.find_at(s, 0)?.filter(|m| m.start() == 0)
     } else {
@@ -589,8 +590,9 @@ pub(crate) fn str_replace(
             let source = read_regexp_source(vm, &regexp)?;
             let flags_str = read_regexp_flags(vm, &regexp).unwrap_or_default();
             let global = flags_str.contains('g');
-            let re = compile_regex(&source, &flags_str)
+            let re = compile_regex_for_input(&source, &flags_str, &s)
                 .map_err(|e| Error::syntax(format!("Invalid regex: {}", e)))?;
+            meter_logical_regex_input(vm, &re, &s)?;
             let capture_names = regex_capture_names(&source, &flags_str).map_err(Error::syntax)?;
             if is_fn {
                 let mut result = String::new();
@@ -1007,20 +1009,21 @@ pub(crate) fn str_match_all(
     )
 }
 
-fn regexp_match_internal(vm: &mut Vm, regexp: Value, s: &str) -> error::Result<Value> {
+pub(super) fn regexp_match_internal(vm: &mut Vm, regexp: Value, s: &str) -> error::Result<Value> {
     let regexp = Some(regexp);
     let source = read_regexp_source(vm, &regexp)?;
     let flags_str = read_regexp_flags(vm, &regexp).unwrap_or_default();
-    let re = compile_regex(&source, &flags_str)
+    let re = compile_regex_for_input(&source, &flags_str, s)
         .map_err(|e| Error::syntax(format!("Invalid regex: {}", e)))?;
+    meter_logical_regex_input(vm, &re, s)?;
     let capture_names = regex_capture_names(&source, &flags_str).map_err(Error::syntax)?;
     let global = flags_str.contains('g');
     if global {
-        let items: Vec<Value> = re
-            .find_iter(s)?
+        let matches = re.find_iter_metered(s, || vm.consume_fuel())?;
+        let items = matches
             .into_iter()
-            .map(|m| Value::String(Arc::from(m.as_str())))
-            .collect();
+            .map(|matched| Value::String(Arc::from(matched.as_str())))
+            .collect::<Vec<_>>();
         if items.is_empty() {
             Ok(Value::Null)
         } else {

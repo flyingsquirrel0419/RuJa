@@ -91,6 +91,10 @@ from test262_regexp_uv_flags_admission import (
     REGEXP_UV_FLAGS_FEATURES,
     REGEXP_UV_FLAGS_FILES,
 )
+from test262_regexp_logical_utf16_admission import (
+    REGEXP_LOGICAL_UTF16_FEATURES,
+    REGEXP_LOGICAL_UTF16_FILES,
+)
 from test262_proxy_get_admission import PROXY_GET_FEATURES, PROXY_GET_FILES
 from test262_proxy_has_admission import PROXY_HAS_FEATURES, PROXY_HAS_FILES
 from test262_proxy_delete_admission import (
@@ -5657,6 +5661,59 @@ class RegExpUvFlagsAdmissionTests(unittest.TestCase):
                         self.assertTrue(
                             tool.should_skip(
                                 {"features": ["regexp-v-flag"]},
+                                path,
+                            )
+                        )
+                finally:
+                    tool.TEST262 = original_root
+
+
+class RegExpLogicalUtf16AdmissionTests(unittest.TestCase):
+    def test_manifest_is_exact_live_and_shared(self):
+        self.assertEqual(len(REGEXP_LOGICAL_UTF16_FILES), 2)
+        self.assertEqual(
+            frozenset(REGEXP_LOGICAL_UTF16_FEATURES),
+            REGEXP_LOGICAL_UTF16_FILES,
+        )
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        if test_root.is_dir():
+            for relative in REGEXP_LOGICAL_UTF16_FILES:
+                path = test_root / relative
+                self.assertTrue(path.is_file(), relative)
+                metadata = test262_runner.parse_meta(path.read_text())
+                self.assertEqual(
+                    REGEXP_LOGICAL_UTF16_FEATURES[relative],
+                    set(metadata.get("features", [])),
+                    relative,
+                )
+                for tool in (test262_runner, test262_analyze):
+                    self.assertFalse(tool.should_skip(metadata, path), relative)
+                    self.assertEqual(tool.test_timeout_seconds(path), 30)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            future = root / "test/built-ins/RegExp/property-escapes/generated/future.js"
+            outside = root / "test/built-ins/RegExp/property-escapes/Surrogate.js"
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for relative, admitted in REGEXP_LOGICAL_UTF16_FEATURES.items():
+                        path = root / "test" / relative
+                        self.assertEqual(
+                            tool.regexp_logical_utf16_features(path), admitted
+                        )
+                        self.assertFalse(
+                            tool.should_skip({"features": list(admitted)}, path)
+                        )
+                    for path in (future, outside):
+                        self.assertEqual(
+                            tool.regexp_logical_utf16_features(path), frozenset()
+                        )
+                        self.assertTrue(
+                            tool.should_skip(
+                                {"features": ["regexp-unicode-property-escapes"]},
                                 path,
                             )
                         )

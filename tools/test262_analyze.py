@@ -70,6 +70,10 @@ try:
         REGEXP_UV_FLAGS_FEATURES,
         REGEXP_UV_FLAGS_FILES,
     )
+    from test262_regexp_logical_utf16_admission import (
+        REGEXP_LOGICAL_UTF16_FEATURES,
+        REGEXP_LOGICAL_UTF16_FILES,
+    )
     from test262_proxy_get_admission import PROXY_GET_FEATURES, PROXY_GET_FILES
     from test262_proxy_has_admission import PROXY_HAS_FEATURES, PROXY_HAS_FILES
     from test262_proxy_delete_admission import (
@@ -241,6 +245,10 @@ except ModuleNotFoundError:
     from tools.test262_regexp_uv_flags_admission import (
         REGEXP_UV_FLAGS_FEATURES,
         REGEXP_UV_FLAGS_FILES,
+    )
+    from tools.test262_regexp_logical_utf16_admission import (
+        REGEXP_LOGICAL_UTF16_FEATURES,
+        REGEXP_LOGICAL_UTF16_FILES,
     )
     from tools.test262_proxy_get_admission import PROXY_GET_FEATURES, PROXY_GET_FILES
     from tools.test262_proxy_has_admission import PROXY_HAS_FEATURES, PROXY_HAS_FILES
@@ -1823,6 +1831,8 @@ def regexp_character_class_escape_exhaustive_timeout_path(path):
 def test_timeout_seconds(path):
     if typed_array_copy_within_extended_timeout_path(path):
         return 600
+    if regexp_logical_utf16_features(path):
+        return 30
     if regexp_character_class_escape_exhaustive_timeout_path(path):
         return 60
     if regexp_literal_extended_timeout_path(path):
@@ -3088,6 +3098,13 @@ def regexp_uv_flags_features(path):
         return frozenset()
     return REGEXP_UV_FLAGS_FEATURES.get(rel.as_posix(), frozenset())
 
+def regexp_logical_utf16_features(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except (OSError, ValueError):
+        return frozenset()
+    return REGEXP_LOGICAL_UTF16_FEATURES.get(rel.as_posix(), frozenset())
+
 def generator_function_path(path):
     try:
         rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
@@ -3282,6 +3299,7 @@ def should_skip(meta, path=None):
         feats.difference_update(regexp_duplicate_named_groups_features(path))
         feats.difference_update(regexp_unicode_sets_features(path))
         feats.difference_update(regexp_uv_flags_features(path))
+        feats.difference_update(regexp_logical_utf16_features(path))
     if path is not None and generator_function_path(path):
         feats.difference_update(generator_function_features(path))
     if path is not None and async_generator_realm_path(path):

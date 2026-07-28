@@ -504,6 +504,13 @@ name = "regex-syntax"
 version = "0.8.11"
 
 [[package]]
+name = "regress"
+version = "0.11.1"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
 name = "ruja"
 version = "0.4.0-alpha"
 dependencies = [
@@ -517,6 +524,7 @@ dependencies = [
  "parking_lot",
  "regex",
  "regex-syntax",
+ "regress",
  "serde_json",
  "unicode-ident",
  "unicode-normalization",
