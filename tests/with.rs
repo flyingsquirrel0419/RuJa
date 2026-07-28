@@ -352,6 +352,39 @@ fn with_unscopables_hides_object_binding() {
 }
 
 #[test]
+fn with_honors_intrinsic_array_unscopables() {
+    let src = r#"
+        let at = "at", copyWithin = "copyWithin", entries = "entries";
+        let fill = "fill", find = "find", findIndex = "findIndex";
+        let findLast = "findLast", findLastIndex = "findLastIndex";
+        let flat = "flat", flatMap = "flatMap", includes = "includes";
+        let keys = "keys", toReversed = "toReversed", toSorted = "toSorted";
+        let toSpliced = "toSpliced", values = "values";
+        let result;
+        with ([]) {
+            result = [
+              at, copyWithin, entries, fill, find, findIndex, findLast,
+              findLastIndex, flat, flatMap, includes, keys, toReversed,
+              toSorted, toSpliced, values
+            ].join(",");
+        }
+        let foreignArray = $262.createRealm().global.Array.of(1);
+        let foreign;
+        with (foreignArray) { foreign = at; }
+        Array.prototype[Symbol.unscopables].values = false;
+        let live;
+        with ([]) { live = values; }
+        result + ":" + foreign + ":" + (live === Array.prototype.values);
+    "#;
+    assert_eq!(
+        run(src),
+        Value::String(Arc::from(
+            "at,copyWithin,entries,fill,find,findIndex,findLast,findLastIndex,flat,flatMap,includes,keys,toReversed,toSorted,toSpliced,values:at:true"
+        ))
+    );
+}
+
+#[test]
 fn with_unscopables_assignment_uses_outer_binding() {
     let src = r#"
         let x = 1;

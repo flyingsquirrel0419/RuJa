@@ -4,6 +4,20 @@
 
 ### Changed
 
+- Every Realm's `%Array.prototype%[Symbol.unscopables]` now holds its own
+  null-prototype object with the exact 16 standard Array method names. Its
+  entries are writable, enumerable, and configurable `true` data properties;
+  the symbol property itself is non-writable, non-enumerable, and configurable.
+  `with` is absent because it is a reserved word, while `with` statements now
+  hide the listed intrinsic Array names through the existing
+  object-environment path. Temporary-root and property-storage reservation
+  failures restore all pins and leave Realm registries unpublished. The pinned
+  Test262 directory moves from **0/4** to **4/4** without changing runner
+  admission policy. Local verification passes **305/305** library,
+  **558/558** builtins, **62/62** `with`, and **138/138** tooling tests plus
+  all-target/all-feature tests, release build, rustfmt, warnings-denied Clippy,
+  and wasm32 checking.
+
 - RegExp `v` now supports string-valued Unicode properties and `\q{...}`
   disjunctions, including empty strings, single-character crossover with
   ordinary classes, `/iv` folding before set algebra, grammar-accurate

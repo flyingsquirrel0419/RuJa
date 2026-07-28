@@ -1571,6 +1571,31 @@ are similarly fuel-bounded before any irreversible mutation.
 - 장점, 단점 및 영향: Array.prototype now has the same length/index invariants as every Array, generic receivers and species are observable in specification order, sparse construction no longer needs a giant vector, and exact fuel, GC retry, Realm rollback, and abrupt cleanup are regression-tested. The representation migration adds property-path complexity, With retains a deliberate 1,048,576-element sandbox cap, and at this decision boundary older methods such as reverse, fill, and several callback methods still needed their own generic and rooting audits; the later fill pipeline section records that follow-up's completion.
 ```
 
+### Array `@@unscopables` intrinsic
+
+Each Realm creates a distinct null-prototype `@@unscopables` object while
+installing its Array intrinsic. The object contains the specification's 16
+names in creation order, with mutable enumerable data properties whose values
+are `true`. `%Array.prototype%` owns the list through a non-writable,
+non-enumerable, configurable symbol property. `with` is absent because it is a
+reserved word and cannot be an unqualified identifier in a `with` statement.
+
+The Array constructor, prototype, and fresh list stay pinned while the
+collecting allocator and fallible property publication run. Publishing through ordinary
+`[[DefineOwnProperty]]` keeps heap reservation failures transactional instead
+of bypassing the VM's fallible property-storage path. Once attached, normal GC
+tracing through the Realm-rooted Array prototype owns the list.
+
+```text
+[Decision Log]
+- 목적과 의도: Complete the observable Array intrinsic shape and make legacy with resolution honor the standard Array exclusion list in every Realm.
+- 기존 구현 및 제약 조건: Symbol.unscopables and object-environment HasBinding were implemented, but Array intrinsic installation never created its required null-prototype list; Realm construction and property growth can trigger GC or host allocation failure.
+- 검토한 주요 대안: Add a shared process-wide list, synthesize values inside with resolution, install only names currently implemented by RuJa, insert raw heap properties, or construct the exact Realm-owned intrinsic object through fallible property operations.
+- 선택한 방식: Reserve three temporary roots, allocate one null-prototype object per Realm, define the exact 16 true-valued entries in specification order, omit with, publish the standard symbol descriptor on that Realm's Array prototype, and release all pins through one setup-result boundary before Realm publication.
+- 다른 대안 대신 이 방식을 선택한 이유: The object and its mutability are JavaScript-observable; a shared or synthesized list breaks Realm identity and mutation isolation, implementation-dependent names diverge from ECMA-262, and raw insertion bypasses allocation-failure handling.
+- 장점, 단점 및 영향: Main and created Realms expose exact independent lists, existing with bindings consume them without a new special case, and failed setup remains within the Realm transaction without leaking temporary pins. Intrinsic setup performs one additional heap allocation plus 17 fallible property publications per Realm.
+```
+
 ### Generic Array concat pipeline
 
 `Array.prototype.concat` now treats its boxed receiver and each argument as an

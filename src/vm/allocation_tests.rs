@@ -18276,6 +18276,73 @@ fn failed_realm_construction_rolls_back_every_heap_boundary() {
 }
 
 #[test]
+fn array_intrinsic_setup_reservation_failures_restore_pins_and_skip_publication() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    let existing_array_realms: Vec<_> = vm.realm_array_constructors.keys().copied().collect();
+    vm.run("$262.createRealm();")
+        .expect("created Realm should initialize");
+    let realm = vm
+        .realm_array_constructors
+        .keys()
+        .copied()
+        .find(|realm| !existing_array_realms.contains(realm))
+        .expect("created Realm should publish its Array intrinsic");
+    vm.gc();
+
+    let baseline_live = vm.heap.live_count();
+    let baseline_pins = vm.gc_pins.len();
+    let baseline_registries = realm_registry_counts(&vm);
+    let baseline_constructor = vm.realm_array_constructors.get(&realm).cloned();
+    let baseline_prototype = vm.realm_array_prototypes.get(&realm).cloned();
+    let baseline_values = vm.realm_array_values_functions.get(&realm).cloned();
+
+    vm.fail_next_gc_pin_reservation = true;
+    let error = crate::builtins::reinstall_array_intrinsic_for_test(&mut vm, GcIdx(realm))
+        .expect_err("Array temporary-root reservation should fail");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert!(!vm.fail_next_gc_pin_reservation);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(realm_registry_counts(&vm), baseline_registries);
+    assert_eq!(
+        vm.realm_array_constructors.get(&realm),
+        baseline_constructor.as_ref()
+    );
+    assert_eq!(
+        vm.realm_array_prototypes.get(&realm),
+        baseline_prototype.as_ref()
+    );
+    assert_eq!(
+        vm.realm_array_values_functions.get(&realm),
+        baseline_values.as_ref()
+    );
+    vm.gc();
+    assert_eq!(vm.heap.live_count(), baseline_live);
+
+    vm.fail_ordinary_property_storage_reservation =
+        Some((OrdinaryPropertyStorageReservationSite::PropertyStorage, 0));
+    let error = crate::builtins::reinstall_array_intrinsic_for_test(&mut vm, GcIdx(realm))
+        .expect_err("Array unscopables property reservation should fail");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fail_ordinary_property_storage_reservation, None);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(realm_registry_counts(&vm), baseline_registries);
+    assert_eq!(
+        vm.realm_array_constructors.get(&realm),
+        baseline_constructor.as_ref()
+    );
+    assert_eq!(
+        vm.realm_array_prototypes.get(&realm),
+        baseline_prototype.as_ref()
+    );
+    assert_eq!(
+        vm.realm_array_values_functions.get(&realm),
+        baseline_values.as_ref()
+    );
+    vm.gc();
+    assert_eq!(vm.heap.live_count(), baseline_live);
+}
+
+#[test]
 fn realm_environment_survives_collection_before_intrinsic_publication() {
     let mut vm = Vm::new().expect("VM should initialize");
     vm.gc();

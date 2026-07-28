@@ -11744,6 +11744,30 @@ baseline `30346121824`, 31 of 32 result artifacts are byte-identical. Only
 37157 run**. The path-independent hash of the sorted 32 artifact content
 hashes is `ffbe2ebc3d7d3c5702fb59dfc16b9f744e4573caca94838f87ac04d5b5b9f039`.
 
+## Array `@@unscopables` intrinsic
+
+Every Realm now installs the exact Array `@@unscopables` object required by
+ECMA-262. The object has a null prototype and 16 writable, enumerable,
+configurable properties set to `true`; the Array prototype's symbol descriptor
+is non-writable, non-enumerable, and configurable. `with` is absent because it
+is a reserved word. Main and created Realms receive independent objects, and
+the existing object-environment `HasBinding` path consumes the list without
+special-casing Array receivers.
+
+On pinned Test262 `020cb74075849d1e404bbcdb62feb7a02e6966db`, the complete
+`built-ins/Array/prototype/Symbol.unscopables` directory moves from **0 pass /
+4 fail** on release `b6964a1` to **4 pass / 0 fail** with unchanged runner
+policy. Direct Rust coverage additionally fixes exact key order and descriptor
+shape, foreign-Realm identity and mutation isolation, intrinsic-root GC
+survival, live legacy `with` lookup for all 16 names, and exact cleanup after
+temporary-root or property-storage reservation failure.
+
+Local verification passes **305/305** library, **558/558** builtins,
+**62/62** `with`, and **138/138** Python tooling tests, plus all-target and
+all-feature tests, release build, rustfmt, warnings-denied Clippy, and wasm32
+checking. Two GPT-5.6 reviews are clean after the final failpoint and
+intrinsic-root coverage additions.
+
 ## RegExp `u`/`v` flag mutual exclusion
 
 Pinned Test262 `020cb74075849d1e404bbcdb62feb7a02e6966db` has two files for

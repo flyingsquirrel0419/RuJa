@@ -4534,64 +4534,112 @@ fn install_array_intrinsic_in_env(
     )?;
     let constructor_value = Value::Object(constructor);
     let prototype_value = Value::Object(prototype);
-    let mut pin_count = vm.pin(&constructor_value);
-    pin_count += vm.pin(&prototype_value);
+    vm.try_reserve_gc_pins(3)?;
+    let mut pin_count = vm.pin_many(&[constructor_value.clone(), prototype_value.clone()]);
 
-    let function_prototype = vm
-        .realm_function_prototypes
-        .get(&env.0)
-        .cloned()
-        .unwrap_or_else(|| vm.function_proto.clone());
-    set_function_object_proto(vm, constructor, &function_prototype);
-    let object_prototype = vm
-        .realm_object_prototypes
-        .get(&env.0)
-        .cloned()
-        .unwrap_or_else(|| vm.object_proto.clone());
-    vm.heap.with_obj(prototype.0, |object| {
-        *object.proto().lock() = Some(object_prototype);
-        let mut length = PropertyDescriptor::data(Value::Number(0.0));
-        length.enumerable = false;
-        length.configurable = false;
-        object
-            .props()
-            .lock()
-            .insert(PropertyKey::from("length"), length);
-    });
-
-    let values = vm.get_property(&prototype_value, "values")?;
-    vm.realm_array_values_functions
-        .insert(env.0, values.clone());
-    vm.heap.with_obj(prototype.0, |object| {
-        object.props().lock().insert(
-            PropertyKey::symbol(vm.well_known_symbols.iterator),
-            data_prop(values),
-        );
-    });
-
-    for (name, function, length) in [
-        ("isArray", array_is_array as NativeFn, 1),
-        ("from", array_from as NativeFn, 1),
-        ("fromAsync", array_from_async as NativeFn, 1),
-        ("of", array_of as NativeFn, 0),
-    ] {
-        let method = vm.new_native_function_in_env(name, function, length, env)?;
-        vm.heap.with_obj(constructor.0, |object| {
+    let setup = (|| -> error::Result<Value> {
+        let function_prototype = vm
+            .realm_function_prototypes
+            .get(&env.0)
+            .cloned()
+            .unwrap_or_else(|| vm.function_proto.clone());
+        set_function_object_proto(vm, constructor, &function_prototype);
+        let object_prototype = vm
+            .realm_object_prototypes
+            .get(&env.0)
+            .cloned()
+            .unwrap_or_else(|| vm.object_proto.clone());
+        vm.heap.with_obj(prototype.0, |object| {
+            *object.proto().lock() = Some(object_prototype);
+            let mut length = PropertyDescriptor::data(Value::Number(0.0));
+            length.enumerable = false;
+            length.configurable = false;
             object
                 .props()
                 .lock()
-                .insert(PropertyKey::from(name), data_prop(Value::Object(method)));
+                .insert(PropertyKey::from("length"), length);
         });
-    }
-    let species =
-        vm.new_native_function_in_env("get [Symbol.species]", promise_species_get, 0, env)?;
-    vm.heap.with_obj(constructor.0, |object| {
-        object.props().lock().insert(
-            PropertyKey::symbol(vm.well_known_symbols.species),
-            accessor_get_prop(Value::Object(species)),
-        );
-    });
 
+        let unscopables = Value::Object(vm.alloc(HeapObj::Object(ObjectData {
+            props: Mutex::new(IndexMap::new()),
+            proto: Mutex::new(None),
+            extensible: AtomicBool::new(true),
+            class_name: None,
+            private_fields: Mutex::new(std::collections::HashMap::new()),
+            primitive: Mutex::new(None),
+        }))?);
+        pin_count += vm.pin(&unscopables);
+        // `with` is absent because it is a reserved word and cannot be an
+        // unqualified identifier inside a with statement.
+        for name in [
+            "at",
+            "copyWithin",
+            "entries",
+            "fill",
+            "find",
+            "findIndex",
+            "findLast",
+            "findLastIndex",
+            "flat",
+            "flatMap",
+            "includes",
+            "keys",
+            "toReversed",
+            "toSorted",
+            "toSpliced",
+            "values",
+        ] {
+            vm.define_own_property_or_throw(
+                &unscopables,
+                PropertyKey::from(name),
+                PropertyDescriptor::data(Value::Bool(true)),
+            )?;
+        }
+        let mut descriptor = data_prop(unscopables.clone());
+        descriptor.writable = false;
+        vm.define_own_property_or_throw(
+            &prototype_value,
+            PropertyKey::symbol(vm.well_known_symbols.unscopables),
+            descriptor,
+        )?;
+
+        let values = vm.get_property(&prototype_value, "values")?;
+        vm.heap.with_obj(prototype.0, |object| {
+            object.props().lock().insert(
+                PropertyKey::symbol(vm.well_known_symbols.iterator),
+                data_prop(values.clone()),
+            );
+        });
+
+        for (name, function, length) in [
+            ("isArray", array_is_array as NativeFn, 1),
+            ("from", array_from as NativeFn, 1),
+            ("fromAsync", array_from_async as NativeFn, 1),
+            ("of", array_of as NativeFn, 0),
+        ] {
+            let method = vm.new_native_function_in_env(name, function, length, env)?;
+            vm.heap.with_obj(constructor.0, |object| {
+                object
+                    .props()
+                    .lock()
+                    .insert(PropertyKey::from(name), data_prop(Value::Object(method)));
+            });
+        }
+        let species =
+            vm.new_native_function_in_env("get [Symbol.species]", promise_species_get, 0, env)?;
+        vm.heap.with_obj(constructor.0, |object| {
+            object.props().lock().insert(
+                PropertyKey::symbol(vm.well_known_symbols.species),
+                accessor_get_prop(Value::Object(species)),
+            );
+        });
+
+        Ok(values)
+    })();
+    vm.unpin_many(pin_count);
+    let values = setup?;
+
+    vm.realm_array_values_functions.insert(env.0, values);
     vm.realm_array_constructors
         .insert(env.0, constructor_value.clone());
     vm.realm_array_prototypes
@@ -4601,8 +4649,12 @@ fn install_array_intrinsic_in_env(
     } else if let Some(global) = realm_global {
         define_realm_global(vm, env, global, "Array", constructor_value);
     }
-    vm.unpin_many(pin_count);
     Ok((constructor, prototype))
+}
+
+#[cfg(test)]
+pub(crate) fn reinstall_array_intrinsic_for_test(vm: &mut Vm, env: GcIdx) -> error::Result<()> {
+    install_array_intrinsic_in_env(vm, env, None).map(|_| ())
 }
 
 fn install_promise_intrinsic_in_env(

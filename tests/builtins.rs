@@ -51,6 +51,58 @@ fn array_prototype_has_the_intrinsic_length_property() {
 }
 
 #[test]
+fn array_unscopables_are_exact_realm_local_and_gc_rooted() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        var other = $262.createRealm().global;
+        "#,
+    )
+    .expect("Array unscopables setup should succeed");
+    vm.gc();
+
+    assert_eq!(
+        vm.run(
+            r#"
+            var mainUnscopables = Array.prototype[Symbol.unscopables];
+            var otherUnscopables = other.Array.prototype[Symbol.unscopables];
+            var expected = [
+              "at", "copyWithin", "entries", "fill", "find", "findIndex",
+              "findLast", "findLastIndex", "flat", "flatMap", "includes",
+              "keys", "toReversed", "toSorted", "toSpliced", "values"
+            ];
+            var descriptor = Object.getOwnPropertyDescriptor(
+              Array.prototype, Symbol.unscopables
+            );
+            var exact = Reflect.ownKeys(mainUnscopables).join(",") === expected.join(",");
+            var propertyShape = expected.every(function(name) {
+              var own = Object.getOwnPropertyDescriptor(mainUnscopables, name);
+              return own.value === true && own.writable === true &&
+                own.enumerable === true && own.configurable === true;
+            });
+            mainUnscopables.entries = false;
+            [
+              Object.getPrototypeOf(mainUnscopables) === null,
+              Object.isExtensible(mainUnscopables),
+              exact,
+              propertyShape,
+              descriptor.value === mainUnscopables &&
+                descriptor.writable === false && descriptor.enumerable === false &&
+                descriptor.configurable === true,
+              !Object.hasOwn(mainUnscopables, "with"),
+              mainUnscopables !== otherUnscopables,
+              Object.getPrototypeOf(otherUnscopables) === null,
+              Reflect.ownKeys(otherUnscopables).join(",") === expected.join(","),
+              otherUnscopables.entries === true
+            ].every(Boolean);
+            "#,
+        )
+        .expect("Array unscopables should survive collection"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn array_slice_and_with_copy_inherited_values_through_holes() {
     assert_eq!(
         run(r#"

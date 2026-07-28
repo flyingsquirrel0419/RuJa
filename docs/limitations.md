@@ -89,6 +89,10 @@ The following resource limits are enforced:
   passes when forced through broad feature gates, but remains skipped by normal
   policy and outside exact admission because it spans otherwise independent
   Array method families.
+  Every Realm's Array prototype also owns the standard Realm-local,
+  null-prototype `Symbol.unscopables` list. Its 16 names are hidden from legacy
+  `with` binding lookup; `with` itself is not listed because it is a reserved
+  word and cannot be an unqualified identifier there.
   Infinite-depth flattening permits 512 repeated active-path source visits so
   observable getters can break a cycle, then raises `RangeError`; finite and
   acyclic nesting has no fixed depth cutoff.
