@@ -12086,6 +12086,15 @@ vendored RegExp **38/38**. All targets/features, rustfmt, warnings-denied
 Clippy, release build, wasm32, doctest, and ordinary/forced focused Test262
 **14/14** also pass.
 
+Implementation commit `061976a` passes ordinary CI `30390397502` (**2/2
+jobs**) and full run `30390395072` (**36/36 jobs**). Compared with preceding
+clean run `30383198359`, 31 of 32 result artifacts are byte-identical. Only
+`built-ins` moves from **16446/4293/2926/3/0** to
+**16448/4293/2924/3/0**, exactly **+2 pass / -2 skip**. Aggregate is **32069
+pass / 5104 fail / 11293 skip / 3 timeout / 0 error / 48469 total / 37173
+run**. The sorted content-set hash is
+`58f6ae50b9c38de673d07c3307dc0c138209465c7babab1d0eff86dd80964166`.
+
 ```text
 [Decision Log]
 - 목적과 의도: Admit the complete Map.groupBy directory only after repairing and directly proving the collection-key GroupBy boundaries omitted by its official tests.

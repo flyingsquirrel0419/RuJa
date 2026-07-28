@@ -26,6 +26,14 @@
   optional absent-checkout live probes skipped, and vendored RegExp **38/38**,
   plus all targets/features, rustfmt, warnings-denied Clippy, release build,
   wasm32, doctest, and ordinary/forced focused Test262 **14/14**.
+  Two independent GPT-5.6 final reviews are clean. Implementation commit
+  `061976a` passes ordinary CI `30390397502` (**2/2 jobs**) and full Test262
+  run `30390395072` (**36/36 jobs**). Against preceding run `30383198359`, 31
+  of 32 result artifacts are byte-identical; `built-ins` alone moves **+2 pass
+  / -2 skip** to **16448/4293/2924/3/0**. Aggregate:
+  **32069/5104/11293/3/0** over **48469** total and **37173** run; sorted
+  content-set hash
+  `58f6ae50b9c38de673d07c3307dc0c138209465c7babab1d0eff86dd80964166`.
 
 - `Object.groupBy` now executes the complete property-key `GroupBy` pipeline
   through a direct synchronous iterator record. It performs no `HasProperty`
