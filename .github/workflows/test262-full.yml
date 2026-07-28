@@ -66,6 +66,12 @@ jobs:
           TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
           test262_tooling_test.ModuleCoreAdmissionTests.test_extensibility_manifest_is_exact_live_disjoint_and_shared
           -v
+      - name: Verify exact RegExp Unicode-set admission
+        working-directory: tools
+        run: >-
+          TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
+          test262_tooling_test.RegExpUnicodeSetsAdmissionTests
+          -v
       - name: Build directory matrix
         id: dirs
         run: |
@@ -80,6 +86,37 @@ jobs:
           } | sort -u | jq -R . | jq -s -c .)
           echo "dirs=$dirs" >> "$GITHUB_OUTPUT"
           echo "matrix directories: $dirs"
+
+  regexp-unicode-sets:
+    needs: [build, setup]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download RuJa binary
+        uses: actions/download-artifact@v4
+        with:
+          name: ruja-release
+          path: target/release/
+      - run: chmod +x target/release/ruja
+      - name: Checkout pinned test262 RegExp string sets
+        uses: actions/checkout@v4
+        with:
+          repository: tc39/test262
+          ref: ${{ env.TEST262_REV }}
+          path: test262
+          sparse-checkout: |
+            harness
+            test/built-ins/RegExp/unicodeSets/generated
+            test/built-ins/RegExp/property-escapes/generated/strings
+      - name: Require all 142 RegExp Unicode-set files to pass
+        run: |
+          TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
+            built-ins/RegExp/unicodeSets/generated \
+            built-ins/RegExp/property-escapes/generated/strings \
+            > regexp_unicode_sets_result.txt 2>&1
+          cat regexp_unicode_sets_result.txt
+          grep -q '^RATE=100.0 PASS=142 FAIL=0 SKIP=0 TOTAL=142 RAN=142$' \
+            regexp_unicode_sets_result.txt
 
   test262-full:
     needs: [build, setup]

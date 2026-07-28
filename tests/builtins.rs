@@ -20178,6 +20178,60 @@ fn regexp_v_flag_uses_unicode_pattern_semantics() {
 }
 
 #[test]
+fn regexp_v_string_sets_match_fold_and_bound_resources() {
+    assert_eq!(
+        run(r#"
+            var ordered = /^([\q{|a}])a?$/v.exec("a");
+            var lone = String.fromCharCode(0xD800);
+            var scalar = String.fromCodePoint(0xF0000);
+            [
+              ordered[1] === "a",
+              /^[\q{a|ab|}]b$/v.test("abb"),
+              /^[\q{a|ab|}]b$/v.test("b"),
+              /^[\q{Kx}&&\q{Kx}]$/iv.test("kX"),
+              !/^[\q{Kx}--\q{Kx}]$/iv.test("Kx"),
+              !/^[k--\q{K}]$/iv.test("k"),
+              /(?<=[\q{ab}])c/v.test("abc"),
+              !/(?<=[\q{ab}])c/v.test("bac"),
+              /^[^\q{a}]$/v.test("b"),
+              !/^[^\q{a}]$/v.test("a"),
+              !/^[[^\q{a}]]$/v.test("a"),
+              /^[^\q{ab}&&\q{a}]$/v.test("x"),
+              /^[\q{\b}]$/v.test("\b"),
+              /^[\q{\!}]$/v.test("!"),
+              new RegExp("^[\\!]$", "v").test("!"),
+              /^[a&b]$/v.test("&"),
+              /^\p{Emoji_Keycap_Sequence}$/v.test("9\uFE0F\u20E3"),
+              !/^\p{Emoji_Keycap_Sequence}$/v.test("9"),
+              new RegExp("^[\\q{\\uD800}]$", "v").test(lone),
+              !new RegExp("^[\\q{\\uD800}]$", "v").test(scalar),
+              new RegExp("^[\\q{\\u{F0000}}]$", "v").test(scalar),
+              !new RegExp("^[\\q{\\u{F0000}}]$", "v").test(lone)
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "true|true|true|true|true|true|true|true|true|true|true|true|true|true|true|true|true|true|true|true|true|true"
+        ))
+    );
+
+    for source in [
+        r#"new RegExp("[^\\q{ab}]", "v");"#,
+        r#"new RegExp("[^\\q{ab}--\\q{ab}]", "v");"#,
+        r#"new RegExp("\\P{RGI_Emoji}", "v");"#,
+        r#"/[^\p{RGI_Emoji}]/v;"#,
+        r#"/\P{RGI_Emoji}/v;"#,
+        r#"/\p{RGI_Emoji}/u;"#,
+    ] {
+        assert!(run_err(source).contains("SyntaxError"), "source: {source}");
+    }
+    for punctuator in "&-!#%,:;<=>@`~".chars() {
+        let source = format!(r#"new RegExp("[\\{punctuator}]", "v").test("{punctuator}");"#);
+        assert_eq!(run(&source), Value::Bool(true), "punctuator: {punctuator}");
+    }
+    assert!(run_err(r#"new RegExp("\\p{RGI_Emoji}".repeat(1000), "v");"#).contains("too large"));
+}
+
+#[test]
 fn regexp_u_and_v_flags_are_mutually_exclusive() {
     for source in ["/./uv;", "/./vu;", "if (false) /a/uv;", "if (false) /a/vu;"] {
         assert!(

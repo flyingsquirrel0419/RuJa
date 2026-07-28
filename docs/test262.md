@@ -11652,11 +11652,12 @@ total files and **37011** executions.
 ## Character-only RegExp Unicode sets
 
 Pinned Test262 `020cb74075849d1e404bbcdb62feb7a02e6966db` contains a
-114-file generated Unicode-set matrix. RuJa now admits the exact 48 files whose
+114-file generated Unicode-set matrix. This initial unit admitted the exact 48 files whose
 operands are characters, nested character classes, class escapes, or character
 property escapes. All union, intersection, and subtraction combinations in
 that character-only matrix pass; the remaining 66 files use string properties
-or `\q{...}` string literals and remain skipped.
+or `\q{...}` string literals and remained skipped until the string-valued unit
+below.
 
 The complete `built-ins/RegExp` diagnostic is **1091 pass / 0 fail / 788 skip /
 0 timeout / 0 error** over 1,879 files after this admission, an exact **+48
@@ -11688,9 +11689,49 @@ total files and **37059** executions.
 - 목적과 의도: Turn the already bounded character-only v-mode behavior into exact conformance evidence while fixing the normalization split that blocked property operands.
 - 기존 구현 및 제약 조건: Test262 marks character sets and unsupported string-valued sets with the same regexp-v-flag feature, so removing that feature globally would run behavior RuJa does not implement.
 - 검토한 주요 대안: Keep the whole feature skipped, admit only the 16 newly fixed property files, admit all v files, or freeze the complete generated character-only operand matrix.
-- 선택한 방식: Freeze 48 exact paths, remove only each path's declared v/property features in both runner and analyzer, and test future and string-operand paths remain gated.
+- 선택한 방식: Freeze 48 exact paths, remove only each path's declared v/property features in both runner and analyzer, and test that future and string-operand paths remained gated until the later string-set unit.
 - 다른 대안 대신 이 방식을 선택한 이유: Sixteen files would understate the cohesive supported surface, global admission would produce known failures, and generated operand names provide a stable semantic boundary that is also verified against live metadata.
-- 장점, 단점 및 영향: Supported RegExp coverage grows by 48 passing executions without weakening skip policy. The manifest's 4×3×4 Cartesian scope and live metadata are tooling invariants, while 66 string-valued generated cases and complex iv word classes remain visible follow-up scope.
+- 장점, 단점 및 영향: Supported RegExp coverage grew by 48 passing executions without weakening skip policy. The manifest's 4×3×4 Cartesian scope and live metadata became tooling invariants, while 66 string-valued generated cases and complex iv word classes remained visible follow-up scope until their later dedicated units.
+```
+
+## String-valued RegExp Unicode sets
+
+Pinned Test262 `020cb74075849d1e404bbcdb62feb7a02e6966db` now runs the
+complete generated string-valued `v` surface: 60 union/intersection/difference
+files involving string properties or `\q{...}`, six RGI Emoji version files,
+and 28 positive or parse-negative files across all seven Unicode 17 string
+properties. Together with the existing 48 character-only paths, one exact
+142-file manifest is checked against live metadata and remains closed to
+synthetic future and outside paths.
+
+The focused 142-file run is **142 pass / 0 fail / 0 skip / 0 timeout / 0
+error**. Complete `built-ins/RegExp` is **1189 pass / 0 fail / 690 skip / 0
+timeout / 0 error** over 1,879 files, exactly **+94 pass / -94 skip** from the
+preceding **1095/0/784/0/0** result. Direct Rust coverage additionally checks
+empty and longest-first q alternatives, one-character crossover, folding
+before iv algebra, specification `MayContainStrings`, negated syntax errors,
+lookbehind direction, escaped backspace and punctuators, lone-surrogate versus
+private-use scalar identity, exhaustive property execution, and hostile
+repeated RGI construction.
+
+The matcher canonicalizes and deduplicates string elements before algebra,
+then lowers a shared-prefix trie. Equal suffix subtrees share bracket
+transitions, which keeps exhaustive Basic Emoji and aggregate RGI Emoji inside
+the bounded PikeVM budget. Elements above 256 code points, more than 65,536
+explicit alternatives, estimated emission above 750,000 units, or a
+conservative trie upper bound above 65,536 nodes fail at construction. Runtime
+work uses a compiled-cost multiplier bounded to 256 through 8,192 per input
+unit and a hard 32,000,000-unit ceiling; live alternative state retains the 64
+MiB cap.
+
+```text
+[Decision Log]
+- 목적과 의도: Admit every generated Test262 file whose string-valued v semantics are now implemented while proving the exhaustive Unicode properties remain sandbox-bounded.
+- 기존 구현 및 제약 조건: The broad regexp-v-flag and regexp-unicode-property-escapes gates cover unrelated files, the prior exact manifest contained only 48 character cases, and aggregate totals could hide failures among six large RGI and 21 parse-negative cases.
+- 검토한 주요 대안: Remove the feature gates globally, admit only the original 66 follow-up files, split parse negatives and positives into several manifests, leave exhaustive property files skipped, or freeze the complete generated 142-file semantic corpus.
+- 선택한 방식: Extend the exact Cartesian manifest with six fixed RGI versions and seven properties times four positive/negative forms; verify live metadata, runner/analyzer symmetry, and future/outside exclusion; run both focused and complete RegExp cohorts.
+- 다른 대안 대신 이 방식을 선택한 이유: Global removal silently admits future behavior; a 66-file list omits 28 tests of the same seven properties; split manifests obscure one implementation boundary. One generated-corpus invariant makes every +94 transition reviewable.
+- 장점, 단점 및 영향: All 142 files pass and complete RegExp improves exactly +94/-94 with no failure, timeout, or error. The manifest must be consciously updated when Test262 adds Unicode versions or properties, preventing accidental support claims.
 ```
 
 ## RegExp `u`/`v` flag mutual exclusion
@@ -11752,7 +11793,7 @@ operations, outer negation, lookahead routing, and backreferences. A bounded
 manual Node 24 probe agrees for the word/literal matrix and is secondary to
 the current ECMA-262 algorithms where engines differ. Direct coverage also
 pins the specified `/^\p{ASCII}$/iv` long-s match. String properties and
-`\q{...}` remain gated.
+`\q{...}` are covered by the later 142-file admission.
 
 Feature commit `719743f828025c6e4effdf556fde1db80f7c5922` passes both jobs
 in ordinary CI run `30323528176` and all **35/35** jobs in full run
@@ -11768,7 +11809,7 @@ immediately preceding docs-only clean run `30317896191`. Both aggregates are
 - 검토한 주요 대안: Broaden regexp-v-flag admission, claim the generated character matrix as evidence, test only one intersection, or add a differential matrix across nested algebra and both execution backends.
 - 선택한 방식: Keep admission unchanged; add public regressions for Rust-only word characters, ECMAScript additions, complements, union, both subtraction operand positions, nesting, lookaround, and backreferences; manually compare a bounded word/literal matrix with Node.
 - 다른 대안 대신 이 방식을 선택한 이유: Broad admission would execute unsupported string sets, generated tests contain no word operands, and one happy path would miss complement and hard-backend routing. Direct regression coverage plus the bounded manual probe measure the corrected semantic boundary without overstating property support.
-- 장점, 단점 및 영향: The documented word-operand leak is closed with no support-policy weakening, and the complete pinned RegExp totals remain 1093/0/786/0/0. String-valued sets remain separately measurable work.
+- 장점, 단점 및 영향: The documented word-operand leak was closed with no support-policy weakening, and the complete pinned RegExp totals remained 1093/0/786/0/0 for that unit. String-valued sets were kept separately measurable and are admitted by the later string-set unit.
 ```
 
 ## Exact Unicode ignore-case word boundaries
@@ -11856,8 +11897,9 @@ two paths in both runner and analyzer. Live metadata, exact path count, future
 generated names, and outside paths are tooling invariants. Each admitted file
 gets a path-specific 30-second limit because it constructs and repeatedly
 matches strings spanning most of Unicode; all other property files retain the
-default skip and timeout policy. The separate 66 string-valued `v`-set files
-remain gated.
+default skip and timeout policy. At that milestone the separate 66
+string-valued `v`-set files remained gated; the later string-set unit admits the
+complete generated 142-file corpus.
 
 Both exact files pass independently in final release mode at **14.90s** and
 **14.92s**. The final complete 1,879-file RegExp run reports **1095 pass / 0
@@ -11891,7 +11933,7 @@ optional checkout as unavailable instead of failing on `Path.is_dir()`.
 - 검토한 주요 대안: Keep both skipped, remove the feature globally, admit every generated property file, rely only on direct tests, or freeze the exact Co/Cs pair with a bounded extended timeout.
 - 선택한 방식: Freeze two exact paths and their live feature metadata, share feature removal between runner/analyzer, assign only those paths 30 seconds, and retain direct structural coverage for literals, offsets, captures, duplicate-name backreferences, bounded iteration, and v mode.
 - 다른 대안 대신 이 방식을 선택한 이유: Global admission overstates unrelated property support, direct tests alone omit the generated Unicode matrices, and the default timeout misclassifies deterministic 15-16 second passes. Exact admission records the coherent repaired surface without weakening adjacent gates.
-- 장점, 단점 및 영향: Two skips move into the supported corpus with no admitted failures. The full-directory run exposed one contention timeout that must be normalized in final CI evidence; unrelated property escapes and all string-valued v sets remain explicitly skipped.
+- 장점, 단점 및 영향: Two skips moved into the supported corpus with no admitted failures. The full-directory run exposed one contention timeout that was normalized in final CI evidence; unrelated property escapes and string-valued v sets remained skipped until their later dedicated units.
 ```
 
 Implementation commit `f84b825` and tooling follow-up `754f220` pass ordinary

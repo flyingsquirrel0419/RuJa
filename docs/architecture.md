@@ -625,14 +625,14 @@ The separate
 `u`-specific negated-property ignore-case workaround remains unchanged because
 `v` defines a different complement and case-folding order.
 
-Admission freezes the complete 48-file generated matrix whose operands are
+The initial admission froze the complete 48-file generated matrix whose operands are
 single characters, nested character classes, character-class escapes, or
 character property escapes. Every union, intersection, and subtraction pair
 in that character-only `/v` matrix runs. Files involving properties of strings
-or `\q{...}` string literals stay feature-gated; admitting the character
-matrix does not claim support for variable-length set elements. Complex `/iv`
-sets containing `\w` or `\W` also remain separate because their backend word
-class still exceeds ECMAScript WordCharacters.
+or `\q{...}` string literals were kept feature-gated at that stage. The
+string-valued unit below now extends this exact corpus. The adjacent word-set
+unit lowers complex `/iv` `\w` and `\W` operands to ECMAScript
+WordCharacters.
 
 ```text
 [Decision Log]
@@ -641,7 +641,7 @@ class still exceeds ECMAScript WordCharacters.
 - 검토한 주요 대안: Keep all v tests skipped, patch only property spellings, route every v pattern to a new engine, admit the complete regexp-v-flag feature, or correct the shared mode boundary and freeze the exact character-only matrix.
 - 선택한 방식: Use unicode_mode for decimal, identity-escape, and exact LineTerminator-aware dot normalization; preserve the u-only negated-property case-folding rule; and remove v/property feature gates only for 48 exact generated character-set files.
 - 다른 대안 대신 이 방식을 선택한 이유: Source spelling patches miss constructors and dot semantics, a new engine is disproportionate to a normalization split, and broad admission would hide unsupported string properties and q-string operands. Exact admission ties policy to behavior already exercised exhaustively by generated tests.
-- 장점, 단점 및 영향: The 48-file character-only matrix runs at 100% while legacy and u behavior share existing paths. The admission manifest requires maintenance when Test262 changes, and 66 generated string-valued cases remain explicit follow-up work.
+- 장점, 단점 및 영향: The 48-file character-only matrix ran at 100% while legacy and u behavior shared existing paths. The admission manifest required maintenance when Test262 changed; the later string-valued unit closes the 66 generated follow-up cases and expands the exact corpus further.
 ```
 
 ### RegExp Unicode-set word operands
@@ -662,7 +662,7 @@ of reparsing or flattening the source.
 
 This closes word-operand leakage through nested classes and through both the
 linear and hard backreference/lookaround routes. String-valued properties and
-`\q{...}` remain separate architecture work.
+`\q{...}` use the bounded logical matcher described below.
 
 ```text
 [Decision Log]
@@ -671,7 +671,41 @@ linear and hard backreference/lookaround routes. String-valued properties and
 - 검토한 주요 대안: Keep the documented mismatch, hand-parse all v algebra in the normalizer, add a second complete RegExp AST, replace the backend, or separate per-escape lowering from whole-class materialization.
 - 선택한 방식: Always rewrite active-ignoreCase w/W operands to exact nested ECMAScript classes, but mark only ordinary classes for whole-class HIR materialization; retain native nested-v operators and existing execution routing.
 - 다른 대안 대신 이 방식을 선택한 이유: The escape is an atomic grammar operand and can be replaced without interpreting surrounding algebra, while reparsing or replacing the full backend would combine word semantics with property folding and string-valued sets. Separating the two decisions fixes the proven leak at its source and preserves current resource bounds.
-- 장점, 단점 및 영향: Direct tests cover word/property and word/literal intersections, differences, unions, nested complements, lookaround, and backreferences for Rust-only word characters and the two ECMAScript Unicode additions. A bounded Node word/literal probe is secondary evidence; current ECMA-262 remains authoritative where engines differ. Sentinel-range scalars and string-valued v operands remain explicit independent units.
+- 장점, 단점 및 영향: Direct tests cover word/property and word/literal intersections, differences, unions, nested complements, lookaround, and backreferences for Rust-only word characters and the two ECMAScript Unicode additions. A bounded Node word/literal probe is secondary evidence; current ECMA-262 remains authoritative where engines differ. Sentinel-range scalars and string-valued v operands remained explicit independent units until the later logical matcher and string-set units closed them.
+```
+
+### RegExp string-valued Unicode sets
+
+`v` classes and atom escapes now retain a mathematical set of canonical,
+deduplicated code-point sequences. `\q{...}` preserves empty alternatives;
+single-character alternatives cross over exactly with ordinary character
+sets. Under `/iv`, every sequence is simple-folded character by character
+before union, intersection, or subtraction. A grammar-level
+`MayContainStrings` bit follows the specification's OR/AND/left-operand rules,
+so negated classes reject only expressions that may still contain strings.
+Literal validation invokes the same vendored parser to report these static
+errors before evaluation.
+
+Final matching order is multi-code-point strings longest first, then one
+character, then empty. Lookbehind reverses each sequence before lowering.
+The emitter builds a shared-prefix trie and merges equal suffix subtrees behind
+one bracket transition, avoiding one Pike state per Unicode string. Static
+property data is charged before cloning; cumulative materialization and
+estimated pre-emission work are each capped at 750,000 units, and elements
+over 256 code points, more than 65,536 explicit alternatives, or a conservative
+trie-node upper bound over 65,536 are rejected. Runtime work scales from 256
+through 8,192
+units per input symbol according to compiled state cost and remains capped at
+32,000,000; aggregate live Pike state remains capped at 64 MiB.
+
+```text
+[Decision Log]
+- 목적과 의도: Implement complete bounded ECMAScript string-valued Unicode set semantics rather than enabling the existing flat alternative prototype.
+- 기존 구현 및 제약 조건: The vendored parser discarded empty q alternatives, compared iv strings before folding, modeled negation per operand, emitted one Pike branch per string, and failed to reverse strings in lookbehind; RuJa requires cooperative work and live-state bounds.
+- 검토한 주요 대안: Keep all string sets gated, admit only parse-negative tests, raise the runtime budget around a flat alternative ladder, add an unbounded backtracking route, or canonicalize sets and lower a bounded shared trie.
+- 선택한 방식: Preserve and deduplicate canonical sequences, charge static tables before cloning, track specification MayContainStrings through algebra, partition multi/single/empty matching order, reverse lookbehind sequences, merge common prefixes and exact interned suffix subtrees, and enforce parser, emission, work, and live-state limits.
+- 다른 대안 대신 이 방식을 선택한 이유: Partial admission would leave core v semantics absent; a larger flat budget scales with the Unicode table rather than matched input; unbounded backtracking violates the sandbox contract. Canonical algebra plus trie/DAG lowering expresses the specification while reducing branch work structurally.
+- 장점, 단점 및 영향: All seven Unicode 17 string properties, q strings, iv algebra, valid and invalid negation, lookbehind, lone-surrogate separation, and exhaustive RGI inputs pass. The implementation retains explicit conservative resource ceilings and a maintained vendored parser instead of claiming unbounded host-regex behavior.
 ```
 
 ### RegExp Unicode mode flag exclusivity
@@ -2833,17 +2867,19 @@ half of a valid pair. Duplicate-name backreferences try only participating
 captures and match empty only when every same-name capture is unmatched. In
 `iv` classes each character, range, escape, property,
 and nested set is case-closed before union, intersection, subtraction, or
-complement. Flat alternations are built as a balanced IR tree, preventing a
+complement. String sequences are canonicalized before algebra and lowered
+through a shared trie. Flat ordinary alternations are built as a balanced IR tree, preventing a
 large legal disjunction from creating parser/optimizer recursion proportional
-to its arm count. Logical compilation explicitly rejects string-valued
-properties and `\q{...}`.
+to its arm count.
 
 The vendored PikeVM exposes bounded search and exact-start UTF-16 APIs. Sticky
 matching executes one candidate only. Instruction dispatch, candidate state,
 state clones, capture/loop slots, and backreference code units consume one
 shared budget; aggregate live alternative state across nested lookarounds is
 capped at a conservative 64 MiB and
-compiled state cost at 1,000,000 units. Input-dependent work grows linearly up to 32,000,000 units.
+compiled state cost at 1,000,000 units. Input-dependent work grows linearly
+with a compiled-cost multiplier clamped to 256 through 8,192, up to 32,000,000
+units.
 Greedy one-character loops followed only by an end assertion do not retain an
 alternative per symbol, which keeps generated full-Unicode property tests at
 constant live-state memory. Lookarounds share the same budget. Exhaustion is a
@@ -2880,8 +2916,6 @@ duplicate-backreference alternatives. These limits prevent legal-size source
 from turning duplicate-name analysis into quadratic allocation or CPU work.
 
 The vendored crate retains its upstream MIT OR Apache-2.0 license files.
-String-valued `v` properties and `\q{...}` remain a separate 66-file unit and
-are not claimed by this fallback.
 
 ```text
 [Decision Log]
@@ -2890,7 +2924,7 @@ are not claimed by this fallback.
 - 검토한 주요 대안: Move the sentinel range, globally prefix-encode every regex symbol, rewrite only Co/Cs properties, replace every regex backend, use regress's unbounded classical UTF-16 API, or route only collision-bearing Unicode inputs through a bounded native UTF-16 executor.
 - 선택한 방식: Vendor regress 0.11.1; validate logical resource preconditions for every u/v pattern at construction; lazily compile canonical pattern code points and native UTF-16 input; route sentinel-bearing u/v inputs and existing-backend compile fallbacks through a bounded PikeVM; add bounded named-capture prepass/lowering, exact sticky execution, logical-symbol and duplicate-name backreferences, operand-first iv folding, balanced alternation IR, shared byte-based state/backreference accounting, metered global collection, batched offset conversion, and UTF-16 boundary preservation.
 - 다른 대안 대신 이 방식을 선택한 이유: Sentinel relocation is mathematically insufficient; prefix encoding requires complete rewrites of literals, classes, properties, complements, lookarounds, and captures; property-only repair leaves literals and dot wrong; global replacement widens performance and compatibility risk; the upstream UTF-16 backtracker has no sandbox bound. A narrow native UTF-16 fallback preserves the established fast path and supplies the required logical domain directly.
-- 장점, 단점 및 영향: Lone surrogates and U+F0000..U+F07FF scalars now differ across literals, properties, complements, dot, captures, backreferences, global/sticky matching, and d indices. Two exact generated Test262 files become admissible. Large flat alternatives have logarithmic IR depth, endpoint conversion is linear, and live branch state has a byte cap. The fallback maintains a second parser for its bounded domain and remains cooperative DFS under explicit work and state limits; string-valued v sets are rejected and remain excluded.
+- 장점, 단점 및 영향: Lone surrogates and U+F0000..U+F07FF scalars now differ across literals, properties, complements, dot, captures, backreferences, global/sticky matching, and d indices. Two exact generated Test262 files became admissible in this unit. Large flat alternatives have logarithmic IR depth, endpoint conversion is linear, and live branch state has a byte cap. The fallback maintains a second parser for its bounded domain and remains cooperative DFS under explicit work and state limits; the later string-set unit extends that parser under the same bounds.
 ```
 
 ---

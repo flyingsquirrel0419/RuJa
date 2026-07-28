@@ -195,25 +195,7 @@ fn validate_logical_utf16_source(source: &str) -> Result<(), String> {
 }
 
 fn logical_utf16_pattern_code_points(source: &str) -> Vec<u32> {
-    let units = crate::value::utf16_from_str(source);
-    let mut code_points = Vec::with_capacity(units.len());
-    let mut index = 0;
-    while index < units.len() {
-        let high = units[index];
-        if (0xd800..=0xdbff).contains(&high)
-            && units
-                .get(index + 1)
-                .is_some_and(|low| (0xdc00..=0xdfff).contains(low))
-        {
-            let low = units[index + 1];
-            code_points.push(0x10000 + (((high as u32 - 0xd800) << 10) | (low as u32 - 0xdc00)));
-            index += 2;
-        } else {
-            code_points.push(high as u32);
-            index += 1;
-        }
-    }
-    code_points
+    crate::value::utf16_code_points_from_str(source)
 }
 
 fn logical_utf16_flags(flags: &str) -> regress::Flags {
@@ -221,7 +203,6 @@ fn logical_utf16_flags(flags: &str) -> regress::Flags {
     if flags.contains('v') {
         logical_flags.unicode = true;
         logical_flags.unicode_sets = true;
-        logical_flags.disable_string_sets = true;
     }
     logical_flags
 }
@@ -591,7 +572,7 @@ impl CompiledRegex {
             CompiledRegex::LogicalUtf16(re) => {
                 let units = crate::value::utf16_from_str(input);
                 let start = crate::value::utf16_len(&input[..start]);
-                let mut work_remaining = logical_utf16_work_limit(units.len());
+                let mut work_remaining = logical_utf16_work_limit(re, units.len());
                 re.find_from_utf16_bounded(&units, start, &mut work_remaining)
                     .map_err(logical_utf16_runtime_error)?
                     .map(|matched| logical_utf16_captures(input, matched))
@@ -689,7 +670,7 @@ impl CompiledRegex {
             CompiledRegex::LogicalUtf16(re) => {
                 let units = crate::value::utf16_from_str(input);
                 let start = crate::value::utf16_len(&input[..start]);
-                let mut work_remaining = logical_utf16_work_limit(units.len());
+                let mut work_remaining = logical_utf16_work_limit(re, units.len());
                 re.find_at_utf16_bounded(&units, start, &mut work_remaining)
                     .map_err(logical_utf16_runtime_error)?
                     .map(|matched| logical_utf16_captures(input, matched))
@@ -799,9 +780,10 @@ const REGEX_LOGICAL_UTF16_MAX_WORK_LIMIT: usize = 32_000_000;
 const REGEX_LOGICAL_UTF16_SOURCE_LIMIT: usize = 262_144;
 const REGEX_LOGICAL_UTF16_PROPERTY_LIMIT: usize = 64;
 
-fn logical_utf16_work_limit(input_units: usize) -> usize {
+fn logical_utf16_work_limit(regex: &regress::Regex, input_units: usize) -> usize {
+    let work_per_unit = regex.bounded_execution_state_cost().clamp(256, 8192);
     REGEX_LOGICAL_UTF16_WORK_LIMIT
-        .saturating_add(input_units.saturating_mul(256))
+        .saturating_add(input_units.saturating_mul(work_per_unit))
         .min(REGEX_LOGICAL_UTF16_MAX_WORK_LIMIT)
 }
 
@@ -958,7 +940,7 @@ where
     let units = crate::value::utf16_from_str(input);
     let mut matches = Vec::new();
     let mut position = 0;
-    let mut work_remaining = logical_utf16_work_limit(units.len());
+    let mut work_remaining = logical_utf16_work_limit(regex, units.len());
     while position <= units.len() {
         let Some(matched) = regex
             .find_from_utf16_bounded(&units, position, &mut work_remaining)

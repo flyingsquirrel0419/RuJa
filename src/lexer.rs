@@ -2116,7 +2116,13 @@ pub(crate) fn validate_regex_literal(pattern: &str, flags: &str) -> Result<(), S
     validate_regex_class_ranges(pattern, flags)?;
     regex_quantifier_metadata(pattern, flags)?;
     validate_regex_assertion_quantifiers(pattern, flags)?;
-    validate_regex_modifier_groups(pattern)
+    validate_regex_modifier_groups(pattern)?;
+    if flags.contains('v') {
+        let code_points = crate::value::utf16_code_points_from_str(pattern);
+        regress::Regex::validate_syntax(code_points.into_iter(), flags)
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
 }
 
 fn validate_regex_named_groups(pattern: &str, flags: &str) -> Result<(), String> {
@@ -2243,7 +2249,15 @@ fn validate_regex_unicode_mode_syntax(pattern: &str, flags: &str) -> Result<(), 
                     continue;
                 }
                 'p' | 'P' => {
-                    i = validate_regex_unicode_property_escape_at(&chars, i + 1)?;
+                    i = validate_regex_unicode_property_escape_at(
+                        &chars,
+                        i + 1,
+                        unicode_sets_mode,
+                    )?;
+                    continue;
+                }
+                'q' if unicode_sets_mode && class_depth > 0 && chars.get(i + 2) == Some(&'{') => {
+                    i += 3;
                     continue;
                 }
                 'k' if class_depth == 0 && chars.get(i + 2) == Some(&'<') => {
@@ -2274,6 +2288,12 @@ fn validate_regex_unicode_mode_syntax(pattern: &str, flags: &str) -> Result<(), 
                 }
                 '^' | '$' | '\\' | '.' | '*' | '+' | '?' | '(' | ')' | '[' | ']' | '{' | '}'
                 | '|' | '/' => {
+                    i += 2;
+                    continue;
+                }
+                '&' | '!' | '#' | '%' | ',' | ':' | ';' | '<' | '=' | '>' | '@' | '`' | '~'
+                    if unicode_sets_mode && class_depth > 0 =>
+                {
                     i += 2;
                     continue;
                 }
@@ -2662,7 +2682,8 @@ fn regex_class_atom_at(chars: &[char], idx: usize) -> Option<RegexClassAtom> {
             let (end, value) = match escaped {
                 'd' | 'D' | 's' | 'S' | 'w' | 'W' | 'p' | 'P' if is_character_set => {
                     let end = if matches!(escaped, 'p' | 'P') {
-                        validate_regex_unicode_property_escape_at(chars, idx + 1).unwrap_or(idx + 2)
+                        validate_regex_unicode_property_escape_at(chars, idx + 1, true)
+                            .unwrap_or(idx + 2)
                     } else {
                         idx + 2
                     };
@@ -2912,7 +2933,7 @@ fn regex_escape_end_for_quantifier(
             validate_regex_unicode_escape_at(chars, start + 1).unwrap_or(start + 2)
         }
         'p' | 'P' if unicode_mode => {
-            validate_regex_unicode_property_escape_at(chars, start + 1).unwrap_or(start + 2)
+            validate_regex_unicode_property_escape_at(chars, start + 1, true).unwrap_or(start + 2)
         }
         'u' if regex_hex_value(chars, start + 2, 4).is_some() => start + 6,
         'x' if regex_hex_value(chars, start + 2, 2).is_some() => start + 4,
@@ -3193,7 +3214,11 @@ fn regex_group_end(chars: &[char], start: usize) -> Option<usize> {
     None
 }
 
-fn validate_regex_unicode_property_escape_at(chars: &[char], idx: usize) -> Result<usize, String> {
+fn validate_regex_unicode_property_escape_at(
+    chars: &[char],
+    idx: usize,
+    unicode_sets_mode: bool,
+) -> Result<usize, String> {
     if chars.get(idx + 1) != Some(&'{') {
         return Err("invalid regular expression property escape".to_string());
     }
@@ -3201,7 +3226,9 @@ fn validate_regex_unicode_property_escape_at(chars: &[char], idx: usize) -> Resu
     let mut property = String::new();
     while let Some(ch) = chars.get(i).copied() {
         if ch == '}' {
-            if is_valid_regex_unicode_property_escape(&property) {
+            if is_valid_regex_unicode_property_escape(&property)
+                || (unicode_sets_mode && is_regex_binary_string_property(&property))
+            {
                 return Ok(i + 1);
             }
             return Err("invalid regular expression property escape".to_string());
@@ -3213,6 +3240,19 @@ fn validate_regex_unicode_property_escape_at(chars: &[char], idx: usize) -> Resu
         i += 1;
     }
     Err("invalid regular expression property escape".to_string())
+}
+
+fn is_regex_binary_string_property(property: &str) -> bool {
+    matches!(
+        property,
+        "Basic_Emoji"
+            | "Emoji_Keycap_Sequence"
+            | "RGI_Emoji_Flag_Sequence"
+            | "RGI_Emoji_Modifier_Sequence"
+            | "RGI_Emoji_Tag_Sequence"
+            | "RGI_Emoji_ZWJ_Sequence"
+            | "RGI_Emoji"
+    )
 }
 
 fn is_valid_regex_unicode_property_escape(property: &str) -> bool {
@@ -3889,6 +3929,29 @@ mod tests {
                 "pattern should be valid: /{pattern}/{flags}"
             );
         }
+    }
+
+    #[test]
+    fn unicode_sets_accept_every_reserved_punctuator_escape() {
+        for punctuator in "&-!#%,:;<=>@`~".chars() {
+            for pattern in [
+                format!(r"[\{punctuator}]"),
+                format!(r"[\q{{\{punctuator}}}]"),
+            ] {
+                assert!(
+                    validate_regex_literal(&pattern, "v").is_ok(),
+                    "pattern should be valid: /{pattern}/v"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn unicode_sets_bound_duplicate_empty_string_alternatives() {
+        let pattern = format!(r"[\q{{{}}}]", "|".repeat(70_000));
+        assert!(validate_regex_literal(&pattern, "v")
+            .unwrap_err()
+            .contains("materialization is too large"));
     }
 
     #[test]

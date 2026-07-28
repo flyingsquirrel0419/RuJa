@@ -5541,7 +5541,7 @@ class RegExpDuplicateNamedGroupsAdmissionTests(unittest.TestCase):
 
 class RegExpUnicodeSetsAdmissionTests(unittest.TestCase):
     def test_manifest_is_exact_live_and_shared(self):
-        self.assertEqual(len(REGEXP_UNICODE_SETS_FILES), 48)
+        self.assertEqual(len(REGEXP_UNICODE_SETS_FILES), 142)
         self.assertEqual(
             frozenset(REGEXP_UNICODE_SETS_FEATURES),
             REGEXP_UNICODE_SETS_FILES,
@@ -5576,9 +5576,9 @@ class RegExpUnicodeSetsAdmissionTests(unittest.TestCase):
                 root
                 / "test/built-ins/RegExp/unicodeSets/generated/character-union-future.js"
             )
-            string_operand = (
+            outside = (
                 root
-                / "test/built-ins/RegExp/unicodeSets/generated/character-union-string-literal.js"
+                / "test/built-ins/RegExp/unicodeSets/non-generated.js"
             )
             for tool in (test262_runner, test262_analyze):
                 original_root = tool.TEST262
@@ -5595,7 +5595,7 @@ class RegExpUnicodeSetsAdmissionTests(unittest.TestCase):
                             tool.should_skip({"features": list(admitted)}, path),
                             relative,
                         )
-                    for path in (future, string_operand):
+                    for path in (future, outside):
                         self.assertEqual(
                             tool.regexp_unicode_sets_features(path), frozenset()
                         )

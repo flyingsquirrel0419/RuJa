@@ -1,18 +1,61 @@
 //! Regex compiler back-end: transforms IR into a CompiledRegex
 
 use crate::bytesearch::{AsciiBitmap, ByteArraySet};
+use crate::codepointset::CodePointSet;
 use crate::insn::{CompiledRegex, Insn, LoopFields, MAX_BYTE_SEQ_LENGTH, MAX_CHAR_SET_LENGTH};
 use crate::ir;
 use crate::ir::Node;
-#[cfg(not(feature = "utf16"))]
-use crate::literal::lower_code_point_sequence;
 use crate::startpredicate;
 use crate::types::{BracketContents, CaptureGroupID, LoopID};
-#[cfg(feature = "utf16")]
 use crate::unicode;
 #[cfg(not(feature = "std"))]
-use alloc::{boxed::Box, vec::Vec};
+use alloc::{boxed::Box, collections::BTreeMap, vec::Vec};
 use core::convert::TryInto;
+#[cfg(feature = "std")]
+use std::collections::BTreeMap;
+
+#[derive(Default)]
+struct StringTrieNode {
+    terminal: bool,
+    children: BTreeMap<u32, StringTrieNode>,
+    signature: usize,
+}
+
+impl StringTrieNode {
+    fn insert(&mut self, code_points: &[u32]) {
+        let Some((&first, rest)) = code_points.split_first() else {
+            self.terminal = true;
+            return;
+        };
+        self.children.entry(first).or_default().insert(rest);
+    }
+
+    fn assign_signatures(&mut self, interner: &mut BTreeMap<StringTrieSignature, usize>) -> usize {
+        let mut children = Vec::with_capacity(self.children.len());
+        for (code_point, child) in &mut self.children {
+            children.push((*code_point, child.assign_signatures(interner)));
+        }
+        let signature = StringTrieSignature {
+            terminal: self.terminal,
+            children,
+        };
+        let id = if let Some(id) = interner.get(&signature) {
+            *id
+        } else {
+            let id = interner.len();
+            interner.insert(signature, id);
+            id
+        };
+        self.signature = id;
+        id
+    }
+}
+
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+struct StringTrieSignature {
+    terminal: bool,
+    children: Vec<(u32, usize)>,
+}
 
 /// \return an anchor instruction for a given IR anchor.
 fn make_anchor(anchor_type: ir::AnchorType, multiline: bool) -> Insn {
@@ -102,59 +145,80 @@ impl Emitter {
         self.emit_insn(insn);
     }
 
-    // Emit a sequence of code points, lowering to literal bytes (UTF-8).
-    #[cfg(not(feature = "utf16"))]
-    fn emit_code_point_sequence(&mut self, cps: &[u32], icase: bool) {
-        let pieces = lower_code_point_sequence(cps, icase, self.result.flags.unicode);
-        for piece in pieces {
-            self.emit_node(&Node::from(piece));
-        }
-    }
-
-    // Emit a sequence of code points, in a UTF-16 friendly way.
-    #[cfg(feature = "utf16")]
-    fn emit_code_point_sequence(&mut self, cps: &[u32], icase: bool) {
-        let unicode = self.result.flags.unicode;
-        for &cp in cps {
-            let chars = unicode::expand_code_point(cp, icase, unicode);
-            let node = match chars.len() {
-                0 => panic!("Char should always unfold to at least itself"),
-                1 => Node::Char { c: chars[0] },
-                2..=MAX_CHAR_SET_LENGTH => Node::CharSet(chars),
-                _ => panic!("Unicode case fold exceeded maximum expansion"),
-            };
-            self.emit_node(&node);
-        }
-    }
-
-    /// Lower a `Node::StringSet` to a right-leaning chain of `Insn::Alt` over the
-    /// alternatives.
+    /// Lower a `Node::StringSet` to a prefix trie. Child paths precede a
+    /// terminal at each node, preserving the specification's longest-first
+    /// order while sharing work and Pike states across common prefixes.
     fn emit_string_set(&mut self, alternatives: &[Box<[u32]>], icase: bool) {
-        let Some((last, priors)) = alternatives.split_last() else {
-            // Empty string sets always fail.
+        let mut root = StringTrieNode::default();
+        for alternative in alternatives {
+            root.insert(alternative);
+        }
+        root.assign_signatures(&mut BTreeMap::new());
+        self.emit_string_trie_node(&root, icase);
+    }
+
+    fn emit_string_trie_node(&mut self, node: &StringTrieNode, icase: bool) {
+        let mut grouped_children: BTreeMap<usize, (CodePointSet, &StringTrieNode)> =
+            BTreeMap::new();
+        let mut single_code_points = CodePointSet::new();
+        for (code_point, child) in &node.children {
+            if child.terminal && child.children.is_empty() {
+                single_code_points.add_one(*code_point);
+            } else if let Some((code_points, _)) = grouped_children.get_mut(&child.signature) {
+                code_points.add_one(*code_point);
+            } else {
+                let mut code_points = CodePointSet::new();
+                code_points.add_one(*code_point);
+                grouped_children.insert(child.signature, (code_points, child));
+            }
+        }
+        let mut branch_groups: Vec<_> = grouped_children.into_values().collect();
+        if icase {
+            single_code_points = unicode::add_icase_code_points(single_code_points);
+            for (code_points, _) in &mut branch_groups {
+                *code_points = unicode::add_icase_code_points(core::mem::take(code_points));
+            }
+        }
+        let has_singles = !single_code_points.is_empty();
+        let option_count =
+            branch_groups.len() + usize::from(has_singles) + usize::from(node.terminal);
+        if option_count == 0 {
             self.emit_insn(Insn::JustFail);
             return;
-        };
-        // Instruction offsets to fix up with jumps to the string set end.
+        }
+
         let mut jump_fixups: Vec<u32> = Vec::new();
-        // Iterate over all alternatives but the last.
-        for cps in priors.iter() {
-            // Start with an alt jumping to the next string.
-            let alt_idx = self.emit_insn_offset(Insn::Alt { secondary: 0 });
-            self.emit_code_point_sequence(cps, icase);
-            // On success, jump past the remaining alternatives.
-            // On failure, the Alt resumes at the next alternative.
+        for option in 0..option_count {
+            let has_fallback = option + 1 < option_count;
+            let alt_idx = has_fallback.then(|| self.emit_insn_offset(Insn::Alt { secondary: 0 }));
+
+            if let Some((code_points, child)) = branch_groups.get(option) {
+                self.emit_node(&Node::Bracket(BracketContents {
+                    invert: false,
+                    cps: code_points.clone(),
+                }));
+                self.emit_string_trie_node(child, icase);
+            } else if has_singles && option == branch_groups.len() {
+                self.emit_node(&Node::Bracket(BracketContents {
+                    invert: false,
+                    cps: single_code_points.clone(),
+                }));
+            } else {
+                debug_assert!(node.terminal && option + 1 == option_count);
+            }
+
+            if !has_fallback {
+                continue;
+            }
             jump_fixups.push(self.emit_insn_offset(Insn::Jump { target: 0 }));
-            let next = self.next_offset(); // where the next alternative starts
+            let next = self.next_offset();
+            let alt_idx = alt_idx.expect("fallback option must have an Alt");
             match self.get_insn(alt_idx) {
                 Insn::Alt { secondary } => *secondary = next,
                 _ => unreachable!("Instruction should be Alt"),
             }
         }
-        // Emit the last alternative.
-        // Note this naturally falls through to the end of the string set.
-        self.emit_code_point_sequence(last, icase);
-        // Fix up any "on success" jumps.
+
         let end = self.next_offset();
         for jump_idx in jump_fixups {
             match self.get_insn(jump_idx) {

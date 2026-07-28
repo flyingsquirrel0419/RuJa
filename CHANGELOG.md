@@ -4,6 +4,20 @@
 
 ### Changed
 
+- RegExp `v` now supports string-valued Unicode properties and `\q{...}`
+  disjunctions, including empty strings, single-character crossover with
+  ordinary classes, `/iv` folding before set algebra, grammar-accurate
+  `MayContainStrings` negation, and backward matching in lookbehind. Vendored
+  `regress` deduplicates mathematical string sets and lowers them through a
+  shared-prefix trie whose equivalent suffix subtrees use bracket transitions;
+  this keeps all seven Unicode 17 string properties inside bounded PikeVM
+  execution. Static property tables are charged before cloning; construction
+  rejects cumulative materialization or estimated emission over 750,000 units,
+  more than 65,536 explicit alternatives, a conservative trie-node upper bound
+  over 65,536, and elements over 256 code points. Exact Test262 admission covers all
+  142 generated Unicode-set and string-property files; complete RegExp is
+  **1189 pass / 0 fail / 690 skip** over 1,879 files.
+
 - Well-formed UTF-8 entering JavaScript strings now passes through one
   canonical UTF-16 boundary. Source string and RegExp literals, template
   cooked/raw text, `JSON.parse` escapes, serde ingress, and JSON/text data
@@ -28,8 +42,8 @@
   intersection, subtraction, union, complement, lookaround, and backreference
   paths no longer inherit Rust's broader Unicode word class. Whole-class HIR
   materialization remains limited to ordinary classes, preserving complex
-  `v` syntax and bounded backend execution. String properties, `\q{...}`, and
-  the UTF-16 sentinel collision remain separate limitations.
+  `v` syntax and bounded backend execution. The string-set and UTF-16 logical
+  matcher work is recorded separately above.
 
 - Unicode `u`/`v` RegExp word boundaries under active ignore-case now use the
   exact ECMAScript WordCharacters set on every backend route. Vendored
@@ -65,7 +79,8 @@
   The frozen character-only Unicode set-operation matrix admits 48 generated
   Test262 files covering union, intersection, and subtraction across literal
   characters, nested character classes, class escapes, and character property
-  escapes. String properties and `\q{...}` string operands remain excluded.
+  escapes. This initial 48-file admission is now subsumed by the 142-file
+  string-set corpus described above.
 
 - RegExp quantifier bounds are now parsed independently of host pointer width.
   Finite values through `u128` stay inline, larger values retain canonical

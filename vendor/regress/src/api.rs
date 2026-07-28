@@ -101,6 +101,7 @@ impl Flags {
                 }
                 'v' => {
                     result.unicode_sets = true;
+                    result.unicode = true;
                 }
                 _ => {
                     // Silently skip unsupported flags.
@@ -132,7 +133,9 @@ impl fmt::Display for Flags {
         if self.dot_all {
             f.write_str("s")?;
         }
-        if self.unicode {
+        if self.unicode_sets {
+            f.write_str("v")?;
+        } else if self.unicode {
             f.write_str("u")?;
         }
         Ok(())
@@ -403,6 +406,17 @@ impl From<CompiledRegex> for Regex {
 }
 
 impl Regex {
+    /// Validate a Unicode-code-point pattern without optimizing or emitting a
+    /// matcher. This is useful for hosts that must report RegExp literal early
+    /// errors before runtime construction.
+    pub fn validate_syntax<I, F>(pattern: I, flags: F) -> Result<(), Error>
+    where
+        I: Iterator<Item = u32> + Clone,
+        F: Into<Flags>,
+    {
+        parse::try_parse(pattern, flags.into()).map(|_| ())
+    }
+
     /// Validate bounded named-capture preprocessing without compiling regex IR.
     pub fn validate_unicode_resource_limits<I, F>(pattern: I, flags: F) -> Result<(), Error>
     where
@@ -862,6 +876,214 @@ mod bounded_utf16_tests {
     }
 
     #[test]
+    fn unicode_string_sets_preserve_spec_order_and_empty_strings() {
+        let regex = Regex::with_flags(r"^([\q{|a}])a?$", "v").unwrap();
+        let mut budget = 10_000;
+        let matched = regex
+            .find_at_utf16_bounded(&[b'a' as u16], 0, &mut budget)
+            .unwrap()
+            .unwrap();
+        assert_eq!(matched.range, 0..1);
+        assert_eq!(matched.group(1), Some(0..1));
+
+        let longest = Regex::with_flags(r"^[\q{a|ab|}]b$", "v").unwrap();
+        let mut budget = 10_000;
+        assert_eq!(
+            longest
+                .find_at_utf16_bounded(&[b'a' as u16, b'b' as u16, b'b' as u16], 0, &mut budget)
+                .unwrap()
+                .unwrap()
+                .range,
+            0..3
+        );
+        let mut budget = 10_000;
+        assert_eq!(
+            longest
+                .find_at_utf16_bounded(&[b'b' as u16], 0, &mut budget)
+                .unwrap()
+                .unwrap()
+                .range,
+            0..1
+        );
+    }
+
+    #[test]
+    fn unicode_string_sets_fold_before_set_algebra() {
+        let intersection = Regex::with_flags(r"^[\q{Kx}&&\q{Kx}]$", "iv").unwrap();
+        let mut budget = 10_000;
+        assert_eq!(
+            intersection
+                .find_at_utf16_bounded(&[b'k' as u16, b'X' as u16], 0, &mut budget)
+                .unwrap()
+                .unwrap()
+                .range,
+            0..2
+        );
+
+        let subtraction = Regex::with_flags(r"^[\q{Kx}--\q{Kx}]$", "iv").unwrap();
+        let mut budget = 10_000;
+        assert!(
+            subtraction
+                .find_at_utf16_bounded(&[b'K' as u16, b'x' as u16], 0, &mut budget)
+                .unwrap()
+                .is_none()
+        );
+
+        let single = Regex::with_flags(r"^[\q{K}&&\q{K}]$", "iv").unwrap();
+        let mut budget = 10_000;
+        assert_eq!(
+            single
+                .find_at_utf16_bounded(&[b'k' as u16], 0, &mut budget)
+                .unwrap()
+                .unwrap()
+                .range,
+            0..1
+        );
+
+        let mixed_subtraction = Regex::with_flags(r"^[k--\q{K}]$", "iv").unwrap();
+        for input in [b'k' as u16, b'K' as u16, 0x212a] {
+            let mut budget = 10_000;
+            assert!(
+                mixed_subtraction
+                    .find_at_utf16_bounded(&[input], 0, &mut budget)
+                    .unwrap()
+                    .is_none()
+            );
+        }
+    }
+
+    #[test]
+    fn unicode_string_sets_reverse_in_lookbehind() {
+        let regex = Regex::with_flags(r"(?<=[\q{ab}])c", "v").unwrap();
+        let mut budget = 10_000;
+        assert_eq!(
+            regex
+                .find_from_utf16_bounded(&[b'a' as u16, b'b' as u16, b'c' as u16], 0, &mut budget,)
+                .unwrap()
+                .unwrap()
+                .range,
+            2..3
+        );
+        let mut budget = 10_000;
+        assert!(
+            regex
+                .find_from_utf16_bounded(&[b'b' as u16, b'a' as u16, b'c' as u16], 0, &mut budget,)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn unicode_string_set_grammar_tracks_strings_and_punctuators() {
+        let complement = Regex::with_flags(r"^[^\q{a}]$", "v").unwrap();
+        let mut budget = 10_000;
+        assert_eq!(
+            complement
+                .find_at_utf16_bounded(&[b'b' as u16], 0, &mut budget)
+                .unwrap()
+                .unwrap()
+                .range,
+            0..1
+        );
+        assert!(Regex::with_flags(r"[^\q{ab}]", "v").is_err());
+        let nested_complement = Regex::with_flags(r"^[[^\q{a}]]$", "v").unwrap();
+        let mut budget = 10_000;
+        assert!(
+            nested_complement
+                .find_at_utf16_bounded(&[b'a' as u16], 0, &mut budget)
+                .unwrap()
+                .is_none()
+        );
+        let mut budget = 10_000;
+        assert!(
+            nested_complement
+                .find_at_utf16_bounded(&[b'b' as u16], 0, &mut budget)
+                .unwrap()
+                .is_some()
+        );
+        assert!(Regex::with_flags(r"[^\q{ab}--\q{ab}]", "v").is_err());
+        assert!(Regex::with_flags(r"[^\q{ab}&&\q{a}]", "v").is_ok());
+        assert!(Regex::with_flags(r"[^a--\p{RGI_Emoji}]", "v").is_ok());
+        assert!(Regex::with_flags(r"[^\p{RGI_Emoji}&&a]", "v").is_ok());
+
+        let backspace = Regex::with_flags(r"^[\q{\b}]$", "v").unwrap();
+        let mut budget = 10_000;
+        assert!(
+            backspace
+                .find_at_utf16_bounded(&[0x08], 0, &mut budget)
+                .unwrap()
+                .is_some()
+        );
+        assert!(Regex::with_flags(r"[\q{!#}]", "v").is_ok());
+        assert!(Regex::with_flags(r"[\q{!!}]", "v").is_err());
+        assert!(Regex::with_flags(r"[\q{[}]", "v").is_err());
+
+        let ampersand = Regex::with_flags(r"^[a&b]$", "v").unwrap();
+        for code_point in [b'a' as u16, b'&' as u16, b'b' as u16] {
+            let mut budget = 10_000;
+            assert!(
+                ampersand
+                    .find_at_utf16_bounded(&[code_point], 0, &mut budget)
+                    .unwrap()
+                    .is_some()
+            );
+        }
+    }
+
+    #[test]
+    fn unicode_string_properties_are_bounded_and_reject_negation() {
+        let keycap = Regex::with_flags(r"^\p{Emoji_Keycap_Sequence}$", "v").unwrap();
+        let mut budget = 100_000;
+        assert_eq!(
+            keycap
+                .find_at_utf16_bounded(&[b'9' as u16, 0xfe0f, 0x20e3], 0, &mut budget)
+                .unwrap()
+                .unwrap()
+                .range,
+            0..3
+        );
+        let mut budget = 100_000;
+        assert!(
+            keycap
+                .find_at_utf16_bounded(&[b'9' as u16], 0, &mut budget)
+                .unwrap()
+                .is_none()
+        );
+
+        assert!(Regex::with_flags(r"[^\q{ab}]", "v").is_err());
+        assert!(Regex::with_flags(r"\P{RGI_Emoji}", "v").is_err());
+        assert!(Regex::with_flags(&r"\p{RGI_Emoji}".repeat(64), "v").is_err());
+        let hostile = r"\p{RGI_Emoji}".repeat(1_000);
+        assert!(
+            Regex::validate_syntax(hostile.chars().map(u32::from), "v")
+                .unwrap_err()
+                .text
+                .contains("materialization is too large")
+        );
+        let duplicate_empty_alternatives = format!(r"[\q{{{}}}]", "|".repeat(70_000));
+        assert!(
+            Regex::validate_syntax(duplicate_empty_alternatives.chars().map(u32::from), "v")
+                .unwrap_err()
+                .text
+                .contains("materialization is too large")
+        );
+
+        let mut alternatives = Vec::new();
+        for index in 0..300u32 {
+            let mut alternative = "a".repeat(255);
+            alternative.push(char::from_u32(0x1000 + index).unwrap());
+            alternatives.push(alternative);
+        }
+        let oversized_trie = format!(r"[\q{{{}}}]", alternatives.join("|"));
+        assert!(
+            Regex::validate_syntax(oversized_trie.chars().map(u32::from), "v")
+                .unwrap_err()
+                .text
+                .contains("trie is too large")
+        );
+    }
+
+    #[test]
     fn exact_match_does_not_scan_later_candidates() {
         let regex = Regex::with_flags("z", "u").unwrap();
         let mut budget = 1_000;
@@ -937,6 +1159,35 @@ mod bounded_utf16_tests {
             Regex::validate_unicode_resource_limits(expanded.chars().map(u32::from), "u").is_err()
         );
         assert!(Regex::with_flags(&expanded, "u").is_err());
+    }
+}
+
+#[cfg(test)]
+mod flags_tests {
+    use super::{Flags, Regex};
+
+    #[test]
+    fn unicode_sets_flags_round_trip_as_v() {
+        let flags = Flags::from("v");
+        assert!(flags.unicode);
+        assert!(flags.unicode_sets);
+        assert_eq!(flags.to_string(), "v");
+    }
+
+    #[test]
+    fn string_sets_match_through_the_classical_api() {
+        let keycap = "9\u{fe0f}\u{20e3}";
+        let property = Regex::with_flags(r"^\p{Emoji_Keycap_Sequence}$", "v").unwrap();
+        assert_eq!(property.find(keycap).unwrap().range, 0..keycap.len());
+
+        let lookbehind = Regex::with_flags(r"(?<=[\q{ab}])c", "v").unwrap();
+        assert_eq!(lookbehind.find("abc").unwrap().range, 2..3);
+        assert!(lookbehind.find("bac").is_none());
+
+        let subtraction = Regex::with_flags(r"^[k--\q{K}]$", "iv").unwrap();
+        for input in ["k", "K", "K"] {
+            assert!(subtraction.find(input).is_none());
+        }
     }
 }
 

@@ -96,10 +96,11 @@ The following resource limits are enforced:
   fail, timeout, and error counts but still exits with status zero, so a matrix
   job can be green while semantic failures remain. Ordinary CI and all
   full-matrix jobs consume the same repository-pinned Test262 revision, and
-  full-matrix setup validates exact TypedArray `toString`, `join`, and locale
-  admissions against that checkout before scheduling shards. Aggregate totals
+  full-matrix setup validates exact TypedArray and RegExp Unicode-set
+  admissions against that checkout before scheduling shards. A dedicated job
+  also requires all 142 Unicode-set files to pass exactly. Aggregate totals
   can still hide pass-to-fail swaps, so until the runner exits nonzero under
-  an explicit policy, release audits must download all 30 artifacts, compare
+  an explicit policy, release audits must download all 32 shard artifacts, compare
   each file to a known baseline, and investigate every changed shard.
 - **Regex execution bounds**: ordinary matching uses the RE2-style,
   linear-time Rust `regex` backend. Backreferences use the vendored
@@ -113,7 +114,12 @@ The following resource limits are enforced:
   capture/loop state copies, and backreference code units against one shared
   input-scaled budget, caps aggregate live alternative state across recursive
   lookarounds at 64 MiB, and uses exact-start execution for sticky regexes.
-  String-valued `v` sets remain unsupported. Logical pattern source length is
+  String-valued `v` sets use canonical algebra and shared trie/DAG lowering.
+  Individual strings are capped at 256 code points; cumulative static-table
+  materialization and conservative estimated emission are each capped at
+  750,000 units before bytecode materialization; explicit alternatives and the
+  conservative trie-node upper bound are each capped at 65,536. Logical pattern
+  source length is
   scanned without allocation and capped at 262,144 UTF-16 units before general
   regex validation; 64 real property operands are checked before compilation.
   Every `u`/`v` pattern receives these logical
@@ -211,13 +217,13 @@ guarantees are required.
   lookbehind. Unicode `iu`/`iv` `\b`/`\B` now use the ECMAScript
   WordCharacters set on both linear-prefiltered and hard routes. External
   well-formed UTF-8 scalar ingress now canonicalizes `U+F0000..U+F07FF` to
-  their two UTF-16 code units. Unicode RegExp execution still maps a lone
-  surrogate sentinel onto that private-use scalar range in the backend, so
-  literal and property matching can still confuse the two logical symbols.
-  String-valued `v` set elements using string properties or `\q{...}` also
-  remain incomplete. Complex `iv` sets
-  now lower `\w` and `\W` operands to ECMAScript WordCharacters before the
-  backend performs set algebra. The backend also rejects some grammar-valid
+  their two UTF-16 code units. The bounded logical UTF-16 matcher keeps lone
+  surrogates distinct from those legal private-use scalars.
+  String-valued `v` set elements, including empty `\q` alternatives, Unicode
+  17 string properties, `/iv` algebra, negation, and lookbehind, use the
+  bounded logical matcher. Complex `iv` sets lower `\w` and `\W` operands to
+  ECMAScript WordCharacters before the backend performs set algebra. The
+  backend also rejects some grammar-valid
   legacy forms, including
   invalid-brace Annex B literals and non-BMP code-unit ranges such as
   `[💩-\uFFFF]`; statement-list RegExp fallback still mishandles nearby lazy

@@ -1,4 +1,6 @@
 /target
+/vendor/regress/target/
+/vendor/regress/Cargo.lock
 tools/__pycache__/
 handoff.md
 HANDOFF.md

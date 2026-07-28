@@ -141,6 +141,11 @@ impl Node {
     pub fn reverse_cats(&mut self, w: &mut Walk) {
         match self {
             Node::Cat(nodes) if w.in_lookbehind => nodes.reverse(),
+            Node::StringSet { alternatives, .. } if w.in_lookbehind => {
+                for alternative in alternatives {
+                    alternative.reverse();
+                }
+            }
             Node::ByteSequence(..) => panic!("Should not be reversing literal bytes"),
             _ => {}
         }

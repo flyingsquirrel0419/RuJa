@@ -15,6 +15,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Install wasm target
+        run: rustup target add wasm32-unknown-unknown
       - name: Build
         run: cargo build --all-targets --all-features --verbose
       - name: Run tests
@@ -23,6 +25,20 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: Test vendored RegExp engine
+        run: >-
+          cargo test --manifest-path vendor/regress/Cargo.toml
+          --features utf16,backend-pikevm --lib
+      - name: Clippy vendored RegExp engine
+        run: >-
+          cargo clippy --manifest-path vendor/regress/Cargo.toml
+          --all-targets --features utf16,backend-pikevm -- -D warnings
+      - name: Check vendored RegExp no_std
+        run: >-
+          cargo check --manifest-path vendor/regress/Cargo.toml
+          --no-default-features --features alloc,backend-pikevm,utf16
+      - name: Check wasm32
+        run: cargo check --target wasm32-unknown-unknown --all-features
       - name: Test test262 tooling
         run: python3 tools/test262_tooling_test.py
 

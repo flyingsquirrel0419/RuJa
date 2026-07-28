@@ -2118,6 +2118,31 @@ pub fn utf16_from_str(s: &str) -> Vec<u16> {
     units
 }
 
+/// Decode an internal JS string into logical Unicode pattern symbols: valid
+/// surrogate pairs become one scalar and lone surrogates remain code points in
+/// the surrogate range.
+pub(crate) fn utf16_code_points_from_str(s: &str) -> Vec<u32> {
+    let units = utf16_from_str(s);
+    let mut code_points = Vec::with_capacity(units.len());
+    let mut index = 0;
+    while index < units.len() {
+        let high = units[index];
+        if (0xd800..=0xdbff).contains(&high)
+            && units
+                .get(index + 1)
+                .is_some_and(|low| (0xdc00..=0xdfff).contains(low))
+        {
+            let low = units[index + 1];
+            code_points.push(0x10000 + (((high as u32 - 0xd800) << 10) | (low as u32 - 0xdc00)));
+            index += 2;
+        } else {
+            code_points.push(high as u32);
+            index += 1;
+        }
+    }
+    code_points
+}
+
 /// Append one well-formed Unicode scalar to RuJa's canonical JS string
 /// representation. Scalars in the private sentinel range must pass through
 /// UTF-16 so they cannot be mistaken for lone surrogate code units.
