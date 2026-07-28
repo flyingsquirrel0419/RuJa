@@ -106,6 +106,15 @@ impl<'t> CompiledCaptures<'t> {
 enum CompiledRegex {
     Rust(RustRegex),
     Fancy(fancy_regex::Regex),
+    // Assertion erasure is rejection-only. The capture-erased exact linear
+    // matcher may select language bounds, but never supplies capture slots.
+    PrefilteredExact {
+        prefilter: RustRegex,
+        boundary_fast: RustRegex,
+        exact: fancy_regex::Regex,
+        linear_exact: Option<fancy_regex::Regex>,
+        needs_capture_correction: bool,
+    },
     CaptureCorrected {
         fast: RustRegex,
         captures: fancy_regex::Regex,
@@ -154,6 +163,7 @@ fn compile_regex_with_input_mode(
             capture_count,
             code_unit_input,
             true,
+            false,
             &capture_indices,
         )?;
         return build_fancy_regex_with_repeat_fallback(
@@ -171,6 +181,7 @@ fn compile_regex_with_input_mode(
         capture_count,
         code_unit_input,
         false,
+        true,
         &capture_indices,
     )?;
     let mut b = RustRegexBuilder::new(&rust_normalized.source);
@@ -186,6 +197,7 @@ fn compile_regex_with_input_mode(
                 capture_count,
                 code_unit_input,
                 true,
+                false,
                 &capture_indices,
             )?;
             return build_fancy_regex(&normalized, flags, true)
@@ -194,6 +206,61 @@ fn compile_regex_with_input_mode(
         }
         Err(error) => return Err(error.to_string()),
     };
+    if rust_normalized.relaxed_unicode_word_boundary {
+        let boundary_normalized = normalize_regex_for_backend(
+            &rewritten_source,
+            flags,
+            capture_count,
+            code_unit_input,
+            false,
+            false,
+            &capture_indices,
+        )?;
+        let mut boundary_builder = RustRegexBuilder::new(&boundary_normalized.source);
+        boundary_builder.case_insensitive(flags.contains('i'));
+        boundary_builder.multi_line(flags.contains('m'));
+        boundary_builder.dot_matches_new_line(flags.contains('s'));
+        let boundary_fast = boundary_builder
+            .build()
+            .map_err(|error| error.to_string())?;
+        let exact_normalized = normalize_regex_for_backend(
+            &rewritten_source,
+            flags,
+            capture_count,
+            code_unit_input,
+            true,
+            false,
+            &capture_indices,
+        )?;
+        let exact = build_fancy_regex_with_repeat_fallback(
+            &exact_normalized,
+            flags,
+            false,
+            quantifiers.has_braced,
+        )?;
+        let linear_exact = if needs_capture_correction {
+            let normalized = NormalizedRegex {
+                source: erase_backend_capture_groups(&exact_normalized.source),
+                backref_sets: Vec::new(),
+                relaxed_unicode_word_boundary: false,
+            };
+            Some(build_fancy_regex_with_repeat_fallback(
+                &normalized,
+                flags,
+                false,
+                quantifiers.has_braced,
+            )?)
+        } else {
+            None
+        };
+        return Ok(CompiledRegex::PrefilteredExact {
+            prefilter: fast,
+            boundary_fast,
+            exact,
+            linear_exact,
+            needs_capture_correction,
+        });
+    }
     if !needs_capture_correction {
         return Ok(CompiledRegex::Rust(fast));
     }
@@ -204,6 +271,7 @@ fn compile_regex_with_input_mode(
         capture_count,
         code_unit_input,
         true,
+        false,
         &capture_indices,
     )?;
     let captures = build_fancy_regex_with_repeat_fallback(
@@ -276,6 +344,30 @@ impl CompiledRegex {
                 .find_from_pos(input, start)
                 .map(|m| m.map(CompiledMatch::from))
                 .map_err(regex_runtime_error),
+            CompiledRegex::PrefilteredExact {
+                prefilter,
+                boundary_fast: _,
+                exact,
+                linear_exact,
+                needs_capture_correction: _,
+            } => {
+                if let Some(linear_exact) = linear_exact {
+                    let Some(candidate) = linear_exact
+                        .find_from_pos(input, start)
+                        .map_err(regex_runtime_error)?
+                    else {
+                        return Ok(None);
+                    };
+                    return Ok(corrected_captures(exact, input, candidate.start())?.get(0));
+                }
+                if prefilter.find_at(input, start).is_none() {
+                    return Ok(None);
+                }
+                exact
+                    .find_from_pos(input, start)
+                    .map(|matched| matched.map(CompiledMatch::from))
+                    .map_err(regex_runtime_error)
+            }
             CompiledRegex::CaptureCorrected { fast, captures } => {
                 let Some(candidate) = fast.find_at(input, start) else {
                     return Ok(None);
@@ -289,26 +381,36 @@ impl CompiledRegex {
     fn find_iter<'t>(&self, input: &'t str) -> error::Result<Vec<CompiledMatch<'t>>> {
         match self {
             CompiledRegex::Rust(re) => Ok(re.find_iter(input).map(CompiledMatch::from).collect()),
-            CompiledRegex::Fancy(re) => {
-                let mut matches = Vec::new();
-                let mut pos = 0;
-                while pos <= input.len() {
-                    let Some(m) = re.find_from_pos(input, pos).map_err(regex_runtime_error)? else {
-                        break;
-                    };
-                    let start = m.start();
-                    let end = m.end();
-                    matches.push(CompiledMatch::from(m));
-                    if end == pos {
-                        match input[end..].chars().next() {
-                            Some(ch) => pos = end + ch.len_utf8(),
-                            None => break,
-                        }
-                    } else {
-                        pos = end.max(start + 1);
-                    }
+            CompiledRegex::Fancy(re) => fancy_find_iter(re, input),
+            CompiledRegex::PrefilteredExact {
+                prefilter,
+                boundary_fast,
+                exact,
+                linear_exact,
+                needs_capture_correction,
+            } => {
+                if let Some(linear_exact) = linear_exact {
+                    return Ok(fancy_corrected_captures_iter(linear_exact, exact, input)?
+                        .into_iter()
+                        .filter_map(|captures| captures.get(0))
+                        .collect());
                 }
-                Ok(matches)
+                if rust_and_ecmascript_unicode_word_classes_agree(input) {
+                    if !needs_capture_correction {
+                        return Ok(boundary_fast
+                            .find_iter(input)
+                            .map(CompiledMatch::from)
+                            .collect());
+                    }
+                    return Ok(corrected_captures_iter(boundary_fast, exact, input)?
+                        .into_iter()
+                        .filter_map(|captures| captures.get(0))
+                        .collect());
+                }
+                if prefilter.find(input).is_none() {
+                    return Ok(Vec::new());
+                }
+                fancy_find_iter(exact, input)
             }
             CompiledRegex::CaptureCorrected { .. } => Ok(self
                 .captures_iter(input)?
@@ -333,6 +435,30 @@ impl CompiledRegex {
                 .captures_from_pos(input, start)
                 .map(|caps| caps.map(CompiledCaptures::from))
                 .map_err(regex_runtime_error),
+            CompiledRegex::PrefilteredExact {
+                prefilter,
+                boundary_fast: _,
+                exact,
+                linear_exact,
+                needs_capture_correction: _,
+            } => {
+                if let Some(linear_exact) = linear_exact {
+                    let Some(expected) = linear_exact
+                        .find_from_pos(input, start)
+                        .map_err(regex_runtime_error)?
+                    else {
+                        return Ok(None);
+                    };
+                    return corrected_captures(exact, input, expected.start()).map(Some);
+                }
+                if prefilter.find_at(input, start).is_none() {
+                    return Ok(None);
+                }
+                exact
+                    .captures_from_pos(input, start)
+                    .map(|captures| captures.map(CompiledCaptures::from))
+                    .map_err(regex_runtime_error)
+            }
             CompiledRegex::CaptureCorrected { fast, captures } => {
                 let Some(expected) = fast.find_at(input, start) else {
                     return Ok(None);
@@ -348,54 +474,82 @@ impl CompiledRegex {
                 .captures_iter(input)
                 .map(CompiledCaptures::from)
                 .collect()),
-            CompiledRegex::Fancy(re) => {
-                let mut captures = Vec::new();
-                let mut pos = 0;
-                while pos <= input.len() {
-                    let Some(caps) = re
-                        .captures_from_pos(input, pos)
-                        .map_err(regex_runtime_error)?
-                    else {
-                        break;
-                    };
-                    let Some(m) = caps.get(0) else {
-                        break;
-                    };
-                    let end = m.end();
-                    captures.push(CompiledCaptures::from(caps));
-                    if end == pos {
-                        match input[end..].chars().next() {
-                            Some(ch) => pos = end + ch.len_utf8(),
-                            None => break,
-                        }
-                    } else {
-                        pos = end;
-                    }
+            CompiledRegex::Fancy(re) => fancy_captures_iter(re, input),
+            CompiledRegex::PrefilteredExact {
+                prefilter,
+                boundary_fast,
+                exact,
+                linear_exact,
+                needs_capture_correction,
+            } => {
+                if let Some(linear_exact) = linear_exact {
+                    return fancy_corrected_captures_iter(linear_exact, exact, input);
                 }
-                Ok(captures)
+                if rust_and_ecmascript_unicode_word_classes_agree(input) {
+                    if !needs_capture_correction {
+                        return Ok(boundary_fast
+                            .captures_iter(input)
+                            .map(CompiledCaptures::from)
+                            .collect());
+                    }
+                    return corrected_captures_iter(boundary_fast, exact, input);
+                }
+                if prefilter.find(input).is_none() {
+                    return Ok(Vec::new());
+                }
+                fancy_captures_iter(exact, input)
             }
             CompiledRegex::CaptureCorrected { fast, captures } => {
-                let mut matches = Vec::new();
-                let mut pos = 0;
-                while pos <= input.len() {
-                    let Some(candidate) = fast.find_at(input, pos) else {
-                        break;
+                corrected_captures_iter(fast, captures, input)
+            }
+        }
+    }
+
+    fn captures_exact_at<'t>(
+        &self,
+        input: &'t str,
+        start: usize,
+    ) -> error::Result<Option<CompiledCaptures<'t>>> {
+        match self {
+            CompiledRegex::Rust(re) => Ok(re
+                .captures_at(input, start)
+                .filter(|captures| {
+                    captures
+                        .get(0)
+                        .is_some_and(|matched| matched.start() == start)
+                })
+                .map(CompiledCaptures::from)),
+            CompiledRegex::Fancy(re) => re
+                .captures_at_pos(input, start)
+                .map(|captures| captures.map(CompiledCaptures::from))
+                .map_err(regex_runtime_error),
+            CompiledRegex::PrefilteredExact {
+                exact,
+                linear_exact,
+                ..
+            } => {
+                if let Some(linear_exact) = linear_exact {
+                    let Some(expected) = linear_exact
+                        .find_at_pos(input, start)
+                        .map_err(regex_runtime_error)?
+                    else {
+                        return Ok(None);
                     };
-                    let corrected = corrected_captures(captures, input, candidate.start())?;
-                    let actual = corrected.get(0).ok_or_else(|| {
-                        Error::internal("capture backend omitted RegExp group zero")
-                    })?;
-                    matches.push(corrected);
-                    if actual.end() == actual.start() {
-                        let Some(ch) = input[actual.end()..].chars().next() else {
-                            break;
-                        };
-                        pos = actual.end() + ch.len_utf8();
-                    } else {
-                        pos = actual.end();
-                    }
+                    debug_assert_eq!(expected.start(), start);
                 }
-                Ok(matches)
+                exact
+                    .captures_at_pos(input, start)
+                    .map(|captures| captures.map(CompiledCaptures::from))
+                    .map_err(regex_runtime_error)
+            }
+            CompiledRegex::CaptureCorrected { fast, captures } => {
+                let Some(candidate) = fast.find_at(input, start) else {
+                    return Ok(None);
+                };
+                if candidate.start() != start {
+                    return Ok(None);
+                }
+                corrected_captures(captures, input, start).map(Some)
             }
         }
     }
@@ -403,7 +557,9 @@ impl CompiledRegex {
     fn replace<'t>(&self, input: &'t str, replacement: &str) -> error::Result<Cow<'t, str>> {
         match self {
             CompiledRegex::Rust(re) => Ok(re.replace(input, replacement)),
-            CompiledRegex::Fancy(_) | CompiledRegex::CaptureCorrected { .. } => {
+            CompiledRegex::Fancy(_)
+            | CompiledRegex::PrefilteredExact { .. }
+            | CompiledRegex::CaptureCorrected { .. } => {
                 self.replace_fancy(input, replacement, false)
             }
         }
@@ -412,7 +568,9 @@ impl CompiledRegex {
     fn replace_all<'t>(&self, input: &'t str, replacement: &str) -> error::Result<Cow<'t, str>> {
         match self {
             CompiledRegex::Rust(re) => Ok(re.replace_all(input, replacement)),
-            CompiledRegex::Fancy(_) | CompiledRegex::CaptureCorrected { .. } => {
+            CompiledRegex::Fancy(_)
+            | CompiledRegex::PrefilteredExact { .. }
+            | CompiledRegex::CaptureCorrected { .. } => {
                 self.replace_fancy(input, replacement, true)
             }
         }
@@ -424,6 +582,20 @@ impl CompiledRegex {
         replacement: &str,
         global: bool,
     ) -> error::Result<Cow<'t, str>> {
+        if !global {
+            let Some(caps) = self.captures(input)? else {
+                return Ok(Cow::Borrowed(input));
+            };
+            let Some(matched) = caps.get(0) else {
+                return Ok(Cow::Borrowed(input));
+            };
+            let mut result =
+                String::with_capacity(input.len() - matched.as_str().len() + replacement.len());
+            result.push_str(&input[..matched.start()]);
+            result.push_str(replacement);
+            result.push_str(&input[matched.end()..]);
+            return Ok(Cow::Owned(result));
+        }
         let mut result = String::new();
         let mut last_end = 0;
         let mut replaced = false;
@@ -435,9 +607,6 @@ impl CompiledRegex {
             result.push_str(replacement);
             last_end = m.end();
             replaced = true;
-            if !global {
-                break;
-            }
         }
         if !replaced {
             return Ok(Cow::Borrowed(input));
@@ -447,13 +616,110 @@ impl CompiledRegex {
     }
 }
 
+fn next_regex_iteration_position(input: &str, start: usize, end: usize) -> Option<usize> {
+    if start != end {
+        return Some(end);
+    }
+    input[end..].chars().next().map(|ch| end + ch.len_utf8())
+}
+
+fn rust_and_ecmascript_unicode_word_classes_agree(input: &str) -> bool {
+    static RUST_ONLY_WORD: OnceLock<RustRegex> = OnceLock::new();
+    let rust_only_word = RUST_ONLY_WORD.get_or_init(|| {
+        RustRegex::new(r"[\w&&[^A-Za-z0-9_\u{017F}\u{212A}]]")
+            .expect("static Unicode word-class difference must compile")
+    });
+    !rust_only_word.is_match(input)
+}
+
+fn erase_backend_capture_groups(source: &str) -> String {
+    let mut output = String::with_capacity(source.len());
+    let mut chars = source.chars().peekable();
+    let mut escaped = false;
+    let mut in_class = false;
+    while let Some(ch) = chars.next() {
+        if escaped {
+            output.push(ch);
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            output.push(ch);
+            escaped = true;
+            continue;
+        }
+        if ch == '[' && !in_class {
+            in_class = true;
+        } else if ch == ']' && in_class {
+            in_class = false;
+        }
+        if ch == '(' && !in_class && chars.peek() != Some(&'?') {
+            output.push_str("(?:");
+        } else {
+            output.push(ch);
+        }
+    }
+    output
+}
+
+fn fancy_find_iter<'t>(
+    regex: &fancy_regex::Regex,
+    input: &'t str,
+) -> error::Result<Vec<CompiledMatch<'t>>> {
+    let mut matches = Vec::new();
+    let mut position = 0;
+    while position <= input.len() {
+        let Some(matched) = regex
+            .find_from_pos(input, position)
+            .map_err(regex_runtime_error)?
+        else {
+            break;
+        };
+        let start = matched.start();
+        let end = matched.end();
+        matches.push(CompiledMatch::from(matched));
+        let Some(next) = next_regex_iteration_position(input, start, end) else {
+            break;
+        };
+        position = next;
+    }
+    Ok(matches)
+}
+
+fn fancy_captures_iter<'t>(
+    regex: &fancy_regex::Regex,
+    input: &'t str,
+) -> error::Result<Vec<CompiledCaptures<'t>>> {
+    let mut captures = Vec::new();
+    let mut position = 0;
+    while position <= input.len() {
+        let Some(groups) = regex
+            .captures_from_pos(input, position)
+            .map_err(regex_runtime_error)?
+        else {
+            break;
+        };
+        let matched = groups
+            .get(0)
+            .ok_or_else(|| Error::internal("exact RegExp backend omitted group zero"))?;
+        let start = matched.start();
+        let end = matched.end();
+        captures.push(CompiledCaptures::from(groups));
+        let Some(next) = next_regex_iteration_position(input, start, end) else {
+            break;
+        };
+        position = next;
+    }
+    Ok(captures)
+}
+
 fn corrected_captures<'t>(
     re: &fancy_regex::Regex,
     input: &'t str,
     expected_start: usize,
 ) -> error::Result<CompiledCaptures<'t>> {
     let caps = re
-        .captures_from_pos(input, expected_start)
+        .captures_at_pos(input, expected_start)
         .map_err(regex_runtime_error)?
         .ok_or_else(|| Error::internal("capture backend lost a prefiltered RegExp match"))?;
     let actual = caps
@@ -467,9 +733,78 @@ fn corrected_captures<'t>(
     Ok(CompiledCaptures::from(caps))
 }
 
+fn corrected_captures_iter<'t>(
+    fast: &RustRegex,
+    exact: &fancy_regex::Regex,
+    input: &'t str,
+) -> error::Result<Vec<CompiledCaptures<'t>>> {
+    let mut matches = Vec::new();
+    let mut position = 0;
+    while position <= input.len() {
+        let Some(candidate) = fast.find_at(input, position) else {
+            break;
+        };
+        let corrected = corrected_captures(exact, input, candidate.start())?;
+        let actual = corrected
+            .get(0)
+            .ok_or_else(|| Error::internal("capture backend omitted RegExp group zero"))?;
+        matches.push(corrected);
+        let Some(next) = next_regex_iteration_position(input, actual.start(), actual.end()) else {
+            break;
+        };
+        position = next;
+    }
+    Ok(matches)
+}
+
+fn fancy_corrected_captures_iter<'t>(
+    linear_exact: &fancy_regex::Regex,
+    exact: &fancy_regex::Regex,
+    input: &'t str,
+) -> error::Result<Vec<CompiledCaptures<'t>>> {
+    let mut matches = Vec::new();
+    let mut position = 0;
+    while position <= input.len() {
+        let Some(candidate) = linear_exact
+            .find_from_pos(input, position)
+            .map_err(regex_runtime_error)?
+        else {
+            break;
+        };
+        let corrected = corrected_captures(exact, input, candidate.start())?;
+        let actual = corrected
+            .get(0)
+            .ok_or_else(|| Error::internal("capture backend omitted RegExp group zero"))?;
+        matches.push(corrected);
+        let Some(next) = next_regex_iteration_position(input, actual.start(), actual.end()) else {
+            break;
+        };
+        position = next;
+    }
+    Ok(matches)
+}
+
 #[cfg(test)]
 mod compiled_regex_tests {
     use super::*;
+
+    #[test]
+    fn unicode_word_class_agreement_detects_rust_only_characters() {
+        assert!(rust_and_ecmascript_unicode_word_classes_agree("a_9ſK"));
+        assert!(!rust_and_ecmascript_unicode_word_classes_agree("é"));
+        assert!(!rust_and_ecmascript_unicode_word_classes_agree("中"));
+        assert!(!rust_and_ecmascript_unicode_word_classes_agree("\u{0660}"));
+
+        let hir = RegexSyntaxParserBuilder::new()
+            .ecmascript_unicode_word_boundary(true)
+            .build()
+            .parse(r"\b")
+            .expect("custom word boundary should parse");
+        assert!(matches!(
+            hir.kind(),
+            HirKind::Look(regex_syntax::hir::Look::WordEcmaUnicodeIgnoreCase)
+        ));
+    }
 
     #[test]
     fn capture_corrected_apis_use_ecmascript_ends_and_iteration() {
@@ -533,25 +868,282 @@ mod compiled_regex_tests {
     }
 
     #[test]
+    fn unicode_boundary_find_uses_exact_nullable_repeat_bounds() {
+        let re = compile_regex(r"\b(a?b??)*", "iu")
+            .expect("Unicode boundary nullable capture pattern should compile");
+
+        let found = re
+            .find_at("ab", 0)
+            .expect("find_at should execute")
+            .expect("find_at should match");
+        assert_eq!((found.as_str(), found.start(), found.end()), ("ab", 0, 2));
+
+        let found_iter = re.find_iter("ab").expect("find_iter should execute");
+        assert_eq!(
+            found_iter
+                .iter()
+                .map(|matched| (matched.as_str(), matched.start(), matched.end()))
+                .collect::<Vec<_>>(),
+            vec![("ab", 0, 2), ("", 2, 2)]
+        );
+    }
+
+    #[test]
+    fn unicode_boundary_position_calls_do_not_rescan_the_whole_input() {
+        let re = compile_regex(r"\ba", "iu").expect("Unicode boundary pattern should compile");
+        let input = "a ".repeat(20_000);
+        let mut position = 0;
+        let mut count = 0;
+        while let Some(captures) = re
+            .captures_at(&input, position)
+            .expect("position match should execute")
+        {
+            let matched = captures.get(0).expect("group zero should exist");
+            count += 1;
+            position = matched.end();
+        }
+        assert_eq!(count, 20_000);
+    }
+
+    #[test]
     fn capture_corrected_no_match_stays_on_the_linear_prefilter() {
         let re = compile_regex("(a+)+$", "").expect("nested repeat should compile");
         let input = format!("{}!", "a".repeat(4_096));
         let CompiledRegex::CaptureCorrected { captures, .. } = &re else {
             panic!("nested quantified capture should use the hybrid backend");
         };
-        assert!(
-            matches!(
-                captures.find(&input),
-                Err(fancy_regex::Error::RuntimeError(
-                    fancy_regex::RuntimeError::BacktrackLimitExceeded
-                ))
-            ),
-            "the bounded capture backend should hit its exact work-limit error"
-        );
+        assert!(captures
+            .find(&input)
+            .expect("non-nullable repeated captures should stay linear")
+            .is_none());
         assert!(re
             .find(&input)
             .expect("the linear prefilter should reject without a backend error")
             .is_none());
+    }
+
+    #[test]
+    fn unicode_word_boundary_prefilter_is_superset_only() {
+        let non_boundary =
+            compile_regex(r"^\B(a)*", "iu").expect("Unicode ignore-case boundary should compile");
+        let CompiledRegex::PrefilteredExact {
+            prefilter, exact, ..
+        } = &non_boundary
+        else {
+            panic!("Unicode ignore-case boundary should use the exact hybrid backend");
+        };
+        assert!(prefilter.find("é").is_some());
+        assert!(exact
+            .find("é")
+            .expect("exact backend should execute")
+            .is_some());
+
+        let captures = non_boundary
+            .captures_at("é", 0)
+            .expect("captures should execute")
+            .expect("non-boundary should match");
+        let whole = captures.get(0).expect("group zero should exist");
+        assert_eq!((whole.start(), whole.end()), (0, 0));
+        assert_eq!(captures.get(1).map(CompiledMatch::as_str), None);
+
+        let boundary =
+            compile_regex(r"^\b(a)*", "iu").expect("Unicode ignore-case boundary should compile");
+        let CompiledRegex::PrefilteredExact { prefilter, .. } = &boundary else {
+            panic!("Unicode ignore-case boundary should use the exact hybrid backend");
+        };
+        assert!(
+            prefilter.find("é").is_some(),
+            "relaxed assertion may produce a false positive"
+        );
+        assert!(boundary
+            .find("é")
+            .expect("exact backend should execute")
+            .is_none());
+
+        let transition =
+            compile_regex(r"é\b(a)*", "iu").expect("Unicode ignore-case transition should compile");
+        let matched = transition
+            .find("éa")
+            .expect("transition should execute")
+            .expect("non-word to word boundary should match");
+        assert_eq!(
+            (matched.as_str(), matched.start(), matched.end()),
+            ("éa", 0, 3)
+        );
+    }
+
+    #[test]
+    fn unicode_word_boundary_exact_iteration_advances_from_actual_empty_match() {
+        let re =
+            compile_regex(r"\B(a)*", "iu").expect("Unicode ignore-case boundary should compile");
+        let found = re.find_iter("é😀").expect("find iteration should execute");
+        assert_eq!(
+            found
+                .iter()
+                .map(|matched| (matched.start(), matched.end()))
+                .collect::<Vec<_>>(),
+            vec![(0, 0), (2, 2), (6, 6)]
+        );
+
+        let later =
+            compile_regex(r"\b", "iu").expect("Unicode ignore-case boundary should compile");
+        assert_eq!(
+            later
+                .find_iter("éK")
+                .expect("later empty matches should execute")
+                .iter()
+                .map(|matched| (matched.start(), matched.end()))
+                .collect::<Vec<_>>(),
+            vec![(2, 2), (5, 5)]
+        );
+        let captures = re
+            .captures_iter("é😀")
+            .expect("capture iteration should execute");
+        assert_eq!(
+            captures
+                .iter()
+                .map(|groups| {
+                    let matched = groups.get(0).expect("group zero should exist");
+                    (matched.start(), matched.end())
+                })
+                .collect::<Vec<_>>(),
+            vec![(0, 0), (2, 2), (6, 6)]
+        );
+        assert_eq!(
+            re.replace_all("é😀", "X")
+                .expect("replacement should execute"),
+            "XéX😀X"
+        );
+
+        let hard = compile_regex(r"(?=)\B(a)*", "iu")
+            .expect("hard Unicode ignore-case boundary should compile");
+        assert!(matches!(&hard, CompiledRegex::Fancy(_)));
+        let hard_found = hard
+            .find_iter("é😀")
+            .expect("hard find iteration should execute");
+        assert_eq!(
+            hard_found
+                .iter()
+                .map(|matched| (matched.start(), matched.end()))
+                .collect::<Vec<_>>(),
+            vec![(0, 0), (2, 2), (6, 6)]
+        );
+    }
+
+    #[test]
+    fn unicode_word_boundary_prefilter_preserves_hostile_no_match_rejection() {
+        let re = compile_regex(r"^(a+)+\b$", "iu").expect("nested boundary pattern should compile");
+        let input = format!("{}!", "a".repeat(4_096));
+        let CompiledRegex::PrefilteredExact { exact, .. } = &re else {
+            panic!("Unicode ignore-case boundary should use the exact hybrid backend");
+        };
+        assert!(exact
+            .find(&input)
+            .expect("non-nullable repeated captures should stay linear")
+            .is_none());
+        assert!(re
+            .find(&input)
+            .expect("linear superset prefilter should reject")
+            .is_none());
+
+        let false_positive =
+            compile_regex(r"^(a+)+\B$", "iu").expect("nested non-boundary pattern should compile");
+        assert!(false_positive
+            .find(&"a".repeat(4_096))
+            .expect("the exact boundary fast path should reject linearly")
+            .is_none());
+
+        let disagreement = compile_regex(r"^(é+)+\b$", "iu")
+            .expect("nested non-ASCII boundary pattern should compile");
+        let CompiledRegex::PrefilteredExact { exact, .. } = &disagreement else {
+            panic!("Unicode ignore-case boundary should use the exact hybrid backend");
+        };
+        let disagreement_input = "é".repeat(4_096);
+        assert!(exact
+            .find(&disagreement_input)
+            .expect("non-ASCII non-nullable repeats should stay linear")
+            .is_none());
+        assert!(disagreement
+            .find(&disagreement_input)
+            .expect("non-ASCII exact no-match should not exhaust work")
+            .is_none());
+    }
+
+    #[test]
+    fn unicode_word_boundary_large_linear_scan_does_not_hit_work_limit() {
+        let re = compile_regex(r"\b", "iu").expect("boundary should compile");
+        assert!(re
+            .find(&"é".repeat(1_000_001))
+            .expect("linear position scanning is not backtracking work")
+            .is_none());
+
+        let repeated_capture =
+            compile_regex(r"^(a)*\b$", "iu").expect("long repeated capture should compile");
+        let repeated_input = "a".repeat(100_001);
+        let CompiledRegex::PrefilteredExact {
+            exact,
+            linear_exact: Some(linear_exact),
+            ..
+        } = &repeated_capture
+        else {
+            panic!("repeated boundary capture should use both exact matchers");
+        };
+        assert!(
+            linear_exact
+                .find(&repeated_input)
+                .expect("linear exact matcher should execute")
+                .is_some(),
+            "linear pattern {:?}",
+            linear_exact.as_str()
+        );
+        assert!(
+            exact
+                .captures(&repeated_input)
+                .expect("capture matcher should execute")
+                .is_some(),
+            "capture pattern {:?}",
+            exact.as_str()
+        );
+        let captures = repeated_capture
+            .captures(&repeated_input)
+            .expect("deterministic repeated captures should stay within bounded storage")
+            .expect("the repeated capture should match");
+        assert_eq!(
+            captures.get(0).map(CompiledMatch::as_str),
+            Some(repeated_input.as_str())
+        );
+        assert_eq!(captures.get(1).map(CompiledMatch::as_str), Some("a"));
+
+        let alternating = compile_regex(r"^(?:(a)|(b))+\b$", "iu")
+            .expect("alternating repeated captures should compile");
+        let alternating = alternating
+            .captures("ab")
+            .expect("alternating captures should execute")
+            .expect("alternating captures should match");
+        assert_eq!(alternating.get(1).map(CompiledMatch::as_str), None);
+        assert_eq!(alternating.get(2).map(CompiledMatch::as_str), Some("b"));
+    }
+
+    #[test]
+    fn exact_position_and_first_replace_do_not_search_the_suffix() {
+        let sticky = compile_regex(r"\b(a+)+$", "iu").expect("sticky probe should compile");
+        let sticky_input = format!("é{}", "a".repeat(4_096));
+        assert!(sticky
+            .captures_at(&sticky_input, 0)
+            .expect("ordinary search should execute")
+            .is_some());
+        assert!(sticky
+            .captures_exact_at(&sticky_input, 0)
+            .expect("exact-position search should execute")
+            .is_none());
+
+        let replace =
+            compile_regex(r"^\B|(a+)+b", "iu").expect("first-replacement probe should compile");
+        let replace_input = format!("é{}!", "a".repeat(4_096));
+        let replaced = replace
+            .replace(&replace_input, "X")
+            .expect("non-global replacement should not inspect later matches");
+        assert_eq!(replaced, format!("X{replace_input}"));
     }
 }
 
@@ -643,34 +1235,16 @@ fn push_ecmascript_word_boundary_for_backend(
     unicode_ignore_case: bool,
 ) {
     out.pop();
-    let word = ecmascript_word_class_body(unicode_ignore_case);
-    out.push_str("(?-i:(?:");
     match escape {
-        'b' => {
-            out.push_str("(?<=[");
-            out.push_str(word);
-            out.push_str("])(?![");
-            out.push_str(word);
-            out.push_str("])|(?<![");
-            out.push_str(word);
-            out.push_str("])(?=[");
-            out.push_str(word);
-            out.push_str("])");
-        }
-        'B' => {
-            out.push_str("(?<=[");
-            out.push_str(word);
-            out.push_str("])(?=[");
-            out.push_str(word);
-            out.push_str("])|(?<![");
-            out.push_str(word);
-            out.push_str("])(?![");
-            out.push_str(word);
-            out.push_str("])");
-        }
+        'b' => out.push_str(r"\b"),
+        'B' => out.push_str(r"\B"),
         _ => unreachable!(),
     }
-    out.push_str("))");
+    if unicode_ignore_case {
+        out.push_str("{ruja-ecma-unicode-i}");
+    } else {
+        out.push_str("{ruja-ecma}");
+    }
 }
 
 fn legacy_regex_canonicalize_code_unit(unit: u16) -> u16 {
@@ -985,6 +1559,7 @@ fn push_ecmascript_class_escape_for_backend(
 struct NormalizedRegex {
     source: String,
     backref_sets: Vec<Vec<usize>>,
+    relaxed_unicode_word_boundary: bool,
 }
 
 fn empty_ecmascript_class_backend_atom(negated: bool, unicode_mode: bool) -> &'static str {
@@ -1003,19 +1578,23 @@ fn normalize_regex_for_backend(
     capture_count: usize,
     code_unit_input: bool,
     fancy_backend: bool,
+    relax_unicode_word_boundaries: bool,
     capture_indices: &IndexMap<Arc<str>, Vec<usize>>,
 ) -> Result<NormalizedRegex, String> {
+    debug_assert!(!(fancy_backend && relax_unicode_word_boundaries));
     let unicode_mode = flags.contains('u') || flags.contains('v');
     if source == "[]" {
         return Ok(NormalizedRegex {
             source: empty_ecmascript_class_backend_atom(false, unicode_mode).to_string(),
             backref_sets: Vec::new(),
+            relaxed_unicode_word_boundary: false,
         });
     }
     if source == "[^]" {
         return Ok(NormalizedRegex {
             source: empty_ecmascript_class_backend_atom(true, unicode_mode).to_string(),
             backref_sets: Vec::new(),
+            relaxed_unicode_word_boundary: false,
         });
     }
     let mut out = String::with_capacity(source.len());
@@ -1029,6 +1608,7 @@ fn normalize_regex_for_backend(
     let mut class_output_start = None;
     let mut class_has_active_word_escape = false;
     let mut materialize_current_word_class = true;
+    let mut relaxed_unicode_word_boundary = false;
     let mut capture_index = 0usize;
     let mut open_captures: Vec<Option<usize>> = Vec::new();
     let mut lookbehind_context = Vec::new();
@@ -1148,6 +1728,15 @@ fn normalize_regex_for_backend(
                 && modifier_stack.last().is_some_and(|state| state.ignore_case)
             {
                 push_ecmascript_word_escape_for_backend(&mut out, ch, false, unicode_mode);
+            } else if !in_class
+                && matches!(ch, 'b' | 'B')
+                && unicode_mode
+                && modifier_stack.last().is_some_and(|state| state.ignore_case)
+                && relax_unicode_word_boundaries
+            {
+                out.pop();
+                out.push_str("(?:)");
+                relaxed_unicode_word_boundary = true;
             } else if !in_class && matches!(ch, 'b' | 'B') && fancy_backend {
                 let unicode_ignore_case =
                     unicode_mode && modifier_stack.last().is_some_and(|state| state.ignore_case);
@@ -1502,6 +2091,7 @@ fn normalize_regex_for_backend(
     Ok(NormalizedRegex {
         source: out,
         backref_sets,
+        relaxed_unicode_word_boundary,
     })
 }
 

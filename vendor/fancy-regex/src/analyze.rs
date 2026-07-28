@@ -130,7 +130,7 @@ struct Analyzer<'a> {
     /// When true, nodes that could produce empty matches (min size 0 and not const size)
     /// are promoted to hard so the VM can backtrack past them to find a non-empty match.
     find_not_empty: bool,
-    /// Whether repeated captures require ECMAScript per-iteration clearing.
+    /// Whether nullable repeated captures require ECMAScript RepeatMatcher semantics.
     ecmascript_mode: bool,
 }
 
@@ -261,11 +261,14 @@ impl<'a> Analyzer<'a> {
                 )?;
                 min_size = lo.saturating_mul_usize(child_info.min_size);
                 const_size = child_info.const_size && hi.as_finite() == Some(lo);
-                let repeats_captures = self.ecmascript_mode
+                let repeats_nullable_captures = self.ecmascript_mode
+                    && child_info.min_size == 0
                     && (hi.is_infinite()
-                        || hi.as_finite().map_or(false, |hi| hi.greater_than_one()))
+                        || hi
+                            .as_finite()
+                            .map_or(false, |hi| !hi.is_zero() && !hi.is_one()))
                     && child_info.start_group() < child_info.end_group();
-                hard = child_info.hard || repeats_captures;
+                hard = child_info.hard || repeats_nullable_captures;
                 children.push(child_info);
             }
             Expr::Delegate { .. } => {
@@ -806,8 +809,9 @@ pub struct AnalyzeContext {
     /// `const_size`) are promoted to `hard` so that the VM can backtrack past them to find a
     /// non-empty match.
     pub find_not_empty: bool,
-    /// When `true`, repeated capture groups are promoted to `hard` so the VM
-    /// can clear their slots at each iteration.
+    /// Whether ECMAScript matching rules are active.
+    ///
+    /// Repeated capture clearing is handled by both regular and hard backends.
     pub ecmascript_mode: bool,
 }
 
@@ -1343,7 +1347,7 @@ mod tests {
     }
 
     #[test]
-    fn repeated_captures_are_hard_only_in_ecmascript_mode() {
+    fn repeated_captures_remain_regular_in_ecmascript_mode() {
         let tree = Expr::parse_tree("(a)+").unwrap();
         let upstream = analyze(&tree, AnalyzeContext::default()).unwrap();
         assert!(!upstream.hard);
@@ -1356,7 +1360,18 @@ mod tests {
             },
         )
         .unwrap();
-        assert!(ecmascript.hard);
+        assert!(!ecmascript.hard);
+
+        let nullable = Expr::parse_tree("(a?)*").unwrap();
+        let nullable = analyze(
+            &nullable,
+            AnalyzeContext {
+                ecmascript_mode: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(nullable.hard);
     }
 
     #[test]

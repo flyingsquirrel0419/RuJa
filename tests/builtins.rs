@@ -18827,6 +18827,22 @@ fn regexp_ignore_case_word_characters_follow_ecmascript_canonicalization() {
 
     assert_eq!(
         run(r#"
+            var suffix = "a".repeat(4096) + "!";
+            var sticky = new RegExp("\\b(a+)+b", "iuy");
+            sticky.lastIndex = 0;
+            var stickyResult = sticky.exec("é" + suffix);
+            var replaced = ("é" + suffix).replace(
+              new RegExp("^\\B|(a+)+b", "iu"),
+              "X"
+            );
+            stickyResult === null && sticky.lastIndex === 0 &&
+              replaced === "Xé" + suffix;
+            "#),
+        Value::Bool(true)
+    );
+
+    assert_eq!(
+        run(r#"
             !/^[s\w]$/i.test("\u017F") &&
               !/^[k\w]$/i.test("\u212A") &&
               /^[s\w]$/i.test("S") &&
@@ -18848,6 +18864,55 @@ fn regexp_ignore_case_word_characters_follow_ecmascript_canonicalization() {
               /(?i:\b)\u017F/u.test("\u017F") && !/(?i:\B)\u017F/u.test("\u017F") &&
               /(?-i:\B)\u017F/ui.test("\u017F") &&
               !/^(a+)+\b$/iu.test("aaaaaaaaaaaaaaaaaaaa!");
+            "#),
+        Value::Bool(true)
+    );
+
+    assert_eq!(
+        run(r#"
+            var flagsList = ["iu", "iv"];
+            var nonWords = ["é", "中", "\u0660"];
+            var ok = true;
+            for (var i = 0; i < flagsList.length; i++) {
+              var flags = flagsList[i];
+              var boundary = new RegExp("^\\b", flags);
+              var nonBoundary = new RegExp("^\\B", flags);
+              var hardBoundary = new RegExp("(?=)^\\b", flags);
+              var hardNonBoundary = new RegExp("(?=)^\\B", flags);
+              for (var j = 0; j < nonWords.length; j++) {
+                var value = nonWords[j];
+                ok = ok && !boundary.test(value) && nonBoundary.test(value) &&
+                  !hardBoundary.test(value) && hardNonBoundary.test(value);
+              }
+              ok = ok && boundary.test("\u017F") && boundary.test("\u212A") &&
+                !nonBoundary.test("\u017F") && !nonBoundary.test("\u212A") &&
+                new RegExp("é\\ba", flags).test("éa") &&
+                new RegExp("a\\bé", flags).test("aé") &&
+                new RegExp("é\\B中", flags).test("é中") &&
+                new RegExp("\u017F\\Ba", flags).test("\u017Fa") &&
+                new RegExp("\u212A\\b中", flags).test("\u212A中");
+
+              var absent = new RegExp("^\\b(a)*", flags).exec("é");
+              var present = new RegExp("^\\B(a)*", flags).exec("é");
+              var transition = new RegExp("é\\b(a)*", flags).exec("éa");
+              ok = ok && absent === null && present[0] === "" &&
+                present[1] === undefined && transition[0] === "éa" &&
+                transition[1] === "a" &&
+                "é😀".replace(new RegExp("\\B(a)*", "g" + flags), "X") === "XéX😀X";
+            }
+            ok;
+            "#),
+        Value::Bool(true)
+    );
+
+    assert_eq!(
+        run(r#"
+            var matches = Array.from(
+              "ab".matchAll(/\b(a?b??)*/giu),
+              function (match) { return [match[0], match[1], match.index]; }
+            );
+            JSON.stringify(matches) ===
+              '[["ab","b",0],["",null,2]]';
             "#),
         Value::Bool(true)
     );

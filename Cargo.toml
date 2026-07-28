@@ -42,6 +42,10 @@ harness = false
 [dev-dependencies]
 criterion = "0.5"
 
+[patch.crates-io]
+regex-automata = { path = "vendor/regex-automata" }
+regex-syntax = { path = "vendor/regex-syntax" }
+
 [[bin]]
 name = "ruja"
 path = "src/bin/ruja.rs"

@@ -54,10 +54,6 @@ impl RepeatCount {
         matches!(self.0, RepeatCountRepr::Small(1))
     }
 
-    pub(crate) fn greater_than_one(&self) -> bool {
-        !matches!(self.0, RepeatCountRepr::Small(0 | 1))
-    }
-
     pub(crate) fn to_usize(&self) -> Option<usize> {
         match self.0 {
             RepeatCountRepr::Small(value) => usize::try_from(value).ok(),

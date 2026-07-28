@@ -106,7 +106,7 @@ version = "0.8"
 default-features = false
 
 [dependencies.regex-automata]
-version = "0.4.14"
+version = "=0.4.14"
 features = [
     "alloc",
     "syntax",
@@ -132,3 +132,7 @@ version = "1.0"
 
 [dev-dependencies.regex]
 version = "1.10"
+
+[patch.crates-io]
+regex-automata = { path = "../regex-automata" }
+regex-syntax = { path = "../regex-syntax" }

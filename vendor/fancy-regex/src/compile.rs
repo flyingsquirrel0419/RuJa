@@ -1096,10 +1096,20 @@ pub(crate) fn options_to_rabuilder(options: &RegexOptions) -> RaBuilder {
     if let Some(limit) = options.delegate_dfa_size_limit {
         config = config.dfa_size_limit(Some(limit));
     }
+    if options.ecmascript_mode {
+        config = config
+            .ecmascript_capture_clearing(true)
+            .dfa(false)
+            .hybrid(false)
+            .onepass(false)
+            .backtrack(false);
+    }
 
     let mut builder = RaBuilder::new();
     builder.configure(config);
-    builder.syntax(options.syntaxc);
+    builder.syntax(options.syntaxc.ecmascript_unicode_word_boundary(
+        options.ecmascript_mode && options.ecmascript_unicode_mode,
+    ));
     builder
 }
 
@@ -1159,6 +1169,8 @@ pub fn compile(info: &Info<'_>, options: CompileOptions) -> Result<Prog> {
         options.ecmascript_backref_sets,
         options.unicode_casei,
     );
+    c.options.ecmascript_mode = options.ecmascript_mode;
+    c.options.ecmascript_unicode_mode = options.ecmascript_mode && options.unicode_casei;
 
     if options.contains_subroutines {
         // Store root info for group 0 subroutine calls

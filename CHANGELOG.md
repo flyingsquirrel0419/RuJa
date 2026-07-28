@@ -4,6 +4,25 @@
 
 ### Changed
 
+- Unicode `u`/`v` RegExp word boundaries under active ignore-case now use the
+  exact ECMAScript WordCharacters set on every backend route. Vendored
+  `regex-syntax` and `regex-automata` lower dedicated ECMAScript boundary HIR
+  assertions to PikeVM look states; non-nullable repeated captures use
+  transactional capture-clear states, while nullable repeats retain Fancy's
+  exact `RepeatMatcher` behavior.
+
+  `PrefilteredExact` uses a relaxed Rust language superset only to reject
+  impossible matches, an exact linear matcher for repeated-capture language
+  selection, and full-haystack exact-position APIs for capture correction and
+  sticky matching. Empty-match iteration advances from the actual match, and
+  non-global replacement no longer enumerates the unused suffix. Direct tests
+  cover non-ASCII boundaries, capture clearing, sticky hostile suffixes,
+  million-scalar no-match scans, and nested-repeat adversarial cases.
+  Exact group-zero bounds are also recovered after a capture-erased nullable
+  repeat selects the start, preventing `find` and capture API disagreement.
+  Per-position global execution no longer rescans the complete input to prove
+  the Rust fast path safe, avoiding quadratic behavior on many matches.
+
 - RegExp flags `u` and `v` are now mutually exclusive in the common source
   validator. Literals fail during parsing and `RegExp` construction fails
   during initialization, while invalid and duplicate flag diagnostics retain
@@ -2730,12 +2749,13 @@
   ECMAScript mode.
 
   ECMAScript matcher work is explicitly bounded even on successful paths:
-  branch creation, attempted repeat iterations, and repeated-capture clearing share one
-  finite work budget, and the branch stack is capped at **100,000** entries.
-  Mode-off `fancy-regex` behavior retains upstream failed-backtrack accounting
-  and its existing stack limit. Stress probes for a 100-million zero-width
-  repeat and the former million-branch path now terminate at the work and stack
-  limits respectively; catastrophic failed matching remains bounded.
+  speculative branch creation, attempted repeat iterations, and
+  repeated-capture clearing share one finite work budget. Deterministic
+  unanchored scanning is free. ECMAScript hard execution retains its
+  **100,000**-entry stack cap; mode-off `fancy-regex` keeps upstream
+  failed-backtrack accounting and the **1,000,000**-entry cap. Stress probes
+  for a 100-million zero-width repeat and catastrophic failed matching
+  terminate under the work bound.
 
   On Test262 `020cb74075849d1e404bbcdb62feb7a02e6966db`, complete lookbehind is
   **17/17** and full `built-ins/RegExp` moves from **991 pass / 52 fail / 836

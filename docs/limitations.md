@@ -178,17 +178,18 @@ guarantees are required.
   greediness. Positive assertions are atomic and preserve their captures while
   restoring the outer cursor; negative assertions restore transactional state.
   Legacy quantified lookahead is enabled only outside `u`/`v`. ECMAScript mode
-  charges branch creation, attempted repeat iterations, and capture clearing
-  to one finite work budget and caps the branch stack at **100,000** entries.
+  charges speculative branch creation, attempted repeat iterations, and
+  capture clearing to one finite work budget, excludes deterministic
+  unanchored scanning, and caps its hard branch stack at **100,000** entries.
   Ordinary mode-off `fancy-regex` callers retain upstream failed-backtrack
-  accounting.
+  accounting and the **1,000,000**-entry stack cap.
 
   Named groups support Unicode identifiers, escaped names, structurally
   disjoint duplicate names, participating-capture selection, and
   Unicode/legacy ignore-case backreferences, including hard variable-length
-  lookbehind. Unicode `iu`/`iv` `\b`/`\B` on linear-backend patterns still
-  inherits Rust's broader Unicode word boundary instead of the ECMAScript
-  WordCharacters set. Valid scalars in `U+F0000..U+F07FF` collide with the
+  lookbehind. Unicode `iu`/`iv` `\b`/`\B` now use the ECMAScript
+  WordCharacters set on both linear-prefiltered and hard routes. Valid scalars
+  in `U+F0000..U+F07FF` collide with the
   internal UTF-16 sentinel representation, and string-valued `v` set elements
   using string properties or `\q{...}` remain incomplete. Complex `iv` sets
   containing `\w` or `\W` can still inherit the backend's broader Unicode

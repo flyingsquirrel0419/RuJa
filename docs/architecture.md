@@ -448,16 +448,16 @@ Resource accounting is also mode-specific. Every ECMAScript branch push,
 attempted repeat iteration, and repeated-capture clear consumes the same finite
 work budget, including paths that succeed without failed backtracking. A
 terminal bound or no-progress check does not charge another iteration. The
-ECMAScript branch stack is capped at 100,000 entries. Mode-off callers retain
-upstream's one-million-entry stack and failed-backtrack counter, so the fork
-does not silently tighten the public crate's ordinary semantics.
+deterministic `SplitUnanchored` search preamble is not charged. ECMAScript hard
+execution retains a 100,000-entry stack cap; mode-off callers keep upstream's
+one-million-entry cap and failed-backtrack counter.
 
 ```text
 [Decision Log]
 - 목적과 의도: Implement ECMAScript lookahead, lookbehind, backward captures and backreferences, and Annex B quantified-lookahead semantics without an unbounded backtracking path.
 - 기존 구현 및 제약 조건: Rust regex cannot express variable-length lookbehind or assertion capture semantics, upstream fancy-regex searched lookbehind prefixes forward, successful zero-width repetitions could bypass the failed-backtrack counter, and broad backend routing would weaken RuJa's resource boundary.
 - 검토한 주요 대안: Continue translating assertions to Rust regex, enumerate candidate lookbehind starts, post-process captures, replace the complete matcher, or add directional instructions and explicit ECMAScript accounting to the maintained backend.
-- 선택한 방식: Detect assertions at the RuJa boundary, normalize JavaScript case and UTF-16 semantics first, compile lookbehind backward with atomic cursor restoration, implement the legacy RepeatMatcher exception in the parser/VM, and charge every ECMAScript branch, attempted repeat iteration, and capture-clear operation to one bounded budget with a 100,000-entry stack cap.
+- 선택한 방식: Detect assertions at the RuJa boundary, normalize JavaScript case and UTF-16 semantics first, compile lookbehind backward with atomic cursor restoration, implement the legacy RepeatMatcher exception in the parser/VM, charge speculative ECMAScript branches, attempted repeat iterations, and capture clears to one bounded budget, and cap the ECMAScript hard stack at 100,000 entries.
 - 다른 대안 대신 이 방식을 선택한 이유: Translation cannot preserve assertion capture/backreference order, prefix enumeration changes greediness and scales with input length, post-processing cannot reconstruct transactional matcher state, and a new engine is too broad for this unit. Directional compilation follows the specification directly while reusing the audited VM state model.
 - 장점, 단점 및 영향: The complete Test262 lookbehind subtree passes, hard duplicate-name lookbehind works, positive assertions remain atomic, and hostile successful zero-width or branch-growth patterns terminate under explicit limits. The cost is a larger maintained backend fork. At this historical decision boundary, unrelated RegExp grammar, empty-class, sentinel, nested-v, and linear-boundary work remained separate; the following sections record the later grammar and empty-class closures.
 ```
@@ -631,6 +631,72 @@ admissions.
 - 선택한 방식: Preserve invalid and duplicate scans, reject seen u plus v afterward, exercise both orders and mixed flags directly, and remove regexp-v-flag only for two frozen paths.
 - 다른 대안 대신 이 방식을 선택한 이유: Backend selection occurs too late for parse-negative literals, path-local checks can diverge, and broad feature admission would run unsupported set syntax. The common validator already owns all flag-set early errors.
 - 장점, 단점 및 영향: Literal and constructor behavior become consistent with no matcher or runtime cost. Two skips become passes; the admission manifest and tooling guard are additional maintenance, while all remaining v behavior stays independently gated.
+```
+
+### Exact Unicode ignore-case word boundaries
+
+ECMAScript WordCharacters contains ASCII letters, digits, and underscore,
+plus long s and Kelvin sign when Unicode mode and ignore-case are both active.
+Rust's Unicode `\b`/`\B` instead treats many additional letters and digits as
+word characters. Previously, a linear pattern used that broader boundary
+while an otherwise equivalent lookaround or backreference pattern used the
+exact fancy lowering. Quantified-capture hybrids also assumed both backends
+selected the same start, so the mismatch could produce either a false negative
+or an internal disagreement error.
+
+The vendored `regex-syntax` HIR has dedicated positive and negative ECMAScript
+Unicode-ignore-case look variants. `regex-automata` lowers them to native NFA
+look states whose word predicate is ASCII alphanumeric or underscore plus long
+s and Kelvin sign. The PikeVM evaluates those assertions without synthesized
+lookaround branches. Fancy's hard VM uses equivalent native assertion variants,
+so regular and hard routes share the same character relation.
+
+ECMAScript repeated-capture clearing is also represented inside the regular
+NFA. Before each non-nullable repeated iteration, Thompson compilation emits
+transactional `CaptureClear` states for descendant groups; PikeVM restores
+slots while exploring alternatives. Nullable repeated captures remain on
+Fancy's hard `RepeatMatcher` route because ECMAScript's greedy nullable-repeat
+choice cannot be reproduced by ordinary Pike priority alone.
+
+`PrefilteredExact` gives its matchers narrow authority. A relaxed Rust pattern
+with affected assertions erased is a language superset and may only reject an
+impossible match. When the input contains no scalar whose Rust/ECMAScript word
+classification differs, bulk iteration may use the original Rust boundary
+matcher. Per-position APIs avoid rescanning the complete input for that proof;
+they use the relaxed gate and native exact matcher, preventing quadratic global
+`exec` iteration. Patterns with repeated captures additionally use a
+capture-erased exact linear matcher
+to choose a language-valid start; the exact matcher then runs at that position
+to recover authoritative group-zero bounds and captures. This distinction is
+required because removing captures can move a nullable repeat from Fancy's
+`RepeatMatcher` route to PikeVM and change its preferred end.
+
+```text
+source pattern
+  -> relaxed Rust superset: reject impossible input only
+  -> class-agreement input: original Rust boundary fast path
+  -> repeated captures: capture-erased exact PikeVM start gate
+  -> exact-position matcher: recover bounds/captures without later scanning
+```
+
+`find_at_pos` and `captures_at_pos` set an exact-position VM option while
+retaining the complete haystack, rather than compiling a second program or
+matching a sliced suffix. Sticky matching therefore
+cannot scan to a later start and lookbehind/boundary assertions still observe
+preceding input. Exact iteration advances an empty match from its actual byte
+position by one internal character. Non-global replacement asks for only the
+first capture set. Deterministic unanchored scanning is excluded from Fancy's
+speculative work charge, so a million-scalar no-match search remains linear;
+branching and RepeatMatcher work stay bounded.
+
+```text
+[Decision Log]
+- 목적과 의도: Make Unicode ignore-case word boundaries backend-independent while preserving exact captures, iteration progress, and linear rejection of hostile no-match inputs.
+- 기존 구현 및 제약 조건: Rust boundaries use a broader Unicode word set, synthesized exact lookarounds consumed branch work, sticky correction could scan later starts, Pike captures retained stale repeated alternatives, and nullable repeats require ECMAScript RepeatMatcher priority.
+- 검토한 주요 대안: Accept Rust semantics, route every pattern through the hard VM, retain synthesized lookarounds, trust a relaxed candidate start, post-process captures, or add exact assertion and capture-clear states to the maintained regex stack.
+- 선택한 방식: Add custom HIR/NFA and hard-VM boundary assertions; add transactional PikeVM CaptureClear states for non-nullable repeats; retain nullable repeats in Fancy; use relaxed, class-agreement, and capture-erased exact linear gates; and expose full-haystack exact-position APIs.
+- 다른 대안 대신 이 방식을 선택한 이유: Rust semantics violate ECMA-262, all-hard routing makes benign scans consume speculative work, synthesized assertions amplify branching, relaxed starts are unsound, and post-processing cannot reconstruct captures observed during matching. Native states preserve linear matching where its priority is sufficient.
+- 장점, 단점 및 영향: Boundary semantics, sticky location, repeated captures, replacement laziness, and UTF-8 empty iteration now agree across routes. Common non-nullable patterns stay linear and hostile probes terminate predictably. Three maintained path forks increase update work; nullable repeated captures and genuinely hard constructs still use the bounded backtracking VM, and complex iv classes containing w/W remain separate set-algebra work.
 ```
 
 `MakeClosure` follows the same rule for an ordinary function's fresh

@@ -835,23 +835,32 @@ impl<'a> Parser<'a> {
             ));
         }
 
-        // \B{...} is not supported
-        if bytes[ix + 1] == b'B' {
-            return Err(Error::ParseError(
-                ix,
-                ParseError::InvalidEscape(format!("\\B{{{}}}", content)),
-            ));
-        }
-
-        let expr = match content.as_str() {
-            "start" => Expr::Assertion(Assertion::LeftWordBoundary),
-            "end" => Expr::Assertion(Assertion::RightWordBoundary),
-            "start-half" => Expr::Assertion(Assertion::LeftWordHalfBoundary),
-            "end-half" => Expr::Assertion(Assertion::RightWordHalfBoundary),
+        let negated = bytes[ix + 1] == b'B';
+        let expr = match (content.as_str(), negated) {
+            ("start", false) => Expr::Assertion(Assertion::LeftWordBoundary),
+            ("end", false) => Expr::Assertion(Assertion::RightWordBoundary),
+            ("start-half", false) => Expr::Assertion(Assertion::LeftWordHalfBoundary),
+            ("end-half", false) => Expr::Assertion(Assertion::RightWordHalfBoundary),
+            ("ruja-ecma", false) if self.flag(FLAG_ECMASCRIPT_MODE) => {
+                Expr::Assertion(Assertion::EcmaWordBoundary)
+            }
+            ("ruja-ecma", true) if self.flag(FLAG_ECMASCRIPT_MODE) => {
+                Expr::Assertion(Assertion::EcmaNotWordBoundary)
+            }
+            ("ruja-ecma-unicode-i", false) if self.flag(FLAG_ECMASCRIPT_MODE) => {
+                Expr::Assertion(Assertion::EcmaUnicodeIgnoreCaseWordBoundary)
+            }
+            ("ruja-ecma-unicode-i", true) if self.flag(FLAG_ECMASCRIPT_MODE) => {
+                Expr::Assertion(Assertion::EcmaUnicodeIgnoreCaseNotWordBoundary)
+            }
             _ => {
                 return Err(Error::ParseError(
                     ix,
-                    ParseError::InvalidEscape(format!("\\b{{{}}}", content)),
+                    ParseError::InvalidEscape(format!(
+                        "\\{}{{{}}}",
+                        if negated { 'B' } else { 'b' },
+                        content
+                    )),
                 ));
             }
         };

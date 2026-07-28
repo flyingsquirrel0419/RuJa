@@ -115,6 +115,8 @@ pub(crate) const OPTION_SKIPPED_EMPTY_MATCH: u32 = 1 << 1;
 /// \K is ignored as part of this check - so empty matches can still be reported if the engine
 /// consumed characters and then \K was used afterwards.
 pub(crate) const OPTION_FIND_NOT_EMPTY: u32 = 1 << 2;
+/// Require the first match attempt to start at the caller's position.
+pub(crate) const OPTION_EXACT_POSITION: u32 = 1 << 3;
 
 const MAX_STACK: usize = 1_000_000;
 const ECMASCRIPT_MAX_STACK: usize = 100_000;
@@ -748,6 +750,24 @@ fn previous_char(s: &str, ix: usize) -> Option<(usize, char)> {
     Some((start, s.get(start..ix)?.chars().next()?))
 }
 
+fn is_ecmascript_word_character(ch: char, unicode_ignore_case: bool) -> bool {
+    ch.is_ascii_alphanumeric()
+        || ch == '_'
+        || (unicode_ignore_case && matches!(ch, '\u{017f}' | '\u{212a}'))
+}
+
+fn is_ecmascript_word_boundary(s: &str, ix: usize, unicode_ignore_case: bool) -> bool {
+    let previous = previous_char(s, ix)
+        .map(|(_, ch)| is_ecmascript_word_character(ch, unicode_ignore_case))
+        .unwrap_or(false);
+    let next = s
+        .get(ix..)
+        .and_then(|suffix| suffix.chars().next())
+        .map(|ch| is_ecmascript_word_character(ch, unicode_ignore_case))
+        .unwrap_or(false);
+    previous != next
+}
+
 fn matches_literal_backwards(s: &str, ix: usize, literal: &str) -> Option<usize> {
     let start = ix.checked_sub(literal.len())?;
     matches_literal(s, start, ix, literal).then_some(start)
@@ -1004,6 +1024,16 @@ pub(crate) fn run(
                         Assertion::NotWordBoundary => look_matcher
                             .is_word_unicode_negate(s.as_bytes(), ix)
                             .unwrap(),
+                        Assertion::EcmaWordBoundary => is_ecmascript_word_boundary(s, ix, false),
+                        Assertion::EcmaNotWordBoundary => {
+                            !is_ecmascript_word_boundary(s, ix, false)
+                        }
+                        Assertion::EcmaUnicodeIgnoreCaseWordBoundary => {
+                            is_ecmascript_word_boundary(s, ix, true)
+                        }
+                        Assertion::EcmaUnicodeIgnoreCaseNotWordBoundary => {
+                            !is_ecmascript_word_boundary(s, ix, true)
+                        }
                     } {
                         break 'fail;
                     }
@@ -1022,13 +1052,17 @@ pub(crate) fn run(
                 }
                 Insn::SplitUnanchored(x, y) => {
                     match_attempt_start = ix;
+                    if option_flags & OPTION_EXACT_POSITION != 0 {
+                        pc = x;
+                        continue;
+                    }
                     push_branch(
                         &mut state,
                         y,
                         ix,
                         &mut work_count,
                         options.backtrack_limit,
-                        prog.ecmascript_mode,
+                        false,
                     )?;
                     pc = x;
                     continue;

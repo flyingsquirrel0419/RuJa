@@ -3,14 +3,12 @@
 This directory vendors `fancy-regex` 0.18.0 (upstream revision
 `895301dadc30cbf466ba845c063a4158619a09b5`) under its MIT license.
 
-RuJa carries seven backend changes behind `RegexBuilder::ecmascript_mode(true)`:
+RuJa carries eight backend changes behind `RegexBuilder::ecmascript_mode(true)`:
 
-1. A repeated expression clears all descendant capture start/end slots before
-   each iteration. The VM writes `usize::MAX` through its copy-on-write
-   `State::save` path, so an exit or backtracking branch restores the captures
-   from the correct completed iteration. Current-delta membership uses a
-   bitset instead of scanning prior saves, and each cleared slot is charged to
-   the existing runtime work limit.
+1. A nullable repeated expression clears all descendant capture start/end
+   slots before each hard-VM iteration. Non-nullable repeated captures stay on
+   the regular delegated route, where RuJa's `regex-automata` fork emits
+   transactional PikeVM `CaptureClear` states.
 2. The internal `(?@N)` atom resolves `N` through a builder-supplied capture
    set and compiles to `BackrefSet`. It consumes the sole populated capture
    from a statically mutually-exclusive set, or succeeds without consuming
@@ -34,11 +32,12 @@ RuJa carries seven backend changes behind `RegexBuilder::ecmascript_mode(true)`:
    required by Annex B `RepeatMatcher`. ECMAScript mode also retains trailing
    positive lookahead instead of applying an optimizer that can discard local
    flag normalization.
-6. ECMAScript execution charges every branch push, attempted repeat iteration,
-   and capture clear to one work budget, including successful zero-width paths.
-   A terminal bound or no-progress check does not consume another iteration.
-   Its branch stack is capped at 100,000 entries. Mode-off execution retains upstream's
-   failed-backtrack accounting and one-million-entry stack limit.
+6. ECMAScript execution charges speculative branch pushes, attempted repeat
+   iterations, and hard-VM capture clears to one work budget, including
+   successful zero-width paths. Deterministic unanchored scanning is not
+   charged. A terminal bound or no-progress check does not consume another
+   iteration. ECMAScript hard execution uses a 100,000-entry branch stack cap;
+   mode-off retains the upstream one-million-entry cap.
 7. Braced repeat bounds use an exact host-independent finite representation,
    with infinity kept separate. Static size arithmetic saturates, and the
    hidden `ecmascript_non_delegated_repeats` option marks every repeat subtree
@@ -47,6 +46,11 @@ RuJa carries seven backend changes behind `RegexBuilder::ecmascript_mode(true)`:
    runtime. ECMAScript mode also accepts quantified empty groups, rejects
    recognized `min > max` ranges, and keeps lower-bound-less legacy braces as
    literals; mode-off parser behavior remains unchanged.
+8. ECMAScript boundary escape spellings lower to native ASCII and Unicode-i
+   assertion variants. Regular delegates receive the same ECMAScript syntax
+   options, and `find_at_pos`/`captures_at_pos` set an exact-position VM option
+   while assertions still observe the full haystack. No second program is
+   compiled or retained.
 
 The mode is disabled by default. This preserves upstream Oniguruma behavior,
 lookaround optimization, unmatched-backreference behavior, work accounting,
@@ -78,8 +82,8 @@ When updating the vendored crate:
 1. Copy the new upstream release and retain its license and provenance files.
 2. Reapply the mode, ID-based `BackrefSet`, case mode, directional assertions,
    legacy quantified-lookahead parsing, exact repeat bounds, non-delegated
-   counter routing, work accounting, stack cap, and backtracking-aware repeat
-   clearing.
+   counter routing, work accounting, native ECMAScript boundaries,
+   exact-position APIs, and both hard-VM and PikeVM repeat clearing.
 3. Run `cargo test --manifest-path vendor/fancy-regex/Cargo.toml --all-features`.
 4. Run RuJa's complete Rust, Test262, formatting, Clippy, release, and wasm32
    gates before changing the path dependency version.

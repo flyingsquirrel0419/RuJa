@@ -47,7 +47,7 @@ use core::str::FromStr;
 use regex_automata::meta::Regex as RaRegex;
 use regex_automata::util::captures::Captures as RaCaptures;
 use regex_automata::util::syntax::Config as SyntaxConfig;
-use regex_automata::Input as RaInput;
+use regex_automata::{Anchored, Input as RaInput};
 
 mod analyze;
 mod compile;
@@ -66,7 +66,7 @@ use crate::compile::{compile, CompileOptions};
 use crate::optimize::optimize;
 use crate::parse::{ExprTree, NamedGroups, Parser};
 use crate::parse_flags::*;
-use crate::vm::{Prog, OPTION_FIND_NOT_EMPTY, OPTION_SKIPPED_EMPTY_MATCH};
+use crate::vm::{Prog, OPTION_EXACT_POSITION, OPTION_FIND_NOT_EMPTY, OPTION_SKIPPED_EMPTY_MATCH};
 
 pub use crate::error::{CompileError, Error, ParseError, Result, RuntimeError};
 pub use crate::expand::Expander;
@@ -921,19 +921,17 @@ impl Regex {
             });
         }
 
-        let prog = compile(
-            &info,
-            CompileOptions {
-                anchored: can_compile_as_anchored(&tree.expr),
-                contains_subroutines: tree.contains_subroutines,
-                ecmascript_mode: options.ecmascript_mode,
-                unicode_casei: !options.ecmascript_mode || options.ecmascript_unicode_mode,
-                ecmascript_backref_sets: options.ecmascript_backref_sets.clone(),
-            },
-        )?;
+        let compile_options = CompileOptions {
+            anchored: can_compile_as_anchored(&tree.expr),
+            contains_subroutines: tree.contains_subroutines,
+            ecmascript_mode: options.ecmascript_mode,
+            unicode_casei: !options.ecmascript_mode || options.ecmascript_unicode_mode,
+            ecmascript_backref_sets: options.ecmascript_backref_sets.clone(),
+        };
+        let prog = Arc::new(compile(&info, compile_options)?);
         Ok(Regex {
             inner: RegexImpl::Fancy {
-                prog: Arc::new(prog),
+                prog,
                 n_groups: info.end_group(),
                 options: options.hard_regex_runtime_options,
                 pattern,
@@ -1037,6 +1035,49 @@ impl Regex {
     /// method and passing a slice of the string, see [Regex::captures_from_pos()] for details.
     pub fn find_from_pos<'t>(&self, text: &'t str, pos: usize) -> Result<Option<Match<'t>>> {
         self.find_from_pos_with_option_flags(text, pos, 0)
+    }
+
+    /// Returns a match only when the pattern matches exactly at byte position `pos`.
+    ///
+    /// Unlike [`Regex::find_from_pos`], this method does not scan later positions.
+    /// Assertions still observe the complete input text.
+    pub fn find_at_pos<'t>(&self, text: &'t str, pos: usize) -> Result<Option<Match<'t>>> {
+        if pos > text.len() {
+            return Ok(None);
+        }
+        match &self.inner {
+            RegexImpl::Wrap {
+                inner,
+                explicit_capture_group_0,
+                ..
+            } => {
+                let input = RaInput::new(text)
+                    .span(pos..text.len())
+                    .anchored(Anchored::Yes);
+                let result = if !*explicit_capture_group_0 {
+                    inner
+                        .search(&input)
+                        .map(|m| Match::new(text, m.start(), m.end()))
+                } else {
+                    let mut locations = inner.create_captures();
+                    inner.captures(input, &mut locations);
+                    locations
+                        .get_group(1)
+                        .map(|group1| Match::new(text, group1.start, group1.end))
+                };
+                Ok(result)
+            }
+            RegexImpl::Fancy { prog, options, .. } => {
+                let mut option_flags = if options.find_not_empty {
+                    OPTION_FIND_NOT_EMPTY
+                } else {
+                    0
+                };
+                option_flags |= OPTION_EXACT_POSITION;
+                let result = vm::run(prog, text, pos, option_flags, options)?;
+                Ok(result.map(|saves| Match::new(text, saves[0], saves[1])))
+            }
+        }
     }
 
     fn find_from_pos_with_option_flags<'t>(
@@ -1169,6 +1210,62 @@ impl Regex {
     ///
     pub fn captures_from_pos<'t>(&self, text: &'t str, pos: usize) -> Result<Option<Captures<'t>>> {
         self.captures_from_pos_with_option_flags(text, pos, 0)
+    }
+
+    /// Returns captures only when the pattern matches exactly at byte position `pos`.
+    ///
+    /// Unlike [`Regex::captures_from_pos`], this method does not scan later positions.
+    /// Assertions still observe the complete input text.
+    pub fn captures_at_pos<'t>(&self, text: &'t str, pos: usize) -> Result<Option<Captures<'t>>> {
+        if pos > text.len() {
+            return Ok(None);
+        }
+        let named_groups = self.named_groups.clone();
+        match &self.inner {
+            RegexImpl::Wrap {
+                inner,
+                explicit_capture_group_0,
+                ..
+            } => {
+                let explicit = *explicit_capture_group_0;
+                let mut locations = inner.create_captures();
+                inner.captures(
+                    RaInput::new(text)
+                        .span(pos..text.len())
+                        .anchored(Anchored::Yes),
+                    &mut locations,
+                );
+                Ok(locations.is_match().then_some(Captures {
+                    inner: CapturesImpl::Wrap {
+                        text,
+                        locations,
+                        explicit_capture_group_0: explicit,
+                    },
+                    named_groups,
+                }))
+            }
+            RegexImpl::Fancy {
+                prog,
+                n_groups,
+                options,
+                ..
+            } => {
+                let mut option_flags = if options.find_not_empty {
+                    OPTION_FIND_NOT_EMPTY
+                } else {
+                    0
+                };
+                option_flags |= OPTION_EXACT_POSITION;
+                let result = vm::run(prog, text, pos, option_flags, options)?;
+                Ok(result.map(|mut saves| {
+                    saves.truncate(n_groups * 2);
+                    Captures {
+                        inner: CapturesImpl::Fancy { text, saves },
+                        named_groups,
+                    }
+                }))
+            }
+        }
     }
 
     fn captures_from_pos_with_option_flags<'t>(
@@ -2036,6 +2133,14 @@ pub enum Assertion {
     WordBoundary,
     /// Not word boundary
     NotWordBoundary,
+    /// ECMAScript ASCII-only word boundary.
+    EcmaWordBoundary,
+    /// Negated ECMAScript ASCII-only word boundary.
+    EcmaNotWordBoundary,
+    /// ECMAScript Unicode ignore-case word boundary, including long s and Kelvin sign.
+    EcmaUnicodeIgnoreCaseWordBoundary,
+    /// Negated ECMAScript Unicode ignore-case word boundary.
+    EcmaUnicodeIgnoreCaseNotWordBoundary,
 }
 
 impl Assertion {
@@ -2270,6 +2375,10 @@ impl Expr {
             Expr::Assertion(Assertion::EndLine { crlf: false }) => buf.push_str("(?m:$)"),
             Expr::Assertion(Assertion::StartLine { crlf: true }) => buf.push_str("(?Rm:^)"),
             Expr::Assertion(Assertion::EndLine { crlf: true }) => buf.push_str("(?Rm:$)"),
+            Expr::Assertion(Assertion::EcmaWordBoundary) => buf.push_str(r"(?-u:\b)"),
+            Expr::Assertion(Assertion::EcmaNotWordBoundary) => buf.push_str(r"(?-u:\B)"),
+            Expr::Assertion(Assertion::EcmaUnicodeIgnoreCaseWordBoundary) => buf.push_str(r"\b"),
+            Expr::Assertion(Assertion::EcmaUnicodeIgnoreCaseNotWordBoundary) => buf.push_str(r"\B"),
             Expr::Concat(ref children) => {
                 if precedence > 1 {
                     buf.push_str("(?:");
@@ -2462,6 +2571,75 @@ mod tests {
             .ecmascript_mode(true)
             .ecmascript_non_delegated_repeats(true);
         builder.build().unwrap()
+    }
+
+    fn ecmascript_regex(pattern: &str) -> Regex {
+        let mut builder = RegexBuilder::new(pattern);
+        builder.ecmascript_mode(true).ecmascript_unicode_mode(true);
+        builder.build().unwrap()
+    }
+
+    #[test]
+    fn exact_position_apis_do_not_scan_later_matches() {
+        let wrapped = Regex::new("(a)").unwrap();
+        assert_eq!(wrapped.find_from_pos("ba", 0).unwrap().unwrap().start(), 1);
+        assert!(wrapped.find_at_pos("ba", 0).unwrap().is_none());
+        assert_eq!(wrapped.find_at_pos("ba", 1).unwrap().unwrap().start(), 1);
+        assert!(wrapped.captures_at_pos("ba", 0).unwrap().is_none());
+        assert_eq!(
+            wrapped
+                .captures_at_pos("ba", 1)
+                .unwrap()
+                .unwrap()
+                .get(1)
+                .unwrap()
+                .as_str(),
+            "a"
+        );
+
+        let fancy = Regex::new("(?=a)(a)").unwrap();
+        assert_eq!(fancy.find_from_pos("ba", 0).unwrap().unwrap().start(), 1);
+        assert!(fancy.find_at_pos("ba", 0).unwrap().is_none());
+        assert_eq!(
+            fancy
+                .captures_at_pos("ba", 1)
+                .unwrap()
+                .unwrap()
+                .get(1)
+                .unwrap()
+                .as_str(),
+            "a"
+        );
+    }
+
+    #[test]
+    fn ecmascript_word_boundaries_use_the_requested_word_set() {
+        let ascii_boundary = ecmascript_regex(r"\b{ruja-ecma}");
+        let unicode_boundary = ecmascript_regex(r"\b{ruja-ecma-unicode-i}");
+        let unicode_non_boundary = ecmascript_regex(r"\B{ruja-ecma-unicode-i}");
+
+        assert!(ascii_boundary.find("é").unwrap().is_none());
+        assert!(unicode_boundary.find("é").unwrap().is_none());
+        assert_eq!(unicode_non_boundary.find("é").unwrap().unwrap().start(), 0);
+        assert!(ascii_boundary.find("ſ").unwrap().is_none());
+        assert_eq!(unicode_boundary.find("ſ").unwrap().unwrap().start(), 0);
+        assert_eq!(unicode_boundary.find("K").unwrap().unwrap().start(), 0);
+        assert_eq!(unicode_boundary.find("éa").unwrap().unwrap().start(), 2);
+
+        let nested = ecmascript_regex(r"^(é+)+\b{ruja-ecma-unicode-i}$");
+        assert!(nested.find(&"é".repeat(64)).unwrap().is_none());
+    }
+
+    #[test]
+    fn ecmascript_unanchored_scan_does_not_consume_backtracking_budget() {
+        let mut builder = RegexBuilder::new(r"\b{ruja-ecma-unicode-i}");
+        builder
+            .ecmascript_mode(true)
+            .ecmascript_unicode_mode(true)
+            .backtrack_limit(0);
+        let regex = builder.build().unwrap();
+        let input = "é".repeat(1_000_001);
+        assert!(regex.find(&input).unwrap().is_none());
     }
 
     #[test]

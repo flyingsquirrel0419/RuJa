@@ -8038,13 +8038,12 @@ locally normalized case flags.
 
 The backend limit is a work limit rather than only a failed-backtrack count.
 Every ECMAScript branch push, attempted repeat iteration, and capture clear
-shares that budget. Terminal bound and no-progress checks are free, and the
-branch stack has a 100,000-entry hard cap. A 100-million
-successful zero-width-repeat probe terminates at the work limit in about
-**0.26 s / 14 MB** in reviewer verification. A path that formerly grew toward
-one million branch entries terminates at the stack limit in about **0.18 s /
-27 MB**. Catastrophic failed matching remains work-bounded, exact limit edges
-were exercised, and mode-off low-limit behavior remains upstream-compatible.
+shares that budget. Terminal bound, no-progress checks, and deterministic
+unanchored scanning are free. ECMAScript hard execution has a 100,000-entry
+branch-stack cap; mode-off retains the upstream one-million-entry cap. A
+100-million successful zero-width-repeat probe terminates at the work limit;
+catastrophic failed matching remains work-bounded, exact limit edges were
+exercised, and mode-off low-limit behavior remains upstream-compatible.
 
 On the pinned local Test262 checkout
 `020cb74075849d1e404bbcdb62feb7a02e6966db`, `built-ins/RegExp/lookBehind` is
@@ -8088,7 +8087,7 @@ therefore the expected Annex B implementation, not unpinned-checkout drift.
 - 목적과 의도: Close ECMAScript lookaround and legacy quantified-lookahead semantics with specification-directed captures, backreferences, atomicity, and finite resources.
 - 기존 구현 및 제약 조건: Rust regex lacks variable-length lookbehind and assertion capture semantics, upstream lookbehind searches prefixes forward, failed-backtrack counting misses successful zero-width work, and RuJa must preserve the linear backend for patterns that do not need assertions.
 - 검토한 주요 대안: Enumerate lookbehind start positions, rewrite lookbehind into lookahead, repair captures after matching, route every RegExp through a backtracking engine, replace the matcher, or add explicit direction and accounting to the maintained fork.
-- 선택한 방식: Route only assertion patterns to ECMAScript mode, compile lookbehind terms backward, make successful assertions atomic with cursor restoration, model Annex B RepeatMatcher in parser/compiler/VM state, and charge all ECMAScript branches, repeats, and capture clears under one work budget plus a 100,000-entry stack cap.
+- 선택한 방식: Route only assertion patterns to ECMAScript mode, compile lookbehind terms backward, make successful assertions atomic with cursor restoration, model Annex B RepeatMatcher in parser/compiler/VM state, charge speculative ECMAScript branches, repeats, and capture clears under one work budget, and cap the ECMAScript hard stack at 100,000 entries.
 - 다른 대안 대신 이 방식을 선택한 이유: Start enumeration changes greediness and scales with input length, rewrites and post-processing cannot reproduce transactional capture state, broad routing weakens linear execution, and a replacement engine is disproportionate to this finite unit. Directional compilation maps directly onto the specification while retaining existing VM rollback machinery.
 - 장점, 단점 및 영향: Thirty-three failures become passes, lookbehind reaches 17/17, hard duplicate-name lookbehind closes, and successful hostile paths are bounded. The maintained fork grows, while 19 unrelated grammar, class, quantifier, and hybrid-boundary failures remain explicit next units.
 ```
@@ -11730,6 +11729,28 @@ total files and **37061** executions.
 - 다른 대안 대신 이 방식을 선택한 이유: Direct tests do not measure admission, directory admission includes unrelated Unicode-set semantics, and global admission would expose known unsupported strings and word classes. Two paths exactly match the implemented specification rule.
 - 장점, 단점 및 영향: Supported RegExp coverage gains two passing executions with no new failures. Future Test262 siblings remain skipped until independently audited.
 ```
+
+## Exact Unicode ignore-case word boundaries
+
+This architecture unit changes no Test262 admission. Pinned Test262
+`020cb74075849d1e404bbcdb62feb7a02e6966db` remains **1093 pass / 0 fail /
+786 skip / 0 timeout / 0 error** over the complete 1,879-file
+`built-ins/RegExp` directory.
+
+Direct engine tests cover the specification cases absent from the admitted
+corpus: non-word `é`, CJK, and Arabic digits; word long s and Kelvin sign;
+word/non-word transitions; global and inline ignore-case; linear-prefiltered
+and hard lookaround routes; repeated and nullable captures; sticky exact-start
+behavior; lazy first replacement; UTF-8 zero-width iteration; a million-scalar
+no-match scan; 20,000 per-position global matches without whole-input rescans;
+and hostile ASCII/non-ASCII nested repeats.
+
+The conformance invariant is structural rather than admission-based: the
+relaxed Rust pattern can only reject impossible inputs, native custom look
+states own ECMAScript boundary semantics, capture-erased Pike matching owns the
+language-valid start where repeated capture correction is required, and
+anchored full-haystack matching owns group-zero bounds, sticky position, and
+corrected captures.
 
 ## Why the full-suite rate is not higher
 
