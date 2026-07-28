@@ -16,7 +16,11 @@
   admission policy. Local verification passes **305/305** library,
   **558/558** builtins, **62/62** `with`, and **138/138** tooling tests plus
   all-target/all-feature tests, release build, rustfmt, warnings-denied Clippy,
-  and wasm32 checking.
+  and wasm32 checking. Implementation commit `2448889` passes CI
+  `30362037365` and all 36 jobs in full run `30362037348`. The full matrix
+  moves only built-ins by **+4 pass / -4 fail** after normalizing one Annex B
+  runner-contention timeout with a byte-identical rerun. Corrected aggregate:
+  **32053 pass / 5104 fail / 11309 skip / 3 timeout / 0 error**.
 
 - RegExp `v` now supports string-valued Unicode properties and `\q{...}`
   disjunctions, including empty strings, single-character crossover with

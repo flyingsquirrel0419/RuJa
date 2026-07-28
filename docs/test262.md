@@ -11768,6 +11768,19 @@ all-feature tests, release build, rustfmt, warnings-denied Clippy, and wasm32
 checking. Two GPT-5.6 reviews are clean after the final failpoint and
 intrinsic-root coverage additions.
 
+Implementation commit `2448889` passes ordinary CI `30362037365` and all 36
+jobs in full run `30362037348`. The raw matrix has one extra Annex B
+runner-contention timeout; the downloaded CI binary rerun restores **201 pass /
+811 fail / 74 skip / 0 timeout / 0 error**, byte-identical to preceding run
+`30355514979` with SHA-256
+`410da6b0d17c7cdd50df356717c298529ca9bcb63be12c77143ec2a1b966153a`.
+After normalization, 31 of 32 result files are byte-identical and only
+built-ins changes, from **16428/4297/2940/3/0** to
+**16432/4293/2940/3/0**. The corrected aggregate is **32053 pass / 5104 fail /
+11309 skip / 3 timeout / 0 error / 48469 total / 37157 run**; the
+path-independent sorted-content hash is
+`1d221f690ccf985fbfb58e7358f586221e02a8b56afb4d2add0c29782a8fa6d5`.
+
 ## RegExp `u`/`v` flag mutual exclusion
 
 Pinned Test262 `020cb74075849d1e404bbcdb62feb7a02e6966db` has two files for
