@@ -11881,7 +11881,8 @@ global-result fuel, generic `Symbol.match` getter order, operand-first
 `iv` word/property intersection, a 4,097-arm flat alternation, and 20,001
 global logical matches with batched endpoint conversion. Python tooling is
 **137/138**; the sole failure remains the external pinned checkout's absent
-staging TypedArray fixture.
+staging TypedArray fixture. Exact-manifest live checks also treat an inaccessible
+optional checkout as unavailable instead of failing on `Path.is_dir()`.
 
 ```text
 [Decision Log]
