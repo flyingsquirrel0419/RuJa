@@ -12083,6 +12083,15 @@ warnings-denied Clippy, wasm32, and doctest also pass. A final live-manifest
 probe against the pinned checkout passes before the checkout and all generated
 test/build output are removed.
 
+Implementation commit `4c0e28c` passes ordinary CI `30397512857` with both
+jobs successful and full Test262 run `30397512891` with all 36 jobs successful.
+Against preceding full run `30390395072`, 31 of 32 result artifacts are
+byte-identical. Only `built-ins` changes, moving exactly **+9 pass / -9 skip**
+to **16457 pass / 4293 fail / 2915 skip / 3 timeout / 0 error**. Aggregate is
+**32078/5104/11284/3/0** over **48469** total and **37182** run. The sorted
+result-content hash is
+`36f9fc0e9dc914015d869e2b199623aa4f9b42da116573d4f86a5dc638a89f78`.
+
 ```text
 [Decision Log]
 - 목적과 의도: Admit only the Map constructor iterator and Realm files after repairing and directly proving their hidden iterator, root, resource, and completion boundaries.

@@ -28,6 +28,14 @@
   targets/features, rustfmt, warnings-denied Clippy, wasm32, doctest, and the
   pinned 204-file Map sweep at **144 pass / 1 fail / 59 skip**. The unchanged
   failure is the independent `Map.prototype[Symbol.toStringTag]` descriptor.
+  Two independent GPT-5.6 final reviews are clean. Implementation commit
+  `4c0e28c` passes ordinary CI `30397512857` (**2/2 jobs**) and full Test262
+  run `30397512891` (**36/36 jobs**). Against preceding run `30390395072`, 31
+  of 32 result artifacts are byte-identical; `built-ins` alone moves **+9 pass
+  / -9 skip** to **16457/4293/2915/3/0**. Aggregate:
+  **32078/5104/11284/3/0** over **48469** total and **37182** run; sorted
+  content-set hash
+  `36f9fc0e9dc914015d869e2b199623aa4f9b42da116573d4f86a5dc638a89f78`.
 
 - `Map.groupBy` now executes the complete collection-key `GroupBy` pipeline
   through a direct cached synchronous iterator record. It performs no
