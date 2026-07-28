@@ -12027,8 +12027,18 @@ documentation issue.
 - 검토한 주요 대안: Keep broad skips, remove Symbol.iterator globally, admit the whole directory by prefix, rely on forced execution only, or freeze only the feature-gated files after a fixed-policy A/B.
 - 선택한 방식: Freeze the exact 13 gated paths and their complete live feature sets in a shared runner/analyzer manifest; require forced 14/11 to 25/0 runtime evidence and ordinary 12/0/13 to 25/0 admission evidence.
 - 다른 대안 대신 이 방식을 선택한 이유: Global feature removal overstates unrelated support, prefix admission silently accepts future tests, forced runs do not affect supported-subset accounting, and ordinary totals alone hide which failures the code fixed.
-- 장점, 단점 및 영향: The focused directory becomes failure-free with thirteen measured skip-to-pass moves and eleven independently isolated runtime repairs. Full built-ins and matrix artifact comparison remain required before final aggregate evidence is recorded.
+- 장점, 단점 및 영향: The focused directory becomes failure-free with thirteen measured skip-to-pass moves and eleven independently isolated runtime repairs. Full built-ins and matrix artifact comparison remain the final evidence gate and are recorded below.
 ```
+
+Implementation commit `4601c00` and checkout-probe follow-up `d0545c9` pass
+ordinary CI `30376165881`. Full run `30374968848` passes all **36/36** jobs.
+The preceding run's Annex B contention timeout reruns at **201/811/74/0/0**
+and is byte-identical to the current artifact. After that normalization, 31 of
+32 result artifacts are unchanged; only `built-ins` moves from
+**16432/4293/2940/3/0** to **16445/4293/2927/3/0**, exactly **+13 pass / -13
+skip**. Aggregate is **32066 pass / 5104 fail / 11296 skip / 3 timeout / 0
+error / 48469 total / 37170 run**. The sorted content-set hash is
+`9080e4e377d351a4621d58b154a8dae6967234a1bbdb7bef4b6865e4bde2baac`.
 
 ## Why the full-suite rate is not higher
 

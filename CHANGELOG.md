@@ -21,7 +21,13 @@
   wasm32 checking. The optional live-metadata tooling probe also tolerates an
   absent or inaccessible configured Test262 checkout while retaining its
   unconditional frozen-manifest checks. Two independent GPT-5.6 final reviews
-  are clean.
+  are clean. Implementation commit `4601c00` and tooling follow-up `d0545c9`
+  pass ordinary CI `30376165881`; all **36/36** jobs pass in full run
+  `30374968848`. After replacing the preceding run's sole Annex B contention
+  timeout with a byte-identical clean rerun, 31 of 32 result artifacts are
+  unchanged and `built-ins` alone moves **+13 pass / -13 skip**. Aggregate:
+  **32066 pass / 5104 fail / 11296 skip / 3 timeout / 0 error**; sorted
+  content-set hash `9080e4e377d351a4621d58b154a8dae6967234a1bbdb7bef4b6865e4bde2baac`.
 
 - Every Realm's `%Array.prototype%[Symbol.unscopables]` now holds its own
   null-prototype object with the exact 16 standard Array method names. Its
