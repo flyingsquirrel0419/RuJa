@@ -18343,6 +18343,128 @@ fn array_intrinsic_setup_reservation_failures_restore_pins_and_skip_publication(
 }
 
 #[test]
+fn object_from_entries_reservation_failures_are_ordered_closed_and_retryable() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.run(
+        r#"
+        var iteratorGets = 0;
+        var closed = 0;
+        var advanced = false;
+        var entry = ["key", { marker: 9 }];
+        var firstStep = { done: false, value: entry };
+        var doneStep = { done: true };
+        var closeResult = {};
+        var iterator = {
+          next: function() {
+            if (advanced) return doneStep;
+            advanced = true;
+            return firstStep;
+          },
+          return: function() { closed++; return closeResult; }
+        };
+        var iterable = {
+          get [Symbol.iterator]() {
+            iteratorGets++;
+            return function() {
+              advanced = false;
+              return iterator;
+            };
+          }
+        };
+        "#,
+    )
+    .expect("iterator fixture should initialize");
+    vm.gc();
+    let baseline_live = vm.heap.live_count();
+    let baseline_pins = vm.gc_pins.len();
+
+    vm.gc_pin_reservation_failure_countdown = Some(1);
+    let error = vm
+        .run("Object.fromEntries(iterable);")
+        .expect_err("allocation-root reservation should fail before result allocation");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.gc_pin_reservation_failure_countdown, None);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(
+        vm.run("iteratorGets + ':' + closed;")
+            .expect("failure counters should remain readable"),
+        Value::String(Arc::from("0:0"))
+    );
+    vm.gc();
+    assert_eq!(vm.heap.live_count(), baseline_live);
+
+    vm.gc_pin_reservation_failure_countdown = Some(2);
+    let error = vm
+        .run("Object.fromEntries(iterable);")
+        .expect_err("iterator-record reservation should fail before GetIterator");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.gc_pin_reservation_failure_countdown, None);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(
+        vm.run("iteratorGets + ':' + closed;")
+            .expect("second reservation counters should remain readable"),
+        Value::String(Arc::from("0:0"))
+    );
+    vm.gc();
+    assert_eq!(vm.heap.live_count(), baseline_live);
+
+    vm.fail_ordinary_property_storage_reservation =
+        Some((OrdinaryPropertyStorageReservationSite::PropertyStorage, 0));
+    let error = vm
+        .run("Object.fromEntries(iterable);")
+        .expect_err("result property publication should be fallible");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fail_ordinary_property_storage_reservation, None);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(
+        vm.run("iteratorGets + ':' + closed;")
+            .expect("IteratorClose counters should remain readable"),
+        Value::String(Arc::from("1:1"))
+    );
+    vm.gc();
+    assert_eq!(vm.heap.live_count(), baseline_live);
+
+    assert_eq!(
+        vm.run("Object.fromEntries(iterable).key.marker;")
+            .expect("a clean retry should consume a fresh iterator"),
+        Value::Number(9.0)
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    vm.register_fn(
+        "abortFuel",
+        |_, _, _| Err(crate::error::Error::fuel("test fuel abort")),
+        0,
+    )
+    .expect("Fuel hook should register");
+    vm.run(
+        r#"
+        var fuelClosed = 0;
+        var fuelEntry = { get 0() { abortFuel(); } };
+        var fuelStep = { done: false, value: fuelEntry };
+        var fuelIterator = {
+          next: function() { return fuelStep; },
+          return: function() { fuelClosed++; return closeResult; }
+        };
+        var fuelIterable = {
+          [Symbol.iterator]: function() { return fuelIterator; }
+        };
+        "#,
+    )
+    .expect("Fuel fixture should initialize");
+    let error = vm
+        .run("Object.fromEntries(fuelIterable);")
+        .expect_err("host Fuel must abort entry processing");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(
+        vm.run("fuelClosed;")
+            .expect("Fuel close counter should remain readable"),
+        Value::Number(0.0)
+    );
+}
+
+#[test]
 fn realm_environment_survives_collection_before_intrinsic_publication() {
     let mut vm = Vm::new().expect("VM should initialize");
     vm.gc();

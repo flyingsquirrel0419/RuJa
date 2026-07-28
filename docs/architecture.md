@@ -2477,6 +2477,34 @@ ordinary target.
 - 장점, 단점 및 영향: Full/spare/existing map, retry, cache, Proxy/fuel, global, Realm, String UTF-16, Namespace NaN/signed-zero, and cleanup boundaries now have deterministic evidence. Receiver overwrite/create benchmarks show no measured regression. Initial PropertyKey/shared String creation, seal/freeze materialization, TypedArray byte conversion, JSON containers, unrelated ArrayData constructors, Error strings, GC root enumeration, and mark worklists remain separate scopes.
 ```
 
+## `Object.fromEntries` iterator pipeline
+
+`Object.fromEntries` creates its Realm-local ordinary result before acquiring
+the source iterator, then retains the iterator object and its cached `next`
+method for the whole loop. Each yielded entry stays rooted while property `0`
+and property `1` are read and while the key is converted. Result properties
+flow through the ordinary fallible define publisher, preserving insertion
+order and bypassing inherited setters.
+
+The iterator-step boundary is deliberate. Errors from calling `next`,
+validating its result, or reading `done`/`value` propagate without
+`IteratorClose`. Once a value has been yielded, a primitive entry, abrupt
+entry getter, key conversion, or result publication closes the iterator while
+preserving the original throw over a catchable close failure. Non-catchable
+host Fuel aborts never re-enter user `return` code. Temporary roots are
+released through one boundary around each entry and one around the full
+iterator record.
+
+```text
+[Decision Log]
+- 목적과 의도: Implement the complete AddEntriesFromIterable behavior for Object.fromEntries, including observable order, IteratorClose boundaries, Realm provenance, GC safety, and fallible result publication.
+- 기존 구현 및 제약 조건: The previous implementation allocated the correct result and coerced Array entries, but cloned only ArrayData.items, treated every other iterable as empty, bypassed Symbol.iterator and next, could not close iterators, and inserted result properties directly into IndexMap. Observable getters and conversions can allocate or force GC, while property growth can fail.
+- 검토한 주요 대안: Extend the Array snapshot with array-like fallback, reuse Vm::make_iterator, build a hidden JavaScript adder function literally, iterate entry objects themselves, or use the existing direct iterator-record and ordinary property helpers.
+- 선택한 방식: Reserve input/result roots before allocation, create the result first, acquire a direct synchronous iterator record with one Symbol.iterator Get and cached next, use the shared iterator-step helper, root each yielded entry/key/value, apply Get(0), Get(1), ToPropertyKey, and fallible DefineOwnProperty in order, close catchable post-step entry-processing errors through the shared abrupt-completion-preserving helper, and propagate host Fuel without user cleanup re-entry.
+- 다른 대안 대신 이 방식을 선택한 이유: Snapshots and array-like fallback do not implement the iterable contract; Vm::make_iterator adds an observable HasProperty probe for ordinary objects; a materialized hidden adder adds heap and rooting complexity without an observable function identity; iterating entries violates indexed Get semantics; and raw map insertion bypasses reservation failure and shared descriptor behavior.
+- 장점, 단점 및 영향: Arbitrary iterables, exact ordering, duplicate-key order, Symbol keys, define semantics, close precedence, foreign Realms, forced GC, and retryable reservation failures now have direct evidence. The loop consumes one native fuel unit per iterator step through the shared helper; unrelated Object.groupBy iterator cleanup remains a separate implementation audit.
+```
+
 ## Object integrity levels
 
 `Object.seal`, `Object.freeze`, `Object.isSealed`, and `Object.isFrozen` share

@@ -4,6 +4,22 @@
 
 ### Changed
 
+- `Object.fromEntries` now consumes every synchronous iterable through a
+  cached iterator record instead of snapshotting only raw Array storage. It
+  observes `next`, entry `0`, entry `1`, `ToPropertyKey`, and property creation
+  in specification order; closes only catchable entry-processing abrupt
+  completions; never re-enters user cleanup for a host Fuel abort;
+  preserves the original throw when `return` also throws; and leaves
+  `IteratorStepValue` failures unclosed. Result publication uses the fallible
+  ordinary define path while the result, iterator, entry, key, and value stay
+  GC-rooted. Exact Test262 admission expands the directory from **12 pass / 0
+  fail / 13 skip** to **25 pass / 0 fail / 0 skip**; a forced fixed-policy A/B
+  isolates the code change from **14 pass / 11 fail** to **25 pass / 0 fail**.
+  Local validation passes **306/306** library, **560/560** builtins,
+  **62/62** `with`, **303/303** release-library, and **139/139** tooling tests,
+  plus all targets/features, rustfmt, warnings-denied Clippy, release build, and
+  wasm32 checking. Two independent GPT-5.6 final reviews are clean.
+
 - Every Realm's `%Array.prototype%[Symbol.unscopables]` now holds its own
   null-prototype object with the exact 16 standard Array method names. Its
   entries are writable, enumerable, and configurable `true` data properties;

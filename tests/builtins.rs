@@ -15036,6 +15036,24 @@ fn object_static_methods_are_realm_specific() {
               get: function() { forceGc(); return { nested: 1 }; }
             });
             var fromEntries = other.Object.fromEntries([entry]);
+            var fromEntriesErrorRealm = false;
+            try {
+              other.Object.fromEntries([null]);
+            } catch (error) {
+              fromEntriesErrorRealm = error instanceof other.TypeError &&
+                !(error instanceof TypeError);
+            }
+            var fromEntriesSentinel = {};
+            var fromEntriesSentinelPreserved = false;
+            try {
+              other.Object.fromEntries({
+                [Symbol.iterator]: function() {
+                  return { next: function() { throw fromEntriesSentinel; } };
+                }
+              });
+            } catch (error) {
+              fromEntriesSentinelPreserved = error === fromEntriesSentinel;
+            }
             var assigned = other.Object.assign(1, { value: 1 });
             var ownNames = other.Object.getOwnPropertyNames({ value: 1 });
             var symbol = Symbol("value");
@@ -15089,6 +15107,8 @@ fn object_static_methods_are_realm_specific() {
                 descriptors.first.value === 1,
               Object.getPrototypeOf(fromEntries) === other.Object.prototype &&
                 fromEntries.value && fromEntries.value.nested === 1,
+              fromEntriesErrorRealm,
+              fromEntriesSentinelPreserved,
               Object.getPrototypeOf(assigned) === other.Number.prototype &&
                 assigned.value === 1 &&
                 other.Object.getPrototypeOf(1) === other.Number.prototype,
@@ -15106,7 +15126,7 @@ fn object_static_methods_are_realm_specific() {
         )
         .expect("foreign Realm Object statics should remain live across GC"),
         Value::String(Arc::from(
-            "true|true|true|true|true|true|true|true|true|true|true|true|true|true|true"
+            "true|true|true|true|true|true|true|true|true|true|true|true|true|true|true|true|true"
         ))
     );
 
@@ -15583,6 +15603,291 @@ fn object_statics() {
     assert_eq!(
         run("typeof Object.create(null);"),
         Value::String(Arc::from("object"))
+    );
+}
+
+#[test]
+fn object_from_entries_observes_iterator_order_close_priority_and_gc_roots() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("GC hook should register");
+
+    assert_eq!(
+        vm.run(
+            r#"
+            var effects = [];
+            var keptValue = { marker: 7 };
+            var key = {
+              [Symbol.toPrimitive]: function(hint) {
+                effects.push("key:" + hint);
+                forceGc();
+                return "kept";
+              }
+            };
+            var entry = {
+              get 0() { effects.push("get0"); forceGc(); return key; },
+              get 1() { effects.push("get1"); forceGc(); return keptValue; }
+            };
+            var iterator = {
+              count: 0,
+              next: function() {
+                effects.push("next" + this.count);
+                forceGc();
+                return this.count++ === 0
+                  ? { done: false, value: entry }
+                  : { done: true };
+              },
+              return: function() { effects.push("return"); return {}; }
+            };
+            var iterable = {
+              get [Symbol.iterator]() {
+                effects.push("iterator");
+                forceGc();
+                return function() {
+                  effects.push("call");
+                  forceGc();
+                  return iterator;
+                };
+              }
+            };
+            var result = Object.fromEntries(iterable);
+            var descriptor = Object.getOwnPropertyDescriptor(result, "kept");
+            [
+              effects.join(","),
+              result.kept === keptValue,
+              descriptor.writable,
+              descriptor.enumerable,
+              descriptor.configurable
+            ].join("|");
+            "#,
+        )
+        .expect("iterator entries should survive every forced collection"),
+        Value::String(Arc::from(
+            "iterator,call,next0,get0,get1,key:string,next1|true|true|true|true"
+        ))
+    );
+
+    assert_eq!(
+        vm.run(
+            r#"
+            var original = {};
+            var replacement = {};
+            var closed = 0;
+            var closeOnEntryError = {
+              [Symbol.iterator]: function() {
+                return {
+                  next: function() {
+                    return { done: false, value: {
+                      get 0() { throw original; }
+                    } };
+                  },
+                  return: function() { closed++; throw replacement; }
+                };
+              }
+            };
+            var entryOutcome;
+            try { Object.fromEntries(closeOnEntryError); }
+            catch (error) { entryOutcome = error === original; }
+
+            var stepClosed = 0;
+            var failDuringStep = {
+              [Symbol.iterator]: function() {
+                return {
+                  next: function() { throw original; },
+                  return: function() { stepClosed++; return {}; }
+                };
+              }
+            };
+            var stepOutcome;
+            try { Object.fromEntries(failDuringStep); }
+            catch (error) { stepOutcome = error === original; }
+            [entryOutcome, closed, stepOutcome, stepClosed].join(",");
+            "#,
+        )
+        .expect("IteratorClose completion priority should be observable"),
+        Value::String(Arc::from("true,1,true,0"))
+    );
+}
+
+#[test]
+fn object_from_entries_caches_iterator_record_and_closes_at_exact_boundary() {
+    assert_eq!(
+        run(r#"
+            var hasCalls = 0;
+            var iteratorGets = 0;
+            var iteratorThis = false;
+            var iteratorArgs = -1;
+            var nextGets = 0;
+            var nextThis = false;
+            var nextArgs = -1;
+            var iteratorTarget = {
+              next: function() {
+                nextThis = this === iterator;
+                nextArgs = arguments.length;
+                return { done: true };
+              }
+            };
+            var iterator = new Proxy(iteratorTarget, {
+              get: function(target, key, receiver) {
+                if (key === "next") nextGets++;
+                return Reflect.get(target, key, receiver);
+              }
+            });
+            var iterableTarget = {};
+            var iterable = new Proxy(iterableTarget, {
+              has: function() { hasCalls++; return true; },
+              get: function(target, key) {
+                if (key === Symbol.iterator) {
+                  iteratorGets++;
+                  return function() {
+                    iteratorThis = this === iterable;
+                    iteratorArgs = arguments.length;
+                    return iterator;
+                  };
+                }
+                return target[key];
+              }
+            });
+            Object.fromEntries(iterable);
+            [
+              hasCalls, iteratorGets, iteratorThis, iteratorArgs,
+              nextGets, nextThis, nextArgs
+            ].join(",");
+        "#),
+        Value::String(Arc::from("0,1,true,0,1,true,0"))
+    );
+
+    assert_eq!(
+        run(r#"
+            function closeCase(kind) {
+              var original = {};
+              var replacement = {};
+              var calls = 0;
+              var iterator = {
+                next: function() {
+                  return { done: false, value: {
+                    get 0() { throw original; }
+                  } };
+                }
+              };
+              if (kind === "getter") {
+                Object.defineProperty(iterator, "return", {
+                  get: function() { throw replacement; }
+                });
+              } else if (kind === "noncallable") {
+                iterator.return = 1;
+              } else if (kind === "throw") {
+                iterator.return = function() { calls++; throw replacement; };
+              } else {
+                iterator.return = function() { calls++; return 1; };
+              }
+              var iterable = {
+                [Symbol.iterator]: function() { return iterator; }
+              };
+              try { Object.fromEntries(iterable); }
+              catch (error) { return (error === original) + ":" + calls; }
+            }
+            [
+              closeCase("getter"), closeCase("noncallable"),
+              closeCase("throw"), closeCase("primitive")
+            ].join(",");
+        "#),
+        Value::String(Arc::from("true:0,true:0,true:1,true:1"))
+    );
+
+    assert_eq!(
+        run(r#"
+            function noCloseCase(kind) {
+              var original = {};
+              var closed = 0;
+              var iterator = {
+                return: function() { closed++; return {}; }
+              };
+              if (kind === "uncallable") iterator.next = null;
+              if (kind === "nonobject") iterator.next = function() { return null; };
+              if (kind === "next") iterator.next = function() { throw original; };
+              if (kind === "done") iterator.next = function() {
+                return { get done() { throw original; } };
+              };
+              if (kind === "value") iterator.next = function() {
+                return { done: false, get value() { throw original; } };
+              };
+              var iterable = {
+                [Symbol.iterator]: function() { return iterator; }
+              };
+              try { Object.fromEntries(iterable); }
+              catch (error) {
+                return (kind === "uncallable" || kind === "nonobject"
+                  ? error instanceof TypeError
+                  : error === original) + ":" + closed;
+              }
+            }
+            var acquisitionError = {};
+            var acquisitionClosed = 0;
+            var acquisition = {
+              get [Symbol.iterator]() { throw acquisitionError; },
+              return: function() { acquisitionClosed++; return {}; }
+            };
+            var acquisitionOutcome;
+            try { Object.fromEntries(acquisition); }
+            catch (error) { acquisitionOutcome = error === acquisitionError; }
+            [
+              acquisitionOutcome + ":" + acquisitionClosed,
+              noCloseCase("uncallable"), noCloseCase("nonobject"),
+              noCloseCase("next"), noCloseCase("done"), noCloseCase("value")
+            ].join(",");
+        "#),
+        Value::String(Arc::from("true:0,true:0,true:0,true:0,true:0,true:0"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var array = [];
+            array[Symbol.iterator] = function() {
+              return [["array", 1]][Symbol.iterator]();
+            };
+            var map = new Map();
+            map[Symbol.iterator] = function() {
+              return [["map", 2]][Symbol.iterator]();
+            };
+            var live = [];
+            var liveKey = {
+              toString: function() {
+                live.push(["later", 4]);
+                return "first";
+              }
+            };
+            live.push([liveKey, 3]);
+            var arrayResult = Object.fromEntries(array);
+            var mapResult = Object.fromEntries(map);
+            var liveResult = Object.fromEntries(live);
+            var primitiveErrors = 0;
+            for (var value of [1, true, Symbol("x")]) {
+              try { Object.fromEntries(value); }
+              catch (error) { if (error instanceof TypeError) primitiveErrors++; }
+            }
+            var arrayLikeError = false;
+            try { Object.fromEntries({ 0: ["ignored", 1], length: 1 }); }
+            catch (error) { arrayLikeError = error instanceof TypeError; }
+            var special = Object.fromEntries([
+              ["duplicate", 1], ["__proto__", 5], ["duplicate", 2]
+            ]);
+            [
+              arrayResult.array, mapResult.map,
+              liveResult.first, liveResult.later, primitiveErrors,
+              arrayLikeError, special.duplicate, special.__proto__,
+              Object.getPrototypeOf(special) === Object.prototype,
+              Object.hasOwn(special, "__proto__")
+            ].join(",");
+        "#),
+        Value::String(Arc::from("1,2,3,4,3,true,2,5,true,true"))
     );
 }
 

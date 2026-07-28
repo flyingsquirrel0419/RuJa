@@ -43,6 +43,10 @@ from test262_object_constructor_admission import (
     OBJECT_CONSTRUCTOR_FEATURES,
     OBJECT_CONSTRUCTOR_FILES,
 )
+from test262_object_from_entries_admission import (
+    OBJECT_FROM_ENTRIES_FEATURES,
+    OBJECT_FROM_ENTRIES_FILES,
+)
 from test262_native_construct_admission import (
     NATIVE_CONSTRUCT_FEATURES,
     NATIVE_CONSTRUCT_FILES,
@@ -1354,6 +1358,97 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                             {"features": ["Reflect.construct"]}, outside
                         )
                     )
+                finally:
+                    tool.TEST262 = original_root
+
+    def test_object_from_entries_manifest_is_exact_live_disjoint_and_shared(self):
+        iterator_names = {
+            "evaluation-order.js",
+            "iterator-closed-for-null-entry.js",
+            "iterator-closed-for-string-entry.js",
+            "iterator-closed-for-throwing-entry-key-accessor.js",
+            "iterator-closed-for-throwing-entry-key-tostring.js",
+            "iterator-closed-for-throwing-entry-value-accessor.js",
+            "iterator-not-closed-for-next-returning-non-object.js",
+            "iterator-not-closed-for-throwing-done-accessor.js",
+            "iterator-not-closed-for-throwing-next.js",
+            "iterator-not-closed-for-uncallable-next.js",
+            "uses-keys-not-iterator.js",
+        }
+        expected = {
+            **{
+                f"built-ins/Object/fromEntries/{name}": {
+                    "Object.fromEntries",
+                    "Symbol.iterator",
+                }
+                for name in iterator_names
+            },
+            "built-ins/Object/fromEntries/not-a-constructor.js": {
+                "Object.fromEntries",
+                "Reflect.construct",
+                "arrow-function",
+            },
+            "built-ins/Object/fromEntries/supports-symbols.js": {
+                "Object.fromEntries",
+                "Symbol",
+            },
+        }
+        self.assertEqual(OBJECT_FROM_ENTRIES_FILES, frozenset(expected))
+        self.assertEqual(
+            OBJECT_FROM_ENTRIES_FEATURES,
+            {path: frozenset(features) for path, features in expected.items()},
+        )
+
+        tools_dir = Path(__file__).resolve().parent
+        for manifest in tools_dir.glob("test262_*_admission.txt"):
+            if manifest.name == "test262_object_from_entries_admission.txt":
+                continue
+            existing = {
+                line
+                for raw_line in manifest.read_text().splitlines()
+                if (line := raw_line.strip()) and not line.startswith("#")
+            }
+            self.assertFalse(OBJECT_FROM_ENTRIES_FILES & existing, manifest.name)
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        if test_root.is_dir():
+            for relative, features in OBJECT_FROM_ENTRIES_FEATURES.items():
+                path = test_root / relative
+                self.assertTrue(path.is_file(), relative)
+                metadata = test262_runner.parse_meta(path.read_text())
+                self.assertEqual(
+                    frozenset(metadata.get("features", [])), features, relative
+                )
+                self.assertEqual(metadata.get("flags", []), [], relative)
+                self.assertIsNone(metadata.get("negative"), relative)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            future = root / "test/built-ins/Object/fromEntries/future.js"
+            outside = root / "test/built-ins/Object/entries/evaluation-order.js"
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for relative, features in expected.items():
+                        path = root / "test" / relative
+                        self.assertTrue(tool.object_from_entries_path(path))
+                        self.assertEqual(
+                            tool.object_from_entries_features(path), features
+                        )
+                        self.assertFalse(
+                            tool.should_skip({"features": sorted(features)}, path)
+                        )
+                        self.assertTrue(
+                            tool.should_skip(
+                                {"features": sorted(features | {"Proxy"})}, path
+                            )
+                        )
+                    for path in (future, outside):
+                        self.assertFalse(tool.object_from_entries_path(path))
+                        self.assertTrue(
+                            tool.should_skip({"features": ["Symbol.iterator"]}, path)
+                        )
                 finally:
                     tool.TEST262 = original_root
 

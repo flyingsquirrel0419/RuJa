@@ -1,0 +1,14 @@
+# Exact feature-gated Object.fromEntries coverage.
+built-ins/Object/fromEntries/evaluation-order.js
+built-ins/Object/fromEntries/iterator-closed-for-null-entry.js
+built-ins/Object/fromEntries/iterator-closed-for-string-entry.js
+built-ins/Object/fromEntries/iterator-closed-for-throwing-entry-key-accessor.js
+built-ins/Object/fromEntries/iterator-closed-for-throwing-entry-key-tostring.js
+built-ins/Object/fromEntries/iterator-closed-for-throwing-entry-value-accessor.js
+built-ins/Object/fromEntries/iterator-not-closed-for-next-returning-non-object.js
+built-ins/Object/fromEntries/iterator-not-closed-for-throwing-done-accessor.js
+built-ins/Object/fromEntries/iterator-not-closed-for-throwing-next.js
+built-ins/Object/fromEntries/iterator-not-closed-for-uncallable-next.js
+built-ins/Object/fromEntries/not-a-constructor.js
+built-ins/Object/fromEntries/supports-symbols.js
+built-ins/Object/fromEntries/uses-keys-not-iterator.js

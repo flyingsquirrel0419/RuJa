@@ -4341,14 +4341,15 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   index/length writes, while Proxy `ownKeys` trap order is preserved for
   normal array key-list results. This closes the focused
   `built-ins/Object/assign` run at **25 pass / 0 fail / 13 skip**.
-- **`Object.fromEntries` entry coercion** —
+- **Earlier `Object.fromEntries` entry-coercion unit** —
   `Object.fromEntries` now rejects nullish iterables, requires each entry
   value to be an object, reads `entry[0]`/`entry[1]` through ordinary property
   access instead of only unpacking array storage, and preserves Symbol keys via
   `ToPropertyKey`. Boxed string entries such as `Object("ab")` now create
-  `{ a: "b" }`, while primitive string entries throw `TypeError`. This closes
-  the focused `built-ins/Object/fromEntries` run at
-  **11 pass / 0 fail / 14 skip**.
+  `{ a: "b" }`, while primitive string entries throw `TypeError`. On that
+  earlier checkout and policy boundary, the focused run was **11 pass / 0 fail
+  / 14 skip**; the complete iterator-protocol unit documented below supersedes
+  that partial count.
 - **`Object.groupBy` static grouping** —
   `Object.groupBy` is now exposed as a static built-in, iterates arbitrary
   sync iterables, calls the grouping callback with `(value, index)`, converts
@@ -11991,6 +11992,40 @@ two additional passes and two fewer skips with no failure movement. Aggregate
 is **31955 pass / 5108 fail / 11403 skip / 3 timeout / 0 error / 48469 total /
 37063 run**. The sorted 32-artifact evidence hash is
 `990bcf4a214a9df0e9e1fe279c79c4961be2403c513dc6d1332c4db3a9589781`.
+
+## `Object.fromEntries` iterator protocol
+
+Pinned Test262 `020cb74075849d1e404bbcdb62feb7a02e6966db` contains 25 files in
+`built-ins/Object/fromEntries`. Before this unit, ordinary policy reported
+**12 pass / 0 fail / 13 skip**. Disabling feature gates without changing the
+binary exposed the actual implementation boundary at **14 pass / 11 fail**:
+the missing cases cover custom iterator order, entry access, close and
+non-close boundaries, and indexed entry reads.
+
+The final implementation passes all **25/25** under both forced and ordinary
+policy. A frozen 13-path manifest removes only each file's live `Symbol`,
+`Symbol.iterator`, or `Reflect.construct` gate. Tooling verifies exact path and
+metadata equality, disjointness from every other admission, rejection of
+future and outside paths, and retention of any additional unsupported feature.
+Direct Rust tests additionally cover forced GC at iterator acquisition,
+`next`, both entry getters, and key conversion; original-throw precedence when
+`return` throws; no close after a `next` throw; root-reservation ordering; and
+fallible result-property publication with close, pin cleanup, and retry.
+Local gates pass **306/306** library, **560/560** builtins, **62/62** `with`,
+**303/303** release-library, and **139/139** tooling tests, together with all
+targets/features, rustfmt, warnings-denied Clippy, release build, and wasm32.
+Two independent GPT-5.6 final reviews found no implementation, admission, or
+documentation issue.
+
+```text
+[Decision Log]
+- 목적과 의도: Admit the complete coherent Object.fromEntries directory only after its iterable, ordering, close, descriptor, Realm, and resource-failure behavior is directly verified.
+- 기존 구현 및 제약 조건: Thirteen files were hidden by broad Symbol/iterator/Reflect.construct gates, normal green counts concealed eleven semantic failures, and aggregate movement alone could not separate the runtime repair from policy expansion.
+- 검토한 주요 대안: Keep broad skips, remove Symbol.iterator globally, admit the whole directory by prefix, rely on forced execution only, or freeze only the feature-gated files after a fixed-policy A/B.
+- 선택한 방식: Freeze the exact 13 gated paths and their complete live feature sets in a shared runner/analyzer manifest; require forced 14/11 to 25/0 runtime evidence and ordinary 12/0/13 to 25/0 admission evidence.
+- 다른 대안 대신 이 방식을 선택한 이유: Global feature removal overstates unrelated support, prefix admission silently accepts future tests, forced runs do not affect supported-subset accounting, and ordinary totals alone hide which failures the code fixed.
+- 장점, 단점 및 영향: The focused directory becomes failure-free with thirteen measured skip-to-pass moves and eleven independently isolated runtime repairs. Full built-ins and matrix artifact comparison remain required before final aggregate evidence is recorded.
+```
 
 ## Why the full-suite rate is not higher
 

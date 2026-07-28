@@ -7358,6 +7358,7 @@ fn object_from_entries(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::
         .get(&realm.0)
         .cloned()
         .unwrap_or_else(|| vm.object_proto.clone());
+    vm.try_reserve_value_roots(&[entries.clone(), prototype.clone()])?;
     let allocation_pins = vm.pin_many(&[entries.clone(), prototype.clone()]);
     let allocation = vm.alloc(HeapObj::Object(crate::value::ObjectData {
         props: Mutex::new(IndexMap::new()),
@@ -7371,54 +7372,48 @@ fn object_from_entries(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::
     let obj_idx = allocation?;
     let object = Value::Object(obj_idx);
     let object_pin = vm.pin(&object);
-    let result = (|| {
-        // Accept an array (or array-like) of [key, value] pairs.
-        if let Value::Object(arr_idx) = &entries {
-            let pairs: Vec<Value> = vm.heap.with_obj(arr_idx.0, |o| {
-                if let HeapObj::Array(a) = o {
-                    a.items.lock().clone()
-                } else {
-                    Vec::new()
+    let result = (|| -> error::Result<Value> {
+        // The five reserved roots cover the iterator record plus one current
+        // entry, key, and value across every observable operation.
+        vm.try_reserve_gc_pins(5)?;
+        let iterator = get_sync_iterator(vm, entries)?;
+        let iterator_pins = vm.pin_many(&[iterator.iterator.clone(), iterator.next_method.clone()]);
+        let iteration = (|| -> error::Result<Value> {
+            loop {
+                // IteratorStepValue failures do not perform IteratorClose.
+                let Some(entry) =
+                    iterator_helper_step(vm, &iterator.iterator, &iterator.next_method, true)?
+                else {
+                    return Ok(object.clone());
+                };
+                if !matches!(entry, Value::Object(_)) {
+                    return close_iterator_after_error(
+                        vm,
+                        &iterator.iterator,
+                        Error::type_err("Iterator value is not an entry object"),
+                    );
                 }
-            });
-            for pair in &pairs {
-                // Each entry object is read through Get(entry, "0") / Get(entry, "1").
-                if !matches!(pair, Value::Object(_)) {
-                    return Err(Error::type_err("Iterator value is not an entry object"));
-                }
-                let mut entry_pins = 0;
-                let entry_result: error::Result<()> = (|| {
-                    let key = vm.get_property_by_key(pair, &PropertyKey::from("0"))?;
+
+                let mut entry_pins = vm.pin(&entry);
+                let entry_result = (|| -> error::Result<()> {
+                    let key = vm.get_property_by_key(&entry, &PropertyKey::from("0"))?;
                     entry_pins += vm.pin(&key);
-                    let value = vm.get_property_by_key(pair, &PropertyKey::from("1"))?;
+                    let value = vm.get_property_by_key(&entry, &PropertyKey::from("1"))?;
                     entry_pins += vm.pin(&value);
                     let key = to_property_key_descriptor(vm, &key)?;
-                    vm.heap.with_obj(obj_idx.0, |o| {
-                        if let HeapObj::Object(obj) = o {
-                            // Own enumerable data property (data_prop is
-                            // non-enumerable, which would hide it from
-                            // Object.keys / JSON.stringify).
-                            obj.props.lock().insert(
-                                key,
-                                PropertyDescriptor {
-                                    value,
-                                    writable: true,
-                                    enumerable: true,
-                                    configurable: true,
-                                    get: None,
-                                    set: None,
-                                    is_accessor: false,
-                                },
-                            );
-                        }
-                    });
-                    Ok(())
+                    vm.define_own_property_or_throw(&object, key, PropertyDescriptor::data(value))
                 })();
                 vm.unpin_many(entry_pins);
-                entry_result?;
+                if let Err(error) = entry_result {
+                    if !error.catchable() {
+                        return Err(error);
+                    }
+                    return close_iterator_after_error(vm, &iterator.iterator, error);
+                }
             }
-        }
-        Ok(object)
+        })();
+        vm.unpin_many(iterator_pins);
+        iteration
     })();
     vm.unpin_many(object_pin);
     result
