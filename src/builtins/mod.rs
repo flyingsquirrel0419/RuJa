@@ -7277,14 +7277,14 @@ fn reserve_group_by_root_slots(
     vm.try_reserve_gc_pins(additional)
 }
 
-fn close_group_by_after_error<T>(
+fn close_iterator_after_error_in_realm<T>(
     vm: &mut Vm,
     iterator: &Value,
     error: Arc<Error>,
     realm: GcIdx,
 ) -> error::Result<T> {
-    // GroupBy creates native Type/Range errors before IteratorClose. Give them
-    // their Realm object now so user return code cannot alter later materialization.
+    // Native errors exist before IteratorClose. Materialize them now so user
+    // return code cannot alter their Realm or collect their thrown value.
     let error = vm.materialize_error_in_realm(error, realm);
     close_iterator_after_error(vm, iterator, error)
 }
@@ -7329,7 +7329,7 @@ fn object_group_by(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::
             let mut k = 0u64;
             loop {
                 if k >= 9_007_199_254_740_991 {
-                    return close_group_by_after_error(
+                    return close_iterator_after_error_in_realm(
                         vm,
                         &iterator.iterator,
                         Error::type_err("Object.groupBy index exceeds the safe integer limit"),
@@ -7378,7 +7378,12 @@ fn object_group_by(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::
                         if !error.catchable() {
                             return Err(error);
                         }
-                        return close_group_by_after_error(vm, &iterator.iterator, error, realm);
+                        return close_iterator_after_error_in_realm(
+                            vm,
+                            &iterator.iterator,
+                            error,
+                            realm,
+                        );
                     }
                 };
                 vm.unpin_many(key_pin);
@@ -7396,7 +7401,12 @@ fn object_group_by(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::
                 };
                 if let Err(error) = storage {
                     vm.unpin_many(value_pin);
-                    return close_group_by_after_error(vm, &iterator.iterator, error, realm);
+                    return close_iterator_after_error_in_realm(
+                        vm,
+                        &iterator.iterator,
+                        error,
+                        realm,
+                    );
                 }
                 group_pins += value_pin;
                 k += 1;

@@ -60,6 +60,12 @@ jobs:
           TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
           test262_tooling_test.ModuleCoreAdmissionTests.test_function_bind_admission_is_exact_live_disjoint_and_shared
           -v
+      - name: Verify exact Map constructor admission
+        working-directory: tools
+        run: >-
+          TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
+          test262_tooling_test.ModuleCoreAdmissionTests.test_map_constructor_manifest_is_exact_live_disjoint_and_shared
+          -v
       - name: Verify exact extensibility admission
         working-directory: tools
         run: >-

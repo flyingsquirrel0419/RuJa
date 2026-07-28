@@ -40,6 +40,9 @@ try:
     from test262_map_group_by_admission import (
         MAP_GROUP_BY_FEATURES, MAP_GROUP_BY_FILES,
     )
+    from test262_map_constructor_admission import (
+        MAP_CONSTRUCTOR_FEATURES, MAP_CONSTRUCTOR_FILES,
+    )
     from test262_native_construct_admission import (
         NATIVE_CONSTRUCT_FEATURES, NATIVE_CONSTRUCT_FILES,
     )
@@ -224,6 +227,9 @@ except ModuleNotFoundError:
     )
     from tools.test262_map_group_by_admission import (
         MAP_GROUP_BY_FEATURES, MAP_GROUP_BY_FILES,
+    )
+    from tools.test262_map_constructor_admission import (
+        MAP_CONSTRUCTOR_FEATURES, MAP_CONSTRUCTOR_FILES,
     )
     from tools.test262_native_construct_admission import (
         NATIVE_CONSTRUCT_FEATURES, NATIVE_CONSTRUCT_FILES,
@@ -3026,6 +3032,20 @@ def map_group_by_features(path):
         return frozenset()
     return MAP_GROUP_BY_FEATURES.get(rel.as_posix(), frozenset())
 
+def map_constructor_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except (OSError, ValueError):
+        return False
+    return rel.as_posix() in MAP_CONSTRUCTOR_FILES
+
+def map_constructor_features(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except (OSError, ValueError):
+        return frozenset()
+    return MAP_CONSTRUCTOR_FEATURES.get(rel.as_posix(), frozenset())
+
 def native_construct_path(path):
     if path is None:
         return False
@@ -3356,6 +3376,8 @@ def should_skip(meta, path=None):
         feats.difference_update(object_group_by_features(path))
     if path is not None and map_group_by_path(path):
         feats.difference_update(map_group_by_features(path))
+    if path is not None and map_constructor_path(path):
+        feats.difference_update(map_constructor_features(path))
     if path is not None and native_construct_path(path):
         feats.difference_update(native_construct_features(path))
     if path is not None and object_prototype_path(path):

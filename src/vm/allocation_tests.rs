@@ -2,7 +2,7 @@ use super::property::MAX_PROXY_CYCLE_REPLAYS;
 use super::{
     ArrayLengthReservationSite, DescriptorMaterializationReservationSite, ExternalPromiseJob,
     ForInKeyReservationSite, GetPrototypeReservationSite, GroupByReservationSite,
-    InlineCacheReservationSite, Microtask, OrdinaryOwnKeysReservationSite,
+    InlineCacheReservationSite, MapReservationSite, Microtask, OrdinaryOwnKeysReservationSite,
     OrdinaryPropertyStorageReservationSite, OwnKeyConsumerReservationSite,
     PropertyTraversalReservationSite, ProxyDefinePropertyReservationSite,
     ProxyDescriptorReservationSite, ProxyOwnKeysReservationSite, Vm,
@@ -18465,6 +18465,354 @@ fn object_from_entries_reservation_failures_are_ordered_closed_and_retryable() {
             .expect("Fuel close counter should remain readable"),
         Value::Number(0.0)
     );
+}
+
+#[test]
+fn map_constructor_roots_storage_fuel_and_cleanup_are_retryable() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("GC hook should register");
+    vm.register_fn(
+        "abortMapFuel",
+        |_, _, _| Err(crate::error::Error::fuel("test Map constructor fuel abort")),
+        0,
+    )
+    .expect("Fuel hook should register");
+
+    assert_eq!(
+        vm.run(
+            r#"
+            var originalMapSet = Map.prototype.set;
+            var rootSetGets = 0;
+            Object.defineProperty(Map.prototype, "set", {
+              configurable: true,
+              get: function() {
+                rootSetGets++;
+                forceGc();
+                return function(key, value) {
+                  forceGc();
+                  return originalMapSet.call(this, key, value);
+                };
+              }
+            });
+            var rootedMap = new Map({
+              get [Symbol.iterator]() {
+                forceGc();
+                return function() {
+                  forceGc();
+                  var index = 0;
+                  return {
+                    get next() {
+                      forceGc();
+                      return function() {
+                        forceGc();
+                        if (index++ !== 0) {
+                          return { get done() { forceGc(); return true; } };
+                        }
+                        return {
+                          get done() { forceGc(); return false; },
+                          get value() {
+                            forceGc();
+                            return {
+                              get 0() { forceGc(); return { marker: "key" }; },
+                              get 1() { forceGc(); return { marker: "value" }; }
+                            };
+                          }
+                        };
+                      };
+                    }
+                  };
+                };
+              }
+            });
+            Object.defineProperty(Map.prototype, "set", {
+              value: originalMapSet, writable: true, configurable: true
+            });
+            var rootedKey = rootedMap.keys().next().value;
+            [rootSetGets, rootedKey.marker,
+              rootedMap.get(rootedKey).marker].join("|");
+            "#,
+        )
+        .expect("Map constructor values should survive every observable GC"),
+        Value::String(Arc::from("1|key|value"))
+    );
+
+    vm.run(
+        r#"
+        var mapConstructorIteratorGets = 0;
+        var mapConstructorNextCalls = 0;
+        var mapConstructorClosed = 0;
+        var mapConstructorIndex = 0;
+        var mapConstructorEntry = ["entry", { marker: 9 }];
+        var mapConstructorIterator = {
+          next: function() {
+            mapConstructorNextCalls++;
+            if (mapConstructorIndex++ === 0) {
+              return { done: false, value: mapConstructorEntry };
+            }
+            return { done: true };
+          },
+          return: function() { mapConstructorClosed++; return {}; }
+        };
+        var mapConstructorIterable = {
+          get [Symbol.iterator]() {
+            mapConstructorIteratorGets++;
+            return function() {
+              mapConstructorIndex = 0;
+              return mapConstructorIterator;
+            };
+          }
+        };
+        "#,
+    )
+    .expect("Map constructor failure fixture should initialize");
+    vm.gc();
+    let baseline_pins = vm.gc_pins.len();
+
+    vm.fail_map_reservation = Some((MapReservationSite::ConstructorRoots, 0));
+    let error = vm
+        .run("new Map(mapConstructorIterable);")
+        .expect_err("Map constructor root reservation should fail before allocation");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fail_map_reservation, None);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    vm.run("var directMapStorage = new Map(); var computedMapCalls = 0;")
+        .expect("direct Map storage fixture should initialize");
+    for (expression, key) in [
+        ("directMapStorage.set('set', 1);", "set"),
+        ("directMapStorage.getOrInsert('insert', 2);", "insert"),
+        (
+            "directMapStorage.getOrInsertComputed('computed', function() { computedMapCalls++; return 3; });",
+            "computed",
+        ),
+    ] {
+        vm.fail_map_reservation = Some((MapReservationSite::EntryStorage, 0));
+        let error = vm
+            .run(expression)
+            .expect_err("direct Map insertion should expose reservation failure");
+        assert_eq!(error.kind, crate::error::ErrorKind::Range, "{expression}");
+        assert_eq!(vm.fail_map_reservation, None);
+        assert_eq!(vm.gc_pins.len(), baseline_pins);
+        assert_eq!(
+            vm.run(&format!("directMapStorage.has('{key}');"))
+                .expect("failed Map insertion should remain observable"),
+            Value::Bool(false),
+            "{expression} must not partially insert"
+        );
+    }
+    assert_eq!(
+        vm.run("computedMapCalls;")
+            .expect("computed callback count should remain readable"),
+        Value::Number(1.0)
+    );
+    assert_eq!(
+        vm.run(
+            "directMapStorage.set('set', 1); \
+             directMapStorage.getOrInsert('insert', 2); \
+             directMapStorage.getOrInsertComputed('computed', function() { \
+               computedMapCalls++; return 3; \
+             }); \
+             [directMapStorage.size, computedMapCalls].join('|');"
+        )
+        .expect("all direct Map insertions should retry cleanly"),
+        Value::String(Arc::from("3|2"))
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(
+        vm.run("mapConstructorIteratorGets + ':' + mapConstructorClosed;")
+            .expect("pre-allocation counters should remain readable"),
+        Value::String(Arc::from("0:0"))
+    );
+
+    vm.fail_map_reservation = Some((MapReservationSite::IteratorRoots, 0));
+    let error = vm
+        .run("new Map(mapConstructorIterable);")
+        .expect_err("Map iterator-root reservation should fail before adder lookup");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fail_map_reservation, None);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(
+        vm.run("mapConstructorIteratorGets + ':' + mapConstructorClosed;")
+            .expect("pre-iterator counters should remain readable"),
+        Value::String(Arc::from("0:0"))
+    );
+
+    vm.fail_map_reservation = Some((MapReservationSite::EntryStorage, 0));
+    let error = vm
+        .run("new Map(mapConstructorIterable);")
+        .expect_err("Map entry reservation should fail atomically");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fail_map_reservation, None);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(
+        vm.run(
+            "mapConstructorIteratorGets + ':' + mapConstructorNextCalls + ':' + mapConstructorClosed;"
+        )
+        .expect("entry failure counters should remain readable"),
+        Value::String(Arc::from("1:1:1"))
+    );
+
+    assert_eq!(
+        vm.run("new Map(mapConstructorIterable).get('entry').marker;")
+            .expect("clean Map constructor retry should succeed"),
+        Value::Number(9.0)
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    vm.run("mapConstructorIteratorGets = mapConstructorNextCalls = mapConstructorClosed = 0;")
+        .expect("Map counters should reset");
+    vm.map_constructor_zero_fuel_before_step = true;
+    let error = vm
+        .run("new Map(mapConstructorIterable);")
+        .expect_err("Map constructor must meter before the first iterator step");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert!(!vm.map_constructor_zero_fuel_before_step);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    vm.set_fuel(None);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(
+        vm.run(
+            "mapConstructorIteratorGets + ':' + mapConstructorNextCalls + ':' + mapConstructorClosed;"
+        )
+        .expect("step-Fuel counters should remain readable"),
+        Value::String(Arc::from("1:0:0"))
+    );
+
+    vm.run(
+        r#"
+        var mapFuelClosed = 0;
+        var mapFuelEntry = { get 0() { abortMapFuel(); } };
+        var mapFuelIterable = {
+          [Symbol.iterator]: function() {
+            return {
+              next: function() { return { done: false, value: mapFuelEntry }; },
+              return: function() { mapFuelClosed++; return {}; }
+            };
+          }
+        };
+        "#,
+    )
+    .expect("post-step Fuel fixture should initialize");
+    let error = vm
+        .run("new Map(mapFuelIterable);")
+        .expect_err("post-step host Fuel must remain non-catchable");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(
+        vm.run("mapFuelClosed;")
+            .expect("post-step Fuel close counter should remain readable"),
+        Value::Number(0.0)
+    );
+
+    vm.run(
+        r#"
+        var closeFuelCalls = 0;
+        var closeFuelIterable = {
+          [Symbol.iterator]: function() {
+            return {
+              next: function() {
+                return {
+                  done: false,
+                  value: { get 0() { throw new Error("original"); } }
+                };
+              },
+              return: function() { closeFuelCalls++; abortMapFuel(); }
+            };
+          }
+        };
+        "#,
+    )
+    .expect("close-time Fuel fixture should initialize");
+    let error = vm
+        .run("new Map(closeFuelIterable);")
+        .expect_err("close-time Fuel must override a catchable entry throw");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(
+        vm.run("closeFuelCalls;")
+            .expect("close-time Fuel call count should remain readable"),
+        Value::Number(1.0)
+    );
+
+    assert_eq!(
+        vm.run(
+            r#"
+            var preservedMapThrow = { marker: 42 };
+            var preservedMapClosed = 0;
+            var preservedMapIterable = {
+              [Symbol.iterator]: function() {
+                return {
+                  next: function() {
+                    return {
+                      done: false,
+                      value: { get 0() { throw preservedMapThrow; } }
+                    };
+                  },
+                  return: function() { preservedMapClosed++; forceGc(); return {}; }
+                };
+              }
+            };
+            var caughtMapThrow;
+            try { new Map(preservedMapIterable); }
+            catch (error) { caughtMapThrow = error; }
+            [caughtMapThrow === preservedMapThrow, caughtMapThrow.marker,
+              preservedMapClosed].join("|");
+            "#,
+        )
+        .expect("original Map throw should survive close-time GC"),
+        Value::String(Arc::from("true|42|1"))
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+}
+
+#[test]
+fn map_constructor_allocation_retries_at_the_exact_heap_cap() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.run(
+        "var mapCapPrototype = { marker: 42 }; \
+         var MapCapNewTarget = function () {}; \
+         MapCapNewTarget.prototype = mapCapPrototype;",
+    )
+    .expect("Map heap-cap fixture should initialize");
+    let map_constructor = vm.get_global("Map");
+    let new_target = vm.get_global("MapCapNewTarget");
+    let expected_prototype = vm.get_global("mapCapPrototype");
+    vm.gc();
+    let baseline_live = vm.heap.live_count();
+    let baseline_pins = vm.gc_pins.len();
+    for _ in 0..64 {
+        let _garbage = vm.new_object().expect("garbage object should allocate");
+    }
+    let capped_live = vm.heap.live_count();
+    assert!(capped_live > baseline_live, "fixture must leave garbage");
+    vm.set_max_heap_objects(Some(baseline_live + 1));
+
+    let map = vm
+        .construct_with_new_target(&map_constructor, &[], &new_target)
+        .expect("Map allocation should collect garbage and retry at the exact cap");
+    let Value::Object(map_index) = map else {
+        panic!("Map construction must return an object");
+    };
+    assert_eq!(
+        vm.heap.with_obj(map_index.0, |object| {
+            let HeapObj::Map(map) = object else {
+                return Value::Undefined;
+            };
+            map.proto.lock().clone().unwrap_or(Value::Null)
+        }),
+        expected_prototype
+    );
+    assert_eq!(vm.heap.live_count(), baseline_live + 1);
+    vm.set_max_heap_objects(None);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
 }
 
 #[test]

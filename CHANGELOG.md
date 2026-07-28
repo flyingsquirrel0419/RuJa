@@ -4,6 +4,31 @@
 
 ### Changed
 
+- `new Map(iterable)` now uses the shared direct cached synchronous iterator
+  record instead of allocating a wrapper iterator. It performs one
+  `@@iterator` Get with no `HasProperty` probe, calls cached `next` with zero
+  arguments, observes Array/Map/Set/generator iterator overrides, and meters
+  each step. Iterator-step failures and non-catchable host Fuel do not close;
+  catchable entry/adder failures close while preserving and rooting the
+  original completion, with native errors materialized in the constructor
+  Realm first. The result Map, iterable, cached adder, iterator record, entry,
+  key, and value remain rooted across observable calls. Map allocation uses
+  the GC-retrying VM path, and all native `Map.prototype.set`/upsert insertion
+  reserves `[[MapData]]` storage before mutation. Exact nine-file Test262
+  admission moves the pinned top-level constructor cohort from ordinary
+  **19 pass / 0 fail / 11 skip** to **28 pass / 0 fail / 2 skip**, while forced
+  execution remains **30/30**. The two retained skips are the independent
+  constructibility and mixed TypedArray/WeakRef key files. Direct tests cover
+  iterator/adder caching and arity, Proxy order, built-in overrides, close and
+  non-close boundaries, foreign-Realm errors, forced GC, root/storage failure,
+  Fuel, pin cleanup, and clean retry. Local gates pass default release library
+  **307/307**, all-feature library **310/310**, builtins **561/561**, es2015
+  **137/137**, `with` **62/62**, Python tooling **142/142** with four optional
+  absent-checkout live probes skipped, and vendored RegExp **38/38**, plus all
+  targets/features, rustfmt, warnings-denied Clippy, wasm32, doctest, and the
+  pinned 204-file Map sweep at **144 pass / 1 fail / 59 skip**. The unchanged
+  failure is the independent `Map.prototype[Symbol.toStringTag]` descriptor.
+
 - `Map.groupBy` now executes the complete collection-key `GroupBy` pipeline
   through a direct cached synchronous iterator record. It performs no
   `HasProperty` probe, calls `next` with zero arguments, observes overridden

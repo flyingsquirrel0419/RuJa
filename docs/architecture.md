@@ -2538,6 +2538,40 @@ iterator record.
 - 장점, 단점 및 영향: Proxy order, next arity/cache, built-in iterator overrides, close precedence, step/output Fuel, safe-index limit, forced heap-cap GC, allocation failure, clean retry, descriptors, null prototype, and foreign-Realm Arrays/errors now have direct evidence. Accumulated values and the completed iterator record remain pinned until output publication, trading root-set size for explicit GC correctness. The adjacent Map.groupBy collection-key pipeline is documented below.
 ```
 
+## Map constructor iterator, Realm, and storage pipeline
+
+The Map constructor allocates through the VM's GC-retrying path after rooting
+the selected `newTarget` prototype and iterable. A non-null iterable causes one
+instance `set` lookup before iterator acquisition. The constructor pins that
+cached adder, obtains a direct synchronous iterator record through ordinary
+`@@iterator` Get, pins its iterator and cached `next`, and calls `next` with no
+arguments through the shared metered step helper. This removes the old wrapper
+allocation, observable Proxy `has` trap, built-in iterator fast-path bypasses,
+and implicit `undefined` argument.
+
+Iterator-step/result/done/value failures propagate without close. Once a value
+has been produced, primitive entries and catchable `0`/`1`/adder failures run
+IteratorClose while retaining the original completion. Native errors are
+materialized in the constructor Realm before user `return` can run; host Fuel
+does not re-enter cleanup, while close-time Fuel still overrides a catchable
+JavaScript throw. The result Map, iterable, adder, iterator record, entry, key,
+and value follow nested LIFO root lifetimes across every observable operation.
+
+Native Map insertion canonicalizes through `MapKey`, checks whether a new slot
+is required, reserves `IndexMap` capacity, and only then mutates `[[MapData]]`.
+This shared fallible path covers `Map.prototype.set`, constructor population,
+and both upsert methods without charging replacements for unused capacity.
+
+```text
+[Decision Log]
+- 목적과 의도: Complete the Map constructor's iterable pipeline with exact iterator observability, close priority, Realm provenance, GC safety, Fuel bounds, and fallible internal storage.
+- 기존 구현 및 제약 조건: Vm::make_iterator added a Proxy HasProperty probe, bypassed Map/Set/generator iterator overrides, allocated a wrapper, and called next(undefined). The result Map, adder, iterator, entry, key, value, and original throw were incompletely rooted; host Fuel could invoke user cleanup; raw heap allocation and IndexMap insertion bypassed retry/reservation boundaries. Forced Test262 was green but omitted these behaviors.
+- 검토한 주요 대안: Patch Vm::make_iterator globally, special-case its wrapper for Map, insert directly without the observable adder, retain infallible Map storage, or reuse the direct iterator and close helpers already proven by GroupBy/Object.fromEntries.
+- 선택한 방식: Root prototype/iterable before VM allocation, reserve the maximum live root slots before observation, cache and pin the instance adder plus direct iterator record, use zero-argument metered steps, close only catchable post-step failures after Realm materialization, and route native Map insertion through reserve-before-mutation storage.
+- 다른 대안 대신 이 방식을 선택한 이유: A global iterator rewrite changes many unfinished consumers; wrapper exceptions retain wrong observability and allocation; bypassing the adder violates Map construction; unchecked insertion can abort the host. Shared direct helpers preserve the specification boundary with a narrow collection-local change.
+- 장점, 단점 및 영향: Direct evidence covers Proxy order, next/adder cache and arity, Array/Map/Set/generator overrides, step non-close, entry/adder close priority, foreign errors, close-time GC, host Fuel, root and entry reservation, pin restoration, and retry. Each active constructor reserves a small fixed temporary-root budget; replacements avoid unnecessary MapData growth. Set/WeakMap/WeakSet constructor wrappers remain separate later audits.
+```
+
 ## `Map.groupBy` iterator, Realm, and collection pipeline
 
 `Map.groupBy` shares the direct synchronous iterator-record boundary with

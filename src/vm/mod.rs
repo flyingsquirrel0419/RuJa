@@ -82,6 +82,14 @@ pub(crate) enum GroupByReservationSite {
 
 #[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MapReservationSite {
+    ConstructorRoots,
+    IteratorRoots,
+    EntryStorage,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ProxyDescriptorReservationSite {
     OperationRoot,
     LayerRoots,
@@ -361,6 +369,8 @@ pub struct Vm {
     #[cfg(test)]
     pub(crate) fail_group_by_reservation: Option<(GroupByReservationSite, usize)>,
     #[cfg(test)]
+    pub(crate) fail_map_reservation: Option<(MapReservationSite, usize)>,
+    #[cfg(test)]
     pub(crate) group_by_index_override: Option<u64>,
     #[cfg(test)]
     pub(crate) group_by_zero_fuel_before_step: bool,
@@ -370,6 +380,8 @@ pub struct Vm {
     pub(crate) group_by_native_next_calls: usize,
     #[cfg(test)]
     pub(crate) map_group_by_output_pin_depth: Option<usize>,
+    #[cfg(test)]
+    pub(crate) map_constructor_zero_fuel_before_step: bool,
     #[cfg(test)]
     pub(crate) fail_proxy_descriptor_reservation: Option<(ProxyDescriptorReservationSite, usize)>,
     #[cfg(test)]
@@ -1043,6 +1055,8 @@ impl Vm {
             #[cfg(test)]
             fail_group_by_reservation: None,
             #[cfg(test)]
+            fail_map_reservation: None,
+            #[cfg(test)]
             group_by_index_override: None,
             #[cfg(test)]
             group_by_zero_fuel_before_step: false,
@@ -1052,6 +1066,8 @@ impl Vm {
             group_by_native_next_calls: 0,
             #[cfg(test)]
             map_group_by_output_pin_depth: None,
+            #[cfg(test)]
+            map_constructor_zero_fuel_before_step: false,
             #[cfg(test)]
             fail_proxy_descriptor_reservation: None,
             #[cfg(test)]

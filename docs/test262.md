@@ -12048,6 +12048,51 @@ timeout / 0 error / 48469 total / 37171 run**. The sorted content-set hash is
 - 장점, 단점 및 영향: The directory becomes fully admitted without broadening Symbol.iterator policy. Official movement is one skip-to-pass; runtime repairs are evidenced independently. Map.groupBy is verified independently in the adjacent collection-key pipeline below rather than inferred from Object.groupBy results.
 ```
 
+## Map constructor direct iterator, Realm, and resource pipeline
+
+Pinned Test262 `9e61c12835c5e4a3bdba93850427e6742c4f64c4` contains 30 top-level
+files in `built-ins/Map`. Before this unit, ordinary policy reports **19 pass /
+0 fail / 11 skip** while forced execution reports **30 pass / 0 fail**. The
+exact admission covers seven `{ Symbol.iterator }` files, one `{ Symbol }`
+entry-object file, and `proto-from-ctor-realm.js` with `{ cross-realm,
+Reflect }`. The independent `is-a-constructor.js` and mixed
+BigInt/Symbol/TypedArray/WeakRef `valid-keys.js` remain skipped.
+
+The repaired runtime and exact admission report **28 pass / 0 fail / 2 skip**
+under ordinary policy and remain **30/30** when forced. Shared runner/analyzer
+tooling freezes the nine paths and complete live metadata, proves disjointness
+from every other admission, rejects future/outside files, and retains any
+additional unsupported feature. The broader 204-file Map directory moves from
+**135/1/68** to **144/1/59**; its unchanged failure is the independent
+`Map.prototype[Symbol.toStringTag]` descriptor test.
+
+Direct Rust tests expose the runtime work hidden by forced-green Test262:
+single Get with no Proxy `has`, cached zero-argument `next`, cached adder order,
+receiver and arity, Array/Map/Set/generator overrides, step/done/value non-close,
+entry/adder close with original-error priority, and constructor-Realm native
+errors. VM tests force GC through adder/iterator/step/entry/key/value operations,
+inject constructor-root, iterator-root, and MapData storage failures, verify
+per-step Fuel and non-catchable post-step Fuel, preserve thrown identity across
+close-time GC, restore pin depth, and complete a clean retry.
+
+Local validation passes default release library **307/307**, all-feature
+library **310/310**, builtins **561/561**, es2015 **137/137**, `with` **62/62**,
+Python tooling **142/142** with four optional absent-checkout live probes
+skipped, and vendored RegExp **38/38**. All targets/features, rustfmt,
+warnings-denied Clippy, wasm32, and doctest also pass. A final live-manifest
+probe against the pinned checkout passes before the checkout and all generated
+test/build output are removed.
+
+```text
+[Decision Log]
+- 목적과 의도: Admit only the Map constructor iterator and Realm files after repairing and directly proving their hidden iterator, root, resource, and completion boundaries.
+- 기존 구현 및 제약 조건: Eleven top-level files were feature-skipped and all 30 passed when forced, but the constructor still used a wrapper that added HasProperty, passed next(undefined), ignored built-in overrides, left observable values unrooted, closed on host Fuel, and used unchecked allocation/storage. Test262 did not inspect those defects.
+- 검토한 주요 대안: Keep all skips, remove Symbol/Reflect/cross-realm globally, admit every top-level Map file, include constructibility and mixed valid-key tests, or freeze only the nine files whose behavior this pipeline proves.
+- 선택한 방식: Freeze the exact eight iterator files plus the constructor-Realm prototype file and their complete metadata; require ordinary 19/0/11 to 28/0/2 with forced 30/0 stability; pair policy movement with direct iterator, close, Realm, GC, Fuel, reservation, cleanup, and retry tests.
+- 다른 대안 대신 이 방식을 선택한 이유: Global feature removal overstates unrelated support, a directory prefix accepts future tests, and forced-green output cannot prove omitted runtime boundaries. The two retained files exercise independent constructibility and mixed unsupported key families.
+- 장점, 단점 및 영향: Official movement is exactly nine skips replaced by passes without broad policy changes. Runtime evidence is deterministic and separately reviewable. Set and weak-collection constructors remain explicit adjacent work rather than inferred from Map.
+```
+
 ## `Map.groupBy` direct iterator, Realm, and resource pipeline
 
 Pinned Test262 `9e61c12835c5e4a3bdba93850427e6742c4f64c4` contains 14 files in

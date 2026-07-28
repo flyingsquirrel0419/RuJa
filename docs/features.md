@@ -271,12 +271,15 @@
   duplicate names across structurally disjoint alternatives with
   participating-capture selection, and the String-symbol
   match/search/split/replace/matchAll operations
-- **Map/Set**: full key/value collections with iteration. `Map.groupBy` uses a
-  cached zero-argument iterator record, SameValueZero keys without
-  `ToPropertyKey`, original-completion-preserving close semantics, metered and
-  fallible storage/output, and Realm-local Map, Array, and Map Iterator
-  intrinsics. Result publication bypasses mutable global `Map`, species, and
-  overridden `set`
+- **Map/Set**: full key/value collections with iteration. The Map constructor
+  and `Map.groupBy` use cached zero-argument iterator records with no
+  `HasProperty` probe, observe built-in iterator overrides, meter each step,
+  preserve original close completions, keep observable state rooted, and use
+  fallible Map storage. Constructor errors and prototypes are Realm-local.
+  `Map.groupBy` additionally preserves SameValueZero keys without
+  `ToPropertyKey`, creates Realm-local group Arrays and Map iterators, and
+  bypasses mutable global `Map`, species, and overridden `set` during result
+  publication
 - **Error**: `Error`/`TypeError`/`RangeError`/`ReferenceError`/`SyntaxError`
 
 ## Type coercion

@@ -1,0 +1,10 @@
+# Exact feature-gated Map constructor iterator and Realm coverage.
+built-ins/Map/iterator-close-after-set-failure.js
+built-ins/Map/iterator-close-failure-after-set-failure.js
+built-ins/Map/iterator-is-undefined-throws.js
+built-ins/Map/iterator-item-first-entry-returns-abrupt.js
+built-ins/Map/iterator-item-second-entry-returns-abrupt.js
+built-ins/Map/iterator-items-are-not-object.js
+built-ins/Map/iterator-next-failure.js
+built-ins/Map/iterator-value-failure.js
+built-ins/Map/proto-from-ctor-realm.js

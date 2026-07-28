@@ -1928,6 +1928,198 @@ fn map_basic() {
 }
 
 #[test]
+fn map_constructor_observes_direct_iterator_close_and_realm_boundaries() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            var nextGets = 0;
+            var nextReceiverWasIterator = false;
+            var setGets = 0;
+            var setReceiverWasMap = false;
+            var step = 0;
+            var originalSet = Map.prototype.set;
+            Object.defineProperty(Map.prototype, "set", {
+              configurable: true,
+              get: function() {
+                setGets++;
+                log.push("get-set");
+                return function(key, value) {
+                  log.push("set:" + arguments.length);
+                  setReceiverWasMap = this instanceof Map;
+                  return originalSet.call(this, key, value);
+                };
+              }
+            });
+            var iterator = {};
+            Object.defineProperty(iterator, "next", {
+              configurable: true,
+              get: function() {
+                nextGets++;
+                return function() {
+                  nextReceiverWasIterator = this === iterator;
+                  log.push("next:" + arguments.length);
+                  Object.defineProperty(iterator, "next", {
+                    value: function() { throw new Error("must use cached next"); },
+                    configurable: true
+                  });
+                  if (step++ === 0) return { done: false, value: ["direct", 7] };
+                  return { done: true };
+                };
+              }
+            });
+            var iterable = new Proxy({
+              [Symbol.iterator]: function() {
+                Object.defineProperty(Map.prototype, "set", {
+                  value: function() { throw new Error("must use cached set"); },
+                  writable: true, configurable: true
+                });
+                return iterator;
+              }
+            }, {
+              has: function(target, key) { log.push("has"); return key in target; },
+              get: function(target, key, receiver) {
+                log.push(typeof key === "symbol" ? "get-symbol" : "get-" + key);
+                return Reflect.get(target, key, receiver);
+              }
+            });
+            var direct = new Map(iterable);
+            Object.defineProperty(Map.prototype, "set", {
+              value: originalSet, writable: true, configurable: true
+            });
+
+            var arraySource = [["array-original", 6]];
+            arraySource[Symbol.iterator] = function() {
+              return [["array-override", 7]][Symbol.iterator]();
+            };
+            var mapSource = new Map([["original", 1]]);
+            mapSource[Symbol.iterator] = function() {
+              return [["map-override", 2]][Symbol.iterator]();
+            };
+            var setSource = new Set([1]);
+            setSource[Symbol.iterator] = function() {
+              return [["set-override", 3]][Symbol.iterator]();
+            };
+            function* pairs() { yield ["generator-original", 4]; }
+            var generator = pairs();
+            generator[Symbol.iterator] = function() {
+              return [["generator-override", 5]][Symbol.iterator]();
+            };
+            var fromArray = new Map(arraySource);
+            var fromMap = new Map(mapSource);
+            var fromSet = new Map(setSource);
+            var fromGenerator = new Map(generator);
+            [
+              log.join(","), nextGets, nextReceiverWasIterator,
+              setGets, setReceiverWasMap,
+              direct.get("direct"),
+              fromArray.get("array-override"), fromArray.has("array-original"),
+              fromMap.has("map-override"), fromMap.has("original"),
+              fromSet.get("set-override"),
+              fromGenerator.get("generator-override"),
+              fromGenerator.has("generator-original")
+            ].join("|");
+            "#,),
+        Value::String(Arc::from(
+            "get-set,get-symbol,next:0,set:2,next:0|1|true|1|true|7|7|false|true|false|3|5|false"
+        ))
+    );
+
+    assert_eq!(
+        run(
+            r#"
+            function closeCount(kind) {
+              var closed = 0;
+              var pair = {};
+              if (kind === "key") Object.defineProperty(pair, "0", {
+                get: function() { throw new Error("key-error"); }
+              });
+              else pair[0] = "key";
+              if (kind === "value") Object.defineProperty(pair, "1", {
+                get: function() { throw new Error("value-error"); }
+              });
+              else pair[1] = 1;
+              var iterator = {
+                next: function() {
+                  if (kind === "next") throw new Error("next-error");
+                  if (kind === "result") return 1;
+                  if (kind === "done") return {
+                    get done() { throw new Error("done-error"); }
+                  };
+                  if (kind === "step-value") return {
+                    done: false,
+                    get value() { throw new Error("step-value-error"); }
+                  };
+                  return { done: false, value: pair };
+                },
+                return: function() { closed++; throw new Error("close-error"); }
+              };
+              var iterable = { [Symbol.iterator]: function() { return iterator; } };
+              var originalSet = Map.prototype.set;
+              if (kind === "adder") Map.prototype.set = function() {
+                throw new Error("adder-error");
+              };
+              var message;
+              try { new Map(iterable); } catch (error) { message = error.message; }
+              Map.prototype.set = originalSet;
+              return kind + ":" + closed + ":" + message;
+            }
+            [
+              closeCount("next"), closeCount("result"), closeCount("done"),
+              closeCount("step-value"),
+              closeCount("key"), closeCount("value"), closeCount("adder")
+            ].join("|");
+            "#,
+        ),
+        Value::String(Arc::from(
+            "next:0:next-error|result:0:Iterator result is not an object|done:0:done-error|step-value:0:step-value-error|key:1:key-error|value:1:value-error|adder:1:adder-error"
+        ))
+    );
+
+    assert_eq!(
+        run(r#"
+            function preservesOriginal(mode) {
+              var original = { mode: mode };
+              var pair = { get 0() { throw original; } };
+              var iterator = {
+                next: function() { return { done: false, value: pair }; }
+              };
+              if (mode === "null") iterator.return = null;
+              if (mode === "getter") Object.defineProperty(iterator, "return", {
+                get: function() { throw new Error("return-getter"); }
+              });
+              if (mode === "noncallable") iterator.return = 1;
+              if (mode === "throw") iterator.return = function() {
+                throw new Error("return-call");
+              };
+              if (mode === "primitive") iterator.return = function() { return 1; };
+              if (mode === "object") iterator.return = function() { return {}; };
+              var iterable = { [Symbol.iterator]: function() { return iterator; } };
+              try { new Map(iterable); } catch (error) { return error === original; }
+              return false;
+            }
+            ["absent", "null", "getter", "noncallable", "throw", "primitive", "object"]
+              .map(preservesOriginal).join("|");
+            "#,),
+        Value::String(Arc::from("true|true|true|true|true|true|true"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var iterator = {
+              next: function() { return { done: false, value: 1 }; },
+              return: function() { return {}; }
+            };
+            var iterable = { [Symbol.iterator]: function() { return iterator; } };
+            var error;
+            try { new other.Map(iterable); } catch (caught) { error = caught; }
+            [error instanceof other.TypeError, error instanceof TypeError].join("|");
+            "#,),
+        Value::String(Arc::from("true|false"))
+    );
+}
+
+#[test]
 fn map_group_by_observes_iterator_close_realm_and_gc_boundaries() {
     let mut vm = Vm::new().expect("failed to initialize VM");
     vm.register_fn(

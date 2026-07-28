@@ -830,11 +830,7 @@ pub(crate) fn map_set(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error
     let key = args.first().cloned().unwrap_or(Value::Undefined);
     let val = args.get(1).cloned().unwrap_or(Value::Undefined);
     let idx = require_map_receiver(vm, this.clone(), "Map.prototype.set")?;
-    vm.heap.with_obj(idx.0, |obj| {
-        if let HeapObj::Map(m) = obj {
-            m.entries.lock().insert(MapKey::new(key), val);
-        }
-    });
+    insert_map_entry(vm, idx, key, val)?;
     Ok(this.unwrap_or(Value::Undefined))
 }
 pub(crate) fn map_get(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
@@ -889,12 +885,72 @@ fn map_get_direct(vm: &Vm, idx: GcIdx, key: &Value) -> Option<Value> {
     })
 }
 
-fn map_set_direct(vm: &mut Vm, idx: GcIdx, key: Value, value: Value) {
-    vm.heap.with_obj(idx.0, |obj| {
-        if let HeapObj::Map(m) = obj {
-            m.entries.lock().insert(MapKey::new(key), value);
-        }
+#[cfg(test)]
+fn take_map_reservation_failure(vm: &mut Vm, site: crate::vm::MapReservationSite) -> bool {
+    let Some((configured_site, remaining)) = vm.fail_map_reservation else {
+        return false;
+    };
+    if configured_site != site {
+        return false;
+    }
+    if remaining != 0 {
+        vm.fail_map_reservation = Some((configured_site, remaining - 1));
+        return false;
+    }
+    vm.fail_map_reservation = None;
+    true
+}
+
+fn reserve_map_root_slots(
+    vm: &mut Vm,
+    additional: usize,
+    #[cfg(test)] site: crate::vm::MapReservationSite,
+) -> error::Result<()> {
+    #[cfg(test)]
+    if take_map_reservation_failure(vm, site) {
+        return Err(Error::range("Map temporary root set is too large"));
+    }
+    vm.try_reserve_gc_pins(additional)
+}
+
+fn reserve_map_entry(vm: &mut Vm, idx: GcIdx, key: &MapKey) -> error::Result<()> {
+    let needs_entry = vm.heap.with_obj(idx.0, |obj| {
+        let HeapObj::Map(map) = obj else {
+            return false;
+        };
+        !map.entries.lock().contains_key(key)
     });
+    if !needs_entry {
+        return Ok(());
+    }
+    #[cfg(test)]
+    if take_map_reservation_failure(vm, crate::vm::MapReservationSite::EntryStorage) {
+        return Err(Error::range("Map entry storage is too large"));
+    }
+    vm.heap.with_obj(idx.0, |obj| {
+        let HeapObj::Map(map) = obj else {
+            return Err(Error::internal("Map entry target lost its Map data"));
+        };
+        let mut entries = map.entries.lock();
+        if entries.len() == entries.capacity() {
+            entries
+                .try_reserve(1)
+                .map_err(|_| Error::range("Map entry storage is too large"))?;
+        }
+        Ok(())
+    })
+}
+
+fn insert_map_entry(vm: &mut Vm, idx: GcIdx, key: Value, value: Value) -> error::Result<()> {
+    let key = MapKey::new(key);
+    reserve_map_entry(vm, idx, &key)?;
+    vm.heap.with_obj(idx.0, |obj| {
+        let HeapObj::Map(map) = obj else {
+            return Err(Error::internal("Map entry target lost its Map data"));
+        };
+        map.entries.lock().insert(key, value);
+        Ok(())
+    })
 }
 
 fn reserve_map_group_by_groups(
@@ -989,7 +1045,7 @@ pub(crate) fn map_group_by(
             let mut index = 0u64;
             loop {
                 if index >= 9_007_199_254_740_991 {
-                    return close_group_by_after_error(
+                    return close_iterator_after_error_in_realm(
                         vm,
                         &iterator.iterator,
                         Error::type_err("Map.groupBy index exceeds the safe integer limit"),
@@ -1037,7 +1093,12 @@ pub(crate) fn map_group_by(
                         if !error.catchable() {
                             return Err(error);
                         }
-                        return close_group_by_after_error(vm, &iterator.iterator, error, realm);
+                        return close_iterator_after_error_in_realm(
+                            vm,
+                            &iterator.iterator,
+                            error,
+                            realm,
+                        );
                     }
                 };
 
@@ -1058,7 +1119,12 @@ pub(crate) fn map_group_by(
                 };
                 if let Err(error) = storage {
                     vm.unpin_many(value_pin + key_pin);
-                    return close_group_by_after_error(vm, &iterator.iterator, error, realm);
+                    return close_iterator_after_error_in_realm(
+                        vm,
+                        &iterator.iterator,
+                        error,
+                        realm,
+                    );
                 }
                 group_pins += value_pin + key_pin;
                 index += 1;
@@ -1132,10 +1198,6 @@ pub(crate) fn map_group_by(
     result
 }
 
-fn close_iterator_preserving_completion(vm: &mut Vm, it: &Value) {
-    let _ = vm.iterator_close(it);
-}
-
 pub(crate) fn map_get_or_insert(
     vm: &mut Vm,
     args: &[Value],
@@ -1147,7 +1209,7 @@ pub(crate) fn map_get_or_insert(
         return Ok(value);
     }
     let value = args.get(1).cloned().unwrap_or(Value::Undefined);
-    map_set_direct(vm, idx, key, value.clone());
+    insert_map_entry(vm, idx, key, value.clone())?;
     Ok(value)
 }
 
@@ -1172,7 +1234,7 @@ pub(crate) fn map_get_or_insert_computed(
         std::slice::from_ref(&key),
         Some(Value::Undefined),
     )?;
-    map_set_direct(vm, idx, key, value.clone());
+    insert_map_entry(vm, idx, key, value.clone())?;
     Ok(value)
 }
 
@@ -1747,60 +1809,119 @@ pub(crate) fn map_for_each(
 }
 pub(crate) fn map_constructor(
     vm: &mut Vm,
-    _args: &[Value],
+    args: &[Value],
     _this: Option<Value>,
 ) -> error::Result<Value> {
     if vm.current_native_new_target().is_none() {
         return Err(Error::type_err("Map constructor must be called with new"));
     }
-    let fallback = vm.map_prototype_for_env(vm.current_realm_global_env());
+    let realm = vm.current_realm_global_env();
+    let iterable = args.first().cloned().unwrap_or(Value::Undefined);
+    let fallback = vm.map_prototype_for_env(realm);
     let proto = native_constructor_prototype_with_default(vm, "Map", fallback)?;
-    let obj_idx = vm.heap.allocate(HeapObj::Map(MapData {
+    let initial_roots = Vm::value_root_count(&proto)
+        .checked_add(Vm::value_root_count(&iterable))
+        .and_then(|count| count.checked_add(1))
+        .ok_or_else(|| Error::range("Map temporary root set is too large"))?;
+    reserve_map_root_slots(
+        vm,
+        initial_roots,
+        #[cfg(test)]
+        crate::vm::MapReservationSite::ConstructorRoots,
+    )?;
+    let mut initial_pins = vm.pin_many(&[proto.clone(), iterable.clone()]);
+    let allocation = vm.alloc(HeapObj::Map(MapData {
         entries: Mutex::new(IndexMap::new()),
         props: Mutex::new(IndexMap::new()),
         proto: Mutex::new(Some(proto)),
         extensible: AtomicBool::new(true),
-    }))?;
-    let map = Value::Object(GcIdx(obj_idx));
-    // Initialize from an optional iterable of [key, value] pairs.
-    if let Some(iterable) = _args.first() {
-        if !iterable.is_undefined() && !iterable.is_null() {
-            let set = vm.get_property(&map, "set")?;
-            if !is_callable(&set, &vm.heap) {
-                return Err(Error::type_err("Map set is not callable"));
-            }
-            let it = vm.make_iterator(iterable)?;
-            loop {
-                let (pair, done) = vm.iterator_next(&it)?;
-                if done {
-                    break;
-                }
-                if !matches!(pair, Value::Object(_)) {
-                    close_iterator_preserving_completion(vm, &it);
-                    return Err(Error::type_err("Iterator value is not an object"));
-                }
-                let k = match vm.get_property(&pair, "0") {
-                    Ok(value) => value,
-                    Err(err) => {
-                        close_iterator_preserving_completion(vm, &it);
-                        return Err(err);
-                    }
-                };
-                let v = match vm.get_property(&pair, "1") {
-                    Ok(value) => value,
-                    Err(err) => {
-                        close_iterator_preserving_completion(vm, &it);
-                        return Err(err);
-                    }
-                };
-                if let Err(err) = vm.call_function(&set, &[k, v], Some(map.clone())) {
-                    close_iterator_preserving_completion(vm, &it);
-                    return Err(err);
-                }
-            }
+    }));
+    let map = match allocation {
+        Ok(index) => Value::Object(index),
+        Err(error) => {
+            vm.unpin_many(initial_pins);
+            return Err(error);
         }
-    }
-    Ok(map)
+    };
+    initial_pins += vm.pin(&map);
+
+    let result = (|| -> error::Result<Value> {
+        if iterable.is_nullish() {
+            return Ok(map.clone());
+        }
+
+        // Adder, iterator record, and current entry/key/value are the maximum
+        // values simultaneously live across observable iteration operations.
+        reserve_map_root_slots(
+            vm,
+            6,
+            #[cfg(test)]
+            crate::vm::MapReservationSite::IteratorRoots,
+        )?;
+        let set = vm.get_property(&map, "set")?;
+        if !is_callable(&set, &vm.heap) {
+            return Err(Error::type_err("Map set is not callable"));
+        }
+        let set_pin = vm.pin(&set);
+        let iterator_result = get_sync_iterator(vm, iterable.clone());
+        let iterator = match iterator_result {
+            Ok(iterator) => iterator,
+            Err(error) => {
+                vm.unpin_many(set_pin);
+                return Err(error);
+            }
+        };
+        let iterator_pins = vm.pin_many(&[iterator.iterator.clone(), iterator.next_method.clone()]);
+        let iteration = (|| -> error::Result<Value> {
+            loop {
+                #[cfg(test)]
+                if std::mem::take(&mut vm.map_constructor_zero_fuel_before_step) {
+                    vm.set_fuel(Some(0));
+                }
+                // IteratorStepValue failures propagate without IteratorClose.
+                let Some(pair) =
+                    iterator_helper_step(vm, &iterator.iterator, &iterator.next_method, true)?
+                else {
+                    return Ok(map.clone());
+                };
+                if !matches!(pair, Value::Object(_)) {
+                    return close_iterator_after_error_in_realm(
+                        vm,
+                        &iterator.iterator,
+                        Error::type_err("Iterator value is not an object"),
+                        realm,
+                    );
+                }
+
+                let mut pair_pins = vm.pin(&pair);
+                let entry_result = (|| -> error::Result<()> {
+                    let key = vm.get_property(&pair, "0")?;
+                    pair_pins += vm.pin(&key);
+                    let value = vm.get_property(&pair, "1")?;
+                    pair_pins += vm.pin(&value);
+                    vm.call_function(&set, &[key, value], Some(map.clone()))?;
+                    Ok(())
+                })();
+                vm.unpin_many(pair_pins);
+                if let Err(error) = entry_result {
+                    if !error.catchable() {
+                        return Err(error);
+                    }
+                    return close_iterator_after_error_in_realm(
+                        vm,
+                        &iterator.iterator,
+                        error,
+                        realm,
+                    );
+                }
+            }
+        })();
+        vm.unpin_many(iterator_pins);
+        vm.unpin_many(set_pin);
+        iteration
+    })();
+    vm.unpin_many(initial_pins);
+    result
 }
 
 // =========================================================================
