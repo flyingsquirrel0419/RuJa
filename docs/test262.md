@@ -11734,6 +11734,16 @@ MiB cap.
 - 장점, 단점 및 영향: All 142 files pass and complete RegExp improves exactly +94/-94 with no failure, timeout, or error. The manifest must be consciously updated when Test262 adds Unicode versions or properties, preventing accidental support claims.
 ```
 
+Implementation commit `b6964a1f96b5491219499c4a6641358102b06b34` passes both
+jobs in ordinary CI run `30355514978` and all **36/36** jobs in full run
+`30355514979`, including the dedicated 142-file string-set job. Against clean
+baseline `30346121824`, 31 of 32 result artifacts are byte-identical. Only
+`built-ins` changes, from **16334/4297/3034/3/0** to
+**16428/4297/2940/3/0**, exactly **+94 pass / -94 skip**. Aggregate is
+**32049 pass / 5108 fail / 11309 skip / 3 timeout / 0 error / 48469 total /
+37157 run**. The path-independent hash of the sorted 32 artifact content
+hashes is `ffbe2ebc3d7d3c5702fb59dfc16b9f744e4573caca94838f87ac04d5b5b9f039`.
+
 ## RegExp `u`/`v` flag mutual exclusion
 
 Pinned Test262 `020cb74075849d1e404bbcdb62feb7a02e6966db` has two files for
