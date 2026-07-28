@@ -27,7 +27,12 @@
   plus all targets/features, rustfmt, warnings-denied Clippy, release build, and
   wasm32 checking. Two independent GPT-5.6 final reviews are clean after LIFO
   rooting, pre-close error materialization, deterministic root/storage
-  failpoints, and native step-Fuel probes were added.
+  failpoints, and native step-Fuel probes were added. Implementation commit
+  `213d472` passes ordinary CI `30383198523` and all **36/36** jobs in full run
+  `30383198359`. Thirty-one of 32 result artifacts are byte-identical;
+  `built-ins` alone moves **+1 pass / -1 skip**. Aggregate: **32067 pass / 5104
+  fail / 11295 skip / 3 timeout / 0 error**; sorted content-set hash
+  `8d7ac4bfebfa569639b2e93767c2496d6f933d89e8082d81eea4646c9aac6266`.
 
 - `Object.fromEntries` now consumes every synchronous iterable through a
   cached iterator record instead of snapshotting only raw Array storage. It

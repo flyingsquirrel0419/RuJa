@@ -12028,6 +12028,14 @@ targets/features, rustfmt, warnings-denied Clippy, release build, and wasm32.
 Two independent GPT-5.6 final reviews are clean after their rooting,
 materialization, deterministic-failpoint, and step-Fuel findings were fixed.
 
+Implementation commit `213d472` passes ordinary CI `30383198523`; full run
+`30383198359` passes all **36/36** jobs. Compared with preceding clean run
+`30374968848`, 31 of 32 result artifacts are byte-identical. Only `built-ins`
+moves from **16445/4293/2927/3/0** to **16446/4293/2926/3/0**, exactly **+1
+pass / -1 skip**. Aggregate is **32067 pass / 5104 fail / 11295 skip / 3
+timeout / 0 error / 48469 total / 37171 run**. The sorted content-set hash is
+`8d7ac4bfebfa569639b2e93767c2496d6f933d89e8082d81eea4646c9aac6266`.
+
 ```text
 [Decision Log]
 - 목적과 의도: Admit the complete Object.groupBy directory only after repairing and directly testing the GroupBy boundaries that its official tests do not observe.
