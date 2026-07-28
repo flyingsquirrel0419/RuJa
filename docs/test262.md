@@ -11894,6 +11894,15 @@ optional checkout as unavailable instead of failing on `Path.is_dir()`.
 - 장점, 단점 및 영향: Two skips move into the supported corpus with no admitted failures. The full-directory run exposed one contention timeout that must be normalized in final CI evidence; unrelated property escapes and all string-valued v sets remain explicitly skipped.
 ```
 
+Implementation commit `f84b825` and tooling follow-up `754f220` pass ordinary
+CI `30346121819`. Full matrix `30346121824` passes all 35 jobs. Compared with
+baseline `30332410263`, 31 of 32 result artifacts are byte-identical. The only
+changed artifact is `built-ins`: **16334 pass / 4297 fail / 3034 skip**, exactly
+two additional passes and two fewer skips with no failure movement. Aggregate
+is **31955 pass / 5108 fail / 11403 skip / 3 timeout / 0 error / 48469 total /
+37063 run**. The sorted 32-artifact evidence hash is
+`990bcf4a214a9df0e9e1fe279c79c4961be2403c513dc6d1332c4db3a9589781`.
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is
