@@ -268,12 +268,15 @@ guarantees are required.
   memory for the VM lifetime. `Symbol.for` identities are rejected by
   `CanBeHeldWeakly` as required. A collectible Symbol arena remains a resource
   management follow-up, not an observable identity or method-semantics gap.
-- Incremental GC's `budget` limits newly marked heap cells, not all native
-  tracing work. One large object's properties or WeakMap entries, the final
-  mutation-safety retrace, and sweep can each take linear time in their local
-  input. Worklist identities are deduplicated and ephemeron chains are linear,
-  but strict pause-time bounds require cursorized object tracing and sweeping
-  in a later collector unit.
+- Incremental GC's `budget` limits newly traced heap cells and physical cells
+  visited by the resumable pre-sweep mutation retrace, not all native tracing
+  work. Already-scanned objects accessed between retrace slices are
+  conservatively deduplicated and revisited before sweep. One large object's
+  properties or WeakMap entries, root/bitmap setup, weak cleanup, and the
+  atomic sweep can still each take linear time in their local input. Worklist
+  identities are deduplicated and ephemeron chains are linear, but strict
+  pause-time bounds still require cursorized object tracing and a barrier-safe
+  resumable sweep in later collector units.
 - `WeakRef` supports object, unregistered Symbol, and well-known Symbol
   targets. Object targets are cleared by GC once unreachable and are kept
   alive through the current job after construction or `deref()`.
@@ -413,10 +416,14 @@ guarantees are required.
   whole `Vm` (and thus `CallFrame`) `Send` without `unsafe`; it is a minor
   runtime overhead and could become `RefCell` if `Send` is later asserted
   via a manual `unsafe impl`.
-- `Heap::with_obj` takes the object out of its cell for the duration of the
-  callback (so the cells mutex is not held re-entrantly). If the callback
-  touches the *same* object index it will see `None` ("temporarily absent")
-  rather than the live value; callers must not re-enter on the same idx.
+- `Heap::with_obj` clones an `Arc` from the object cell and marks that cell as
+  an active GC root for the callback duration. Nested access to the same index
+  sees the live object, and re-entrant collection can trace mutations made
+  before collection starts. A low-level host callback must drop every guard
+  acquired from an object's interior mutex, such as `props().lock()`, before
+  invoking collection; tracing while the same thread retains such a guard
+  would self-deadlock. Ordinary VM paths do not expose these Rust guards to
+  JavaScript.
 - `yield*` throw/return propagation into a delegated generator is not yet
   forwarded (direct `g.throw`/`g.return` work)
 - Dynamic `import()` supports relative imports from file-backed Script and

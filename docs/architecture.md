@@ -39,10 +39,24 @@ source ─► Lexer ─► Parser ─► Compiler ─► Bytecode ─► VM
 A mark-and-sweep collector with optional incremental marking reclaims
 reference cycles. Collection runs at safe points only (after a run settles,
 and throttled at frame boundaries). Incremental marking via
-`collect_incremental(roots, budget)` allows limiting the number of cells
-marked per GC step, avoiding long pauses. There is no generational collector.
-accumulate memory before a collection. A `gc_pins` stack lets call paths pin
+`collect_incremental(roots, budget)` limits newly traced cells and physical
+cells visited by the pre-sweep mutation retrace. The retrace phase stores a
+cursor across calls. Access to an already-scanned object conservatively queues
+its identity once, so edges added between slices are traced before sweep.
+Sweep remains atomic, and tracing one large object is not yet subdivided, so
+the collector does not claim a strict pause-time bound. There is no
+generational collector. A `gc_pins` stack lets call paths pin
 heap values held in Rust locals across allocations that could trigger a GC.
+
+```text
+[Decision Log]
+- 목적과 의도: Bound the previously unmetered pre-sweep mutation retrace without weakening incremental GC liveness or pretending the remaining collector phases are bounded.
+- 기존 구현 및 제약 조건: The finite budget stopped only initial marking; final root closure, a complete marked-cell retrace, and sweep all ran in the completing call. Heap objects expose interior-mutability containers through shared accessors, allocation can continue between slices, and sweep cannot safely pause without a stronger root/mutation barrier.
+- 검토한 주요 대안: Cursorize sweep immediately, remove the final retrace, rescan every marked cell on every slice, instrument every interior container mutation first, or persist a retrace cursor with conservative object-access dirtiness.
+- 선택한 방식: Persist explicit Mark/Retrace phases, charge each marked trace and each physical retrace slot, requeue current roots during Retrace, keep heap objects visible through Arc-owned cells, treat active object accesses as roots, and deduplicate already-scanned objects accessed through with_obj or private-element mutation before allowing the existing atomic sweep.
+- 다른 대안 대신 이 방식을 선택한 이유: Pausing sweep can free a cell before a later host root or edge publishes it; removing retrace loses mutations; repeated full rescans are quadratic; and migrating every interior container is a much larger unit. Conservative dirty tracking preserves safety while making retrace progress observable and bounded by cells per call.
+- 장점, 단점 및 영향: budget=0 performs no trace or sweep on a non-empty heap; budget=1 advances retrace by one physical slot or one dirty revisit; late roots, allocations, ordinary properties, active reentrant object access, private elements, and ephemeron chains remain live. Arc cloning adds one atomic reference-count pair to each object access. A large cell trace, root/bitmap setup, weak cleanup, and atomic sweep can still take linear native time and remain explicit follow-ups.
+```
 
 Native functions carry `Option<NativeConstructMode>` metadata instead of
 deriving constructibility from an observable `.prototype` slot. `None` means

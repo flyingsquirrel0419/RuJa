@@ -4,6 +4,32 @@
 
 ### Changed
 
+- Incremental GC now persists explicit Mark and Retrace phases. Finite budgets
+  apply to newly traced cells and every physical cell visited by the pre-sweep
+  mutation retrace instead of being disabled during finalization. Access to an
+  already-scanned object through ordinary or private-element heap APIs queues
+  one deduplicated dirty revisit, while current roots, active object accesses,
+  and intervening allocations rejoin the ordinary worklist. Heap cells retain
+  `Arc`-owned objects during callbacks, so re-entrant collection can trace the
+  current mutated object instead of observing an empty cell. Tests cover
+  `budget=0`, exact one-slot retrace progress, mutation after cursor passage,
+  dirty deduplication, late roots, allocation, re-entrant collection,
+  ephemeron chains, private elements, and final reuse. Sweep remains atomic and large-object tracing is
+  not yet cursorized, preserving the existing safety boundary without
+  overstating full pause-time bounds. Local gates pass all-target/all-feature
+  release tests with library **330/330**, focused GC **16/16**, warnings-denied
+  Clippy, rustfmt, wasm32, doctest, Python tooling **145/145**, and pinned
+  WeakMap/WeakSet/WeakRef/FinalizationRegistry **302/302**. Same-machine
+  Criterion A/B shows computed Reference access about **7.7% slower** from the
+  Arc atomic pair and the object-environment Reference workload about **60%
+  faster** after removing complete HeapObj take/restore cycles.
+  The previously public `Heap::cells`/`GcCell` representation is now private,
+  and the unused `Heap::with_obj_mut` escape hatch is removed. Downstream
+  low-level heap integrations must use barrier-aware `Heap` accessors;
+  `with_obj` remains public and now exposes the live object during nested
+  access. Callbacks must release object interior-mutex guards before invoking
+  collection.
+
 - The seven Set composition methods now implement the complete SetRecord and
   iterator protocol with cached `has`, `keys`, and `next` methods, Realm-local
   result Sets, original-completion-preserving `IteratorClose`, and GC roots for

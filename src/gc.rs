@@ -31,17 +31,21 @@ impl std::convert::From<HeapLimitExceeded> for std::sync::Arc<crate::error::Erro
     }
 }
 use parking_lot::Mutex;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{
+    atomic::{AtomicBool, AtomicUsize, Ordering},
+    Arc,
+};
 
-pub struct GcCell {
-    pub obj: Mutex<Option<HeapObj>>,
+struct GcCell {
+    obj: Mutex<Option<Arc<HeapObj>>>,
     private_elements:
         Mutex<std::collections::HashMap<crate::value::PrivateSlotKey, crate::value::PrivateSlot>>,
-    pub marked: AtomicBool,
+    marked: AtomicBool,
+    active_accesses: AtomicUsize,
 }
 
 pub struct Heap {
-    pub cells: Mutex<Vec<GcCell>>,
+    cells: Mutex<Vec<GcCell>>,
     free_list: Mutex<Vec<usize>>,
     incremental_mark: Mutex<Option<IncrementalMark>>,
     alloc_since_gc: AtomicUsize,
@@ -51,11 +55,34 @@ pub struct Heap {
     max_objects: AtomicUsize,
 }
 
+struct ActiveObjectAccess<'a> {
+    heap: &'a Heap,
+    index: usize,
+}
+
+impl Drop for ActiveObjectAccess<'_> {
+    fn drop(&mut self) {
+        let cells = self.heap.cells.lock();
+        cells[self.index]
+            .active_accesses
+            .fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
 struct IncrementalMark {
     marked: Vec<bool>,
     queued: Vec<bool>,
     worklist: Vec<usize>,
     pending_ephemerons: std::collections::HashMap<usize, Vec<crate::value::Value>>,
+    phase: IncrementalPhase,
+    dirty: Vec<usize>,
+    dirty_queued: Vec<bool>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum IncrementalPhase {
+    Mark,
+    Retrace { cursor: usize },
 }
 
 impl IncrementalMark {
@@ -71,6 +98,20 @@ impl IncrementalMark {
         push_value(value, &mut roots);
         for root in roots {
             self.queue_index(root);
+        }
+    }
+
+    fn queue_dirty(&mut self, index: usize) {
+        let IncrementalPhase::Retrace { cursor } = self.phase else {
+            return;
+        };
+        if index < cursor
+            && index < self.marked.len()
+            && self.marked[index]
+            && !self.dirty_queued[index]
+        {
+            self.dirty_queued[index] = true;
+            self.dirty.push(index);
         }
     }
 }
@@ -110,11 +151,11 @@ fn trace_cell(
         return (Vec::new(), Vec::new());
     };
     let mut children = Vec::new();
-    trace_obj(obj, &mut children);
+    trace_obj(obj.as_ref(), &mut children);
     for slot in cell.private_elements.lock().values() {
         trace_private_slot(slot, &mut children);
     }
-    let ephemerons = match obj {
+    let ephemerons = match obj.as_ref() {
         HeapObj::WeakMap(map) => map
             .entries
             .lock()
@@ -513,7 +554,7 @@ impl Heap {
             let mut free = self.free_list.lock();
             if let Some(idx) = free.pop() {
                 let cells = self.cells.lock();
-                *cells[idx].obj.lock() = Some(obj);
+                *cells[idx].obj.lock() = Some(Arc::new(obj));
                 cells[idx].private_elements.lock().clear();
                 cells[idx].marked.store(false, Ordering::Relaxed);
                 idx
@@ -521,9 +562,10 @@ impl Heap {
                 let mut cells = self.cells.lock();
                 let idx = cells.len();
                 cells.push(GcCell {
-                    obj: Mutex::new(Some(obj)),
+                    obj: Mutex::new(Some(Arc::new(obj))),
                     private_elements: Mutex::new(std::collections::HashMap::new()),
                     marked: AtomicBool::new(false),
+                    active_accesses: AtomicUsize::new(0),
                 });
                 idx
             }
@@ -532,6 +574,7 @@ impl Heap {
             if idx >= state.marked.len() {
                 state.marked.resize(idx + 1, false);
                 state.queued.resize(idx + 1, false);
+                state.dirty_queued.resize(idx + 1, false);
             }
             state.queue_index(idx);
         }
@@ -543,11 +586,14 @@ impl Heap {
         self.collect_incremental(roots, usize::MAX);
     }
 
-    /// Incremental GC: mark up to `budget` cells, then sweep if marking is done.
-    /// With budget = usize::MAX, this is equivalent to a full stop-the-world GC.
-    /// Finite-budget cycles snapshot roots on their first slice. New allocations
-    /// are queued by `allocate`, while the final retrace catches edges added to
-    /// already-marked objects between slices.
+    /// Incremental GC: trace or retrace up to `budget` cells, then sweep if
+    /// marking is done.
+    /// With `usize::MAX`, a new cycle is a full stop-the-world collection and an
+    /// existing cycle is completed without yielding while retaining its prior
+    /// marks. Finite-budget cycles snapshot roots on their first slice. New
+    /// allocations are queued by `allocate`, while the final retrace catches
+    /// edges added through the heap access APIs between slices. Direct mutation
+    /// through the public cell storage is outside that barrier contract.
     pub fn collect_incremental(&self, roots: &[usize], budget: usize) {
         let mut state_slot = self.incremental_mark.lock();
         let cells_len = self.cells.lock().len();
@@ -559,21 +605,36 @@ impl Heap {
                     queued: vec![false; cells_len],
                     worklist: Vec::new(),
                     pending_ephemerons: std::collections::HashMap::new(),
+                    phase: IncrementalPhase::Mark,
+                    dirty: Vec::new(),
+                    dirty_queued: vec![false; cells_len],
                 },
                 true,
             ),
         };
         state.marked.resize(cells_len, false);
         state.queued.resize(cells_len, false);
+        state.dirty_queued.resize(cells_len, false);
         if new_cycle || budget == usize::MAX {
             for root in roots {
                 state.queue_index(*root);
             }
         }
+        if matches!(state.phase, IncrementalPhase::Retrace { .. }) {
+            for root in roots {
+                state.queue_index(*root);
+            }
+        }
+        {
+            let cells = self.cells.lock();
+            for (index, cell) in cells.iter().enumerate() {
+                if cell.active_accesses.load(Ordering::Relaxed) > 0 {
+                    state.queue_index(index);
+                }
+            }
+        }
 
-        let mut marked_this_slice = 0usize;
-        let mut finalizing = false;
-        let mut rescanned = false;
+        let mut traced_this_slice = 0usize;
         loop {
             while let Some(idx) = state.worklist.pop() {
                 if idx < state.queued.len() {
@@ -582,13 +643,13 @@ impl Heap {
                 if idx >= cells_len || state.marked[idx] {
                     continue;
                 }
-                if !finalizing && marked_this_slice >= budget && budget != usize::MAX {
+                if traced_this_slice >= budget && budget != usize::MAX {
                     state.queue_index(idx);
                     *state_slot = Some(state);
                     return;
                 }
                 state.marked[idx] = true;
-                marked_this_slice += 1;
+                traced_this_slice = traced_this_slice.saturating_add(1);
 
                 let (children, ephemerons) = {
                     let cells = self.cells.lock();
@@ -604,37 +665,79 @@ impl Heap {
                     }
                 }
             }
-            if !finalizing {
-                // Finish against the current root set in the same stop-the-
-                // world phase as sweep. This catches old white objects that
-                // became host roots between finite-budget slices without
-                // rescanning all roots on every slice.
-                finalizing = true;
-                for root in roots {
-                    state.queue_index(*root);
-                }
-                continue;
-            }
-            if rescanned {
-                break;
-            }
 
-            // A mutator can change an already-marked object between slices.
-            // Rebuild ephemeron dependencies and retrace marked cells once
-            // immediately before sweep, which is the incremental write-barrier
-            // equivalent for this single-threaded VM.
-            rescanned = true;
-            state.pending_ephemerons.clear();
-            let cells = self.cells.lock();
-            for index in 0..cells_len {
-                if !state.marked[index] {
-                    continue;
+            match state.phase {
+                IncrementalPhase::Mark => {
+                    // Remark current roots before beginning the resumable
+                    // pre-sweep retrace. This catches roots published after the
+                    // first finite-budget slice.
+                    for root in roots {
+                        state.queue_index(*root);
+                    }
+                    if !state.worklist.is_empty() {
+                        continue;
+                    }
+                    state.pending_ephemerons.clear();
+                    state.phase = IncrementalPhase::Retrace { cursor: 0 };
                 }
-                let (children, ephemerons) = trace_cell(&cells, index);
-                for child in children {
-                    state.queue_index(child);
+                IncrementalPhase::Retrace { mut cursor } => {
+                    while cursor < cells_len {
+                        if traced_this_slice >= budget && budget != usize::MAX {
+                            state.phase = IncrementalPhase::Retrace { cursor };
+                            *state_slot = Some(state);
+                            return;
+                        }
+                        let index = cursor;
+                        cursor += 1;
+                        traced_this_slice = traced_this_slice.saturating_add(1);
+                        state.phase = IncrementalPhase::Retrace { cursor };
+                        if state.marked[index] {
+                            let (children, ephemerons) = {
+                                let cells = self.cells.lock();
+                                trace_cell(&cells, index)
+                            };
+                            for child in children {
+                                state.queue_index(child);
+                            }
+                            queue_ephemerons(&mut state, ephemerons);
+                        }
+                        if !state.worklist.is_empty() {
+                            break;
+                        }
+                    }
+                    if !state.worklist.is_empty() {
+                        continue;
+                    }
+                    while let Some(index) = state.dirty.pop() {
+                        state.dirty_queued[index] = false;
+                        if traced_this_slice >= budget && budget != usize::MAX {
+                            state.dirty_queued[index] = true;
+                            state.dirty.push(index);
+                            *state_slot = Some(state);
+                            return;
+                        }
+                        traced_this_slice = traced_this_slice.saturating_add(1);
+                        if state.marked[index] {
+                            let (children, ephemerons) = {
+                                let cells = self.cells.lock();
+                                trace_cell(&cells, index)
+                            };
+                            for child in children {
+                                state.queue_index(child);
+                            }
+                            queue_ephemerons(&mut state, ephemerons);
+                        }
+                        if !state.worklist.is_empty() {
+                            break;
+                        }
+                    }
+                    if !state.worklist.is_empty() {
+                        continue;
+                    }
+                    if cursor >= cells_len && state.dirty.is_empty() {
+                        break;
+                    }
                 }
-                queue_ephemerons(&mut state, ephemerons);
             }
         }
 
@@ -653,7 +756,7 @@ impl Heap {
         for cell in cells.iter() {
             let obj_ref = cell.obj.lock();
             if let Some(obj) = obj_ref.as_ref() {
-                match obj {
+                match obj.as_ref() {
                     HeapObj::WeakMap(wm) => {
                         wm.entries.lock().retain(|key, _| match key {
                             crate::value::WeakKey::Object(index) => {
@@ -719,7 +822,7 @@ impl Heap {
             .enumerate()
             .filter_map(|(idx, cell)| {
                 let obj = cell.obj.lock();
-                let HeapObj::FinalizationRegistry(registry) = obj.as_ref()? else {
+                let HeapObj::FinalizationRegistry(registry) = obj.as_deref()? else {
                     return None;
                 };
                 let has_pending = registry
@@ -770,62 +873,47 @@ impl Heap {
             &mut std::collections::HashMap<crate::value::PrivateSlotKey, crate::value::PrivateSlot>,
         ) -> R,
     ) -> R {
-        let cells = self.cells.lock();
-        let mut private_elements = cells[idx].private_elements.lock();
-        f(&mut private_elements)
+        let result = {
+            let cells = self.cells.lock();
+            let mut private_elements = cells[idx].private_elements.lock();
+            f(&mut private_elements)
+        };
+        self.note_incremental_access(idx);
+        result
     }
 
+    /// Access a heap object without hiding it from re-entrant collection.
+    ///
+    /// A callback that invokes collection must first drop every guard acquired
+    /// from an interior object mutex such as `props()`. Holding such a guard
+    /// while tracing the same object would self-deadlock.
     pub fn with_obj<R>(&self, idx: usize, f: impl FnOnce(&HeapObj) -> R) -> R {
-        // Take the object out of the cell so the cells mutex can be released
-        // before running `f`. This prevents re-entrant locking of the cells
-        // mutex (e.g. when `f` allocates or triggers a GC) from deadlocking.
-        // The object is put back after `f` returns.
-        //
-        // Reentrancy: if `f` reaches back into the *same* object index (e.g.
-        // a getter on the object calls a coercion that reads the object
-        // again), the inner `take()` sees `None`. Previously this panicked
-        // ("use after free"), aborting the host. Now a reentrant call gets a
-        // temporary placeholder object so the inner callback still runs
-        // instead of crashing; the outer frame owns the real object and
-        // restores it on its way out, so it is never lost. Reentrant reads
-        // already diverge from ES, so observing the placeholder is acceptable.
-        let (obj, owned) = {
+        self.note_incremental_access(idx);
+        let obj = {
             let cells = self.cells.lock();
             let cell = &cells[idx];
-            let mut slot = cell.obj.lock();
-            match slot.take() {
-                Some(o) => (o, true),
-                None => (crate::value::HeapObj::placeholder(), false),
-            }
+            cell.active_accesses.fetch_add(1, Ordering::Relaxed);
+            let obj = cell
+                .obj
+                .lock()
+                .clone()
+                .unwrap_or_else(|| Arc::new(crate::value::HeapObj::placeholder()));
+            obj
         };
-        let result = f(&obj);
-        if owned {
-            let cells = self.cells.lock();
-            let cell = &cells[idx];
-            *cell.obj.lock() = Some(obj);
-        }
+        let active_access = ActiveObjectAccess {
+            heap: self,
+            index: idx,
+        };
+        let result = f(obj.as_ref());
+        drop(active_access);
+        self.note_incremental_access(idx);
         result
     }
 
-    pub fn with_obj_mut<R>(&self, idx: usize, f: impl FnOnce(&mut HeapObj) -> R) -> R {
-        // Mirrors `with_obj`, but allows narrow metadata updates such as
-        // initializing internal brands during native construction.
-        let (mut obj, owned) = {
-            let cells = self.cells.lock();
-            let cell = &cells[idx];
-            let mut slot = cell.obj.lock();
-            match slot.take() {
-                Some(o) => (o, true),
-                None => (crate::value::HeapObj::placeholder(), false),
-            }
-        };
-        let result = f(&mut obj);
-        if owned {
-            let cells = self.cells.lock();
-            let cell = &cells[idx];
-            *cell.obj.lock() = Some(obj);
+    fn note_incremental_access(&self, idx: usize) {
+        if let Some(state) = self.incremental_mark.lock().as_mut() {
+            state.queue_dirty(idx);
         }
-        result
     }
 }
 
@@ -850,6 +938,17 @@ mod tests {
             extensible: AtomicBool::new(true),
         }))
         .unwrap()
+    }
+
+    fn finish_incremental(heap: &Heap, roots: &[usize], budget: usize) {
+        let max_slices = heap.cells.lock().len().saturating_mul(4).max(16);
+        for _ in 0..max_slices {
+            if heap.incremental_mark.lock().is_none() {
+                return;
+            }
+            heap.collect_incremental(roots, budget);
+        }
+        panic!("incremental collection did not finish within {max_slices} slices");
     }
 
     #[test]
@@ -945,7 +1044,7 @@ mod tests {
             heap.collect_incremental(&roots, 1);
             assert_eq!(heap.live_count(), 6, "partial marks must not sweep");
         }
-        heap.collect_incremental(&roots, 1);
+        finish_incremental(&heap, &roots, 1);
         assert_eq!(heap.live_count(), 5);
         let fresh = heap.allocate(HeapObj::placeholder()).unwrap();
         assert_eq!(fresh, garbage, "completed incremental mark must sweep");
@@ -972,8 +1071,7 @@ mod tests {
                 PropertyDescriptor::data(Value::Object(GcIdx(late_child))),
             );
         });
-        heap.collect_incremental(&[owner], 1);
-        heap.collect_incremental(&[owner], 1);
+        finish_incremental(&heap, &[owner], 1);
 
         assert_eq!(heap.live_count(), 3);
         let fresh = heap.allocate(HeapObj::placeholder()).unwrap();
@@ -1024,8 +1122,7 @@ mod tests {
 
         heap.collect_incremental(&[owner], 1);
         let late = heap.allocate(HeapObj::placeholder()).unwrap();
-        heap.collect_incremental(&[owner], 1);
-        heap.collect_incremental(&[owner], 1);
+        finish_incremental(&heap, &[owner], 1);
 
         assert_eq!(heap.live_count(), 3);
         let fresh = heap.allocate(HeapObj::placeholder()).unwrap();
@@ -1051,7 +1148,7 @@ mod tests {
         heap.collect_incremental(&[owner], 1);
         let late = heap.allocate(HeapObj::placeholder()).unwrap();
         assert_eq!(late, garbage);
-        heap.collect_incremental(&[owner], 1);
+        finish_incremental(&heap, &[owner], 1);
 
         assert_eq!(heap.live_count(), 3);
         assert!(heap.with_obj(child, |object| matches!(object, HeapObj::Object(_))));
@@ -1073,9 +1170,168 @@ mod tests {
 
         heap.collect_incremental(&[owner], 1);
         heap.collect_incremental(&[owner, late_root], 1);
+        finish_incremental(&heap, &[owner, late_root], 1);
 
         assert_eq!(heap.live_count(), 3);
         assert!(heap.with_obj(late_root, |object| matches!(object, HeapObj::Object(_))));
+        let fresh = heap.allocate(HeapObj::placeholder()).unwrap();
+        assert_eq!(fresh, garbage);
+    }
+
+    #[test]
+    fn incremental_retrace_is_budgeted_and_revisits_scanned_objects() {
+        let heap = Heap::new();
+        let ordinary_owner = heap.allocate(HeapObj::placeholder()).unwrap();
+        let private_owner = heap.allocate(HeapObj::placeholder()).unwrap();
+        let ordinary_child = heap.allocate(HeapObj::placeholder()).unwrap();
+        let private_child = heap.allocate(HeapObj::placeholder()).unwrap();
+        let garbage = heap.allocate(HeapObj::placeholder()).unwrap();
+        let roots = [ordinary_owner, private_owner];
+
+        for _ in 0..2 {
+            heap.collect_incremental(&roots, 1);
+        }
+        assert!(matches!(
+            heap.incremental_mark
+                .lock()
+                .as_ref()
+                .map(|state| state.phase),
+            Some(IncrementalPhase::Retrace { cursor: 0 })
+        ));
+
+        for expected_cursor in 1..=2 {
+            heap.collect_incremental(&roots, 1);
+            assert!(matches!(
+                heap.incremental_mark
+                    .lock()
+                    .as_ref()
+                    .map(|state| state.phase),
+                Some(IncrementalPhase::Retrace { cursor }) if cursor == expected_cursor
+            ));
+        }
+        assert_eq!(heap.live_count(), 5, "partial retrace must not sweep");
+
+        heap.with_obj(ordinary_owner, |object| {
+            object.props().lock().insert(
+                PropertyKey::from("ordinary"),
+                PropertyDescriptor::data(Value::Object(GcIdx(ordinary_child))),
+            );
+        });
+        let private_key = PrivateSlotKey::Private(PrivateNameKey {
+            id: 2,
+            description: Arc::from("private"),
+        });
+        heap.with_private_elements(private_owner, |elements| {
+            elements.insert(
+                private_key,
+                PrivateSlot::Value(Value::Object(GcIdx(private_child))),
+            );
+        });
+        heap.with_obj(ordinary_owner, |_| {});
+        heap.with_private_elements(private_owner, |_| {});
+        let dirty = heap.incremental_mark.lock().as_ref().unwrap().dirty.clone();
+        assert_eq!(dirty, roots, "each access path must queue its owner once");
+        finish_incremental(&heap, &roots, 1);
+
+        assert_eq!(heap.live_count(), 4);
+        let fresh = heap.allocate(HeapObj::placeholder()).unwrap();
+        assert_eq!(fresh, garbage);
+        assert_ne!(fresh, ordinary_child);
+        assert_ne!(fresh, private_child);
+    }
+
+    #[test]
+    fn reentrant_collection_traces_an_active_object_after_mutation() {
+        let heap = Heap::new();
+        let owner = heap.allocate(HeapObj::placeholder()).unwrap();
+        let child = heap.allocate(HeapObj::placeholder()).unwrap();
+        let garbage = heap.allocate(HeapObj::placeholder()).unwrap();
+
+        heap.collect_incremental(&[owner], 1);
+        heap.collect_incremental(&[owner], 1);
+        assert!(matches!(
+            heap.incremental_mark
+                .lock()
+                .as_ref()
+                .map(|state| state.phase),
+            Some(IncrementalPhase::Retrace { cursor: 1 })
+        ));
+
+        heap.with_obj(owner, |object| {
+            object.props().lock().insert(
+                PropertyKey::from("child"),
+                PropertyDescriptor::data(Value::Object(GcIdx(child))),
+            );
+            heap.collect_incremental(&[], usize::MAX);
+        });
+
+        assert_eq!(heap.live_count(), 2);
+        let fresh = heap.allocate(HeapObj::placeholder()).unwrap();
+        assert_eq!(fresh, garbage);
+        assert_ne!(fresh, child);
+    }
+
+    #[test]
+    fn new_collection_treats_an_active_object_as_a_root() {
+        let heap = Heap::new();
+        let owner = heap.allocate(HeapObj::placeholder()).unwrap();
+        let child = heap.allocate(HeapObj::placeholder()).unwrap();
+        let garbage = heap.allocate(HeapObj::placeholder()).unwrap();
+
+        heap.with_obj(owner, |object| {
+            object.props().lock().insert(
+                PropertyKey::from("child"),
+                PropertyDescriptor::data(Value::Object(GcIdx(child))),
+            );
+            heap.collect(&[]);
+        });
+
+        assert!(heap.incremental_mark.lock().is_none());
+        assert_eq!(heap.live_count(), 2);
+        let fresh = heap.allocate(HeapObj::placeholder()).unwrap();
+        assert_eq!(fresh, garbage);
+        assert_ne!(fresh, child);
+    }
+
+    #[test]
+    fn active_object_access_releases_its_root_during_unwind() {
+        let heap = Heap::new();
+        let owner = heap.allocate(HeapObj::placeholder()).unwrap();
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            heap.with_obj(owner, |_| panic!("host callback panic"));
+        }));
+
+        assert!(result.is_err());
+        assert_eq!(
+            heap.cells.lock()[owner]
+                .active_accesses
+                .load(Ordering::Relaxed),
+            0
+        );
+        heap.collect(&[]);
+        assert_eq!(heap.live_count(), 0);
+    }
+
+    #[test]
+    fn zero_incremental_budget_does_not_trace_or_sweep() {
+        let heap = Heap::new();
+        let garbage = heap.allocate(HeapObj::placeholder()).unwrap();
+
+        heap.collect_incremental(&[], 0);
+        heap.collect_incremental(&[], 0);
+
+        assert_eq!(heap.live_count(), 1);
+        assert!(matches!(
+            heap.incremental_mark
+                .lock()
+                .as_ref()
+                .map(|state| state.phase),
+            Some(IncrementalPhase::Retrace { cursor: 0 })
+        ));
+
+        heap.collect_incremental(&[], 1);
+        assert_eq!(heap.live_count(), 0);
         let fresh = heap.allocate(HeapObj::placeholder()).unwrap();
         assert_eq!(fresh, garbage);
     }

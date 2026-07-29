@@ -242,6 +242,31 @@ Test262 identity rather than a throughput claim.
 cargo bench --bench basic -- non_index_ --quick
 ```
 
+## Active GC object access
+
+The pre-sweep retrace cursor keeps heap objects visible to re-entrant GC by
+storing them in `Arc`-owned cells. `with_obj` now clones the `Arc` and updates a
+cell-local active-root counter instead of moving the complete `HeapObj` out of
+its cell and restoring it after every callback. This adds one atomic reference
+count pair but removes two object-slot moves and makes nested access observe the
+real object.
+
+On commit `cf3de4a` and the current uncommitted collector change, built
+sequentially with the same release target and measured with ten Criterion
+samples, `computed_reference_numeric_30k` changed from **91.817 ms** to
+**98.933 ms** median, about **7.7% slower**. The access-heavy
+`with_object_environment_reference_30k` changed from **1.719 s** to **682.31
+ms**, about **60% faster**. The mixed result is retained rather than summarized
+as a universal speedup: direct object access pays the atomic pair, while paths
+that previously moved large environment objects avoid much more work. Exact GC
+liveness tests remain the correctness gate.
+
+```sh
+cargo bench --bench basic -- \
+  'with_object_environment_reference_30k|computed_reference_numeric_30k' \
+  --sample-size 10
+```
+
 ## Reproducing
 
 ```sh
