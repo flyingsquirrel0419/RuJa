@@ -3697,7 +3697,7 @@ impl Vm {
         let Value::Object(idx) = base else {
             return self.get_property(base, &key);
         };
-        let cacheable_own_data = self.heap.with_obj(idx.0, |object| {
+        let cacheable_own_data = self.heap.with_obj_read(idx.0, |object| {
             if matches!(
                 object,
                 crate::value::HeapObj::Array(array)

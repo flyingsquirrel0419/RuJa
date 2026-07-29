@@ -3,8 +3,8 @@ use indexmap::IndexMap;
 use parking_lot::Mutex;
 use ruja::gc::Heap;
 use ruja::value::{
-    ArrayData, FinalizationRegistryCell, FinalizationRegistryData, PromiseData, PromiseHandler,
-    PromiseStatus, PropertyKey,
+    ArrayData, FinalizationRegistryCell, FinalizationRegistryData, MapData, MapKey, PromiseData,
+    PromiseHandler, PromiseStatus, PropertyKey,
 };
 use ruja::{Value, Vm};
 use std::sync::atomic::AtomicBool;
@@ -141,6 +141,28 @@ fn bench_cursorized_record_gc(c: &mut Criterion) {
             })
         },
     );
+
+    let map_heap = Heap::new();
+    let map = map_heap
+        .allocate(ruja::HeapObj::Map(MapData {
+            entries: Mutex::new(
+                (0..100_000)
+                    .map(|value| (MapKey::new(Value::Number(value.into())), Value::Undefined))
+                    .collect(),
+            ),
+            props: Mutex::new(IndexMap::new()),
+            proto: Mutex::new(None),
+            extensible: AtomicBool::new(true),
+        }))
+        .expect("Map GC fixture allocation failed");
+    c.bench_function("gc_map_entries_100k", |b| {
+        b.iter(|| map_heap.collect(black_box(&[map])))
+    });
+    c.bench_function("gc_map_entries_incremental_slice_100k_budget_256", |b| {
+        b.iter(|| {
+            map_heap.collect_incremental(black_box(&[map]), black_box(256));
+        })
+    });
 }
 
 fn bench_array_index_set(c: &mut Criterion) {

@@ -1721,7 +1721,7 @@ impl Vm {
                     // `for (let i = 0; i < arr.length; i++)` where the same
                     // property is read repeatedly.
                     let v = if let Value::Object(idx) = &obj {
-                        let cacheable_own_data = self.heap.with_obj(idx.0, |o| {
+                        let cacheable_own_data = self.heap.with_obj_read(idx.0, |o| {
                             o.props()
                                 .lock()
                                 .get(&crate::value::PropertyKey::from(key_str.as_str()))

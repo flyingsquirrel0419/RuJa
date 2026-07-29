@@ -2286,7 +2286,7 @@ impl Vm {
         // because destructuring and for-of are sensitive to deletion and
         // overrides.
         let (is_map, is_set, is_gen, is_arr) = match iterable {
-            Value::Object(idx) => self.heap.with_obj(idx.0, |o| {
+            Value::Object(idx) => self.heap.with_obj_read(idx.0, |o| {
                 (
                     matches!(o, HeapObj::Map(_)),
                     matches!(o, HeapObj::Set(_)),
@@ -2327,14 +2327,15 @@ impl Vm {
         }
         match iterable {
             Value::Object(idx) => {
-                let (is_array, is_map, is_set, is_generator) = self.heap.with_obj(idx.0, |o| {
-                    (
-                        matches!(o, HeapObj::Array(_)),
-                        matches!(o, HeapObj::Map(_)),
-                        matches!(o, HeapObj::Set(_)),
-                        matches!(o, HeapObj::Generator(_) | HeapObj::LazyGenerator(_)),
-                    )
-                });
+                let (is_array, is_map, is_set, is_generator) =
+                    self.heap.with_obj_read(idx.0, |o| {
+                        (
+                            matches!(o, HeapObj::Array(_)),
+                            matches!(o, HeapObj::Map(_)),
+                            matches!(o, HeapObj::Set(_)),
+                            matches!(o, HeapObj::Generator(_) | HeapObj::LazyGenerator(_)),
+                        )
+                    });
                 if is_generator {
                     // Wrap the generator in a lazy iterator that resumes it per
                     // pull. This preserves the generator's return value (needed

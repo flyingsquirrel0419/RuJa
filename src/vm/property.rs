@@ -953,7 +953,7 @@ impl Vm {
         obj_idx: usize,
         index: usize,
     ) -> Option<(GcIdx, Arc<str>)> {
-        self.heap.with_obj(obj_idx, |o| {
+        self.heap.with_obj_read(obj_idx, |o| {
             if let HeapObj::Array(a) = o {
                 a.arguments_map.lock().as_ref().and_then(|m| {
                     m.names
@@ -1021,7 +1021,7 @@ impl Vm {
         index: usize,
         key: &crate::value::PropertyKey,
     ) -> Option<crate::value::PropertyDescriptor> {
-        let (ordinary, dense) = self.heap.with_obj(obj_idx, |o| {
+        let (ordinary, dense) = self.heap.with_obj_read(obj_idx, |o| {
             if let HeapObj::Array(a) = o {
                 let ordinary = a.props.lock().get(key).cloned();
                 let dense = if index < a.items.lock().len() && a.is_dense_present(index) {
@@ -1434,7 +1434,7 @@ impl Vm {
                 Some("length" | "byteLength" | "byteOffset" | "buffer")
             )
         {
-            let uses_direct_exotic_field = self.heap.with_obj(idx.0, |object| {
+            let uses_direct_exotic_field = self.heap.with_obj_read(idx.0, |object| {
                 matches!(
                     object,
                     HeapObj::TypedArray(_) | HeapObj::ArrayBuffer(_) | HeapObj::DataView(_)
@@ -1443,7 +1443,7 @@ impl Vm {
             if uses_direct_exotic_field {
                 let descriptor = self
                     .heap
-                    .with_obj(idx.0, |object| object.props().lock().get(key).cloned());
+                    .with_obj_read(idx.0, |object| object.props().lock().get(key).cloned());
                 if let Some(descriptor) = descriptor {
                     return if descriptor.is_accessor {
                         Ok(GetOwnPropertyOutcome::Accessor(descriptor.get))
@@ -1459,7 +1459,7 @@ impl Vm {
         // direct property reads; Proxy forwarding and Reflect.get must retain
         // their explicit receiver semantics.
         if include_direct_exotics {
-            let typed_array_info = self.heap.with_obj(idx.0, |object| {
+            let typed_array_info = self.heap.with_obj_read(idx.0, |object| {
                 if let HeapObj::TypedArray(typed_array) = object {
                     Some((
                         typed_array.kind,
@@ -1520,7 +1520,7 @@ impl Vm {
                 }
             }
 
-            let array_buffer_len = self.heap.with_obj(idx.0, |object| {
+            let array_buffer_len = self.heap.with_obj_read(idx.0, |object| {
                 if let HeapObj::ArrayBuffer(buffer) = object {
                     Some(
                         if buffer.detached.load(std::sync::atomic::Ordering::Relaxed) {
@@ -1539,7 +1539,7 @@ impl Vm {
                 }
             }
 
-            let data_view_info = self.heap.with_obj(idx.0, |object| {
+            let data_view_info = self.heap.with_obj_read(idx.0, |object| {
                 if let HeapObj::DataView(view) = object {
                     Some((
                         view.buffer.clone(),
@@ -1579,7 +1579,7 @@ impl Vm {
             }
         }
 
-        let namespace_binding = self.heap.with_obj(idx.0, |object| {
+        let namespace_binding = self.heap.with_obj_read(idx.0, |object| {
             if let HeapObj::ModuleNamespace(namespace) = object {
                 return key_str.and_then(|name| namespace.exports.lock().get(name).cloned());
             }
@@ -1604,7 +1604,7 @@ impl Vm {
 
         let own_descriptor = self
             .heap
-            .with_obj(idx.0, |object| object.props().lock().get(key).cloned());
+            .with_obj_read(idx.0, |object| object.props().lock().get(key).cloned());
         if let Some(descriptor) = &own_descriptor {
             if descriptor.is_accessor {
                 return Ok(GetOwnPropertyOutcome::Accessor(descriptor.get.clone()));
@@ -1623,7 +1623,7 @@ impl Vm {
         }
 
         if let Some(name) = key_str {
-            let restricted_function_special = self.heap.with_obj(idx.0, |object| {
+            let restricted_function_special = self.heap.with_obj_read(idx.0, |object| {
                 if let HeapObj::Function(function) = object {
                     if matches!(name, "caller" | "arguments") {
                         if let crate::value::FunctionKind::Interpreted { func } = &function.kind {
@@ -1648,7 +1648,7 @@ impl Vm {
                 };
             }
 
-            let is_global_this = self.heap.with_obj(idx.0, |object| {
+            let is_global_this = self.heap.with_obj_read(idx.0, |object| {
                 matches!(object, HeapObj::Object(data) if data.class_name.as_deref() == Some("global"))
             });
             if is_global_this {
@@ -1658,7 +1658,7 @@ impl Vm {
             }
         }
 
-        let exotic_value = self.heap.with_obj(idx.0, |object| {
+        let exotic_value = self.heap.with_obj_read(idx.0, |object| {
             if let HeapObj::Array(array) = object {
                 if key_str == Some("length")
                     && !array
@@ -1702,7 +1702,7 @@ impl Vm {
             return Ok(GetOwnPropertyOutcome::Value(value));
         }
 
-        let function_value = self.heap.with_obj(idx.0, |object| {
+        let function_value = self.heap.with_obj_read(idx.0, |object| {
             let HeapObj::Function(function) = object else {
                 return None;
             };
@@ -1791,7 +1791,7 @@ impl Vm {
                     return Ok(Value::Undefined);
                 };
                 let idx = *idx;
-                let proxy_info = self.heap.with_obj(idx.0, |object| {
+                let proxy_info = self.heap.with_obj_read(idx.0, |object| {
                     let HeapObj::Proxy(proxy) = object else {
                         return None;
                     };
@@ -1853,13 +1853,13 @@ impl Vm {
                     GetOwnPropertyOutcome::Absent => {}
                 }
 
-                let prototype = self.heap.with_obj(idx.0, |object| {
+                let prototype = self.heap.with_obj_read(idx.0, |object| {
                     object.proto().lock().clone().unwrap_or(Value::Undefined)
                 });
                 let Value::Object(prototype_idx) = &prototype else {
                     return Ok(Value::Undefined);
                 };
-                let prototype_is_proxy = self.heap.with_obj(prototype_idx.0, |object| {
+                let prototype_is_proxy = self.heap.with_obj_read(prototype_idx.0, |object| {
                     matches!(object, HeapObj::Proxy(_))
                 });
                 self.advance_property_edge(&mut traversal, idx, &prototype, !prototype_is_proxy)?;
@@ -3264,7 +3264,7 @@ impl Vm {
     fn typed_array_numeric_slots(&self, idx: GcIdx, key: &str) -> Option<TypedArrayNumericSlots> {
         let numeric_index = crate::value::canonical_numeric_index_string(key)?;
         let (kind, viewed_array_buffer, byte_offset, byte_length, length_tracking) =
-            self.heap.with_obj(idx.0, |o| {
+            self.heap.with_obj_read(idx.0, |o| {
                 if let HeapObj::TypedArray(t) = o {
                     return Some((
                         t.kind,
@@ -3322,7 +3322,7 @@ impl Vm {
         };
         let is_typed_array = self
             .heap
-            .with_obj(idx.0, |o| matches!(o, HeapObj::TypedArray(_)));
+            .with_obj_read(idx.0, |o| matches!(o, HeapObj::TypedArray(_)));
         if !is_typed_array {
             return None;
         }
@@ -3350,7 +3350,7 @@ impl Vm {
             if relative_end > byte_length {
                 return Some(None);
             }
-            let value = self.heap.with_obj(buffer_idx.0, |o| {
+            let value = self.heap.with_obj_read(buffer_idx.0, |o| {
                 let HeapObj::ArrayBuffer(buffer) = o else {
                     return None;
                 };
@@ -3370,7 +3370,7 @@ impl Vm {
             };
             value
         } else {
-            let value = self.heap.with_obj(idx.0, |o| {
+            let value = self.heap.with_obj_read(idx.0, |o| {
                 let HeapObj::TypedArray(t) = o else {
                     return None;
                 };
@@ -3877,7 +3877,7 @@ impl Vm {
                         "Proxy getPrototypeOf target must be an object",
                     ));
                 };
-                let proxy_info = self.heap.with_obj(idx.0, |heap_object| {
+                let proxy_info = self.heap.with_obj_read(idx.0, |heap_object| {
                     if let HeapObj::Proxy(proxy) = heap_object {
                         if *proxy.revoked.lock() {
                             return Some(Err(Error::type_err(
@@ -3892,7 +3892,7 @@ impl Vm {
                 let Some(proxy_info) = proxy_info else {
                     break self
                         .heap
-                        .with_obj(idx.0, |heap_object| heap_object.proto().lock().clone());
+                        .with_obj_read(idx.0, |heap_object| heap_object.proto().lock().clone());
                 };
 
                 let (target, handler) = proxy_info?;

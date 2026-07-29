@@ -58,6 +58,7 @@ pub struct Heap {
 struct ActiveObjectAccess<'a> {
     heap: &'a Heap,
     index: usize,
+    dirty_on_drop: bool,
 }
 
 impl Drop for ActiveObjectAccess<'_> {
@@ -68,7 +69,9 @@ impl Drop for ActiveObjectAccess<'_> {
                 .active_accesses
                 .fetch_sub(1, Ordering::Relaxed);
         }
-        self.heap.note_incremental_access(self.index);
+        if self.dirty_on_drop {
+            self.heap.note_incremental_access(self.index);
+        }
     }
 }
 
@@ -101,6 +104,7 @@ enum VecTraceKind {
     IteratorItems,
     PromiseHandlers,
     FinalizationRegistryCells,
+    MapEntries,
 }
 
 struct CellTrace {
@@ -186,13 +190,30 @@ fn trace_cell(cells: &[GcCell], index: usize, cursorize_vectors: bool) -> CellTr
         };
     };
     let mut before = Vec::new();
-    let mut after = Vec::new();
-    let vector = match (cursorize_vectors, obj.as_ref()) {
-        (false, _) => {
-            trace_obj_impl(obj.as_ref(), &mut before);
-            None
+    if !cursorize_vectors {
+        trace_obj_impl(obj.as_ref(), &mut before);
+        for slot in cell.private_elements.lock().values() {
+            trace_private_slot(slot, &mut before);
         }
-        (true, HeapObj::Array(array)) => {
+        let ephemerons = match obj.as_ref() {
+            HeapObj::WeakMap(map) => map
+                .entries
+                .lock()
+                .iter()
+                .map(|(key, value)| (*key, value.clone()))
+                .collect(),
+            _ => Vec::new(),
+        };
+        return CellTrace {
+            before,
+            vector: None,
+            after: Vec::new(),
+            ephemerons,
+        };
+    }
+    let mut after = Vec::new();
+    let vector = match obj.as_ref() {
+        HeapObj::Array(array) => {
             trace_properties_and_prototype(obj.as_ref(), &mut before);
             if let Some(map) = array.arguments_map.lock().as_ref() {
                 after.push(map.env.0);
@@ -203,7 +224,7 @@ fn trace_cell(cells: &[GcCell], index: usize, cursorize_vectors: bool) -> CellTr
                 next: array.items.lock().len(),
             })
         }
-        (true, HeapObj::Iterator(iterator)) => {
+        HeapObj::Iterator(iterator) => {
             trace_iterator_auxiliary_edges(iterator, &mut after);
             Some(VecTrace {
                 owner: index,
@@ -211,7 +232,7 @@ fn trace_cell(cells: &[GcCell], index: usize, cursorize_vectors: bool) -> CellTr
                 next: iterator.items.lock().len(),
             })
         }
-        (true, HeapObj::Promise(promise)) => {
+        HeapObj::Promise(promise) => {
             trace_properties_and_prototype(obj.as_ref(), &mut before);
             push_value(&promise.result.lock(), &mut before);
             Some(VecTrace {
@@ -220,7 +241,7 @@ fn trace_cell(cells: &[GcCell], index: usize, cursorize_vectors: bool) -> CellTr
                 next: promise.handlers.lock().len(),
             })
         }
-        (true, HeapObj::FinalizationRegistry(registry)) => {
+        HeapObj::FinalizationRegistry(registry) => {
             trace_properties_and_prototype(obj.as_ref(), &mut before);
             push_value(&registry.cleanup_callback, &mut before);
             Some(VecTrace {
@@ -229,7 +250,15 @@ fn trace_cell(cells: &[GcCell], index: usize, cursorize_vectors: bool) -> CellTr
                 next: registry.cells.lock().len(),
             })
         }
-        (true, _) => {
+        HeapObj::Map(map) => {
+            trace_properties_and_prototype(obj.as_ref(), &mut before);
+            Some(VecTrace {
+                owner: index,
+                kind: VecTraceKind::MapEntries,
+                next: map.entries.lock().len(),
+            })
+        }
+        _ => {
             trace_obj_impl(obj.as_ref(), &mut before);
             None
         }
@@ -307,6 +336,17 @@ fn trace_vec_slots(
             let start = next.min(end);
             for cell in &cells[start..end] {
                 push_value(&cell.held_value, &mut roots);
+            }
+        }
+        (VecTraceKind::MapEntries, HeapObj::Map(map)) => {
+            let entries = map.entries.lock();
+            let end = trace.next.min(entries.len());
+            let start = next.min(end);
+            for index in start..end {
+                if let Some((key, value)) = entries.get_index(index) {
+                    push_value(&key.0, &mut roots);
+                    push_value(value, &mut roots);
+                }
             }
         }
         _ => {}
@@ -1042,6 +1082,26 @@ impl Heap {
         cells.len() - free.len()
     }
 
+    #[cfg(test)]
+    pub(crate) fn incremental_in_progress(&self) -> bool {
+        self.incremental_mark.lock().is_some()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn incremental_retrace_passed(&self, index: usize) -> bool {
+        self.incremental_mark.lock().as_ref().is_some_and(
+            |state| matches!(state.phase, IncrementalPhase::Retrace { cursor } if cursor > index),
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn incremental_is_dirty(&self, index: usize) -> bool {
+        self.incremental_mark
+            .lock()
+            .as_ref()
+            .is_some_and(|state| state.dirty_queued.get(index).copied().unwrap_or(false))
+    }
+
     pub fn set_max_objects(&self, max: usize) {
         self.max_objects.store(max, Ordering::Relaxed);
     }
@@ -1084,6 +1144,21 @@ impl Heap {
     /// while tracing the same object would self-deadlock.
     pub fn with_obj<R>(&self, idx: usize, f: impl FnOnce(&HeapObj) -> R) -> R {
         self.note_incremental_access(idx);
+        self.with_obj_access(idx, true, f)
+    }
+
+    /// Read an object while retaining the active-access root without applying
+    /// the mutation barrier. The callback must not mutate interior object data.
+    pub(crate) fn with_obj_read<R>(&self, idx: usize, f: impl FnOnce(&HeapObj) -> R) -> R {
+        self.with_obj_access(idx, false, f)
+    }
+
+    fn with_obj_access<R>(
+        &self,
+        idx: usize,
+        dirty_on_drop: bool,
+        f: impl FnOnce(&HeapObj) -> R,
+    ) -> R {
         let obj = {
             let cells = self.cells.lock();
             let cell = &cells[idx];
@@ -1098,6 +1173,7 @@ impl Heap {
         let active_access = ActiveObjectAccess {
             heap: self,
             index: idx,
+            dirty_on_drop,
         };
         let result = f(obj.as_ref());
         drop(active_access);
@@ -1115,8 +1191,8 @@ impl Heap {
 mod tests {
     use super::*;
     use crate::value::{
-        FinalizationRegistryCell, FinalizationRegistryData, GcIdx, IteratorData, PrivateNameKey,
-        PrivateSlot, PrivateSlotKey, PromiseData, PromiseHandler, PromiseStatus,
+        FinalizationRegistryCell, FinalizationRegistryData, GcIdx, IteratorData, MapData, MapKey,
+        PrivateNameKey, PrivateSlot, PrivateSlotKey, PromiseData, PromiseHandler, PromiseStatus,
         PropertyDescriptor, PropertyKey, Value, WeakKey, WeakMapData,
     };
     use std::sync::Arc;
@@ -1145,6 +1221,7 @@ mod tests {
                     Some(HeapObj::Iterator(iterator)) => iterator.items.lock().len(),
                     Some(HeapObj::Promise(promise)) => promise.handlers.lock().len(),
                     Some(HeapObj::FinalizationRegistry(registry)) => registry.cells.lock().len(),
+                    Some(HeapObj::Map(map)) => map.entries.lock().len(),
                     _ => 0,
                 })
             })
@@ -1217,6 +1294,41 @@ mod tests {
             proto: Mutex::new(None),
             extensible: AtomicBool::new(true),
         })
+    }
+
+    fn map(entries: impl IntoIterator<Item = (Value, Value)>) -> HeapObj {
+        HeapObj::Map(MapData {
+            entries: Mutex::new(
+                entries
+                    .into_iter()
+                    .map(|(key, value)| (MapKey::new(key), value))
+                    .collect(),
+            ),
+            props: Mutex::new(indexmap::IndexMap::new()),
+            proto: Mutex::new(None),
+            extensible: AtomicBool::new(true),
+        })
+    }
+
+    fn advance_to_retrace_vec(
+        heap: &Heap,
+        roots: &[usize],
+        owner: usize,
+        kind: VecTraceKind,
+        expected_next: usize,
+    ) {
+        for _ in 0..256 {
+            heap.collect_incremental(roots, 1);
+            let state = heap.incremental_mark.lock();
+            let state = state.as_ref().unwrap();
+            if matches!(state.phase, IncrementalPhase::Retrace { cursor } if cursor > owner)
+                && pending_vec_trace(state, owner, kind)
+                    .is_some_and(|trace| trace.next == expected_next)
+            {
+                return;
+            }
+        }
+        panic!("incremental retrace did not park the expected vector cursor");
     }
 
     #[test]
@@ -1894,6 +2006,414 @@ mod tests {
 
         assert_eq!(heap.live_count(), 2);
         assert_eq!(heap.allocate(HeapObj::placeholder()).unwrap(), garbage);
+    }
+
+    #[test]
+    fn map_entry_cursor_charges_one_record_and_traces_key_and_value() {
+        let heap = Heap::new();
+        let key = heap.allocate(HeapObj::placeholder()).unwrap();
+        let value = heap.allocate(HeapObj::placeholder()).unwrap();
+        let owner = heap
+            .allocate(map([
+                (Value::Number(0.0), Value::Undefined),
+                (Value::Object(GcIdx(key)), Value::Object(GcIdx(value))),
+            ]))
+            .unwrap();
+
+        heap.collect_incremental(&[owner], 1);
+        heap.collect_incremental(&[owner], 1);
+
+        let state = heap.incremental_mark.lock();
+        let state = state.as_ref().unwrap();
+        assert_eq!(
+            pending_vec_trace(state, owner, VecTraceKind::MapEntries).map(|trace| trace.next),
+            Some(1)
+        );
+        assert!(state.queued[key]);
+        assert!(state.queued[value]);
+        assert!(!state.marked[key]);
+        assert!(!state.marked[value]);
+    }
+
+    #[test]
+    fn map_entry_cursor_batches_finite_budget() {
+        let heap = Heap::new();
+        let owner = heap
+            .allocate(map(
+                (0..5).map(|key| (Value::Number(key.into()), Value::Undefined))
+            ))
+            .unwrap();
+
+        heap.collect_incremental(&[owner], 1);
+        heap.collect_incremental(&[owner], 3);
+
+        assert_eq!(
+            pending_vec_trace(
+                heap.incremental_mark.lock().as_ref().unwrap(),
+                owner,
+                VecTraceKind::MapEntries,
+            )
+            .map(|trace| trace.next),
+            Some(2)
+        );
+    }
+
+    #[test]
+    fn map_entry_cursor_snapshots_growth_and_charges_removed_records() {
+        {
+            let heap = Heap::new();
+            let owner = heap.allocate(map([])).unwrap();
+            let first = heap.allocate(HeapObj::placeholder()).unwrap();
+            let appended = heap.allocate(HeapObj::placeholder()).unwrap();
+            let garbage = heap.allocate(HeapObj::placeholder()).unwrap();
+            heap.with_obj(owner, |object| {
+                let HeapObj::Map(map) = object else {
+                    panic!("Map fixture lost its type");
+                };
+                map.entries
+                    .lock()
+                    .insert(MapKey::new(Value::Number(0.0)), Value::Object(GcIdx(first)));
+            });
+
+            heap.collect_incremental(&[owner], 1);
+            heap.with_obj(owner, |object| {
+                let HeapObj::Map(map) = object else {
+                    panic!("Map fixture lost its type");
+                };
+                map.entries.lock().insert(
+                    MapKey::new(Value::Number(1.0)),
+                    Value::Object(GcIdx(appended)),
+                );
+            });
+            heap.collect_incremental(&[owner], 1);
+            {
+                let state = heap.incremental_mark.lock();
+                let state = state.as_ref().unwrap();
+                assert!(pending_vec_trace(state, owner, VecTraceKind::MapEntries).is_none());
+                assert!(!state.marked[appended]);
+            }
+            finish_incremental(&heap, &[owner], 1);
+
+            assert_eq!(heap.live_count(), 3);
+            assert_eq!(heap.allocate(HeapObj::placeholder()).unwrap(), garbage);
+        }
+
+        {
+            let heap = Heap::new();
+            let owner = heap
+                .allocate(map([
+                    (Value::Number(0.0), Value::Undefined),
+                    (Value::Number(1.0), Value::Undefined),
+                ]))
+                .unwrap();
+            heap.collect_incremental(&[owner], 1);
+            heap.with_obj(owner, |object| {
+                let HeapObj::Map(map) = object else {
+                    panic!("Map fixture lost its type");
+                };
+                map.entries.lock().clear();
+            });
+            heap.collect_incremental(&[owner], 1);
+
+            assert_eq!(
+                pending_vec_trace(
+                    heap.incremental_mark.lock().as_ref().unwrap(),
+                    owner,
+                    VecTraceKind::MapEntries,
+                )
+                .map(|trace| trace.next),
+                Some(1),
+                "a removed Map snapshot record must still consume one work unit"
+            );
+        }
+    }
+
+    #[test]
+    fn map_entry_cursor_retraces_shift_and_reinsert() {
+        let heap = Heap::new();
+        let owner = heap.allocate(map([])).unwrap();
+        let low = heap.allocate(HeapObj::placeholder()).unwrap();
+        let middle = heap.allocate(HeapObj::placeholder()).unwrap();
+        let high = heap.allocate(HeapObj::placeholder()).unwrap();
+        let late = heap.allocate(HeapObj::placeholder()).unwrap();
+        let garbage = heap.allocate(HeapObj::placeholder()).unwrap();
+        heap.with_obj(owner, |object| {
+            let HeapObj::Map(map) = object else {
+                panic!("Map fixture lost its type");
+            };
+            map.entries.lock().extend([
+                (MapKey::new(Value::Number(0.0)), Value::Object(GcIdx(low))),
+                (
+                    MapKey::new(Value::Number(1.0)),
+                    Value::Object(GcIdx(middle)),
+                ),
+                (MapKey::new(Value::Number(2.0)), Value::Object(GcIdx(high))),
+            ]);
+        });
+
+        advance_to_retrace_vec(&heap, &[owner], owner, VecTraceKind::MapEntries, 3);
+        heap.collect_incremental(&[owner], 1);
+        heap.with_obj(owner, |object| {
+            let HeapObj::Map(map) = object else {
+                panic!("Map fixture lost its type");
+            };
+            let mut entries = map.entries.lock();
+            entries.shift_remove(&MapKey::new(Value::Number(0.0)));
+            entries.insert(MapKey::new(Value::Number(3.0)), Value::Object(GcIdx(late)));
+        });
+        assert_eq!(
+            heap.incremental_mark.lock().as_ref().unwrap().dirty,
+            [owner]
+        );
+        finish_incremental(&heap, &[owner], 1);
+
+        assert_eq!(heap.live_count(), 5);
+        assert_eq!(heap.allocate(HeapObj::placeholder()).unwrap(), garbage);
+        assert_ne!(heap.allocate(HeapObj::placeholder()).unwrap(), late);
+    }
+
+    #[test]
+    fn map_entry_cursor_dirty_retrace_preserves_replaced_value() {
+        let heap = Heap::new();
+        let owner = heap.allocate(map([])).unwrap();
+        let original = heap.allocate(HeapObj::placeholder()).unwrap();
+        let replacement = heap.allocate(HeapObj::placeholder()).unwrap();
+        let garbage = heap.allocate(HeapObj::placeholder()).unwrap();
+        heap.with_obj(owner, |object| {
+            let HeapObj::Map(map) = object else {
+                panic!("Map fixture lost its type");
+            };
+            map.entries.lock().insert(
+                MapKey::new(Value::Number(0.0)),
+                Value::Object(GcIdx(original)),
+            );
+        });
+
+        advance_to_retrace_vec(&heap, &[owner], owner, VecTraceKind::MapEntries, 1);
+        heap.collect_incremental(&[owner], 1);
+        heap.with_obj(owner, |object| {
+            let HeapObj::Map(map) = object else {
+                panic!("Map fixture lost its type");
+            };
+            map.entries.lock().insert(
+                MapKey::new(Value::Number(0.0)),
+                Value::Object(GcIdx(replacement)),
+            );
+        });
+        assert_eq!(
+            heap.incremental_mark.lock().as_ref().unwrap().dirty,
+            [owner]
+        );
+        finish_incremental(&heap, &[owner], 1);
+
+        assert_eq!(heap.live_count(), 3);
+        assert_eq!(heap.allocate(HeapObj::placeholder()).unwrap(), garbage);
+        assert_ne!(heap.allocate(HeapObj::placeholder()).unwrap(), replacement);
+    }
+
+    #[test]
+    fn map_entry_cursor_retraces_clear_and_reinsert() {
+        let heap = Heap::new();
+        let owner = heap
+            .allocate(map(
+                (0..3).map(|key| (Value::Number(key.into()), Value::Undefined))
+            ))
+            .unwrap();
+        let late = heap.allocate(HeapObj::placeholder()).unwrap();
+        let garbage = heap.allocate(HeapObj::placeholder()).unwrap();
+
+        advance_to_retrace_vec(&heap, &[owner], owner, VecTraceKind::MapEntries, 3);
+        heap.collect_incremental(&[owner], 1);
+        heap.with_obj(owner, |object| {
+            let HeapObj::Map(map) = object else {
+                panic!("Map fixture lost its type");
+            };
+            let mut entries = map.entries.lock();
+            entries.clear();
+            entries.insert(MapKey::new(Value::Number(3.0)), Value::Object(GcIdx(late)));
+        });
+        finish_incremental(&heap, &[owner], 1);
+
+        assert_eq!(heap.live_count(), 2);
+        assert_eq!(heap.allocate(HeapObj::placeholder()).unwrap(), garbage);
+        assert_ne!(heap.allocate(HeapObj::placeholder()).unwrap(), late);
+    }
+
+    #[test]
+    fn read_only_map_access_does_not_redirty_a_dirty_cursor() {
+        let heap = Heap::new();
+        let owner = heap
+            .allocate(map(
+                (0..3).map(|key| (Value::Number(key.into()), Value::Undefined))
+            ))
+            .unwrap();
+
+        advance_to_retrace_vec(&heap, &[owner], owner, VecTraceKind::MapEntries, 3);
+        heap.with_obj(owner, |object| {
+            let HeapObj::Map(map) = object else {
+                panic!("Map fixture lost its type");
+            };
+            map.entries
+                .lock()
+                .insert(MapKey::new(Value::Number(0.0)), Value::Null);
+        });
+
+        let mut dirty_cursor_started = false;
+        for _ in 0..32 {
+            heap.collect_incremental(&[owner], 1);
+            let state = heap.incremental_mark.lock();
+            let state = state.as_ref().unwrap();
+            if state.dirty.is_empty()
+                && !state.dirty_queued[owner]
+                && pending_vec_trace(state, owner, VecTraceKind::MapEntries)
+                    .is_some_and(|trace| trace.next == 3)
+            {
+                dirty_cursor_started = true;
+                break;
+            }
+        }
+        assert!(dirty_cursor_started, "dirty Map cursor was not scheduled");
+
+        for _ in 0..16 {
+            let len = heap.with_obj_read(owner, |object| {
+                let HeapObj::Map(map) = object else {
+                    panic!("Map fixture lost its type");
+                };
+                map.entries.lock().len()
+            });
+            assert_eq!(len, 3);
+            {
+                let state = heap.incremental_mark.lock();
+                let state = state.as_ref().unwrap();
+                assert!(state.dirty.is_empty());
+                assert!(!state.dirty_queued[owner]);
+            }
+            heap.collect_incremental(&[owner], 1);
+            if heap.incremental_mark.lock().is_none() {
+                break;
+            }
+        }
+        assert!(heap.incremental_mark.lock().is_none());
+    }
+
+    #[test]
+    fn map_cursor_preserves_fixed_record_private_lifo_order() {
+        let heap = Heap::new();
+        let owner = heap.allocate(map([])).unwrap();
+        let fixed = heap.allocate(HeapObj::placeholder()).unwrap();
+        let low_key = heap.allocate(HeapObj::placeholder()).unwrap();
+        let low_value = heap.allocate(HeapObj::placeholder()).unwrap();
+        let high_key = heap.allocate(HeapObj::placeholder()).unwrap();
+        let high_value = heap.allocate(HeapObj::placeholder()).unwrap();
+        let private = heap.allocate(HeapObj::placeholder()).unwrap();
+        heap.with_obj(owner, |object| {
+            let HeapObj::Map(map) = object else {
+                panic!("Map fixture lost its type");
+            };
+            map.props.lock().insert(
+                PropertyKey::from("fixed"),
+                PropertyDescriptor::data(Value::Object(GcIdx(fixed))),
+            );
+            map.entries.lock().extend([
+                (
+                    MapKey::new(Value::Object(GcIdx(low_key))),
+                    Value::Object(GcIdx(low_value)),
+                ),
+                (
+                    MapKey::new(Value::Object(GcIdx(high_key))),
+                    Value::Object(GcIdx(high_value)),
+                ),
+            ]);
+        });
+        heap.with_private_elements(owner, |elements| {
+            elements.insert(
+                PrivateSlotKey::Private(PrivateNameKey {
+                    id: 8,
+                    description: Arc::from("map-cursor-order"),
+                }),
+                PrivateSlot::Value(Value::Object(GcIdx(private))),
+            );
+        });
+
+        heap.collect_incremental(&[owner], 1);
+        assert_eq!(
+            heap.incremental_mark
+                .lock()
+                .as_ref()
+                .unwrap()
+                .worklist
+                .last(),
+            Some(&TraceWork::Cell(private))
+        );
+        heap.collect_incremental(&[owner], 1);
+        assert_eq!(
+            pending_vec_trace(
+                heap.incremental_mark.lock().as_ref().unwrap(),
+                owner,
+                VecTraceKind::MapEntries,
+            )
+            .map(|trace| trace.next),
+            Some(2)
+        );
+        heap.collect_incremental(&[owner], 1);
+        {
+            let state = heap.incremental_mark.lock();
+            let state = state.as_ref().unwrap();
+            assert_eq!(state.worklist.last(), Some(&TraceWork::Cell(high_value)));
+            assert!(state.worklist.contains(&TraceWork::Cell(high_key)));
+            assert!(state.worklist.contains(&TraceWork::Cell(fixed)));
+            assert_eq!(
+                pending_vec_trace(state, owner, VecTraceKind::MapEntries).map(|trace| trace.next),
+                Some(1)
+            );
+        }
+        heap.collect_incremental(&[owner], 1);
+        heap.collect_incremental(&[owner], 1);
+        heap.collect_incremental(&[owner], 1);
+        let state = heap.incremental_mark.lock();
+        let state = state.as_ref().unwrap();
+        assert_eq!(state.worklist.last(), Some(&TraceWork::Cell(low_value)));
+        assert!(state.worklist.contains(&TraceWork::Cell(low_key)));
+        assert!(state.worklist.contains(&TraceWork::Cell(fixed)));
+    }
+
+    #[test]
+    fn usize_max_uses_direct_map_trace_and_completes_pending_cursor() {
+        let direct_heap = Heap::new();
+        let key = direct_heap.allocate(HeapObj::placeholder()).unwrap();
+        let value = direct_heap.allocate(HeapObj::placeholder()).unwrap();
+        let owner = direct_heap
+            .allocate(map([(
+                Value::Object(GcIdx(key)),
+                Value::Object(GcIdx(value)),
+            )]))
+            .unwrap();
+        direct_heap.collect_incremental(&[owner], usize::MAX);
+        assert!(direct_heap.incremental_mark.lock().is_none());
+        assert_eq!(direct_heap.live_count(), 3);
+
+        let pending_heap = Heap::new();
+        let key = pending_heap.allocate(HeapObj::placeholder()).unwrap();
+        let value = pending_heap.allocate(HeapObj::placeholder()).unwrap();
+        let owner = pending_heap
+            .allocate(map([
+                (Value::Number(0.0), Value::Undefined),
+                (Value::Object(GcIdx(key)), Value::Object(GcIdx(value))),
+            ]))
+            .unwrap();
+        pending_heap.collect_incremental(&[owner], 1);
+        assert_eq!(
+            pending_vec_trace(
+                pending_heap.incremental_mark.lock().as_ref().unwrap(),
+                owner,
+                VecTraceKind::MapEntries,
+            )
+            .map(|trace| trace.next),
+            Some(2)
+        );
+        pending_heap.collect_incremental(&[owner], usize::MAX);
+        assert!(pending_heap.incremental_mark.lock().is_none());
+        assert_eq!(pending_heap.live_count(), 3);
     }
 
     #[test]

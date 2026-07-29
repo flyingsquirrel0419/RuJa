@@ -270,16 +270,22 @@ guarantees are required.
   management follow-up, not an observable identity or method-semantics gap.
 - Incremental GC's `budget` limits trace work units: heap-cell headers,
   physical and dirty pre-sweep retrace visits, and each Array/internal Iterator
-  item, Promise handler, or FinalizationRegistry cell. Vector cursors use a
-  pass-start length snapshot, and a removed slot still consumes one unit.
+  item, Promise handler, FinalizationRegistry cell, or Map entry. Container
+  cursors use a pass-start length snapshot, and a removed slot still consumes
+  one unit.
   Consecutive records fitting the current slice share one lock scope;
   `usize::MAX` intentionally uses the direct atomic tracer. Registry targets
   and unregister tokens remain weak, so only held values are strong cursor
-  edges. Already-scanned objects accessed between retrace slices are
-  conservatively deduplicated and revisited before sweep. One Promise handler
-  can still trace unbounded nested AsyncFunction stack, local, and catch
-  vectors in one unit. One large object's ordinary properties,
-  Map/Set/WeakMap entries, LazyGenerator state, root/bitmap setup, weak cleanup,
+  edges. Already-scanned objects accessed for mutation between retrace slices
+  are conservatively deduplicated and revisited before sweep; collection,
+  ordinary Get/HasProperty/GetPrototypeOf, and iterable read snapshots retain
+  active-root safety without scheduling a revisit. Other pure observer paths
+  still use conservative mutation access and can schedule unnecessary dirty
+  revisits; if repeated between every slice, they can delay or prevent cycle
+  completion until observation stops. Broader access classification remains
+  pending. One Promise handler can still trace unbounded nested AsyncFunction
+  stack, local, and catch vectors in one unit. One large object's ordinary properties,
+  Set/WeakMap entries, LazyGenerator state, root/bitmap setup, weak cleanup,
   and the atomic sweep can still each take linear time in their local input.
   Strict pause-time bounds still require cursorizing those sources and adding a
   barrier-safe resumable sweep in later collector units.

@@ -8,7 +8,7 @@ fn require_map_receiver(vm: &Vm, this: Option<Value>, name: &str) -> error::Resu
     };
     if vm
         .heap
-        .with_obj(idx.0, |obj| matches!(obj, HeapObj::Map(_)))
+        .with_obj_read(idx.0, |obj| matches!(obj, HeapObj::Map(_)))
     {
         Ok(idx)
     } else {
@@ -592,7 +592,7 @@ fn finish_collection_iterator(vm: &mut Vm, iter_idx: GcIdx) -> error::Result<Val
 }
 
 fn map_entry_at(vm: &Vm, idx: GcIdx, index: usize) -> error::Result<Option<(Value, Value)>> {
-    Ok(vm.heap.with_obj(idx.0, |obj| {
+    Ok(vm.heap.with_obj_read(idx.0, |obj| {
         if let HeapObj::Map(map) = obj {
             map.entries
                 .lock()
@@ -645,7 +645,7 @@ fn set_value_at(
 }
 
 fn map_keys_in_order(vm: &Vm, idx: GcIdx) -> Vec<MapKey> {
-    vm.heap.with_obj(idx.0, |obj| {
+    vm.heap.with_obj_read(idx.0, |obj| {
         if let HeapObj::Map(map) = obj {
             map.entries.lock().keys().cloned().collect()
         } else {
@@ -1236,7 +1236,7 @@ pub(crate) fn map_set(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error
 pub(crate) fn map_get(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let key = args.first().cloned().unwrap_or(Value::Undefined);
     let idx = require_map_receiver(vm, this, "Map.prototype.get")?;
-    Ok(vm.heap.with_obj(idx.0, |obj| {
+    Ok(vm.heap.with_obj_read(idx.0, |obj| {
         if let HeapObj::Map(m) = obj {
             m.entries
                 .lock()
@@ -1251,7 +1251,7 @@ pub(crate) fn map_get(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error
 pub(crate) fn map_has(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let key = args.first().cloned().unwrap_or(Value::Undefined);
     let idx = require_map_receiver(vm, this, "Map.prototype.has")?;
-    Ok(Value::Bool(vm.heap.with_obj(idx.0, |obj| {
+    Ok(Value::Bool(vm.heap.with_obj_read(idx.0, |obj| {
         if let HeapObj::Map(m) = obj {
             m.entries.lock().contains_key(&MapKey::new(key))
         } else {
@@ -1276,7 +1276,7 @@ fn canonicalize_keyed_collection_key(value: Value) -> Value {
 }
 
 fn map_get_direct(vm: &Vm, idx: GcIdx, key: &Value) -> Option<Value> {
-    vm.heap.with_obj(idx.0, |obj| {
+    vm.heap.with_obj_read(idx.0, |obj| {
         if let HeapObj::Map(m) = obj {
             m.entries.lock().get(&MapKey::new(key.clone())).cloned()
         } else {
@@ -1314,7 +1314,7 @@ fn reserve_map_root_slots(
 }
 
 fn reserve_map_entry(vm: &mut Vm, idx: GcIdx, key: &MapKey) -> error::Result<()> {
-    let needs_entry = vm.heap.with_obj(idx.0, |obj| {
+    let needs_entry = vm.heap.with_obj_read(idx.0, |obj| {
         let HeapObj::Map(map) = obj else {
             return false;
         };
@@ -2464,7 +2464,7 @@ pub(crate) fn map_size(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> err
             "Map.prototype.size getter called on non-Map".to_string(),
         ));
     };
-    vm.heap.with_obj(idx.0, |obj| {
+    vm.heap.with_obj_read(idx.0, |obj| {
         if let HeapObj::Map(m) = obj {
             Ok(Value::Number(m.entries.lock().len() as f64))
         } else {
@@ -2477,7 +2477,7 @@ pub(crate) fn map_size(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> err
 /// Collect Map entries as [key, value] arrays.
 pub(crate) fn map_entries_list(vm: &mut Vm, this: &Option<Value>) -> error::Result<Vec<Value>> {
     let idx = require_map_receiver(vm, this.clone(), "Map.prototype.entries")?;
-    let pairs: Vec<(Value, Value)> = vm.heap.with_obj(idx.0, |obj| {
+    let pairs: Vec<(Value, Value)> = vm.heap.with_obj_read(idx.0, |obj| {
         if let HeapObj::Map(m) = obj {
             m.entries
                 .lock()
@@ -2533,7 +2533,7 @@ pub(crate) fn map_for_each(
     while cursor < queue.len() {
         let key = queue[cursor].clone();
         cursor += 1;
-        let value = vm.heap.with_obj(idx.0, |obj| {
+        let value = vm.heap.with_obj_read(idx.0, |obj| {
             if let HeapObj::Map(map) = obj {
                 map.entries.lock().get(&key).cloned()
             } else {

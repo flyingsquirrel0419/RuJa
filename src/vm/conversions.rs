@@ -489,7 +489,7 @@ impl Vm {
         if let Some(desc) = self.typed_array_integer_index_own_property_descriptor(obj, key) {
             return desc.is_some();
         }
-        self.heap.with_obj(idx.0, |o| {
+        self.heap.with_obj_read(idx.0, |o| {
             if let HeapObj::ModuleNamespace(namespace) = o {
                 if key
                     .as_str()
@@ -535,11 +535,11 @@ impl Vm {
         }
         let ordinary = self
             .heap
-            .with_obj(idx.0, |o| o.props().lock().get(key).cloned());
+            .with_obj_read(idx.0, |o| o.props().lock().get(key).cloned());
         if ordinary.is_some() {
             return ordinary;
         }
-        let namespace_binding = self.heap.with_obj(idx.0, |o| {
+        let namespace_binding = self.heap.with_obj_read(idx.0, |o| {
             if let HeapObj::ModuleNamespace(namespace) = o {
                 return key
                     .as_str()
@@ -559,7 +559,7 @@ impl Vm {
             return Some(desc);
         }
         if key.as_str().is_some_and(|s| s == "length") {
-            let array_length = self.heap.with_obj(idx.0, |o| {
+            let array_length = self.heap.with_obj_read(idx.0, |o| {
                 let HeapObj::Array(array) = o else {
                     return None;
                 };
@@ -584,7 +584,7 @@ impl Vm {
                 return Some(desc);
             }
         }
-        let string_exotic = self.heap.with_obj(idx.0, |o| {
+        let string_exotic = self.heap.with_obj_read(idx.0, |o| {
             if let HeapObj::Object(od) = o {
                 return od.primitive.lock().clone();
             }
@@ -647,7 +647,7 @@ impl Vm {
                     return Ok(false);
                 };
                 let idx = *idx;
-                let proxy_info = self.heap.with_obj(idx.0, |object| {
+                let proxy_info = self.heap.with_obj_read(idx.0, |object| {
                     let HeapObj::Proxy(proxy) = object else {
                         return None;
                     };
@@ -715,13 +715,13 @@ impl Vm {
                 if self.has_own_property_key_raw(&current, key) {
                     return Ok(true);
                 }
-                let prototype = self.heap.with_obj(idx.0, |object| {
+                let prototype = self.heap.with_obj_read(idx.0, |object| {
                     object.proto().lock().clone().unwrap_or(Value::Undefined)
                 });
                 let Value::Object(prototype_idx) = &prototype else {
                     return Ok(false);
                 };
-                let prototype_is_proxy = self.heap.with_obj(prototype_idx.0, |object| {
+                let prototype_is_proxy = self.heap.with_obj_read(prototype_idx.0, |object| {
                     matches!(object, HeapObj::Proxy(_))
                 });
                 self.advance_property_edge(&mut traversal, idx, &prototype, !prototype_is_proxy)?;
@@ -739,7 +739,7 @@ impl Vm {
             if let Some(desc) = self.typed_array_integer_index_own_property_descriptor(obj, &pkey) {
                 return desc.is_some();
             }
-            self.heap.with_obj(idx.0, |o| {
+            self.heap.with_obj_read(idx.0, |o| {
                 if let HeapObj::ModuleNamespace(namespace) = o {
                     if namespace.exports.lock().contains_key(name) {
                         return true;
@@ -769,7 +769,7 @@ impl Vm {
         match obj {
             Value::Object(idx) => {
                 let (is_arr, has_dense_index, has_boxed_string_property) =
-                    self.heap.with_obj(idx.0, |o| {
+                    self.heap.with_obj_read(idx.0, |o| {
                         if let HeapObj::Array(a) = o {
                             if name == "length"
                                 && a.is_arguments.load(std::sync::atomic::Ordering::Relaxed)
@@ -837,7 +837,7 @@ impl Vm {
             return desc.is_some();
         }
         match obj {
-            Value::Object(idx) => self.heap.with_obj(idx.0, |o| {
+            Value::Object(idx) => self.heap.with_obj_read(idx.0, |o| {
                 if let HeapObj::ModuleNamespace(namespace) = o {
                     if namespace.exports.lock().contains_key(name) {
                         return true;

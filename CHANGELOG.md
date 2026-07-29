@@ -4,6 +4,35 @@
 
 ### Changed
 
+- Finite-budget incremental GC now cursorizes ordered Map entries, charging one
+  work unit for each key/value record while scanning each slice under one lock.
+  The cursor snapshots entry count and counts down, so append cannot extend a
+  pass and removed records still consume bounded work. Mutation access schedules
+  fresh retraces for replacement, shift removal, clear, and reinsertion, while
+  read-only access paths cover collection reads, ordinary Get/HasProperty,
+  GetPrototypeOf, iterator brands, and TypedArray iterable probes so those
+  operations do not repeatedly dirty an active Map cursor. Newly reached cells
+  use the direct Map tracer for `usize::MAX`; previously parked cursors drain
+  without yielding. Exact tests
+  cover key/value roots, one-record accounting, batching, Mark growth, removed
+  records, Retrace mutation, repeated direct and compiled JS observations,
+  two-record LIFO order, and direct/pending-MAX liveness; focused GC is
+  **48/48**. Same-host parent/current full-GC ranges overlap at
+  **448.09-476.02 us** and **444.98-467.40 us**. The
+  stateful budget-256 benchmark changed from atomic **459.93-466.37 us** to an
+  amortized **754.22-891.68 ns** per invocation. Set
+  generation/compaction state, WeakMap ephemerons, and LazyGenerator's ordered
+  multi-vector state require separate cursor designs. Remaining read-only
+  own-descriptor/key enumeration, extensibility/integrity, classification,
+  Promise/await, RegExp/String/Array, and host-observer paths still use the
+  conservative mutation access API and remain a separate barrier-classification
+  unit. Final gates pass all-target/all-feature library **363/363**, release
+  library **360/360**, focused GC **48/48**, Python tooling **145/145** with four
+  absent-checkout skips, rustfmt, warnings-denied Clippy, wasm32, doctest, and
+  every benchmark smoke target. The pinned 204-file Map sweep remains
+  **144 pass / 1 fail / 59 skip**; the sole failure is the pre-existing
+  `Map.prototype[Symbol.toStringTag]` descriptor.
+
 - Finite-budget incremental GC now cursorizes pending Promise handlers and
   FinalizationRegistry cells alongside Array and internal Iterator vectors.
   Each pass snapshots record count, charges removed or compacted slots, scans

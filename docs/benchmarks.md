@@ -270,11 +270,11 @@ cargo bench --bench basic -- \
 ## Incremental vector and record tracing
 
 Finite-budget GC represents Array/internal Iterator items, Promise handlers,
-and FinalizationRegistry cells as snapshot-length cursors. Records that fit the
-current slice are scanned under one lock while each record still consumes one
-work unit. The ordinary `collect()` path uses `usize::MAX`, so newly reached
-vectors retain the preceding direct atomic tracer instead of constructing
-cursor work.
+FinalizationRegistry cells, and Map entries as snapshot-length cursors. Records
+that fit the current slice are scanned under one lock while each record still
+consumes one work unit. The ordinary `collect()` path uses `usize::MAX`, so
+newly reached vectors retain the preceding direct atomic tracer instead of
+constructing cursor work.
 
 The `gc_dense_primitive_array_100k` benchmark allocates one rooted Array with
 100,000 numeric items and repeatedly performs a complete Mark, Retrace, and
@@ -297,9 +297,20 @@ actually enters the cursorized path. Their aggregate timing includes periodic
 cycle setup, retrace, and sweep, so it is a regression signal rather than a
 pure per-record latency claim.
 
+The Map fixture contains 100,000 primitive key/value records. Before
+cursorization, repeated nominal budget-256 calls averaged
+**459.93-466.37 us** because each call still traced the complete Map. The
+stateful cursorized fixture averages **754.22-891.68 ns** per invocation across
+ordinary slices plus periodic cycle setup, retrace, and sweep. It is an
+amortized regression signal, not an individual-slice latency or tail bound.
+Interleaved 20-sample full-GC runs measured the parent at
+**448.09-476.02 us** and the final direct-fast-path implementation at
+**444.98-467.40 us**. The overlapping range shows no measured full-GC
+regression on this host; it is not a cross-machine throughput claim.
+
 ```sh
 cargo bench --bench basic -- \
-  'gc_dense_primitive_array_100k|gc_promise_handlers.*100k|gc_finalization_cells.*100k' \
+  'gc_dense_primitive_array_100k|gc_promise_handlers.*100k|gc_finalization_cells.*100k|gc_map_entries.*100k' \
   --quick
 ```
 

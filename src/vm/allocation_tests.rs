@@ -28,6 +28,111 @@ fn cache_test_reference(base: ReferenceBase) -> ReferenceRecord {
     }
 }
 
+#[test]
+fn ordinary_map_property_reads_do_not_restart_incremental_collection() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        "var incrementalReadMap = new Map(); \
+         for (let i = 0; i < 64; i++) incrementalReadMap.set(i, i); \
+         incrementalReadMap.extra = 1; \
+         function readIncrementalMap() { return incrementalReadMap.get(0); } \
+         function hasNamedIncrementalMap() { return 'missing' in incrementalReadMap; } \
+         function hasNumericIncrementalMap() { return 0 in incrementalReadMap; } \
+         function observeIncrementalMapPrototype() { \
+           return Object.getPrototypeOf(incrementalReadMap) === null; \
+         } \
+         function deleteIncrementalMapProperty() { \
+           return delete incrementalReadMap.extra; \
+         }",
+    )
+    .expect("failed to create Map fixture");
+    let map = vm.get_global("incrementalReadMap");
+    let Value::Object(map_index) = map else {
+        panic!("Map fixture was not an object");
+    };
+    let map = Value::Object(map_index);
+    let reader = vm.get_global("readIncrementalMap");
+    let named_has = vm.get_global("hasNamedIncrementalMap");
+    let numeric_has = vm.get_global("hasNumericIncrementalMap");
+    let prototype_observer = vm.get_global("observeIncrementalMapPrototype");
+    let delete_property = vm.get_global("deleteIncrementalMapProperty");
+
+    let mut retrace_reached_map = false;
+    for _ in 0..100_000 {
+        let roots = vm.collect_roots();
+        vm.heap.collect_incremental(&roots, 1);
+        if vm.heap.incremental_retrace_passed(map_index.0) {
+            retrace_reached_map = true;
+            break;
+        }
+    }
+    assert!(retrace_reached_map, "incremental retrace did not reach Map");
+    assert_eq!(
+        vm.call_function(&reader, &[], Some(Value::Undefined))
+            .expect("compiled Map read should succeed"),
+        Value::Number(0.0)
+    );
+    assert!(
+        !vm.heap.incremental_is_dirty(map_index.0),
+        "compiled Map read must not classify its receiver as mutated"
+    );
+    assert_eq!(
+        vm.call_function(&named_has, &[], Some(Value::Undefined))
+            .expect("named Map HasProperty should succeed"),
+        Value::Bool(false)
+    );
+    assert!(
+        !vm.heap.incremental_is_dirty(map_index.0),
+        "named HasProperty must not classify a Map as mutated"
+    );
+    assert_eq!(
+        vm.call_function(&numeric_has, &[], Some(Value::Undefined))
+            .expect("numeric Map HasProperty should succeed"),
+        Value::Bool(false)
+    );
+    assert!(
+        !vm.heap.incremental_is_dirty(map_index.0),
+        "numeric HasProperty must not classify a Map as mutated"
+    );
+    assert_eq!(
+        vm.call_function(&prototype_observer, &[], Some(Value::Undefined))
+            .expect("Map GetPrototypeOf should succeed"),
+        Value::Bool(false)
+    );
+    assert!(
+        !vm.heap.incremental_is_dirty(map_index.0),
+        "GetPrototypeOf must not classify a Map as mutated"
+    );
+    assert_eq!(
+        vm.call_function(&delete_property, &[], Some(Value::Undefined))
+            .expect("compiled Map property deletion should succeed"),
+        Value::Bool(true)
+    );
+    assert!(
+        vm.heap.incremental_is_dirty(map_index.0),
+        "Map property deletion must retain the mutation barrier"
+    );
+
+    let mut completed = false;
+    for _ in 0..100_000 {
+        assert!(matches!(
+            vm.get_property(&map, "get")
+                .expect("Map property lookup should succeed"),
+            Value::Object(_)
+        ));
+        let roots = vm.collect_roots();
+        vm.heap.collect_incremental(&roots, 1);
+        if !vm.heap.incremental_in_progress() {
+            completed = true;
+            break;
+        }
+    }
+    assert!(
+        completed,
+        "ordinary Map property reads must not livelock incremental collection"
+    );
+}
+
 fn reference_created_by_opcode(
     vm: &mut Vm,
     opcode: Op,

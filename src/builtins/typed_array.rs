@@ -5562,7 +5562,7 @@ fn typed_array_constructor_with_kind(
                     length_tracking,
                 );
             }
-            let source_view = vm.heap.with_obj(idx.0, |obj| {
+            let source_view = vm.heap.with_obj_read(idx.0, |obj| {
                 let HeapObj::TypedArray(array) = obj else {
                     return None;
                 };
@@ -5593,7 +5593,7 @@ fn typed_array_constructor_with_kind(
                 }
             }
             let iterator_key = PropertyKey::symbol(vm.well_known_symbols.iterator);
-            let is_builtin_iterable = vm.heap.with_obj(idx.0, |o| {
+            let is_builtin_iterable = vm.heap.with_obj_read(idx.0, |o| {
                 matches!(
                     o,
                     HeapObj::Generator(_)
