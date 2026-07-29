@@ -31,7 +31,12 @@
   absent-checkout skips, rustfmt, warnings-denied Clippy, wasm32, doctest, and
   every benchmark smoke target. The pinned 204-file Map sweep remains
   **144 pass / 1 fail / 59 skip**; the sole failure is the pre-existing
-  `Map.prototype[Symbol.toStringTag]` descriptor.
+  `Map.prototype[Symbol.toStringTag]` descriptor. Implementation commit
+  `ceee602` passes ordinary CI `30454181926` (**2/2**) and all **37/37** jobs
+  in full run `30454181980`. Against preceding clean full run `30445593831`,
+  all **32/32** result artifacts are byte-identical; aggregate remains
+  **32260 pass / 5028 fail / 11178 skip / 3 timeout / 0 error** over 48469
+  files, with 37288 run.
 
 - Finite-budget incremental GC now cursorizes pending Promise handlers and
   FinalizationRegistry cells alongside Array and internal Iterator vectors.
