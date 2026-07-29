@@ -2,7 +2,9 @@
 
 use super::intl_aliases::{TRANSFORM_VALUE_ALIASES, UNICODE_TYPE_ALIASES};
 use super::intl_locale_info::{
-    CALENDAR_PREFERENCES, HOUR_CYCLES, SCRIPT_DIRECTIONS, TIME_ZONES, WEEK_INFORMATION,
+    CALENDAR_PREFERENCES, HOUR_CYCLES, SCRIPT_DIRECTIONS, SUPPORTED_VALUE_CALENDARS,
+    SUPPORTED_VALUE_NUMBERING_SYSTEMS, SUPPORTED_VALUE_TIME_ZONES, SUPPORTED_VALUE_UNITS,
+    TIME_ZONES, WEEK_INFORMATION,
 };
 use super::{
     accessor_get_prop, const_prop, data_prop, make_value_array_in_current_realm,
@@ -1026,16 +1028,16 @@ fn string_list_data(
         .and_then(|index| table.get(index).map(|(_, values)| *values))
 }
 
-fn string_list_value(vm: &mut Vm, values: &[&str]) -> error::Result<Value> {
+fn intl_string_list_value(vm: &mut Vm, values: &[&str]) -> error::Result<Value> {
     let work = values.iter().try_fold(values.len(), |work, value| {
         work.checked_add(value.len().div_ceil(64))
-            .ok_or_else(|| Error::range("Intl.Locale result is too large"))
+            .ok_or_else(|| Error::range("Intl result is too large"))
     })?;
     vm.consume_fuel_units(work.min(i64::MAX as usize) as i64)?;
     let mut items = Vec::new();
     items
         .try_reserve_exact(values.len())
-        .map_err(|_| Error::range("Intl.Locale result is too large"))?;
+        .map_err(|_| Error::range("Intl result is too large"))?;
     items.extend(values.iter().map(|value| Value::String(Arc::from(*value))));
     make_value_array_in_current_realm(vm, items)
 }
@@ -1162,7 +1164,7 @@ fn locale_get_calendars(vm: &mut Vm, _: &[Value], this: Option<Value>) -> error:
         return make_value_array_in_current_realm(vm, vec![Value::String(calendar)]);
     }
     let preference = region_preference(vm, &record.locale)?;
-    string_list_value(
+    intl_string_list_value(
         vm,
         preferred_region_data(CALENDAR_PREFERENCES, &preference).unwrap_or(&["gregory"]),
     )
@@ -1173,7 +1175,7 @@ fn locale_get_collations(vm: &mut Vm, _: &[Value], this: Option<Value>) -> error
     if let Some(collation) = record.collation {
         return make_value_array_in_current_realm(vm, vec![Value::String(collation)]);
     }
-    string_list_value(vm, &["emoji", "eor"])
+    intl_string_list_value(vm, &["emoji", "eor"])
 }
 
 fn locale_get_hour_cycles(vm: &mut Vm, _: &[Value], this: Option<Value>) -> error::Result<Value> {
@@ -1182,7 +1184,7 @@ fn locale_get_hour_cycles(vm: &mut Vm, _: &[Value], this: Option<Value>) -> erro
         return make_value_array_in_current_realm(vm, vec![Value::String(hour_cycle)]);
     }
     let preference = region_preference(vm, &record.locale)?;
-    string_list_value(
+    intl_string_list_value(
         vm,
         preferred_region_data(HOUR_CYCLES, &preference).unwrap_or(&["h23"]),
     )
@@ -1197,7 +1199,7 @@ fn locale_get_numbering_systems(
     if let Some(numbering_system) = record.numbering_system {
         return make_value_array_in_current_realm(vm, vec![Value::String(numbering_system)]);
     }
-    string_list_value(vm, &["latn"])
+    intl_string_list_value(vm, &["latn"])
 }
 
 fn locale_get_time_zones(vm: &mut Vm, _: &[Value], this: Option<Value>) -> error::Result<Value> {
@@ -1205,7 +1207,7 @@ fn locale_get_time_zones(vm: &mut Vm, _: &[Value], this: Option<Value>) -> error
     let Some(region) = locale_tag_parts_metered(vm, &record.locale)?.region else {
         return Ok(Value::Undefined);
     };
-    string_list_value(vm, string_list_data(TIME_ZONES, &region).unwrap_or(&[]))
+    intl_string_list_value(vm, string_list_data(TIME_ZONES, &region).unwrap_or(&[]))
 }
 
 fn locale_get_text_info(vm: &mut Vm, _: &[Value], this: Option<Value>) -> error::Result<Value> {
@@ -1324,6 +1326,21 @@ fn intl_get_canonical_locales(
     let list = canonicalize_list(vm, &locales);
     vm.unpin_many(locales_pin);
     make_value_array_in_current_realm(vm, list?)
+}
+
+fn intl_supported_values_of(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    let key = vm.to_string(args.first().unwrap_or(&Value::Undefined))?;
+    let values = match key.as_ref() {
+        "calendar" => SUPPORTED_VALUE_CALENDARS,
+        // Formatter-dependent lists remain empty until their service
+        // constructors establish which values RuJa actually supports.
+        "collation" | "currency" => &[],
+        "numberingSystem" => SUPPORTED_VALUE_NUMBERING_SYSTEMS,
+        "timeZone" => SUPPORTED_VALUE_TIME_ZONES,
+        "unit" => SUPPORTED_VALUE_UNITS,
+        _ => return Err(Error::range("Invalid key for Intl.supportedValuesOf")),
+    };
+    intl_string_list_value(vm, values)
 }
 
 fn build_locale_intrinsic_in_env(
@@ -1452,22 +1469,41 @@ pub(crate) fn build_intl_in_env(
     env: GcIdx,
     object_proto: Value,
 ) -> error::Result<Value> {
+    vm.try_reserve_gc_pins(4)?;
     let mut pin_count = vm.pin(&object_proto);
     let result = (|| {
         let locale = build_locale_intrinsic_in_env(vm, env, object_proto.clone())?;
         pin_count += vm.pin(&locale);
-        let method_idx = vm.new_native_function_in_env_with_gc_retry(
+        let canonical_locales_idx = vm.new_native_function_in_env_with_gc_retry(
             "getCanonicalLocales",
             intl_get_canonical_locales as NativeFn,
             1,
             env,
         )?;
-        let method = Value::Object(method_idx);
-        pin_count += vm.pin(&method);
+        let canonical_locales = Value::Object(canonical_locales_idx);
+        pin_count += vm.pin(&canonical_locales);
+        let supported_values_idx = vm.new_native_function_in_env_with_gc_retry(
+            "supportedValuesOf",
+            intl_supported_values_of as NativeFn,
+            1,
+            env,
+        )?;
+        let supported_values = Value::Object(supported_values_idx);
+        pin_count += vm.pin(&supported_values);
 
         let mut props = IndexMap::new();
+        props
+            .try_reserve(4)
+            .map_err(|_| Error::range("Intl namespace is too large"))?;
         props.insert(PropertyKey::from("Locale"), data_prop(locale));
-        props.insert(PropertyKey::from("getCanonicalLocales"), data_prop(method));
+        props.insert(
+            PropertyKey::from("getCanonicalLocales"),
+            data_prop(canonical_locales),
+        );
+        props.insert(
+            PropertyKey::from("supportedValuesOf"),
+            data_prop(supported_values),
+        );
         let mut tag = PropertyDescriptor::data(Value::String(Arc::from("Intl")));
         tag.writable = false;
         tag.enumerable = false;
@@ -1496,7 +1532,10 @@ mod tests {
         canonical_subdivision_region, canonicalize_locale, region_preference, string_list_data,
         week_information, CALENDAR_PREFERENCES, HOUR_CYCLES, TIME_ZONES,
     };
+    use crate::value::Value;
+    use crate::vm::OwnKeyConsumerReservationSite;
     use crate::vm::Vm;
+    use std::sync::Arc;
 
     #[test]
     fn canonicalizes_cldr_aliases_and_extensions() {
@@ -1532,6 +1571,39 @@ mod tests {
         for (input, expected) in cases {
             assert_eq!(canonicalize_locale(input).unwrap().as_ref(), expected);
         }
+    }
+
+    #[test]
+    fn supported_values_publication_failures_release_roots_and_recover() {
+        let mut vm = Vm::new().expect("failed to initialize VM");
+        let baseline_pins = vm.gc_pins.len();
+
+        vm.fail_own_key_consumer_reservation =
+            Some((OwnKeyConsumerReservationSite::ArrayPresence, 0));
+        let reserve_error = vm
+            .run("Intl.supportedValuesOf('calendar')")
+            .expect_err("Array presence reservation failure should propagate");
+        assert!(reserve_error
+            .to_string()
+            .contains("Array presence bitmap is too large"));
+        assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+        vm.gc();
+        let exact_cap = vm.heap.live_count();
+        vm.set_max_heap_objects(Some(exact_cap));
+        let cap_error = vm
+            .run("Intl.supportedValuesOf('calendar')")
+            .expect_err("exact live-object cap should reject the result Array");
+        assert!(cap_error.to_string().contains("heap limit exceeded"));
+        assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+        vm.set_max_heap_objects(None);
+        assert_eq!(
+            vm.run("Intl.supportedValuesOf('calendar')[0]")
+                .expect("VM should recover after publication failures"),
+            Value::String(Arc::from("buddhist"))
+        );
+        assert_eq!(vm.gc_pins.len(), baseline_pins);
     }
 
     #[test]

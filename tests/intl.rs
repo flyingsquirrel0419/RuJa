@@ -128,6 +128,78 @@ fn detached_foreign_method_ignores_replaced_realm_globals() {
 }
 
 #[test]
+fn supported_values_of_has_spec_surface_and_uses_its_function_realm() {
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var method = other.Intl.supportedValuesOf;
+            var arrayPrototype = other.Array.prototype;
+            var rangePrototype = other.RangeError.prototype;
+            var descriptor = Object.getOwnPropertyDescriptor(
+              other.Intl, "supportedValuesOf"
+            );
+            var log = [];
+            var key = {
+              toString: function () { log.push("toString"); return "calendar"; }
+            };
+            other.Array = function PoisonedArray() {};
+            other.RangeError = function PoisonedRangeError() {};
+            delete other.Intl;
+            var values = method(key);
+            var range;
+            var type;
+            try { method("CALENDAR"); } catch (error) { range = error; }
+            try { method(Symbol()); } catch (error) { type = error; }
+            var constructible = true;
+            try { Reflect.construct(method, ["calendar"]); }
+            catch (error) { constructible = false; }
+            [
+              method.name, method.length,
+              descriptor.writable, descriptor.enumerable, descriptor.configurable,
+              Object.getPrototypeOf(values) === arrayPrototype,
+              Object.getPrototypeOf(range) === rangePrototype,
+              type.name,
+              log.join(","),
+              constructible
+            ].join(":");
+        "#),
+        Value::String(Arc::from(
+            "supportedValuesOf:1:true:false:true:true:true:TypeError:toString:false"
+        ))
+    );
+}
+
+#[test]
+fn supported_values_of_returns_fresh_sorted_required_data() {
+    assert_eq!(
+        run(r#"
+            var calendars = Intl.supportedValuesOf("calendar");
+            var collations = Intl.supportedValuesOf("collation");
+            var currencies = Intl.supportedValuesOf("currency");
+            var numbering = Intl.supportedValuesOf("numberingSystem");
+            var timeZones = Intl.supportedValuesOf("timeZone");
+            var units = Intl.supportedValuesOf("unit");
+            function sorted(values) {
+              return values.join(",") === values.slice().sort().join(",");
+            }
+            [
+              calendars.length, calendars[0], calendars[15], sorted(calendars),
+              collations.length, currencies.length,
+              numbering.length, numbering.includes("onao"), sorted(numbering),
+              timeZones.length, timeZones.includes("UTC"),
+              timeZones.includes("Etc/GMT+12"),
+              timeZones.includes("Etc/UTC"), sorted(timeZones),
+              units.length, units.includes("mile-scandinavian"), sorted(units),
+              Intl.supportedValuesOf("calendar") !== calendars
+            ].join(":");
+        "#),
+        Value::String(Arc::from(
+            "16:buddhist:roc:true:0:0:78:true:true:445:true:true:false:true:45:true:true:true"
+        ))
+    );
+}
+
+#[test]
 fn intl_intrinsics_survive_collection() {
     let mut vm = Vm::new().expect("failed to initialize VM");
     vm.run(
@@ -144,12 +216,13 @@ fn intl_intrinsics_survive_collection() {
             r#"
                 Intl.getCanonicalLocales("sh")[0] + ":" +
                 other.Intl.getCanonicalLocales("und-u-kb-yes")[0] + ":" +
-                locale.toString() + ":" + otherLocale.maximize().toString();
+                locale.toString() + ":" + otherLocale.maximize().toString() + ":" +
+                Intl.supportedValuesOf("unit").includes("acre");
             "#,
         )
         .expect("Intl intrinsics should remain live"),
         Value::String(Arc::from(
-            "sr-Latn:und-u-kb:sr-Latn-u-ca-gregory:th-Thai-TH"
+            "sr-Latn:und-u-kb:sr-Latn-u-ca-gregory:th-Thai-TH:true"
         ))
     );
 }
@@ -403,6 +476,12 @@ fn locale_list_and_tag_scans_are_fuel_bounded_and_reusable() {
         .run("variantLocaleObject.getTextInfo()")
         .expect_err("Locale-info likely-subtag expansion should precharge quadratic work");
     assert!(locale_info_error.to_string().contains("fuel"));
+
+    vm.set_fuel(Some(100));
+    let supported_values_error = vm
+        .run("Intl.supportedValuesOf('timeZone')")
+        .expect_err("large supportedValuesOf result should precharge publication work");
+    assert!(supported_values_error.to_string().contains("fuel"));
 
     vm.set_fuel(None);
     assert_eq!(

@@ -133,9 +133,10 @@ logical assignment. TypedArray `fill`, `values`,
 `join`, `set`, `subarray`, and default iteration are also included.
 
 **Intentionally unsupported**: bare-specifier ES Module host resolution,
-source-phase and deferred imports, Intl formatter and Locale-info data APIs,
-a public multi-agent embedder API, and tail-call optimization. `%Intl%`,
-`Intl.getCanonicalLocales`, and the base `Intl.Locale` surface are supported.
+source-phase and deferred imports, Intl formatter APIs, a public multi-agent
+embedder API, and tail-call optimization. `%Intl%`,
+`Intl.getCanonicalLocales`, `Intl.supportedValuesOf`, and the complete
+`Intl.Locale` surface are supported.
 File-backed relative module graphs, dynamic
 imports, namespace objects, and JSON/text import attributes are supported in
 the frozen module slice.
@@ -12556,4 +12557,37 @@ fuel precharging.
 - 선택한 방식: Pin CLDR 48.2; generate calendar/hour/week/script/time-zone data; canonicalize Windows-region zone lists through timezone.xml IANA identifiers and union region-encoded zones; treat the emitted calendar set as Locale-info AvailableCalendars; use ECMA formatter-absence fallbacks for collations and numbering systems; implement RegionPreference and Realm-local publication directly in the existing Locale intrinsic.
 - 다른 대안 대신 이 방식을 선택한 이유: Test-only tables preserve hidden correctness gaps; host files are nondeterministic; formatter-first coupling makes Locale inspection unnecessarily broad; world-only data cannot satisfy region semantics. Generated data is reproducible, runtime-allocation-light, wasm-compatible, and independently reviewable.
 - 장점, 단점 및 영향: All 52 pinned files run without skips, locale data lookup is sorted static binary search, and no XML/network work occurs at runtime. The generated Rust source adds about 31 KiB plus compiled static data; CLDR upgrades intentionally change observable preferences and require regeneration/review. Collation and numbering results broaden when their future formatter locale data lands.
+```
+
+## `Intl.supportedValuesOf` exact admission
+
+Pinned Test262 has 25 files below `intl402/Intl/supportedValuesOf`. The frozen
+standalone manifest owns 15 files covering the built-in contract, key
+coercion/errors, all six result shapes, required calendar and numbering-system
+members, primary/noncontinental time zones, and sanctioned units. Exact local
+and CI execution requires **15 pass / 0 fail / 0 skip**. A second whole-scope
+gate requires **15 pass / 0 fail / 10 skip** so formatter-dependent
+DateTimeFormat, DisplayNames, Collator, NumberFormat, and RelativeTimeFormat
+files cannot enter accidentally.
+
+Tooling compares the 15-file manifest to every live non-formatter file and
+requires exact feature metadata in both runner and analyzer. `Intl-enumeration`
+remains a broad skip everywhere else; only the frozen paths remove their actual
+feature sets. Future siblings and all ten held formatter files remain
+scope-closed even if their metadata changes.
+
+Direct tests additionally cover detached function-Realm Arrays and errors,
+replaced globals, fresh results, descriptor/constructibility behavior, GC
+survival, fuel exhaustion, Array bitmap reservation failure, exact live-object
+heap caps, pin balance, and VM recovery. Generated data is checked against
+CLDR 48.2 commit `11299982335beb974c1c63c45265184e759c0f41`.
+
+```text
+[Decision Log]
+- 목적과 의도: Move the independently complete Intl.supportedValuesOf behavior into measurable supported conformance without claiming absent formatters.
+- 기존 구현 및 제약 조건: All 25 files shared the broad Intl-enumeration gate; ten instantiate service constructors that RuJa does not implement, while the other 15 completely specify the standalone method and data invariants.
+- 검토한 주요 대안: Remove Intl-enumeration globally, admit the directory prefix, leave all files skipped, report forced runs only, or freeze the standalone metadata and separately assert the held formatter boundary.
+- 선택한 방식: Freeze 15 exact paths and metadata, scope-close the whole directory, hard-gate 15/0/0, and independently hard-gate the full directory at 15/0/10.
+- 다른 대안 대신 이 방식을 선택한 이유: Global and prefix admission create false formatter support, skips hide completed behavior, and forced-green output does not affect supported policy. Dual exact/scope gates prove both progress and restraint.
+- 장점, 단점 및 영향: Supported accounting gains exactly 15 passes with no failures; ten formatter integration files remain explicit future work and cannot drift into execution silently.
 ```

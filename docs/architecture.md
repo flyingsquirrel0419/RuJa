@@ -3370,7 +3370,40 @@ fallibly. Runtime code does no XML parsing, filesystem access, or network I/O.
 - 검토한 주요 대안: Runtime CLDR parsing, host ICU bindings, test-only maps, ICU4X formatter crates, world-only fallbacks, or generated CLDR tables plus existing locale expansion.
 - 선택한 방식: Generate sorted immutable tables from pinned CLDR; combine timezone.xml and windowsZones; model `001` inheritance during lookup; preserve formatter-absence fallbacks; publish fresh Realm-local values from branded methods.
 - 다른 대안 대신 이 방식을 선택한 이유: Runtime and host providers are nondeterministic or resource-heavy, test maps are incomplete, formatter crates widen the unit, and world defaults erase required region distinctions. The chosen boundary is broad data with narrow runtime machinery.
-- 장점, 단점 및 영향: Locale-info is reproducible, fast, network-free at runtime, and exact over 52 pinned tests. Generated source is roughly 31 KiB and CLDR preference updates are observable; formatter constructors will later replace only the documented collation/numbering fallback paths.
+- 장점, 단점 및 영향: Locale-info is reproducible, fast, network-free at runtime, and exact over 52 pinned tests. Its original generated source was roughly 31 KiB; the shared file is roughly 44 KiB after the subsequent supportedValuesOf tables. CLDR preference updates are observable, and formatter constructors will later replace only the documented collation/numbering fallback paths.
+```
+
+### `Intl.supportedValuesOf` capability boundary
+
+`Intl.supportedValuesOf` is installed as a Realm-local non-constructor next to
+`getCanonicalLocales`. It performs observable `ToString`, dispatches only the
+six case-sensitive specification keys, and publishes a newly allocated Array
+through the native function Realm. Static lists are already sorted and unique,
+so runtime work is linear publication rather than sorting or provider access.
+
+The existing pinned generator emits the ECMA-402 fixed 16-calendar and
+45-simple-unit lists, CLDR 48.2's 78 simple-digit numbering systems, and 445
+primary time-zone identifiers. Time-zone generation maps `Etc/UTC` and
+`Etc/GMT` links to `UTC`, removes `Etc/Unknown`, and retains primary geographic
+and nonzero `Etc/GMT` identifiers. Collation and currency are
+implementation-defined formatter capability sets; both remain empty until
+their service constructors establish real support. This avoids advertising
+values that no RuJa formatter can consume.
+
+List entry count and string chunks consume fuel before any result allocation.
+The native Vec reserves fallibly; contained values and the Realm Array
+prototype are pinned across Array allocation and GC retry. Fresh bounded
+`Arc<str>` bytes remain outside the heap-object cap, matching Locale-info's
+documented native-memory limitation.
+
+```text
+[Decision Log]
+- 목적과 의도: Implement the complete standalone Intl.supportedValuesOf contract while preserving honest formatter capability reporting and sandbox guarantees.
+- 기존 구현 및 제약 조건: Locale-info already generated regional data, but no global capability lists or formatter constructors existed; broad Intl-enumeration gating hid 25 files, ten of which directly instantiate absent formatters.
+- 검토한 주요 대안: Return test-only literals, expose every CLDR collation/currency, wait for all formatters, admit the whole directory, query host ICU at runtime, or generate fixed/pinned data and scope-close formatter integration.
+- 선택한 방식: Extend the pinned CLDR generator with normative fixed lists and primary time-zone filtering; expose empty formatter-owned capability sets; publish through the method Realm with shared fuel/allocation handling; freeze the 15 standalone files and retain ten formatter files as skips.
+- 다른 대안 대신 이 방식을 선택한 이유: Test literals and host providers are incomplete or nondeterministic, fabricated formatter capabilities violate the API meaning, formatter-first coupling delays an independent standard function, and directory admission would claim behavior RuJa cannot execute.
+- 장점, 단점 및 영향: Six-key enumeration is deterministic, Realm-correct, GC-safe, fuel-bounded, wasm-compatible, and exact over the standalone pinned boundary. Collation/currency output intentionally broadens only when real formatter providers land; ten integration tests remain visible skips rather than false support.
 ```
 
 ---

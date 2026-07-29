@@ -4,6 +4,16 @@
 
 ### Changed
 
+- Added Realm-local `Intl.supportedValuesOf` with observable `ToString`, exact
+  key validation, fresh Arrays, and deterministic sorted data for the 16
+  required calendars, 78 simple-digit numbering systems, 445 primary IANA time
+  zones, and 45 sanctioned simple units. Collation and currency lists remain
+  empty until their formatter providers exist, so the API does not advertise
+  unsupported service behavior. Result publication is fuel-precharged,
+  fallible, rooted across GC retry, and covered by reservation and exact heap
+  cap failures. A frozen 15-file Test262 manifest passes **15/0/0**; the full
+  25-file directory reports **15 pass / 0 fail / 10 formatter-dependent skip**.
+
 - Completed the `Intl.Locale-info` surface. `Intl.Locale` now observes and
   canonicalizes `firstDayOfWeek`, exposes its branded accessor, and implements
   `getCalendars`, `getCollations`, `getHourCycles`, `getNumberingSystems`,
@@ -53,8 +63,8 @@
   40 files, keeps future in-scope files closed until explicit admission, and
   delegates the adjacent Locale-object case to the exact Locale manifest;
   its dedicated gate reports **41 pass / 0 fail / 0 skip** over 41 files.
-  Formatter constructors, `Intl.supportedValuesOf`, and the remaining
-  ECMA-402 surface stay separately gated. The package now declares
+  Formatter constructors and the remaining ECMA-402 surface stay separately
+  gated. The package now declares
   Rust 1.88 as its MSRV and CI checks it explicitly.
 
 - Static import and re-export declarations now accept Import Attributes

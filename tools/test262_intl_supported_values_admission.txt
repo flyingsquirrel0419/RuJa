@@ -1,0 +1,16 @@
+# Standalone Intl.supportedValuesOf surface; formatter-integration files remain excluded.
+intl402/Intl/supportedValuesOf/builtin.js
+intl402/Intl/supportedValuesOf/calendars-required-by-intl-era-monthcode.js
+intl402/Intl/supportedValuesOf/calendars.js
+intl402/Intl/supportedValuesOf/coerced-to-string.js
+intl402/Intl/supportedValuesOf/collations.js
+intl402/Intl/supportedValuesOf/currencies.js
+intl402/Intl/supportedValuesOf/invalid-key.js
+intl402/Intl/supportedValuesOf/length.js
+intl402/Intl/supportedValuesOf/name.js
+intl402/Intl/supportedValuesOf/numberingSystems-with-simple-digit-mappings.js
+intl402/Intl/supportedValuesOf/numberingSystems.js
+intl402/Intl/supportedValuesOf/prop-desc.js
+intl402/Intl/supportedValuesOf/timeZones-include-non-continental.js
+intl402/Intl/supportedValuesOf/timeZones.js
+intl402/Intl/supportedValuesOf/units.js

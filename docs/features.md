@@ -320,6 +320,10 @@
   Locale-info methods use generated CLDR calendar, hour-cycle, week,
   text-direction, and canonical IANA region-time-zone data. Region overrides,
   subdivisions, likely regions, and `001` inheritance follow ECMA-402 priority.
+  `Intl.supportedValuesOf` exposes fresh Realm-local sorted Arrays for calendar,
+  collation, currency, numbering-system, primary time-zone, and sanctioned
+  simple-unit keys; formatter-dependent capability sets stay empty until their
+  service constructors exist.
   Constructor/prototype fallback and fresh result Arrays/objects are
   Realm-correct. Locale, option, likely-subtag, and index scans consume VM fuel
 

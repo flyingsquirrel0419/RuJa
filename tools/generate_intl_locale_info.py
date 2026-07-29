@@ -15,6 +15,71 @@ CLDR_REF = "11299982335beb974c1c63c45265184e759c0f41"
 RAW_ROOT = f"https://raw.githubusercontent.com/unicode-org/cldr/{CLDR_REF}/common"
 DAY_NUMBER = {"mon": 1, "tue": 2, "wed": 3, "thu": 4, "fri": 5, "sat": 6, "sun": 7}
 HOUR_CYCLE = {"H": "h23", "k": "h24", "h": "h12", "K": "h11"}
+SUPPORTED_VALUE_CALENDARS = (
+    "buddhist",
+    "chinese",
+    "coptic",
+    "dangi",
+    "ethioaa",
+    "ethiopic",
+    "gregory",
+    "hebrew",
+    "indian",
+    "islamic-civil",
+    "islamic-tbla",
+    "islamic-umalqura",
+    "iso8601",
+    "japanese",
+    "persian",
+    "roc",
+)
+SUPPORTED_VALUE_UNITS = (
+    "acre",
+    "bit",
+    "byte",
+    "celsius",
+    "centimeter",
+    "day",
+    "degree",
+    "fahrenheit",
+    "fluid-ounce",
+    "foot",
+    "gallon",
+    "gigabit",
+    "gigabyte",
+    "gram",
+    "hectare",
+    "hour",
+    "inch",
+    "kilobit",
+    "kilobyte",
+    "kilogram",
+    "kilometer",
+    "liter",
+    "megabit",
+    "megabyte",
+    "meter",
+    "microsecond",
+    "mile",
+    "mile-scandinavian",
+    "milliliter",
+    "millimeter",
+    "millisecond",
+    "minute",
+    "month",
+    "nanosecond",
+    "ounce",
+    "percent",
+    "petabyte",
+    "pound",
+    "second",
+    "stone",
+    "terabit",
+    "terabyte",
+    "week",
+    "yard",
+    "year",
+)
 
 
 def load(path: str) -> bytes:
@@ -154,6 +219,29 @@ def time_zones() -> dict[str, list[str]]:
     return {territory: sorted(values) for territory, values in result.items()}
 
 
+def supported_value_numbering_systems() -> list[str]:
+    root = load_xml("supplemental/numberingSystems.xml")
+    return sorted(
+        node.attrib["id"]
+        for node in root.findall(".//numberingSystem")
+        if "digits" in node.attrib
+    )
+
+
+def supported_value_time_zones() -> list[str]:
+    root = load_xml("bcp47/timezone.xml")
+    result = set()
+    for node in root.findall(".//type"):
+        aliases = node.attrib.get("alias", "").split()
+        canonical = node.attrib.get("iana") or (aliases[0] if aliases else None)
+        if canonical is not None and "/" in canonical and canonical != "Etc/Unknown":
+            result.add(canonical)
+    # ECMA-402 makes UTC primary and the Etc/UTC and Etc/GMT links non-primary.
+    result.difference_update(("Etc/GMT", "Etc/UTC"))
+    result.add("UTC")
+    return sorted(result)
+
+
 def render_string_lists(name: str, values: dict[str, list[str]]) -> list[str]:
     lines = ["#[rustfmt::skip]\n", f"pub(super) const {name}: &[(&str, &[&str])] = &[\n"]
     for key in sorted(values):
@@ -187,6 +275,14 @@ def render_directions(values: dict[str, str]) -> list[str]:
     return lines
 
 
+def render_string_slice(name: str, values: list[str] | tuple[str, ...]) -> list[str]:
+    lines = ["#[rustfmt::skip]\n", f"pub(super) const {name}: &[&str] = &[\n"]
+    for value in values:
+        lines.append(f'    "{value}",\n')
+    lines.append("];\n")
+    return lines
+
+
 def generate() -> str:
     supplemental = load_xml("supplemental/supplementalData.xml")
     output = [
@@ -202,6 +298,23 @@ def generate() -> str:
     output.extend(render_directions(script_directions()))
     output.append("\n")
     output.extend(render_string_lists("TIME_ZONES", time_zones()))
+    output.append("\n")
+    output.append("// ECMA-402 fixed supportedValuesOf lists plus pinned CLDR capability data.\n\n")
+    output.extend(
+        render_string_slice("SUPPORTED_VALUE_CALENDARS", SUPPORTED_VALUE_CALENDARS)
+    )
+    output.append("\n")
+    output.extend(
+        render_string_slice(
+            "SUPPORTED_VALUE_NUMBERING_SYSTEMS", supported_value_numbering_systems()
+        )
+    )
+    output.append("\n")
+    output.extend(
+        render_string_slice("SUPPORTED_VALUE_TIME_ZONES", supported_value_time_zones())
+    )
+    output.append("\n")
+    output.extend(render_string_slice("SUPPORTED_VALUE_UNITS", SUPPORTED_VALUE_UNITS))
     return "".join(output)
 
 

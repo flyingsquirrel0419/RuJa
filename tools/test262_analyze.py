@@ -200,6 +200,10 @@ try:
         INTL_CANONICAL_LOCALES_FILES,
         intl_canonical_locales_features,
     )
+    from test262_intl_supported_values_admission import (
+        INTL_SUPPORTED_VALUES_FILES,
+        intl_supported_values_features,
+    )
     from test262_intl_locale_admission import INTL_LOCALE_FILES, intl_locale_features
     from test262_import_meta_admission import IMPORT_META_FILES
     from test262_iterator_admission import ITERATOR_CORE_FEATURES, ITERATOR_CORE_FILES
@@ -404,6 +408,10 @@ except ModuleNotFoundError:
         INTL_CANONICAL_LOCALES_FILES,
         intl_canonical_locales_features,
     )
+    from tools.test262_intl_supported_values_admission import (
+        INTL_SUPPORTED_VALUES_FILES,
+        intl_supported_values_features,
+    )
     from tools.test262_intl_locale_admission import (
         INTL_LOCALE_FILES,
         intl_locale_features,
@@ -546,7 +554,7 @@ MODULE_NAMESPACE_FEATURES = {
 SKIP_FEATURES = {
     "AggregateError", "ArrayBuffer", "Atomics", "Atomics.pause", "Atomics.waitAsync", "DataView",
     "Float16Array", "Float32Array", "Float64Array", "Int8Array", "Int16Array",
-    "Int32Array", "Intl", "Intl.Locale", "Intl.Locale-info", "IsHTMLDDA", "Promise", "SharedArrayBuffer",
+    "Int32Array", "Intl", "Intl-enumeration", "Intl.Locale", "Intl.Locale-info", "IsHTMLDDA", "Promise", "SharedArrayBuffer",
     "Symbol", "Symbol.asyncIterator", "Symbol.iterator",
     "TypedArray", "Uint8Array", "Uint8Array-base64", "Uint8Array-hex",
     "Uint8ClampedArray", "Uint16Array", "Uint32Array", "WeakMap", "WeakRef",
@@ -2406,6 +2414,31 @@ def intl_canonical_locales_path_features(path):
         return frozenset()
     return intl_canonical_locales_features(rel.as_posix())
 
+def intl_supported_values_path(path):
+    if path is None:
+        return False
+    try:
+        rel = Path(path).resolve().relative_to(Path(TEST262).resolve() / "test")
+    except (OSError, ValueError):
+        return False
+    return rel.as_posix() in INTL_SUPPORTED_VALUES_FILES
+
+def intl_supported_values_scope_path(path):
+    if path is None:
+        return False
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except (OSError, ValueError):
+        return False
+    return rel.as_posix().startswith("intl402/Intl/supportedValuesOf/")
+
+def intl_supported_values_path_features(path):
+    try:
+        rel = Path(path).resolve().relative_to(Path(TEST262).resolve() / "test")
+    except (OSError, ValueError):
+        return frozenset()
+    return intl_supported_values_features(rel.as_posix())
+
 def intl_locale_path(path):
     if path is None:
         return False
@@ -3420,6 +3453,12 @@ def should_skip(meta, path=None):
         and not intl_locale_path(path)
     ):
         return True
+    if (
+        path is not None
+        and intl_supported_values_scope_path(path)
+        and not intl_supported_values_path(path)
+    ):
+        return True
     if path is not None and intl_locale_scope_path(path) and not intl_locale_path(path):
         return True
     if path is not None and module_core_path(path):
@@ -3442,6 +3481,8 @@ def should_skip(meta, path=None):
         feats.difference_update(static_import_attributes_path_features(path))
     if path is not None and intl_canonical_locales_path(path):
         feats.difference_update(intl_canonical_locales_path_features(path))
+    if path is not None and intl_supported_values_path(path):
+        feats.difference_update(intl_supported_values_path_features(path))
     if path is not None and intl_locale_path(path):
         feats.difference_update(intl_locale_path_features(path))
     if path is not None and import_meta_path(path):

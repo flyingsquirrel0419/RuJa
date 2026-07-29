@@ -561,14 +561,17 @@ guarantees are required.
   identifier canonicalization, and the complete `Intl.Locale` constructor,
   accessor, likely-subtag, and Locale-info data surface. Collation and numbering
   methods use the ECMA-402 formatter-absence fallbacks until their service
-  constructors land. Formatter constructors, `Intl.supportedValuesOf`, locale
-  negotiation and formatting data, and legacy constructor fallback semantics
-  remain unsupported. Array, TypedArray, String, Number, BigInt, and Date
+  constructors land. `Intl.supportedValuesOf` implements all six keys and the
+  required calendar, simple-digit numbering-system, primary-time-zone, and
+  sanctioned-unit sets; its collation and currency capability sets are empty
+  until Collator, NumberFormat, and DisplayNames exist. Formatter constructors,
+  locale negotiation and formatting data, and legacy constructor fallback
+  semantics remain unsupported. Array, TypedArray, String, Number, BigInt, and Date
   locale-sensitive methods therefore retain their documented non-ECMA-402
-  behavior until those formatter units land. Locale-info result counts and
-  string chunks are fuel-precharged and Vec growth is fallible, but its bounded
-  static strings become fresh `Arc<str>` values whose bytes are not charged to
-  the VM heap-object cap
+  behavior until those formatter units land. Locale-info and
+  supportedValuesOf result counts and string chunks are fuel-precharged and Vec
+  growth is fallible, but their bounded static strings become fresh `Arc<str>`
+  values whose bytes are not charged to the VM heap-object cap
 - Wrapper objects (`new String(x)`, `new Number(x)`, `new Boolean(x)`,
   `Object(x)`) now store the wrapped primitive, so `.valueOf()` and
   `ToPrimitive` resolve to it (`new Number(5) + 1 === 6`). Boxed-string

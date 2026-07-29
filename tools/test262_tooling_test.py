@@ -240,6 +240,10 @@ from test262_intl_canonical_locales_admission import (
     INTL_CANONICAL_LOCALES_FILES,
     intl_canonical_locales_features,
 )
+from test262_intl_supported_values_admission import (
+    INTL_SUPPORTED_VALUES_FILES,
+    intl_supported_values_features,
+)
 from test262_intl_locale_admission import (
     INTL_LOCALE_BASE_FILES,
     INTL_LOCALE_FILES,
@@ -1434,6 +1438,93 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                         )
                     )
                     self.assertTrue(tool.should_skip({"features": []}, future))
+            finally:
+                test262_runner.TEST262, test262_analyze.TEST262 = original_roots
+
+    def test_intl_supported_values_manifest_is_exact_live_and_shared(self):
+        self.assertEqual(len(INTL_SUPPORTED_VALUES_FILES), 15)
+        builtin = "intl402/Intl/supportedValuesOf/builtin.js"
+        calendar = "intl402/Intl/supportedValuesOf/calendars.js"
+        formatter = (
+            "intl402/Intl/supportedValuesOf/units-accepted-by-NumberFormat.js"
+        )
+        outside = "intl402/Intl/supportedValuesOf/future-test.js"
+        self.assertIn(builtin, INTL_SUPPORTED_VALUES_FILES)
+        self.assertIn(calendar, INTL_SUPPORTED_VALUES_FILES)
+        self.assertNotIn(formatter, INTL_SUPPORTED_VALUES_FILES)
+        self.assertNotIn(outside, INTL_SUPPORTED_VALUES_FILES)
+        self.assertEqual(
+            intl_supported_values_features(builtin),
+            frozenset({"Intl-enumeration", "Reflect.construct"}),
+        )
+        self.assertEqual(intl_supported_values_features(outside), frozenset())
+
+        checkout = Path(test262_runner.TEST262) / "test"
+        try:
+            checkout_available = checkout.exists()
+        except OSError:
+            checkout_available = False
+        if checkout_available:
+            root = checkout / "intl402/Intl/supportedValuesOf"
+            live = {
+                path.relative_to(checkout).as_posix()
+                for path in root.glob("*.js")
+                if "-accepted-by-" not in path.name
+            }
+            self.assertEqual(live, INTL_SUPPORTED_VALUES_FILES)
+            for relative in live:
+                meta = test262_runner.parse_meta((checkout / relative).read_text())
+                self.assertEqual(
+                    intl_supported_values_features(relative),
+                    frozenset(meta.get("features", [])),
+                )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            original_roots = (test262_runner.TEST262, test262_analyze.TEST262)
+            try:
+                test262_runner.TEST262 = temp_dir
+                test262_analyze.TEST262 = temp_dir
+                admitted = Path(temp_dir) / "test" / calendar
+                excluded = Path(temp_dir) / "test" / formatter
+                future = Path(temp_dir) / "test" / outside
+                broad_only = (
+                    Path(temp_dir)
+                    / "test/intl402/NumberFormat/supportedValuesOf-future.js"
+                )
+                for tool in (test262_runner, test262_analyze):
+                    self.assertFalse(
+                        tool.should_skip(
+                            {
+                                "features": [
+                                    "Intl-enumeration",
+                                    "Intl.Locale",
+                                    "Array.prototype.includes",
+                                ]
+                            },
+                            admitted,
+                        )
+                    )
+                    self.assertTrue(
+                        tool.should_skip(
+                            {
+                                "features": [
+                                    "Intl-enumeration",
+                                    "Array.prototype.includes",
+                                ]
+                            },
+                            excluded,
+                        )
+                    )
+                    self.assertTrue(
+                        tool.should_skip(
+                            {"features": ["Intl-enumeration"]}, future
+                        )
+                    )
+                    self.assertTrue(
+                        tool.should_skip(
+                            {"features": ["Intl-enumeration"]}, broad_only
+                        )
+                    )
             finally:
                 test262_runner.TEST262, test262_analyze.TEST262 = original_roots
 

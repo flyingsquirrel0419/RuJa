@@ -46,7 +46,8 @@ WeakMap/WeakSet,
 WeakRef/FinalizationRegistry, Reflect, Proxy, resizable ArrayBuffer and growable
 SharedArrayBuffer cores, Atomics including worker `wait`/`notify`, `waitAsync`,
 and `pause`, Realm-local `%Intl%`, `Intl.getCanonicalLocales`, and the complete
-`Intl.Locale` constructor/accessor/likely-subtag/Locale-info surface, file-backed
+`Intl.Locale` constructor/accessor/likely-subtag/Locale-info surface plus
+`Intl.supportedValuesOf`, file-backed
 ES Module graphs with named imports/exports and live
 bindings, relative dynamic imports, and static/dynamic JSON/text import
 attributes,
