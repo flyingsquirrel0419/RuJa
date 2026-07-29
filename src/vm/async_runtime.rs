@@ -905,6 +905,19 @@ impl Vm {
         )
     }
 
+    pub(crate) fn new_native_constructor_in_env_with_gc_retry(
+        &mut self,
+        name: &str,
+        func: NativeFn,
+        length: usize,
+        closure: GcIdx,
+        construct_mode: NativeConstructMode,
+    ) -> error::Result<GcIdx> {
+        let function =
+            self.native_function_object(name, func, length, closure, Some(construct_mode));
+        self.alloc(function)
+    }
+
     fn new_native_function_with_construct_mode_in_env(
         &mut self,
         name: &str,
@@ -1153,6 +1166,13 @@ impl Vm {
         if intrinsic == "RegExp" {
             return Ok(self
                 .realm_regexp_prototypes
+                .get(&realm.0)
+                .cloned()
+                .unwrap_or(fallback));
+        }
+        if intrinsic == "Intl.Locale" {
+            return Ok(self
+                .realm_intl_locale_prototypes
                 .get(&realm.0)
                 .cloned()
                 .unwrap_or(fallback));

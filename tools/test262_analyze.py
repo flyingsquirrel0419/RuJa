@@ -200,6 +200,7 @@ try:
         INTL_CANONICAL_LOCALES_FILES,
         intl_canonical_locales_features,
     )
+    from test262_intl_locale_admission import INTL_LOCALE_FILES, intl_locale_features
     from test262_import_meta_admission import IMPORT_META_FILES
     from test262_iterator_admission import ITERATOR_CORE_FEATURES, ITERATOR_CORE_FILES
     from test262_json_parse_admission import JSON_PARSE_FILES
@@ -403,6 +404,10 @@ except ModuleNotFoundError:
         INTL_CANONICAL_LOCALES_FILES,
         intl_canonical_locales_features,
     )
+    from tools.test262_intl_locale_admission import (
+        INTL_LOCALE_FILES,
+        intl_locale_features,
+    )
     from tools.test262_import_meta_admission import IMPORT_META_FILES
     from tools.test262_iterator_admission import ITERATOR_CORE_FEATURES, ITERATOR_CORE_FILES
     from tools.test262_json_parse_admission import JSON_PARSE_FILES
@@ -541,7 +546,7 @@ MODULE_NAMESPACE_FEATURES = {
 SKIP_FEATURES = {
     "AggregateError", "ArrayBuffer", "Atomics", "Atomics.pause", "Atomics.waitAsync", "DataView",
     "Float16Array", "Float32Array", "Float64Array", "Int8Array", "Int16Array",
-    "Int32Array", "Intl", "Intl.Locale", "IsHTMLDDA", "Promise", "SharedArrayBuffer",
+    "Int32Array", "Intl", "Intl.Locale", "Intl.Locale-info", "IsHTMLDDA", "Promise", "SharedArrayBuffer",
     "Symbol", "Symbol.asyncIterator", "Symbol.iterator",
     "TypedArray", "Uint8Array", "Uint8Array-base64", "Uint8Array-hex",
     "Uint8ClampedArray", "Uint16Array", "Uint32Array", "WeakMap", "WeakRef",
@@ -2401,6 +2406,31 @@ def intl_canonical_locales_path_features(path):
         return frozenset()
     return intl_canonical_locales_features(rel.as_posix())
 
+def intl_locale_path(path):
+    if path is None:
+        return False
+    try:
+        rel = Path(path).resolve().relative_to(Path(TEST262).resolve() / "test")
+    except (OSError, ValueError):
+        return False
+    return rel.as_posix() in INTL_LOCALE_FILES
+
+def intl_locale_scope_path(path):
+    if path is None:
+        return False
+    try:
+        rel = Path(path).resolve().relative_to(Path(TEST262).resolve() / "test")
+    except (OSError, ValueError):
+        return False
+    return rel.as_posix().startswith("intl402/Locale/")
+
+def intl_locale_path_features(path):
+    try:
+        rel = Path(path).resolve().relative_to(Path(TEST262).resolve() / "test")
+    except (OSError, ValueError):
+        return frozenset()
+    return intl_locale_features(rel.as_posix())
+
 def import_meta_path(path):
     if path is None:
         return False
@@ -3387,7 +3417,10 @@ def should_skip(meta, path=None):
         path is not None
         and intl_canonical_locales_scope_path(path)
         and not intl_canonical_locales_path(path)
+        and not intl_locale_path(path)
     ):
+        return True
+    if path is not None and intl_locale_scope_path(path) and not intl_locale_path(path):
         return True
     if path is not None and module_core_path(path):
         feats.discard("generators")
@@ -3409,6 +3442,8 @@ def should_skip(meta, path=None):
         feats.difference_update(static_import_attributes_path_features(path))
     if path is not None and intl_canonical_locales_path(path):
         feats.difference_update(intl_canonical_locales_path_features(path))
+    if path is not None and intl_locale_path(path):
+        feats.difference_update(intl_locale_path_features(path))
     if path is not None and import_meta_path(path):
         feats.difference_update({
             "import.meta", "dynamic-import", "generators", "async-functions",
@@ -3778,6 +3813,12 @@ def run_test(path):
         full, meta, RUJA, timeout=timeout, source_path=source_path
     )
 
+def discover_test_files(base):
+    """Return one requested test file or every JavaScript file below a directory."""
+    if base.is_file():
+        return [base] if base.suffix == ".js" else []
+    return sorted(base.rglob("*.js"))
+
 def bucket(err):
     if not err:
         return 'OTHER: (no output)'
@@ -3798,7 +3839,7 @@ def main():
         if not base.exists():
             print(f"SKIP missing: {base}", file=sys.stderr)
             continue
-        files = sorted(base.rglob('*.js'))
+        files = discover_test_files(base)
         print(f"Scanning {len(files)} files under {d} ...", file=sys.stderr)
         for f in files:
             if '_FIXTURE' in f.name:

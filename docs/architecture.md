@@ -3295,7 +3295,45 @@ in canonical digit order ahead of alphabetic extensions and private use.
 - 검토한 주요 대안: Hand-maintain only pinned Test262 mappings, write all CLDR canonicalization from scratch, depend on ICU4X without adapters, bundle raw CLDR XML at runtime, or use ICU4X plus generated extension data and a narrow structural parser adapter.
 - 선택한 방식: Pin ICU4X 2.2.0 and CLDR 48.2 independently; validate original syntax, adapt only reserved long languages, apply ICU canonicalization, preserve repeated transform fields outside ICU's map, and apply deterministically emitted U/T aliases; implement exact locale-list observability, Realm allocation, GC rooting, fallible result growth, and fuel metering before input scans.
 - 다른 대안 대신 이 방식을 선택한 이유: Test-only maps preserve known conformance gaps; a new CLDR engine duplicates complex likely-subtag logic; unadapted ICU fails required grammar and extension cases; runtime XML increases startup, binary, parser, and allocation risk. The layered design keeps authoritative data broad while isolating documented upstream gaps.
-- 장점, 단점 및 영향: The exact 40-file `%Intl%`/getCanonicalLocales boundary is green with one explicit `Intl.Locale` skip, cross-Realm identity and errors are deterministic, and CLDR updates are reproducible. ICU adds compiled locale data and dependencies; formatter data, `%Intl%.[[FallbackSymbol]]` observability, Locale internal slots, locale negotiation, and the rest of ECMA-402 remain later units.
+- 장점, 단점 및 영향: The exact 40-file `%Intl%`/getCanonicalLocales manifest is green and its adjacent Locale-object case is now owned by the separate Locale manifest; cross-Realm identity and errors are deterministic, and CLDR updates are reproducible. ICU adds compiled locale data and dependencies; formatter data, `%Intl%.[[FallbackSymbol]]` observability, locale negotiation, and the rest of ECMA-402 remain later units.
+```
+
+### `Intl.Locale` structural object and Realm flow
+
+Each Realm installs a distinct `%Intl.Locale%` constructor and prototype and
+keeps both in GC-rooted Realm registries. Construction uses the VM's eager
+native-constructor mode: observable `newTarget.prototype` resolution happens
+before the native body, and a non-object prototype falls back to the
+new-target Realm's immutable Locale prototype registry. The installer pins
+every provisional getter, method, prototype, and constructor until both
+objects are linked and published in those registries.
+
+Locale instances use `HeapObj::IntlLocale`, whose one-time immutable record
+stores the canonical tag and relevant Unicode keyword values. The enum variant
+is the unforgeable `[[InitializedLocale]]` brand; ordinary properties,
+prototype inheritance, and Proxy wrapping cannot copy it. Its ordinary class
+name remains `Object`, so deleting the configurable inherited
+`@@toStringTag` restores `[object Object]` as required. GC traces only the
+instance's ordinary properties and prototype because the locale record holds
+no VM heap edges.
+
+The constructor canonicalizes the input tag, observes language/script/region/
+variants and Unicode options in specification order, rebuilds and
+recanonicalizes after each option phase, then initializes the record exactly
+once. Locale inputs and locale-list elements read the internal tag directly.
+`maximize` and `minimize` transform only the language identifier with ICU4X's
+extended likely-subtag data, preserve variants/extensions/private use, and
+construct the fresh result through the method Realm's registered intrinsic.
+String grammar scans and likely-subtag work are precharged against VM fuel.
+
+```text
+[Decision Log]
+- 목적과 의도: Add the complete base Intl.Locale object contract without weakening Realm, GC, brand, or sandbox guarantees.
+- 기존 구현 및 제약 조건: Canonicalization returned only strings; ordinary hidden properties were forgeable or allocation-heavy; generic constructor fallback could not locate an Intl-nested intrinsic; ICU locale values and Rust strings are outside the heap-object cap; Locale-info requires calendar, collation, time-zone, week, and text-direction data not present in the current dependency set.
+- 검토한 주요 대안: Store a public/private ordinary property, infer the brand from prototype or class name, retain a full ICU Locale per object, use the generic constructor builder, implement Locale-info with partial tables, or add a dedicated compact heap variant and Realm installer while separating the data-dependent surface.
+- 선택한 방식: Use a one-time immutable IntlLocale record in a dedicated ordinary-behaving heap variant; install constructor/prototype transactionally per Realm with eager prototype observation; reuse the shared canonicalizer and ICU4X LocaleExpander; precharge native scans; freeze the 109-file base boundary and keep Intl.Locale-info scope-closed.
+- 다른 대안 대신 이 방식을 선택한 이유: Properties/prototypes/class names cannot supply an unforgeable brand and the class name is observably wrong after deleting @@toStringTag; retaining parsed ICU structures duplicates native memory; the generic builder bypasses rooted GC retry and Intl-specific Realm fallback; partial Locale-info would overclaim data semantics.
+- 장점, 단점 및 영향: Base constructor, options, descriptors, brands, subclassing, cross-Realm fallback, canonical locale-list integration, and likely-subtag transforms are exact and independently gated. One canonical string plus relevant keyword strings keeps instance state compact. Native Arc/String/ICU temporary bytes still are not included in the heap-object cap, and Intl.Locale-info remains a separate data-provider unit.
 ```
 
 ---

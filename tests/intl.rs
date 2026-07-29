@@ -130,18 +130,182 @@ fn detached_foreign_method_ignores_replaced_realm_globals() {
 #[test]
 fn intl_intrinsics_survive_collection() {
     let mut vm = Vm::new().expect("failed to initialize VM");
-    vm.run("var other = $262.createRealm().global;")
-        .expect("failed to create foreign realm");
+    vm.run(
+        r#"
+            var other = $262.createRealm().global;
+            var locale = new Intl.Locale("sh-u-ca-gregory");
+            var otherLocale = new other.Intl.Locale("und-Thai");
+        "#,
+    )
+    .expect("failed to create foreign realm");
     vm.gc();
     assert_eq!(
         vm.run(
             r#"
                 Intl.getCanonicalLocales("sh")[0] + ":" +
-                other.Intl.getCanonicalLocales("und-u-kb-yes")[0];
+                other.Intl.getCanonicalLocales("und-u-kb-yes")[0] + ":" +
+                locale.toString() + ":" + otherLocale.maximize().toString();
             "#,
         )
         .expect("Intl intrinsics should remain live"),
-        Value::String(Arc::from("sr-Latn:und-u-kb"))
+        Value::String(Arc::from(
+            "sr-Latn:und-u-kb:sr-Latn-u-ca-gregory:th-Thai-TH"
+        ))
+    );
+}
+
+#[test]
+fn locale_constructor_exposes_canonical_slots_and_spec_descriptors() {
+    assert_eq!(
+        run(r#"
+            var locale = new Intl.Locale(
+              "EN-latn-us-u-ca-islamicc-kn-true",
+              { caseFirst: "upper", numberingSystem: "latn" }
+            );
+            var constructorDescriptor = Object.getOwnPropertyDescriptor(
+              Intl, "Locale"
+            );
+            var prototypeDescriptor = Object.getOwnPropertyDescriptor(
+              Intl.Locale, "prototype"
+            );
+            var languageDescriptor = Object.getOwnPropertyDescriptor(
+              Intl.Locale.prototype, "language"
+            );
+            var tagDescriptor = Object.getOwnPropertyDescriptor(
+              Intl.Locale.prototype, Symbol.toStringTag
+            );
+            [
+              locale.toString(), locale.baseName, locale.language,
+              locale.script, locale.region, locale.variants,
+              locale.calendar, locale.caseFirst, locale.collation,
+              locale.hourCycle, locale.numberingSystem, locale.numeric,
+              Object.prototype.toString.call(locale),
+              Intl.Locale.name, Intl.Locale.length,
+              constructorDescriptor.writable,
+              constructorDescriptor.enumerable,
+              constructorDescriptor.configurable,
+              prototypeDescriptor.writable,
+              prototypeDescriptor.enumerable,
+              prototypeDescriptor.configurable,
+              languageDescriptor.get.name,
+              languageDescriptor.get.length,
+              languageDescriptor.set,
+              languageDescriptor.enumerable,
+              languageDescriptor.configurable,
+              tagDescriptor.writable,
+              tagDescriptor.enumerable,
+              tagDescriptor.configurable
+            ].join(":");
+        "#),
+        Value::String(Arc::from(
+            "en-Latn-US-u-ca-islamic-civil-kf-upper-kn-nu-latn:en-Latn-US:en:Latn:US::islamic-civil:upper:::latn:true:[object Intl.Locale]:Locale:1:true:false:true:false:false:false:get language:0::false:true:false:false:true"
+        ))
+    );
+}
+
+#[test]
+fn locale_constructor_observes_options_in_order_and_recanonicalizes() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            var tag = {
+              toString: function () { log.push("tag"); return "und-Armn-SU"; }
+            };
+            var values = {
+              language: "ru", script: undefined, region: undefined,
+              variants: undefined, calendar: "gregory", collation: undefined,
+              hourCycle: "h23", caseFirst: "false", numeric: "false",
+              numberingSystem: "latn"
+            };
+            var options = new Proxy(values, {
+              get: function (target, key) {
+                log.push(key);
+                return target[key];
+              }
+            });
+            var locale = new Intl.Locale(tag, options);
+            [locale.toString(), log.join(",")].join(":");
+        "#),
+        Value::String(Arc::from(
+            "ru-Armn-AM-u-ca-gregory-hc-h23-kf-false-kn-nu-latn:tag,language,script,region,variants,calendar,collation,hourCycle,caseFirst,numeric,numberingSystem"
+        ))
+    );
+
+    assert_eq!(
+        run(r#"
+            var log = [];
+            try {
+              new Intl.Locale({
+                toString: function () { log.push("tag"); return "not_a_tag"; }
+              }, null);
+            } catch (error) {
+              log.push(error.name);
+            }
+            log.join(":");
+        "#),
+        Value::String(Arc::from("tag:TypeError"))
+    );
+}
+
+#[test]
+fn locale_brand_subclass_and_locale_list_fast_path_are_unforgeable() {
+    assert_eq!(
+        run(r#"
+            class Child extends Intl.Locale {
+              toString() { throw new Error("observable"); }
+            }
+            var locale = new Child("EN-us");
+            var brandErrors = 0;
+            for (var receiver of [Intl.Locale.prototype, {}, new Proxy(locale, {})]) {
+              try { Intl.Locale.prototype.toString.call(receiver); }
+              catch (error) { if (error instanceof TypeError) brandErrors++; }
+            }
+            var descriptor = Object.getOwnPropertyDescriptor(
+              Intl.Locale.prototype, Symbol.toStringTag
+            );
+            delete Intl.Locale.prototype[Symbol.toStringTag];
+            var objectTag = Object.prototype.toString.call(locale);
+            Object.defineProperty(
+              Intl.Locale.prototype, Symbol.toStringTag, descriptor
+            );
+            [
+              Intl.getCanonicalLocales([locale])[0],
+              Object.getPrototypeOf(locale) === Child.prototype,
+              brandErrors,
+              objectTag
+            ].join(":");
+        "#),
+        Value::String(Arc::from("en-US:true:3:[object Object]"))
+    );
+}
+
+#[test]
+fn locale_likely_subtags_preserve_suffix_and_use_method_realm() {
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var locale = new Intl.Locale("und-Thai-fonipa-u-ca-buddhist-x-test");
+            var maximized = locale.maximize();
+            var minimized = new Intl.Locale("und-CW").minimize();
+            var foreign = other.Intl.Locale.prototype.maximize.call(
+              new Intl.Locale("en")
+            );
+            var ForeignNewTarget = other.Function(
+              "return function ForeignNewTarget() {}"
+            )();
+            ForeignNewTarget.prototype = 1;
+            var reflected = Reflect.construct(
+              Intl.Locale, ["en"], ForeignNewTarget
+            );
+            [
+              maximized.toString(), minimized.toString(),
+              Object.getPrototypeOf(foreign) === other.Intl.Locale.prototype,
+              Object.getPrototypeOf(reflected) === other.Intl.Locale.prototype
+            ].join(":");
+        "#),
+        Value::String(Arc::from(
+            "th-Thai-TH-fonipa-u-ca-buddhist-x-test:pap:true:true"
+        ))
     );
 }
 
@@ -152,6 +316,8 @@ fn locale_list_and_tag_scans_are_fuel_bounded_and_reusable() {
         r#"
             var sparseLocales = { length: 1000000 };
             var longLocale = "en-x-" + "abcdefgh-".repeat(10000) + "abcdefgh";
+            var longOption = "abcdefgh-".repeat(10000) + "abcdefgh";
+            var longLocaleObject = new Intl.Locale(longLocale);
         "#,
     )
     .expect("failed to initialize Intl fuel fixtures");
@@ -168,9 +334,23 @@ fn locale_list_and_tag_scans_are_fuel_bounded_and_reusable() {
         .expect_err("long language tag should exhaust fuel before ICU parsing");
     assert!(tag_error.to_string().contains("fuel"));
 
+    vm.set_fuel(Some(100));
+    let option_error = vm
+        .run("new Intl.Locale('en', { calendar: longOption })")
+        .expect_err("long Locale option should exhaust fuel before grammar scanning");
+    assert!(option_error.to_string().contains("fuel"));
+
+    for accessor in ["baseName", "language", "script", "region", "variants"] {
+        vm.set_fuel(Some(100));
+        let accessor_error = vm
+            .run(format!("longLocaleObject.{accessor}").as_str())
+            .expect_err("structural Locale accessor should precharge its tag scan");
+        assert!(accessor_error.to_string().contains("fuel"), "{accessor}");
+    }
+
     vm.set_fuel(None);
     assert_eq!(
-        vm.run("Intl.getCanonicalLocales('en-us')[0]")
+        vm.run("new Intl.Locale(Intl.getCanonicalLocales('en-us')[0]).toString()")
             .expect("VM should remain reusable after Intl fuel aborts"),
         Value::String(Arc::from("en-US"))
     );

@@ -240,6 +240,7 @@ from test262_intl_canonical_locales_admission import (
     INTL_CANONICAL_LOCALES_FILES,
     intl_canonical_locales_features,
 )
+from test262_intl_locale_admission import INTL_LOCALE_FILES, intl_locale_features
 from test262_import_meta_admission import IMPORT_META_FILES
 from test262_iterator_admission import ITERATOR_CORE_FEATURES, ITERATOR_CORE_FILES
 from test262_json_parse_admission import JSON_PARSE_FILES
@@ -1345,10 +1346,86 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                 future = Path(temp_dir) / "test" / outside
                 for tool in (test262_runner, test262_analyze):
                     self.assertFalse(tool.should_skip({"features": ["Proxy"]}, admitted))
-                    self.assertTrue(
+                    self.assertFalse(
                         tool.should_skip({"features": ["Intl.Locale"]}, locale)
                     )
                     self.assertTrue(tool.should_skip({"features": ["Proxy"]}, future))
+                    self.assertTrue(tool.should_skip({"features": []}, future))
+            finally:
+                test262_runner.TEST262, test262_analyze.TEST262 = original_roots
+
+    def test_intl_locale_manifest_is_exact_live_and_shared(self):
+        self.assertEqual(len(INTL_LOCALE_FILES), 109)
+        locale_object = "intl402/Intl/getCanonicalLocales/Locale-object.js"
+        symbol_file = "intl402/Locale/invalid-tag-throws-symbol.js"
+        realm_file = "intl402/Locale/proto-from-ctor-realm.js"
+        info_file = "intl402/Locale/prototype/getCollations/branding.js"
+        outside = "intl402/Locale/future-test.js"
+        self.assertIn(locale_object, INTL_LOCALE_FILES)
+        self.assertIn(symbol_file, INTL_LOCALE_FILES)
+        self.assertIn(realm_file, INTL_LOCALE_FILES)
+        self.assertNotIn(info_file, INTL_LOCALE_FILES)
+        self.assertNotIn(outside, INTL_LOCALE_FILES)
+        self.assertEqual(
+            intl_locale_features(symbol_file),
+            frozenset({"Intl.Locale", "Symbol"}),
+        )
+        self.assertEqual(
+            intl_locale_features(realm_file),
+            frozenset({"Intl.Locale", "Reflect", "Symbol", "cross-realm"}),
+        )
+        self.assertEqual(intl_locale_features(outside), frozenset())
+
+        checkout = Path(test262_runner.TEST262) / "test"
+        try:
+            checkout_available = checkout.exists()
+        except OSError:
+            checkout_available = False
+        if checkout_available:
+            live = {
+                path.relative_to(checkout).as_posix()
+                for path in (checkout / "intl402/Locale").rglob("*.js")
+                if "Intl.Locale-info"
+                not in test262_runner.parse_meta(path.read_text()).get("features", [])
+            }
+            adjacent = checkout / locale_object
+            if adjacent.exists():
+                live.add(locale_object)
+            self.assertEqual(live, INTL_LOCALE_FILES)
+            for relative in live:
+                meta = test262_runner.parse_meta((checkout / relative).read_text())
+                self.assertEqual(
+                    intl_locale_features(relative),
+                    frozenset(meta.get("features", [])),
+                )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            original_roots = (test262_runner.TEST262, test262_analyze.TEST262)
+            try:
+                test262_runner.TEST262 = temp_dir
+                test262_analyze.TEST262 = temp_dir
+                admitted = Path(temp_dir) / "test" / symbol_file
+                info = Path(temp_dir) / "test" / info_file
+                future = Path(temp_dir) / "test" / outside
+                adjacent = Path(temp_dir) / "test" / locale_object
+                adjacent.parent.mkdir(parents=True)
+                adjacent.write_text("/*---\nfeatures: [Intl.Locale]\n---*/")
+                for tool in (test262_runner, test262_analyze):
+                    self.assertEqual(tool.discover_test_files(adjacent), [adjacent])
+                    self.assertFalse(
+                        tool.should_skip(
+                            {"features": ["Intl.Locale", "Symbol"]}, admitted
+                        )
+                    )
+                    self.assertFalse(
+                        tool.should_skip({"features": ["Intl.Locale"]}, adjacent)
+                    )
+                    self.assertTrue(
+                        tool.should_skip(
+                            {"features": ["Intl.Locale", "Intl.Locale-info"]},
+                            info,
+                        )
+                    )
                     self.assertTrue(tool.should_skip({"features": []}, future))
             finally:
                 test262_runner.TEST262, test262_analyze.TEST262 = original_roots

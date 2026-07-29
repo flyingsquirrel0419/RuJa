@@ -1070,6 +1070,25 @@ pub enum HeapObj {
     TypedArray(TypedArrayData),
     ArrayBuffer(ArrayBufferData),
     DataView(DataViewData),
+    IntlLocale(IntlLocaleData),
+}
+
+/// Immutable ECMA-402 Locale internal slots attached to an ordinary object.
+pub struct IntlLocaleRecord {
+    pub locale: Arc<str>,
+    pub calendar: Option<Arc<str>>,
+    pub case_first: Option<Arc<str>>,
+    pub collation: Option<Arc<str>>,
+    pub hour_cycle: Option<Arc<str>>,
+    pub numbering_system: Option<Arc<str>>,
+    pub numeric: bool,
+}
+
+pub struct IntlLocaleData {
+    pub record: std::sync::OnceLock<IntlLocaleRecord>,
+    pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
+    pub proto: Mutex<Option<Value>>,
+    pub extensible: AtomicBool,
 }
 
 /// Generic JS object.
@@ -1862,6 +1881,7 @@ impl HeapObj {
             HeapObj::TypedArray(t) => &t.props,
             HeapObj::ArrayBuffer(a) => &a.props,
             HeapObj::DataView(d) => &d.props,
+            HeapObj::IntlLocale(locale) => &locale.props,
             HeapObj::Iterator(_) => panic!("iterator has no props"),
             HeapObj::Environment(_) => panic!("env has no props"),
         }
@@ -1890,6 +1910,7 @@ impl HeapObj {
             HeapObj::TypedArray(t) => &t.proto,
             HeapObj::ArrayBuffer(a) => &a.proto,
             HeapObj::DataView(d) => &d.proto,
+            HeapObj::IntlLocale(locale) => &locale.proto,
             HeapObj::Environment(_) => panic!("env has no proto"),
             HeapObj::Iterator(_) => panic!("iterator has no proto"),
         }
@@ -1950,6 +1971,7 @@ impl HeapObj {
             HeapObj::TypedArray(t) => t.kind.name(),
             HeapObj::ArrayBuffer(_) => "ArrayBuffer",
             HeapObj::DataView(_) => "DataView",
+            HeapObj::IntlLocale(_) => "Object",
         }
     }
 
@@ -1976,6 +1998,7 @@ impl HeapObj {
             HeapObj::LazyGenerator(generator) => generator.extensible.load(Ordering::Relaxed),
             HeapObj::ArrayBuffer(buffer) => buffer.extensible.load(Ordering::Relaxed),
             HeapObj::DataView(view) => view.extensible.load(Ordering::Relaxed),
+            HeapObj::IntlLocale(locale) => locale.extensible.load(Ordering::Relaxed),
             HeapObj::ModuleNamespace(_) => false,
             _ => true,
         }
@@ -2001,6 +2024,7 @@ impl HeapObj {
             HeapObj::TypedArray(array) => &array.extensible,
             HeapObj::ArrayBuffer(buffer) => &buffer.extensible,
             HeapObj::DataView(view) => &view.extensible,
+            HeapObj::IntlLocale(locale) => &locale.extensible,
             _ => return,
         };
         extensible.store(false, Ordering::Relaxed);

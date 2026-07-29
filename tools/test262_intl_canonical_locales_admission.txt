@@ -1,4 +1,4 @@
-# `%Intl%`, @@toStringTag, and getCanonicalLocales; Intl.Locale remains excluded.
+# `%Intl%` and getCanonicalLocales; Locale-object is owned by the Locale manifest.
 intl402/Intl/builtin.js
 intl402/Intl/getCanonicalLocales/canonicalized-tags.js
 intl402/Intl/getCanonicalLocales/canonicalized-unicode-ext-seq.js

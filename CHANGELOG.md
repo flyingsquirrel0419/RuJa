@@ -4,6 +4,19 @@
 
 ### Changed
 
+- Added the base `Intl.Locale` surface with a Realm-local constructor and
+  prototype, an unforgeable structural heap brand, canonical locale internal
+  slots, ordered language/Unicode option processing, branded accessors,
+  subclassing, `toString`, and ICU4X-backed `maximize`/`minimize`. Locale
+  objects now take the internal-slot fast path in `CanonicalizeLocaleList`, so
+  patched subclass methods are not observed. Construction uses eager
+  `newTarget.prototype` observation with constructor-Realm fallback; all
+  provisional intrinsic objects remain rooted across GC retry. Option and
+  likely-subtag scans consume sandbox fuel before native work. A frozen
+  109-file Test262 manifest admits every base `Intl.Locale` file plus the
+  adjacent canonical-locale-list case at **109 pass / 0 fail / 0 skip** while
+  scope-closing all `Intl.Locale-info` data APIs and future files.
+
 - Added the Realm-local `%Intl%` namespace and `Intl.getCanonicalLocales`.
   Locale-list coercion follows `CanonicalizeLocaleList` ordering, including
   String singleton handling, one `length` read, `HasProperty` before `Get`,
@@ -23,9 +36,9 @@
   `@@toStringTag`, cross-Realm Array/error behavior, coercion order, GC, and
   fuel recovery have direct tests. The frozen Test262 boundary admits exactly
   40 files, keeps future in-scope files closed until explicit admission, and
-  retains only the adjacent `Intl.Locale` file as unsupported;
-  its dedicated gate reports **40 pass / 0 fail / 1 skip** over 41 files.
-  Formatter constructors, `Intl.Locale`, `Intl.supportedValuesOf`, and the
+  delegates the adjacent Locale-object case to the exact Locale manifest;
+  its dedicated gate reports **41 pass / 0 fail / 0 skip** over 41 files.
+  Formatter constructors, `Intl.Locale-info`, `Intl.supportedValuesOf`, and the
   remaining ECMA-402 surface stay separately gated. The package now declares
   Rust 1.88 as its MSRV and CI checks it explicitly.
 

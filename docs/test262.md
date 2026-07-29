@@ -83,8 +83,9 @@ missing-marker, process-error, and timeout outcomes.
 RuJa does **not** claim full ES conformance. Instead, it targets a
 deliberately scoped subset of ES5.1 + selected ES2015+ features (see
 [Supported subset](#supported-subset) below). Tests requiring unsupported
-features (bare module host resolution, source/defer imports, Intl, etc.) are skipped via the
-runner's `SKIP_FEATURES` set. The `explicit-resource-management` feature is
+features (bare module host resolution, source/defer imports, remaining Intl
+formatters/data APIs, etc.) are skipped via the runner's `SKIP_FEATURES` set.
+The `explicit-resource-management` feature is
 still skipped for syntax/runtime coverage, with a narrow exception for the
 already-supported `Symbol.dispose` and `Symbol.asyncDispose` intrinsics.
 
@@ -132,8 +133,10 @@ logical assignment. TypedArray `fill`, `values`,
 `join`, `set`, `subarray`, and default iteration are also included.
 
 **Intentionally unsupported**: bare-specifier ES Module host resolution,
-source-phase and deferred imports, Intl, a public multi-agent embedder API,
-and tail-call optimization. File-backed relative module graphs, dynamic
+source-phase and deferred imports, Intl formatter and Locale-info data APIs,
+a public multi-agent embedder API, and tail-call optimization. `%Intl%`,
+`Intl.getCanonicalLocales`, and the base `Intl.Locale` surface are supported.
+File-backed relative module graphs, dynamic
 imports, namespace objects, and JSON/text import attributes are supported in
 the frozen module slice.
 Explicit resource management syntax (`using` / `await using`) is not yet
@@ -12468,10 +12471,9 @@ in `HANDOFF.md` and will be pulled into support in later milestones.
 Pinned Test262 `9e61c12835c5e4a3bdba93850427e6742c4f64c4` has one `%Intl%`
 builtin file, two `@@toStringTag` files, and 38
 `Intl/getCanonicalLocales` files. The frozen manifest admits exactly 40 files;
-`getCanonicalLocales/Locale-object.js` remains skipped by its exact
-`Intl.Locale` feature because Locale objects and their internal slot are a
-later unit. A non-cone sparse checkout runs only this 41-file boundary and
-requires the literal summary **40 pass / 0 fail / 1 skip / 41 total / 40 run**.
+`getCanonicalLocales/Locale-object.js` is admitted by the separate Locale
+manifest. A non-cone sparse checkout runs only this 41-file boundary and
+requires the literal summary **41 pass / 0 fail / 0 skip / 41 total / 41 run**.
 The shared runner/analyzer removes only the six audited Symbol, Proxy, and
 Symbol.toStringTag gates on exact paths. Files later added under these Intl
 directories remain skipped even when they have no broad feature metadata;
@@ -12492,7 +12494,38 @@ the live manifest assertion against its pinned sparse checkout.
 - 목적과 의도: Move the first coherent ECMA-402 surface from broad failure/skip policy into exact supported conformance.
 - 기존 구현 및 제약 조건: `%Intl%` was absent; 41 adjacent files were failures or broad Symbol/Proxy skips, and ICU4X alone does not cover every required grammar and extension alias case.
 - 검토한 주요 대안: Remove Intl/Symbol/Proxy gates globally, admit the directory prefix, keep the green forced run informational, admit only getCanonicalLocales tests, or freeze `%Intl%`, toStringTag, and locale canonicalization together while retaining Intl.Locale.
-- 선택한 방식: Freeze 40 exact paths and six exact feature overrides, reject future files in the scoped directories until explicit admission, retain `Intl.Locale` as one explicit skip, and hard-gate the 41-file sparse corpus at 40/0/1.
+- 선택한 방식: Freeze 40 exact paths and six exact feature overrides, reject future files in the scoped directories until explicit admission, delegate the adjacent Locale-object path to the separate Locale manifest, and hard-gate the 41-file sparse corpus at 41/0/0.
 - 다른 대안 대신 이 방식을 선택한 이유: Global and prefix gates overclaim formatter and future Intl behavior; forced runs do not change supported-subset accounting; excluding namespace descriptors would leave the intrinsic contract unproved; including Locale would claim an absent internal slot.
-- 장점, 단점 및 영향: Supported policy now matches the implemented Realm, coercion, grammar, alias, and resource boundary exactly. Later Intl constructors can reuse the canonicalizer while adding their own frozen manifests and data requirements.
+- 장점, 단점 및 영향: Supported policy now matches the implemented Realm, coercion, grammar, alias, and resource boundary exactly. Later Intl constructors reuse the canonicalizer while adding their own frozen manifests and data requirements.
+```
+
+## `Intl.Locale` base exact admission
+
+Pinned Test262 contains 160 files below `intl402/Locale`. Exactly 108 omit the
+`Intl.Locale-info` feature; the adjacent
+`intl402/Intl/getCanonicalLocales/Locale-object.js` makes the frozen base
+boundary **109 files**. The shared runner/analyzer removes each file's complete
+live feature set only for those paths. Every other Locale file, including all
+52 Locale-info files and future metadata-free files, remains scope-closed.
+The dedicated sparse CI gate passes the manifest paths directly and requires
+**109 pass / 0 fail / 0 skip / 109 total / 109 run**.
+
+Direct and pinned tests cover construction-only invocation, tag coercion and
+abrupt order, two-phase recanonicalization, every base option grammar and
+getter order, grandfathered and transformed tags, internal-slot locale-list
+fast paths, descriptors, brands, subclassing, extensibility, constructor-Realm
+prototype fallback, relevant Unicode keyword slots, `@@toStringTag`, and
+likely-subtag maximize/minimize while preserving suffixes. Tooling compares
+the 109-path set and complete feature metadata against the pinned checkout and
+tests direct file arguments so the adjacent singleton cannot disappear from a
+directory-only run.
+
+```text
+[Decision Log]
+- 목적과 의도: Admit the complete data-independent Intl.Locale contract as one measurable supported boundary.
+- 기존 구현 및 제약 조건: All 160 Locale files were hidden by the broad Intl.Locale feature; 52 also require Intl.Locale-info provider data, while one canonical-locale-list test lives outside the Locale directory.
+- 검토한 주요 대안: Remove Intl.Locale globally, admit the directory prefix, count skipped Locale-info files in the exact gate, omit the adjacent file, or freeze only the 109 complete live metadata records.
+- 선택한 방식: Freeze 108 non-Intl.Locale-info Locale paths plus the adjacent Locale-object path, verify complete metadata equality, scope-close every other Locale path, add direct-file runner discovery, and hard-gate 109/0/0.
+- 다른 대안 대신 이 방식을 선택한 이유: Global and prefix admission overclaim data APIs and future tests; a 108/0/52 directory result hides the true supported boundary; directory traversal silently omitted the adjacent file; exact file and metadata ownership makes policy movement auditable.
+- 장점, 단점 및 영향: The base Locale surface is failure- and skip-free with an exact CI contract, while all data-provider methods remain visibly unsupported. The manifest must be intentionally revised when pinned Test262 or Locale-info support changes.
 ```

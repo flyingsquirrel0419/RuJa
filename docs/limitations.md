@@ -557,12 +557,15 @@ guarantees are required.
   interop are implemented. The VM heap cap does not account for BigInt limb or
   Arc allocations, so large parsing, multiplication, and shifts can still hit
   host OOM rather than a catchable JavaScript error
-- ECMA-402 currently includes `%Intl%`, `Intl.getCanonicalLocales`, and locale
-  identifier canonicalization only. `Intl.Locale`, formatter constructors,
-  `Intl.supportedValuesOf`, locale negotiation/formatting data, and legacy
-  constructor fallback semantics remain unsupported. Array, TypedArray,
-  String, Number, BigInt, and Date locale-sensitive methods therefore retain
-  their documented non-ECMA-402 behavior until those formatter units land
+- ECMA-402 currently includes `%Intl%`, `Intl.getCanonicalLocales`, locale
+  identifier canonicalization, and the base `Intl.Locale` constructor,
+  accessors, `toString`, `maximize`, and `minimize`. The `Intl.Locale-info`
+  calendar/collation/hour-cycle/time-zone/week/text-direction data APIs,
+  formatter constructors, `Intl.supportedValuesOf`, locale negotiation and
+  formatting data, and legacy constructor fallback semantics remain
+  unsupported. Array, TypedArray, String, Number, BigInt, and Date
+  locale-sensitive methods therefore retain their documented non-ECMA-402
+  behavior until those formatter units land
 - Wrapper objects (`new String(x)`, `new Number(x)`, `new Boolean(x)`,
   `Object(x)`) now store the wrapped primitive, so `.valueOf()` and
   `ToPrimitive` resolve to it (`new Number(5) + 1 === 6`). Boxed-string

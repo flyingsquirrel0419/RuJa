@@ -1,12 +1,18 @@
 //! ECMA-402 locale canonicalization and the `%Intl%` intrinsic.
 
 use super::intl_aliases::{TRANSFORM_VALUE_ALIASES, UNICODE_TYPE_ALIASES};
-use super::{data_prop, make_value_array_in_current_realm};
+use super::{
+    accessor_get_prop, const_prop, data_prop, make_value_array_in_current_realm,
+    native_constructor_prototype_with_default,
+};
 use crate::error::{self, Error};
-use crate::value::{GcIdx, HeapObj, ObjectData, PropertyDescriptor, PropertyKey, Value};
+use crate::value::{
+    GcIdx, HeapObj, IntlLocaleData, IntlLocaleRecord, NativeConstructMode, ObjectData,
+    PropertyDescriptor, PropertyKey, Value,
+};
 use crate::vm::{NativeFn, Vm};
 use icu_locale::extensions::unicode;
-use icu_locale::{Locale, LocaleCanonicalizer};
+use icu_locale::{Locale, LocaleCanonicalizer, LocaleExpander};
 use indexmap::{IndexMap, IndexSet};
 use parking_lot::Mutex;
 use std::borrow::Cow;
@@ -350,6 +356,403 @@ fn canonicalize_locale_metered(vm: &mut Vm, tag: &str) -> error::Result<Arc<str>
     canonicalize_locale(tag)
 }
 
+fn locale_tag(vm: &Vm, value: &Value) -> Option<Arc<str>> {
+    let Value::Object(index) = value else {
+        return None;
+    };
+    vm.heap.with_obj(index.0, |object| match object {
+        HeapObj::IntlLocale(locale) => locale.record.get().map(|record| record.locale.clone()),
+        _ => None,
+    })
+}
+
+fn require_locale_tag(vm: &Vm, this: Option<Value>) -> error::Result<Arc<str>> {
+    let receiver = this.unwrap_or(Value::Undefined);
+    locale_tag(vm, &receiver)
+        .ok_or_else(|| Error::type_err("Intl.Locale method called on incompatible receiver"))
+}
+
+fn locale_string_slot(
+    vm: &Vm,
+    this: Option<Value>,
+    select: impl FnOnce(&IntlLocaleRecord) -> Option<Arc<str>>,
+) -> error::Result<Value> {
+    let receiver = this.unwrap_or(Value::Undefined);
+    let Value::Object(index) = receiver else {
+        return Err(Error::type_err(
+            "Intl.Locale accessor called on incompatible receiver",
+        ));
+    };
+    vm.heap.with_obj(index.0, |object| match object {
+        HeapObj::IntlLocale(locale) => locale
+            .record
+            .get()
+            .map(select)
+            .map(|value| value.map(Value::String).unwrap_or(Value::Undefined))
+            .ok_or_else(|| Error::type_err("Intl.Locale object is not initialized")),
+        _ => Err(Error::type_err(
+            "Intl.Locale accessor called on incompatible receiver",
+        )),
+    })
+}
+
+#[derive(Clone)]
+struct LocaleTagParts {
+    language: String,
+    script: Option<String>,
+    region: Option<String>,
+    variants: Vec<String>,
+    suffix: Vec<String>,
+}
+
+fn is_script_subtag(value: &str) -> bool {
+    value.len() == 4 && value.bytes().all(|byte| byte.is_ascii_alphabetic())
+}
+
+fn is_region_subtag(value: &str) -> bool {
+    (value.len() == 2 && value.bytes().all(|byte| byte.is_ascii_alphabetic()))
+        || (value.len() == 3 && value.bytes().all(|byte| byte.is_ascii_digit()))
+}
+
+fn is_variant_subtag(value: &str) -> bool {
+    ((5..=8).contains(&value.len()) && value.bytes().all(|byte| byte.is_ascii_alphanumeric()))
+        || (value.len() == 4
+            && value.as_bytes()[0].is_ascii_digit()
+            && value.bytes().all(|byte| byte.is_ascii_alphanumeric()))
+}
+
+fn locale_tag_parts(tag: &str) -> error::Result<LocaleTagParts> {
+    let subtags: Vec<&str> = tag.split('-').collect();
+    let base_end = subtags
+        .iter()
+        .position(|subtag| subtag.len() == 1)
+        .unwrap_or(subtags.len());
+    let base = &subtags[..base_end];
+    let language = base
+        .first()
+        .ok_or_else(|| Error::internal("canonical locale has no language"))?
+        .to_string();
+    let mut index = 1;
+    let script = base
+        .get(index)
+        .filter(|value| is_script_subtag(value))
+        .map(|value| {
+            index += 1;
+            (*value).to_string()
+        });
+    let region = base
+        .get(index)
+        .filter(|value| is_region_subtag(value))
+        .map(|value| {
+            index += 1;
+            (*value).to_string()
+        });
+    let variants = base[index..]
+        .iter()
+        .map(|value| (*value).to_string())
+        .collect();
+    let suffix = subtags[base_end..]
+        .iter()
+        .map(|value| (*value).to_string())
+        .collect();
+    Ok(LocaleTagParts {
+        language,
+        script,
+        region,
+        variants,
+        suffix,
+    })
+}
+
+fn locale_tag_parts_metered(vm: &mut Vm, tag: &str) -> error::Result<LocaleTagParts> {
+    vm.consume_fuel_units(tag.len().div_ceil(64).min(i64::MAX as usize) as i64)?;
+    locale_tag_parts(tag)
+}
+
+fn compose_locale_tag(parts: &LocaleTagParts) -> String {
+    let mut subtags = vec![parts.language.clone()];
+    if let Some(script) = &parts.script {
+        subtags.push(script.clone());
+    }
+    if let Some(region) = &parts.region {
+        subtags.push(region.clone());
+    }
+    subtags.extend(parts.variants.iter().cloned());
+    subtags.extend(parts.suffix.iter().cloned());
+    subtags.join("-")
+}
+
+fn valid_language_option(value: &str) -> bool {
+    ((2..=3).contains(&value.len()) || (5..=8).contains(&value.len()))
+        && value.bytes().all(|byte| byte.is_ascii_alphabetic())
+        && !value.eq_ignore_ascii_case("root")
+}
+
+fn valid_variants_option(value: &str) -> bool {
+    let mut seen = IndexSet::new();
+    !value.is_empty()
+        && value
+            .split('-')
+            .all(|variant| is_variant_subtag(variant) && seen.insert(variant.to_ascii_lowercase()))
+}
+
+fn valid_unicode_type(value: &str) -> bool {
+    !value.is_empty()
+        && value.split('-').all(|subtag| {
+            (3..=8).contains(&subtag.len())
+                && subtag.bytes().all(|byte| byte.is_ascii_alphanumeric())
+        })
+}
+
+fn get_string_option(
+    vm: &mut Vm,
+    options: Option<&Value>,
+    name: &str,
+) -> error::Result<Option<String>> {
+    let Some(options) = options else {
+        return Ok(None);
+    };
+    let value = vm.get_property(options, name)?;
+    if value.is_undefined() {
+        return Ok(None);
+    }
+    let pin_count = vm.pin(&value);
+    let result = vm.to_string(&value).and_then(|value| {
+        vm.consume_fuel_units(value.len().div_ceil(64).min(i64::MAX as usize) as i64)?;
+        Ok(value.to_string())
+    });
+    vm.unpin_many(pin_count);
+    result.map(Some)
+}
+
+fn get_boolean_option(
+    vm: &mut Vm,
+    options: Option<&Value>,
+    name: &str,
+) -> error::Result<Option<bool>> {
+    let Some(options) = options else {
+        return Ok(None);
+    };
+    let value = vm.get_property(options, name)?;
+    if value.is_undefined() {
+        Ok(None)
+    } else {
+        Ok(Some(vm.to_boolean(&value)))
+    }
+}
+
+fn update_language_id(vm: &mut Vm, tag: &str, options: Option<&Value>) -> error::Result<Arc<str>> {
+    let mut parts = locale_tag_parts(tag)?;
+    if let Some(language) = get_string_option(vm, options, "language")? {
+        if !valid_language_option(&language) {
+            return Err(Error::range("Invalid language option"));
+        }
+        parts.language = language;
+    }
+    if let Some(script) = get_string_option(vm, options, "script")? {
+        if !is_script_subtag(&script) {
+            return Err(Error::range("Invalid script option"));
+        }
+        parts.script = Some(script);
+    }
+    if let Some(region) = get_string_option(vm, options, "region")? {
+        if !is_region_subtag(&region) {
+            return Err(Error::range("Invalid region option"));
+        }
+        parts.region = Some(region);
+    }
+    if let Some(variants) = get_string_option(vm, options, "variants")? {
+        if !valid_variants_option(&variants) {
+            return Err(Error::range("Invalid variants option"));
+        }
+        parts.variants = variants.split('-').map(str::to_string).collect();
+    }
+    canonicalize_locale_metered(vm, &compose_locale_tag(&parts))
+}
+
+#[derive(Default)]
+struct UnicodeExtension {
+    attributes: Vec<String>,
+    keywords: IndexMap<String, String>,
+}
+
+fn remove_unicode_extension(tag: &str) -> (String, UnicodeExtension) {
+    let subtags: Vec<&str> = tag.split('-').collect();
+    let Some(start) = subtags
+        .iter()
+        .take_while(|subtag| !subtag.eq_ignore_ascii_case("x"))
+        .position(|subtag| subtag.eq_ignore_ascii_case("u"))
+    else {
+        return (tag.to_string(), UnicodeExtension::default());
+    };
+    let end = subtags[start + 1..]
+        .iter()
+        .position(|subtag| subtag.len() == 1)
+        .map_or(subtags.len(), |offset| start + 1 + offset);
+    let contents = &subtags[start + 1..end];
+    let first_key = contents
+        .iter()
+        .position(|subtag| subtag.len() == 2)
+        .unwrap_or(contents.len());
+    let attributes = contents[..first_key]
+        .iter()
+        .map(|value| (*value).to_string())
+        .collect();
+    let mut keywords = IndexMap::new();
+    let mut index = first_key;
+    while index < contents.len() {
+        let key = contents[index].to_string();
+        let value_start = index + 1;
+        index = value_start;
+        while index < contents.len() && contents[index].len() != 2 {
+            index += 1;
+        }
+        keywords.insert(key, contents[value_start..index].join("-"));
+    }
+    let mut kept = Vec::with_capacity(subtags.len() - (end - start));
+    kept.extend_from_slice(&subtags[..start]);
+    kept.extend_from_slice(&subtags[end..]);
+    (
+        kept.join("-"),
+        UnicodeExtension {
+            attributes,
+            keywords,
+        },
+    )
+}
+
+fn restore_unicode_extension(base: String, mut extension: UnicodeExtension) -> String {
+    if extension.attributes.is_empty() && extension.keywords.is_empty() {
+        return base;
+    }
+    extension.attributes.sort();
+    let mut keywords: Vec<_> = extension.keywords.into_iter().collect();
+    keywords.sort_by(|left, right| left.0.cmp(&right.0));
+    let mut rendered = vec!["u".to_string()];
+    rendered.extend(extension.attributes);
+    for (key, value) in keywords {
+        rendered.push(key);
+        if value != "true" && !value.is_empty() {
+            rendered.extend(value.split('-').map(str::to_string));
+        }
+    }
+    let mut subtags: Vec<String> = base.split('-').map(str::to_string).collect();
+    let insertion = subtags
+        .iter()
+        .position(|subtag| subtag.len() == 1 && subtag.as_str() > "u")
+        .unwrap_or(subtags.len());
+    subtags.splice(insertion..insertion, rendered);
+    subtags.join("-")
+}
+
+fn update_unicode_extension(
+    vm: &mut Vm,
+    tag: &str,
+    options: Option<&Value>,
+) -> error::Result<Arc<str>> {
+    let calendar = get_string_option(vm, options, "calendar")?;
+    if calendar
+        .as_deref()
+        .is_some_and(|value| !valid_unicode_type(value))
+    {
+        return Err(Error::range("Invalid calendar option"));
+    }
+    let collation = get_string_option(vm, options, "collation")?;
+    if collation
+        .as_deref()
+        .is_some_and(|value| !valid_unicode_type(value))
+    {
+        return Err(Error::range("Invalid collation option"));
+    }
+    let hour_cycle = get_string_option(vm, options, "hourCycle")?;
+    if hour_cycle
+        .as_deref()
+        .is_some_and(|value| !matches!(value, "h11" | "h12" | "h23" | "h24"))
+    {
+        return Err(Error::range("Invalid hourCycle option"));
+    }
+    let case_first = get_string_option(vm, options, "caseFirst")?;
+    if case_first
+        .as_deref()
+        .is_some_and(|value| !matches!(value, "upper" | "lower" | "false"))
+    {
+        return Err(Error::range("Invalid caseFirst option"));
+    }
+    let numeric = get_boolean_option(vm, options, "numeric")?;
+    let numbering_system = get_string_option(vm, options, "numberingSystem")?;
+    if numbering_system
+        .as_deref()
+        .is_some_and(|value| !valid_unicode_type(value))
+    {
+        return Err(Error::range("Invalid numberingSystem option"));
+    }
+
+    let (base, mut extension) = remove_unicode_extension(tag);
+    for (key, value) in [
+        ("ca", calendar),
+        ("co", collation),
+        ("hc", hour_cycle),
+        ("kf", case_first),
+        ("kn", numeric.map(|value| value.to_string())),
+        ("nu", numbering_system),
+    ] {
+        if let Some(value) = value {
+            extension.keywords.insert(key.to_string(), value);
+        }
+    }
+    canonicalize_locale_metered(vm, &restore_unicode_extension(base, extension))
+}
+
+fn locale_record(tag: Arc<str>) -> IntlLocaleRecord {
+    let (_, extension) = remove_unicode_extension(&tag);
+    let value = |key: &str| {
+        extension
+            .keywords
+            .get(key)
+            .map(|value| Arc::from(value.as_str()))
+    };
+    let numeric = extension
+        .keywords
+        .get("kn")
+        .is_some_and(|value| value.is_empty() || value == "true");
+    IntlLocaleRecord {
+        locale: tag,
+        calendar: value("ca"),
+        case_first: value("kf"),
+        collation: value("co"),
+        hour_cycle: value("hc"),
+        numbering_system: value("nu"),
+        numeric,
+    }
+}
+
+fn transform_likely_subtags(vm: &mut Vm, tag: &str, maximize: bool) -> error::Result<Arc<str>> {
+    vm.consume_fuel_units(tag.len().div_ceil(64).min(i64::MAX as usize) as i64)?;
+    let parts = locale_tag_parts(tag)?;
+    let subtags = tag.bytes().filter(|byte| *byte == b'-').count() + 1;
+    vm.consume_fuel_units(subtags.saturating_mul(subtags).min(i64::MAX as usize) as i64)?;
+    let suffix = parts.suffix.join("-");
+    let mut base_parts = parts;
+    base_parts.suffix.clear();
+    let base = compose_locale_tag(&base_parts);
+    let (input, replacements) = substitute_long_language_subtags(&base);
+    let mut locale = input
+        .parse::<Locale>()
+        .map_err(|_| Error::range(format!("Invalid language tag: {tag}")))?;
+    let expander = LocaleExpander::new_extended();
+    if maximize {
+        expander.maximize(&mut locale.id);
+    } else {
+        expander.minimize(&mut locale.id);
+    }
+    let mut transformed = restore_long_language_subtags(locale.to_string(), replacements);
+    if !suffix.is_empty() {
+        transformed.push('-');
+        transformed.push_str(&suffix);
+    }
+    canonicalize_locale_metered(vm, &transformed)
+}
+
 fn to_length(vm: &mut Vm, value: &Value) -> error::Result<u64> {
     let number = vm.to_number(value)?;
     if number.is_nan() || number <= 0.0 {
@@ -365,6 +768,9 @@ fn canonicalize_list(vm: &mut Vm, locales: &Value) -> error::Result<Vec<Value>> 
     let mut seen = IndexSet::<Arc<str>>::new();
     if locales.is_undefined() {
         return Ok(Vec::new());
+    }
+    if let Some(tag) = locale_tag(vm, locales) {
+        return Ok(vec![Value::String(tag)]);
     }
     if let Value::String(tag) = locales {
         let canonical = canonicalize_locale_metered(vm, tag)?;
@@ -391,10 +797,14 @@ fn canonicalize_list(vm: &mut Vm, locales: &Value) -> error::Result<Vec<Value>> 
                         "locale list elements must be strings or objects",
                     ));
                 }
-                let value_pin = vm.pin(&value);
-                let tag_result = vm.to_string(&value);
-                vm.unpin_many(value_pin);
-                let canonical = canonicalize_locale_metered(vm, &tag_result?)?;
+                let canonical = if let Some(tag) = locale_tag(vm, &value) {
+                    tag
+                } else {
+                    let value_pin = vm.pin(&value);
+                    let tag_result = vm.to_string(&value);
+                    vm.unpin_many(value_pin);
+                    canonicalize_locale_metered(vm, &tag_result?)?
+                };
                 if !seen.contains(&canonical) {
                     seen.try_reserve(1)
                         .map_err(|_| Error::range("locale list is too large"))?;
@@ -415,6 +825,178 @@ fn canonicalize_list(vm: &mut Vm, locales: &Value) -> error::Result<Vec<Value>> 
     completion
 }
 
+fn intl_locale_constructor(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    if vm.current_native_new_target().is_none() {
+        return Err(Error::type_err(
+            "Intl.Locale constructor must be called with new",
+        ));
+    }
+    let tag = args.first().cloned().unwrap_or(Value::Undefined);
+    let raw_options = args.get(1).cloned().unwrap_or(Value::Undefined);
+    vm.try_reserve_gc_pins(5)?;
+    let mut pin_count = vm.pin_many(&[tag.clone(), raw_options.clone()]);
+    let result = (|| {
+        let realm = vm.current_realm_global_env();
+        let fallback = vm
+            .realm_intl_locale_prototypes
+            .get(&realm.0)
+            .cloned()
+            .ok_or_else(|| Error::internal("Intl.Locale prototype is not installed"))?;
+        let prototype = native_constructor_prototype_with_default(vm, "Intl.Locale", fallback)?;
+        pin_count += vm.pin(&prototype);
+        let index = vm.alloc(HeapObj::IntlLocale(IntlLocaleData {
+            record: std::sync::OnceLock::new(),
+            props: Mutex::new(IndexMap::new()),
+            proto: Mutex::new(Some(prototype)),
+            extensible: AtomicBool::new(true),
+        }))?;
+        let object = Value::Object(index);
+        pin_count += vm.pin(&object);
+
+        if !matches!(tag, Value::String(_) | Value::Object(_)) {
+            return Err(Error::type_err(
+                "Intl.Locale tag must be a string or object",
+            ));
+        }
+        let input = if let Some(locale) = locale_tag(vm, &tag) {
+            locale
+        } else {
+            vm.to_string(&tag)?
+        };
+        let options = if raw_options.is_undefined() {
+            None
+        } else {
+            let object = vm.to_object(&raw_options)?;
+            pin_count += vm.pin(&object);
+            Some(object)
+        };
+        let canonical = canonicalize_locale_metered(vm, &input)?;
+        let canonical = update_language_id(vm, &canonical, options.as_ref())?;
+        let canonical = update_unicode_extension(vm, &canonical, options.as_ref())?;
+        let record = locale_record(canonical);
+        vm.heap.with_obj(index.0, |heap_object| {
+            let HeapObj::IntlLocale(locale) = heap_object else {
+                unreachable!("new Intl.Locale object changed representation")
+            };
+            locale
+                .record
+                .set(record)
+                .map_err(|_| Error::internal("Intl.Locale initialized twice"))
+        })?;
+        Ok(object)
+    })();
+    vm.unpin_many(pin_count);
+    result
+}
+
+fn locale_base_name(vm: &mut Vm, _: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let tag = require_locale_tag(vm, this)?;
+    let mut parts = locale_tag_parts_metered(vm, &tag)?;
+    parts.suffix.clear();
+    Ok(Value::String(Arc::from(compose_locale_tag(&parts))))
+}
+
+fn locale_language(vm: &mut Vm, _: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let tag = require_locale_tag(vm, this)?;
+    Ok(Value::String(Arc::from(
+        locale_tag_parts_metered(vm, &tag)?.language,
+    )))
+}
+
+fn locale_script(vm: &mut Vm, _: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let tag = require_locale_tag(vm, this)?;
+    Ok(locale_tag_parts_metered(vm, &tag)?
+        .script
+        .map(|value| Value::String(Arc::from(value)))
+        .unwrap_or(Value::Undefined))
+}
+
+fn locale_region(vm: &mut Vm, _: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let tag = require_locale_tag(vm, this)?;
+    Ok(locale_tag_parts_metered(vm, &tag)?
+        .region
+        .map(|value| Value::String(Arc::from(value)))
+        .unwrap_or(Value::Undefined))
+}
+
+fn locale_variants(vm: &mut Vm, _: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let tag = require_locale_tag(vm, this)?;
+    let variants = locale_tag_parts_metered(vm, &tag)?.variants;
+    Ok(if variants.is_empty() {
+        Value::Undefined
+    } else {
+        Value::String(Arc::from(variants.join("-")))
+    })
+}
+
+fn locale_calendar(vm: &mut Vm, _: &[Value], this: Option<Value>) -> error::Result<Value> {
+    locale_string_slot(vm, this, |record| record.calendar.clone())
+}
+
+fn locale_case_first(vm: &mut Vm, _: &[Value], this: Option<Value>) -> error::Result<Value> {
+    locale_string_slot(vm, this, |record| record.case_first.clone())
+}
+
+fn locale_collation(vm: &mut Vm, _: &[Value], this: Option<Value>) -> error::Result<Value> {
+    locale_string_slot(vm, this, |record| record.collation.clone())
+}
+
+fn locale_hour_cycle(vm: &mut Vm, _: &[Value], this: Option<Value>) -> error::Result<Value> {
+    locale_string_slot(vm, this, |record| record.hour_cycle.clone())
+}
+
+fn locale_numbering_system(vm: &mut Vm, _: &[Value], this: Option<Value>) -> error::Result<Value> {
+    locale_string_slot(vm, this, |record| record.numbering_system.clone())
+}
+
+fn locale_numeric(vm: &mut Vm, _: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let receiver = this.unwrap_or(Value::Undefined);
+    let Value::Object(index) = receiver else {
+        return Err(Error::type_err(
+            "Intl.Locale accessor called on incompatible receiver",
+        ));
+    };
+    vm.heap.with_obj(index.0, |object| match object {
+        HeapObj::IntlLocale(locale) => locale
+            .record
+            .get()
+            .map(|record| Value::Bool(record.numeric))
+            .ok_or_else(|| Error::type_err("Intl.Locale object is not initialized")),
+        _ => Err(Error::type_err(
+            "Intl.Locale accessor called on incompatible receiver",
+        )),
+    })
+}
+
+fn locale_to_string(vm: &mut Vm, _: &[Value], this: Option<Value>) -> error::Result<Value> {
+    require_locale_tag(vm, this).map(Value::String)
+}
+
+fn construct_intrinsic_locale(vm: &mut Vm, tag: Arc<str>) -> error::Result<Value> {
+    let realm = vm.current_realm_global_env();
+    let constructor = vm
+        .realm_intl_locale_constructors
+        .get(&realm.0)
+        .cloned()
+        .ok_or_else(|| Error::internal("Intl.Locale constructor is not installed"))?;
+    let pin_count = vm.pin(&constructor);
+    let result = vm.construct(&constructor, &[Value::String(tag)]);
+    vm.unpin_many(pin_count);
+    result
+}
+
+fn locale_maximize(vm: &mut Vm, _: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let tag = require_locale_tag(vm, this)?;
+    let transformed = transform_likely_subtags(vm, &tag, true)?;
+    construct_intrinsic_locale(vm, transformed)
+}
+
+fn locale_minimize(vm: &mut Vm, _: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let tag = require_locale_tag(vm, this)?;
+    let transformed = transform_likely_subtags(vm, &tag, false)?;
+    construct_intrinsic_locale(vm, transformed)
+}
+
 fn intl_get_canonical_locales(
     vm: &mut Vm,
     args: &[Value],
@@ -427,6 +1009,115 @@ fn intl_get_canonical_locales(
     make_value_array_in_current_realm(vm, list?)
 }
 
+fn build_locale_intrinsic_in_env(
+    vm: &mut Vm,
+    env: GcIdx,
+    object_proto: Value,
+) -> error::Result<Value> {
+    const METHODS: [(&str, NativeFn, usize); 3] = [
+        ("toString", locale_to_string as NativeFn, 0),
+        ("maximize", locale_maximize as NativeFn, 0),
+        ("minimize", locale_minimize as NativeFn, 0),
+    ];
+    const GETTERS: [(&str, NativeFn); 11] = [
+        ("baseName", locale_base_name as NativeFn),
+        ("calendar", locale_calendar as NativeFn),
+        ("caseFirst", locale_case_first as NativeFn),
+        ("collation", locale_collation as NativeFn),
+        ("hourCycle", locale_hour_cycle as NativeFn),
+        ("language", locale_language as NativeFn),
+        ("numberingSystem", locale_numbering_system as NativeFn),
+        ("numeric", locale_numeric as NativeFn),
+        ("region", locale_region as NativeFn),
+        ("script", locale_script as NativeFn),
+        ("variants", locale_variants as NativeFn),
+    ];
+
+    // Provisional functions must survive a GC retry until both intrinsic
+    // objects and their Realm registry roots have been published.
+    vm.try_reserve_gc_pins(1 + METHODS.len() + GETTERS.len() + 2)?;
+    let mut pin_count = vm.pin(&object_proto);
+    let result = (|| {
+        let mut prototype_props = IndexMap::new();
+        prototype_props
+            .try_reserve(METHODS.len() + GETTERS.len() + 2)
+            .map_err(|_| Error::range("Intl.Locale prototype is too large"))?;
+
+        for (name, function, length) in METHODS {
+            let method = Value::Object(
+                vm.new_native_function_in_env_with_gc_retry(name, function, length, env)?,
+            );
+            pin_count += vm.pin(&method);
+            prototype_props.insert(PropertyKey::from(name), data_prop(method));
+        }
+        for (property, getter) in GETTERS {
+            let name = format!("get {property}");
+            let function =
+                Value::Object(vm.new_native_function_in_env_with_gc_retry(&name, getter, 0, env)?);
+            pin_count += vm.pin(&function);
+            prototype_props.insert(PropertyKey::from(property), accessor_get_prop(function));
+        }
+
+        let mut tag = PropertyDescriptor::data(Value::String(Arc::from("Intl.Locale")));
+        tag.writable = false;
+        tag.enumerable = false;
+        tag.configurable = true;
+        prototype_props.insert(
+            PropertyKey::symbol(vm.well_known_symbols.to_string_tag),
+            tag,
+        );
+
+        let prototype = Value::Object(vm.alloc(HeapObj::Object(ObjectData {
+            props: Mutex::new(prototype_props),
+            proto: Mutex::new(Some(object_proto)),
+            extensible: AtomicBool::new(true),
+            class_name: None,
+            private_fields: Mutex::new(std::collections::HashMap::new()),
+            primitive: Mutex::new(None),
+        }))?);
+        pin_count += vm.pin(&prototype);
+
+        let constructor = Value::Object(vm.new_native_constructor_in_env_with_gc_retry(
+            "Locale",
+            intl_locale_constructor as NativeFn,
+            1,
+            env,
+            NativeConstructMode::InternalEagerPrototype,
+        )?);
+        pin_count += vm.pin(&constructor);
+
+        let Value::Object(constructor_index) = &constructor else {
+            unreachable!("native constructor allocation returned a non-object")
+        };
+        vm.heap.with_obj(constructor_index.0, |object| {
+            let HeapObj::Function(function) = object else {
+                unreachable!("native constructor allocation returned a non-function")
+            };
+            *function.prototype.lock() = Some(prototype.clone());
+            function.props.lock().insert(
+                PropertyKey::from("prototype"),
+                const_prop(prototype.clone()),
+            );
+        });
+        let Value::Object(prototype_index) = &prototype else {
+            unreachable!("Locale prototype allocation returned a non-object")
+        };
+        vm.heap.with_obj(prototype_index.0, |object| {
+            object.props().lock().insert(
+                PropertyKey::from("constructor"),
+                data_prop(constructor.clone()),
+            );
+        });
+
+        vm.realm_intl_locale_constructors
+            .insert(env.0, constructor.clone());
+        vm.realm_intl_locale_prototypes.insert(env.0, prototype);
+        Ok(constructor)
+    })();
+    vm.unpin_many(pin_count);
+    result
+}
+
 pub(crate) fn build_intl_in_env(
     vm: &mut Vm,
     env: GcIdx,
@@ -434,6 +1125,8 @@ pub(crate) fn build_intl_in_env(
 ) -> error::Result<Value> {
     let mut pin_count = vm.pin(&object_proto);
     let result = (|| {
+        let locale = build_locale_intrinsic_in_env(vm, env, object_proto.clone())?;
+        pin_count += vm.pin(&locale);
         let method_idx = vm.new_native_function_in_env_with_gc_retry(
             "getCanonicalLocales",
             intl_get_canonical_locales as NativeFn,
@@ -444,6 +1137,7 @@ pub(crate) fn build_intl_in_env(
         pin_count += vm.pin(&method);
 
         let mut props = IndexMap::new();
+        props.insert(PropertyKey::from("Locale"), data_prop(locale));
         props.insert(PropertyKey::from("getCanonicalLocales"), data_prop(method));
         let mut tag = PropertyDescriptor::data(Value::String(Arc::from("Intl")));
         tag.writable = false;

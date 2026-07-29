@@ -311,10 +311,14 @@
   publication
 - **Error**: `Error`/`TypeError`/`RangeError`/`ReferenceError`/`SyntaxError`
 - **Intl foundation**: each Realm has its own `%Intl%` ordinary namespace with
-  the standard `@@toStringTag` and `getCanonicalLocales`. Locale lists preserve
-  observable `length`/`HasProperty`/`Get`/`ToString` order, return Realm-local
-  Arrays, and canonicalize Unicode locale identifiers with pinned ICU4X/CLDR
-  alias data. Locale and index scans consume VM fuel
+  the standard `@@toStringTag`, `getCanonicalLocales`, and base `Intl.Locale`
+  constructor/prototype. Locale lists preserve observable
+  `length`/`HasProperty`/`Get`/`ToString` order, return Realm-local Arrays, and
+  canonicalize Unicode locale identifiers with pinned ICU4X/CLDR alias data.
+  Locale objects expose canonical component and Unicode-keyword accessors plus
+  branded `toString`, `maximize`, and `minimize`; constructor/prototype fallback
+  and fresh results are Realm-correct. Locale, option, likely-subtag, and index
+  scans consume VM fuel
 
 ## Type coercion
 

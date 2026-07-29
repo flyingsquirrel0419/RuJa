@@ -18415,6 +18415,73 @@ fn eager_constructor_prototype_getter_keeps_arguments_rooted() {
 }
 
 #[test]
+fn intl_locale_constructor_root_reservation_failure_is_balanced_and_retryable() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "failLocaleRootReservation",
+        |vm, _, _| {
+            // Native call dispatch reserves first; fail the constructor's
+            // following exact five-root preflight.
+            vm.gc_pin_reservation_failure_countdown = Some(1);
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("root-reservation failure hook should register");
+    vm.run(
+        r#"
+        var failLocaleReservation = true;
+        var localeIntrinsicPrototype = Intl.Locale.prototype;
+        function LocaleNewTarget() {}
+        var LocaleProxyNewTarget = new Proxy(LocaleNewTarget, {
+          get: function (target, key, receiver) {
+            if (key !== "prototype") return Reflect.get(target, key, receiver);
+            if (failLocaleReservation) {
+              failLocaleReservation = false;
+              failLocaleRootReservation();
+            }
+            return localeIntrinsicPrototype;
+          }
+        });
+        var localeTagObject = { toString: function () { return "en-US"; } };
+        var localeOptionsObject = {};
+        "#,
+    )
+    .expect("Locale reservation fixtures should initialize");
+
+    let baseline_pins = vm.gc_pins.len();
+    let error = vm
+        .run(
+            r#"
+            Reflect.construct(
+              Intl.Locale,
+              [localeTagObject, localeOptionsObject],
+              LocaleProxyNewTarget
+            );
+            "#,
+        )
+        .expect_err("Locale temporary-root reservation should fail");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range, "{error:?}");
+    assert_eq!(vm.gc_pin_reservation_failure_countdown, None);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    assert_eq!(
+        vm.run(
+            r#"
+            Reflect.construct(
+              Intl.Locale,
+              [localeTagObject, localeOptionsObject],
+              LocaleProxyNewTarget
+            ).toString();
+            "#,
+        )
+        .expect("Locale construction should retry cleanly"),
+        Value::String(Arc::from("en-US"))
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+}
+
+#[test]
 fn failed_realm_construction_rolls_back_every_heap_boundary() {
     let required_capacity = realm_creation_live_delta();
     let mut vm = Vm::new().expect("VM should initialize");
