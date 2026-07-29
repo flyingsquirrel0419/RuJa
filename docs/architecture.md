@@ -34,6 +34,32 @@ source ─► Lexer ─► Parser ─► Compiler ─► Bytecode ─► VM
   Object, Array, String, Number, Boolean, Function, Math, JSON, console, RegExp,
   Map, Set, Symbol, Promise, Proxy, TypedArray, and the Error hierarchy.
 
+## Module requests and typed modules
+
+Module parsing stores every static import or re-export as a `ModuleRequest`
+containing its decoded specifier and UTF-16-sorted Import Attributes. Equal
+requests are deduplicated only after attributes are included; the loader then
+maps a relative source path plus its selected JavaScript/JSON/text type to one
+canonical ModuleRecord key. Static and dynamic imports therefore share
+evaluation state, namespace identity, and JSON default-object identity.
+
+JSON and text files become synthetic one-default-export ModuleRecords. The VM
+parses or materializes their default value once while the graph resolves and
+stores it in the record. Graph-local values are pinned until publication; VM
+root enumeration traces cached synthetic defaults afterward. Dependency
+evaluation only initializes the synthetic binding. User code cannot observe or
+replace that operation through the global `JSON.parse` property.
+
+```text
+[Decision Log]
+- 목적과 의도: Static Import Attributes와 JSON/text modules를 dynamic import의 기존 typed-module surface와 하나의 ModuleRequest, cache, linking model로 통합한다.
+- 기존 구현 및 제약 조건: ModuleRequest는 specifier만 저장했고 static grammar는 module specifier 직후 semicolon을 요구했다. JSON/text loading은 dynamic import 전용이었으며 filesystem path만 사용하는 graph resolution은 같은 파일의 JavaScript, JSON, text identity를 구분할 수 없었다. Module graph는 dependency-first로 instantiate/evaluate하며 namespace와 live binding은 ModuleRecord environment를 참조한다.
+- 검토한 주요 대안: `with {}`를 파싱만 하고 무시하기, static loader를 dynamic loader와 별도로 복제하기, JSON source를 JavaScript object literal로 변환하기, synthetic module에서 전역 `JSON.parse`를 호출하기, 또는 parsed Value를 graph loading 중 임시 Rust local로 보존하기.
+- 선택한 방식: Decoded attributes를 UTF-16 key order로 ModuleRequest에 저장하고 request equality에 포함한다. Host가 지원하는 유일한 key `type`을 graph loading 전에 검증하고 physical path와 module type으로 cache key를 만든다. JSON/text default value를 resolution에서 한 번 만들고 synthetic ModuleRecord에 보존하며 graph-local payload/environment는 publication까지 pin한다. 평가 시에는 저장된 value로 default binding만 초기화한다. Static/dynamic paths는 같은 resolver와 ModuleRecord cache를 사용한다.
+- 다른 대안 대신 이 방식을 선택한 이유: Attribute 무시는 host semantics와 cache identity를 깨뜨리고, loader 복제는 static/dynamic namespace identity를 갈라놓는다. Object literal 변환은 `__proto__`와 JSON grammar가 달라지며, 전역 `JSON.parse` 호출은 사용자 mutation을 관찰한다. Graph loading 중 heap Value를 보관하면 아직 VM root registry에 publish되지 않은 값의 GC ownership이 불명확하다.
+- 장점, 단점 및 영향: 모든 import/re-export form이 같은 request를 전달하고 invalid JSON 및 named JSON imports가 linking 전에 실패하며 static/dynamic JSON objects가 동일하다. Escaped lone surrogates를 포함한 JSON strings를 보존하고 JavaScript/JSON/text views는 충돌하지 않으며 self-text import도 cycle 없이 동작한다. 현재 host는 relative files와 `type: "json"`/`"text"`만 지원한다. Bare specifiers, source-phase/deferred imports, Realm별 module graph/cache, arbitrary host attribute policies는 후속 범위다.
+```
+
 ## Garbage collection
 
 A mark-and-sweep collector with optional incremental marking reclaims

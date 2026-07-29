@@ -1,4 +1,4 @@
-use crate::ast::{ExportEntry, Program};
+use crate::ast::{ExportEntry, ImportAttribute, ModuleRequest, Program};
 use crate::bytecode::Chunk;
 use crate::error::{self, Error};
 use crate::value::{GcIdx, HeapObj, PromiseStatus, Value};
@@ -32,9 +32,16 @@ pub(crate) struct ModuleRecord {
     pub(crate) program: Program,
     pub(crate) env: GcIdx,
     pub(crate) dependencies: Vec<PathBuf>,
+    source_path: PathBuf,
+    synthetic: Option<SyntheticModule>,
     chunk: Option<Arc<Chunk>>,
     scc_id: usize,
     runtime: Arc<Mutex<ModuleRuntime>>,
+}
+
+#[derive(Clone)]
+struct SyntheticModule {
+    default_value: Value,
 }
 
 struct ModuleRuntime {
@@ -67,6 +74,12 @@ impl ModuleRecord {
     pub(crate) fn import_meta(&self) -> Option<GcIdx> {
         self.runtime.lock().import_meta
     }
+
+    pub(crate) fn synthetic_default(&self) -> Option<Value> {
+        self.synthetic
+            .as_ref()
+            .map(|module| module.default_value.clone())
+    }
 }
 
 fn resolve_specifier(referrer: &Path, specifier: &str) -> error::Result<PathBuf> {
@@ -91,26 +104,144 @@ fn resolve_specifier(referrer: &Path, specifier: &str) -> error::Result<PathBuf>
     })
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ModuleType {
+    JavaScript,
+    Json,
+    Text,
+}
+
+struct ResolvedModuleRequest {
+    source_path: PathBuf,
+    cache_key: PathBuf,
+    module_type: ModuleType,
+}
+
+fn module_request_type(request: &ModuleRequest) -> error::Result<ModuleType> {
+    let mut module_type = ModuleType::JavaScript;
+    for attribute in &request.attributes {
+        if attribute.key.as_ref() != "type" {
+            return Err(Error::syntax(format!(
+                "Unsupported static import attribute '{}'",
+                attribute.key
+            )));
+        }
+        module_type = match attribute.value.as_ref() {
+            "json" => ModuleType::Json,
+            "text" => ModuleType::Text,
+            other => {
+                return Err(Error::syntax(format!(
+                    "Unsupported static import type '{other}'"
+                )))
+            }
+        };
+    }
+    Ok(module_type)
+}
+
+fn resolve_module_request(
+    referrer: &Path,
+    request: &ModuleRequest,
+) -> error::Result<ResolvedModuleRequest> {
+    let module_type = module_request_type(request)?;
+    let source_path = resolve_specifier(referrer, &request.specifier)?;
+    let cache_key = match module_type {
+        ModuleType::JavaScript => source_path.clone(),
+        ModuleType::Json => data_module_cache_key(&source_path, "json"),
+        ModuleType::Text => data_module_cache_key(&source_path, "text"),
+    };
+    Ok(ResolvedModuleRequest {
+        source_path,
+        cache_key,
+        module_type,
+    })
+}
+
 fn load_graph(
     vm: &mut Vm,
     path: PathBuf,
     graph: &mut HashMap<PathBuf, ModuleRecord>,
+    realm: GcIdx,
 ) -> error::Result<()> {
     if graph.contains_key(&path) {
         return Ok(());
     }
     if let Some(cached) = vm.module_records.get(&path).cloned() {
         let dependencies = cached.dependencies.clone();
+        let cache_key = path.clone();
         graph.insert(path, cached);
+        let record = graph.get(&cache_key).expect("cached module was inserted");
+        vm.gc_pins.push(record.env.0);
+        if let Some(value) = record.synthetic_default() {
+            vm.pin(&value);
+        }
         for dependency in dependencies {
-            load_graph(vm, dependency, graph)?;
+            load_graph(vm, dependency, graph, realm)?;
         }
         return Ok(());
     }
     let source = std::fs::read_to_string(&path).map_err(|err| {
         Error::syntax_host(format!("Cannot read module '{}': {}", path.display(), err))
     })?;
-    load_graph_from_source(vm, path, &source, graph)
+    load_graph_from_source(vm, path, &source, graph, realm)
+}
+
+fn load_resolved_module(
+    vm: &mut Vm,
+    request: ResolvedModuleRequest,
+    graph: &mut HashMap<PathBuf, ModuleRecord>,
+    realm: GcIdx,
+) -> error::Result<()> {
+    if graph.contains_key(&request.cache_key) {
+        return Ok(());
+    }
+    if vm.module_records.contains_key(&request.cache_key) {
+        return load_graph(vm, request.cache_key, graph, realm);
+    }
+    if request.module_type == ModuleType::JavaScript {
+        return load_graph(vm, request.source_path, graph, realm);
+    }
+
+    let module_type = match request.module_type {
+        ModuleType::Json => "json",
+        ModuleType::Text => "text",
+        ModuleType::JavaScript => unreachable!("JavaScript handled above"),
+    };
+    let source = std::fs::read_to_string(&request.source_path).map_err(|error| {
+        Error::syntax_host(format!(
+            "Cannot read {} module '{}': {}",
+            module_type,
+            request.source_path.display(),
+            error
+        ))
+    })?;
+    let default_value = match request.module_type {
+        ModuleType::Json => {
+            let source = crate::value::utf16_from_scalar_str(&source);
+            crate::builtins::json::parse_json_text_in_realm(vm, &source, realm)?
+        }
+        ModuleType::Text => Value::from_string(&source),
+        ModuleType::JavaScript => unreachable!("JavaScript handled above"),
+    };
+    let value_pin = vm.pin(&default_value);
+    let cache_key = request.cache_key;
+    let loaded = load_graph_from_source(
+        vm,
+        cache_key.clone(),
+        "let __ruja_data_module_default; export { __ruja_data_module_default as default };",
+        graph,
+        realm,
+    );
+    if let Err(error) = loaded {
+        vm.unpin_many(value_pin);
+        return Err(error);
+    }
+    let record = graph
+        .get_mut(&cache_key)
+        .expect("synthetic module was inserted");
+    record.source_path = request.source_path;
+    record.synthetic = Some(SyntheticModule { default_value });
+    Ok(())
 }
 
 fn load_graph_from_source(
@@ -118,9 +249,10 @@ fn load_graph_from_source(
     path: PathBuf,
     source: &str,
     graph: &mut HashMap<PathBuf, ModuleRecord>,
+    realm: GcIdx,
 ) -> error::Result<()> {
     let program = Parser::parse_module(&source)?;
-    let env = crate::environment::new_env(&vm.heap, Some(vm.global), true)?;
+    let env = crate::environment::new_env(&vm.heap, Some(realm), true)?;
     crate::environment::declare(
         &vm.heap,
         env,
@@ -134,6 +266,8 @@ fn load_graph_from_source(
             program: program.clone(),
             env,
             dependencies: Vec::new(),
+            source_path: path.clone(),
+            synthetic: None,
             chunk: None,
             scc_id: usize::MAX,
             runtime: Arc::new(Mutex::new(ModuleRuntime {
@@ -147,14 +281,15 @@ fn load_graph_from_source(
             })),
         },
     );
+    vm.gc_pins.push(env.0);
 
     let mut dependencies = Vec::new();
     for request in &program.module_requests {
-        let dependency = resolve_specifier(&path, &request.specifier)?;
-        if !dependencies.contains(&dependency) {
-            dependencies.push(dependency.clone());
+        let dependency = resolve_module_request(&path, request)?;
+        if !dependencies.contains(&dependency.cache_key) {
+            dependencies.push(dependency.cache_key.clone());
         }
-        load_graph(vm, dependency, graph)?;
+        load_resolved_module(vm, dependency, graph, realm)?;
     }
     graph
         .get_mut(&path)
@@ -187,8 +322,13 @@ fn resolve_export(
     export_name: &str,
     seen: &mut HashSet<(PathBuf, Arc<str>)>,
 ) -> error::Result<(GcIdx, Arc<str>)> {
-    resolve_export_optional(graph, module, export_name, seen)?
-        .ok_or_else(|| missing_export_error(module, export_name))
+    resolve_export_optional(graph, module, export_name, seen)?.ok_or_else(|| {
+        let source_path = graph
+            .get(module)
+            .map(|record| record.source_path.as_path())
+            .unwrap_or(module);
+        missing_export_error(source_path, export_name)
+    })
 }
 
 fn resolve_export_optional(
@@ -217,14 +357,14 @@ fn resolve_export_optional(
                 import_name,
                 export_name: candidate,
             } if candidate.as_ref() == export_name => {
-                let dependency = resolve_specifier(module, &module_request.specifier)?;
+                let dependency = resolve_module_request(module, module_request)?.cache_key;
                 return resolve_export_optional(graph, &dependency, import_name, seen);
             }
             ExportEntry::NamespaceReExport {
                 module_request,
                 export_name: candidate,
             } if candidate.as_ref() == export_name => {
-                let dependency = resolve_specifier(module, &module_request.specifier)?;
+                let dependency = resolve_module_request(module, module_request)?.cache_key;
                 let target = graph
                     .get(&dependency)
                     .ok_or_else(|| Error::syntax("Module graph is incomplete"))?;
@@ -239,7 +379,7 @@ fn resolve_export_optional(
     let mut star_resolution: Option<(GcIdx, Arc<str>)> = None;
     for entry in &record.program.export_entries {
         if let ExportEntry::Star { module_request } = entry {
-            let dependency = resolve_specifier(module, &module_request.specifier)?;
+            let dependency = resolve_module_request(module, module_request)?.cache_key;
             if let Some(candidate) = resolve_export_optional(graph, &dependency, export_name, seen)?
             {
                 if let Some(existing) = &star_resolution {
@@ -279,7 +419,7 @@ fn exported_names(
                 names.push(export_name.clone());
             }
             ExportEntry::Star { module_request } => {
-                let dependency = resolve_specifier(module, &module_request.specifier)?;
+                let dependency = resolve_module_request(module, module_request)?.cache_key;
                 for name in exported_names(graph, &dependency, seen)? {
                     if name.as_ref() != "default" {
                         names.push(name);
@@ -350,7 +490,7 @@ fn get_module_namespace(
             {
                 Some((
                     export_name.clone(),
-                    resolve_specifier(path, &module_request.specifier),
+                    resolve_module_request(path, module_request).map(|request| request.cache_key),
                 ))
             } else {
                 None
@@ -422,7 +562,7 @@ fn link_imports_with_vm(
         })
         .collect();
     for (path, env, import) in imports {
-        let dependency = resolve_specifier(&path, &import.module_request.specifier)?;
+        let dependency = resolve_module_request(&path, &import.module_request)?.cache_key;
         if import.import_name.as_ref() == "*" {
             let namespace = get_module_namespace(vm, &dependency, graph)?;
             crate::environment::declare(
@@ -809,7 +949,7 @@ fn evaluate_module(
             if !ready {
                 continue;
             }
-            let (chunk, env) = {
+            let (chunk, env, synthetic) = {
                 let record = graph.get(module).expect("module exists");
                 (
                     record
@@ -817,8 +957,31 @@ fn evaluate_module(
                         .clone()
                         .ok_or_else(|| Error::internal("Instantiated module has no bytecode"))?,
                     record.env,
+                    record.synthetic.clone(),
                 )
             };
+            if let Some(synthetic) = synthetic {
+                if !crate::environment::initialize(
+                    &vm.heap,
+                    env,
+                    "__ruja_data_module_default",
+                    synthetic.default_value,
+                ) {
+                    vm.unpin_many(running_pin_count);
+                    let error = Error::internal("Synthetic module default binding is unavailable");
+                    mark_dependent_errors(graph, module, error.clone());
+                    clear_settled_module_runtime(graph);
+                    return Err(error);
+                }
+                graph
+                    .get(module)
+                    .expect("module exists")
+                    .runtime
+                    .lock()
+                    .status = ModuleStatus::Evaluated;
+                progressed = true;
+                continue;
+            }
             graph
                 .get(module)
                 .expect("module exists")
@@ -948,14 +1111,23 @@ impl Vm {
         }
     }
 
-    pub(crate) fn finish_dynamic_import(&mut self, target: &Path) -> error::Result<Value> {
+    pub(crate) fn finish_dynamic_import(
+        &mut self,
+        target: &Path,
+        realm: GcIdx,
+    ) -> error::Result<Value> {
+        let pin_base = self.gc_pins.len();
         let mut graph = HashMap::new();
-        load_graph(self, target.to_path_buf(), &mut graph)?;
-        let namespace = get_module_namespace(self, target, &mut graph)?;
-        for (path, record) in graph {
-            self.module_records.insert(path, record);
-        }
-        Ok(Value::Object(namespace))
+        let result = (|| {
+            load_graph(self, target.to_path_buf(), &mut graph, realm)?;
+            let namespace = get_module_namespace(self, target, &mut graph)?;
+            for (path, record) in graph {
+                self.module_records.insert(path, record);
+            }
+            Ok(Value::Object(namespace))
+        })();
+        self.gc_pins.truncate(pin_base);
+        result
     }
 
     pub(crate) fn dynamic_import_module(
@@ -963,53 +1135,61 @@ impl Vm {
         referrer: &Path,
         specifier: &str,
         import_type: Option<&str>,
+        realm: GcIdx,
     ) -> error::Result<DynamicImportResult> {
-        let target = resolve_specifier(referrer, specifier)?;
-        if matches!(import_type, Some("json" | "text")) {
-            let import_type = import_type.expect("matched supported data module type");
-            let virtual_target = data_module_cache_key(&target, import_type);
-            if !self.module_records.contains_key(&virtual_target) {
-                let source = std::fs::read_to_string(&target).map_err(|error| {
-                    Error::syntax_host(format!(
-                        "Cannot read {} module '{}': {}",
-                        import_type,
-                        target.display(),
-                        error
-                    ))
-                })?;
-                let value = if import_type == "json" {
-                    let source = crate::value::utf16_from_scalar_str(&source);
-                    crate::builtins::json::parse_json_text(self, &source)?
-                } else {
-                    Value::from_string(&source)
-                };
-                let value_pin = self.pin(&value);
+        let attributes = import_type
+            .map(|value| ImportAttribute {
+                key: Arc::from("type"),
+                value: Arc::from(value),
+            })
+            .into_iter()
+            .collect();
+        let request = ModuleRequest {
+            specifier: Arc::from(specifier),
+            attributes,
+        };
+        let resolved = resolve_module_request(referrer, &request)?;
+        let target = resolved.cache_key.clone();
+        if resolved.module_type != ModuleType::JavaScript {
+            if !self.module_records.contains_key(&target) {
+                let pin_base = self.gc_pins.len();
                 let mut graph = HashMap::new();
-                let loaded = load_graph_from_source(
-                    self,
-                    virtual_target.clone(),
-                    "export let __ruja_data_module_default; export { __ruja_data_module_default as default };",
-                    &mut graph,
-                )
-                .and_then(|()| self.run_loaded_module_graph(&virtual_target, graph, false));
-                self.unpin(value_pin);
-                loaded?;
-                let record = self.module_records.get(&virtual_target).ok_or_else(|| {
-                    Error::syntax("Data module evaluation did not produce a record".to_string())
-                })?;
-                if !crate::environment::set(
-                    &self.heap,
-                    record.env,
-                    "__ruja_data_module_default",
-                    value,
-                ) {
-                    return Err(Error::syntax(
-                        "Data module default binding is unavailable".to_string(),
-                    ));
+                if let Err(error) = load_resolved_module(self, resolved, &mut graph, realm) {
+                    self.gc_pins.truncate(pin_base);
+                    return Err(error);
+                }
+                self.run_loaded_module_graph(&target, graph, false, pin_base)?;
+            } else {
+                let status = self
+                    .module_records
+                    .get(&target)
+                    .expect("typed module record exists")
+                    .status();
+                if status == ModuleStatus::Evaluating {
+                    let evaluation_promise = self
+                        .module_records
+                        .get(&target)
+                        .and_then(ModuleRecord::evaluation_promise)
+                        .ok_or_else(|| {
+                            Error::internal("Evaluating module has no evaluation Promise")
+                        })?;
+                    return Ok(DynamicImportResult::Pending {
+                        target,
+                        evaluation_promise,
+                    });
+                }
+                if status != ModuleStatus::Evaluated {
+                    let pin_base = self.gc_pins.len();
+                    let mut graph = HashMap::new();
+                    if let Err(error) = load_graph(self, target.clone(), &mut graph, realm) {
+                        self.gc_pins.truncate(pin_base);
+                        return Err(error);
+                    }
+                    self.run_loaded_module_graph(&target, graph, false, pin_base)?;
                 }
             }
             return self
-                .finish_dynamic_import(&virtual_target)
+                .finish_dynamic_import(&target, realm)
                 .map(DynamicImportResult::Ready);
         }
         if let Some(record) = self.module_records.get(&target) {
@@ -1023,8 +1203,8 @@ impl Vm {
                 });
             }
         }
-        self.run_module_file_inner(&target, false)?;
-        self.finish_dynamic_import(&target)
+        self.run_module_file_inner(&target, false, realm)?;
+        self.finish_dynamic_import(&target, realm)
             .map(DynamicImportResult::Ready)
     }
 
@@ -1037,34 +1217,36 @@ impl Vm {
                 err
             ))
         })?;
+        let pin_base = self.gc_pins.len();
         let mut graph = HashMap::new();
-        load_graph(self, root.clone(), &mut graph)?;
-        assign_scc_ids(&mut graph);
-        link_imports_with_vm(self, &mut graph)?;
-        let pin_count = graph.len();
-        for record in graph.values() {
-            self.gc_pins.push(record.env.0);
+        if let Err(error) = load_graph(self, root.clone(), &mut graph, self.global) {
+            self.gc_pins.truncate(pin_base);
+            return Err(error);
         }
-        let result = instantiate_module(self, &root, &mut graph);
+        let result = (|| {
+            assign_scc_ids(&mut graph);
+            link_imports_with_vm(self, &mut graph)?;
+            instantiate_module(self, &root, &mut graph)
+        })();
         if result.is_ok() {
             for (path, record) in graph {
                 self.module_records.insert(path, record);
             }
         }
-        self.gc_pins
-            .truncate(self.gc_pins.len().saturating_sub(pin_count));
+        self.gc_pins.truncate(pin_base);
         result
     }
 
     /// Load, link, and evaluate an ECMAScript module graph rooted at `path`.
     pub fn run_module_file(&mut self, path: impl AsRef<Path>) -> error::Result<Value> {
-        self.run_module_file_inner(path.as_ref(), true)
+        self.run_module_file_inner(path.as_ref(), true, self.global)
     }
 
     fn run_module_file_inner(
         &mut self,
         path: &Path,
         drain_microtasks: bool,
+        realm: GcIdx,
     ) -> error::Result<Value> {
         let root = path.canonicalize().map_err(|err| {
             Error::syntax_host(format!(
@@ -1073,9 +1255,13 @@ impl Vm {
                 err
             ))
         })?;
+        let pin_base = self.gc_pins.len();
         let mut graph = HashMap::new();
-        load_graph(self, root.clone(), &mut graph)?;
-        self.run_loaded_module_graph(&root, graph, drain_microtasks)
+        if let Err(error) = load_graph(self, root.clone(), &mut graph, realm) {
+            self.gc_pins.truncate(pin_base);
+            return Err(error);
+        }
+        self.run_loaded_module_graph(&root, graph, drain_microtasks, pin_base)
     }
 
     fn run_loaded_module_graph(
@@ -1083,13 +1269,12 @@ impl Vm {
         root: &Path,
         mut graph: HashMap<PathBuf, ModuleRecord>,
         drain_microtasks: bool,
+        pin_base: usize,
     ) -> error::Result<Value> {
         assign_scc_ids(&mut graph);
-        link_imports_with_vm(self, &mut graph)?;
-
-        let pin_count = graph.len();
-        for record in graph.values() {
-            self.gc_pins.push(record.env.0);
+        if let Err(error) = link_imports_with_vm(self, &mut graph) {
+            self.gc_pins.truncate(pin_base);
+            return Err(error);
         }
         let (result, cache_graph) = match instantiate_module(self, root, &mut graph) {
             Ok(()) => {
@@ -1107,8 +1292,7 @@ impl Vm {
                 self.module_records.insert(path.clone(), record.clone());
             }
         }
-        self.gc_pins
-            .truncate(self.gc_pins.len().saturating_sub(pin_count));
+        self.gc_pins.truncate(pin_base);
 
         let result_roots: Vec<Value> = match &result {
             Ok(value) => vec![value.clone()],

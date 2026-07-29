@@ -29,6 +29,85 @@ fn cache_test_reference(base: ReferenceBase) -> ReferenceRecord {
 }
 
 #[test]
+fn json_builder_retries_at_heap_cap_and_roots_partial_tree() {
+    for (source, key, outer_is_array) in [(r#"{"items":[]}"#, "items", false), ("[[]]", "0", true)]
+    {
+        let mut vm = Vm::new().expect("failed to initialize VM");
+        let baseline = vm.heap.live_count();
+        vm.new_object()
+            .expect("first garbage object should allocate");
+        vm.new_object()
+            .expect("second garbage object should allocate");
+        vm.clear_kept_objects();
+        assert_eq!(vm.heap.live_count(), baseline + 2);
+        // The child reaches baseline+3; allocating its parent must collect the
+        // two garbage cells while retaining that child through the pin set.
+        vm.set_max_heap_objects(Some(baseline + 3));
+
+        let realm = vm.global;
+        let value = crate::builtins::json::parse_json_text_in_realm(&mut vm, source, realm)
+            .expect("JSON builder should collect garbage and retain its child array");
+        vm.set_max_heap_objects(None);
+        let child = vm
+            .get_property(&value, key)
+            .expect("parsed child should remain readable");
+        assert_eq!(
+            matches!(value, Value::Object(index) if vm.heap.with_obj(index.0, |object| matches!(object, HeapObj::Array(_)))),
+            outer_is_array
+        );
+        assert!(
+            matches!(child, Value::Object(index) if vm.heap.with_obj(index.0, |object| matches!(object, HeapObj::Array(_))))
+        );
+        assert_ne!(child, value, "the child cell must not alias its parent");
+        assert_eq!(
+            vm.get_property(&child, "length")
+                .expect("child length should remain readable"),
+            Value::Number(0.0)
+        );
+        if outer_is_array {
+            assert_eq!(
+                vm.get_property(&value, "length")
+                    .expect("parent length should remain readable"),
+                Value::Number(1.0)
+            );
+        }
+    }
+}
+
+#[test]
+fn json_builder_releases_overwritten_duplicate_value_roots() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    let baseline = vm.heap.live_count();
+    vm.set_max_heap_objects(Some(baseline + 3));
+
+    let realm = vm.global;
+    let value = crate::builtins::json::parse_json_text_in_realm(
+        &mut vm,
+        r#"{"value":[[]],"value":[[]]}"#,
+        realm,
+    )
+    .expect("an overwritten subtree should be collectible before parsing its replacement");
+    vm.set_max_heap_objects(None);
+
+    let outer = vm
+        .get_property(&value, "value")
+        .expect("replacement array should remain readable");
+    let inner = vm
+        .get_property(&outer, "0")
+        .expect("replacement nested array should remain readable");
+    assert_eq!(
+        vm.get_property(&outer, "length")
+            .expect("outer replacement length should remain readable"),
+        Value::Number(1.0)
+    );
+    assert_eq!(
+        vm.get_property(&inner, "length")
+            .expect("inner replacement length should remain readable"),
+        Value::Number(0.0)
+    );
+}
+
+#[test]
 fn ordinary_map_property_reads_do_not_restart_incremental_collection() {
     let mut vm = Vm::new().expect("failed to initialize VM");
     vm.run(

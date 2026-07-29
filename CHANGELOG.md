@@ -4,6 +4,31 @@
 
 ### Changed
 
+- Static import and re-export declarations now accept Import Attributes
+  `with { ... }` clauses. Parsed ModuleRequest records retain decoded,
+  duplicate-checked attributes in UTF-16 key order, and source requests are
+  deduplicated only when both specifier and attributes match. The relative-file
+  host recognizes `type: "json"` and `type: "text"`, rejects unsupported keys
+  or values before loading, parses JSON once during graph resolution, and gives
+  JavaScript, JSON, and text views distinct canonical cache identities. Static
+  and dynamic imports share the same typed ModuleRecord and namespace, so JSON
+  default objects preserve identity across import sites. Data modules initialize
+  a rooted internal default value directly instead of evaluating synthetic
+  source through observable global `JSON.parse`. Tests cover every import/re-export
+  grammar form, decoded duplicate keys, attribute ordering, JSON/text/default/
+  namespace semantics, re-exports, static/dynamic identity, self-text imports,
+  poisoned globals, cache separation, invalid JSON, named-import rejection, and
+  unsupported host attributes. The exact pinned Test262 boundary is **30/30**;
+  broad module, source-phase, deferred-import, and bare-specifier gates remain.
+  First loads use the request Realm's Object/Array prototypes; JSON construction
+  roots partial trees, releases overwritten duplicate-key subtrees before
+  parsing replacements, and uses the ordinary heap-limit GC retry. Final local
+  gates pass all-target/all-feature library **367/367**, release library
+  **367/367**, modules **33/33**, Python tooling **146/146** with four expected
+  absent-checkout skips, rustfmt, warnings-denied Clippy, wasm32, doctest
+  **1/1**, and every benchmark smoke target. The exact pinned Test262 run is
+  **30/30** on revision `9e61c128`; two final GPT-5.6 reviews are CLEAN.
+
 - Finite-budget incremental GC now cursorizes ordered Map entries, charging one
   work unit for each key/value record while scanning each slice under one lock.
   The cursor snapshots entry count and counts down, so append cannot extend a

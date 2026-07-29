@@ -337,13 +337,16 @@ guarantees are required.
   through SCC-aware graph evaluation. Script- and module-origin dynamic imports
   resolve relative file specifiers, share canonical module records, and reject
   loading, coercion, instantiation, and evaluation failures asynchronously.
-  Dynamic import attributes enumerate observable `with` properties and support
-  `type: "json"` and `type: "text"` for relative files; other keys and types
-  reject. Bare-specifier resolution, `import.source`, and `import.defer` are
-  not implemented yet. Dynamic-import jobs and generated errors retain the
-  initiating Realm, but file-backed module environments and the canonical
-  module cache are still VM-wide and rooted under the main global environment;
-  independently Realm-owned module graphs are not implemented yet.
+  Dynamic import attributes enumerate observable `with` properties. Static
+  import/re-export attributes retain decoded, sorted ModuleRequest records.
+  Both forms support `type: "json"` and `type: "text"` for relative files,
+  share typed cache identities, and reject other keys and types. Bare-specifier
+  resolution, `import.source`, and `import.defer` are not implemented yet.
+  Dynamic-import jobs and generated errors retain the
+  initiating Realm. A newly loaded graph and its JSON object/Array defaults use
+  that request Realm, but the canonical module cache remains VM-wide, so later
+  imports from another Realm reuse the first-loaded graph and namespace rather
+  than creating an independently Realm-owned graph.
 - test262 conformance is scoped, not full: RuJa targets a deliberately
   scoped subset of ES5.1 + selected ES2015+ features (see
   [test262.md](test262.md#supported-subset) for the exact list). The full

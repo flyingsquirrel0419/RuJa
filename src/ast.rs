@@ -461,9 +461,17 @@ pub enum SourceType {
     Module,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportAttribute {
+    pub key: Arc<str>,
+    pub value: Arc<str>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModuleRequest {
     pub specifier: Arc<str>,
+    /// Sorted by UTF-16 code units, as required by ModuleRequest records.
+    pub attributes: Vec<ImportAttribute>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

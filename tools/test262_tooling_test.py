@@ -232,6 +232,10 @@ from test262_language_early_error_admission import (
 )
 from test262_reference_primitive_admission import REFERENCE_PRIMITIVE_FILES
 from test262_dynamic_import_admission import DYNAMIC_IMPORT_FILES
+from test262_static_import_attributes_admission import (
+    STATIC_IMPORT_ATTRIBUTES_FILES,
+    static_import_attributes_features,
+)
 from test262_import_meta_admission import IMPORT_META_FILES
 from test262_iterator_admission import ITERATOR_CORE_FEATURES, ITERATOR_CORE_FILES
 from test262_json_parse_admission import JSON_PARSE_FILES
@@ -1169,6 +1173,113 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                     )
                     self.assertTrue(tool.should_skip(meta, outside_path))
                     self.assertTrue(tool.dynamic_import_path(path))
+                finally:
+                    tool.TEST262 = original_root
+
+    def test_static_import_attributes_manifest_is_exact_live_and_shared(self):
+        self.assertEqual(len(STATIC_IMPORT_ATTRIBUTES_FILES), 30)
+        syntax = (
+            "language/module-code/import-attributes/"
+            "early-dup-attribute-key-export.js"
+        )
+        runtime = (
+            "language/import/import-attributes/json-idempotency.js"
+        )
+        text = "language/import/import-attributes/text-self.js"
+        outside = "language/import/import-attributes/unknown-future-test.js"
+        self.assertIn(syntax, STATIC_IMPORT_ATTRIBUTES_FILES)
+        self.assertIn(runtime, STATIC_IMPORT_ATTRIBUTES_FILES)
+        self.assertIn(text, STATIC_IMPORT_ATTRIBUTES_FILES)
+        self.assertNotIn(outside, STATIC_IMPORT_ATTRIBUTES_FILES)
+        self.assertEqual(
+            static_import_attributes_features(syntax),
+            frozenset({"import-attributes"}),
+        )
+        self.assertEqual(
+            static_import_attributes_features(runtime),
+            frozenset({"import-attributes", "json-modules", "dynamic-import"}),
+        )
+        self.assertEqual(
+            static_import_attributes_features(text),
+            frozenset({"import-attributes", "import-text"}),
+        )
+
+        checkout = Path(test262_runner.TEST262) / "test"
+        if checkout.exists():
+            syntax_dir = checkout / "language/module-code/import-attributes"
+            runtime_dir = checkout / "language/import/import-attributes"
+            live = {
+                path.relative_to(checkout).as_posix()
+                for path in syntax_dir.glob("*.js")
+                if "_FIXTURE" not in path.name
+            }
+            live.update(
+                path.relative_to(checkout).as_posix()
+                for path in runtime_dir.glob("*.js")
+                if "_FIXTURE" not in path.name
+                and (path.name.startswith("json-") or path.name.startswith("text-"))
+            )
+            self.assertEqual(live, STATIC_IMPORT_ATTRIBUTES_FILES)
+            for relative in live:
+                meta = test262_runner.parse_meta((checkout / relative).read_text())
+                self.assertTrue(
+                    static_import_attributes_features(relative)
+                    <= set(meta.get("features", []))
+                )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    self.assertFalse(
+                        tool.should_skip(
+                            {
+                                "features": ["import-attributes"],
+                            },
+                            root / "test" / syntax,
+                        )
+                    )
+                    self.assertFalse(
+                        tool.should_skip(
+                            {
+                                "flags": ["module", "async"],
+                                "features": [
+                                    "import-attributes",
+                                    "json-modules",
+                                    "dynamic-import",
+                                ],
+                            },
+                            root / "test" / runtime,
+                        )
+                    )
+                    self.assertFalse(
+                        tool.should_skip(
+                            {
+                                "flags": ["module"],
+                                "features": ["import-attributes", "import-text"],
+                            },
+                            root / "test" / text,
+                        )
+                    )
+                    self.assertTrue(
+                        tool.should_skip(
+                            {
+                                "features": ["import-attributes"],
+                            },
+                            root / "test" / outside,
+                        )
+                    )
+                    self.assertTrue(
+                        tool.should_skip(
+                            {
+                                "features": ["import-text"],
+                            },
+                            root / "test" / outside,
+                        )
+                    )
+                    self.assertTrue(tool.static_import_attributes_path(root / "test" / syntax))
                 finally:
                     tool.TEST262 = original_root
 

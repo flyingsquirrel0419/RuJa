@@ -462,9 +462,35 @@ pub(crate) fn json_parse(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error
 }
 
 pub(crate) fn parse_json_text(vm: &mut Vm, source: &str) -> error::Result<Value> {
-    serde_json::from_str::<serde_json::Value>(source)
-        .map_err(|error| Error::syntax(format!("Invalid JSON: {error}")))?;
-    parse_json_value(vm, &mut source.chars().peekable(), 0)
+    let realm = vm.current_realm_global_env();
+    parse_json_text_in_realm(vm, source, realm)
+}
+
+pub(crate) fn parse_json_text_in_realm(
+    vm: &mut Vm,
+    source: &str,
+    realm: GcIdx,
+) -> error::Result<Value> {
+    validate_json_text(source)?;
+    let object_proto = vm.object_prototype_for_env(realm);
+    let array_proto = vm.array_prototype_for_env(realm);
+    let prototype_pins = vm.pin_many(&[object_proto.clone(), array_proto.clone()]);
+    let result = parse_json_value(
+        vm,
+        &mut source.chars().peekable(),
+        0,
+        &object_proto,
+        &array_proto,
+    );
+    vm.unpin_many(prototype_pins);
+    result
+}
+
+pub(crate) fn validate_json_text(source: &str) -> error::Result<()> {
+    let validation_source = normalize_raw_json_for_validation(source);
+    serde_json::from_str::<serde_json::Value>(&validation_source)
+        .map(|_| ())
+        .map_err(|error| Error::syntax(format!("Invalid JSON: {error}")))
 }
 
 #[derive(Debug)]
@@ -755,6 +781,8 @@ fn parse_json_value(
     vm: &mut Vm,
     chars: &mut std::iter::Peekable<std::str::Chars>,
     depth: usize,
+    object_proto: &Value,
+    array_proto: &Value,
 ) -> error::Result<Value> {
     // Guard against pathological nesting that would overflow the native
     // stack: `JSON.parse("[".repeat(100000)+...]")` used to abort the host.
@@ -776,11 +804,11 @@ fn parse_json_value(
     match chars.peek() {
         Some(&'{') => {
             chars.next();
-            parse_json_obj(vm, chars, depth)
+            parse_json_obj(vm, chars, depth, object_proto, array_proto)
         }
         Some(&'[') => {
             chars.next();
-            parse_json_arr(vm, chars, depth)
+            parse_json_arr(vm, chars, depth, object_proto, array_proto)
         }
         Some(&'"') => {
             chars.next();
@@ -806,97 +834,122 @@ fn parse_json_obj(
     vm: &mut Vm,
     chars: &mut std::iter::Peekable<std::str::Chars>,
     depth: usize,
+    object_proto: &Value,
+    array_proto: &Value,
 ) -> error::Result<Value> {
     let mut props: IndexMap<PropertyKey, PropertyDescriptor> = IndexMap::new();
-    loop {
-        while let Some(&c) = chars.peek() {
-            if c.is_whitespace() {
-                chars.next();
-            } else {
-                break;
-            }
-        }
-        if chars.peek() == Some(&'}') {
-            chars.next();
-            break;
-        }
-        // consume the opening quote of the key string
-        if chars.peek() == Some(&'"') {
-            chars.next();
-        }
-        let key = match parse_json_str(chars)? {
-            Value::String(s) => s.to_string(),
-            _ => String::new(),
-        };
-        while chars.peek() != Some(&':') {
-            match chars.peek() {
-                None => return Err(Error::syntax("Invalid JSON: expected ':'".to_string())),
-                Some(&_) => {
+    let pin_base = vm.gc_pins.len();
+    let result = (|| {
+        loop {
+            while let Some(&c) = chars.peek() {
+                if c.is_whitespace() {
                     chars.next();
+                } else {
+                    break;
                 }
             }
-        }
-        chars.next();
-        let val = parse_json_value(vm, chars, depth + 1)?;
-        // JSON-parsed properties are enumerable (data_prop is non-enumerable for builtins).
-        let mut desc = data_prop(val);
-        desc.enumerable = true;
-        props.insert(PropertyKey::from(key.as_str()), desc);
-        while let Some(&c) = chars.peek() {
-            if c.is_whitespace() || c == ',' {
+            if chars.peek() == Some(&'}') {
                 chars.next();
-            } else {
+                break;
+            }
+            // consume the opening quote of the key string
+            if chars.peek() == Some(&'"') {
+                chars.next();
+            }
+            let key = match parse_json_str(chars)? {
+                Value::String(s) => s.to_string(),
+                _ => String::new(),
+            };
+            while chars.peek() != Some(&':') {
+                match chars.peek() {
+                    None => return Err(Error::syntax("Invalid JSON: expected ':'".to_string())),
+                    Some(&_) => {
+                        chars.next();
+                    }
+                }
+            }
+            chars.next();
+            let property_key = PropertyKey::from(key.as_str());
+            if let Some(replaced) = props.get_mut(&property_key) {
+                replaced.value = Value::Undefined;
+                vm.gc_pins.truncate(pin_base);
+                for descriptor in props.values() {
+                    vm.pin(&descriptor.value);
+                }
+            }
+            let val = parse_json_value(vm, chars, depth + 1, object_proto, array_proto)?;
+            vm.pin(&val);
+            // JSON-parsed properties are enumerable (data_prop is non-enumerable for builtins).
+            let mut desc = data_prop(val);
+            desc.enumerable = true;
+            props.insert(property_key, desc);
+            while let Some(&c) = chars.peek() {
+                if c.is_whitespace() || c == ',' {
+                    chars.next();
+                } else {
+                    break;
+                }
+            }
+            if chars.peek() == Some(&'}') {
+                chars.next();
                 break;
             }
         }
-        if chars.peek() == Some(&'}') {
-            chars.next();
-            break;
-        }
-    }
-    let obj = HeapObj::Object(ObjectData {
-        props: Mutex::new(props),
-        proto: Mutex::new(Some(vm.object_proto.clone())),
-        extensible: AtomicBool::new(true),
-        class_name: None,
-        private_fields: Mutex::new(std::collections::HashMap::new()),
-        primitive: Mutex::new(None),
-    });
-    Ok(Value::Object(GcIdx(vm.heap.allocate(obj)?)))
+        let obj = HeapObj::Object(ObjectData {
+            props: Mutex::new(props),
+            proto: Mutex::new(Some(object_proto.clone())),
+            extensible: AtomicBool::new(true),
+            class_name: None,
+            private_fields: Mutex::new(std::collections::HashMap::new()),
+            primitive: Mutex::new(None),
+        });
+        vm.alloc(obj).map(Value::Object)
+    })();
+    vm.gc_pins.truncate(pin_base);
+    result
 }
 fn parse_json_arr(
     vm: &mut Vm,
     chars: &mut std::iter::Peekable<std::str::Chars>,
     depth: usize,
+    object_proto: &Value,
+    array_proto: &Value,
 ) -> error::Result<Value> {
     let mut items = Vec::new();
-    loop {
-        while let Some(&c) = chars.peek() {
-            if c.is_whitespace() {
+    let mut value_pins = 0;
+    let result = (|| {
+        loop {
+            while let Some(&c) = chars.peek() {
+                if c.is_whitespace() {
+                    chars.next();
+                } else {
+                    break;
+                }
+            }
+            if chars.peek() == Some(&']') {
                 chars.next();
-            } else {
+                break;
+            }
+            let value = parse_json_value(vm, chars, depth + 1, object_proto, array_proto)?;
+            value_pins += vm.pin(&value);
+            items.push(value);
+            while let Some(&c) = chars.peek() {
+                if c.is_whitespace() || c == ',' {
+                    chars.next();
+                } else {
+                    break;
+                }
+            }
+            if chars.peek() == Some(&']') {
+                chars.next();
                 break;
             }
         }
-        if chars.peek() == Some(&']') {
-            chars.next();
-            break;
-        }
-        items.push(parse_json_value(vm, chars, depth + 1)?);
-        while let Some(&c) = chars.peek() {
-            if c.is_whitespace() || c == ',' {
-                chars.next();
-            } else {
-                break;
-            }
-        }
-        if chars.peek() == Some(&']') {
-            chars.next();
-            break;
-        }
-    }
-    let obj = HeapObj::Array(ArrayData::new(items, Some(vm.array_proto.clone())));
-    Ok(Value::Object(GcIdx(vm.heap.allocate(obj)?)))
+        let obj = HeapObj::Array(ArrayData::new(items, Some(array_proto.clone())));
+        vm.alloc(obj).map(Value::Object)
+    })();
+    vm.unpin_many(value_pins);
+    result
 }
 fn parse_json_str(chars: &mut std::iter::Peekable<std::str::Chars>) -> error::Result<Value> {
     let mut s = String::new();
@@ -924,25 +977,32 @@ fn parse_json_str(chars: &mut std::iter::Peekable<std::str::Chars>) -> error::Re
                         value = value * 16 + digit;
                     }
                     if (0xd800..=0xdbff).contains(&value) {
-                        if chars.next() != Some('\\') || chars.next() != Some('u') {
-                            return Err(Error::syntax("Unsupported lone surrogate in JSON string"));
-                        }
+                        let mut tail = chars.clone();
                         let mut low = 0u32;
-                        for _ in 0..4 {
-                            let digit = chars
-                                .next()
-                                .and_then(|digit| digit.to_digit(16))
-                                .ok_or_else(|| Error::syntax("Invalid JSON Unicode escape"))?;
-                            low = low * 16 + digit;
+                        let valid_pair = tail.next() == Some('\\')
+                            && tail.next() == Some('u')
+                            && (0..4).all(|_| {
+                                tail.next()
+                                    .and_then(|digit| digit.to_digit(16))
+                                    .map(|digit| {
+                                        low = low * 16 + digit;
+                                    })
+                                    .is_some()
+                            })
+                            && (0xdc00..=0xdfff).contains(&low);
+                        if valid_pair {
+                            *chars = tail;
+                            value = 0x10000 + ((value - 0xd800) << 10) + (low - 0xdc00);
+                        } else {
+                            s.push_str(&crate::value::utf16_to_string(&[value as u16]));
+                            continue;
                         }
-                        if !(0xdc00..=0xdfff).contains(&low) {
-                            return Err(Error::syntax("Unsupported lone surrogate in JSON string"));
-                        }
-                        value = 0x10000 + ((value - 0xd800) << 10) + (low - 0xdc00);
+                    } else if (0xdc00..=0xdfff).contains(&value) {
+                        s.push_str(&crate::value::utf16_to_string(&[value as u16]));
+                        continue;
                     }
-                    let decoded = char::from_u32(value).ok_or_else(|| {
-                        Error::syntax("Unsupported lone surrogate in JSON string")
-                    })?;
+                    let decoded = char::from_u32(value)
+                        .ok_or_else(|| Error::syntax("Invalid JSON Unicode escape"))?;
                     crate::value::push_utf16_scalar(&mut s, decoded);
                 }
                 Some(_) => return Err(Error::syntax("Invalid JSON escape")),

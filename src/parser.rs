@@ -845,14 +845,80 @@ impl Parser {
     }
 
     fn parse_module_specifier(&mut self) -> error::Result<ModuleRequest> {
-        match self.advance() {
-            TokenKind::String(specifier) => Ok(ModuleRequest {
-                specifier: Arc::from(specifier.as_str()),
-            }),
-            other => Err(error::Error::syntax(format!(
-                "Expected module specifier string, got {:?}",
-                other
-            ))),
+        let specifier = self.parse_module_string_literal("module specifier")?;
+        let attributes = self.parse_import_attributes()?;
+        Ok(ModuleRequest {
+            specifier,
+            attributes,
+        })
+    }
+
+    fn parse_module_string_literal(&mut self, context: &str) -> error::Result<Arc<str>> {
+        let token = self.peek_at_tok(0).clone();
+        let TokenKind::String(value) = token.kind else {
+            return Err(error::Error::syntax(format!(
+                "Expected {context} string, got {:?}",
+                self.peek()
+            )));
+        };
+        if token.string_had_legacy_escape {
+            return Err(error::Error::syntax(format!(
+                "Legacy string escapes are not allowed in {context}"
+            )));
+        }
+        self.advance();
+        Ok(Arc::from(value.as_str()))
+    }
+
+    fn at_import_attributes_with(&self) -> bool {
+        let token = self.peek_at_tok(0);
+        !token.had_escape
+            && (matches!(&token.kind, TokenKind::Ident(name) if name == "with")
+                || token.kind.as_keyword_str() == Some("with"))
+    }
+
+    fn parse_import_attributes(&mut self) -> error::Result<Vec<ImportAttribute>> {
+        if !self.at_import_attributes_with() {
+            return Ok(Vec::new());
+        }
+        self.advance();
+        self.expect(&TokenKind::LBrace, "{")?;
+        let mut attributes = Vec::new();
+        while !self.check(&TokenKind::RBrace) {
+            let key = if matches!(self.peek(), TokenKind::String(_)) {
+                self.parse_module_string_literal("import attribute key")?
+            } else {
+                self.parse_module_identifier_name()?
+            };
+            self.expect(&TokenKind::Colon, ":")?;
+            let value = self.parse_module_string_literal("import attribute value")?;
+            if attributes
+                .iter()
+                .any(|attribute: &ImportAttribute| attribute.key == key)
+            {
+                return Err(error::Error::syntax(format!(
+                    "Duplicate import attribute '{}'",
+                    key
+                )));
+            }
+            attributes.push(ImportAttribute { key, value });
+            if !self.eat(&TokenKind::Comma) {
+                break;
+            }
+            if self.check(&TokenKind::RBrace) {
+                break;
+            }
+        }
+        self.expect(&TokenKind::RBrace, "}")?;
+        attributes.sort_by(|left, right| {
+            crate::value::utf16_from_str(&left.key).cmp(&crate::value::utf16_from_str(&right.key))
+        });
+        Ok(attributes)
+    }
+
+    fn push_module_request(requests: &mut Vec<ModuleRequest>, request: ModuleRequest) {
+        if !requests.contains(&request) {
+            requests.push(request);
         }
     }
 
@@ -866,7 +932,7 @@ impl Parser {
         if matches!(self.peek(), TokenKind::String(_)) {
             let request = self.parse_module_specifier()?;
             self.expect_semi()?;
-            module_requests.push(request);
+            Self::push_module_request(module_requests, request);
             return Ok(());
         }
 
@@ -921,7 +987,7 @@ impl Parser {
                 local_name,
             });
         }
-        module_requests.push(request);
+        Self::push_module_request(module_requests, request);
         Ok(())
     }
 
@@ -1055,7 +1121,7 @@ impl Parser {
                     module_request: request.clone(),
                     export_name,
                 });
-                module_requests.push(request);
+                Self::push_module_request(module_requests, request);
                 return Ok(None);
             }
             self.expect_contextual("from")?;
@@ -1064,7 +1130,7 @@ impl Parser {
             export_entries.push(ExportEntry::Star {
                 module_request: request.clone(),
             });
-            module_requests.push(request);
+            Self::push_module_request(module_requests, request);
             return Ok(None);
         }
         if self.check(&TokenKind::LBrace) {
@@ -1079,7 +1145,7 @@ impl Parser {
                         export_name: specifier.export_name,
                     });
                 }
-                module_requests.push(request);
+                Self::push_module_request(module_requests, request);
             } else {
                 self.expect_semi()?;
                 for specifier in specifiers {
@@ -7448,15 +7514,19 @@ mod tests {
             vec![
                 ModuleRequest {
                     specifier: Arc::from("side-effect"),
+                    attributes: Vec::new(),
                 },
                 ModuleRequest {
                     specifier: Arc::from("dep"),
+                    attributes: Vec::new(),
                 },
                 ModuleRequest {
                     specifier: Arc::from("other"),
+                    attributes: Vec::new(),
                 },
                 ModuleRequest {
                     specifier: Arc::from("all"),
+                    attributes: Vec::new(),
                 },
             ]
         );
@@ -7466,6 +7536,7 @@ mod tests {
                 ImportEntry {
                     module_request: ModuleRequest {
                         specifier: Arc::from("dep"),
+                        attributes: Vec::new(),
                     },
                     import_name: Arc::from("x"),
                     local_name: Arc::from("x"),
@@ -7473,6 +7544,7 @@ mod tests {
                 ImportEntry {
                     module_request: ModuleRequest {
                         specifier: Arc::from("dep"),
+                        attributes: Vec::new(),
                     },
                     import_name: Arc::from("x"),
                     local_name: Arc::from("y"),
@@ -7509,6 +7581,7 @@ mod tests {
                 ExportEntry::ReExport {
                     module_request: ModuleRequest {
                         specifier: Arc::from("dep"),
+                        attributes: Vec::new(),
                     },
                     import_name: Arc::from("x"),
                     export_name: Arc::from("y"),
@@ -7516,6 +7589,7 @@ mod tests {
                 ExportEntry::ReExport {
                     module_request: ModuleRequest {
                         specifier: Arc::from("other"),
+                        attributes: Vec::new(),
                     },
                     import_name: Arc::from("remote"),
                     export_name: Arc::from("reexported"),
@@ -7523,6 +7597,7 @@ mod tests {
                 ExportEntry::Star {
                     module_request: ModuleRequest {
                         specifier: Arc::from("all"),
+                        attributes: Vec::new(),
                     },
                 },
             ]
@@ -7552,6 +7627,77 @@ mod tests {
         assert!(Parser::parse("new import('./dep.js');").is_err());
         assert!(Parser::parse("new import('./dep.js').value;").is_err());
         assert!(Parser::parse("new (import('./dep.js'));").is_ok());
+    }
+
+    #[test]
+    fn parse_static_import_attributes_on_imports_and_reexports() {
+        let program = Parser::parse_module(
+            r#"
+            import value from './data' with { type: 'json', mode: "strict", };
+            import './data' with { mode: 'strict', "type": "json" };
+            export { default as forwarded } from './data'
+              with { mode: 'strict', type: 'json' };
+            export * from './text' with { type: 'text' };
+            export * as text from './text' with { type: 'text' };
+            "#,
+        )
+        .expect("static import attributes should parse on every request form");
+
+        assert_eq!(program.module_requests.len(), 2);
+        assert_eq!(program.module_requests[0].specifier.as_ref(), "./data");
+        assert_eq!(
+            program.module_requests[0]
+                .attributes
+                .iter()
+                .map(|attribute| (attribute.key.as_ref(), attribute.value.as_ref()))
+                .collect::<Vec<_>>(),
+            vec![("mode", "strict"), ("type", "json")]
+        );
+        assert_eq!(program.module_requests[1].specifier.as_ref(), "./text");
+        assert_eq!(
+            program.module_requests[1].attributes[0].key.as_ref(),
+            "type"
+        );
+        assert!(program
+            .import_entries
+            .iter()
+            .all(|entry| { entry.module_request == program.module_requests[0] }));
+        assert!(program
+            .export_entries
+            .iter()
+            .filter_map(|entry| match entry {
+                ExportEntry::ReExport { module_request, .. } => Some(module_request),
+                _ => None,
+            })
+            .all(|request| request == &program.module_requests[0]));
+        assert!(program
+            .export_entries
+            .iter()
+            .filter_map(|entry| match entry {
+                ExportEntry::Star { module_request }
+                | ExportEntry::NamespaceReExport { module_request, .. } => Some(module_request),
+                _ => None,
+            })
+            .all(|request| request == &program.module_requests[1]));
+    }
+
+    #[test]
+    fn static_import_attributes_reject_duplicate_decoded_keys_and_non_strings() {
+        for source in [
+            r#"import './data' with { type: 'json', "typ\u0065": 'json' };"#,
+            r#"import './data' with { '\164ype': 'json' };"#,
+            r#"import './data' with { type: '\152son' };"#,
+            r#"import './data' with { '\8': 'json' };"#,
+            r#"import './data' with { type: '\9' };"#,
+            r#"import './\144ata' with { type: 'json' };"#,
+            "import './data' with { type: 1 };",
+            "import './data' with { type: `json` };",
+            "import './data' with { type: 'json' type: 'json' };",
+            "import './data' with { type: 'json',, };",
+        ] {
+            assert!(Parser::parse_module(source).is_err(), "{source}");
+        }
+        assert!(Parser::parse_module("import './data'\nwith {\n type: 'json',\n };").is_ok());
     }
 
     #[test]
@@ -7653,6 +7799,7 @@ mod tests {
             ExportEntry::ReExport {
                 module_request: ModuleRequest {
                     specifier: Arc::from("dep"),
+                    attributes: Vec::new(),
                 },
                 import_name: Arc::from("x"),
                 export_name: Arc::from("as"),

@@ -1023,6 +1023,21 @@ fn dynamic_import_attributes_load_data_without_executing_or_colliding() {
         import('./data.json', { with: { type: 'bogus' } }).catch(error => {
             globalThis.unknownTypeIsTypeError = error instanceof TypeError;
         });
+        var dynamicAttributeOrder = [];
+        var dynamicAttributeReason = new URIError('later getter');
+        var orderedAttributes = {};
+        Object.defineProperty(orderedAttributes, 'bad', {
+          enumerable: true,
+          get() { dynamicAttributeOrder.push('bad'); return 1; }
+        });
+        Object.defineProperty(orderedAttributes, 'later', {
+          enumerable: true,
+          get() { dynamicAttributeOrder.push('later'); throw dynamicAttributeReason; }
+        });
+        import('./data.json', { with: orderedAttributes }).catch(error => {
+          globalThis.dynamicAttributeCollectionWins =
+            error === dynamicAttributeReason && dynamicAttributeOrder.join(',') === 'bad,later';
+        });
         "#,
     )
     .expect("dynamic import attributes entry should be written");
@@ -1032,12 +1047,202 @@ fn dynamic_import_attributes_load_data_without_executing_or_colliding() {
         .expect("data module imports should settle");
     assert_eq!(
         vm.run(
-            "[jsonModuleValue, textModuleValue.length, jsonModuleScalar, textModuleScalar, collisionModuleValue, dataModuleExecuted, invalidJsonIsSyntaxError, unknownAttributeIsTypeError, unknownTypeIsTypeError].join('|')"
+            "[jsonModuleValue, textModuleValue.length, jsonModuleScalar, textModuleScalar, collisionModuleValue, dataModuleExecuted, invalidJsonIsSyntaxError, unknownAttributeIsTypeError, unknownTypeIsTypeError, dynamicAttributeCollectionWins].join('|')"
         )
         .expect("data module results should be readable"),
         Value::String(Arc::from(
-            "42|14|true|true|7|false|true|true|true"
+            "42|14|true|true|7|false|true|true|true|true"
         ))
+    );
+    fs::remove_dir_all(dir).expect("module fixtures should be removed");
+}
+
+#[test]
+fn static_import_attributes_share_typed_modules_and_validate_during_linking() {
+    let dir = module_fixture_dir("static-import-attributes");
+    fs::write(
+        dir.join("data.json"),
+        r#"{"answer":42,"__proto__":{"polluted":true}}"#,
+    )
+    .expect("JSON module should be written");
+    fs::write(dir.join("invalid.json"), "{ invalid json")
+        .expect("invalid JSON module should be written");
+    fs::write(dir.join("surrogate.json"), r#""\uD800""#)
+        .expect("surrogate JSON module should be written");
+    fs::write(
+        dir.join("payload.js"),
+        "globalThis.payloadExecuted = (globalThis.payloadExecuted || 0) + 1; export default 7;",
+    )
+    .expect("dual-mode payload should be written");
+    fs::write(
+        dir.join("poison.js"),
+        "JSON.parse = function() { throw new Error('observable JSON.parse'); };",
+    )
+    .expect("JSON poison module should be written");
+    fs::write(
+        dir.join("bridge.js"),
+        "export { default as value } from './data.json' with { type: 'json' };",
+    )
+    .expect("JSON re-export should be written");
+    fs::write(
+        dir.join("star-bridge.js"),
+        "export * from './data.json' with { type: 'json' };",
+    )
+    .expect("JSON star re-export should be written");
+    fs::write(
+        dir.join("namespace-bridge.js"),
+        "export * as data from './data.json' with { type: 'json' };",
+    )
+    .expect("JSON namespace re-export should be written");
+    fs::write(
+        dir.join("entry.js"),
+        r#"
+        import './poison.js';
+        import direct from './data.json' with { type: 'json' };
+        import { default as duplicate } from './data.json' with { "type": "json" };
+        import * as jsonNamespace from './data.json' with { type: 'json' };
+        import dataText from './data.json' with { type: 'text' };
+        import surrogate from './surrogate.json' with { type: 'json' };
+        import { value as reexported } from './bridge.js';
+        import * as starBridge from './star-bridge.js';
+        import { data as reexportedNamespace } from './namespace-bridge.js';
+        import payloadText from './payload.js' with { type: 'text' };
+        import selfText from './entry.js' with { type: 'text' };
+        import payloadValue from './payload.js';
+        globalThis.staticDataResult = [
+          direct === duplicate,
+          duplicate === jsonNamespace.default,
+          reexported === direct,
+          Object.keys(starBridge).length === 0,
+          reexportedNamespace === jsonNamespace,
+          direct.answer,
+          Object.prototype.hasOwnProperty.call(direct, '__proto__'),
+          Object.getPrototypeOf(direct) === Object.prototype,
+          dataText.indexOf('"answer":42') >= 0,
+          surrogate.length === 1 && surrogate.charCodeAt(0) === 0xD800,
+          payloadText.indexOf('payloadExecuted') >= 0,
+          selfText.indexOf("import selfText from './entry.js'") >= 0,
+          payloadValue,
+          payloadExecuted
+        ].join('|');
+        import('./data.json', { with: { type: 'json' } }).then(namespace => {
+          globalThis.staticDynamicDataIdentity = namespace.default === direct;
+        });
+        "#,
+    )
+    .expect("static data entry should be written");
+    fs::write(
+        dir.join("invalid-entry.js"),
+        "import value from './invalid.json' with { type: 'json' };",
+    )
+    .expect("invalid JSON entry should be written");
+    fs::write(
+        dir.join("named-entry.js"),
+        "import { answer } from './data.json' with { type: 'json' };",
+    )
+    .expect("named JSON entry should be written");
+    fs::write(
+        dir.join("unknown-key.js"),
+        "import './data.json' with { integrity: 'x' };",
+    )
+    .expect("unknown attribute entry should be written");
+    fs::write(
+        dir.join("unknown-type.js"),
+        "import './data.json' with { type: 'binary' };",
+    )
+    .expect("unknown type entry should be written");
+
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.run_module_file(dir.join("entry.js"))
+        .expect("static data graph should evaluate");
+    assert_eq!(
+        vm.run("[staticDataResult, staticDynamicDataIdentity].join('||')")
+            .expect("static data markers should be readable"),
+        Value::String(Arc::from(
+            "true|true|true|true|true|42|true|true|true|true|true|true|7|1||true"
+        ))
+    );
+
+    for (name, message) in [
+        (
+            "invalid-entry.js",
+            "invalid JSON must fail during resolution",
+        ),
+        (
+            "named-entry.js",
+            "JSON named import must fail during resolution",
+        ),
+        (
+            "unknown-key.js",
+            "unsupported attribute must fail during resolution",
+        ),
+        (
+            "unknown-type.js",
+            "unsupported type must fail during resolution",
+        ),
+    ] {
+        let error = vm.link_module_file(dir.join(name)).expect_err(message);
+        assert_eq!(error.kind, ruja::ErrorKind::Syntax, "{name}");
+        if name == "named-entry.js" {
+            assert!(error.message.contains("data.json"));
+            assert!(!error.message.contains("ruja-data-module"));
+            assert!(!error.message.contains('\0'));
+        }
+    }
+
+    fs::write(
+        dir.join("link-only.js"),
+        "import value from './data.json' with { type: 'json' }; export { value };",
+    )
+    .expect("link-only data entry should be written");
+    fs::write(
+        dir.join("dynamic-after-link.js"),
+        "import('./data.json', { with: { type: 'json' } }).then(namespace => { globalThis.afterLinkValue = namespace.default.answer; });",
+    )
+    .expect("post-link dynamic entry should be written");
+    let mut linked_vm = Vm::new().expect("link-only VM should initialize");
+    linked_vm
+        .link_module_file(dir.join("link-only.js"))
+        .expect("static typed dependency should link without evaluating");
+    linked_vm
+        .run_file(dir.join("dynamic-after-link.js"))
+        .expect("dynamic import should evaluate a linked typed record");
+    assert_eq!(
+        linked_vm
+            .run("afterLinkValue")
+            .expect("post-link dynamic value should be readable"),
+        Value::Number(42.0)
+    );
+
+    fs::write(dir.join("foreign-data.json"), r#"{"items":[]}"#)
+        .expect("foreign-Realm JSON should be written");
+    fs::write(
+        dir.join("foreign-entry.js"),
+        r#"
+        globalThis.mainGlobal = globalThis;
+        globalThis.other = $262.createRealm().global;
+        other.mainGlobal = mainGlobal;
+        var startForeignImport = other.eval(`(function() {
+          import('./foreign-data.json', { with: { type: 'json' } }).then(namespace => {
+            mainGlobal.foreignJsonObjectRealm =
+              Object.getPrototypeOf(namespace.default) === Object.prototype;
+            mainGlobal.foreignJsonArrayRealm =
+              Object.getPrototypeOf(namespace.default.items) === Array.prototype;
+          });
+        })`);
+        Array.prototype.forEach.call([0], startForeignImport);
+        "#,
+    )
+    .expect("foreign-Realm import entry should be written");
+    let mut realm_vm = Vm::new().expect("foreign-Realm VM should initialize");
+    realm_vm
+        .run_module_file(dir.join("foreign-entry.js"))
+        .expect("foreign-Realm JSON import should settle");
+    assert_eq!(
+        realm_vm
+            .run("[foreignJsonObjectRealm, foreignJsonArrayRealm].join('|')")
+            .expect("foreign-Realm JSON markers should be readable"),
+        Value::String(Arc::from("true|true"))
     );
     fs::remove_dir_all(dir).expect("module fixtures should be removed");
 }

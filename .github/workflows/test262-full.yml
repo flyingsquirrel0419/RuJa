@@ -54,6 +54,12 @@ jobs:
           TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
           test262_tooling_test.ModuleCoreAdmissionTests.test_language_early_error_admission_is_exact_and_shared
           -v
+      - name: Verify exact static import-attribute admission
+        working-directory: tools
+        run: >-
+          TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
+          test262_tooling_test.ModuleCoreAdmissionTests.test_static_import_attributes_manifest_is_exact_live_and_shared
+          -v
       - name: Verify exact Function.prototype.bind admission
         working-directory: tools
         run: >-
@@ -212,6 +218,37 @@ jobs:
           cat set_algebra_result.txt
           grep -q '^RATE=100.0 PASS=186 FAIL=0 SKIP=0 TOTAL=186 RAN=186$' \
             set_algebra_result.txt
+
+  static-import-attributes:
+    needs: [build, setup]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download RuJa binary
+        uses: actions/download-artifact@v4
+        with:
+          name: ruja-release
+          path: target/release/
+      - run: chmod +x target/release/ruja
+      - name: Checkout pinned static import-attribute tests
+        uses: actions/checkout@v4
+        with:
+          repository: tc39/test262
+          ref: ${{ env.TEST262_REV }}
+          path: test262
+          sparse-checkout: |
+            harness
+            test/language/module-code/import-attributes
+            test/language/import/import-attributes
+      - name: Require all 30 static import-attribute files to pass
+        run: |
+          TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
+            language/module-code/import-attributes \
+            language/import/import-attributes \
+            > static_import_attributes_result.txt 2>&1
+          cat static_import_attributes_result.txt
+          grep -q '^RATE=100.0 PASS=30 FAIL=0 SKIP=0 TOTAL=30 RAN=30$' \
+            static_import_attributes_result.txt
 
   test262-full:
     needs: [build, setup]

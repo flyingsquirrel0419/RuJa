@@ -107,6 +107,16 @@
   `flatMap`, `take`, and `drop` pipelines with dynamic close and reentrancy
   semantics.
 
+## Modules
+
+- File-backed relative ES Module graphs support side-effect, default, named,
+  namespace, star, and namespace re-exports; live bindings; cyclic graph
+  instantiation; top-level await; dynamic import; and `import.meta`.
+- Static import and re-export declarations accept Import Attributes. The host
+  supports `type: "json"` and `type: "text"`; typed modules expose exactly one
+  `default` export and share canonical namespace/value identity with dynamic
+  imports of the same path and type.
+
 ## Property model
 
 - Ordinary `[[Get]]`, `[[HasProperty]]`, and `[[Set]]` traverse prototype

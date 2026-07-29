@@ -46,7 +46,8 @@ WeakMap/WeakSet,
 WeakRef/FinalizationRegistry, Reflect, Proxy, resizable ArrayBuffer and growable
 SharedArrayBuffer cores, Atomics including worker `wait`/`notify`, `waitAsync`,
 and `pause`, file-backed ES Module graphs with named imports/exports and live
-bindings, relative dynamic imports, and JSON/text import attributes,
+bindings, relative dynamic imports, and static/dynamic JSON/text import
+attributes,
 the realm-specific global `Iterator`, common synchronous iterator prototype
 hierarchy, branded Realm-specific String iterators, `Iterator.from`, and
 `Iterator.prototype.toArray`, `reduce`, `forEach`, `some`, `every`, and `find`,

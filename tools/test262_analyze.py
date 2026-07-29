@@ -192,6 +192,10 @@ try:
     from test262_reference_primitive_admission import REFERENCE_PRIMITIVE_FILES
     from test262_support import append_async_harness, execute_source
     from test262_dynamic_import_admission import DYNAMIC_IMPORT_FILES
+    from test262_static_import_attributes_admission import (
+        STATIC_IMPORT_ATTRIBUTES_FILES,
+        static_import_attributes_features,
+    )
     from test262_import_meta_admission import IMPORT_META_FILES
     from test262_iterator_admission import ITERATOR_CORE_FEATURES, ITERATOR_CORE_FILES
     from test262_json_parse_admission import JSON_PARSE_FILES
@@ -387,6 +391,10 @@ except ModuleNotFoundError:
     from tools.test262_reference_primitive_admission import REFERENCE_PRIMITIVE_FILES
     from tools.test262_support import append_async_harness, execute_source
     from tools.test262_dynamic_import_admission import DYNAMIC_IMPORT_FILES
+    from tools.test262_static_import_attributes_admission import (
+        STATIC_IMPORT_ATTRIBUTES_FILES,
+        static_import_attributes_features,
+    )
     from tools.test262_import_meta_admission import IMPORT_META_FILES
     from tools.test262_iterator_admission import ITERATOR_CORE_FEATURES, ITERATOR_CORE_FILES
     from tools.test262_json_parse_admission import JSON_PARSE_FILES
@@ -538,7 +546,7 @@ SKIP_FEATURES = {
     "dynamic-import", "error-cause", "explicit-resource-management",
     "export-star-as-namespace-from-module",
     "generators", "hashbang", "import-assertions",
-    "import-attributes", "import-defer", "import.meta", "iterator-helpers",
+    "import-attributes", "import-defer", "import-text", "import.meta", "iterator-helpers",
     "iterator-sequencing", "joint-iteration",
     "json-modules", "module",
     "object-rest", "optional-chaining",
@@ -2343,6 +2351,22 @@ def dynamic_import_path(path):
         return False
     return rel.as_posix() in DYNAMIC_IMPORT_FILES
 
+def static_import_attributes_path(path):
+    if path is None:
+        return False
+    try:
+        rel = Path(path).resolve().relative_to(Path(TEST262).resolve() / "test")
+    except ValueError:
+        return False
+    return rel.as_posix() in STATIC_IMPORT_ATTRIBUTES_FILES
+
+def static_import_attributes_path_features(path):
+    try:
+        rel = Path(path).resolve().relative_to(Path(TEST262).resolve() / "test")
+    except (OSError, ValueError):
+        return frozenset()
+    return static_import_attributes_features(rel.as_posix())
+
 def import_meta_path(path):
     if path is None:
         return False
@@ -3341,6 +3365,8 @@ def should_skip(meta, path=None):
             "import-attributes", "async-functions", "Proxy", "json-modules",
             "import-text",
         })
+    if path is not None and static_import_attributes_path(path):
+        feats.difference_update(static_import_attributes_path_features(path))
     if path is not None and import_meta_path(path):
         feats.difference_update({
             "import.meta", "dynamic-import", "generators", "async-functions",
@@ -3655,11 +3681,13 @@ def should_skip(meta, path=None):
         or atomics_sync_path(path)
         or module_tla_runtime_path(path)
         or dynamic_import_path(path)
+        or static_import_attributes_path(path)
         or import_meta_path(path)
     )
     module_admitted = path is not None and (
         module_core_path(path)
         or dynamic_import_path(path)
+        or static_import_attributes_path(path)
         or import_meta_path(path)
         or extensibility_module_path(path)
         or language_early_error_module_path(path)

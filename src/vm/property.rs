@@ -5020,6 +5020,9 @@ impl Vm {
             if let Some(value) = module.completion_value() {
                 Self::push_value_roots(&mut roots, &value);
             }
+            if let Some(value) = module.synthetic_default() {
+                Self::push_value_roots(&mut roots, &value);
+            }
         }
         for function in &self.functions {
             if let Some(meta) = function.chunk.import_meta {
@@ -5373,7 +5376,7 @@ impl Vm {
                 Some(Value::Undefined),
             )
         } else {
-            match self.finish_dynamic_import(target) {
+            match self.finish_dynamic_import(target, realm) {
                 Ok(namespace) => self.call_function(
                     &capability.resolve,
                     std::slice::from_ref(&namespace),
@@ -5471,8 +5474,12 @@ impl Vm {
             } => {
                 let capability_pins =
                     self.pin_many(&[Value::Object(promise), resolve.clone(), reject.clone()]);
-                let outcome =
-                    self.dynamic_import_module(&referrer, &specifier, import_type.as_deref());
+                let outcome = self.dynamic_import_module(
+                    &referrer,
+                    &specifier,
+                    import_type.as_deref(),
+                    realm,
+                );
                 let settlement = match outcome {
                     Ok(crate::module::DynamicImportResult::Ready(namespace)) => {
                         let value_pin = self.pin(&namespace);

@@ -2947,35 +2947,52 @@ impl Vm {
         let result = (|| {
             let keys =
                 crate::builtins::own_property_keys_or_throw(self, &attributes, false, true, false)?;
-            let mut import_type = None;
-            for key in keys {
-                if !crate::builtins::own_property_descriptor_for_key_or_throw(
-                    self,
-                    &attributes,
-                    &key,
-                )?
-                .is_some_and(|descriptor| descriptor.enumerable)
+            let mut entries = Vec::new();
+            let mut entry_pins = 0;
+            let collection = (|| -> error::Result<()> {
+                for key in keys {
+                    if !crate::builtins::own_property_descriptor_for_key_or_throw(
+                        self,
+                        &attributes,
+                        &key,
+                    )?
+                    .is_some_and(|descriptor| descriptor.enumerable)
+                    {
+                        continue;
+                    }
+                    let value = self.get_property_by_key(&attributes, &key)?;
+                    entry_pins += self.pin(&value);
+                    entries.push((key, value));
+                }
+                Ok(())
+            })();
+            if let Err(error) = collection {
+                self.unpin_many(entry_pins);
+                return Err(error);
+            }
+            let validation = (|| {
+                let mut import_type = None;
+                for (key, value) in entries {
+                    let Value::String(value) = value else {
+                        return Err(Error::type_err(
+                            "Dynamic import attribute values must be strings",
+                        ));
+                    };
+                    if !key.is_str("type") {
+                        return Err(Error::type_err("Unsupported dynamic import attribute"));
+                    }
+                    import_type = Some(value);
+                }
+                if import_type
+                    .as_deref()
+                    .is_some_and(|value| value != "json" && value != "text")
                 {
-                    continue;
+                    return Err(Error::type_err("Unsupported dynamic import type"));
                 }
-                let value = self.get_property_by_key(&attributes, &key)?;
-                let Value::String(value) = value else {
-                    return Err(Error::type_err(
-                        "Dynamic import attribute values must be strings",
-                    ));
-                };
-                if !key.is_str("type") {
-                    return Err(Error::type_err("Unsupported dynamic import attribute"));
-                }
-                import_type = Some(value);
-            }
-            if import_type
-                .as_deref()
-                .is_some_and(|value| value != "json" && value != "text")
-            {
-                return Err(Error::type_err("Unsupported dynamic import type"));
-            }
-            Ok(import_type)
+                Ok(import_type)
+            })();
+            self.unpin_many(entry_pins);
+            validation
         })();
         self.unpin(attributes_pin);
         result

@@ -1,5 +1,32 @@
 # test262 conformance
 
+## Static import attributes and typed modules
+
+The frozen manifest `tools/test262_static_import_attributes_admission.txt`
+admits exactly 30 files: all 13 static grammar files under
+`language/module-code/import-attributes`, the 12 JSON module files, and the
+five text module files under `language/import/import-attributes`. Runner and
+analyzer share the same path-to-feature map, and tooling checks the manifest
+against live pinned metadata before CI runs it.
+
+The focused pinned run reports **30 pass / 0 fail / 0 skip**. It covers
+newline/trailing-comma grammar, decoded duplicate keys, import-side static
+request forms, invalid JSON and named-import resolution failures, mutable JSON
+values, JSON/text namespaces, static/dynamic JSON identity, and text modules
+whose contents are valid JavaScript or import themselves. Repository parser
+and runtime regressions additionally cover named, star, and namespace
+re-exports carrying attributes. Broad
+`module`, `import-attributes`, `json-modules`, and `import-text` gates remain
+closed outside the exact manifest. Source-phase imports, deferred imports,
+bare host specifiers, and Realm-owned module caches remain separate work.
+
+```sh
+TEST262=/root/test262 RUJA=target/release/ruja \
+  python3 tools/test262_runner.py \
+  language/module-code/import-attributes \
+  language/import/import-attributes
+```
+
 ## Incremental Promise/FinalizationRegistry GC cursor evidence
 
 The local compatibility check uses pinned Test262
