@@ -12299,6 +12299,17 @@ reservation failures, verify first-entry preservation, duplicate/update
 no-reserve behavior, pre/post-step and close-time Fuel, exact-cap allocation,
 balanced pins, and clean retry.
 
+The later incremental pre-sweep retrace unit preserves this complete weak
+surface: pinned WeakMap, WeakSet, WeakRef, and FinalizationRegistry pass
+**302/302** together. Implementation commit `f4747ce` passes ordinary CI
+`30431870408` (**2/2**) and full run `30431870820` (**38/38**), including the
+dedicated WeakMap/WeakSet **226/226** gate. Against preceding full run
+`30428204190`, all **32/32** result artifacts are byte-identical. Aggregate
+results remain **32260 pass / 5028 fail / 11178 skip / 3 timeout / 0 error**
+over 48469, with 37288 run. This is intentionally an identity result: the unit
+bounds collector retrace work and re-entrant liveness without changing the
+supported Test262 policy.
+
 Final local gates pass all-target/all-feature Rust tests with **324/324**
 library tests, warnings-denied Clippy, rustfmt, wasm32, doctest, tooling
 **144/144**, vendored RegExp **29/29** unit tests plus **14/14** doctests,

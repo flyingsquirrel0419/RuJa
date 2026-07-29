@@ -28,7 +28,11 @@
   low-level heap integrations must use barrier-aware `Heap` accessors;
   `with_obj` remains public and now exposes the live object during nested
   access. Callbacks must release object interior-mutex guards before invoking
-  collection.
+  collection. Implementation commit `f4747ce` passes ordinary CI
+  `30431870408` (**2/2**) and full matrix `30431870820` (**38/38**). Against
+  preceding run `30428204190`, all **32/32** result artifacts are byte-identical
+  at **32260 pass / 5028 fail / 11178 skip / 3 timeout / 0 error** over 48469,
+  with 37288 run.
 
 - The seven Set composition methods now implement the complete SetRecord and
   iterator protocol with cached `has`, `keys`, and `next` methods, Realm-local
