@@ -1205,7 +1205,11 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
         )
 
         checkout = Path(test262_runner.TEST262) / "test"
-        if checkout.exists():
+        try:
+            checkout_available = checkout.exists()
+        except OSError:
+            checkout_available = False
+        if checkout_available:
             syntax_dir = checkout / "language/module-code/import-attributes"
             runtime_dir = checkout / "language/import/import-attributes"
             live = {

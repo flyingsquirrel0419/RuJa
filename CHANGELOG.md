@@ -28,6 +28,8 @@
   absent-checkout skips, rustfmt, warnings-denied Clippy, wasm32, doctest
   **1/1**, and every benchmark smoke target. The exact pinned Test262 run is
   **30/30** on revision `9e61c128`; two final GPT-5.6 reviews are CLEAN.
+  Tooling treats an inaccessible default Test262 path as an absent checkout,
+  while explicit CI checkouts still require exact live-manifest equality.
 
 - Finite-budget incremental GC now cursorizes ordered Map entries, charging one
   work unit for each key/value record while scanning each slice under one lock.
