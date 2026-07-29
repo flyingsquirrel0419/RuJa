@@ -27,7 +27,12 @@
   **25/25**, warnings-denied Clippy, rustfmt, wasm32, doctest **1/1**, and
   Python tooling **145/145** with four expected absent-checkout skips. Pinned
   Array/Iterator/WeakMap/WeakSet/WeakRef/FinalizationRegistry Test262 is
-  **3788 pass / 0 fail / 109 skip** over 3897 files.
+  **3788 pass / 0 fail / 109 skip** over 3897 files. Implementation commit
+  `6a715c1` passes ordinary CI `30439702247` (**2/2**) and all **38/38** jobs
+  in full run `30439701818`. Against preceding clean run `30431870820`, all
+  **32/32** result artifacts are byte-identical; aggregate remains **32260
+  pass / 5028 fail / 11178 skip / 3 timeout / 0 error** over 48469 files with
+  37288 run.
 
 - Incremental GC now persists explicit Mark and Retrace phases. Finite budgets
   apply to newly traced cells and every physical cell visited by the pre-sweep
