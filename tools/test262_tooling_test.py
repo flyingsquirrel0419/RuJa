@@ -240,7 +240,12 @@ from test262_intl_canonical_locales_admission import (
     INTL_CANONICAL_LOCALES_FILES,
     intl_canonical_locales_features,
 )
-from test262_intl_locale_admission import INTL_LOCALE_FILES, intl_locale_features
+from test262_intl_locale_admission import (
+    INTL_LOCALE_BASE_FILES,
+    INTL_LOCALE_FILES,
+    INTL_LOCALE_INFO_FILES,
+    intl_locale_features,
+)
 from test262_import_meta_admission import IMPORT_META_FILES
 from test262_iterator_admission import ITERATOR_CORE_FEATURES, ITERATOR_CORE_FILES
 from test262_json_parse_admission import JSON_PARSE_FILES
@@ -1355,7 +1360,10 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                 test262_runner.TEST262, test262_analyze.TEST262 = original_roots
 
     def test_intl_locale_manifest_is_exact_live_and_shared(self):
-        self.assertEqual(len(INTL_LOCALE_FILES), 109)
+        self.assertEqual(len(INTL_LOCALE_BASE_FILES), 109)
+        self.assertEqual(len(INTL_LOCALE_FILES), 161)
+        self.assertEqual(len(INTL_LOCALE_INFO_FILES), 52)
+        self.assertTrue(INTL_LOCALE_BASE_FILES.isdisjoint(INTL_LOCALE_INFO_FILES))
         locale_object = "intl402/Intl/getCanonicalLocales/Locale-object.js"
         symbol_file = "intl402/Locale/invalid-tag-throws-symbol.js"
         realm_file = "intl402/Locale/proto-from-ctor-realm.js"
@@ -1364,7 +1372,8 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
         self.assertIn(locale_object, INTL_LOCALE_FILES)
         self.assertIn(symbol_file, INTL_LOCALE_FILES)
         self.assertIn(realm_file, INTL_LOCALE_FILES)
-        self.assertNotIn(info_file, INTL_LOCALE_FILES)
+        self.assertIn(info_file, INTL_LOCALE_FILES)
+        self.assertIn(info_file, INTL_LOCALE_INFO_FILES)
         self.assertNotIn(outside, INTL_LOCALE_FILES)
         self.assertEqual(
             intl_locale_features(symbol_file),
@@ -1385,8 +1394,6 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
             live = {
                 path.relative_to(checkout).as_posix()
                 for path in (checkout / "intl402/Locale").rglob("*.js")
-                if "Intl.Locale-info"
-                not in test262_runner.parse_meta(path.read_text()).get("features", [])
             }
             adjacent = checkout / locale_object
             if adjacent.exists():
@@ -1420,7 +1427,7 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                     self.assertFalse(
                         tool.should_skip({"features": ["Intl.Locale"]}, adjacent)
                     )
-                    self.assertTrue(
+                    self.assertFalse(
                         tool.should_skip(
                             {"features": ["Intl.Locale", "Intl.Locale-info"]},
                             info,

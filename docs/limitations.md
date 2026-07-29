@@ -558,14 +558,17 @@ guarantees are required.
   Arc allocations, so large parsing, multiplication, and shifts can still hit
   host OOM rather than a catchable JavaScript error
 - ECMA-402 currently includes `%Intl%`, `Intl.getCanonicalLocales`, locale
-  identifier canonicalization, and the base `Intl.Locale` constructor,
-  accessors, `toString`, `maximize`, and `minimize`. The `Intl.Locale-info`
-  calendar/collation/hour-cycle/time-zone/week/text-direction data APIs,
-  formatter constructors, `Intl.supportedValuesOf`, locale negotiation and
-  formatting data, and legacy constructor fallback semantics remain
-  unsupported. Array, TypedArray, String, Number, BigInt, and Date
+  identifier canonicalization, and the complete `Intl.Locale` constructor,
+  accessor, likely-subtag, and Locale-info data surface. Collation and numbering
+  methods use the ECMA-402 formatter-absence fallbacks until their service
+  constructors land. Formatter constructors, `Intl.supportedValuesOf`, locale
+  negotiation and formatting data, and legacy constructor fallback semantics
+  remain unsupported. Array, TypedArray, String, Number, BigInt, and Date
   locale-sensitive methods therefore retain their documented non-ECMA-402
-  behavior until those formatter units land
+  behavior until those formatter units land. Locale-info result counts and
+  string chunks are fuel-precharged and Vec growth is fallible, but its bounded
+  static strings become fresh `Arc<str>` values whose bytes are not charged to
+  the VM heap-object cap
 - Wrapper objects (`new String(x)`, `new Number(x)`, `new Boolean(x)`,
   `Object(x)`) now store the wrapped primitive, so `.valueOf()` and
   `ToPrimitive` resolve to it (`new Number(5) + 1 === 6`). Boxed-string

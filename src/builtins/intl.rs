@@ -1,6 +1,9 @@
 //! ECMA-402 locale canonicalization and the `%Intl%` intrinsic.
 
 use super::intl_aliases::{TRANSFORM_VALUE_ALIASES, UNICODE_TYPE_ALIASES};
+use super::intl_locale_info::{
+    CALENDAR_PREFERENCES, HOUR_CYCLES, SCRIPT_DIRECTIONS, TIME_ZONES, WEEK_INFORMATION,
+};
 use super::{
     accessor_get_prop, const_prop, data_prop, make_value_array_in_current_realm,
     native_constructor_prototype_with_default,
@@ -664,6 +667,23 @@ fn update_unicode_extension(
     {
         return Err(Error::range("Invalid collation option"));
     }
+    let first_day_of_week =
+        get_string_option(vm, options, "firstDayOfWeek")?.map(|value| match value.as_str() {
+            "0" | "7" => "sun".to_string(),
+            "1" => "mon".to_string(),
+            "2" => "tue".to_string(),
+            "3" => "wed".to_string(),
+            "4" => "thu".to_string(),
+            "5" => "fri".to_string(),
+            "6" => "sat".to_string(),
+            _ => value,
+        });
+    if first_day_of_week
+        .as_deref()
+        .is_some_and(|value| !valid_unicode_type(value))
+    {
+        return Err(Error::range("Invalid firstDayOfWeek option"));
+    }
     let hour_cycle = get_string_option(vm, options, "hourCycle")?;
     if hour_cycle
         .as_deref()
@@ -691,6 +711,7 @@ fn update_unicode_extension(
     for (key, value) in [
         ("ca", calendar),
         ("co", collation),
+        ("fw", first_day_of_week),
         ("hc", hour_cycle),
         ("kf", case_first),
         ("kn", numeric.map(|value| value.to_string())),
@@ -706,10 +727,13 @@ fn update_unicode_extension(
 fn locale_record(tag: Arc<str>) -> IntlLocaleRecord {
     let (_, extension) = remove_unicode_extension(&tag);
     let value = |key: &str| {
-        extension
-            .keywords
-            .get(key)
-            .map(|value| Arc::from(value.as_str()))
+        extension.keywords.get(key).map(|value| {
+            Arc::from(if value.is_empty() && key != "kf" {
+                "true"
+            } else {
+                value
+            })
+        })
     };
     let numeric = extension
         .keywords
@@ -720,6 +744,7 @@ fn locale_record(tag: Arc<str>) -> IntlLocaleRecord {
         calendar: value("ca"),
         case_first: value("kf"),
         collation: value("co"),
+        first_day_of_week: value("fw"),
         hour_cycle: value("hc"),
         numbering_system: value("nu"),
         numeric,
@@ -968,6 +993,298 @@ fn locale_numeric(vm: &mut Vm, _: &[Value], this: Option<Value>) -> error::Resul
     })
 }
 
+fn locale_first_day_of_week(vm: &mut Vm, _: &[Value], this: Option<Value>) -> error::Result<Value> {
+    locale_string_slot(vm, this, |record| record.first_day_of_week.clone())
+}
+
+fn require_locale_record(vm: &Vm, this: Option<Value>) -> error::Result<IntlLocaleRecord> {
+    let receiver = this.unwrap_or(Value::Undefined);
+    let Value::Object(index) = receiver else {
+        return Err(Error::type_err(
+            "Intl.Locale method called on incompatible receiver",
+        ));
+    };
+    vm.heap.with_obj(index.0, |object| match object {
+        HeapObj::IntlLocale(locale) => locale
+            .record
+            .get()
+            .cloned()
+            .ok_or_else(|| Error::type_err("Intl.Locale object is not initialized")),
+        _ => Err(Error::type_err(
+            "Intl.Locale method called on incompatible receiver",
+        )),
+    })
+}
+
+fn string_list_data(
+    table: &'static [(&'static str, &'static [&'static str])],
+    key: &str,
+) -> Option<&'static [&'static str]> {
+    table
+        .binary_search_by_key(&key, |(candidate, _)| *candidate)
+        .ok()
+        .and_then(|index| table.get(index).map(|(_, values)| *values))
+}
+
+fn string_list_value(vm: &mut Vm, values: &[&str]) -> error::Result<Value> {
+    let work = values.iter().try_fold(values.len(), |work, value| {
+        work.checked_add(value.len().div_ceil(64))
+            .ok_or_else(|| Error::range("Intl.Locale result is too large"))
+    })?;
+    vm.consume_fuel_units(work.min(i64::MAX as usize) as i64)?;
+    let mut items = Vec::new();
+    items
+        .try_reserve_exact(values.len())
+        .map_err(|_| Error::range("Intl.Locale result is too large"))?;
+    items.extend(values.iter().map(|value| Value::String(Arc::from(*value))));
+    make_value_array_in_current_realm(vm, items)
+}
+
+fn locale_info_object(vm: &mut Vm, properties: Vec<(&'static str, Value)>) -> error::Result<Value> {
+    vm.try_reserve_gc_pins(properties.len())?;
+    let values: Vec<Value> = properties.iter().map(|(_, value)| value.clone()).collect();
+    let pin_count = vm.pin_many(&values);
+    let result = vm.new_object_in_current_realm().map(|index| {
+        vm.heap.with_obj(index.0, |object| {
+            let mut props = object.props().lock();
+            for (name, value) in properties {
+                let mut descriptor = PropertyDescriptor::data(value);
+                descriptor.writable = true;
+                descriptor.enumerable = true;
+                descriptor.configurable = true;
+                props.insert(PropertyKey::from(name), descriptor);
+            }
+        });
+        Value::Object(index)
+    });
+    vm.unpin_many(pin_count);
+    result
+}
+
+fn canonical_subdivision_region(tag: &str, key: &str) -> Option<String> {
+    let (_, extension) = remove_unicode_extension(tag);
+    let subdivision = extension.keywords.get(key)?;
+    if !(3..=8).contains(&subdivision.len())
+        || !subdivision.bytes().all(|byte| byte.is_ascii_alphanumeric())
+    {
+        return None;
+    }
+    let prefix_len = if subdivision
+        .as_bytes()
+        .get(..2)
+        .is_some_and(|prefix| prefix.iter().all(u8::is_ascii_alphabetic))
+    {
+        2
+    } else if subdivision
+        .as_bytes()
+        .get(..3)
+        .is_some_and(|prefix| prefix.iter().all(u8::is_ascii_digit))
+    {
+        3
+    } else {
+        return None;
+    };
+    if !(1..=4).contains(&(subdivision.len() - prefix_len)) {
+        return None;
+    }
+    let canonical = canonicalize_locale(&format!("und-{}", &subdivision[..prefix_len])).ok()?;
+    locale_tag_parts(&canonical).ok()?.region
+}
+
+struct RegionPreference {
+    language: String,
+    region: String,
+    region_override: Option<String>,
+}
+
+fn likely_subtag_parts(
+    vm: &mut Vm,
+    parts: &LocaleTagParts,
+) -> error::Result<Option<LocaleTagParts>> {
+    let mut base_parts = parts.clone();
+    base_parts.suffix.clear();
+    let base = compose_locale_tag(&base_parts);
+    let subtags = base.bytes().filter(|byte| *byte == b'-').count() + 1;
+    vm.consume_fuel_units(subtags.saturating_mul(subtags).min(i64::MAX as usize) as i64)?;
+    let (input, replacements) = substitute_long_language_subtags(&base);
+    let Ok(mut locale) = input.parse::<Locale>() else {
+        return Ok(None);
+    };
+    LocaleExpander::new_extended().maximize(&mut locale.id);
+    let maximal = restore_long_language_subtags(locale.to_string(), replacements);
+    Ok(locale_tag_parts(&maximal).ok())
+}
+
+fn region_preference(vm: &mut Vm, tag: &str) -> error::Result<RegionPreference> {
+    let parts = locale_tag_parts_metered(vm, tag)?;
+    let region = if let Some(region) = parts.region.clone() {
+        region
+    } else if let Some(region) = canonical_subdivision_region(tag, "sd") {
+        region
+    } else {
+        likely_subtag_parts(vm, &parts)?
+            .and_then(|maximal| maximal.region)
+            .unwrap_or_else(|| "001".to_string())
+    };
+    Ok(RegionPreference {
+        language: parts.language,
+        region,
+        region_override: canonical_subdivision_region(tag, "rg"),
+    })
+}
+
+fn preferred_region_data(
+    table: &'static [(&'static str, &'static [&'static str])],
+    preference: &RegionPreference,
+) -> Option<&'static [&'static str]> {
+    let mut regions = [
+        preference.region_override.as_deref(),
+        Some(&preference.region),
+    ];
+    for region in regions.iter_mut().filter_map(Option::take) {
+        let locale = format!("{}-{region}", preference.language);
+        if let Some(values) = string_list_data(table, &locale) {
+            return Some(values);
+        }
+        if let Some(values) = string_list_data(table, region) {
+            return Some(values);
+        }
+        if let Some(values) = string_list_data(table, "001") {
+            return Some(values);
+        }
+    }
+    None
+}
+
+fn locale_get_calendars(vm: &mut Vm, _: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let record = require_locale_record(vm, this)?;
+    if let Some(calendar) = record.calendar {
+        return make_value_array_in_current_realm(vm, vec![Value::String(calendar)]);
+    }
+    let preference = region_preference(vm, &record.locale)?;
+    string_list_value(
+        vm,
+        preferred_region_data(CALENDAR_PREFERENCES, &preference).unwrap_or(&["gregory"]),
+    )
+}
+
+fn locale_get_collations(vm: &mut Vm, _: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let record = require_locale_record(vm, this)?;
+    if let Some(collation) = record.collation {
+        return make_value_array_in_current_realm(vm, vec![Value::String(collation)]);
+    }
+    string_list_value(vm, &["emoji", "eor"])
+}
+
+fn locale_get_hour_cycles(vm: &mut Vm, _: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let record = require_locale_record(vm, this)?;
+    if let Some(hour_cycle) = record.hour_cycle {
+        return make_value_array_in_current_realm(vm, vec![Value::String(hour_cycle)]);
+    }
+    let preference = region_preference(vm, &record.locale)?;
+    string_list_value(
+        vm,
+        preferred_region_data(HOUR_CYCLES, &preference).unwrap_or(&["h23"]),
+    )
+}
+
+fn locale_get_numbering_systems(
+    vm: &mut Vm,
+    _: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let record = require_locale_record(vm, this)?;
+    if let Some(numbering_system) = record.numbering_system {
+        return make_value_array_in_current_realm(vm, vec![Value::String(numbering_system)]);
+    }
+    string_list_value(vm, &["latn"])
+}
+
+fn locale_get_time_zones(vm: &mut Vm, _: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let record = require_locale_record(vm, this)?;
+    let Some(region) = locale_tag_parts_metered(vm, &record.locale)?.region else {
+        return Ok(Value::Undefined);
+    };
+    string_list_value(vm, string_list_data(TIME_ZONES, &region).unwrap_or(&[]))
+}
+
+fn locale_get_text_info(vm: &mut Vm, _: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let record = require_locale_record(vm, this)?;
+    let parts = locale_tag_parts_metered(vm, &record.locale)?;
+    let script = if parts.script.is_some() {
+        parts.script.clone()
+    } else {
+        likely_subtag_parts(vm, &parts)?.and_then(|maximal| maximal.script)
+    };
+    let direction = script
+        .as_deref()
+        .and_then(|script| {
+            SCRIPT_DIRECTIONS
+                .binary_search_by_key(&script, |(candidate, _)| *candidate)
+                .ok()
+                .and_then(|index| SCRIPT_DIRECTIONS.get(index).map(|(_, value)| *value))
+        })
+        .map(|value| Value::String(Arc::from(value)))
+        .unwrap_or(Value::Undefined);
+    locale_info_object(vm, vec![("direction", direction)])
+}
+
+fn locale_get_week_info(vm: &mut Vm, _: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let record = require_locale_record(vm, this)?;
+    let preference = region_preference(vm, &record.locale)?;
+    let lookup_region = preference
+        .region_override
+        .as_deref()
+        .unwrap_or(&preference.region);
+    let week_data = week_information(lookup_region)
+        .or_else(|| week_information("001"))
+        .ok_or_else(|| Error::internal("CLDR world week data is missing"))?;
+    let first_day = record
+        .first_day_of_week
+        .as_deref()
+        .and_then(weekday_number)
+        .unwrap_or(week_data.0);
+    let weekend = make_value_array_in_current_realm(
+        vm,
+        week_data
+            .1
+            .iter()
+            .map(|day| Value::Number(f64::from(*day)))
+            .collect(),
+    )?;
+    locale_info_object(
+        vm,
+        vec![
+            ("firstDay", Value::Number(f64::from(first_day))),
+            ("weekend", weekend),
+        ],
+    )
+}
+
+fn week_information(region: &str) -> Option<(u8, &'static [u8])> {
+    WEEK_INFORMATION
+        .binary_search_by_key(&region, |(candidate, _, _)| *candidate)
+        .ok()
+        .and_then(|index| {
+            WEEK_INFORMATION
+                .get(index)
+                .map(|(_, first_day, weekend)| (*first_day, *weekend))
+        })
+}
+
+fn weekday_number(value: &str) -> Option<u8> {
+    match value {
+        "mon" => Some(1),
+        "tue" => Some(2),
+        "wed" => Some(3),
+        "thu" => Some(4),
+        "fri" => Some(5),
+        "sat" => Some(6),
+        "sun" => Some(7),
+        _ => None,
+    }
+}
+
 fn locale_to_string(vm: &mut Vm, _: &[Value], this: Option<Value>) -> error::Result<Value> {
     require_locale_tag(vm, this).map(Value::String)
 }
@@ -1014,16 +1331,28 @@ fn build_locale_intrinsic_in_env(
     env: GcIdx,
     object_proto: Value,
 ) -> error::Result<Value> {
-    const METHODS: [(&str, NativeFn, usize); 3] = [
+    const METHODS: [(&str, NativeFn, usize); 10] = [
         ("toString", locale_to_string as NativeFn, 0),
         ("maximize", locale_maximize as NativeFn, 0),
         ("minimize", locale_minimize as NativeFn, 0),
+        ("getCalendars", locale_get_calendars as NativeFn, 0),
+        ("getCollations", locale_get_collations as NativeFn, 0),
+        ("getHourCycles", locale_get_hour_cycles as NativeFn, 0),
+        (
+            "getNumberingSystems",
+            locale_get_numbering_systems as NativeFn,
+            0,
+        ),
+        ("getTimeZones", locale_get_time_zones as NativeFn, 0),
+        ("getTextInfo", locale_get_text_info as NativeFn, 0),
+        ("getWeekInfo", locale_get_week_info as NativeFn, 0),
     ];
-    const GETTERS: [(&str, NativeFn); 11] = [
+    const GETTERS: [(&str, NativeFn); 12] = [
         ("baseName", locale_base_name as NativeFn),
         ("calendar", locale_calendar as NativeFn),
         ("caseFirst", locale_case_first as NativeFn),
         ("collation", locale_collation as NativeFn),
+        ("firstDayOfWeek", locale_first_day_of_week as NativeFn),
         ("hourCycle", locale_hour_cycle as NativeFn),
         ("language", locale_language as NativeFn),
         ("numberingSystem", locale_numbering_system as NativeFn),
@@ -1163,7 +1492,11 @@ pub(crate) fn build_intl_in_env(
 
 #[cfg(test)]
 mod tests {
-    use super::canonicalize_locale;
+    use super::{
+        canonical_subdivision_region, canonicalize_locale, region_preference, string_list_data,
+        week_information, CALENDAR_PREFERENCES, HOUR_CYCLES, TIME_ZONES,
+    };
+    use crate::vm::Vm;
 
     #[test]
     fn canonicalizes_cldr_aliases_and_extensions() {
@@ -1216,5 +1549,46 @@ mod tests {
         ] {
             assert!(canonicalize_locale(invalid).is_err(), "accepted {invalid}");
         }
+    }
+
+    #[test]
+    fn locale_info_tables_are_sorted_and_cover_world_fallbacks() {
+        for table in [CALENDAR_PREFERENCES, HOUR_CYCLES, TIME_ZONES] {
+            assert!(table.windows(2).all(|pair| pair[0].0 < pair[1].0));
+        }
+        assert_eq!(
+            string_list_data(CALENDAR_PREFERENCES, "TH"),
+            Some(&["buddhist", "gregory"][..])
+        );
+        assert_eq!(
+            string_list_data(HOUR_CYCLES, "US"),
+            Some(&["h12", "h23"][..])
+        );
+        assert!(string_list_data(TIME_ZONES, "US")
+            .is_some_and(|zones| zones.windows(2).all(|pair| pair[0] < pair[1])));
+        assert_eq!(week_information("001"), Some((1, &[6, 7][..])));
+    }
+
+    #[test]
+    fn region_preference_validates_subdivisions_and_obeys_priority() {
+        assert_eq!(
+            canonical_subdivision_region("fa-u-sd-thabcd", "sd").as_deref(),
+            Some("TH")
+        );
+        assert_eq!(canonical_subdivision_region("fa-u-sd-thabcde", "sd"), None);
+
+        let mut vm = Vm::new().expect("VM should initialize");
+        let override_preference = region_preference(&mut vm, "fa-JP-u-sd-inka-rg-thzzzz")
+            .expect("region preference should resolve");
+        assert_eq!(override_preference.region, "JP");
+        assert_eq!(override_preference.region_override.as_deref(), Some("TH"));
+
+        let subdivision_preference = region_preference(&mut vm, "fa-u-sd-inka")
+            .expect("subdivision preference should resolve");
+        assert_eq!(subdivision_preference.region, "IN");
+
+        let likely_preference =
+            region_preference(&mut vm, "fa").expect("likely region should resolve");
+        assert_eq!(likely_preference.region, "IR");
     }
 }

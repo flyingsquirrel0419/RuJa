@@ -6,6 +6,7 @@
 pub(crate) mod global;
 pub(crate) mod intl;
 mod intl_aliases;
+mod intl_locale_info;
 pub(crate) mod json;
 pub(crate) mod math;
 

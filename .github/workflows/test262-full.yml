@@ -316,14 +316,26 @@ jobs:
           test262_tooling_test.ModuleCoreAdmissionTests.test_intl_locale_manifest_is_exact_live_and_shared
       - name: Require the exact Intl.Locale boundary to pass
         run: |
-          mapfile -t locale_files < <(sed -e '/^#/d' -e '/^$/d' \
-            tools/test262_intl_locale_admission.txt)
+          mapfile -t locale_files < <(cat \
+            tools/test262_intl_locale_admission.txt \
+            tools/test262_intl_locale_info_admission.txt | \
+            sed -e '/^#/d' -e '/^$/d')
           TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
             "${locale_files[@]}" \
             > intl_locale_result.txt 2>&1
           cat intl_locale_result.txt
-          grep -q '^RATE=100.0 PASS=109 FAIL=0 SKIP=0 TOTAL=109 RAN=109$' \
+          grep -q '^RATE=100.0 PASS=161 FAIL=0 SKIP=0 TOTAL=161 RAN=161$' \
             intl_locale_result.txt
+      - name: Require the exact Intl.Locale-info boundary to pass
+        run: |
+          mapfile -t locale_info_files < <(sed -e '/^#/d' -e '/^$/d' \
+            tools/test262_intl_locale_info_admission.txt)
+          TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
+            "${locale_info_files[@]}" \
+            > intl_locale_info_result.txt 2>&1
+          cat intl_locale_info_result.txt
+          grep -q '^RATE=100.0 PASS=52 FAIL=0 SKIP=0 TOTAL=52 RAN=52$' \
+            intl_locale_info_result.txt
 
   test262-full:
     needs: [build, setup]

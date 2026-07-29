@@ -227,7 +227,7 @@ fn locale_constructor_observes_options_in_order_and_recanonicalizes() {
             [locale.toString(), log.join(",")].join(":");
         "#),
         Value::String(Arc::from(
-            "ru-Armn-AM-u-ca-gregory-hc-h23-kf-false-kn-nu-latn:tag,language,script,region,variants,calendar,collation,hourCycle,caseFirst,numeric,numberingSystem"
+            "ru-Armn-AM-u-ca-gregory-hc-h23-kf-false-kn-nu-latn:tag,language,script,region,variants,calendar,collation,firstDayOfWeek,hourCycle,caseFirst,numeric,numberingSystem"
         ))
     );
 
@@ -310,6 +310,53 @@ fn locale_likely_subtags_preserve_suffix_and_use_method_realm() {
 }
 
 #[test]
+fn locale_info_uses_cldr_preferences_slots_and_method_realm() {
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var locale = new Intl.Locale(
+              "fa-JP-u-sd-inka-rg-thzzzz",
+              { firstDayOfWeek: 3 }
+            );
+            var explicit = new Intl.Locale(
+              "en-u-ca-buddhist-co-phonebk-hc-h11-nu-arab"
+            );
+            var calendars = other.Intl.Locale.prototype.getCalendars.call(locale);
+            var weekInfo = other.Intl.Locale.prototype.getWeekInfo.call(locale);
+            var inherited = new Intl.Locale("th-TH-u-rg-aozzzz");
+            [
+              locale.firstDayOfWeek,
+              locale.getCalendars().join(","),
+              locale.getHourCycles().join(","),
+              locale.getWeekInfo().firstDay,
+              locale.getWeekInfo().weekend.join(","),
+              new Intl.Locale("ar").getTextInfo().direction,
+              new Intl.Locale("en").getTextInfo().direction,
+              new Intl.Locale("en").getTimeZones(),
+              new Intl.Locale("en-US").getTimeZones().length > 0,
+              explicit.getCalendars().join(","),
+              explicit.getCollations().join(","),
+              explicit.getHourCycles().join(","),
+              explicit.getNumberingSystems().join(","),
+              new Intl.Locale("en-u-fw").firstDayOfWeek,
+              new Intl.Locale("en", { firstDayOfWeek: true }).firstDayOfWeek,
+              new Intl.Locale("en-u-ca").calendar,
+              inherited.getCalendars().join(","),
+              inherited.getWeekInfo().firstDay,
+              inherited.getWeekInfo().weekend.join(","),
+              new Intl.Locale("und-AQ").getTimeZones().includes("Antarctica/Troll"),
+              Object.getPrototypeOf(calendars) === other.Array.prototype,
+              Object.getPrototypeOf(weekInfo) === other.Object.prototype,
+              Object.getPrototypeOf(weekInfo.weekend) === other.Array.prototype
+            ].join(":");
+        "#),
+        Value::String(Arc::from(
+            "wed:buddhist,gregory:h23,h12:3:6,7:rtl:ltr::true:buddhist:phonebk:h11:arab:true:true:true:gregory:1:6,7:true:true:true:true"
+        ))
+    );
+}
+
+#[test]
 fn locale_list_and_tag_scans_are_fuel_bounded_and_reusable() {
     let mut vm = Vm::new().expect("failed to initialize VM");
     vm.run(
@@ -318,6 +365,9 @@ fn locale_list_and_tag_scans_are_fuel_bounded_and_reusable() {
             var longLocale = "en-x-" + "abcdefgh-".repeat(10000) + "abcdefgh";
             var longOption = "abcdefgh-".repeat(10000) + "abcdefgh";
             var longLocaleObject = new Intl.Locale(longLocale);
+            var variantTag = "en";
+            for (var i = 1000; i < 2000; i++) variantTag += "-" + i;
+            var variantLocaleObject = new Intl.Locale(variantTag);
         "#,
     )
     .expect("failed to initialize Intl fuel fixtures");
@@ -347,6 +397,12 @@ fn locale_list_and_tag_scans_are_fuel_bounded_and_reusable() {
             .expect_err("structural Locale accessor should precharge its tag scan");
         assert!(accessor_error.to_string().contains("fuel"), "{accessor}");
     }
+
+    vm.set_fuel(Some(100));
+    let locale_info_error = vm
+        .run("variantLocaleObject.getTextInfo()")
+        .expect_err("Locale-info likely-subtag expansion should precharge quadratic work");
+    assert!(locale_info_error.to_string().contains("fuel"));
 
     vm.set_fuel(None);
     assert_eq!(

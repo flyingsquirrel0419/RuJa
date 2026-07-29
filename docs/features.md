@@ -316,9 +316,12 @@
   `length`/`HasProperty`/`Get`/`ToString` order, return Realm-local Arrays, and
   canonicalize Unicode locale identifiers with pinned ICU4X/CLDR alias data.
   Locale objects expose canonical component and Unicode-keyword accessors plus
-  branded `toString`, `maximize`, and `minimize`; constructor/prototype fallback
-  and fresh results are Realm-correct. Locale, option, likely-subtag, and index
-  scans consume VM fuel
+  branded `toString`, `maximize`, and `minimize`; `firstDayOfWeek` and all seven
+  Locale-info methods use generated CLDR calendar, hour-cycle, week,
+  text-direction, and canonical IANA region-time-zone data. Region overrides,
+  subdivisions, likely regions, and `001` inheritance follow ECMA-402 priority.
+  Constructor/prototype fallback and fresh result Arrays/objects are
+  Realm-correct. Locale, option, likely-subtag, and index scans consume VM fuel
 
 ## Type coercion
 

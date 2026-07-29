@@ -32,6 +32,8 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Verify generated Intl aliases
         run: python3 tools/generate_intl_aliases.py --check
+      - name: Verify generated Intl Locale-info data
+        run: python3 tools/generate_intl_locale_info.py --check
       - name: Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
       - name: Test vendored RegExp engine

@@ -4,6 +4,20 @@
 
 ### Changed
 
+- Completed the `Intl.Locale-info` surface. `Intl.Locale` now observes and
+  canonicalizes `firstDayOfWeek`, exposes its branded accessor, and implements
+  `getCalendars`, `getCollations`, `getHourCycles`, `getNumberingSystems`,
+  `getTimeZones`, `getTextInfo`, and `getWeekInfo` with method-Realm Arrays and
+  ordinary result objects. A deterministic generator pins Unicode CLDR 48.2
+  calendar preferences, hour cycles, week data, script direction metadata,
+  and canonical IANA region time zones; ICU4X supplies extended likely
+  subtags. Region selection follows region, subdivision, likely-subtag, world
+  fallback, and independent region-override precedence while preserving CLDR
+  `001` inheritance. Native scans are fuel-precharged and result objects remain
+  rooted across GC retry. A separate 52-file manifest expands the exact
+  `Intl.Locale` boundary to **161 pass / 0 fail / 0 skip**, with an independent
+  **52/0/0** Locale-info CI assertion.
+
 - Added the base `Intl.Locale` surface with a Realm-local constructor and
   prototype, an unforgeable structural heap brand, canonical locale internal
   slots, ordered language/Unicode option processing, branded accessors,
@@ -14,8 +28,9 @@
   provisional intrinsic objects remain rooted across GC retry. Option and
   likely-subtag scans consume sandbox fuel before native work. A frozen
   109-file Test262 manifest admits every base `Intl.Locale` file plus the
-  adjacent canonical-locale-list case at **109 pass / 0 fail / 0 skip** while
-  scope-closing all `Intl.Locale-info` data APIs and future files.
+  adjacent canonical-locale-list case at **109 pass / 0 fail / 0 skip**. The
+  later Locale-info manifest now extends that frozen base without changing its
+  historical ownership.
 
 - Added the Realm-local `%Intl%` namespace and `Intl.getCanonicalLocales`.
   Locale-list coercion follows `CanonicalizeLocaleList` ordering, including
@@ -38,8 +53,8 @@
   40 files, keeps future in-scope files closed until explicit admission, and
   delegates the adjacent Locale-object case to the exact Locale manifest;
   its dedicated gate reports **41 pass / 0 fail / 0 skip** over 41 files.
-  Formatter constructors, `Intl.Locale-info`, `Intl.supportedValuesOf`, and the
-  remaining ECMA-402 surface stay separately gated. The package now declares
+  Formatter constructors, `Intl.supportedValuesOf`, and the remaining
+  ECMA-402 surface stay separately gated. The package now declares
   Rust 1.88 as its MSRV and CI checks it explicitly.
 
 - Static import and re-export declarations now accept Import Attributes

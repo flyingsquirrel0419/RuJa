@@ -3336,6 +3336,43 @@ String grammar scans and likely-subtag work are precharged against VM fuel.
 - 장점, 단점 및 영향: Base constructor, options, descriptors, brands, subclassing, cross-Realm fallback, canonical locale-list integration, and likely-subtag transforms are exact and independently gated. One canonical string plus relevant keyword strings keeps instance state compact. Native Arc/String/ICU temporary bytes still are not included in the heap-object cap, and Intl.Locale-info remains a separate data-provider unit.
 ```
 
+### `Intl.Locale-info` generated data boundary
+
+Locale-info keeps immutable locale identifiers in `IntlLocaleRecord` and does
+not attach provider objects to each instance. Calls derive the explicit region,
+canonical `sd` subdivision, ICU4X likely region, and independent `rg` override,
+then binary-search generated static tables. CLDR `001` inheritance makes a
+valid override region available even when it has no explicit row. Text
+direction uses the explicit or likely script; time zones deliberately use only
+the explicit locale region as required by `TimeZonesOfLocale`.
+
+`tools/generate_intl_locale_info.py` pins CLDR 48.2 and emits calendar
+preferences, hour cycles, effective week rows, known script directions, and
+region-to-time-zone lists. Time-zone generation combines Windows territory
+mappings with region-encoded timezone entries, rewrites aliases through each
+entry's canonical IANA identifier, deduplicates, and sorts. The generated
+calendar identifiers define RuJa's current Locale-info `AvailableCalendars`
+set independently of formatter constructors. Until Collator and NumberFormat
+exist, their specified no-matching-locale fallbacks are `emoji`/`eor` and
+`latn`.
+
+Every returned Array and ordinary information object is allocated from the
+active native function Realm. Arrays are rooted before containing objects can
+allocate; result fields use CreateDataProperty attributes. Linear tag scans and
+quadratic likely-subtag work plus result entry/string chunks are charged before
+ICU execution or result materialization; result Vec capacity is reserved
+fallibly. Runtime code does no XML parsing, filesystem access, or network I/O.
+
+```text
+[Decision Log]
+- 목적과 의도: Supply complete deterministic Locale inspection data without weakening Realm identity, GC safety, sandbox metering, or wasm portability.
+- 기존 구현 및 제약 조건: Base Locale stored only canonical keyword slots; formatter providers were absent; CLDR defaults are inherited rather than repeated per region; windowsZones alone omits valid region zones such as Antarctica/Troll.
+- 검토한 주요 대안: Runtime CLDR parsing, host ICU bindings, test-only maps, ICU4X formatter crates, world-only fallbacks, or generated CLDR tables plus existing locale expansion.
+- 선택한 방식: Generate sorted immutable tables from pinned CLDR; combine timezone.xml and windowsZones; model `001` inheritance during lookup; preserve formatter-absence fallbacks; publish fresh Realm-local values from branded methods.
+- 다른 대안 대신 이 방식을 선택한 이유: Runtime and host providers are nondeterministic or resource-heavy, test maps are incomplete, formatter crates widen the unit, and world defaults erase required region distinctions. The chosen boundary is broad data with narrow runtime machinery.
+- 장점, 단점 및 영향: Locale-info is reproducible, fast, network-free at runtime, and exact over 52 pinned tests. Generated source is roughly 31 KiB and CLDR preference updates are observable; formatter constructors will later replace only the documented collation/numbering fallback paths.
+```
+
 ---
 
 **Next:** [Features](features.md) · [Known limitations](limitations.md) · [Back to README](../README.md)

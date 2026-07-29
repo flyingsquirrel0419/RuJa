@@ -12504,11 +12504,11 @@ the live manifest assertion against its pinned sparse checkout.
 Pinned Test262 contains 160 files below `intl402/Locale`. Exactly 108 omit the
 `Intl.Locale-info` feature; the adjacent
 `intl402/Intl/getCanonicalLocales/Locale-object.js` makes the frozen base
-boundary **109 files**. The shared runner/analyzer removes each file's complete
-live feature set only for those paths. Every other Locale file, including all
-52 Locale-info files and future metadata-free files, remains scope-closed.
-The dedicated sparse CI gate passes the manifest paths directly and requires
-**109 pass / 0 fail / 0 skip / 109 total / 109 run**.
+boundary **109 files**. The historical base manifest remains unchanged. A
+separate 52-file Locale-info manifest now admits every remaining pinned Locale
+path; only future metadata-free files remain scope-closed. The dedicated sparse
+CI gate requires **161 pass / 0 fail / 0 skip / 161 total / 161 run**, then
+independently requires **52/0/0** for Locale-info.
 
 Direct and pinned tests cover construction-only invocation, tag coercion and
 abrupt order, two-phase recanonicalization, every base option grammar and
@@ -12527,5 +12527,33 @@ directory-only run.
 - 검토한 주요 대안: Remove Intl.Locale globally, admit the directory prefix, count skipped Locale-info files in the exact gate, omit the adjacent file, or freeze only the 109 complete live metadata records.
 - 선택한 방식: Freeze 108 non-Intl.Locale-info Locale paths plus the adjacent Locale-object path, verify complete metadata equality, scope-close every other Locale path, add direct-file runner discovery, and hard-gate 109/0/0.
 - 다른 대안 대신 이 방식을 선택한 이유: Global and prefix admission overclaim data APIs and future tests; a 108/0/52 directory result hides the true supported boundary; directory traversal silently omitted the adjacent file; exact file and metadata ownership makes policy movement auditable.
-- 장점, 단점 및 영향: The base Locale surface is failure- and skip-free with an exact CI contract, while all data-provider methods remain visibly unsupported. The manifest must be intentionally revised when pinned Test262 or Locale-info support changes.
+- 장점, 단점 및 영향: The historical base Locale surface remains independently measurable; the later data-provider manifest expands support without rewriting that evidence. Both manifests must be intentionally revised when pinned Test262 changes.
+```
+
+## `Intl.Locale-info` exact admission
+
+The 52-file Locale-info manifest covers `firstDayOfWeek` construction and its
+accessor plus all calendar, collation, hour-cycle, numbering-system, time-zone,
+text-direction, and week-info methods. Tooling proves the two Locale manifests
+equal all 160 live files below `intl402/Locale` plus the adjacent canonical
+locale-list case. Exact pinned runs are **52/0/0** for Locale-info and
+**161/0/0** for the combined Locale boundary.
+
+CLDR 48.2 commit `11299982335beb974c1c63c45265184e759c0f41`
+generates sorted static tables from `supplementalData.xml`,
+`scriptMetadata.txt`, `timezone.xml`, and `windowsZones.xml`. ICU4X 2.2.0
+provides likely region/script expansion. Direct tests cover numeric weekday
+conversion, bare Unicode-keyword `true`, region/subdivision/likely/`001`
+priority, `rg` inheritance, canonical IANA IDs including Antarctica/Troll,
+method-Realm result prototypes, enumerable result fields, brand checks, and
+fuel precharging.
+
+```text
+[Decision Log]
+- 목적과 의도: Close the complete data-dependent Intl.Locale contract with authoritative broad data and an exact measurable support boundary.
+- 기존 구현 및 제약 조건: The base object existed, but 52 files were gated; RuJa has no formatter constructors, runtime XML parsing would violate startup/resource goals, and Locale methods must still return function-Realm objects under GC and fuel limits.
+- 검토한 주요 대안: Add test-only region tables, parse host locale/time-zone files at runtime, add all formatter dependencies first, return world defaults everywhere, or generate compact immutable CLDR tables while reusing ICU4X likely subtags.
+- 선택한 방식: Pin CLDR 48.2; generate calendar/hour/week/script/time-zone data; canonicalize Windows-region zone lists through timezone.xml IANA identifiers and union region-encoded zones; treat the emitted calendar set as Locale-info AvailableCalendars; use ECMA formatter-absence fallbacks for collations and numbering systems; implement RegionPreference and Realm-local publication directly in the existing Locale intrinsic.
+- 다른 대안 대신 이 방식을 선택한 이유: Test-only tables preserve hidden correctness gaps; host files are nondeterministic; formatter-first coupling makes Locale inspection unnecessarily broad; world-only data cannot satisfy region semantics. Generated data is reproducible, runtime-allocation-light, wasm-compatible, and independently reviewable.
+- 장점, 단점 및 영향: All 52 pinned files run without skips, locale data lookup is sorted static binary search, and no XML/network work occurs at runtime. The generated Rust source adds about 31 KiB plus compiled static data; CLDR upgrades intentionally change observable preferences and require regeneration/review. Collation and numbering results broaden when their future formatter locale data lands.
 ```

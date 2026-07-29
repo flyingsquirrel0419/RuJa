@@ -1074,11 +1074,13 @@ pub enum HeapObj {
 }
 
 /// Immutable ECMA-402 Locale internal slots attached to an ordinary object.
+#[derive(Clone)]
 pub struct IntlLocaleRecord {
     pub locale: Arc<str>,
     pub calendar: Option<Arc<str>>,
     pub case_first: Option<Arc<str>>,
     pub collation: Option<Arc<str>>,
+    pub first_day_of_week: Option<Arc<str>>,
     pub hour_cycle: Option<Arc<str>>,
     pub numbering_system: Option<Arc<str>>,
     pub numeric: bool,
