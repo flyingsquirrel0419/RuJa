@@ -310,6 +310,11 @@
   bypasses mutable global `Map`, species, and overridden `set` during result
   publication
 - **Error**: `Error`/`TypeError`/`RangeError`/`ReferenceError`/`SyntaxError`
+- **Intl foundation**: each Realm has its own `%Intl%` ordinary namespace with
+  the standard `@@toStringTag` and `getCanonicalLocales`. Locale lists preserve
+  observable `length`/`HasProperty`/`Get`/`ToString` order, return Realm-local
+  Arrays, and canonicalize Unicode locale identifiers with pinned ICU4X/CLDR
+  alias data. Locale and index scans consume VM fuel
 
 ## Type coercion
 

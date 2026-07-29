@@ -2,6 +2,7 @@
 name = "ruja"
 version = "0.4.0-alpha"
 edition = "2021"
+rust-version = "1.88"
 authors = ["flyingsquirrel0419"]
 description = "A sandboxed, embeddable JavaScript runtime for untrusted scripts in Rust"
 license = "Apache-2.0"
@@ -16,6 +17,7 @@ publish = false
 [dependencies]
 fancy-regex = { version = "0.18.0", path = "vendor/fancy-regex" }
 indexmap = "=2.2.6"
+icu_locale = "=2.2.0"
 regex = "1"
 regex-syntax = "0.8"
 regress = { path = "vendor/regress", features = ["utf16"] }

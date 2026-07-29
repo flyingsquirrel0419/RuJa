@@ -1309,12 +1309,19 @@ impl Vm {
     }
 
     pub(crate) fn consume_fuel(&mut self) -> error::Result<()> {
-        if let Some(fuel) = self.fuel.as_mut() {
-            if *fuel <= 0 {
-                return Err(crate::error::Error::fuel("fuel exhausted"));
-            }
-            *fuel -= 1;
+        self.consume_fuel_units(1)
+    }
+
+    pub(crate) fn consume_fuel_units(&mut self, units: i64) -> error::Result<()> {
+        debug_assert!(units >= 0);
+        let Some(fuel) = self.fuel.as_mut() else {
+            return Ok(());
+        };
+        if units > *fuel {
+            *fuel = 0;
+            return Err(crate::error::Error::fuel("fuel exhausted"));
         }
+        *fuel -= units;
         Ok(())
     }
 

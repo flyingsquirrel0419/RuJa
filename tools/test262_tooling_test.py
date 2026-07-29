@@ -236,6 +236,10 @@ from test262_static_import_attributes_admission import (
     STATIC_IMPORT_ATTRIBUTES_FILES,
     static_import_attributes_features,
 )
+from test262_intl_canonical_locales_admission import (
+    INTL_CANONICAL_LOCALES_FILES,
+    intl_canonical_locales_features,
+)
 from test262_import_meta_admission import IMPORT_META_FILES
 from test262_iterator_admission import ITERATOR_CORE_FEATURES, ITERATOR_CORE_FILES
 from test262_json_parse_admission import JSON_PARSE_FILES
@@ -1239,9 +1243,7 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                 try:
                     self.assertFalse(
                         tool.should_skip(
-                            {
-                                "features": ["import-attributes"],
-                            },
+                            {"features": ["import-attributes"]},
                             root / "test" / syntax,
                         )
                     )
@@ -1269,23 +1271,87 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                     )
                     self.assertTrue(
                         tool.should_skip(
-                            {
-                                "features": ["import-attributes"],
-                            },
+                            {"features": ["import-attributes"]},
                             root / "test" / outside,
                         )
                     )
                     self.assertTrue(
                         tool.should_skip(
-                            {
-                                "features": ["import-text"],
-                            },
+                            {"features": ["import-text"]},
                             root / "test" / outside,
                         )
                     )
                     self.assertTrue(tool.static_import_attributes_path(root / "test" / syntax))
                 finally:
                     tool.TEST262 = original_root
+
+    def test_intl_canonical_locales_manifest_is_exact_live_and_shared(self):
+        self.assertEqual(len(INTL_CANONICAL_LOCALES_FILES), 40)
+        root_file = "intl402/Intl/builtin.js"
+        proxy_file = "intl402/Intl/getCanonicalLocales/has-property.js"
+        tag_file = "intl402/Intl/toStringTag/toStringTag.js"
+        locale_object = "intl402/Intl/getCanonicalLocales/Locale-object.js"
+        outside = "intl402/Intl/getCanonicalLocales/future-test.js"
+        self.assertIn(root_file, INTL_CANONICAL_LOCALES_FILES)
+        self.assertIn(proxy_file, INTL_CANONICAL_LOCALES_FILES)
+        self.assertIn(tag_file, INTL_CANONICAL_LOCALES_FILES)
+        self.assertNotIn(locale_object, INTL_CANONICAL_LOCALES_FILES)
+        self.assertNotIn(outside, INTL_CANONICAL_LOCALES_FILES)
+        self.assertEqual(
+            intl_canonical_locales_features(proxy_file), frozenset({"Proxy"})
+        )
+        self.assertEqual(
+            intl_canonical_locales_features(tag_file),
+            frozenset({"Symbol.toStringTag"}),
+        )
+        self.assertEqual(intl_canonical_locales_features(outside), frozenset())
+
+        checkout = Path(test262_runner.TEST262) / "test"
+        try:
+            checkout_available = checkout.exists()
+        except OSError:
+            checkout_available = False
+        if checkout_available:
+            intl_root = checkout / "intl402/Intl"
+            live = {
+                path.relative_to(checkout).as_posix()
+                for path in intl_root.glob("*.js")
+                if path.name == "builtin.js"
+            }
+            live.update(
+                path.relative_to(checkout).as_posix()
+                for path in (intl_root / "toStringTag").glob("*.js")
+            )
+            live.update(
+                path.relative_to(checkout).as_posix()
+                for path in (intl_root / "getCanonicalLocales").glob("*.js")
+                if path.name != "Locale-object.js"
+            )
+            self.assertEqual(live, INTL_CANONICAL_LOCALES_FILES)
+            for relative in live:
+                meta = test262_runner.parse_meta((checkout / relative).read_text())
+                self.assertTrue(
+                    intl_canonical_locales_features(relative)
+                    <= set(meta.get("features", []))
+                )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            original_roots = (test262_runner.TEST262, test262_analyze.TEST262)
+            try:
+                test262_runner.TEST262 = temp_dir
+                test262_analyze.TEST262 = temp_dir
+                admitted = Path(temp_dir) / "test" / proxy_file
+                locale = Path(temp_dir) / "test" / locale_object
+                future = Path(temp_dir) / "test" / outside
+                for tool in (test262_runner, test262_analyze):
+                    self.assertFalse(tool.should_skip({"features": ["Proxy"]}, admitted))
+                    self.assertTrue(
+                        tool.should_skip({"features": ["Intl.Locale"]}, locale)
+                    )
+                    self.assertTrue(tool.should_skip({"features": ["Proxy"]}, future))
+                    self.assertTrue(tool.should_skip({"features": []}, future))
+            finally:
+                test262_runner.TEST262, test262_analyze.TEST262 = original_roots
 
     def test_import_meta_manifest_is_exact_and_shared(self):
         self.assertEqual(len(IMPORT_META_FILES), 23)

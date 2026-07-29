@@ -12459,6 +12459,40 @@ aggregate is **32260 pass / 5028 fail / 11178 skip / 3 timeout / 0 error** over
 
 The supported subset currently has no known failures. The full-suite rate is
 still much lower because the full matrix includes unsupported features such as
-Intl, async iterator helpers, remaining RegExp semantics, and tail-call
-optimization. Those larger feature areas are tracked
+the remaining Intl constructors, async iterator helpers, remaining RegExp
+semantics, and tail-call optimization. Those larger feature areas are tracked
 in `HANDOFF.md` and will be pulled into support in later milestones.
+
+## `%Intl%` and canonical locale-list exact admission
+
+Pinned Test262 `9e61c12835c5e4a3bdba93850427e6742c4f64c4` has one `%Intl%`
+builtin file, two `@@toStringTag` files, and 38
+`Intl/getCanonicalLocales` files. The frozen manifest admits exactly 40 files;
+`getCanonicalLocales/Locale-object.js` remains skipped by its exact
+`Intl.Locale` feature because Locale objects and their internal slot are a
+later unit. A non-cone sparse checkout runs only this 41-file boundary and
+requires the literal summary **40 pass / 0 fail / 1 skip / 41 total / 40 run**.
+The shared runner/analyzer removes only the six audited Symbol, Proxy, and
+Symbol.toStringTag gates on exact paths. Files later added under these Intl
+directories remain skipped even when they have no broad feature metadata;
+broad Intl and future files remain closed until explicit admission.
+
+Combined direct and pinned Test262 tests cover namespace and method descriptors,
+independent Realm objects, function-Realm result Arrays and native errors,
+stable deduplication, sparse/Proxy order, object coercion, mutable results, GC
+survival, long-language grammar adaptation, core and extension aliases, and
+recovery after list/tag fuel exhaustion. CI regenerates and compares the alias
+table from Unicode CLDR 48.2 commit
+`11299982335beb974c1c63c45265184e759c0f41` without formatter-version input,
+and the dedicated Test262 job runs
+the live manifest assertion against its pinned sparse checkout.
+
+```text
+[Decision Log]
+- 목적과 의도: Move the first coherent ECMA-402 surface from broad failure/skip policy into exact supported conformance.
+- 기존 구현 및 제약 조건: `%Intl%` was absent; 41 adjacent files were failures or broad Symbol/Proxy skips, and ICU4X alone does not cover every required grammar and extension alias case.
+- 검토한 주요 대안: Remove Intl/Symbol/Proxy gates globally, admit the directory prefix, keep the green forced run informational, admit only getCanonicalLocales tests, or freeze `%Intl%`, toStringTag, and locale canonicalization together while retaining Intl.Locale.
+- 선택한 방식: Freeze 40 exact paths and six exact feature overrides, reject future files in the scoped directories until explicit admission, retain `Intl.Locale` as one explicit skip, and hard-gate the 41-file sparse corpus at 40/0/1.
+- 다른 대안 대신 이 방식을 선택한 이유: Global and prefix gates overclaim formatter and future Intl behavior; forced runs do not change supported-subset accounting; excluding namespace descriptors would leave the intrinsic contract unproved; including Locale would claim an absent internal slot.
+- 장점, 단점 및 영향: Supported policy now matches the implemented Realm, coercion, grammar, alias, and resource boundary exactly. Later Intl constructors can reuse the canonicalizer while adding their own frozen manifests and data requirements.
+```

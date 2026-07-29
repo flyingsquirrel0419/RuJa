@@ -10,6 +10,13 @@ env:
   TEST262_REV: 9e61c12835c5e4a3bdba93850427e6742c4f64c4
 
 jobs:
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.88.0
+      - run: cargo check --locked --all-features
+
   test:
     runs-on: ubuntu-latest
     steps:
@@ -23,6 +30,8 @@ jobs:
         run: cargo test --all-targets --all-features --verbose
       - name: Check formatting
         run: cargo fmt --all -- --check
+      - name: Verify generated Intl aliases
+        run: python3 tools/generate_intl_aliases.py --check
       - name: Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
       - name: Test vendored RegExp engine

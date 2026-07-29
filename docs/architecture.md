@@ -3253,4 +3253,51 @@ immutable Set prototype and GC-retrying allocation path.
 
 ---
 
+## ECMA-402 locale canonicalization foundation
+
+Every Realm receives an ordinary `%Intl%` namespace backed by that Realm's
+`%Object.prototype%`; its native `getCanonicalLocales` function creates result
+Arrays and errors through the function Realm. `CanonicalizeLocaleList` keeps
+the source object rooted across one `length` read and the required
+`HasProperty`/`Get` sequence. Only String and Object elements proceed to locale
+canonicalization, and canonical strings are deduplicated after conversion in
+first-seen order. Logical indices consume VM fuel, while locale parsing
+precharges the square of subtag count plus input chunks to cover ICU's sorted
+insertion paths, so huge sparse lists and adversarial tags cannot bypass
+cooperative limits.
+
+ICU4X `icu_locale` 2.2.0 provides UTS 35 casing, ordering, CLDR
+language/script/region/variant aliases, subdivision aliases, and extended
+likely-subtag selection. Its parser does not accept the structurally valid
+reserved 5-8-letter language range, so RuJa validates the original identifier
+with collision-free private-use language placeholders, canonicalizes, and
+restores those exact lowercase subtags. Original syntax is validated before
+legacy whole-tag replacement. ICU4X also documents missing BCP47 extension
+type aliases; a reproducible generator pins Unicode CLDR 48.2 commit
+`11299982335beb974c1c63c45265184e759c0f41`, filters aliases through the U/T
+value grammar, and emits sorted static Unicode and transform tables under the
+Unicode-3.0 terms.
+
+The outer canonicalizer only applies simple aliases inside a transformed
+language extension and represents fields as a unique-key map. RuJa therefore
+extracts the complete transform extension, applies the ordinary Locale
+canonicalizer to `tlang`, canonicalizes every tfield through generated aliases,
+stable-sorts fields by key, and restores all occurrences so repeated valid
+tkeys are not discarded.
+ICU4X 2.2 does not parse numeric extension singletons, so RuJa structurally
+validates and removes those segments before ICU processing, then restores them
+in canonical digit order ahead of alphabetic extensions and private use.
+
+```text
+[Decision Log]
+- 목적과 의도: Establish a specification-correct, Realm-safe locale canonicalization base that later ECMA-402 constructors can share.
+- 기존 구현 및 제약 조건: RuJa had no `%Intl%`; broad Test262 Symbol/Proxy gates hid observable locale-list cases; ICU4X has complete core CLDR alias and likely-subtag data but deliberately omits some extension aliases and rejects reserved 5-8-letter language subtags.
+- 검토한 주요 대안: Hand-maintain only pinned Test262 mappings, write all CLDR canonicalization from scratch, depend on ICU4X without adapters, bundle raw CLDR XML at runtime, or use ICU4X plus generated extension data and a narrow structural parser adapter.
+- 선택한 방식: Pin ICU4X 2.2.0 and CLDR 48.2 independently; validate original syntax, adapt only reserved long languages, apply ICU canonicalization, preserve repeated transform fields outside ICU's map, and apply deterministically emitted U/T aliases; implement exact locale-list observability, Realm allocation, GC rooting, fallible result growth, and fuel metering before input scans.
+- 다른 대안 대신 이 방식을 선택한 이유: Test-only maps preserve known conformance gaps; a new CLDR engine duplicates complex likely-subtag logic; unadapted ICU fails required grammar and extension cases; runtime XML increases startup, binary, parser, and allocation risk. The layered design keeps authoritative data broad while isolating documented upstream gaps.
+- 장점, 단점 및 영향: The exact 40-file `%Intl%`/getCanonicalLocales boundary is green with one explicit `Intl.Locale` skip, cross-Realm identity and errors are deterministic, and CLDR updates are reproducible. ICU adds compiled locale data and dependencies; formatter data, `%Intl%.[[FallbackSymbol]]` observability, Locale internal slots, locale negotiation, and the rest of ECMA-402 remain later units.
+```
+
+---
+
 **Next:** [Features](features.md) · [Known limitations](limitations.md) · [Back to README](../README.md)

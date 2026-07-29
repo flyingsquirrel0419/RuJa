@@ -200,6 +200,10 @@ try:
         STATIC_IMPORT_ATTRIBUTES_FILES,
         static_import_attributes_features,
     )
+    from test262_intl_canonical_locales_admission import (
+        INTL_CANONICAL_LOCALES_FILES,
+        intl_canonical_locales_features,
+    )
     from test262_import_meta_admission import IMPORT_META_FILES
     from test262_iterator_admission import ITERATOR_CORE_FEATURES, ITERATOR_CORE_FILES
     from test262_json_parse_admission import JSON_PARSE_FILES
@@ -399,6 +403,10 @@ except ModuleNotFoundError:
         STATIC_IMPORT_ATTRIBUTES_FILES,
         static_import_attributes_features,
     )
+    from tools.test262_intl_canonical_locales_admission import (
+        INTL_CANONICAL_LOCALES_FILES,
+        intl_canonical_locales_features,
+    )
     from tools.test262_import_meta_admission import IMPORT_META_FILES
     from tools.test262_iterator_admission import ITERATOR_CORE_FEATURES, ITERATOR_CORE_FILES
     from tools.test262_json_parse_admission import JSON_PARSE_FILES
@@ -537,7 +545,7 @@ MODULE_NAMESPACE_FEATURES = {
 SKIP_FEATURES = {
     "AggregateError", "ArrayBuffer", "Atomics", "Atomics.pause", "Atomics.waitAsync", "DataView",
     "Float16Array", "Float32Array", "Float64Array", "Int8Array", "Int16Array",
-    "Int32Array", "Intl", "IsHTMLDDA", "Promise", "SharedArrayBuffer",
+    "Int32Array", "Intl", "Intl.Locale", "IsHTMLDDA", "Promise", "SharedArrayBuffer",
     "Symbol", "Symbol.asyncIterator", "Symbol.iterator",
     "TypedArray", "Uint8Array", "Uint8Array-base64", "Uint8Array-hex",
     "Uint8ClampedArray", "Uint16Array", "Uint32Array", "WeakMap", "WeakRef",
@@ -2375,6 +2383,32 @@ def static_import_attributes_path_features(path):
         return frozenset()
     return static_import_attributes_features(rel.as_posix())
 
+def intl_canonical_locales_path(path):
+    if path is None:
+        return False
+    try:
+        rel = Path(path).resolve().relative_to(Path(TEST262).resolve() / "test")
+    except (OSError, ValueError):
+        return False
+    return rel.as_posix() in INTL_CANONICAL_LOCALES_FILES
+
+def intl_canonical_locales_scope_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except (OSError, ValueError):
+        return False
+    relative = rel.as_posix()
+    return relative == "intl402/Intl/builtin.js" or relative.startswith(
+        ("intl402/Intl/toStringTag/", "intl402/Intl/getCanonicalLocales/")
+    )
+
+def intl_canonical_locales_path_features(path):
+    try:
+        rel = Path(path).resolve().relative_to(Path(TEST262).resolve() / "test")
+    except (OSError, ValueError):
+        return frozenset()
+    return intl_canonical_locales_features(rel.as_posix())
+
 def import_meta_path(path):
     if path is None:
         return False
@@ -3349,6 +3383,12 @@ def array_from_async_features(path):
 
 def should_skip(meta, path=None):
     feats = set(meta.get('features', []))
+    if (
+        path is not None
+        and intl_canonical_locales_scope_path(path)
+        and not intl_canonical_locales_path(path)
+    ):
+        return True
     if path is not None and module_core_path(path):
         feats.discard("generators")
     if path is not None and module_namespace_path(path):
@@ -3367,6 +3407,8 @@ def should_skip(meta, path=None):
         })
     if path is not None and static_import_attributes_path(path):
         feats.difference_update(static_import_attributes_path_features(path))
+    if path is not None and intl_canonical_locales_path(path):
+        feats.difference_update(intl_canonical_locales_path_features(path))
     if path is not None and import_meta_path(path):
         feats.difference_update({
             "import.meta", "dynamic-import", "generators", "async-functions",

@@ -45,7 +45,8 @@ templates, Symbols, Map/Set,
 WeakMap/WeakSet,
 WeakRef/FinalizationRegistry, Reflect, Proxy, resizable ArrayBuffer and growable
 SharedArrayBuffer cores, Atomics including worker `wait`/`notify`, `waitAsync`,
-and `pause`, file-backed ES Module graphs with named imports/exports and live
+and `pause`, Realm-local `%Intl%` plus `Intl.getCanonicalLocales`, file-backed
+ES Module graphs with named imports/exports and live
 bindings, relative dynamic imports, and static/dynamic JSON/text import
 attributes,
 the realm-specific global `Iterator`, common synchronous iterator prototype
@@ -82,6 +83,8 @@ $ cargo run --release -- examples/fib.js
 ```
 
 ## Quick start
+
+Requires Rust 1.88 or newer.
 
 ```sh
 git clone https://github.com/flyingsquirrel0419/RuJa.git

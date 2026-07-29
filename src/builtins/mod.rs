@@ -4,6 +4,8 @@
 //! here. Native functions follow the `NativeFn` signature used by the VM.
 
 pub(crate) mod global;
+pub(crate) mod intl;
+mod intl_aliases;
 pub(crate) mod json;
 pub(crate) mod math;
 
@@ -5188,6 +5190,9 @@ fn populate_test262_realm(vm: &mut Vm, realm_env: GcIdx) -> error::Result<Value>
 
     let realm_math = build_math_in_env(vm, realm_env, realm_object_prototype.clone())?;
     define_realm_global(vm, realm_env, &global, "Math", realm_math);
+
+    let realm_intl = intl::build_intl_in_env(vm, realm_env, realm_object_prototype.clone())?;
+    define_realm_global(vm, realm_env, &global, "Intl", realm_intl);
 
     let (realm_error_ctor, realm_error_proto) =
         make_error_constructor_in_env(vm, "Error", realm_env)?;
@@ -12602,6 +12607,8 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
     // Math
     let math = build_math_in_env(vm, vm.global, vm.object_proto.clone())?;
     define_global(vm, "Math", math);
+    let intl = intl::build_intl_in_env(vm, vm.global, vm.object_proto.clone())?;
+    define_global(vm, "Intl", intl);
     // console
     let console = build_console(vm)?;
     define_global(vm, "console", console);

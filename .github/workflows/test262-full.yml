@@ -250,6 +250,43 @@ jobs:
           grep -q '^RATE=100.0 PASS=30 FAIL=0 SKIP=0 TOTAL=30 RAN=30$' \
             static_import_attributes_result.txt
 
+  intl-canonical-locales:
+    needs: [build, setup]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download RuJa binary
+        uses: actions/download-artifact@v4
+        with:
+          name: ruja-release
+          path: target/release/
+      - run: chmod +x target/release/ruja
+      - name: Checkout pinned Intl canonical-locale tests
+        uses: actions/checkout@v4
+        with:
+          repository: tc39/test262
+          ref: ${{ env.TEST262_REV }}
+          path: test262
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /harness/
+            /test/intl402/Intl/builtin.js
+            /test/intl402/Intl/toStringTag/
+            /test/intl402/Intl/getCanonicalLocales/
+      - name: Verify the frozen Intl manifest against the pinned checkout
+        run: >-
+          PYTHONPATH=tools TEST262="$GITHUB_WORKSPACE/test262"
+          python3 -m unittest
+          test262_tooling_test.ModuleCoreAdmissionTests.test_intl_canonical_locales_manifest_is_exact_live_and_shared
+      - name: Require the exact Intl boundary to pass
+        run: |
+          TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
+            intl402/Intl \
+            > intl_canonical_locales_result.txt 2>&1
+          cat intl_canonical_locales_result.txt
+          grep -q '^RATE=100.0 PASS=40 FAIL=0 SKIP=1 TOTAL=41 RAN=40$' \
+            intl_canonical_locales_result.txt
+
   test262-full:
     needs: [build, setup]
     runs-on: ubuntu-latest

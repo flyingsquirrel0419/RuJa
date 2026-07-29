@@ -4,6 +4,31 @@
 
 ### Changed
 
+- Added the Realm-local `%Intl%` namespace and `Intl.getCanonicalLocales`.
+  Locale-list coercion follows `CanonicalizeLocaleList` ordering, including
+  String singleton handling, one `length` read, `HasProperty` before `Get`,
+  object-only `ToString`, stable post-canonicalization deduplication, and a
+  fresh result Array from the method Realm. Locale syntax and CLDR
+  language/script/region/variant aliases use pinned ICU4X `icu_locale` 2.2.0;
+  valid reserved 5-8-letter language subtags and numeric extension singletons
+  are adapted around ICU4X parser limitations. A deterministic generator pins
+  Unicode CLDR 48.2 commit
+  `11299982335beb974c1c63c45265184e759c0f41` and supplies the complete
+  structurally usable Unicode and transformed-extension type aliases missing
+  from ICU4X without formatter-version input, while ICU4X supplies subdivision
+  aliases and extended likely subtags. Transform fields are preserved outside
+  ICU's unique-key map so repeated valid tkeys survive canonicalization. Index
+  scans consume sandbox fuel, and locale parsing precharges input length before
+  scanning plus quadratic subtag work before ICU sorted insertion. `%Intl%`, its
+  `@@toStringTag`, cross-Realm Array/error behavior, coercion order, GC, and
+  fuel recovery have direct tests. The frozen Test262 boundary admits exactly
+  40 files, keeps future in-scope files closed until explicit admission, and
+  retains only the adjacent `Intl.Locale` file as unsupported;
+  its dedicated gate reports **40 pass / 0 fail / 1 skip** over 41 files.
+  Formatter constructors, `Intl.Locale`, `Intl.supportedValuesOf`, and the
+  remaining ECMA-402 surface stay separately gated. The package now declares
+  Rust 1.88 as its MSRV and CI checks it explicitly.
+
 - Static import and re-export declarations now accept Import Attributes
   `with { ... }` clauses. Parsed ModuleRequest records retain decoded,
   duplicate-checked attributes in UTF-16 key order, and source requests are
