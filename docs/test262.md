@@ -12305,6 +12305,19 @@ library tests, warnings-denied Clippy, rustfmt, wasm32, doctest, tooling
 ordinary and forced WeakMap/WeakSet **226/226**, and adjacent weak facilities
 **76/76**. Independent GPT-5.6 runtime and tooling/workflow reviews are clean.
 
+Implementation commit `9b0f736` passes ordinary CI `30411263256` (**2/2**)
+and full run `30411263253` (**37/37**), including the dedicated exact
+WeakMap/WeakSet **226/226** gate. Against preceding run `30403723369`, the
+built-ins artifact alone has the intended conformance movement:
+**16461/4293/2911/3/0 -> 16632/4217/2816/3/0**, or **+171 pass / -76 fail /
+-95 skip**. The raw matrix had two unrelated annexB contention timeouts; a
+standalone rerun with the downloaded current CI release binary is byte-for-byte
+identical to the preceding annexB artifact. After replacing only that noisy
+artifact, 31/32 shards are byte-identical, aggregate is **32253 pass / 5028
+fail / 11185 skip / 3 timeout / 0 error** over 48469 with 37281 run, and the
+sorted content-set hash is
+`4d596150d0ed50123f4d0ecdc0a187da21e74991fc858a9e10732c4fa95afa40`.
+
 ```text
 [Decision Log]
 - 목적과 의도: Admit the complete coherent WeakMap/WeakSet directories only after iterator, Realm, weak-key, method, storage, and GC-liveness behavior is directly proved.
@@ -12312,7 +12325,7 @@ ordinary and forced WeakMap/WeakSet **226/226**, and adjacent weak facilities
 - 검토한 주요 대안: Keep broad skips, remove WeakMap/WeakSet/Symbol gates globally, admit directory prefixes, repair only forced failures, retain Vec storage, or freeze exact metadata after completing deterministic runtime/resource tests.
 - 선택한 방식: Freeze the exact 95 paths and live feature sets in one shared manifest; require ordinary 55/76/95 to 226/0/0 and forced 91/135 to 226/0; pair policy movement with direct iterator, Realm, Symbol, brand, upsert, reservation, Fuel, GC fixed-point, cleanup, and retry tests.
 - 다른 대안 대신 이 방식을 선택한 이유: Global gates and prefixes overclaim unrelated or future tests, forced execution does not affect supported-subset accounting, Test262 alone misses resource and GC-order defects, and constructor-only compatibility would preserve a non-conforming storage/liveness model.
-- 장점, 단점 및 영향: Both directories become failure-free with 76 runtime fail-to-pass and 95 skip-to-pass transitions. Exact metadata keeps the support boundary closed, while deterministic tests establish correctness beyond aggregate conformance counts. Full matrix artifact comparison remains the release evidence gate.
+- 장점, 단점 및 영향: Both directories become failure-free with 76 runtime fail-to-pass and 95 skip-to-pass transitions. Exact metadata keeps the support boundary closed, deterministic tests establish correctness beyond aggregate conformance counts, and the full matrix confirms built-ins-only movement with 31/32 corrected artifact identity. Strict pause-time GC budgeting and collectible Symbols remain explicit later collector work.
 ```
 
 ## Why the full-suite rate is not higher
