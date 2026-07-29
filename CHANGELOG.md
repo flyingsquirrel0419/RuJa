@@ -30,6 +30,13 @@
   **30/30** on revision `9e61c128`; two final GPT-5.6 reviews are CLEAN.
   Tooling treats an inaccessible default Test262 path as an absent checkout,
   while explicit CI checkouts still require exact live-manifest equality.
+  Implementation commit `aa62191` and portability fix `cbd28fc` are pushed;
+  ordinary CI `30467208759` passes **2/2** and all **39/39** jobs in full run
+  `30467210702` pass. Against clean run `30454181980`, **30/32** Test262 result
+  files are byte-identical. `language/import` is exactly **+17 pass/-17 skip**
+  and `language/module-code` is **+13 pass/-13 skip**; aggregate is
+  **32290 pass / 5028 fail / 11148 skip / 3 timeout / 0 error** over 48469
+  files with 37318 run, exactly **+30 pass/-30 skip** and no regressions.
 
 - Finite-budget incremental GC now cursorizes ordered Map entries, charging one
   work unit for each key/value record while scanning each slice under one lock.
