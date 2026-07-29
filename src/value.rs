@@ -1348,23 +1348,28 @@ pub struct RegExpStringIteratorData {
     pub extensible: AtomicBool,
 }
 
-/// A WeakMap holds (object-key -> value) pairs where the key is held
-/// *weakly*: if the key is unreachable from anywhere except this WeakMap,
-/// the entry is dropped during GC. Values are held strongly (per spec the
-/// value is only reachable while the key is). Keys must be objects.
+/// Identity stored by a weak collection. Object identities participate in
+/// ephemeron marking; Symbol identities stay available because RuJa's Symbol
+/// table is not currently garbage-collected.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum WeakKey {
+    Object(usize),
+    Symbol(u32),
+}
+
+/// A WeakMap holds (weak-key -> value) pairs. Object keys are omitted from
+/// normal tracing, and their values are traced only after the key is marked.
+/// Non-registered Symbol keys are retained as stable Symbol-table identities.
 pub struct WeakMapData {
-    /// (key heap idx, value) pairs. The key idx is not marked as a GC root,
-    /// so an unreachable key causes the entry to be swept.
-    pub entries: Mutex<Vec<(usize, Value)>>,
+    pub entries: Mutex<std::collections::HashMap<WeakKey, Value>>,
     pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
     pub proto: Mutex<Option<Value>>,
     pub extensible: AtomicBool,
 }
 
-/// A WeakSet holds object members weakly: an unreachable member is dropped
-/// during GC. Members must be objects.
+/// A WeakSet holds object members weakly and non-registered Symbol identities.
 pub struct WeakSetData {
-    pub items: Mutex<Vec<usize>>,
+    pub items: Mutex<std::collections::HashSet<WeakKey>>,
     pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
     pub proto: Mutex<Option<Value>>,
     pub extensible: AtomicBool,

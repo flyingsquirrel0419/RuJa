@@ -12260,6 +12260,61 @@ skip**. Aggregate is **32066 pass / 5104 fail / 11296 skip / 3 timeout / 0
 error / 48469 total / 37170 run**. The sorted content-set hash is
 `9080e4e377d351a4621d58b154a8dae6967234a1bbdb7bef4b6865e4bde2baac`.
 
+## WeakMap and WeakSet complete directory admission
+
+Pinned Test262 `9e61c12835c5e4a3bdba93850427e6742c4f64c4`
+contains **226** files across `built-ins/WeakMap` and
+`built-ins/WeakSet`. Before this unit, ordinary policy reports **55 pass / 76
+fail / 95 skip** and forced execution reports **91 pass / 135 fail**. The
+runtime ignored constructor iterables, lacked Realm-local weak intrinsics,
+accepted wrong method receivers, rejected admissible Symbol keys, omitted
+WeakMap upsert methods, used unchecked linear storage, and traced ephemeron
+values in a root-order-dependent single pass.
+
+The repaired runtime passes **226/226** under forced execution. A frozen
+95-path metadata manifest removes only each current file's complete live
+feature set, making ordinary policy **226 pass / 0 fail / 0 skip** without
+globally admitting WeakMap, WeakSet, Symbol, iterator, cross-Realm, or upsert
+features elsewhere. Shared runner/analyzer tooling checks exact path and
+metadata equality, disjointness, rejection of future/outside files, and
+retention of any additional unsupported feature. Adjacent WeakRef and
+FinalizationRegistry remain **76/76** after the GC change.
+
+The full workflow has a dedicated sparse-checkout job that reruns both exact
+directories and requires the literal `PASS=226 FAIL=0 SKIP=0 TOTAL=226`
+summary. This is separate from metadata admission and from the informational
+full-shard report, so a runtime regression cannot remain hidden behind the
+runner's aggregate zero exit status.
+
+Direct tests cover one Proxy Get with no Has, cached zero-argument next and
+adder calls, Array/Map/Set/generator overrides, step non-close, entry/adder
+close priority, foreign Realm prototypes and native errors, immutable fallback,
+brand checks, local/well-known/registered Symbol distinctions, and both upsert
+methods including callback-first validation and callback mutation. Resource tests force GC through every
+constructor stage, prove live ephemerons under both root orders, strong-property
+activation, key-indexed transitive fixed points, finite-budget progress,
+mutation-before-sweep safety, dead-cycle collection, and no freed-cell alias.
+They also inject constructor, iterator, entry, and computed-root
+reservation failures, verify first-entry preservation, duplicate/update
+no-reserve behavior, pre/post-step and close-time Fuel, exact-cap allocation,
+balanced pins, and clean retry.
+
+Final local gates pass all-target/all-feature Rust tests with **324/324**
+library tests, warnings-denied Clippy, rustfmt, wasm32, doctest, tooling
+**144/144**, vendored RegExp **29/29** unit tests plus **14/14** doctests,
+ordinary and forced WeakMap/WeakSet **226/226**, and adjacent weak facilities
+**76/76**. Independent GPT-5.6 runtime and tooling/workflow reviews are clean.
+
+```text
+[Decision Log]
+- 목적과 의도: Admit the complete coherent WeakMap/WeakSet directories only after iterator, Realm, weak-key, method, storage, and GC-liveness behavior is directly proved.
+- 기존 구현 및 제약 조건: Ninety-five files were feature-skipped, 76 ordinarily executed files failed, forced execution failed 135 files, and the official corpus did not deterministically exercise host allocation failure or ephemeron root ordering.
+- 검토한 주요 대안: Keep broad skips, remove WeakMap/WeakSet/Symbol gates globally, admit directory prefixes, repair only forced failures, retain Vec storage, or freeze exact metadata after completing deterministic runtime/resource tests.
+- 선택한 방식: Freeze the exact 95 paths and live feature sets in one shared manifest; require ordinary 55/76/95 to 226/0/0 and forced 91/135 to 226/0; pair policy movement with direct iterator, Realm, Symbol, brand, upsert, reservation, Fuel, GC fixed-point, cleanup, and retry tests.
+- 다른 대안 대신 이 방식을 선택한 이유: Global gates and prefixes overclaim unrelated or future tests, forced execution does not affect supported-subset accounting, Test262 alone misses resource and GC-order defects, and constructor-only compatibility would preserve a non-conforming storage/liveness model.
+- 장점, 단점 및 영향: Both directories become failure-free with 76 runtime fail-to-pass and 95 skip-to-pass transitions. Exact metadata keeps the support boundary closed, while deterministic tests establish correctness beyond aggregate conformance counts. Full matrix artifact comparison remains the release evidence gate.
+```
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is

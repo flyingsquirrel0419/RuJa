@@ -262,7 +262,15 @@
   abrupt-completion behavior. The complete direct Test262 Reflect directory is
   admitted at **153/153**; deeper internal-method limitations remain documented
   separately.
-- **WeakMap**/`WeakSet`: object-keyed collections (get/set/has/delete)
+- **WeakMap**/`WeakSet`: object and weakly-holdable Symbol keyed collections.
+  Constructors use cached zero-argument iterator records with standard close,
+  Realm, rooting, Fuel, and fallible-storage behavior. Methods enforce internal
+  brands; WeakMap provides `get`, `set`, `has`, `delete`, `getOrInsert`, and
+  `getOrInsertComputed`, while WeakSet provides `add`, `has`, and `delete`.
+  Hash-backed storage and registered-Symbol classification give average O(1)
+  access. GC resolves transitive WeakMap ephemerons through key-indexed pending
+  values and retraces incremental mutations before sweep. The complete pinned WeakMap/WeakSet
+  directories are admitted at **226/226**
 - **Date**: `now()`, constructor with timestamp, `getTime()`
 - **JSON**: `parse` (with reviver) and `stringify` (with replacer/space)
 - **RegExp**: literals `/pattern/flags` with `test`, `exec`, `match`, `source`,

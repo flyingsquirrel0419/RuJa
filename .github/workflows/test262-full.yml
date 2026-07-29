@@ -72,6 +72,12 @@ jobs:
           TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
           test262_tooling_test.ModuleCoreAdmissionTests.test_set_constructor_manifest_is_exact_live_disjoint_and_shared
           -v
+      - name: Verify exact Weak collection admission
+        working-directory: tools
+        run: >-
+          TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
+          test262_tooling_test.ModuleCoreAdmissionTests.test_weak_collection_manifest_is_exact_live_disjoint_and_shared
+          -v
       - name: Verify exact extensibility admission
         working-directory: tools
         run: >-
@@ -129,6 +135,36 @@ jobs:
           cat regexp_unicode_sets_result.txt
           grep -q '^RATE=100.0 PASS=142 FAIL=0 SKIP=0 TOTAL=142 RAN=142$' \
             regexp_unicode_sets_result.txt
+
+  weak-collections:
+    needs: [build, setup]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download RuJa binary
+        uses: actions/download-artifact@v4
+        with:
+          name: ruja-release
+          path: target/release/
+      - run: chmod +x target/release/ruja
+      - name: Checkout pinned test262 WeakMap and WeakSet tests
+        uses: actions/checkout@v4
+        with:
+          repository: tc39/test262
+          ref: ${{ env.TEST262_REV }}
+          path: test262
+          sparse-checkout: |
+            harness
+            test/built-ins/WeakMap
+            test/built-ins/WeakSet
+      - name: Require all 226 WeakMap and WeakSet files to pass
+        run: |
+          TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
+            built-ins/WeakMap built-ins/WeakSet \
+            > weak_collections_result.txt 2>&1
+          cat weak_collections_result.txt
+          grep -q '^RATE=100.0 PASS=226 FAIL=0 SKIP=0 TOTAL=226 RAN=226$' \
+            weak_collections_result.txt
 
   test262-full:
     needs: [build, setup]

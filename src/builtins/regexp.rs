@@ -3105,14 +3105,13 @@ pub(crate) fn install_set_intrinsic_in_env(
     Ok((set_ctor, set_proto))
 }
 
-pub fn setup_collections(vm: &mut Vm) -> error::Result<()> {
-    setup_map_set_iterator_protos(vm)?;
-    let main_realm = vm.global;
-    install_map_intrinsic_in_env(vm, main_realm, None)?;
-    install_set_intrinsic_in_env(vm, main_realm, None)?;
-    // WeakMap / WeakSet: true weak-reference semantics. Keys are object
-    // heap indices held weakly; GC sweeps entries whose key was collected.
-    let (weakmap_ctor, weakmap_proto) = make_builtin_constructor_with(
+pub(crate) fn install_weakmap_intrinsic_in_env(
+    vm: &mut Vm,
+    env: GcIdx,
+    realm_global: Option<&Value>,
+) -> error::Result<(GcIdx, GcIdx)> {
+    let realm = crate::environment::global_env_root(&vm.heap, env);
+    let (constructor_index, prototype_index) = make_builtin_constructor_with_in_env(
         vm,
         "WeakMap",
         0,
@@ -3123,11 +3122,42 @@ pub fn setup_collections(vm: &mut Vm) -> error::Result<()> {
             ("set", weakmap_set, 2),
             ("has", weakmap_has, 1),
             ("delete", weakmap_delete, 1),
+            ("getOrInsert", weakmap_get_or_insert, 2),
+            ("getOrInsertComputed", weakmap_get_or_insert_computed, 2),
         ],
+        realm,
     )?;
-    define_global(vm, "WeakMap", Value::Object(weakmap_ctor));
-    let _ = weakmap_proto;
-    let (weakset_ctor, weakset_proto) = make_builtin_constructor_with(
+    let constructor = Value::Object(constructor_index);
+    let prototype = Value::Object(prototype_index);
+    vm.try_reserve_value_roots(&[constructor.clone(), prototype.clone()])?;
+    let pin_count = vm.pin_many(&[constructor.clone(), prototype.clone()]);
+    let mut tag = data_prop(Value::String(Arc::from("WeakMap")));
+    tag.writable = false;
+    vm.heap.with_obj(prototype_index.0, |object| {
+        object.props().lock().insert(
+            PropertyKey::symbol(vm.well_known_symbols.to_string_tag),
+            tag,
+        );
+    });
+    vm.realm_weakmap_prototypes
+        .insert(realm.0, prototype.clone());
+    if realm == vm.global {
+        vm.weakmap_proto = prototype.clone();
+        define_global(vm, "WeakMap", constructor.clone());
+    } else if let Some(global) = realm_global {
+        define_realm_global(vm, realm, global, "WeakMap", constructor.clone());
+    }
+    vm.unpin_many(pin_count);
+    Ok((constructor_index, prototype_index))
+}
+
+pub(crate) fn install_weakset_intrinsic_in_env(
+    vm: &mut Vm,
+    env: GcIdx,
+    realm_global: Option<&Value>,
+) -> error::Result<(GcIdx, GcIdx)> {
+    let realm = crate::environment::global_env_root(&vm.heap, env);
+    let (constructor_index, prototype_index) = make_builtin_constructor_with_in_env(
         vm,
         "WeakSet",
         0,
@@ -3138,9 +3168,39 @@ pub fn setup_collections(vm: &mut Vm) -> error::Result<()> {
             ("has", weakset_has, 1),
             ("delete", weakset_delete, 1),
         ],
+        realm,
     )?;
-    define_global(vm, "WeakSet", Value::Object(weakset_ctor));
-    let _ = weakset_proto;
+    let constructor = Value::Object(constructor_index);
+    let prototype = Value::Object(prototype_index);
+    vm.try_reserve_value_roots(&[constructor.clone(), prototype.clone()])?;
+    let pin_count = vm.pin_many(&[constructor.clone(), prototype.clone()]);
+    let mut tag = data_prop(Value::String(Arc::from("WeakSet")));
+    tag.writable = false;
+    vm.heap.with_obj(prototype_index.0, |object| {
+        object.props().lock().insert(
+            PropertyKey::symbol(vm.well_known_symbols.to_string_tag),
+            tag,
+        );
+    });
+    vm.realm_weakset_prototypes
+        .insert(realm.0, prototype.clone());
+    if realm == vm.global {
+        vm.weakset_proto = prototype.clone();
+        define_global(vm, "WeakSet", constructor.clone());
+    } else if let Some(global) = realm_global {
+        define_realm_global(vm, realm, global, "WeakSet", constructor.clone());
+    }
+    vm.unpin_many(pin_count);
+    Ok((constructor_index, prototype_index))
+}
+
+pub fn setup_collections(vm: &mut Vm) -> error::Result<()> {
+    setup_map_set_iterator_protos(vm)?;
+    let main_realm = vm.global;
+    install_map_intrinsic_in_env(vm, main_realm, None)?;
+    install_set_intrinsic_in_env(vm, main_realm, None)?;
+    install_weakmap_intrinsic_in_env(vm, main_realm, None)?;
+    install_weakset_intrinsic_in_env(vm, main_realm, None)?;
 
     // Symbol
     let sym_idx = vm.new_native_constructor(

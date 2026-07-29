@@ -2552,6 +2552,273 @@ fn set_constructor_observes_direct_iterator_close_and_realm_boundaries() {
 }
 
 #[test]
+fn weak_collection_constructors_observe_direct_iterators_and_realm_boundaries() {
+    assert_eq!(
+        run(
+            r#"
+            var log = [];
+            var mapKey = {};
+            var setValue = {};
+            function construct(kind, yielded) {
+              var Constructor = kind === "map" ? WeakMap : WeakSet;
+              var method = kind === "map" ? "set" : "add";
+              var original = Constructor.prototype[method];
+              var methodGets = 0;
+              var nextGets = 0;
+              var step = 0;
+              Object.defineProperty(Constructor.prototype, method, {
+                configurable: true,
+                get: function() {
+                  methodGets++;
+                  log.push("get-" + method);
+                  return function() {
+                    log.push(method + ":" + arguments.length + ":" +
+                      (this instanceof Constructor));
+                    return original.apply(this, arguments);
+                  };
+                }
+              });
+              var iterator = {};
+              Object.defineProperty(iterator, "next", {
+                configurable: true,
+                get: function() {
+                  nextGets++;
+                  return function() {
+                    log.push("next:" + arguments.length + ":" +
+                      (this === iterator));
+                    Object.defineProperty(iterator, "next", {
+                      value: function() { throw new Error("uncached next"); },
+                      configurable: true
+                    });
+                    return step++ === 0
+                      ? { done: false, value: yielded }
+                      : { done: true };
+                  };
+                }
+              });
+              var iterable = new Proxy({
+                [Symbol.iterator]: function() {
+                  Object.defineProperty(Constructor.prototype, method, {
+                    value: function() { throw new Error("uncached adder"); },
+                    writable: true, configurable: true
+                  });
+                  return iterator;
+                }
+              }, {
+                has: function() { log.push("has"); return true; },
+                get: function(target, key, receiver) {
+                  log.push(typeof key === "symbol" ? "get-symbol" : "get-" + key);
+                  return Reflect.get(target, key, receiver);
+                }
+              });
+              var result = new Constructor(iterable);
+              Object.defineProperty(Constructor.prototype, method, {
+                value: original, writable: true, configurable: true
+              });
+              return [result, methodGets, nextGets];
+            }
+            var mapResult = construct("map", [mapKey, 7]);
+            var setResult = construct("set", setValue);
+            [
+              log.join(","), mapResult[1], mapResult[2],
+              setResult[1], setResult[2], mapResult[0].get(mapKey),
+              setResult[0].has(setValue)
+            ].join("|");
+            "#,
+        ),
+        Value::String(Arc::from(
+            "get-set,get-symbol,next:0:true,set:2:true,next:0:true,get-add,get-symbol,next:0:true,add:1:true,next:0:true|1|1|1|1|7|true"
+        ))
+    );
+
+    assert_eq!(
+        run(
+            r#"
+            function closeCase(kind, collection) {
+              var closed = 0;
+              var original = {};
+              var Constructor = collection === "map" ? WeakMap : WeakSet;
+              var method = collection === "map" ? "set" : "add";
+              var saved = Constructor.prototype[method];
+              var entry = collection === "map"
+                ? { get 0() { throw original; } }
+                : {};
+              var iterator = {
+                next: function() {
+                  if (kind === "next") throw original;
+                  if (kind === "result") return 1;
+                  if (kind === "done") return { get done() { throw original; } };
+                  if (kind === "value") return {
+                    done: false, get value() { throw original; }
+                  };
+                  return { done: false, value: entry };
+                },
+                return: function() { closed++; throw new Error("replacement"); }
+              };
+              if (kind === "adder") Constructor.prototype[method] = function() {
+                throw original;
+              };
+              var caught;
+              try {
+                new Constructor({ [Symbol.iterator]: function() { return iterator; } });
+              } catch (error) { caught = error; }
+              Constructor.prototype[method] = saved;
+              return kind + ":" + collection + ":" + closed + ":" +
+                (caught === original);
+            }
+            [
+              closeCase("next", "map"), closeCase("result", "map"),
+              closeCase("done", "map"),
+              closeCase("value", "map"), closeCase("entry", "map"),
+              closeCase("adder", "map"), closeCase("next", "set"),
+              closeCase("result", "set"), closeCase("value", "set"),
+              closeCase("adder", "set")
+            ].join("|");
+            "#,
+        ),
+        Value::String(Arc::from(
+            "next:map:0:true|result:map:0:false|done:map:0:true|value:map:0:true|entry:map:1:true|adder:map:1:true|next:set:0:true|result:set:0:false|value:set:0:true|adder:set:1:true"
+        ))
+    );
+
+    assert_eq!(
+        run(r#"
+            function one(value) {
+              return function() {
+                var done = false;
+                return { next: function() {
+                  if (done) return { done: true };
+                  done = true;
+                  return { done: false, value: value };
+                }};
+              };
+            }
+            var arrayKey = {};
+            var array = [arrayKey];
+            array[Symbol.iterator] = one(arrayKey);
+            var mapKey = {};
+            var map = new Map([[{}, 1]]);
+            map[Symbol.iterator] = one([mapKey, 2]);
+            var setKey = {};
+            var set = new Set([{}]);
+            set[Symbol.iterator] = one(setKey);
+            var generatorKey = {};
+            function* source() { yield {}; }
+            var generator = source();
+            generator[Symbol.iterator] = one([generatorKey, 3]);
+            [
+              new WeakSet(array).has(arrayKey),
+              new WeakMap(map).get(mapKey),
+              new WeakSet(set).has(setKey),
+              new WeakMap(generator).get(generatorKey)
+            ].join("|");
+            "#,),
+        Value::String(Arc::from("true|2|true|3"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var OtherWeakMap = other.WeakMap;
+            var OtherWeakSet = other.WeakSet;
+            var OtherWeakMapPrototype = OtherWeakMap.prototype;
+            var OtherWeakSetPrototype = OtherWeakSet.prototype;
+            var NewTarget = new other.Function();
+            NewTarget.prototype = null;
+            var BoundNewTarget = NewTarget.bind(null);
+            other.WeakMap = other.WeakSet = other.Object = null;
+            var foreignMap = Reflect.construct(WeakMap, [], BoundNewTarget);
+            var foreignSet = Reflect.construct(WeakSet, [], BoundNewTarget);
+            var iterator = {
+              next: function() { return { done: false, value: 1 }; },
+              return: function() { return {}; }
+            };
+            var mapError;
+            var setError;
+            try {
+              new OtherWeakMap({ [Symbol.iterator]: function() { return iterator; } });
+            } catch (error) { mapError = error; }
+            try {
+              OtherWeakSet.prototype.add = null;
+              new OtherWeakSet([{}]);
+            } catch (error) { setError = error; }
+            [
+              Object.getPrototypeOf(foreignMap) === OtherWeakMapPrototype,
+              Object.getPrototypeOf(foreignSet) === OtherWeakSetPrototype,
+              mapError instanceof other.TypeError, !(mapError instanceof TypeError),
+              setError instanceof other.TypeError, !(setError instanceof TypeError),
+              OtherWeakMapPrototype.get instanceof other.Function,
+              !(OtherWeakMapPrototype.get instanceof Function)
+            ].join("|");
+            "#,),
+        Value::String(Arc::from("true|true|true|true|true|true|true|true"))
+    );
+}
+
+#[test]
+fn weak_collection_methods_cover_brands_symbols_and_upsert_reentry() {
+    assert_eq!(
+        run(r#"
+            var objectKey = {};
+            var symbolKey = Symbol("key");
+            var wellKnown = Symbol.iterator;
+            var registered = Symbol.for("registered");
+            var map = new WeakMap([[objectKey, 1], [symbolKey, 2], [wellKnown, 3]]);
+            var set = new WeakSet([objectKey, symbolKey, wellKnown]);
+            var registeredMapError = false;
+            var registeredSetError = false;
+            try { map.set(registered, 4); } catch (error) {
+              registeredMapError = error instanceof TypeError;
+            }
+            try { set.add(registered); } catch (error) {
+              registeredSetError = error instanceof TypeError;
+            }
+            var inserted = {};
+            var computed = {};
+            var calls = 0;
+            var first = map.getOrInsert(inserted, 5);
+            var second = map.getOrInsert(inserted, 6);
+            var computedValue = map.getOrInsertComputed(computed, function(key) {
+              "use strict";
+              calls++;
+              map.set(key, "during");
+              return this === undefined && arguments.length === 1 ? "final" : "bad";
+            });
+            map.getOrInsertComputed(computed, function() { calls++; return "late"; });
+            var callbackCheckedFirst = false;
+            try { map.getOrInsertComputed(1, 1); } catch (error) {
+              callbackCheckedFirst = error.message.indexOf("callback") !== -1;
+            }
+            var brandErrors = 0;
+            for (var method of [
+              WeakMap.prototype.get, WeakMap.prototype.set,
+              WeakMap.prototype.has, WeakMap.prototype.delete,
+              WeakMap.prototype.getOrInsert,
+              WeakMap.prototype.getOrInsertComputed,
+              WeakSet.prototype.add, WeakSet.prototype.has,
+              WeakSet.prototype.delete
+            ]) {
+              try { method.call({}); } catch (error) {
+                if (error instanceof TypeError) brandErrors++;
+              }
+            }
+            [
+              map.get(objectKey), map.get(symbolKey), map.get(wellKnown),
+              set.has(objectKey), set.has(symbolKey), set.has(wellKnown),
+              registeredMapError, registeredSetError,
+              first, second, computedValue, map.get(computed), calls,
+              callbackCheckedFirst,
+              brandErrors, map.delete(symbolKey), set.delete(symbolKey),
+              map.has(symbolKey), set.has(symbolKey)
+            ].join("|");
+            "#,),
+        Value::String(Arc::from(
+            "1|2|3|true|true|true|true|true|5|5|final|final|1|true|9|true|true|false|false"
+        ))
+    );
+}
+
+#[test]
 fn set_basic() {
     assert_eq!(
         run("let s = new Set(); s.add(1); s.add(2); s.add(1); s.size;"),

@@ -4,6 +4,33 @@
 
 ### Changed
 
+- `WeakMap` and `WeakSet` now execute iterable constructors through direct,
+  cached synchronous iterator records. They perform one `@@iterator` Get with
+  no `HasProperty` probe, call cached `next` and adder functions with standard
+  arity/receivers, meter every step, preserve catchable IteratorClose
+  completions, and never close step or non-catchable Fuel failures. Every Realm
+  owns immutable WeakMap/WeakSet prototype identities with rollback and
+  constructor-Realm error/fallback behavior. Methods enforce their internal
+  brands; WeakMap also implements `getOrInsert` and `getOrInsertComputed` with
+  callback re-entry semantics. Object, well-known Symbol, and non-registered
+  Symbol keys are accepted while `Symbol.for` keys are rejected. Weak storage
+  uses fallible `HashMap`/`HashSet` growth and an O(1) registered-Symbol index,
+  while leaving duplicates/replacements allocation-free. GC now resolves
+  reachable WeakMap ephemerons through key-indexed pending values instead of
+  repeated whole-map scans. Finite-budget marks snapshot roots once, deduplicate
+  the worklist, queue intervening allocations, resume across calls, and retrace
+  current host roots and marked cells before sweep. Allocation publication and
+  its mark barrier share collector lock order, so intervening mutations remain live, preventing
+  values from being freed and later aliased through reused heap cells.
+  Exact 95-file admission moves pinned WeakMap/WeakSet from **55 pass / 76 fail
+  / 95 skip** to **226/0/0**; forced execution moves from **91/135** to
+  **226/0**. Adjacent WeakRef/FinalizationRegistry remains **76/76**. Direct
+  tests cover Proxy order, caching, built-in overrides, close priority, Realm
+  identity, brands, Symbol classes, callback-first upsert validation and
+  re-entry, forced and incremental GC, ephemeron chains, every reservation
+  site, duplicate/update no-reserve behavior, Fuel,
+  exact heap-cap retry, pin cleanup, and clean retry.
+
 - `new Set(iterable)` now uses a direct cached synchronous iterator record
   instead of allocating a wrapper. It performs one `@@iterator` Get without a
   `HasProperty` probe, calls cached `next` with zero arguments, observes

@@ -1178,6 +1178,20 @@ impl Vm {
                 .cloned()
                 .unwrap_or(fallback));
         }
+        if intrinsic == "WeakMap" {
+            return Ok(self
+                .realm_weakmap_prototypes
+                .get(&realm.0)
+                .cloned()
+                .unwrap_or(fallback));
+        }
+        if intrinsic == "WeakSet" {
+            return Ok(self
+                .realm_weakset_prototypes
+                .get(&realm.0)
+                .cloned()
+                .unwrap_or(fallback));
+        }
         if intrinsic == "Function" {
             return Ok(self
                 .realm_function_prototypes

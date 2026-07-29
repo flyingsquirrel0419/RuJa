@@ -4914,6 +4914,12 @@ impl Vm {
         for v in self.realm_set_prototypes.values() {
             Self::push_value_roots(&mut roots, v);
         }
+        for v in self.realm_weakmap_prototypes.values() {
+            Self::push_value_roots(&mut roots, v);
+        }
+        for v in self.realm_weakset_prototypes.values() {
+            Self::push_value_roots(&mut roots, v);
+        }
         for v in self.realm_generator_prototypes.values() {
             Self::push_value_roots(&mut roots, v);
         }

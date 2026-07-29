@@ -1317,9 +1317,180 @@ pub(crate) fn map_get_or_insert_computed(
 
 // --- WeakMap / WeakSet (true weak-reference semantics) ---
 
+fn require_weakmap_receiver(vm: &Vm, this: Option<Value>, name: &str) -> error::Result<GcIdx> {
+    let Some(Value::Object(index)) = this else {
+        return Err(Error::type_err(format!("{name} called on non-WeakMap")));
+    };
+    if vm
+        .heap
+        .with_obj(index.0, |object| matches!(object, HeapObj::WeakMap(_)))
+    {
+        Ok(index)
+    } else {
+        Err(Error::type_err(format!("{name} called on non-WeakMap")))
+    }
+}
+
+fn require_weakset_receiver(vm: &Vm, this: Option<Value>, name: &str) -> error::Result<GcIdx> {
+    let Some(Value::Object(index)) = this else {
+        return Err(Error::type_err(format!("{name} called on non-WeakSet")));
+    };
+    if vm
+        .heap
+        .with_obj(index.0, |object| matches!(object, HeapObj::WeakSet(_)))
+    {
+        Ok(index)
+    } else {
+        Err(Error::type_err(format!("{name} called on non-WeakSet")))
+    }
+}
+
+fn weak_collection_key(vm: &Vm, value: &Value) -> Option<crate::value::WeakKey> {
+    match value {
+        Value::Object(index) => Some(crate::value::WeakKey::Object(index.0)),
+        Value::Symbol(id) if can_be_held_weakly(vm, value) => {
+            Some(crate::value::WeakKey::Symbol(*id))
+        }
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+fn take_weak_collection_reservation_failure(
+    vm: &mut Vm,
+    site: crate::vm::WeakCollectionReservationSite,
+) -> bool {
+    let Some((configured_site, remaining)) = vm.fail_weak_collection_reservation else {
+        return false;
+    };
+    if configured_site != site {
+        return false;
+    }
+    if remaining != 0 {
+        vm.fail_weak_collection_reservation = Some((configured_site, remaining - 1));
+        return false;
+    }
+    vm.fail_weak_collection_reservation = None;
+    true
+}
+
+fn reserve_weak_collection_roots(
+    vm: &mut Vm,
+    additional: usize,
+    message: &'static str,
+    #[cfg(test)] site: crate::vm::WeakCollectionReservationSite,
+) -> error::Result<()> {
+    #[cfg(test)]
+    if take_weak_collection_reservation_failure(vm, site) {
+        return Err(Error::range(message));
+    }
+    vm.try_reserve_gc_pins(additional)
+}
+
+fn reserve_weakmap_entry(
+    vm: &mut Vm,
+    index: GcIdx,
+    key: crate::value::WeakKey,
+) -> error::Result<()> {
+    let needs_entry = vm.heap.with_obj(index.0, |object| {
+        let HeapObj::WeakMap(map) = object else {
+            return false;
+        };
+        !map.entries.lock().contains_key(&key)
+    });
+    if !needs_entry {
+        return Ok(());
+    }
+    #[cfg(test)]
+    if take_weak_collection_reservation_failure(
+        vm,
+        crate::vm::WeakCollectionReservationSite::MapEntryStorage,
+    ) {
+        return Err(Error::range("WeakMap entry storage is too large"));
+    }
+    vm.heap.with_obj(index.0, |object| {
+        let HeapObj::WeakMap(map) = object else {
+            return Err(Error::internal("WeakMap target lost its internal data"));
+        };
+        let mut entries = map.entries.lock();
+        if entries.len() == entries.capacity() {
+            entries
+                .try_reserve(1)
+                .map_err(|_| Error::range("WeakMap entry storage is too large"))?;
+        }
+        Ok(())
+    })
+}
+
+fn insert_weakmap_entry(
+    vm: &mut Vm,
+    index: GcIdx,
+    key: crate::value::WeakKey,
+    value: Value,
+) -> error::Result<()> {
+    reserve_weakmap_entry(vm, index, key)?;
+    vm.heap.with_obj(index.0, |object| {
+        let HeapObj::WeakMap(map) = object else {
+            return Err(Error::internal("WeakMap target lost its internal data"));
+        };
+        map.entries.lock().insert(key, value);
+        Ok(())
+    })
+}
+
+fn reserve_weakset_entry(
+    vm: &mut Vm,
+    index: GcIdx,
+    key: crate::value::WeakKey,
+) -> error::Result<()> {
+    let needs_entry = vm.heap.with_obj(index.0, |object| {
+        let HeapObj::WeakSet(set) = object else {
+            return false;
+        };
+        !set.items.lock().contains(&key)
+    });
+    if !needs_entry {
+        return Ok(());
+    }
+    #[cfg(test)]
+    if take_weak_collection_reservation_failure(
+        vm,
+        crate::vm::WeakCollectionReservationSite::SetEntryStorage,
+    ) {
+        return Err(Error::range("WeakSet entry storage is too large"));
+    }
+    vm.heap.with_obj(index.0, |object| {
+        let HeapObj::WeakSet(set) = object else {
+            return Err(Error::internal("WeakSet target lost its internal data"));
+        };
+        let mut items = set.items.lock();
+        if items.len() == items.capacity() {
+            items
+                .try_reserve(1)
+                .map_err(|_| Error::range("WeakSet entry storage is too large"))?;
+        }
+        Ok(())
+    })
+}
+
+fn insert_weakset_entry(
+    vm: &mut Vm,
+    index: GcIdx,
+    key: crate::value::WeakKey,
+) -> error::Result<()> {
+    reserve_weakset_entry(vm, index, key)?;
+    vm.heap.with_obj(index.0, |object| {
+        let HeapObj::WeakSet(set) = object else {
+            return Err(Error::internal("WeakSet target lost its internal data"));
+        };
+        set.items.lock().insert(key);
+        Ok(())
+    })
+}
+
 pub(crate) fn weakmap_constructor(
     vm: &mut Vm,
-    _args: &[Value],
+    args: &[Value],
     _this: Option<Value>,
 ) -> error::Result<Value> {
     if vm.current_native_new_target().is_none() {
@@ -1327,18 +1498,109 @@ pub(crate) fn weakmap_constructor(
             "WeakMap constructor must be called with new",
         ));
     }
-    let proto = native_constructor_prototype_with_default(vm, "WeakMap", vm.object_proto.clone())?;
-    let pin_count = vm.pin(&proto);
-    let allocation = vm
-        .heap
-        .allocate(HeapObj::WeakMap(crate::value::WeakMapData {
-            entries: Mutex::new(Vec::new()),
-            props: Mutex::new(IndexMap::new()),
-            proto: Mutex::new(Some(proto)),
-            extensible: AtomicBool::new(true),
-        }));
-    vm.unpin_many(pin_count);
-    Ok(Value::Object(GcIdx(allocation?)))
+    let realm = vm.current_realm_global_env();
+    let iterable = args.first().cloned().unwrap_or(Value::Undefined);
+    let fallback = vm.weakmap_prototype_for_env(realm);
+    let prototype = native_constructor_prototype_with_default(vm, "WeakMap", fallback)?;
+    let initial_roots = Vm::value_root_count(&prototype)
+        .checked_add(Vm::value_root_count(&iterable))
+        .and_then(|count| count.checked_add(1))
+        .ok_or_else(|| Error::range("WeakMap temporary root set is too large"))?;
+    reserve_weak_collection_roots(
+        vm,
+        initial_roots,
+        "WeakMap temporary root set is too large",
+        #[cfg(test)]
+        crate::vm::WeakCollectionReservationSite::MapConstructorRoots,
+    )?;
+    let mut initial_pins = vm.pin_many(&[prototype.clone(), iterable.clone()]);
+    let allocation = vm.alloc(HeapObj::WeakMap(crate::value::WeakMapData {
+        entries: Mutex::new(std::collections::HashMap::new()),
+        props: Mutex::new(IndexMap::new()),
+        proto: Mutex::new(Some(prototype)),
+        extensible: AtomicBool::new(true),
+    }));
+    let map = match allocation {
+        Ok(index) => Value::Object(index),
+        Err(error) => {
+            vm.unpin_many(initial_pins);
+            return Err(error);
+        }
+    };
+    initial_pins += vm.pin(&map);
+
+    let result = (|| -> error::Result<Value> {
+        if iterable.is_nullish() {
+            return Ok(map.clone());
+        }
+        reserve_weak_collection_roots(
+            vm,
+            6,
+            "WeakMap temporary root set is too large",
+            #[cfg(test)]
+            crate::vm::WeakCollectionReservationSite::MapIteratorRoots,
+        )?;
+        let adder = vm.get_property(&map, "set")?;
+        if !is_callable(&adder, &vm.heap) {
+            return Err(Error::type_err("WeakMap set is not callable"));
+        }
+        let adder_pin = vm.pin(&adder);
+        let iterator = match get_sync_iterator(vm, iterable.clone()) {
+            Ok(iterator) => iterator,
+            Err(error) => {
+                vm.unpin_many(adder_pin);
+                return Err(error);
+            }
+        };
+        let iterator_pins = vm.pin_many(&[iterator.iterator.clone(), iterator.next_method.clone()]);
+        let iteration = (|| -> error::Result<Value> {
+            loop {
+                #[cfg(test)]
+                if std::mem::take(&mut vm.weakmap_constructor_zero_fuel_before_step) {
+                    vm.set_fuel(Some(0));
+                }
+                let Some(entry) =
+                    iterator_helper_step(vm, &iterator.iterator, &iterator.next_method, true)?
+                else {
+                    return Ok(map.clone());
+                };
+                if !matches!(entry, Value::Object(_)) {
+                    return close_iterator_after_error_in_realm(
+                        vm,
+                        &iterator.iterator,
+                        Error::type_err("Iterator value is not an object"),
+                        realm,
+                    );
+                }
+                let mut entry_pins = vm.pin(&entry);
+                let status = (|| -> error::Result<()> {
+                    let key = vm.get_property(&entry, "0")?;
+                    entry_pins += vm.pin(&key);
+                    let value = vm.get_property(&entry, "1")?;
+                    entry_pins += vm.pin(&value);
+                    vm.call_function(&adder, &[key, value], Some(map.clone()))?;
+                    Ok(())
+                })();
+                vm.unpin_many(entry_pins);
+                if let Err(error) = status {
+                    if !error.catchable() {
+                        return Err(error);
+                    }
+                    return close_iterator_after_error_in_realm(
+                        vm,
+                        &iterator.iterator,
+                        error,
+                        realm,
+                    );
+                }
+            }
+        })();
+        vm.unpin_many(iterator_pins);
+        vm.unpin_many(adder_pin);
+        iteration
+    })();
+    vm.unpin_many(initial_pins);
+    result
 }
 
 pub(crate) fn weakmap_set(
@@ -1346,29 +1608,15 @@ pub(crate) fn weakmap_set(
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    let key = args.first().cloned().unwrap_or(Value::Undefined);
-    let val = args.get(1).cloned().unwrap_or(Value::Undefined);
-    let key_idx = match &key {
-        Value::Object(i) => i.0,
-        _ => {
-            return Err(Error::type_err(
-                "Invalid value used as weak map key".to_string(),
-            ))
-        }
+    let receiver = this.clone().unwrap_or(Value::Undefined);
+    let index = require_weakmap_receiver(vm, this, "WeakMap.prototype.set")?;
+    let key_value = args.first().cloned().unwrap_or(Value::Undefined);
+    let Some(key) = weak_collection_key(vm, &key_value) else {
+        return Err(Error::type_err("Invalid value used as weak map key"));
     };
-    if let Some(Value::Object(idx)) = this {
-        vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::WeakMap(wm) = obj {
-                let mut entries = wm.entries.lock();
-                if let Some(slot) = entries.iter_mut().find(|(k, _)| *k == key_idx) {
-                    slot.1 = val;
-                } else {
-                    entries.push((key_idx, val));
-                }
-            }
-        });
-    }
-    Ok(this.unwrap_or(Value::Undefined))
+    let value = args.get(1).cloned().unwrap_or(Value::Undefined);
+    insert_weakmap_entry(vm, index, key, value)?;
+    Ok(receiver)
 }
 
 pub(crate) fn weakmap_get(
@@ -1376,26 +1624,21 @@ pub(crate) fn weakmap_get(
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    let key = args.first().cloned().unwrap_or(Value::Undefined);
-    let key_idx = match &key {
-        Value::Object(i) => i.0,
-        _ => return Ok(Value::Undefined),
+    let index = require_weakmap_receiver(vm, this, "WeakMap.prototype.get")?;
+    let key_value = args.first().cloned().unwrap_or(Value::Undefined);
+    let Some(key) = weak_collection_key(vm, &key_value) else {
+        return Ok(Value::Undefined);
     };
-    if let Some(Value::Object(idx)) = this {
-        return Ok(vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::WeakMap(wm) = obj {
-                wm.entries
-                    .lock()
-                    .iter()
-                    .find(|(k, _)| *k == key_idx)
-                    .map(|(_, v)| v.clone())
-                    .unwrap_or(Value::Undefined)
-            } else {
-                Value::Undefined
-            }
-        }));
-    }
-    Ok(Value::Undefined)
+    Ok(vm.heap.with_obj(index.0, |object| {
+        let HeapObj::WeakMap(map) = object else {
+            return Value::Undefined;
+        };
+        map.entries
+            .lock()
+            .get(&key)
+            .cloned()
+            .unwrap_or(Value::Undefined)
+    }))
 }
 
 pub(crate) fn weakmap_has(
@@ -1403,21 +1646,17 @@ pub(crate) fn weakmap_has(
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    let key = args.first().cloned().unwrap_or(Value::Undefined);
-    let key_idx = match &key {
-        Value::Object(i) => i.0,
-        _ => return Ok(Value::Bool(false)),
+    let index = require_weakmap_receiver(vm, this, "WeakMap.prototype.has")?;
+    let key_value = args.first().cloned().unwrap_or(Value::Undefined);
+    let Some(key) = weak_collection_key(vm, &key_value) else {
+        return Ok(Value::Bool(false));
     };
-    if let Some(Value::Object(idx)) = this {
-        return Ok(Value::Bool(vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::WeakMap(wm) = obj {
-                wm.entries.lock().iter().any(|(k, _)| *k == key_idx)
-            } else {
-                false
-            }
-        })));
-    }
-    Ok(Value::Bool(false))
+    Ok(Value::Bool(vm.heap.with_obj(index.0, |object| {
+        let HeapObj::WeakMap(map) = object else {
+            return false;
+        };
+        map.entries.lock().contains_key(&key)
+    })))
 }
 
 pub(crate) fn weakmap_delete(
@@ -1425,29 +1664,98 @@ pub(crate) fn weakmap_delete(
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    let key = args.first().cloned().unwrap_or(Value::Undefined);
-    let key_idx = match &key {
-        Value::Object(i) => i.0,
-        _ => return Ok(Value::Bool(false)),
+    let index = require_weakmap_receiver(vm, this, "WeakMap.prototype.delete")?;
+    let key_value = args.first().cloned().unwrap_or(Value::Undefined);
+    let Some(key) = weak_collection_key(vm, &key_value) else {
+        return Ok(Value::Bool(false));
     };
-    if let Some(Value::Object(idx)) = this {
-        return Ok(Value::Bool(vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::WeakMap(wm) = obj {
-                let mut entries = wm.entries.lock();
-                let len = entries.len();
-                entries.retain(|(k, _)| *k != key_idx);
-                entries.len() != len
-            } else {
-                false
-            }
-        })));
+    Ok(Value::Bool(vm.heap.with_obj(index.0, |object| {
+        let HeapObj::WeakMap(map) = object else {
+            return false;
+        };
+        map.entries.lock().remove(&key).is_some()
+    })))
+}
+
+pub(crate) fn weakmap_get_or_insert(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let index = require_weakmap_receiver(vm, this, "WeakMap.prototype.getOrInsert")?;
+    let key_value = args.first().cloned().unwrap_or(Value::Undefined);
+    let Some(key) = weak_collection_key(vm, &key_value) else {
+        return Err(Error::type_err("Invalid value used as weak map key"));
+    };
+    if let Some(value) = vm.heap.with_obj(index.0, |object| {
+        let HeapObj::WeakMap(map) = object else {
+            return None;
+        };
+        map.entries.lock().get(&key).cloned()
+    }) {
+        return Ok(value);
     }
-    Ok(Value::Bool(false))
+    let value = args.get(1).cloned().unwrap_or(Value::Undefined);
+    insert_weakmap_entry(vm, index, key, value.clone())?;
+    Ok(value)
+}
+
+pub(crate) fn weakmap_get_or_insert_computed(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let receiver = this.clone().unwrap_or(Value::Undefined);
+    let index = require_weakmap_receiver(vm, this, "WeakMap.prototype.getOrInsertComputed")?;
+    let callback = args.get(1).cloned().unwrap_or(Value::Undefined);
+    if !is_callable(&callback, &vm.heap) {
+        return Err(Error::type_err(
+            "WeakMap.prototype.getOrInsertComputed callback is not callable",
+        ));
+    }
+    let key_value = args.first().cloned().unwrap_or(Value::Undefined);
+    let Some(key) = weak_collection_key(vm, &key_value) else {
+        return Err(Error::type_err("Invalid value used as weak map key"));
+    };
+    if let Some(value) = vm.heap.with_obj(index.0, |object| {
+        let HeapObj::WeakMap(map) = object else {
+            return None;
+        };
+        map.entries.lock().get(&key).cloned()
+    }) {
+        return Ok(value);
+    }
+
+    let root_count = Vm::value_root_count(&receiver)
+        .checked_add(Vm::value_root_count(&key_value))
+        .and_then(|count| count.checked_add(Vm::value_root_count(&callback)))
+        .and_then(|count| count.checked_add(1))
+        .ok_or_else(|| Error::range("WeakMap temporary root set is too large"))?;
+    reserve_weak_collection_roots(
+        vm,
+        root_count,
+        "WeakMap temporary root set is too large",
+        #[cfg(test)]
+        crate::vm::WeakCollectionReservationSite::MapComputedRoots,
+    )?;
+    let mut pin_count = vm.pin_many(&[receiver, key_value.clone(), callback.clone()]);
+    let result = (|| -> error::Result<Value> {
+        let value = vm.call_function(
+            &callback,
+            std::slice::from_ref(&key_value),
+            Some(Value::Undefined),
+        )?;
+        pin_count += vm.pin(&value);
+        insert_weakmap_entry(vm, index, key, value.clone())?;
+        Ok(value)
+    })();
+    vm.unpin_many(pin_count);
+    result
 }
 
 pub(crate) fn weakset_constructor(
     vm: &mut Vm,
-    _args: &[Value],
+    args: &[Value],
     _this: Option<Value>,
 ) -> error::Result<Value> {
     if vm.current_native_new_target().is_none() {
@@ -1455,18 +1763,94 @@ pub(crate) fn weakset_constructor(
             "WeakSet constructor must be called with new",
         ));
     }
-    let proto = native_constructor_prototype_with_default(vm, "WeakSet", vm.object_proto.clone())?;
-    let pin_count = vm.pin(&proto);
-    let allocation = vm
-        .heap
-        .allocate(HeapObj::WeakSet(crate::value::WeakSetData {
-            items: Mutex::new(Vec::new()),
-            props: Mutex::new(IndexMap::new()),
-            proto: Mutex::new(Some(proto)),
-            extensible: AtomicBool::new(true),
-        }));
-    vm.unpin_many(pin_count);
-    Ok(Value::Object(GcIdx(allocation?)))
+    let realm = vm.current_realm_global_env();
+    let iterable = args.first().cloned().unwrap_or(Value::Undefined);
+    let fallback = vm.weakset_prototype_for_env(realm);
+    let prototype = native_constructor_prototype_with_default(vm, "WeakSet", fallback)?;
+    let initial_roots = Vm::value_root_count(&prototype)
+        .checked_add(Vm::value_root_count(&iterable))
+        .and_then(|count| count.checked_add(1))
+        .ok_or_else(|| Error::range("WeakSet temporary root set is too large"))?;
+    reserve_weak_collection_roots(
+        vm,
+        initial_roots,
+        "WeakSet temporary root set is too large",
+        #[cfg(test)]
+        crate::vm::WeakCollectionReservationSite::SetConstructorRoots,
+    )?;
+    let mut initial_pins = vm.pin_many(&[prototype.clone(), iterable.clone()]);
+    let allocation = vm.alloc(HeapObj::WeakSet(crate::value::WeakSetData {
+        items: Mutex::new(std::collections::HashSet::new()),
+        props: Mutex::new(IndexMap::new()),
+        proto: Mutex::new(Some(prototype)),
+        extensible: AtomicBool::new(true),
+    }));
+    let set = match allocation {
+        Ok(index) => Value::Object(index),
+        Err(error) => {
+            vm.unpin_many(initial_pins);
+            return Err(error);
+        }
+    };
+    initial_pins += vm.pin(&set);
+
+    let result = (|| -> error::Result<Value> {
+        if iterable.is_nullish() {
+            return Ok(set.clone());
+        }
+        reserve_weak_collection_roots(
+            vm,
+            4,
+            "WeakSet temporary root set is too large",
+            #[cfg(test)]
+            crate::vm::WeakCollectionReservationSite::SetIteratorRoots,
+        )?;
+        let adder = vm.get_property(&set, "add")?;
+        if !is_callable(&adder, &vm.heap) {
+            return Err(Error::type_err("WeakSet add is not callable"));
+        }
+        let adder_pin = vm.pin(&adder);
+        let iterator = match get_sync_iterator(vm, iterable.clone()) {
+            Ok(iterator) => iterator,
+            Err(error) => {
+                vm.unpin_many(adder_pin);
+                return Err(error);
+            }
+        };
+        let iterator_pins = vm.pin_many(&[iterator.iterator.clone(), iterator.next_method.clone()]);
+        let iteration = (|| -> error::Result<Value> {
+            loop {
+                #[cfg(test)]
+                if std::mem::take(&mut vm.weakset_constructor_zero_fuel_before_step) {
+                    vm.set_fuel(Some(0));
+                }
+                let Some(value) =
+                    iterator_helper_step(vm, &iterator.iterator, &iterator.next_method, true)?
+                else {
+                    return Ok(set.clone());
+                };
+                let value_pin = vm.pin(&value);
+                let status = vm.call_function(&adder, &[value], Some(set.clone()));
+                vm.unpin_many(value_pin);
+                if let Err(error) = status {
+                    if !error.catchable() {
+                        return Err(error);
+                    }
+                    return close_iterator_after_error_in_realm(
+                        vm,
+                        &iterator.iterator,
+                        error,
+                        realm,
+                    );
+                }
+            }
+        })();
+        vm.unpin_many(iterator_pins);
+        vm.unpin_many(adder_pin);
+        iteration
+    })();
+    vm.unpin_many(initial_pins);
+    result
 }
 
 pub(crate) fn weakset_add(
@@ -1474,26 +1858,14 @@ pub(crate) fn weakset_add(
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    let key = args.first().cloned().unwrap_or(Value::Undefined);
-    let key_idx = match &key {
-        Value::Object(i) => i.0,
-        _ => {
-            return Err(Error::type_err(
-                "Invalid value used in weak set".to_string(),
-            ))
-        }
+    let receiver = this.clone().unwrap_or(Value::Undefined);
+    let index = require_weakset_receiver(vm, this, "WeakSet.prototype.add")?;
+    let value = args.first().cloned().unwrap_or(Value::Undefined);
+    let Some(key) = weak_collection_key(vm, &value) else {
+        return Err(Error::type_err("Invalid value used in weak set"));
     };
-    if let Some(Value::Object(idx)) = this {
-        vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::WeakSet(ws) = obj {
-                let mut items = ws.items.lock();
-                if !items.contains(&key_idx) {
-                    items.push(key_idx);
-                }
-            }
-        });
-    }
-    Ok(this.unwrap_or(Value::Undefined))
+    insert_weakset_entry(vm, index, key)?;
+    Ok(receiver)
 }
 
 pub(crate) fn weakset_has(
@@ -1501,21 +1873,17 @@ pub(crate) fn weakset_has(
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    let key = args.first().cloned().unwrap_or(Value::Undefined);
-    let key_idx = match &key {
-        Value::Object(i) => i.0,
-        _ => return Ok(Value::Bool(false)),
+    let index = require_weakset_receiver(vm, this, "WeakSet.prototype.has")?;
+    let value = args.first().cloned().unwrap_or(Value::Undefined);
+    let Some(key) = weak_collection_key(vm, &value) else {
+        return Ok(Value::Bool(false));
     };
-    if let Some(Value::Object(idx)) = this {
-        return Ok(Value::Bool(vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::WeakSet(ws) = obj {
-                ws.items.lock().contains(&key_idx)
-            } else {
-                false
-            }
-        })));
-    }
-    Ok(Value::Bool(false))
+    Ok(Value::Bool(vm.heap.with_obj(index.0, |object| {
+        let HeapObj::WeakSet(set) = object else {
+            return false;
+        };
+        set.items.lock().contains(&key)
+    })))
 }
 
 pub(crate) fn weakset_delete(
@@ -1523,24 +1891,17 @@ pub(crate) fn weakset_delete(
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    let key = args.first().cloned().unwrap_or(Value::Undefined);
-    let key_idx = match &key {
-        Value::Object(i) => i.0,
-        _ => return Ok(Value::Bool(false)),
+    let index = require_weakset_receiver(vm, this, "WeakSet.prototype.delete")?;
+    let value = args.first().cloned().unwrap_or(Value::Undefined);
+    let Some(key) = weak_collection_key(vm, &value) else {
+        return Ok(Value::Bool(false));
     };
-    if let Some(Value::Object(idx)) = this {
-        return Ok(Value::Bool(vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::WeakSet(ws) = obj {
-                let mut items = ws.items.lock();
-                let len = items.len();
-                items.retain(|k| *k != key_idx);
-                items.len() != len
-            } else {
-                false
-            }
-        })));
-    }
-    Ok(Value::Bool(false))
+    Ok(Value::Bool(vm.heap.with_obj(index.0, |object| {
+        let HeapObj::WeakSet(set) = object else {
+            return false;
+        };
+        set.items.lock().remove(&key)
+    })))
 }
 
 // --- WeakRef --------------------------------------------------------------
@@ -1548,10 +1909,7 @@ pub(crate) fn weakset_delete(
 fn can_be_held_weakly(vm: &Vm, target: &Value) -> bool {
     match target {
         Value::Object(_) => true,
-        Value::Symbol(id) => !vm
-            .symbol_registry
-            .values()
-            .any(|registered| registered == id),
+        Value::Symbol(id) => !vm.registered_symbol_ids.contains(id),
         _ => false,
     }
 }
@@ -2527,6 +2885,7 @@ pub(crate) fn symbol_for(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error
     vm.next_symbol_id += 1;
     vm.symbol_descriptions.insert(id, Some(key.clone()));
     vm.symbol_registry.insert(key, id);
+    vm.registered_symbol_ids.insert(id);
     Ok(Value::Symbol(id))
 }
 

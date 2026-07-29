@@ -6,6 +6,7 @@ use super::{
     OrdinaryPropertyStorageReservationSite, OwnKeyConsumerReservationSite,
     PropertyTraversalReservationSite, ProxyDefinePropertyReservationSite,
     ProxyDescriptorReservationSite, ProxyOwnKeysReservationSite, SetReservationSite, Vm,
+    WeakCollectionReservationSite,
 };
 use crate::bytecode::{Chunk, Op};
 use crate::value::{
@@ -891,6 +892,8 @@ const FOREIGN_EAGER_NATIVE_CONSTRUCTOR_SOURCES: &[&str] = &[
     "Array",
     "Map",
     "Set",
+    "WeakMap",
+    "WeakSet",
     "Error",
     "EvalError",
     "RangeError",
@@ -901,7 +904,7 @@ const FOREIGN_EAGER_NATIVE_CONSTRUCTOR_SOURCES: &[&str] = &[
     "AggregateError",
 ];
 
-fn realm_registry_counts(vm: &Vm) -> [usize; 38] {
+fn realm_registry_counts(vm: &Vm) -> [usize; 40] {
     [
         vm.realm_globals.len(),
         vm.realm_object_prototypes.len(),
@@ -913,6 +916,8 @@ fn realm_registry_counts(vm: &Vm) -> [usize; 38] {
         vm.realm_promise_prototypes.len(),
         vm.realm_map_prototypes.len(),
         vm.realm_set_prototypes.len(),
+        vm.realm_weakmap_prototypes.len(),
+        vm.realm_weakset_prototypes.len(),
         vm.realm_generator_prototypes.len(),
         vm.realm_generator_function_constructors.len(),
         vm.realm_generator_function_prototypes.len(),
@@ -981,7 +986,7 @@ fn assert_main_realm_range_error(vm: &Vm, error: &crate::error::Error) {
 fn assert_failed_realm_attempt(
     vm: &mut Vm,
     baseline_live: usize,
-    baseline_registries: [usize; 38],
+    baseline_registries: [usize; 40],
     baseline_pins: usize,
     extra_capacity: usize,
 ) {
@@ -19228,6 +19233,592 @@ fn set_constructor_allocation_retries_at_the_exact_heap_cap() {
     assert!(vm.heap.live_count() <= heap_cap);
     vm.set_max_heap_objects(None);
     assert_eq!(vm.gc_pins.len(), baseline_pins);
+}
+
+#[test]
+fn weak_collection_roots_storage_gc_fuel_and_cleanup_are_retryable() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("GC hook should register");
+    vm.register_fn(
+        "abortWeakFuel",
+        |_, _, _| Err(crate::error::Error::fuel("test weak collection fuel abort")),
+        0,
+    )
+    .expect("Fuel hook should register");
+
+    vm.run(
+        "var weakRealm = $262.createRealm().global; \
+         weakRealm.eval('WeakMap = null; WeakSet = null;');",
+    )
+    .expect("foreign weak collection registry fixture should initialize");
+    let foreign_realm = vm
+        .realm_weakmap_prototypes
+        .keys()
+        .copied()
+        .find(|realm| *realm != vm.global.0)
+        .expect("created Realm should publish weak collection prototypes");
+    let Value::Object(foreign_weakmap_prototype) = vm.realm_weakmap_prototypes[&foreign_realm]
+    else {
+        panic!("WeakMap prototype registry entry must be an object");
+    };
+    let Value::Object(foreign_weakset_prototype) = vm.realm_weakset_prototypes[&foreign_realm]
+    else {
+        panic!("WeakSet prototype registry entry must be an object");
+    };
+    vm.gc();
+    assert!(vm.heap.with_obj(foreign_weakmap_prototype.0, |object| {
+        object
+            .props()
+            .lock()
+            .contains_key(&PropertyKey::from("set"))
+    }));
+    assert!(vm.heap.with_obj(foreign_weakset_prototype.0, |object| {
+        object
+            .props()
+            .lock()
+            .contains_key(&PropertyKey::from("add"))
+    }));
+
+    assert_eq!(
+        vm.run(
+            r#"
+            var originalWeakMapSet = WeakMap.prototype.set;
+            var weakMapSetGets = 0;
+            Object.defineProperty(WeakMap.prototype, "set", {
+              configurable: true,
+              get: function() {
+                weakMapSetGets++;
+                forceGc();
+                return function(key, value) {
+                  forceGc();
+                  return originalWeakMapSet.call(this, key, value);
+                };
+              }
+            });
+            var rootedWeakMapKey;
+            var rootedWeakMap = new WeakMap({
+              get [Symbol.iterator]() {
+                forceGc();
+                return function() {
+                  forceGc();
+                  var done = false;
+                  return {
+                    get next() {
+                      forceGc();
+                      return function() {
+                        forceGc();
+                        if (done) return { get done() { forceGc(); return true; } };
+                        done = true;
+                        return {
+                          get done() { forceGc(); return false; },
+                          get value() {
+                            forceGc();
+                            var entry = {};
+                            Object.defineProperty(entry, "0", { get: function() {
+                              forceGc(); rootedWeakMapKey = { marker: "key" };
+                              return rootedWeakMapKey;
+                            }});
+                            Object.defineProperty(entry, "1", { get: function() {
+                              forceGc(); return { marker: "value" };
+                            }});
+                            return entry;
+                          }
+                        };
+                      };
+                    }
+                  };
+                };
+              }
+            });
+            Object.defineProperty(WeakMap.prototype, "set", {
+              value: originalWeakMapSet, writable: true, configurable: true
+            });
+
+            var originalWeakSetAdd = WeakSet.prototype.add;
+            var weakSetAddGets = 0;
+            Object.defineProperty(WeakSet.prototype, "add", {
+              configurable: true,
+              get: function() {
+                weakSetAddGets++;
+                forceGc();
+                return function(value) {
+                  forceGc();
+                  return originalWeakSetAdd.call(this, value);
+                };
+              }
+            });
+            var rootedWeakSetValue = { marker: 7 };
+            var rootedWeakSet = new WeakSet({
+              get [Symbol.iterator]() {
+                forceGc();
+                return function() {
+                  forceGc();
+                  var done = false;
+                  return { get next() {
+                    forceGc();
+                    return function() {
+                      forceGc();
+                      if (done) return { done: true };
+                      done = true;
+                      return { done: false, get value() {
+                        forceGc(); return rootedWeakSetValue;
+                      }};
+                    };
+                  }};
+                };
+              }
+            });
+            Object.defineProperty(WeakSet.prototype, "add", {
+              value: originalWeakSetAdd, writable: true, configurable: true
+            });
+            [weakMapSetGets, rootedWeakMap.get(rootedWeakMapKey).marker,
+              weakSetAddGets, rootedWeakSet.has(rootedWeakSetValue)].join("|");
+            "#,
+        )
+        .expect("weak constructor values should survive every observable GC"),
+        Value::String(Arc::from("1|value|1|true"))
+    );
+
+    vm.run(
+        r#"
+        var ephemeronKey = {};
+        var ephemeronRef = new WeakRef(ephemeronKey);
+        var ephemeronMap = new WeakMap();
+        var ephemeronValue = { back: ephemeronKey };
+        ephemeronMap.set(ephemeronKey, ephemeronValue);
+        ephemeronKey = ephemeronValue = null;
+
+        var symbolKey = Symbol("live");
+        var symbolValue = { marker: 8 };
+        var symbolValueRef = new WeakRef(symbolValue);
+        var symbolMap = new WeakMap([[symbolKey, symbolValue]]);
+        symbolValue = null;
+
+        var weakSetValue = {};
+        var weakSetRef = new WeakRef(weakSetValue);
+        var collectedWeakSet = new WeakSet([weakSetValue]);
+        weakSetValue = null;
+        "#,
+    )
+    .expect("weak collection GC fixtures should initialize");
+    assert_eq!(
+        vm.run(
+            "[ephemeronKey === null, ephemeronValue === null, \
+              symbolValue === null, weakSetValue === null].join('|');"
+        )
+        .expect("weak fixture links should be severed"),
+        Value::String(Arc::from("true|true|true|true"))
+    );
+    vm.clear_kept_objects();
+    for name in ["ephemeronRef", "weakSetRef"] {
+        let Value::Object(reference) = vm.get_global(name) else {
+            panic!("{name} must be a WeakRef object");
+        };
+        let target = vm.heap.with_obj(reference.0, |object| {
+            let HeapObj::WeakRef(reference) = object else {
+                return None;
+            };
+            reference.target.lock().clone()
+        });
+        let Some(Value::Object(target)) = target else {
+            panic!("{name} must retain its pre-collection target");
+        };
+        assert!(
+            !vm.collect_roots().contains(&target.0),
+            "{name} target must not remain a strong VM root"
+        );
+    }
+    vm.gc();
+    assert_eq!(
+        vm.run(
+            "[ephemeronRef.deref() === undefined, \
+              symbolValueRef.deref().marker, \
+              weakSetRef.deref() === undefined].join('|');"
+        )
+        .expect("weak collection GC state should remain observable"),
+        Value::String(Arc::from("true|8|true"))
+    );
+    vm.run("symbolMap.delete(symbolKey);")
+        .expect("symbol weak entry should delete");
+    vm.clear_kept_objects();
+    vm.gc();
+    assert_eq!(
+        vm.run("symbolValueRef.deref() === undefined;")
+            .expect("deleted Symbol-keyed value should collect"),
+        Value::Bool(true)
+    );
+
+    vm.run(
+        r#"
+        var weakMapIteratorGets = 0;
+        var weakMapNextCalls = 0;
+        var weakMapClosed = 0;
+        var weakMapIndex = 0;
+        var weakMapKey = {};
+        var weakMapEntry = [weakMapKey, { marker: 9 }];
+        var weakMapIterator = {
+          next: function() {
+            weakMapNextCalls++;
+            return weakMapIndex++ === 0
+              ? { done: false, value: weakMapEntry }
+              : { done: true };
+          },
+          return: function() { weakMapClosed++; return {}; }
+        };
+        var weakMapIterable = {
+          get [Symbol.iterator]() {
+            weakMapIteratorGets++;
+            return function() { weakMapIndex = 0; return weakMapIterator; };
+          }
+        };
+
+        var weakSetIteratorGets = 0;
+        var weakSetNextCalls = 0;
+        var weakSetClosed = 0;
+        var weakSetIndex = 0;
+        var weakSetValue = {};
+        var weakSetIterator = {
+          next: function() {
+            weakSetNextCalls++;
+            return weakSetIndex++ === 0
+              ? { done: false, value: weakSetValue }
+              : { done: true };
+          },
+          return: function() { weakSetClosed++; return {}; }
+        };
+        var weakSetIterable = {
+          get [Symbol.iterator]() {
+            weakSetIteratorGets++;
+            return function() { weakSetIndex = 0; return weakSetIterator; };
+          }
+        };
+        "#,
+    )
+    .expect("weak constructor failure fixtures should initialize");
+    vm.gc();
+    let baseline_pins = vm.gc_pins.len();
+
+    for (site, expression, counters) in [
+        (
+            WeakCollectionReservationSite::MapConstructorRoots,
+            "new WeakMap(weakMapIterable);",
+            "weakMapIteratorGets + ':' + weakMapClosed;",
+        ),
+        (
+            WeakCollectionReservationSite::MapIteratorRoots,
+            "new WeakMap(weakMapIterable);",
+            "weakMapIteratorGets + ':' + weakMapClosed;",
+        ),
+        (
+            WeakCollectionReservationSite::SetConstructorRoots,
+            "new WeakSet(weakSetIterable);",
+            "weakSetIteratorGets + ':' + weakSetClosed;",
+        ),
+        (
+            WeakCollectionReservationSite::SetIteratorRoots,
+            "new WeakSet(weakSetIterable);",
+            "weakSetIteratorGets + ':' + weakSetClosed;",
+        ),
+    ] {
+        vm.fail_weak_collection_reservation = Some((site, 0));
+        let error = vm
+            .run(expression)
+            .expect_err("weak constructor root reservation should fail");
+        assert_eq!(error.kind, crate::error::ErrorKind::Range, "{expression}");
+        assert_eq!(vm.fail_weak_collection_reservation, None);
+        assert_eq!(vm.gc_pins.len(), baseline_pins);
+        assert_eq!(
+            vm.run(counters)
+                .expect("failure counters should remain readable"),
+            Value::String(Arc::from("0:0"))
+        );
+    }
+
+    vm.fail_weak_collection_reservation = Some((WeakCollectionReservationSite::MapEntryStorage, 0));
+    let error = vm
+        .run("new WeakMap(weakMapIterable);")
+        .expect_err("WeakMap constructor storage should fail atomically");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fail_weak_collection_reservation, None);
+    assert_eq!(
+        vm.run("weakMapIteratorGets + ':' + weakMapNextCalls + ':' + weakMapClosed;")
+            .expect("WeakMap close counters should remain readable"),
+        Value::String(Arc::from("1:1:1"))
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(
+        vm.run("new WeakMap(weakMapIterable).get(weakMapKey).marker;")
+            .expect("WeakMap constructor should retry cleanly"),
+        Value::Number(9.0)
+    );
+
+    vm.fail_weak_collection_reservation = Some((WeakCollectionReservationSite::SetEntryStorage, 0));
+    let error = vm
+        .run("new WeakSet(weakSetIterable);")
+        .expect_err("WeakSet constructor storage should fail atomically");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fail_weak_collection_reservation, None);
+    assert_eq!(
+        vm.run("weakSetIteratorGets + ':' + weakSetNextCalls + ':' + weakSetClosed;")
+            .expect("WeakSet close counters should remain readable"),
+        Value::String(Arc::from("1:1:1"))
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(
+        vm.run("new WeakSet(weakSetIterable).has(weakSetValue);")
+            .expect("WeakSet constructor should retry cleanly"),
+        Value::Bool(true)
+    );
+
+    vm.run(
+        "var directWeakMap = new WeakMap(); var directWeakSet = new WeakSet(); \
+         var directKey = {}; var directSetValue = {}; var computedCalls = 0;",
+    )
+    .expect("direct weak storage fixtures should initialize");
+    for (site, expression, present) in [
+        (
+            WeakCollectionReservationSite::MapEntryStorage,
+            "directWeakMap.set(directKey, 1);",
+            "directWeakMap.has(directKey);",
+        ),
+        (
+            WeakCollectionReservationSite::MapEntryStorage,
+            "directWeakMap.getOrInsert(directKey, 2);",
+            "directWeakMap.has(directKey);",
+        ),
+        (
+            WeakCollectionReservationSite::MapEntryStorage,
+            "directWeakMap.getOrInsertComputed(directKey, function() { computedCalls++; return 3; });",
+            "directWeakMap.has(directKey);",
+        ),
+        (
+            WeakCollectionReservationSite::SetEntryStorage,
+            "directWeakSet.add(directSetValue);",
+            "directWeakSet.has(directSetValue);",
+        ),
+    ] {
+        vm.fail_weak_collection_reservation = Some((site, 0));
+        let error = vm
+            .run(expression)
+            .expect_err("direct weak insertion should expose reservation failure");
+        assert_eq!(error.kind, crate::error::ErrorKind::Range, "{expression}");
+        assert_eq!(vm.fail_weak_collection_reservation, None);
+        assert_eq!(vm.gc_pins.len(), baseline_pins);
+        assert_eq!(
+            vm.run(present).expect("failed insertion should be atomic"),
+            Value::Bool(false),
+            "{expression}"
+        );
+    }
+    assert_eq!(
+        vm.run("computedCalls;")
+            .expect("computed callback count should remain readable"),
+        Value::Number(1.0)
+    );
+
+    vm.fail_weak_collection_reservation =
+        Some((WeakCollectionReservationSite::MapComputedRoots, 0));
+    let error = vm
+        .run("directWeakMap.getOrInsertComputed(directKey, function() { computedCalls++; });")
+        .expect_err("computed root reservation should fail before callback");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fail_weak_collection_reservation, None);
+    assert_eq!(
+        vm.run("computedCalls;")
+            .expect("computed callback count should remain readable"),
+        Value::Number(1.0)
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    vm.run("directWeakMap.set(directKey, 4); directWeakSet.add(directSetValue);")
+        .expect("direct weak insertions should retry");
+    vm.fail_weak_collection_reservation = Some((WeakCollectionReservationSite::MapEntryStorage, 0));
+    assert_eq!(
+        vm.run("directWeakMap.set(directKey, 5).get(directKey);")
+            .expect("WeakMap replacement must not reserve"),
+        Value::Number(5.0)
+    );
+    assert_eq!(
+        vm.fail_weak_collection_reservation,
+        Some((WeakCollectionReservationSite::MapEntryStorage, 0))
+    );
+    vm.fail_weak_collection_reservation = None;
+    vm.fail_weak_collection_reservation = Some((WeakCollectionReservationSite::SetEntryStorage, 0));
+    assert_eq!(
+        vm.run("directWeakSet.add(directSetValue).has(directSetValue);")
+            .expect("WeakSet duplicate must not reserve"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        vm.fail_weak_collection_reservation,
+        Some((WeakCollectionReservationSite::SetEntryStorage, 0))
+    );
+    vm.fail_weak_collection_reservation = None;
+
+    vm.run("var secondDirectKey = {}; var secondDirectSetValue = {};")
+        .expect("second weak storage keys should initialize");
+    vm.fail_weak_collection_reservation = Some((WeakCollectionReservationSite::MapEntryStorage, 0));
+    let error = vm
+        .run("directWeakMap.set(secondDirectKey, 6);")
+        .expect_err("second WeakMap entry reservation should fail atomically");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(
+        vm.run("[directWeakMap.get(directKey), directWeakMap.has(secondDirectKey)].join('|');")
+            .expect("first WeakMap entry must survive second-entry failure"),
+        Value::String(Arc::from("5|false"))
+    );
+    vm.fail_weak_collection_reservation = Some((WeakCollectionReservationSite::SetEntryStorage, 0));
+    let error = vm
+        .run("directWeakSet.add(secondDirectSetValue);")
+        .expect_err("second WeakSet entry reservation should fail atomically");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(
+        vm.run(
+            "[directWeakSet.has(directSetValue), \
+              directWeakSet.has(secondDirectSetValue)].join('|');"
+        )
+        .expect("first WeakSet entry must survive second-entry failure"),
+        Value::String(Arc::from("true|false"))
+    );
+    vm.run(
+        "directWeakMap.set(secondDirectKey, 6); \
+         directWeakSet.add(secondDirectSetValue);",
+    )
+    .expect("second weak entries should retry cleanly");
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    vm.run(
+        "weakMapIteratorGets = weakMapNextCalls = weakMapClosed = 0; \
+         weakSetIteratorGets = weakSetNextCalls = weakSetClosed = 0;",
+    )
+    .expect("weak constructor counters should reset");
+    vm.weakmap_constructor_zero_fuel_before_step = true;
+    let error = vm
+        .run("new WeakMap(weakMapIterable);")
+        .expect_err("WeakMap constructor must meter before stepping");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    vm.set_fuel(None);
+    assert_eq!(
+        vm.run("weakMapIteratorGets + ':' + weakMapNextCalls + ':' + weakMapClosed;")
+            .expect("WeakMap Fuel counters should remain readable"),
+        Value::String(Arc::from("1:0:0"))
+    );
+    vm.weakset_constructor_zero_fuel_before_step = true;
+    let error = vm
+        .run("new WeakSet(weakSetIterable);")
+        .expect_err("WeakSet constructor must meter before stepping");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    vm.set_fuel(None);
+    assert_eq!(
+        vm.run("weakSetIteratorGets + ':' + weakSetNextCalls + ':' + weakSetClosed;")
+            .expect("WeakSet Fuel counters should remain readable"),
+        Value::String(Arc::from("1:0:0"))
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    vm.run(
+        r#"
+        var weakFuelClosed = 0;
+        var savedWeakMapSet = WeakMap.prototype.set;
+        WeakMap.prototype.set = function() { abortWeakFuel(); };
+        var weakFuelIterable = {
+          [Symbol.iterator]: function() {
+            return {
+              next: function() { return { done: false, value: [{}, 1] }; },
+              return: function() { weakFuelClosed++; return {}; }
+            };
+          }
+        };
+        "#,
+    )
+    .expect("post-step weak Fuel fixture should initialize");
+    let error = vm
+        .run("new WeakMap(weakFuelIterable);")
+        .expect_err("post-step weak Fuel must not close");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    vm.run("WeakMap.prototype.set = savedWeakMapSet;")
+        .expect("WeakMap set should restore");
+    assert_eq!(
+        vm.run("weakFuelClosed;")
+            .expect("post-step Fuel close count should remain readable"),
+        Value::Number(0.0)
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    vm.run(
+        r#"
+        var weakCloseFuelCalls = 0;
+        var weakCloseFuelSavedSet = WeakMap.prototype.set;
+        WeakMap.prototype.set = function() { throw new Error("original"); };
+        var weakCloseFuelIterable = {
+          [Symbol.iterator]: function() {
+            return {
+              next: function() { return { done: false, value: [{}, 1] }; },
+              return: function() { weakCloseFuelCalls++; abortWeakFuel(); }
+            };
+          }
+        };
+        "#,
+    )
+    .expect("close-time weak Fuel fixture should initialize");
+    let error = vm
+        .run("new WeakMap(weakCloseFuelIterable);")
+        .expect_err("close-time Fuel must override the catchable adder error");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    vm.run("WeakMap.prototype.set = weakCloseFuelSavedSet;")
+        .expect("WeakMap set should restore after close-time Fuel");
+    assert_eq!(
+        vm.run("weakCloseFuelCalls;")
+            .expect("close-time Fuel call count should remain readable"),
+        Value::Number(1.0)
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+}
+
+#[test]
+fn weak_collection_constructor_allocation_retries_at_exact_heap_cap() {
+    for (constructor_name, expected_kind) in [("WeakMap", "map"), ("WeakSet", "set")] {
+        let mut vm = Vm::new().expect("VM should initialize");
+        vm.run(
+            "var weakCapPrototype = { marker: 42 }; \
+             var WeakCapNewTarget = function () {}; \
+             WeakCapNewTarget.prototype = weakCapPrototype;",
+        )
+        .expect("weak heap-cap fixture should initialize");
+        let constructor = vm.get_global(constructor_name);
+        let new_target = vm.get_global("WeakCapNewTarget");
+        let expected_prototype = vm.get_global("weakCapPrototype");
+        vm.gc();
+        let baseline_live = vm.heap.live_count();
+        let baseline_pins = vm.gc_pins.len();
+        for _ in 0..64 {
+            let _garbage = vm.new_object().expect("garbage object should allocate");
+        }
+        vm.set_max_heap_objects(Some(baseline_live + 1));
+        let result = vm
+            .construct_with_new_target(&constructor, &[], &new_target)
+            .expect("weak collection allocation should collect and retry");
+        let Value::Object(index) = result else {
+            panic!("weak collection construction must return an object");
+        };
+        let actual_prototype = vm.heap.with_obj(index.0, |object| match object {
+            HeapObj::WeakMap(map) if expected_kind == "map" => map.proto.lock().clone(),
+            HeapObj::WeakSet(set) if expected_kind == "set" => set.proto.lock().clone(),
+            _ => None,
+        });
+        assert_eq!(actual_prototype, Some(expected_prototype));
+        assert_eq!(vm.heap.live_count(), baseline_live + 1);
+        vm.set_max_heap_objects(None);
+        assert_eq!(vm.gc_pins.len(), baseline_pins);
+    }
 }
 
 #[test]

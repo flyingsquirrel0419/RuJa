@@ -63,6 +63,10 @@ from test262_set_constructor_admission import (
     SET_CONSTRUCTOR_FEATURES,
     SET_CONSTRUCTOR_FILES,
 )
+from test262_weak_collection_admission import (
+    WEAK_COLLECTION_FEATURES,
+    WEAK_COLLECTION_FILES,
+)
 from test262_native_construct_admission import (
     NATIVE_CONSTRUCT_FEATURES,
     NATIVE_CONSTRUCT_FILES,
@@ -1772,6 +1776,94 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                         self.assertFalse(tool.set_constructor_path(path))
                         self.assertTrue(
                             tool.should_skip({"features": ["Symbol.iterator"]}, path)
+                        )
+                finally:
+                    tool.TEST262 = original_root
+
+    def test_weak_collection_manifest_is_exact_live_disjoint_and_shared(self):
+        self.assertEqual(len(WEAK_COLLECTION_FILES), 95)
+        self.assertEqual(
+            WEAK_COLLECTION_FILES, frozenset(WEAK_COLLECTION_FEATURES)
+        )
+        self.assertTrue(
+            all(
+                path.startswith(("built-ins/WeakMap/", "built-ins/WeakSet/"))
+                for path in WEAK_COLLECTION_FILES
+            )
+        )
+
+        tools_dir = Path(__file__).resolve().parent
+        manifest = tools_dir / "test262_weak_collection_admission.data"
+        frozen = {}
+        for raw_line in manifest.read_text().splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            path, separator, raw_features = line.partition("|")
+            self.assertEqual(separator, "|", raw_line)
+            self.assertNotIn(path, frozen)
+            frozen[path] = frozenset(raw_features.split(","))
+        self.assertEqual(frozen, WEAK_COLLECTION_FEATURES)
+
+        for name, files in vars(test262_runner).items():
+            if name == "WEAK_COLLECTION_FILES" or not name.endswith("_FILES"):
+                continue
+            if not isinstance(files, (set, frozenset)) or not all(
+                isinstance(path, str) for path in files
+            ):
+                continue
+            self.assertFalse(WEAK_COLLECTION_FILES & files, name)
+
+        strict_path = (
+            "built-ins/WeakMap/prototype/getOrInsertComputed/"
+            "check-callback-fn-args.js"
+        )
+        test_root = Path(test262_runner.TEST262) / "test"
+        try:
+            test_root_available = test_root.is_dir()
+        except OSError:
+            test_root_available = False
+        if test_root_available:
+            for relative, features in WEAK_COLLECTION_FEATURES.items():
+                path = test_root / relative
+                self.assertTrue(path.is_file(), relative)
+                metadata = test262_runner.parse_meta(path.read_text())
+                self.assertEqual(
+                    frozenset(metadata.get("features", [])), features, relative
+                )
+                self.assertEqual(
+                    metadata.get("flags", []),
+                    ["onlyStrict"] if relative == strict_path else [],
+                    relative,
+                )
+                self.assertIsNone(metadata.get("negative"), relative)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            future = root / "test/built-ins/WeakMap/future.js"
+            outside = root / "test/built-ins/Map/weak.js"
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for relative, features in WEAK_COLLECTION_FEATURES.items():
+                        path = root / "test" / relative
+                        self.assertTrue(tool.weak_collection_path(path))
+                        self.assertEqual(
+                            tool.weak_collection_features(path), features
+                        )
+                        self.assertFalse(
+                            tool.should_skip({"features": sorted(features)}, path)
+                        )
+                        self.assertTrue(
+                            tool.should_skip(
+                                {"features": sorted(features | {"Proxy"})}, path
+                            )
+                        )
+                    for path in (future, outside):
+                        self.assertFalse(tool.weak_collection_path(path))
+                        self.assertTrue(
+                            tool.should_skip({"features": ["WeakMap"]}, path)
                         )
                 finally:
                     tool.TEST262 = original_root

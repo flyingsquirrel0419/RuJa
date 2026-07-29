@@ -5250,6 +5250,8 @@ fn populate_test262_realm(vm: &mut Vm, realm_env: GcIdx) -> error::Result<Value>
     setup_set_iterator_proto_in_env(vm, realm_env, realm_iterator_proto.clone())?;
     install_map_intrinsic_in_env(vm, realm_env, Some(&global))?;
     install_set_intrinsic_in_env(vm, realm_env, Some(&global))?;
+    install_weakmap_intrinsic_in_env(vm, realm_env, Some(&global))?;
+    install_weakset_intrinsic_in_env(vm, realm_env, Some(&global))?;
     let (str_ctor, str_proto) = make_builtin_constructor_with_in_env(
         vm,
         "String",

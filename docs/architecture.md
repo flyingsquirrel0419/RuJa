@@ -3033,6 +3033,54 @@ second buffer or looping over every discarded value.
 
 ---
 
+## Weak collection iterator, Realm, storage, and ephemeron pipeline
+
+WeakMap and WeakSet constructors share the direct synchronous iterator record
+used by Map and Set: one observable `@@iterator` Get, one cached `next`, zero
+arguments per step, and no wrapper or `HasProperty` probe. Adder lookup precedes
+iterator acquisition. Step/result/done/value failures and host Fuel propagate
+without close; catchable entry/adder/storage failures use Realm-aware
+IteratorClose while preserving and rooting the original completion. Prototype,
+iterable, result collection, adder, iterator/next, entry/key/value, and callback
+results remain rooted across every collecting or re-entrant boundary.
+
+Each Realm installs and roots distinct WeakMap and WeakSet prototypes. Failed
+provisional Realm construction removes both registries transactionally, and
+constructor fallback uses the immutable NewTarget Realm intrinsic even after
+observable globals and prototype links are replaced. Native allocation uses
+the VM's collect-and-retry path. New weak entries reserve hash storage before
+mutation; duplicate WeakSet members and WeakMap replacements reserve nothing.
+
+`WeakKey` represents either a heap object identity or a Symbol identity.
+`Symbol.for` values fail `CanBeHeldWeakly`; local and well-known Symbols are
+accepted. HashMap/HashSet storage satisfies the specification's average
+sublinear access requirement. Object keys remain weak. When a reachable
+WeakMap is marked, the collector activates values whose keys are already live
+and indexes every other value under its pending object key. Marking that key
+then activates the pending values without rescanning unrelated maps, reaching
+the ephemeron fixed point in work proportional to marked objects and reachable
+entries. Finite-budget marks snapshot roots once, deduplicate queued identities,
+queue every allocation made during the cycle, and retrace every marked cell
+once immediately before sweep. The completion phase also remarks the current
+host roots and shares the collector lock with allocation publication, so
+mutations between slices cannot hide a new object, host root, strong edge, or
+WeakMap entry. Sweep then removes dead entries,
+preventing root-order-dependent value loss and stale heap-index aliasing.
+Symbol-keyed entries remain live because RuJa's Symbol table is not yet
+collectible.
+
+```text
+[Decision Log]
+- 목적과 의도: Complete WeakMap/WeakSet observable semantics and resource ownership while making weak-key liveness independent of GC root order.
+- 기존 구현 및 제약 조건: Constructors ignored iterables, only the main Realm installed weak collections, methods silently accepted wrong receivers, only object keys were represented, unchecked linear Vec storage violated average sublinear access, and one-pass WeakMap tracing could free a live-key value while retaining its stale entry.
+- 검토한 주요 대안: Patch constructors only, retain Vec with more Fuel, globally unskip WeakMap/WeakSet features, store every key strongly, add heap generations without fixing marking, use hash storage with one-pass tracing, or combine hash storage with an ephemeron fixed point and exact admission.
+- 선택한 방식: Install Realm-local intrinsics; use the shared direct iterator/close protocol; represent object and admissible Symbol identities as WeakKey; reserve HashMap/HashSet growth before publication; enforce method brands and callback-first upsert validation; and resolve reachable WeakMap ephemerons through deduplicated key-indexed pending values, with root snapshots, an allocation barrier, persistent finite-budget state, and a pre-sweep mutation retrace.
+- 다른 대안 대신 이 방식을 선택한 이유: Constructor-only repair leaves method, Symbol, Realm, performance, and ABA-visible GC defects; extra Fuel does not satisfy average sublinear access; strong keys destroy weak semantics; generations only mask stale aliases; one-pass tracing remains root-order dependent; and global feature removal overclaims unrelated paths.
+- 장점, 단점 및 영향: The complete pinned WeakMap/WeakSet corpus is 226/226, access and registered-Symbol classification are average O(1), insertion failures are catchable and atomic, and direct tests prove root-order independence, transitive ephemerons, incremental progress and mutation safety, dead cycles, cell reuse safety, Realm rollback, close/Fuel boundaries, and retry. The final incremental retrace is one linear sweep-side pass; Symbol-keyed entries can persist until VM teardown because Symbol GC remains separate work.
+```
+
+---
+
 ## Logical UTF-16 Unicode RegExp fallback
 
 RuJa's internal lone-surrogate representation uses `U+F0000..U+F07FF`

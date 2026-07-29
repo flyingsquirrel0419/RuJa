@@ -43,11 +43,36 @@ pub struct GcCell {
 pub struct Heap {
     pub cells: Mutex<Vec<GcCell>>,
     free_list: Mutex<Vec<usize>>,
+    incremental_mark: Mutex<Option<IncrementalMark>>,
     alloc_since_gc: AtomicUsize,
     gc_threshold: AtomicUsize,
     /// Maximum number of live heap objects allowed. When this is exceeded,
     /// `allocate` returns `HeapLimitExceeded`. `0` means unlimited.
     max_objects: AtomicUsize,
+}
+
+struct IncrementalMark {
+    marked: Vec<bool>,
+    queued: Vec<bool>,
+    worklist: Vec<usize>,
+    pending_ephemerons: std::collections::HashMap<usize, Vec<crate::value::Value>>,
+}
+
+impl IncrementalMark {
+    fn queue_index(&mut self, index: usize) {
+        if index < self.marked.len() && !self.marked[index] && !self.queued[index] {
+            self.queued[index] = true;
+            self.worklist.push(index);
+        }
+    }
+
+    fn queue_value(&mut self, value: &crate::value::Value) {
+        let mut roots = Vec::new();
+        push_value(value, &mut roots);
+        for root in roots {
+            self.queue_index(root);
+        }
+    }
 }
 
 fn push_value(value: &crate::value::Value, worklist: &mut Vec<usize>) {
@@ -70,12 +95,67 @@ fn trace_private_slot(slot: &crate::value::PrivateSlot, worklist: &mut Vec<usize
     }
 }
 
+fn trace_cell(
+    cells: &[GcCell],
+    index: usize,
+) -> (
+    Vec<usize>,
+    Vec<(crate::value::WeakKey, crate::value::Value)>,
+) {
+    let Some(cell) = cells.get(index) else {
+        return (Vec::new(), Vec::new());
+    };
+    let obj_ref = cell.obj.lock();
+    let Some(obj) = obj_ref.as_ref() else {
+        return (Vec::new(), Vec::new());
+    };
+    let mut children = Vec::new();
+    trace_obj(obj, &mut children);
+    for slot in cell.private_elements.lock().values() {
+        trace_private_slot(slot, &mut children);
+    }
+    let ephemerons = match obj {
+        HeapObj::WeakMap(map) => map
+            .entries
+            .lock()
+            .iter()
+            .map(|(key, value)| (*key, value.clone()))
+            .collect(),
+        _ => Vec::new(),
+    };
+    (children, ephemerons)
+}
+
+fn queue_ephemerons(
+    state: &mut IncrementalMark,
+    ephemerons: Vec<(crate::value::WeakKey, crate::value::Value)>,
+) {
+    for (key, value) in ephemerons {
+        match key {
+            crate::value::WeakKey::Object(key_index)
+                if key_index < state.marked.len() && state.marked[key_index] =>
+            {
+                state.queue_value(&value);
+            }
+            crate::value::WeakKey::Object(key_index) => state
+                .pending_ephemerons
+                .entry(key_index)
+                .or_default()
+                .push(value),
+            // Symbols are stable VM identities until the Symbol table itself
+            // becomes collectible.
+            crate::value::WeakKey::Symbol(_) => {
+                state.queue_value(&value);
+            }
+        }
+    }
+}
+
 /// Push reachable child indices of `obj` onto `worklist`. Called while NOT
-/// holding the cells mutex, so it may lock any object field freely. Ephemeron
-/// (WeakMap) values are pushed only when their key is already marked; the
-/// caller iterates to a fixed point so transitively-reachable values are
-/// eventually marked.
-pub fn trace_obj(obj: &HeapObj, marked: &[bool], worklist: &mut Vec<usize>) {
+/// holding the cells mutex, so it may lock any object field freely. WeakMap
+/// ephemeron values are deliberately deferred to the collector's fixed-point
+/// phase after this ordinary strong-edge trace.
+pub fn trace_obj(obj: &HeapObj, worklist: &mut Vec<usize>) {
     if let HeapObj::Iterator(it) = obj {
         for v in it.items.lock().iter() {
             push_value(v, worklist);
@@ -192,13 +272,10 @@ pub fn trace_obj(obj: &HeapObj, marked: &[bool], worklist: &mut Vec<usize>) {
                 push_value(v, worklist);
             }
         }
-        HeapObj::WeakMap(wm) => {
-            for (key_idx, v) in wm.entries.lock().iter() {
-                if *key_idx < marked.len() && marked[*key_idx] {
-                    push_value(v, worklist);
-                }
-            }
-        }
+        // WeakMap values are activated in a separate ephemeron fixed point
+        // after ordinary strong marking. Visiting them here would make
+        // liveness depend on root/worklist order.
+        HeapObj::WeakMap(_) => {}
         HeapObj::WeakSet(_) | HeapObj::WeakRef(_) => {}
         HeapObj::FinalizationRegistry(registry) => {
             push_value(&registry.cleanup_callback, worklist);
@@ -403,6 +480,7 @@ impl Heap {
         Heap {
             cells: Mutex::new(Vec::new()),
             free_list: Mutex::new(Vec::new()),
+            incremental_mark: Mutex::new(None),
             alloc_since_gc: AtomicUsize::new(0),
             gc_threshold: AtomicUsize::new(1024),
             max_objects: AtomicUsize::new(0),
@@ -430,6 +508,7 @@ impl Heap {
                 return Err(HeapLimitExceeded);
             }
         }
+        let mut incremental_mark = self.incremental_mark.lock();
         let idx = {
             let mut free = self.free_list.lock();
             if let Some(idx) = free.pop() {
@@ -449,6 +528,13 @@ impl Heap {
                 idx
             }
         };
+        if let Some(state) = incremental_mark.as_mut() {
+            if idx >= state.marked.len() {
+                state.marked.resize(idx + 1, false);
+                state.queued.resize(idx + 1, false);
+            }
+            state.queue_index(idx);
+        }
         self.alloc_since_gc.fetch_add(1, Ordering::Relaxed);
         Ok(idx)
     }
@@ -459,59 +545,100 @@ impl Heap {
 
     /// Incremental GC: mark up to `budget` cells, then sweep if marking is done.
     /// With budget = usize::MAX, this is equivalent to a full stop-the-world GC.
-    /// The VM calls this periodically with a small budget to avoid long pauses.
+    /// Finite-budget cycles snapshot roots on their first slice. New allocations
+    /// are queued by `allocate`, while the final retrace catches edges added to
+    /// already-marked objects between slices.
     pub fn collect_incremental(&self, roots: &[usize], budget: usize) {
+        let mut state_slot = self.incremental_mark.lock();
         let cells_len = self.cells.lock().len();
-        let mut marked = vec![false; cells_len];
-        let mut worklist: Vec<usize> = roots.to_vec();
-        let mut changed = true;
-        let mut marked_count = 0usize;
-        while changed {
-            changed = false;
-            while let Some(idx) = worklist.pop() {
-                if marked_count >= budget && budget != usize::MAX {
-                    // Budget exhausted: stop marking, don't sweep yet.
-                    // The next call will restart from roots (simplified:
-                    // we don't save state between calls, so this is a
-                    // partial collection that marks what it can).
-                    // For now, just continue to completion since the
-                    // incremental state isn't persisted across calls.
-                    break;
+        let (mut state, new_cycle) = match state_slot.take() {
+            Some(state) => (state, false),
+            None => (
+                IncrementalMark {
+                    marked: vec![false; cells_len],
+                    queued: vec![false; cells_len],
+                    worklist: Vec::new(),
+                    pending_ephemerons: std::collections::HashMap::new(),
+                },
+                true,
+            ),
+        };
+        state.marked.resize(cells_len, false);
+        state.queued.resize(cells_len, false);
+        if new_cycle || budget == usize::MAX {
+            for root in roots {
+                state.queue_index(*root);
+            }
+        }
+
+        let mut marked_this_slice = 0usize;
+        let mut finalizing = false;
+        let mut rescanned = false;
+        loop {
+            while let Some(idx) = state.worklist.pop() {
+                if idx < state.queued.len() {
+                    state.queued[idx] = false;
                 }
-                if idx >= cells_len || marked[idx] {
+                if idx >= cells_len || state.marked[idx] {
                     continue;
                 }
-                marked[idx] = true;
-                marked_count += 1;
-                changed = true;
-                let children: Vec<usize> = {
+                if !finalizing && marked_this_slice >= budget && budget != usize::MAX {
+                    state.queue_index(idx);
+                    *state_slot = Some(state);
+                    return;
+                }
+                state.marked[idx] = true;
+                marked_this_slice += 1;
+
+                let (children, ephemerons) = {
                     let cells = self.cells.lock();
-                    if let Some(cell) = cells.get(idx) {
-                        let obj_ref = cell.obj.lock();
-                        if let Some(obj) = obj_ref.as_ref() {
-                            let mut w = Vec::new();
-                            trace_obj(obj, &marked, &mut w);
-                            for slot in cell.private_elements.lock().values() {
-                                trace_private_slot(slot, &mut w);
-                            }
-                            w
-                        } else {
-                            Vec::new()
-                        }
-                    } else {
-                        Vec::new()
-                    }
+                    trace_cell(&cells, idx)
                 };
-                worklist.extend(children);
+                for child in children {
+                    state.queue_index(child);
+                }
+                queue_ephemerons(&mut state, ephemerons);
+                if let Some(values) = state.pending_ephemerons.remove(&idx) {
+                    for value in values {
+                        state.queue_value(&value);
+                    }
+                }
             }
-            if marked_count >= budget && budget != usize::MAX {
+            if !finalizing {
+                // Finish against the current root set in the same stop-the-
+                // world phase as sweep. This catches old white objects that
+                // became host roots between finite-budget slices without
+                // rescanning all roots on every slice.
+                finalizing = true;
+                for root in roots {
+                    state.queue_index(*root);
+                }
+                continue;
+            }
+            if rescanned {
                 break;
             }
+
+            // A mutator can change an already-marked object between slices.
+            // Rebuild ephemeron dependencies and retrace marked cells once
+            // immediately before sweep, which is the incremental write-barrier
+            // equivalent for this single-threaded VM.
+            rescanned = true;
+            state.pending_ephemerons.clear();
+            let cells = self.cells.lock();
+            for index in 0..cells_len {
+                if !state.marked[index] {
+                    continue;
+                }
+                let (children, ephemerons) = trace_cell(&cells, index);
+                for child in children {
+                    state.queue_index(child);
+                }
+                queue_ephemerons(&mut state, ephemerons);
+            }
         }
-        // Only sweep if marking completed (worklist drained fully).
-        if !worklist.is_empty() {
-            return;
-        }
+
+        let marked = state.marked;
         // Sweep: free unmarked cells.
         let mut free = self.free_list.lock();
         let mut cells = self.cells.lock();
@@ -528,12 +655,20 @@ impl Heap {
             if let Some(obj) = obj_ref.as_ref() {
                 match obj {
                     HeapObj::WeakMap(wm) => {
-                        wm.entries
-                            .lock()
-                            .retain(|(k, _)| *k < marked.len() && marked[*k]);
+                        wm.entries.lock().retain(|key, _| match key {
+                            crate::value::WeakKey::Object(index) => {
+                                *index < marked.len() && marked[*index]
+                            }
+                            crate::value::WeakKey::Symbol(_) => true,
+                        });
                     }
                     HeapObj::WeakSet(ws) => {
-                        ws.items.lock().retain(|k| *k < marked.len() && marked[*k]);
+                        ws.items.lock().retain(|key| match key {
+                            crate::value::WeakKey::Object(index) => {
+                                *index < marked.len() && marked[*index]
+                            }
+                            crate::value::WeakKey::Symbol(_) => true,
+                        });
                     }
                     HeapObj::WeakRef(wr) => {
                         let mut target = wr.target.lock();
@@ -697,8 +832,25 @@ impl Heap {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::value::{GcIdx, PrivateNameKey, PrivateSlot, PrivateSlotKey, Value};
+    use crate::value::{
+        GcIdx, PrivateNameKey, PrivateSlot, PrivateSlotKey, PropertyDescriptor, PropertyKey, Value,
+        WeakKey, WeakMapData,
+    };
     use std::sync::Arc;
+
+    fn weak_map(
+        heap: &Heap,
+        entries: impl IntoIterator<Item = (WeakKey, Value)>,
+        strong_properties: impl IntoIterator<Item = (PropertyKey, PropertyDescriptor)>,
+    ) -> usize {
+        heap.allocate(HeapObj::WeakMap(WeakMapData {
+            entries: Mutex::new(entries.into_iter().collect()),
+            props: Mutex::new(strong_properties.into_iter().collect()),
+            proto: Mutex::new(None),
+            extensible: AtomicBool::new(true),
+        }))
+        .unwrap()
+    }
 
     #[test]
     fn private_elements_trace_values_and_clear_when_cells_are_reused() {
@@ -722,5 +874,248 @@ mod tests {
         let second = heap.allocate(HeapObj::placeholder()).unwrap();
         assert!(heap.get_private_element(first, &key).is_none());
         assert!(heap.get_private_element(second, &key).is_none());
+    }
+
+    #[test]
+    fn weak_map_live_values_are_root_order_independent() {
+        for map_first in [false, true] {
+            let heap = Heap::new();
+            let key = heap.allocate(HeapObj::placeholder()).unwrap();
+            let value = heap.allocate(HeapObj::placeholder()).unwrap();
+            let map = weak_map(
+                &heap,
+                [(WeakKey::Object(key), Value::Object(GcIdx(value)))],
+                [],
+            );
+            let roots = if map_first {
+                vec![key, map]
+            } else {
+                vec![map, key]
+            };
+            heap.collect(&roots);
+            assert_eq!(heap.live_count(), 3, "map_first={map_first}");
+            let fresh = heap.allocate(HeapObj::placeholder()).unwrap();
+            assert_ne!(fresh, value, "live ephemeron value must not be reused");
+        }
+    }
+
+    #[test]
+    fn weak_map_ephemeron_chains_reach_a_fixed_point() {
+        let heap = Heap::new();
+        let first_key = heap.allocate(HeapObj::placeholder()).unwrap();
+        let second_key = heap.allocate(HeapObj::placeholder()).unwrap();
+        let value = heap.allocate(HeapObj::placeholder()).unwrap();
+        let first_map = weak_map(
+            &heap,
+            [(WeakKey::Object(first_key), Value::Object(GcIdx(second_key)))],
+            [],
+        );
+        let second_map = weak_map(
+            &heap,
+            [(WeakKey::Object(second_key), Value::Object(GcIdx(value)))],
+            [],
+        );
+
+        heap.collect(&[first_key, first_map, second_map]);
+        assert_eq!(heap.live_count(), 5);
+        let fresh = heap.allocate(HeapObj::placeholder()).unwrap();
+        assert_ne!(fresh, value, "transitive ephemeron value must remain live");
+    }
+
+    #[test]
+    fn incremental_marking_resumes_through_ephemeron_chains() {
+        let heap = Heap::new();
+        let first_key = heap.allocate(HeapObj::placeholder()).unwrap();
+        let second_key = heap.allocate(HeapObj::placeholder()).unwrap();
+        let value = heap.allocate(HeapObj::placeholder()).unwrap();
+        let garbage = heap.allocate(HeapObj::placeholder()).unwrap();
+        let first_map = weak_map(
+            &heap,
+            [(WeakKey::Object(first_key), Value::Object(GcIdx(second_key)))],
+            [],
+        );
+        let second_map = weak_map(
+            &heap,
+            [(WeakKey::Object(second_key), Value::Object(GcIdx(value)))],
+            [],
+        );
+        let roots = [first_key, first_map, second_map];
+
+        for _ in 0..4 {
+            heap.collect_incremental(&roots, 1);
+            assert_eq!(heap.live_count(), 6, "partial marks must not sweep");
+        }
+        heap.collect_incremental(&roots, 1);
+        assert_eq!(heap.live_count(), 5);
+        let fresh = heap.allocate(HeapObj::placeholder()).unwrap();
+        assert_eq!(fresh, garbage, "completed incremental mark must sweep");
+    }
+
+    #[test]
+    fn incremental_marking_retraces_mutated_marked_objects_before_sweep() {
+        let heap = Heap::new();
+        let owner = heap.allocate(HeapObj::placeholder()).unwrap();
+        let first_child = heap.allocate(HeapObj::placeholder()).unwrap();
+        let late_child = heap.allocate(HeapObj::placeholder()).unwrap();
+        let garbage = heap.allocate(HeapObj::placeholder()).unwrap();
+        heap.with_obj(owner, |object| {
+            object.props().lock().insert(
+                PropertyKey::from("first"),
+                PropertyDescriptor::data(Value::Object(GcIdx(first_child))),
+            );
+        });
+
+        heap.collect_incremental(&[owner], 1);
+        heap.with_obj(owner, |object| {
+            object.props().lock().insert(
+                PropertyKey::from("late"),
+                PropertyDescriptor::data(Value::Object(GcIdx(late_child))),
+            );
+        });
+        heap.collect_incremental(&[owner], 1);
+        heap.collect_incremental(&[owner], 1);
+
+        assert_eq!(heap.live_count(), 3);
+        let fresh = heap.allocate(HeapObj::placeholder()).unwrap();
+        assert_eq!(fresh, garbage);
+    }
+
+    #[test]
+    fn incremental_marking_deduplicates_roots_already_in_the_worklist() {
+        let heap = Heap::new();
+        let roots: Vec<_> = (0..100)
+            .map(|_| heap.allocate(HeapObj::placeholder()).unwrap())
+            .collect();
+
+        heap.collect_incremental(&roots, 1);
+        assert_eq!(
+            heap.incremental_mark
+                .lock()
+                .as_ref()
+                .unwrap()
+                .worklist
+                .len(),
+            99
+        );
+        heap.collect_incremental(&roots, 1);
+        assert_eq!(
+            heap.incremental_mark
+                .lock()
+                .as_ref()
+                .unwrap()
+                .worklist
+                .len(),
+            98
+        );
+    }
+
+    #[test]
+    fn incremental_marking_queues_allocations_created_between_slices() {
+        let heap = Heap::new();
+        let owner = heap.allocate(HeapObj::placeholder()).unwrap();
+        let child = heap.allocate(HeapObj::placeholder()).unwrap();
+        let garbage = heap.allocate(HeapObj::placeholder()).unwrap();
+        heap.with_obj(owner, |object| {
+            object.props().lock().insert(
+                PropertyKey::from("child"),
+                PropertyDescriptor::data(Value::Object(GcIdx(child))),
+            );
+        });
+
+        heap.collect_incremental(&[owner], 1);
+        let late = heap.allocate(HeapObj::placeholder()).unwrap();
+        heap.collect_incremental(&[owner], 1);
+        heap.collect_incremental(&[owner], 1);
+
+        assert_eq!(heap.live_count(), 3);
+        let fresh = heap.allocate(HeapObj::placeholder()).unwrap();
+        assert_eq!(fresh, garbage);
+        assert_ne!(fresh, late);
+    }
+
+    #[test]
+    fn incremental_allocation_barrier_preserves_marks_when_reusing_a_low_cell() {
+        let heap = Heap::new();
+        let garbage = heap.allocate(HeapObj::placeholder()).unwrap();
+        let owner = heap.allocate(HeapObj::placeholder()).unwrap();
+        let child = heap.allocate(HeapObj::placeholder()).unwrap();
+        heap.with_obj(owner, |object| {
+            object.props().lock().insert(
+                PropertyKey::from("child"),
+                PropertyDescriptor::data(Value::Object(GcIdx(child))),
+            );
+        });
+        heap.collect(&[owner]);
+        assert_eq!(heap.live_count(), 2);
+
+        heap.collect_incremental(&[owner], 1);
+        let late = heap.allocate(HeapObj::placeholder()).unwrap();
+        assert_eq!(late, garbage);
+        heap.collect_incremental(&[owner], 1);
+
+        assert_eq!(heap.live_count(), 3);
+        assert!(heap.with_obj(child, |object| matches!(object, HeapObj::Object(_))));
+    }
+
+    #[test]
+    fn incremental_completion_remarks_roots_added_between_slices() {
+        let heap = Heap::new();
+        let owner = heap.allocate(HeapObj::placeholder()).unwrap();
+        let child = heap.allocate(HeapObj::placeholder()).unwrap();
+        let late_root = heap.allocate(HeapObj::placeholder()).unwrap();
+        let garbage = heap.allocate(HeapObj::placeholder()).unwrap();
+        heap.with_obj(owner, |object| {
+            object.props().lock().insert(
+                PropertyKey::from("child"),
+                PropertyDescriptor::data(Value::Object(GcIdx(child))),
+            );
+        });
+
+        heap.collect_incremental(&[owner], 1);
+        heap.collect_incremental(&[owner, late_root], 1);
+
+        assert_eq!(heap.live_count(), 3);
+        assert!(heap.with_obj(late_root, |object| matches!(object, HeapObj::Object(_))));
+        let fresh = heap.allocate(HeapObj::placeholder()).unwrap();
+        assert_eq!(fresh, garbage);
+    }
+
+    #[test]
+    fn strong_weak_map_property_can_activate_an_ephemeron_value() {
+        let heap = Heap::new();
+        let key = heap.allocate(HeapObj::placeholder()).unwrap();
+        let value = heap.allocate(HeapObj::placeholder()).unwrap();
+        let map = weak_map(
+            &heap,
+            [(WeakKey::Object(key), Value::Object(GcIdx(value)))],
+            [(
+                PropertyKey::from("key"),
+                PropertyDescriptor::data(Value::Object(GcIdx(key))),
+            )],
+        );
+
+        heap.collect(&[map]);
+        assert_eq!(heap.live_count(), 3);
+    }
+
+    #[test]
+    fn dead_ephemeron_cycle_does_not_retain_its_key_or_value() {
+        let heap = Heap::new();
+        let key = heap.allocate(HeapObj::placeholder()).unwrap();
+        let value = heap.allocate(HeapObj::placeholder()).unwrap();
+        let map = weak_map(
+            &heap,
+            [(WeakKey::Object(key), Value::Object(GcIdx(value)))],
+            [],
+        );
+
+        heap.collect(&[map]);
+        assert_eq!(heap.live_count(), 1);
+        assert!(heap.with_obj(map, |object| {
+            let HeapObj::WeakMap(map) = object else {
+                return false;
+            };
+            map.entries.lock().is_empty()
+        }));
     }
 }

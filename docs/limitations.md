@@ -249,8 +249,22 @@ guarantees are required.
   async interrupt / `vm.Interrupt()` like goja. To hard-bound untrusted
   code, also run RuJa in a separately killable process.
 - Map/Set are backed by `IndexMap`/`IndexSet` with SameValueZero keys
-  (`MapKey` wrapper), so `get`/`has`/`set` are O(1). `WeakMap`/`WeakSet`
-  still use `Vec` (entries are keyed by heap index for GC integration).
+  (`MapKey` wrapper), so `get`/`has`/`set` are O(1). `WeakMap`/`WeakSet` use
+  `HashMap`/`HashSet` over object or Symbol identities for average O(1) access;
+  registered-Symbol rejection also uses an O(1) identity set. Object-keyed
+  WeakMap values are activated through a key-indexed ephemeron fixed point.
+- RuJa's Symbol table is not garbage-collected. Local and well-known Symbols
+  are valid WeakMap keys, WeakSet values, and WeakRef targets, but an otherwise
+  unreachable Symbol weak key and its associated WeakMap value may remain in
+  memory for the VM lifetime. `Symbol.for` identities are rejected by
+  `CanBeHeldWeakly` as required. A collectible Symbol arena remains a resource
+  management follow-up, not an observable identity or method-semantics gap.
+- Incremental GC's `budget` limits newly marked heap cells, not all native
+  tracing work. One large object's properties or WeakMap entries, the final
+  mutation-safety retrace, and sweep can each take linear time in their local
+  input. Worklist identities are deduplicated and ephemeron chains are linear,
+  but strict pause-time bounds require cursorized object tracing and sweeping
+  in a later collector unit.
 - `WeakRef` supports object, unregistered Symbol, and well-known Symbol
   targets. Object targets are cleared by GC once unreachable and are kept
   alive through the current job after construction or `deref()`.

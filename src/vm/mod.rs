@@ -98,6 +98,18 @@ pub(crate) enum SetReservationSite {
 
 #[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum WeakCollectionReservationSite {
+    MapConstructorRoots,
+    MapIteratorRoots,
+    MapEntryStorage,
+    SetConstructorRoots,
+    SetIteratorRoots,
+    SetEntryStorage,
+    MapComputedRoots,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ProxyDescriptorReservationSite {
     OperationRoot,
     LayerRoots,
@@ -335,6 +347,8 @@ pub struct Vm {
     pub(crate) async_generator_function_proto: Value,
     pub(crate) map_proto: Value,
     pub(crate) set_proto: Value,
+    pub(crate) weakmap_proto: Value,
+    pub(crate) weakset_proto: Value,
     pub(crate) date_proto: Value,
     pub(crate) microtask_queue: std::collections::VecDeque<Microtask>,
     /// Monomorphic inline cache grouped by heap identity. The nested map lets
@@ -381,6 +395,8 @@ pub struct Vm {
     #[cfg(test)]
     pub(crate) fail_set_reservation: Option<(SetReservationSite, usize)>,
     #[cfg(test)]
+    pub(crate) fail_weak_collection_reservation: Option<(WeakCollectionReservationSite, usize)>,
+    #[cfg(test)]
     pub(crate) group_by_index_override: Option<u64>,
     #[cfg(test)]
     pub(crate) group_by_zero_fuel_before_step: bool,
@@ -394,6 +410,10 @@ pub struct Vm {
     pub(crate) map_constructor_zero_fuel_before_step: bool,
     #[cfg(test)]
     pub(crate) set_constructor_zero_fuel_before_step: bool,
+    #[cfg(test)]
+    pub(crate) weakmap_constructor_zero_fuel_before_step: bool,
+    #[cfg(test)]
+    pub(crate) weakset_constructor_zero_fuel_before_step: bool,
     #[cfg(test)]
     pub(crate) set_constructor_fresh_index: Option<GcIdx>,
     #[cfg(test)]
@@ -427,6 +447,7 @@ pub struct Vm {
     pub(crate) next_symbol_id: u32,
     pub(crate) next_private_name_id: u64,
     pub(crate) symbol_registry: HashMap<Arc<str>, u32>,
+    pub(crate) registered_symbol_ids: HashSet<u32>,
     pub(crate) symbol_descriptions: HashMap<u32, Option<Arc<str>>>,
     /// Canonical non-GC key reused by Array length operations so publication
     /// never needs to allocate key storage after its fallible preflight.
@@ -460,6 +481,8 @@ pub struct Vm {
     pub(crate) realm_promise_prototypes: HashMap<usize, Value>,
     pub(crate) realm_map_prototypes: HashMap<usize, Value>,
     pub(crate) realm_set_prototypes: HashMap<usize, Value>,
+    pub(crate) realm_weakmap_prototypes: HashMap<usize, Value>,
+    pub(crate) realm_weakset_prototypes: HashMap<usize, Value>,
     /// Realm global environment -> synchronous generator intrinsics.
     pub(crate) realm_generator_prototypes: HashMap<usize, Value>,
     pub(crate) realm_generator_function_constructors: HashMap<usize, Value>,
@@ -1040,6 +1063,8 @@ impl Vm {
             async_generator_function_proto: Value::Undefined,
             map_proto: Value::Undefined,
             set_proto: Value::Undefined,
+            weakmap_proto: Value::Undefined,
+            weakset_proto: Value::Undefined,
             date_proto: Value::Undefined,
             microtask_queue: std::collections::VecDeque::new(),
             ic: std::collections::HashMap::new(),
@@ -1079,6 +1104,8 @@ impl Vm {
             #[cfg(test)]
             fail_set_reservation: None,
             #[cfg(test)]
+            fail_weak_collection_reservation: None,
+            #[cfg(test)]
             group_by_index_override: None,
             #[cfg(test)]
             group_by_zero_fuel_before_step: false,
@@ -1092,6 +1119,10 @@ impl Vm {
             map_constructor_zero_fuel_before_step: false,
             #[cfg(test)]
             set_constructor_zero_fuel_before_step: false,
+            #[cfg(test)]
+            weakmap_constructor_zero_fuel_before_step: false,
+            #[cfg(test)]
+            weakset_constructor_zero_fuel_before_step: false,
             #[cfg(test)]
             set_constructor_fresh_index: None,
             #[cfg(test)]
@@ -1116,6 +1147,7 @@ impl Vm {
             next_symbol_id: 16,
             next_private_name_id: 1,
             symbol_registry: HashMap::new(),
+            registered_symbol_ids: HashSet::new(),
             symbol_descriptions: HashMap::new(),
             array_length_key: PropertyKey::from("length"),
             well_known_symbols: WellKnownSymbols {
@@ -1147,6 +1179,8 @@ impl Vm {
             realm_promise_prototypes: HashMap::new(),
             realm_map_prototypes: HashMap::new(),
             realm_set_prototypes: HashMap::new(),
+            realm_weakmap_prototypes: HashMap::new(),
+            realm_weakset_prototypes: HashMap::new(),
             realm_generator_prototypes: HashMap::new(),
             realm_generator_function_constructors: HashMap::new(),
             realm_generator_function_prototypes: HashMap::new(),
@@ -2727,6 +2761,8 @@ impl Vm {
         self.realm_promise_prototypes.remove(&realm);
         self.realm_map_prototypes.remove(&realm);
         self.realm_set_prototypes.remove(&realm);
+        self.realm_weakmap_prototypes.remove(&realm);
+        self.realm_weakset_prototypes.remove(&realm);
         self.realm_generator_prototypes.remove(&realm);
         self.realm_generator_function_constructors.remove(&realm);
         self.realm_generator_function_prototypes.remove(&realm);
@@ -3088,6 +3124,22 @@ impl Vm {
             .get(&realm.0)
             .cloned()
             .unwrap_or_else(|| self.set_proto.clone())
+    }
+
+    pub(crate) fn weakmap_prototype_for_env(&self, env: GcIdx) -> Value {
+        let realm = crate::environment::global_env_root(&self.heap, env);
+        self.realm_weakmap_prototypes
+            .get(&realm.0)
+            .cloned()
+            .unwrap_or_else(|| self.weakmap_proto.clone())
+    }
+
+    pub(crate) fn weakset_prototype_for_env(&self, env: GcIdx) -> Value {
+        let realm = crate::environment::global_env_root(&self.heap, env);
+        self.realm_weakset_prototypes
+            .get(&realm.0)
+            .cloned()
+            .unwrap_or_else(|| self.weakset_proto.clone())
     }
 
     pub(crate) fn error_prototype_for_env(&self, name: &str, env: GcIdx) -> Value {

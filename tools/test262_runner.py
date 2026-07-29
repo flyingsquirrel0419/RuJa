@@ -50,6 +50,9 @@ try:
     from test262_set_constructor_admission import (
         SET_CONSTRUCTOR_FEATURES, SET_CONSTRUCTOR_FILES,
     )
+    from test262_weak_collection_admission import (
+        WEAK_COLLECTION_FEATURES, WEAK_COLLECTION_FILES,
+    )
     from test262_native_construct_admission import (
         NATIVE_CONSTRUCT_FEATURES, NATIVE_CONSTRUCT_FILES,
     )
@@ -240,6 +243,9 @@ except ModuleNotFoundError:
     )
     from tools.test262_set_constructor_admission import (
         SET_CONSTRUCTOR_FEATURES, SET_CONSTRUCTOR_FILES,
+    )
+    from tools.test262_weak_collection_admission import (
+        WEAK_COLLECTION_FEATURES, WEAK_COLLECTION_FILES,
     )
     from tools.test262_native_construct_admission import (
         NATIVE_CONSTRUCT_FEATURES, NATIVE_CONSTRUCT_FILES,
@@ -3066,6 +3072,20 @@ def set_constructor_features(path):
         return frozenset()
     return SET_CONSTRUCTOR_FEATURES.get(rel.as_posix(), frozenset())
 
+def weak_collection_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except (OSError, ValueError):
+        return False
+    return rel.as_posix() in WEAK_COLLECTION_FILES
+
+def weak_collection_features(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except (OSError, ValueError):
+        return frozenset()
+    return WEAK_COLLECTION_FEATURES.get(rel.as_posix(), frozenset())
+
 def native_construct_path(path):
     if path is None:
         return False
@@ -3400,6 +3420,8 @@ def should_skip(meta, path=None):
         feats.difference_update(map_constructor_features(path))
     if path is not None and set_constructor_path(path):
         feats.difference_update(set_constructor_features(path))
+    if path is not None and weak_collection_path(path):
+        feats.difference_update(weak_collection_features(path))
     if path is not None and native_construct_path(path):
         feats.difference_update(native_construct_features(path))
     if path is not None and object_prototype_path(path):
