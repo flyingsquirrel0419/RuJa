@@ -279,7 +279,16 @@
   duplicate names across structurally disjoint alternatives with
   participating-capture selection, and the String-symbol
   match/search/split/replace/matchAll operations
-- **Map/Set**: full key/value collections with iteration. Map and Set
+- **Map/Set**: full key/value collections with iteration. Set includes
+  `union`, `intersection`, `difference`, `symmetricDifference`, `isSubsetOf`,
+  `isSupersetOf`, and `isDisjointFrom`. These methods cache Set-like `size`,
+  `has`, `keys`, and iterator `next` observations, preserve live receiver or
+  copied-result traversal as required, close active iterators on catchable
+  post-step failures, and create results in the calling Realm. Set's ordered
+  generation slots, tombstones, stable bounded compaction, and hash index
+  preserve deletion/reinsertion order with average O(1) membership and removal
+  while Fuel bounds traversal, compaction, and clear work. `forEach` uses the
+  same rooted live cursor. Map and Set
   constructors plus `Map.groupBy` use cached zero-argument iterator records with no
   `HasProperty` probe, observe built-in iterator overrides, meter each step,
   preserve original close completions, keep observable state rooted, and use

@@ -94,6 +94,12 @@ pub(crate) enum SetReservationSite {
     ConstructorRoots,
     IteratorRoots,
     EntryStorage,
+    AlgebraInputs,
+    AlgebraRecordRoots,
+    AlgebraIteratorRoots,
+    AlgebraTraversalRoots,
+    AlgebraResultRoots,
+    AlgebraResultStorage,
 }
 
 #[cfg(test)]
@@ -410,6 +416,12 @@ pub struct Vm {
     pub(crate) map_constructor_zero_fuel_before_step: bool,
     #[cfg(test)]
     pub(crate) set_constructor_zero_fuel_before_step: bool,
+    #[cfg(test)]
+    pub(crate) set_algebra_zero_fuel_before_step: bool,
+    #[cfg(test)]
+    pub(crate) set_algebra_garbage_before_result_allocation: bool,
+    #[cfg(test)]
+    pub(crate) set_algebra_live_before_result_allocation: Option<usize>,
     #[cfg(test)]
     pub(crate) weakmap_constructor_zero_fuel_before_step: bool,
     #[cfg(test)]
@@ -1119,6 +1131,12 @@ impl Vm {
             map_constructor_zero_fuel_before_step: false,
             #[cfg(test)]
             set_constructor_zero_fuel_before_step: false,
+            #[cfg(test)]
+            set_algebra_zero_fuel_before_step: false,
+            #[cfg(test)]
+            set_algebra_garbage_before_result_allocation: false,
+            #[cfg(test)]
+            set_algebra_live_before_result_allocation: None,
             #[cfg(test)]
             weakmap_constructor_zero_fuel_before_step: false,
             #[cfg(test)]

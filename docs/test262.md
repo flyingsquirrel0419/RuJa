@@ -12328,6 +12328,43 @@ sorted content-set hash is
 - 장점, 단점 및 영향: Both directories become failure-free with 76 runtime fail-to-pass and 95 skip-to-pass transitions. Exact metadata keeps the support boundary closed, deterministic tests establish correctness beyond aggregate conformance counts, and the full matrix confirms built-ins-only movement with 31/32 corrected artifact identity. Strict pause-time GC budgeting and collectible Symbols remain explicit later collector work.
 ```
 
+## Set algebra exact admission
+
+Pinned Test262 `9e61c12835c5e4a3bdba93850427e6742c4f64c4`
+contains **186** files across the seven Set composition method directories.
+Before this unit, ordinary policy reports **179 pass / 0 fail / 7 skip**; the
+only skips are each method's `not-a-constructor.js`, gated by the exact live
+feature pair `Reflect.construct` and `set-methods`. Forced execution already
+reports **186/0**, so this unit repairs hidden resource and observability gaps
+and then admits only those seven proved paths.
+
+The shared runner/analyzer manifest freezes all seven paths and exact metadata,
+rejects future or outside files, and retains any additional unsupported feature.
+The full workflow sparse-checks all seven directories and hard-requires
+`PASS=186 FAIL=0 SKIP=0 TOTAL=186 RAN=186`. The complete 383-file Set sweep is
+**351 pass / 2 fail / 30 skip**; both failures remain the independent
+`Set.prototype[Symbol.toStringTag]` descriptor tests.
+
+Direct Rust tests cover SetRecord Get order, cached iterator methods, early and
+abrupt close, receiver-versus-result traversal, deletion/reinsertion order,
+foreign-Realm result prototypes, forced GC at observable boundaries, every
+Set-algebra root/storage site with selected later-failure countdowns, exact
+heap-cap result/pair retry, per-slot cursor persistence, Fuel-atomic compaction
+and clear, balanced pins, and clean retry. Local gates pass
+all-target/all-feature release tests including
+**325/325** library tests, warnings-denied Clippy, rustfmt, tooling **145/145**
+with four absent-checkout probes skipped, and exact Set algebra **186/186**.
+
+```text
+[Decision Log]
+- 목적과 의도: Admit the seven Set composition constructibility files only after proving their complete iterator, live-order, Realm, GC, Fuel, and storage behavior.
+- 기존 구현 및 제약 조건: Seven files were skipped by broad feature policy while forced execution was green, but the runtime still bypassed observable iterator methods, leaked resource assumptions, used the wrong difference traversal source, and had superlinear mutation handling not exposed by those files.
+- 검토한 주요 대안: Remove Reflect.construct or set-methods globally, admit directory prefixes, rely on forced green counts, retain all skips, or freeze the exact seven metadata records after deterministic runtime tests.
+- 선택한 방식: Freeze the seven not-a-constructor paths and exact two-feature sets in shared tooling; add a literal 186-file CI gate; pair admission with direct mutation, iterator-close, Realm, GC, reservation, Fuel, and retry evidence.
+- 다른 대안 대신 이 방식을 선택한 이유: Global gates and prefixes overclaim unrelated or future behavior, forced counts do not change supported-subset accounting, and Test262 constructibility files cannot prove host resource ownership or complexity bounds.
+- 장점, 단점 및 영향: Official movement is exactly seven skips replaced by passes with no new failures. Full Set gains seven passes and retains its two known independent failures; full-matrix artifact comparison remains the post-push evidence gate.
+```
+
 ## Why the full-suite rate is not higher
 
 The supported subset currently has no known failures. The full-suite rate is

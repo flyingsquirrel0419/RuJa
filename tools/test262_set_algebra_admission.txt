@@ -1,0 +1,7 @@
+built-ins/Set/prototype/difference/not-a-constructor.js
+built-ins/Set/prototype/intersection/not-a-constructor.js
+built-ins/Set/prototype/isDisjointFrom/not-a-constructor.js
+built-ins/Set/prototype/isSubsetOf/not-a-constructor.js
+built-ins/Set/prototype/isSupersetOf/not-a-constructor.js
+built-ins/Set/prototype/symmetricDifference/not-a-constructor.js
+built-ins/Set/prototype/union/not-a-constructor.js

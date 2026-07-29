@@ -18845,7 +18845,7 @@ fn set_constructor_roots_storage_fuel_and_cleanup_are_retryable() {
         "throwFreshSetValue",
         |vm, _, _| {
             let index = vm.alloc(HeapObj::Set(crate::value::SetData {
-                items: parking_lot::Mutex::new(IndexSet::new()),
+                items: parking_lot::Mutex::new(crate::value::SetStorage::new()),
                 props: parking_lot::Mutex::new(IndexMap::new()),
                 proto: parking_lot::Mutex::new(Some(vm.object_proto.clone())),
                 extensible: std::sync::atomic::AtomicBool::new(true),
@@ -19173,7 +19173,7 @@ fn set_constructor_allocation_retries_at_the_exact_heap_cap() {
         "freshSetPrototype",
         |vm, _, _| {
             let index = vm.alloc(HeapObj::Set(crate::value::SetData {
-                items: parking_lot::Mutex::new(IndexSet::new()),
+                items: parking_lot::Mutex::new(crate::value::SetStorage::new()),
                 props: parking_lot::Mutex::new(IndexMap::new()),
                 proto: parking_lot::Mutex::new(Some(vm.object_proto.clone())),
                 extensible: std::sync::atomic::AtomicBool::new(true),
@@ -19232,6 +19232,471 @@ fn set_constructor_allocation_retries_at_the_exact_heap_cap() {
     )));
     assert!(vm.heap.live_count() <= heap_cap);
     vm.set_max_heap_objects(None);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+}
+
+#[test]
+fn set_algebra_roots_storage_fuel_and_allocation_are_retryable() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("GC hook should register");
+
+    assert_eq!(
+        vm.run(
+            r#"
+            var algebraSourceKey = { marker: 41 };
+            var algebraSource = new Set([algebraSourceKey]);
+            var algebraStep = 0;
+            var algebraOther = {
+              get size() { forceGc(); return 1; },
+              get has() {
+                var has = function(value) { forceGc(); return true; };
+                forceGc();
+                return has;
+              },
+              get keys() {
+                var keys = function() {
+                  forceGc();
+                  var iterator = {
+                    get next() {
+                      var next = function() {
+                        forceGc();
+                        if (algebraStep++ !== 0) {
+                          return { get done() { forceGc(); return true; } };
+                        }
+                        return {
+                          get done() { forceGc(); return false; },
+                          get value() {
+                            var value = { marker: 42 };
+                            forceGc();
+                            return value;
+                          }
+                        };
+                      };
+                      forceGc();
+                      return next;
+                    }
+                  };
+                  forceGc();
+                  return iterator;
+                };
+                forceGc();
+                return keys;
+              }
+            };
+            var algebraUnion = algebraSource.union(algebraOther);
+            Array.from(algebraUnion).map(function(value) { return value.marker; }).join(",");
+            "#,
+        )
+        .expect("Set algebra state should survive every observable GC"),
+        Value::String(Arc::from("41,42"))
+    );
+
+    assert_eq!(
+        vm.run(
+            r#"
+            var algebraIntersectionSource = new Set([{ marker: 73 }]);
+            var algebraIntersection = algebraIntersectionSource.intersection({
+              size: Infinity,
+              has(value) {
+                algebraIntersectionSource.clear();
+                forceGc();
+                return true;
+              },
+              keys() { throw new Error("keys must not run"); }
+            });
+            algebraIntersection.values().next().value.marker;
+            "#,
+        )
+        .expect("deleted receiver keys should remain rooted through has callbacks"),
+        Value::Number(73.0)
+    );
+
+    vm.run(
+        r#"
+        var algebraSizeGets = 0;
+        var algebraHasGets = 0;
+        var algebraKeysGets = 0;
+        var algebraKeysCalls = 0;
+        var algebraNextGets = 0;
+        var algebraNextCalls = 0;
+        var algebraClosed = 0;
+        var algebraIteratorDone = false;
+        var algebraIterator = {
+          get next() {
+            algebraNextGets++;
+            return function() {
+              algebraNextCalls++;
+              if (algebraIteratorDone) return { done: true };
+              algebraIteratorDone = true;
+              return { done: false, value: 2 };
+            };
+          },
+          return() { algebraClosed++; return {}; }
+        };
+        var algebraOperand = {
+          get size() { algebraSizeGets++; return 1; },
+          get has() { algebraHasGets++; return function() { return false; }; },
+          get keys() {
+            algebraKeysGets++;
+            return function() { algebraKeysCalls++; return algebraIterator; };
+          }
+        };
+        var algebraInput = new Set([1]);
+        "#,
+    )
+    .expect("Set algebra failure fixture should initialize");
+    vm.gc();
+    let baseline_pins = vm.gc_pins.len();
+
+    for (site, countdown, expression, counters) in [
+        (
+            SetReservationSite::AlgebraInputs,
+            0,
+            "algebraInput.union(algebraOperand);",
+            "0:0:0:0:0:0:0",
+        ),
+        (
+            SetReservationSite::AlgebraRecordRoots,
+            0,
+            "algebraInput.union(algebraOperand);",
+            "1:0:0:0:0:0:0",
+        ),
+        (
+            SetReservationSite::AlgebraRecordRoots,
+            1,
+            "algebraInput.union(algebraOperand);",
+            "1:1:0:0:0:0:0",
+        ),
+        (
+            SetReservationSite::AlgebraRecordRoots,
+            2,
+            "algebraInput.union(algebraOperand);",
+            "1:1:1:0:0:0:0",
+        ),
+        (
+            SetReservationSite::AlgebraIteratorRoots,
+            0,
+            "algebraInput.union(algebraOperand);",
+            "1:1:1:1:0:0:0",
+        ),
+        (
+            SetReservationSite::AlgebraIteratorRoots,
+            1,
+            "algebraInput.union(algebraOperand);",
+            "1:1:1:1:1:0:0",
+        ),
+        (
+            SetReservationSite::AlgebraResultRoots,
+            0,
+            "algebraInput.union(algebraOperand);",
+            "1:1:1:1:1:0:1",
+        ),
+        (
+            SetReservationSite::AlgebraResultStorage,
+            0,
+            "algebraInput.union(algebraOperand);",
+            "1:1:1:1:1:0:1",
+        ),
+        (
+            SetReservationSite::AlgebraResultStorage,
+            1,
+            "algebraInput.union(algebraOperand);",
+            "1:1:1:1:1:1:1",
+        ),
+        (
+            SetReservationSite::AlgebraTraversalRoots,
+            0,
+            "algebraInput.intersection({ size: Infinity, has: function(){ return true; }, keys: function(){} });",
+            "0:0:0:0:0:0:0",
+        ),
+        (
+            SetReservationSite::AlgebraTraversalRoots,
+            0,
+            "algebraInput.isSupersetOf(algebraOperand);",
+            "1:1:1:1:1:1:1",
+        ),
+    ] {
+        vm.run(
+            "algebraSizeGets = algebraHasGets = algebraKeysGets = algebraKeysCalls = \
+             algebraNextGets = algebraNextCalls = algebraClosed = 0; \
+             algebraIteratorDone = false;",
+        )
+        .expect("Set algebra counters should reset");
+        vm.fail_set_reservation = Some((site, countdown));
+        let error = vm
+            .run(expression)
+            .expect_err("configured Set algebra reservation should fail");
+        assert_eq!(error.kind, crate::error::ErrorKind::Range, "{site:?}");
+        assert_eq!(vm.fail_set_reservation, None, "{site:?}");
+        assert_eq!(vm.gc_pins.len(), baseline_pins, "{site:?}");
+        assert_eq!(
+            vm.run(
+                "[algebraSizeGets, algebraHasGets, algebraKeysGets, algebraKeysCalls, \
+                 algebraNextGets, algebraNextCalls, algebraClosed].join(':');"
+            )
+            .expect("Set algebra counters should remain readable"),
+            Value::String(Arc::from(counters)),
+            "{site:?}"
+        );
+    }
+
+    vm.run("algebraIteratorDone = false;")
+        .expect("Set algebra iterator should reset before retry");
+    assert_eq!(
+        vm.run("Array.from(algebraInput.union(algebraOperand)).join(',');")
+            .expect("Set algebra should retry cleanly after reservation failures"),
+        Value::String(Arc::from("1,2"))
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    vm.run("var algebraFuelCalls = 0;")
+        .expect("Set algebra Fuel fixture should initialize");
+    vm.set_algebra_zero_fuel_before_step = true;
+    let error = vm
+        .run(
+            "new Set([1]).isSubsetOf({ size: 1, has: function(){ algebraFuelCalls++; return true; }, keys: function(){} });",
+        )
+        .expect_err("Set algebra must meter before the first native traversal step");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert!(!vm.set_algebra_zero_fuel_before_step);
+    vm.set_fuel(None);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(
+        vm.run("algebraFuelCalls;")
+            .expect("Set algebra Fuel counter should remain readable"),
+        Value::Number(0.0)
+    );
+
+    vm.run("var algebraCapSource = new Set([1]); var algebraCapOther = new Set([2]);")
+        .expect("Set algebra heap-cap fixture should initialize");
+    let algebra_cap_source = vm.get_global("algebraCapSource");
+    let algebra_cap_other = vm.get_global("algebraCapOther");
+    let set_prototype = vm
+        .get_property(&vm.get_global("Set"), "prototype")
+        .expect("Set prototype should be readable");
+    let union = vm
+        .get_property(&set_prototype, "union")
+        .expect("Set union should be readable");
+    vm.gc();
+    let baseline_live = vm.heap.live_count();
+    let heap_cap = baseline_live + 8;
+    vm.set_max_heap_objects(Some(heap_cap));
+    vm.set_algebra_garbage_before_result_allocation = true;
+    let algebra_cap_result = vm
+        .call_function(
+            &union,
+            std::slice::from_ref(&algebra_cap_other),
+            Some(algebra_cap_source),
+        )
+        .expect("Set algebra result should collect garbage and retry at the exact cap");
+    assert!(!vm.set_algebra_garbage_before_result_allocation);
+    assert_eq!(
+        vm.set_algebra_live_before_result_allocation.take(),
+        Some(heap_cap)
+    );
+    assert!(vm.heap.live_count() <= heap_cap);
+    vm.set_max_heap_objects(None);
+    let Value::Object(algebra_cap_result) = algebra_cap_result else {
+        panic!("Set algebra result should be an object");
+    };
+    assert_eq!(
+        vm.heap.with_obj(algebra_cap_result.0, |object| {
+            let HeapObj::Set(set) = object else {
+                return Vec::new();
+            };
+            set.items
+                .lock()
+                .iter()
+                .map(|key| key.0.clone())
+                .collect::<Vec<_>>()
+        }),
+        vec![Value::Number(1.0), Value::Number(2.0)]
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    assert_eq!(
+        vm.run(
+            r#"
+            var algebraForEachValue = { marker: 91 };
+            var algebraForEachSet = new Set([algebraForEachValue]);
+            var algebraForEachMarker = 0;
+            algebraForEachSet.forEach(function(value) {
+              algebraForEachSet.delete(value);
+              forceGc();
+              algebraForEachMarker = value.marker;
+            });
+            algebraForEachMarker;
+            "#,
+        )
+        .expect("Set forEach values should remain rooted across callback GC"),
+        Value::Number(91.0)
+    );
+
+    assert_eq!(
+        vm.run(
+            r#"
+            var algebraChurn = new Set(["anchor", "next"]);
+            var algebraChurnIterator = algebraChurn.values();
+            algebraChurnIterator.next();
+            for (var i = 0; i < 1000; i++) {
+              algebraChurn.add(i);
+              algebraChurn.delete(i);
+            }
+            algebraChurnIterator.next().value;
+            "#,
+        )
+        .expect("Set iterators should survive storage compaction"),
+        Value::String(Arc::from("next"))
+    );
+    let Value::Object(algebra_churn) = vm.get_global("algebraChurn") else {
+        panic!("Set churn fixture should remain an object");
+    };
+    let (physical_len, live_len) = vm.heap.with_obj(algebra_churn.0, |object| {
+        let HeapObj::Set(set) = object else {
+            return (usize::MAX, 0);
+        };
+        let items = set.items.lock();
+        (items.physical_len(), items.len())
+    });
+    assert_eq!(live_len, 2);
+    assert!(physical_len <= 66, "physical Set slots: {physical_len}");
+    vm.run("algebraChurn.clear();")
+        .expect("Set clear should release compacted slots");
+    assert_eq!(
+        vm.heap.with_obj(algebra_churn.0, |object| {
+            let HeapObj::Set(set) = object else {
+                return usize::MAX;
+            };
+            set.items.lock().physical_len()
+        }),
+        0
+    );
+
+    vm.run(
+        "var algebraFuelSet = new Set(); \
+         for (var i = 0; i < 20; i++) algebraFuelSet.add(i); \
+         for (var i = 0; i < 10; i++) algebraFuelSet.delete(i); \
+         var algebraFuelIterator = algebraFuelSet.values();",
+    )
+    .expect("Set iterator Fuel fixture should initialize");
+    let algebra_fuel_iterator = vm.get_global("algebraFuelIterator");
+    let algebra_fuel_next = vm
+        .get_property(&algebra_fuel_iterator, "next")
+        .expect("Set iterator next should be readable");
+    for fuel in [5, 5] {
+        vm.set_fuel(Some(fuel));
+        let error = vm
+            .call_function(&algebra_fuel_next, &[], Some(algebra_fuel_iterator.clone()))
+            .expect_err("partial tombstone traversal should exhaust Fuel");
+        assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+        assert_eq!(vm.fuel_remaining(), Some(0));
+    }
+    vm.set_fuel(Some(1));
+    let first_live_result = vm
+        .call_function(&algebra_fuel_next, &[], Some(algebra_fuel_iterator.clone()))
+        .expect("Set iterator should resume after consumed tombstones");
+    vm.set_fuel(None);
+    assert_eq!(
+        vm.get_property(&first_live_result, "value")
+            .expect("Set iterator result value should be readable"),
+        Value::Number(10.0)
+    );
+
+    vm.run(
+        "var algebraEntriesSet = new Set([77]); \
+         var algebraEntriesIterator = algebraEntriesSet.entries();",
+    )
+    .expect("Set entries allocation fixture should initialize");
+    let algebra_entries_iterator = vm.get_global("algebraEntriesIterator");
+    let algebra_entries_next = vm
+        .get_property(&algebra_entries_iterator, "next")
+        .expect("Set entries next should be readable");
+    vm.gc();
+    vm.set_max_heap_objects(Some(vm.heap.live_count()));
+    let error = vm
+        .call_function(
+            &algebra_entries_next,
+            &[],
+            Some(algebra_entries_iterator.clone()),
+        )
+        .expect_err("Set entries pair allocation should obey the exact heap cap");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    vm.set_max_heap_objects(None);
+    let retry_result = vm
+        .call_function(&algebra_entries_next, &[], Some(algebra_entries_iterator))
+        .expect("Set entries iterator should remain retryable after allocation failure");
+    assert_eq!(
+        vm.get_property(&retry_result, "done")
+            .expect("Set entries retry result should expose done"),
+        Value::Bool(true)
+    );
+
+    vm.run(
+        "var algebraCompactSet = new Set(['anchor']); \
+         for (var i = 0; i < 63; i++) { algebraCompactSet.add(i); algebraCompactSet.delete(i); } \
+         var algebraCompactVictim = {}; algebraCompactSet.add(algebraCompactVictim); \
+         var algebraClearSet = new Set([1, 2, 3]);",
+    )
+    .expect("Set compaction Fuel fixtures should initialize");
+    let algebra_compact_set = vm.get_global("algebraCompactSet");
+    let algebra_compact_victim = vm.get_global("algebraCompactVictim");
+    let compact_delete = vm
+        .get_property(&algebra_compact_set, "delete")
+        .expect("Set delete should be readable");
+    vm.set_fuel(Some(64));
+    let error = vm
+        .call_function(
+            &compact_delete,
+            std::slice::from_ref(&algebra_compact_victim),
+            Some(algebra_compact_set.clone()),
+        )
+        .expect_err("Set compaction should precharge all physical slots");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    vm.set_fuel(None);
+    assert_eq!(
+        vm.run("algebraCompactSet.has(algebraCompactVictim);")
+            .expect("failed compaction delete should leave the key present"),
+        Value::Bool(true)
+    );
+    vm.set_fuel(Some(65));
+    assert_eq!(
+        vm.call_function(
+            &compact_delete,
+            std::slice::from_ref(&algebra_compact_victim),
+            Some(algebra_compact_set),
+        )
+        .expect("exact compaction Fuel should permit deletion"),
+        Value::Bool(true)
+    );
+    vm.set_fuel(None);
+
+    let algebra_clear_set = vm.get_global("algebraClearSet");
+    let clear = vm
+        .get_property(&algebra_clear_set, "clear")
+        .expect("Set clear should be readable");
+    vm.set_fuel(Some(2));
+    let error = vm
+        .call_function(&clear, &[], Some(algebra_clear_set.clone()))
+        .expect_err("Set clear should precharge all physical slots");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    vm.set_fuel(None);
+    assert_eq!(
+        vm.run("algebraClearSet.size;")
+            .expect("failed Set clear should preserve the complete Set"),
+        Value::Number(3.0)
+    );
+    vm.set_fuel(Some(3));
+    vm.call_function(&clear, &[], Some(algebra_clear_set))
+        .expect("exact clear Fuel should permit mutation");
+    vm.set_fuel(None);
     assert_eq!(vm.gc_pins.len(), baseline_pins);
 }
 

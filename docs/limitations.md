@@ -248,8 +248,17 @@ guarantees are required.
   function that loops in Rust) is not subdivided, and there is no true
   async interrupt / `vm.Interrupt()` like goja. To hard-bound untrusted
   code, also run RuJa in a separately killable process.
-- Map/Set are backed by `IndexMap`/`IndexSet` with SameValueZero keys
-  (`MapKey` wrapper), so `get`/`has`/`set` are O(1). `WeakMap`/`WeakSet` use
+- Map uses `IndexMap`; Set uses generation-ordered slots with tombstones and a
+  `HashMap` index. Both use SameValueZero `MapKey` keys and provide average O(1)
+  membership and updates. Set iterator cursors store monotonic generations
+  rather than Vec indices, allowing allocation-free stable compaction once
+  tombstones reach `max(live entries, 64)`. Physical traversal storage stays
+  within a small constant plus roughly twice the live size under constant-live
+  churn; clearing or deleting the final live entry releases the backing
+  collections. As with other Rust hash/vector containers, a non-empty Set can
+  retain capacity from a larger historical live peak until it is cleared or
+  becomes empty.
+  `WeakMap`/`WeakSet` use
   `HashMap`/`HashSet` over object or Symbol identities for average O(1) access;
   registered-Symbol rejection also uses an O(1) identity set. Object-keyed
   WeakMap values are activated through a key-indexed ephemeron fixed point.

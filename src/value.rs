@@ -1252,8 +1252,158 @@ pub struct MapData {
     pub extensible: AtomicBool,
 }
 
+struct SetSlot {
+    generation: u64,
+    key: Option<MapKey>,
+}
+
+pub struct SetStorage {
+    entries: Vec<SetSlot>,
+    indices: std::collections::HashMap<MapKey, usize>,
+    live_len: usize,
+    tombstones: usize,
+    next_generation: u64,
+    compaction_epoch: u64,
+}
+
+impl SetStorage {
+    pub fn new() -> Self {
+        Self {
+            entries: Vec::new(),
+            indices: std::collections::HashMap::new(),
+            live_len: 0,
+            tombstones: 0,
+            next_generation: 0,
+            compaction_epoch: 0,
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.live_len
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.live_len == 0
+    }
+
+    pub fn physical_len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn contains(&self, key: &MapKey) -> bool {
+        self.indices.contains_key(key)
+    }
+
+    pub fn slot_for_cursor(
+        &self,
+        generation: u64,
+        physical_index: usize,
+        compaction_epoch: u64,
+    ) -> Option<(u64, usize, u64, Option<MapKey>)> {
+        let index = if compaction_epoch == self.compaction_epoch {
+            physical_index
+        } else {
+            self.entries
+                .partition_point(|entry| entry.generation < generation)
+        };
+        self.entries.get(index).map(|entry| {
+            (
+                self.compaction_epoch,
+                index + 1,
+                entry.generation,
+                entry.key.clone(),
+            )
+        })
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &MapKey> {
+        self.entries.iter().filter_map(|entry| entry.key.as_ref())
+    }
+
+    pub fn try_reserve(
+        &mut self,
+        additional: usize,
+    ) -> Result<(), std::collections::TryReserveError> {
+        self.entries.try_reserve(additional)?;
+        self.indices.try_reserve(additional)
+    }
+
+    pub fn insert(&mut self, key: MapKey) -> Option<bool> {
+        if self.indices.contains_key(&key) {
+            return Some(false);
+        }
+        let generation = self.next_generation;
+        self.next_generation = generation.checked_add(1)?;
+        let index = self.entries.len();
+        self.indices.insert(key.clone(), index);
+        self.entries.push(SetSlot {
+            generation,
+            key: Some(key),
+        });
+        self.live_len += 1;
+        Some(true)
+    }
+
+    pub fn removal_compaction_work(&self, key: &MapKey) -> usize {
+        if !self.indices.contains_key(key) {
+            return 0;
+        }
+        let live_after = self.live_len - 1;
+        let tombstones_after = self.tombstones + 1;
+        if live_after == 0 || tombstones_after >= live_after.max(64) {
+            self.entries.len()
+        } else {
+            0
+        }
+    }
+
+    pub fn shift_remove(&mut self, key: &MapKey) -> bool {
+        let Some(index) = self.indices.remove(key) else {
+            return false;
+        };
+        self.entries[index].key = None;
+        self.live_len -= 1;
+        self.tombstones += 1;
+        if self.live_len == 0 || self.tombstones >= self.live_len.max(64) {
+            self.compact();
+        }
+        true
+    }
+
+    pub fn clear(&mut self) {
+        self.entries = Vec::new();
+        self.indices = std::collections::HashMap::new();
+        self.live_len = 0;
+        self.tombstones = 0;
+        self.compaction_epoch = self.compaction_epoch.wrapping_add(1);
+    }
+
+    fn compact(&mut self) {
+        if self.live_len == 0 {
+            self.clear();
+            return;
+        }
+        self.entries.retain(|entry| entry.key.is_some());
+        for (index, entry) in self.entries.iter().enumerate() {
+            if let Some(key) = entry.key.as_ref() {
+                if let Some(stored_index) = self.indices.get_mut(key) {
+                    *stored_index = index;
+                }
+            }
+        }
+        self.tombstones = 0;
+        self.compaction_epoch = self.compaction_epoch.wrapping_add(1);
+    }
+}
+
+impl Default for SetStorage {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub struct SetData {
-    pub items: Mutex<IndexSet<MapKey>>,
+    pub items: Mutex<SetStorage>,
     pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
     pub proto: Mutex<Option<Value>>,
     pub extensible: AtomicBool,
@@ -1278,6 +1428,8 @@ pub struct CollectionIteratorData {
     pub next_method: Mutex<Option<Value>>,
     pub kind: CollectionIteratorKind,
     pub index: Mutex<u64>,
+    pub set_physical_index: Mutex<usize>,
+    pub set_compaction_epoch: Mutex<u64>,
     pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
     pub proto: Mutex<Option<Value>>,
     pub extensible: AtomicBool,

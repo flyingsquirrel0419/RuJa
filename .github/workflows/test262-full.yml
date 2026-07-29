@@ -72,6 +72,12 @@ jobs:
           TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
           test262_tooling_test.ModuleCoreAdmissionTests.test_set_constructor_manifest_is_exact_live_disjoint_and_shared
           -v
+      - name: Verify exact Set algebra admission
+        working-directory: tools
+        run: >-
+          TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
+          test262_tooling_test.ModuleCoreAdmissionTests.test_set_algebra_manifest_is_exact_live_disjoint_and_shared
+          -v
       - name: Verify exact Weak collection admission
         working-directory: tools
         run: >-
@@ -165,6 +171,47 @@ jobs:
           cat weak_collections_result.txt
           grep -q '^RATE=100.0 PASS=226 FAIL=0 SKIP=0 TOTAL=226 RAN=226$' \
             weak_collections_result.txt
+
+  set-algebra:
+    needs: [build, setup]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download RuJa binary
+        uses: actions/download-artifact@v4
+        with:
+          name: ruja-release
+          path: target/release/
+      - run: chmod +x target/release/ruja
+      - name: Checkout pinned test262 Set algebra tests
+        uses: actions/checkout@v4
+        with:
+          repository: tc39/test262
+          ref: ${{ env.TEST262_REV }}
+          path: test262
+          sparse-checkout: |
+            harness
+            test/built-ins/Set/prototype/difference
+            test/built-ins/Set/prototype/intersection
+            test/built-ins/Set/prototype/isDisjointFrom
+            test/built-ins/Set/prototype/isSubsetOf
+            test/built-ins/Set/prototype/isSupersetOf
+            test/built-ins/Set/prototype/symmetricDifference
+            test/built-ins/Set/prototype/union
+      - name: Require all 186 Set algebra files to pass
+        run: |
+          TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
+            built-ins/Set/prototype/difference \
+            built-ins/Set/prototype/intersection \
+            built-ins/Set/prototype/isDisjointFrom \
+            built-ins/Set/prototype/isSubsetOf \
+            built-ins/Set/prototype/isSupersetOf \
+            built-ins/Set/prototype/symmetricDifference \
+            built-ins/Set/prototype/union \
+            > set_algebra_result.txt 2>&1
+          cat set_algebra_result.txt
+          grep -q '^RATE=100.0 PASS=186 FAIL=0 SKIP=0 TOTAL=186 RAN=186$' \
+            set_algebra_result.txt
 
   test262-full:
     needs: [build, setup]

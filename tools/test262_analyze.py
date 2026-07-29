@@ -46,6 +46,7 @@ try:
     from test262_set_constructor_admission import (
         SET_CONSTRUCTOR_FEATURES, SET_CONSTRUCTOR_FILES,
     )
+    from test262_set_algebra_admission import SET_ALGEBRA_FEATURES, SET_ALGEBRA_FILES
     from test262_weak_collection_admission import (
         WEAK_COLLECTION_FEATURES, WEAK_COLLECTION_FILES,
     )
@@ -240,6 +241,7 @@ except ModuleNotFoundError:
     from tools.test262_set_constructor_admission import (
         SET_CONSTRUCTOR_FEATURES, SET_CONSTRUCTOR_FILES,
     )
+    from tools.test262_set_algebra_admission import SET_ALGEBRA_FEATURES, SET_ALGEBRA_FILES
     from tools.test262_weak_collection_admission import (
         WEAK_COLLECTION_FEATURES, WEAK_COLLECTION_FILES,
     )
@@ -3072,6 +3074,20 @@ def set_constructor_features(path):
         return frozenset()
     return SET_CONSTRUCTOR_FEATURES.get(rel.as_posix(), frozenset())
 
+def set_algebra_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except (OSError, ValueError):
+        return False
+    return rel.as_posix() in SET_ALGEBRA_FILES
+
+def set_algebra_features(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except (OSError, ValueError):
+        return frozenset()
+    return SET_ALGEBRA_FEATURES.get(rel.as_posix(), frozenset())
+
 def weak_collection_path(path):
     try:
         rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
@@ -3420,6 +3436,8 @@ def should_skip(meta, path=None):
         feats.difference_update(map_constructor_features(path))
     if path is not None and set_constructor_path(path):
         feats.difference_update(set_constructor_features(path))
+    if path is not None and set_algebra_path(path):
+        feats.difference_update(set_algebra_features(path))
     if path is not None and weak_collection_path(path):
         feats.difference_update(weak_collection_features(path))
     if path is not None and native_construct_path(path):

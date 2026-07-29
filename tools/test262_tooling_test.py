@@ -63,6 +63,7 @@ from test262_set_constructor_admission import (
     SET_CONSTRUCTOR_FEATURES,
     SET_CONSTRUCTOR_FILES,
 )
+from test262_set_algebra_admission import SET_ALGEBRA_FEATURES, SET_ALGEBRA_FILES
 from test262_weak_collection_admission import (
     WEAK_COLLECTION_FEATURES,
     WEAK_COLLECTION_FILES,
@@ -1776,6 +1777,80 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                         self.assertFalse(tool.set_constructor_path(path))
                         self.assertTrue(
                             tool.should_skip({"features": ["Symbol.iterator"]}, path)
+                        )
+                finally:
+                    tool.TEST262 = original_root
+
+    def test_set_algebra_manifest_is_exact_live_disjoint_and_shared(self):
+        methods = {
+            "difference",
+            "intersection",
+            "isDisjointFrom",
+            "isSubsetOf",
+            "isSupersetOf",
+            "symmetricDifference",
+            "union",
+        }
+        expected = {
+            f"built-ins/Set/prototype/{method}/not-a-constructor.js": {
+                "Reflect.construct",
+                "set-methods",
+            }
+            for method in methods
+        }
+        self.assertEqual(SET_ALGEBRA_FILES, frozenset(expected))
+        self.assertEqual(
+            SET_ALGEBRA_FEATURES,
+            {path: frozenset(features) for path, features in expected.items()},
+        )
+
+        for name, files in vars(test262_runner).items():
+            if name == "SET_ALGEBRA_FILES" or not name.endswith("_FILES"):
+                continue
+            if isinstance(files, (set, frozenset)) and all(
+                isinstance(path, str) for path in files
+            ):
+                self.assertFalse(SET_ALGEBRA_FILES & files, name)
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        if test_root.is_dir():
+            for relative, features in SET_ALGEBRA_FEATURES.items():
+                path = test_root / relative
+                self.assertTrue(path.is_file(), relative)
+                metadata = test262_runner.parse_meta(path.read_text())
+                self.assertEqual(
+                    frozenset(metadata.get("features", [])), features, relative
+                )
+                self.assertEqual(metadata.get("flags", []), [], relative)
+                self.assertIsNone(metadata.get("negative"), relative)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            future = root / "test/built-ins/Set/prototype/union/future.js"
+            outside = root / "test/built-ins/Map/prototype/union/not-a-constructor.js"
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for relative, features in expected.items():
+                        path = root / "test" / relative
+                        self.assertTrue(tool.set_algebra_path(path))
+                        self.assertEqual(tool.set_algebra_features(path), features)
+                        self.assertFalse(
+                            tool.should_skip({"features": sorted(features)}, path)
+                        )
+                        self.assertTrue(
+                            tool.should_skip(
+                                {"features": sorted(features | {"Proxy"})}, path
+                            )
+                        )
+                    for path in (future, outside):
+                        self.assertFalse(tool.set_algebra_path(path))
+                        self.assertTrue(
+                            tool.should_skip(
+                                {"features": ["Reflect.construct", "set-methods"]},
+                                path,
+                            )
                         )
                 finally:
                     tool.TEST262 = original_root

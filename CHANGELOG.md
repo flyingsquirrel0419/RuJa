@@ -4,6 +4,22 @@
 
 ### Changed
 
+- The seven Set composition methods now implement the complete SetRecord and
+  iterator protocol with cached `has`, `keys`, and `next` methods, Realm-local
+  result Sets, original-completion-preserving `IteratorClose`, and GC roots for
+  every observable intermediate. Set storage uses generation-ordered slots,
+  tombstones, bounded stable compaction, and an average-O(1) key index, so live
+  iteration observes deletion and reinsertion without repeated snapshots or
+  quadratic removal. `Set.prototype.forEach` shares the rooted cursor path.
+  Native traversal consumes Fuel per physical slot and uses fallible per-value
+  roots and result growth. Exact metadata admission moves the seven pinned
+  directories from **179 pass / 0 fail / 7 skip** to **186/0/0**; the complete
+  383-file Set directory is **351 pass / 2 fail / 30 skip**. Direct tests cover
+  receiver/result snapshot distinctions, callback mutation, delete/reinsert
+  order, iterator caching and close, foreign Realms, forced GC, root/storage
+  failpoint sequences, post-step close, exact-cap Set-result/pair failure,
+  Fuel-atomic compaction/clear, pin cleanup, and clean retry.
+
 - `WeakMap` and `WeakSet` now execute iterable constructors through direct,
   cached synchronous iterator records. They perform one `@@iterator` Get with
   no `HasProperty` probe, call cached `next` and adder functions with standard

@@ -284,8 +284,8 @@ pub fn trace_obj(obj: &HeapObj, worklist: &mut Vec<usize>) {
             }
         }
         HeapObj::Set(s) => {
-            for k in s.items.lock().iter() {
-                push_value(&k.0, worklist);
+            for key in s.items.lock().iter() {
+                push_value(&key.0, worklist);
             }
         }
         HeapObj::CollectionIterator(it) => {

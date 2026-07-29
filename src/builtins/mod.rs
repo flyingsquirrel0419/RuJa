@@ -10311,6 +10311,8 @@ fn iterator_from(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Re
                 next_method: Mutex::new(Some(next)),
                 kind: CollectionIteratorKind::WrappedIterator,
                 index: Mutex::new(0),
+                set_physical_index: Mutex::new(0),
+                set_compaction_epoch: Mutex::new(u64::MAX),
                 props: Mutex::new(IndexMap::new()),
                 proto: Mutex::new(Some(proto)),
                 extensible: AtomicBool::new(true),

@@ -2958,6 +2958,110 @@ fn set_basic() {
 }
 
 #[test]
+fn set_algebra_preserves_snapshots_generations_iterators_and_realms() {
+    assert_eq!(
+        run(r#"
+            var source = new Set(["a", "b"]);
+            var other = {
+              size: 99,
+              has(value) {
+                if (value === "a") source.delete("b");
+                return value === "b";
+              },
+              keys() { throw new Error("keys must not run"); }
+            };
+            Array.from(source.difference(other)).join(",");
+            "#),
+        Value::String(Arc::from("a"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var source = new Set(["a", "b", "c"]);
+            var seen = [];
+            var other = {
+              size: Infinity,
+              has(value) {
+                seen.push(value);
+                if (value === "a") {
+                  source.delete("b");
+                  source.add("b");
+                }
+                return !(value === "b" && seen.length === 2);
+              },
+              keys() { throw new Error("keys must not run"); }
+            };
+            [source.isSubsetOf(other), seen.join(",")].join("|");
+            "#),
+        Value::String(Arc::from("true|a,c,b"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var nextGets = 0;
+            var iterator = new Set([2]).keys();
+            Object.defineProperty(iterator, "next", {
+              configurable: true,
+              get() {
+                nextGets++;
+                return function() { return { done: true }; };
+              }
+            });
+            var other = { size: 1, has() {}, keys() { return iterator; } };
+            [Array.from(new Set([1]).union(other)).join(","), nextGets].join("|");
+            "#),
+        Value::String(Arc::from("1|1"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var closed = 0;
+            var iterator = new Set([2]).keys();
+            iterator.return = function() { closed++; return {}; };
+            var result = new Set([1]).isSupersetOf({
+              size: 1, has() {}, keys() { return iterator; }
+            });
+            [result, closed].join("|");
+            "#),
+        Value::String(Arc::from("false|1"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var source = new Set([1]);
+            var operand = new Set([2]);
+            var methods = ["union", "intersection", "difference", "symmetricDifference"];
+            methods.map(function(name) {
+              var result = other.Set.prototype[name].call(source, operand);
+              return Object.getPrototypeOf(result) === other.Set.prototype;
+            }).join("|");
+            "#),
+        Value::String(Arc::from("true|true|true|true"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var source = new Set(["a", "b"]);
+            var seen = [];
+            var moved = false;
+            source.forEach(function(value) {
+              seen.push(value);
+              if (value === "a" && !moved) {
+                moved = true;
+                source.delete("b");
+                source.add("b");
+                source.delete("a");
+                source.add("a");
+              }
+            });
+            seen.join(",");
+            "#),
+        Value::String(Arc::from("a,b,a"))
+    );
+}
+
+#[test]
 fn symbol_type() {
     assert_eq!(run("typeof Symbol();"), Value::String(Arc::from("symbol")));
 }

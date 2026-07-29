@@ -58,6 +58,8 @@ pub(crate) fn new_collection_iterator(
         next_method: Mutex::new(None),
         kind,
         index: Mutex::new(0),
+        set_physical_index: Mutex::new(0),
+        set_compaction_epoch: Mutex::new(u64::MAX),
         props: Mutex::new(IndexMap::new()),
         proto: Mutex::new(Some(proto)),
         extensible: std::sync::atomic::AtomicBool::new(true),
@@ -99,6 +101,8 @@ fn string_iterator_method(
         next_method: Mutex::new(None),
         kind: CollectionIteratorKind::StringValues,
         index: Mutex::new(0),
+        set_physical_index: Mutex::new(0),
+        set_compaction_epoch: Mutex::new(u64::MAX),
         props: Mutex::new(IndexMap::new()),
         proto: Mutex::new(Some(proto)),
         extensible: std::sync::atomic::AtomicBool::new(true),
@@ -399,18 +403,26 @@ fn collection_iterator_next(
         let Value::Object(iter_idx) = receiver else {
             return Err(Error::type_err("Iterator next called on non-iterator"));
         };
-        let Some((source, kind, index)) = vm.heap.with_obj(iter_idx.0, |obj| {
-            let HeapObj::CollectionIterator(iter) = obj else {
-                return None;
-            };
-            if matches!(
-                iter.kind,
-                CollectionIteratorKind::WrappedIterator | CollectionIteratorKind::StringValues
-            ) {
-                return None;
-            }
-            Some((iter.source.lock().clone(), iter.kind, *iter.index.lock()))
-        }) else {
+        let Some((source, kind, index, set_physical_index, set_compaction_epoch)) =
+            vm.heap.with_obj(iter_idx.0, |obj| {
+                let HeapObj::CollectionIterator(iter) = obj else {
+                    return None;
+                };
+                if matches!(
+                    iter.kind,
+                    CollectionIteratorKind::WrappedIterator | CollectionIteratorKind::StringValues
+                ) {
+                    return None;
+                }
+                Some((
+                    iter.source.lock().clone(),
+                    iter.kind,
+                    *iter.index.lock(),
+                    *iter.set_physical_index.lock(),
+                    *iter.set_compaction_epoch.lock(),
+                ))
+            })
+        else {
             return Err(Error::type_err("Iterator next called on non-iterator"));
         };
         if !brand.accepts(kind) {
@@ -432,6 +444,9 @@ fn collection_iterator_next(
             return array_iterator_step(vm, iter_idx, &source, kind, index);
         }
 
+        let mut next_index = index.saturating_add(1);
+        let mut next_set_physical_index = set_physical_index;
+        let mut next_set_compaction_epoch = set_compaction_epoch;
         let next_value = match (&source, kind, usize::try_from(index).ok()) {
             (Value::Object(source_idx), CollectionIteratorKind::MapEntries, Some(index)) => {
                 map_entry_at(vm, *source_idx, index)?
@@ -444,13 +459,35 @@ fn collection_iterator_next(
             (Value::Object(source_idx), CollectionIteratorKind::MapValues, Some(index)) => {
                 map_entry_at(vm, *source_idx, index)?.map(|(_, value)| value)
             }
-            (Value::Object(source_idx), CollectionIteratorKind::SetEntries, Some(index)) => {
-                set_value_at(vm, *source_idx, index)?
+            (Value::Object(source_idx), CollectionIteratorKind::SetEntries, _) => {
+                let (value, advanced, physical_index, compaction_epoch) = set_value_at(
+                    vm,
+                    iter_idx,
+                    *source_idx,
+                    index,
+                    set_physical_index,
+                    set_compaction_epoch,
+                )?;
+                next_index = advanced;
+                next_set_physical_index = physical_index;
+                next_set_compaction_epoch = compaction_epoch;
+                value
                     .map(|value| make_value_array_in_current_realm(vm, vec![value.clone(), value]))
                     .transpose()?
             }
-            (Value::Object(source_idx), CollectionIteratorKind::SetValues, Some(index)) => {
-                set_value_at(vm, *source_idx, index)?
+            (Value::Object(source_idx), CollectionIteratorKind::SetValues, _) => {
+                let (value, advanced, physical_index, compaction_epoch) = set_value_at(
+                    vm,
+                    iter_idx,
+                    *source_idx,
+                    index,
+                    set_physical_index,
+                    set_compaction_epoch,
+                )?;
+                next_index = advanced;
+                next_set_physical_index = physical_index;
+                next_set_compaction_epoch = compaction_epoch;
+                value
             }
             _ => None,
         };
@@ -458,7 +495,9 @@ fn collection_iterator_next(
         if let Some(value) = next_value {
             vm.heap.with_obj(iter_idx.0, |obj| {
                 if let HeapObj::CollectionIterator(iter) = obj {
-                    *iter.index.lock() = index + 1;
+                    *iter.index.lock() = next_index;
+                    *iter.set_physical_index.lock() = next_set_physical_index;
+                    *iter.set_compaction_epoch.lock() = next_set_compaction_epoch;
                 }
             });
             let value_pin = vm.pin(&value);
@@ -565,30 +604,50 @@ fn map_entry_at(vm: &Vm, idx: GcIdx, index: usize) -> error::Result<Option<(Valu
     }))
 }
 
-fn set_value_at(vm: &Vm, idx: GcIdx, index: usize) -> error::Result<Option<Value>> {
-    Ok(vm.heap.with_obj(idx.0, |obj| {
-        if let HeapObj::Set(set) = obj {
-            set.items.lock().get_index(index).map(|key| key.0.clone())
-        } else {
-            None
+fn set_value_at(
+    vm: &mut Vm,
+    iterator: GcIdx,
+    idx: GcIdx,
+    index: u64,
+    physical_index: usize,
+    compaction_epoch: u64,
+) -> error::Result<(Option<Value>, u64, usize, u64)> {
+    let mut cursor = index;
+    let mut physical_cursor = physical_index;
+    let mut epoch = compaction_epoch;
+    loop {
+        let slot = vm.heap.with_obj(idx.0, |object| {
+            let HeapObj::Set(set) = object else {
+                return None;
+            };
+            set.items
+                .lock()
+                .slot_for_cursor(cursor, physical_cursor, epoch)
+        });
+        let Some((current_epoch, next_physical_index, generation, key)) = slot else {
+            return Ok((None, cursor, physical_cursor, epoch));
+        };
+        vm.consume_fuel()?;
+        cursor = generation + 1;
+        physical_cursor = next_physical_index;
+        epoch = current_epoch;
+        vm.heap.with_obj(iterator.0, |object| {
+            if let HeapObj::CollectionIterator(iterator) = object {
+                *iterator.index.lock() = cursor;
+                *iterator.set_physical_index.lock() = physical_cursor;
+                *iterator.set_compaction_epoch.lock() = epoch;
+            }
+        });
+        if let Some(key) = key {
+            return Ok((Some(key.0), cursor, physical_cursor, epoch));
         }
-    }))
+    }
 }
 
 fn map_keys_in_order(vm: &Vm, idx: GcIdx) -> Vec<MapKey> {
     vm.heap.with_obj(idx.0, |obj| {
         if let HeapObj::Map(map) = obj {
             map.entries.lock().keys().cloned().collect()
-        } else {
-            Vec::new()
-        }
-    })
-}
-
-fn set_keys_in_order(vm: &Vm, idx: GcIdx) -> Vec<MapKey> {
-    vm.heap.with_obj(idx.0, |obj| {
-        if let HeapObj::Set(set) = obj {
-            set.items.lock().iter().cloned().collect()
         } else {
             Vec::new()
         }
@@ -602,19 +661,39 @@ struct SetRecord {
     keys: Value,
 }
 
-enum SetRecordKeysIterator {
-    Internal(Value),
-    Js { object: Value, next: Value },
+struct SetRecordKeysIterator {
+    object: Value,
+    next: Value,
 }
 
 fn new_empty_set(vm: &mut Vm) -> error::Result<Value> {
-    let obj_idx = vm.heap.allocate(HeapObj::Set(SetData {
-        items: Mutex::new(IndexSet::new()),
+    let realm = vm.current_realm_global_env();
+    let prototype = vm.set_prototype_for_env(realm);
+    reserve_set_value_roots(
+        vm,
+        std::slice::from_ref(&prototype),
+        #[cfg(test)]
+        crate::vm::SetReservationSite::AlgebraResultRoots,
+    )?;
+    let prototype_pin = vm.pin(&prototype);
+    #[cfg(test)]
+    if std::mem::take(&mut vm.set_algebra_garbage_before_result_allocation) {
+        while vm.max_heap_objects > 0 && vm.heap.live_count() < vm.max_heap_objects {
+            if let Err(error) = vm.new_object() {
+                vm.unpin_many(prototype_pin);
+                return Err(error);
+            }
+        }
+        vm.set_algebra_live_before_result_allocation = Some(vm.heap.live_count());
+    }
+    let allocation = vm.alloc(HeapObj::Set(SetData {
+        items: Mutex::new(crate::value::SetStorage::new()),
         props: Mutex::new(IndexMap::new()),
-        proto: Mutex::new(Some(vm.set_proto.clone())),
+        proto: Mutex::new(Some(prototype)),
         extensible: AtomicBool::new(true),
-    }))?;
-    Ok(Value::Object(GcIdx(obj_idx)))
+    }));
+    vm.unpin_many(prototype_pin);
+    Ok(Value::Object(allocation?))
 }
 
 #[cfg(test)]
@@ -645,6 +724,18 @@ fn reserve_set_root_slots(
     vm.try_reserve_gc_pins(additional)
 }
 
+fn reserve_set_value_roots(
+    vm: &mut Vm,
+    values: &[Value],
+    #[cfg(test)] site: crate::vm::SetReservationSite,
+) -> error::Result<()> {
+    #[cfg(test)]
+    if take_set_reservation_failure(vm, site) {
+        return Err(Error::range("Set temporary root set is too large"));
+    }
+    vm.try_reserve_value_roots(values)
+}
+
 fn reserve_set_entry(vm: &mut Vm, idx: GcIdx, key: &MapKey) -> error::Result<()> {
     let needs_entry = vm.heap.with_obj(idx.0, |obj| {
         let HeapObj::Set(set) = obj else {
@@ -664,11 +755,9 @@ fn reserve_set_entry(vm: &mut Vm, idx: GcIdx, key: &MapKey) -> error::Result<()>
             return Err(Error::internal("Set entry target lost its Set data"));
         };
         let mut items = set.items.lock();
-        if items.len() == items.capacity() {
-            items
-                .try_reserve(1)
-                .map_err(|_| Error::range("Set entry storage is too large"))?;
-        }
+        items
+            .try_reserve(1)
+            .map_err(|_| Error::range("Set entry storage is too large"))?;
         Ok(())
     })
 }
@@ -680,29 +769,83 @@ fn insert_set_entry(vm: &mut Vm, idx: GcIdx, value: Value) -> error::Result<()> 
         let HeapObj::Set(set) = obj else {
             return Err(Error::internal("Set entry target lost its Set data"));
         };
-        set.items.lock().insert(key);
+        set.items
+            .lock()
+            .insert(key)
+            .ok_or_else(|| Error::range("Set insertion order is exhausted"))?;
         Ok(())
     })
 }
 
-fn set_insert_direct(vm: &mut Vm, set: &Value, value: Value) {
-    if let Value::Object(idx) = set {
-        vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Set(set) = obj {
-                set.items.lock().insert(MapKey::new(value));
-            }
-        });
+fn reserve_set_algebra_entry(vm: &mut Vm, idx: GcIdx, key: &MapKey) -> error::Result<()> {
+    let needs_entry = vm.heap.with_obj(idx.0, |object| {
+        let HeapObj::Set(set) = object else {
+            return false;
+        };
+        !set.items.lock().contains(key)
+    });
+    if !needs_entry {
+        return Ok(());
     }
+    #[cfg(test)]
+    if take_set_reservation_failure(vm, crate::vm::SetReservationSite::AlgebraResultStorage) {
+        return Err(Error::range("Set algebra result storage is too large"));
+    }
+    vm.heap.with_obj(idx.0, |object| {
+        let HeapObj::Set(set) = object else {
+            return Err(Error::internal("Set algebra result lost its Set data"));
+        };
+        let mut items = set.items.lock();
+        items
+            .try_reserve(1)
+            .map_err(|_| Error::range("Set algebra result storage is too large"))?;
+        Ok(())
+    })
 }
 
-fn set_delete_direct(vm: &mut Vm, set: &Value, value: &Value) {
-    if let Value::Object(idx) = set {
-        vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Set(set) = obj {
-                set.items.lock().shift_remove(&MapKey::new(value.clone()));
-            }
-        });
+fn insert_set_algebra_entry(vm: &mut Vm, idx: GcIdx, value: Value) -> error::Result<()> {
+    let key = MapKey::new(value);
+    reserve_set_algebra_entry(vm, idx, &key)?;
+    vm.heap.with_obj(idx.0, |object| {
+        let HeapObj::Set(set) = object else {
+            return Err(Error::internal("Set algebra result lost its Set data"));
+        };
+        set.items
+            .lock()
+            .insert(key)
+            .ok_or_else(|| Error::range("Set insertion order is exhausted"))?;
+        Ok(())
+    })
+}
+
+fn consume_set_native_work(vm: &mut Vm, work: usize) -> error::Result<()> {
+    for _ in 0..work {
+        vm.consume_fuel()?;
     }
+    Ok(())
+}
+
+fn delete_set_entry(vm: &mut Vm, index: GcIdx, key: &MapKey) -> error::Result<bool> {
+    let compaction_work = vm.heap.with_obj(index.0, |object| {
+        let HeapObj::Set(set) = object else {
+            return 0;
+        };
+        set.items.lock().removal_compaction_work(key)
+    });
+    consume_set_native_work(vm, compaction_work)?;
+    Ok(vm.heap.with_obj(index.0, |object| {
+        let HeapObj::Set(set) = object else {
+            return false;
+        };
+        set.items.lock().shift_remove(key)
+    }))
+}
+
+fn set_delete_direct(vm: &mut Vm, set: &Value, value: &Value) -> error::Result<()> {
+    if let Value::Object(index) = set {
+        delete_set_entry(vm, *index, &MapKey::new(value.clone()))?;
+    }
+    Ok(())
 }
 
 fn set_has_direct(vm: &Vm, idx: GcIdx, value: &Value) -> bool {
@@ -713,14 +856,6 @@ fn set_has_direct(vm: &Vm, idx: GcIdx, value: &Value) -> bool {
             false
         }
     })
-}
-
-fn copy_set_direct(vm: &mut Vm, source: GcIdx) -> error::Result<Value> {
-    let result = new_empty_set(vm)?;
-    for key in set_keys_in_order(vm, source) {
-        set_insert_direct(vm, &result, key.0);
-    }
-    Ok(result)
 }
 
 fn set_record_size(vm: &mut Vm, value: &Value) -> error::Result<f64> {
@@ -741,26 +876,62 @@ fn set_record_size(vm: &mut Vm, value: &Value) -> error::Result<f64> {
     Ok(int_size)
 }
 
-fn require_set_record(vm: &mut Vm, value: Value) -> error::Result<SetRecord> {
+fn require_set_record(vm: &mut Vm, value: Value) -> error::Result<(SetRecord, usize)> {
     if !matches!(value, Value::Object(_)) {
         return Err(Error::type_err("Set-like object must be an object"));
     }
     let raw_size = vm.get_property(&value, "size")?;
-    let size = set_record_size(vm, &raw_size)?;
+    reserve_set_value_roots(
+        vm,
+        std::slice::from_ref(&raw_size),
+        #[cfg(test)]
+        crate::vm::SetReservationSite::AlgebraRecordRoots,
+    )?;
+    let raw_size_pin = vm.pin(&raw_size);
+    let size = set_record_size(vm, &raw_size);
+    vm.unpin_many(raw_size_pin);
+    let size = size?;
     let has = vm.get_property(&value, "has")?;
     if !is_callable(&has, &vm.heap) {
         return Err(Error::type_err("Set-like object has is not callable"));
     }
-    let keys = vm.get_property(&value, "keys")?;
+    reserve_set_value_roots(
+        vm,
+        std::slice::from_ref(&has),
+        #[cfg(test)]
+        crate::vm::SetReservationSite::AlgebraRecordRoots,
+    )?;
+    let has_pin = vm.pin(&has);
+    let keys = match vm.get_property(&value, "keys") {
+        Ok(keys) => keys,
+        Err(error) => {
+            vm.unpin_many(has_pin);
+            return Err(error);
+        }
+    };
     if !is_callable(&keys, &vm.heap) {
+        vm.unpin_many(has_pin);
         return Err(Error::type_err("Set-like object keys is not callable"));
     }
-    Ok(SetRecord {
-        object: value,
-        size,
-        has,
-        keys,
-    })
+    if let Err(error) = reserve_set_value_roots(
+        vm,
+        std::slice::from_ref(&keys),
+        #[cfg(test)]
+        crate::vm::SetReservationSite::AlgebraRecordRoots,
+    ) {
+        vm.unpin_many(has_pin);
+        return Err(error);
+    }
+    let keys_pin = vm.pin(&keys);
+    Ok((
+        SetRecord {
+            object: value,
+            size,
+            has,
+            keys,
+        },
+        has_pin + keys_pin,
+    ))
 }
 
 fn set_record_has(vm: &mut Vm, record: &SetRecord, value: Value) -> error::Result<bool> {
@@ -772,50 +943,51 @@ fn set_record_has(vm: &mut Vm, record: &SetRecord, value: Value) -> error::Resul
 fn set_record_keys_iterator(
     vm: &mut Vm,
     record: &SetRecord,
-) -> error::Result<SetRecordKeysIterator> {
+) -> error::Result<(SetRecordKeysIterator, usize)> {
     let iter_obj = vm.call_function(&record.keys, &[], Some(record.object.clone()))?;
     if !matches!(iter_obj, Value::Object(_)) {
         return Err(Error::type_err("Set-like keys must return an object"));
     }
-    let is_internal_iterator = match &iter_obj {
-        Value::Object(idx) => vm
-            .heap
-            .with_obj(idx.0, |obj| matches!(obj, HeapObj::Iterator(_))),
-        _ => false,
+    reserve_set_value_roots(
+        vm,
+        std::slice::from_ref(&iter_obj),
+        #[cfg(test)]
+        crate::vm::SetReservationSite::AlgebraIteratorRoots,
+    )?;
+    let object_pin = vm.pin(&iter_obj);
+    let next = match vm.get_property(&iter_obj, "next") {
+        Ok(next) => next,
+        Err(error) => {
+            vm.unpin_many(object_pin);
+            return Err(error);
+        }
     };
-    if is_internal_iterator {
-        return Ok(SetRecordKeysIterator::Internal(iter_obj));
+    if let Err(error) = reserve_set_value_roots(
+        vm,
+        std::slice::from_ref(&next),
+        #[cfg(test)]
+        crate::vm::SetReservationSite::AlgebraIteratorRoots,
+    ) {
+        vm.unpin_many(object_pin);
+        return Err(error);
     }
-    let next = vm.get_property(&iter_obj, "next")?;
-    if !is_callable(&next, &vm.heap) {
-        return Err(Error::type_err(
-            "Set-like keys iterator next is not callable",
-        ));
-    }
-    Ok(SetRecordKeysIterator::Js {
-        object: iter_obj,
-        next,
-    })
+    let next_pin = vm.pin(&next);
+    Ok((
+        SetRecordKeysIterator {
+            object: iter_obj,
+            next,
+        },
+        object_pin + next_pin,
+    ))
 }
 
 fn set_record_keys_iterator_next(
     vm: &mut Vm,
     iterator: &SetRecordKeysIterator,
 ) -> error::Result<(Value, bool)> {
-    match iterator {
-        SetRecordKeysIterator::Internal(iter) => vm.iterator_next(iter),
-        SetRecordKeysIterator::Js { object, next } => {
-            let result = vm.call_function(next, &[], Some(object.clone()))?;
-            if !matches!(result, Value::Object(_)) {
-                return Err(Error::type_err("Iterator next result is not an object"));
-            }
-            let done = vm.get_property(&result, "done")?.is_truthy();
-            if done {
-                Ok((Value::Undefined, true))
-            } else {
-                Ok((vm.get_property(&result, "value")?, false))
-            }
-        }
+    match iterator_helper_step(vm, &iterator.object, &iterator.next, true)? {
+        Some(value) => Ok((value, false)),
+        None => Ok((Value::Undefined, true)),
     }
 }
 
@@ -823,23 +995,30 @@ fn set_record_keys_iterator_close(
     vm: &mut Vm,
     iterator: &SetRecordKeysIterator,
 ) -> error::Result<()> {
-    match iterator {
-        SetRecordKeysIterator::Internal(iter) => vm.iterator_close(iter),
-        SetRecordKeysIterator::Js { object, .. } => {
-            let return_method = vm.get_property(object, "return")?;
-            if return_method.is_undefined() || return_method.is_null() {
-                return Ok(());
-            }
-            if !is_callable(&return_method, &vm.heap) {
-                return Err(Error::type_err("Iterator return is not callable"));
-            }
-            let result = vm.call_function(&return_method, &[], Some(object.clone()))?;
-            if !matches!(result, Value::Object(_)) {
-                return Err(Error::type_err("Iterator return result is not an object"));
-            }
-            Ok(())
-        }
+    let return_method = vm.get_property(&iterator.object, "return")?;
+    if return_method.is_undefined() || return_method.is_null() {
+        return Ok(());
     }
+    if !is_callable(&return_method, &vm.heap) {
+        return Err(Error::type_err("Iterator return is not callable"));
+    }
+    let result = vm.call_function(&return_method, &[], Some(iterator.object.clone()))?;
+    if !matches!(result, Value::Object(_)) {
+        return Err(Error::type_err("Iterator return result is not an object"));
+    }
+    Ok(())
+}
+
+fn close_set_record_iterator_after_error<T>(
+    vm: &mut Vm,
+    iterator: &SetRecordKeysIterator,
+    error: Arc<Error>,
+    realm: GcIdx,
+) -> error::Result<T> {
+    if !error.catchable() {
+        return Err(error);
+    }
+    close_iterator_after_error_in_realm(vm, &iterator.object, error, realm)
 }
 
 fn for_each_set_record_iterator_key<F>(
@@ -850,14 +1029,38 @@ fn for_each_set_record_iterator_key<F>(
 where
     F: FnMut(&mut Vm, Value) -> error::Result<bool>,
 {
+    let realm = vm.current_realm_global_env();
+    #[cfg(test)]
+    if std::mem::take(&mut vm.set_algebra_zero_fuel_before_step) {
+        vm.set_fuel(Some(0));
+    }
     loop {
         let (value, done) = set_record_keys_iterator_next(vm, iter)?;
         if done {
             break;
         }
-        if !visit(vm, value)? {
-            set_record_keys_iterator_close(vm, iter)?;
-            break;
+        let mut value_pin = 0;
+        let visit_result = (|| {
+            reserve_set_value_roots(
+                vm,
+                std::slice::from_ref(&value),
+                #[cfg(test)]
+                crate::vm::SetReservationSite::AlgebraTraversalRoots,
+            )?;
+            value_pin = vm.pin(&value);
+            visit(vm, value)
+        })();
+        vm.unpin_many(value_pin);
+        match visit_result {
+            Ok(true) => {}
+            Ok(false) => {
+                set_record_keys_iterator_close(vm, iter)?;
+                break;
+            }
+            Err(error) if !error.catchable() => return Err(error),
+            Err(error) => {
+                return close_set_record_iterator_after_error(vm, iter, error, realm);
+            }
         }
     }
     Ok(())
@@ -867,8 +1070,128 @@ fn for_each_set_record_key<F>(vm: &mut Vm, record: &SetRecord, visit: F) -> erro
 where
     F: FnMut(&mut Vm, Value) -> error::Result<bool>,
 {
-    let iter = set_record_keys_iterator(vm, record)?;
-    for_each_set_record_iterator_key(vm, &iter, visit)
+    let (iter, iterator_pins) = set_record_keys_iterator(vm, record)?;
+    let result = for_each_set_record_iterator_key(vm, &iter, visit);
+    vm.unpin_many(iterator_pins);
+    result
+}
+
+struct SetVisitQueue {
+    cursor: u64,
+    physical_index: usize,
+    compaction_epoch: u64,
+}
+
+impl SetVisitQueue {
+    fn new() -> Self {
+        Self {
+            cursor: 0,
+            physical_index: 0,
+            compaction_epoch: u64::MAX,
+        }
+    }
+
+    fn next(&mut self, vm: &mut Vm, set: GcIdx) -> error::Result<Option<MapKey>> {
+        #[cfg(test)]
+        if std::mem::take(&mut vm.set_algebra_zero_fuel_before_step) {
+            vm.set_fuel(Some(0));
+        }
+        loop {
+            let slot = vm.heap.with_obj(set.0, |object| {
+                let HeapObj::Set(set) = object else {
+                    return None;
+                };
+                set.items.lock().slot_for_cursor(
+                    self.cursor,
+                    self.physical_index,
+                    self.compaction_epoch,
+                )
+            });
+            let Some((compaction_epoch, physical_index, generation, key)) = slot else {
+                return Ok(None);
+            };
+            vm.consume_fuel()?;
+            self.cursor = generation + 1;
+            self.physical_index = physical_index;
+            self.compaction_epoch = compaction_epoch;
+            if let Some(key) = key {
+                return Ok(Some(key));
+            }
+        }
+    }
+}
+
+fn with_set_traversal_value<R>(
+    vm: &mut Vm,
+    key: MapKey,
+    body: impl FnOnce(&mut Vm, Value) -> error::Result<R>,
+) -> error::Result<R> {
+    let value = key.0;
+    reserve_set_value_roots(
+        vm,
+        std::slice::from_ref(&value),
+        #[cfg(test)]
+        crate::vm::SetReservationSite::AlgebraTraversalRoots,
+    )?;
+    let pin_count = vm.pin(&value);
+    let result = body(vm, value);
+    vm.unpin_many(pin_count);
+    result
+}
+
+fn with_set_record<R>(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+    name: &str,
+    body: impl FnOnce(&mut Vm, GcIdx, &SetRecord) -> error::Result<R>,
+) -> error::Result<R> {
+    let receiver = this.unwrap_or(Value::Undefined);
+    let index = require_set_receiver(vm, Some(receiver.clone()), name)?;
+    let other = args.first().cloned().unwrap_or(Value::Undefined);
+    reserve_set_value_roots(
+        vm,
+        &[receiver.clone(), other.clone()],
+        #[cfg(test)]
+        crate::vm::SetReservationSite::AlgebraInputs,
+    )?;
+    let mut pin_count = vm.pin_many(&[receiver, other.clone()]);
+    let result = (|| {
+        let (record, record_pins) = require_set_record(vm, other)?;
+        pin_count += record_pins;
+        body(vm, index, &record)
+    })();
+    vm.unpin_many(pin_count);
+    result
+}
+
+fn new_pinned_set_result(vm: &mut Vm) -> error::Result<(Value, GcIdx, usize)> {
+    let result = new_empty_set(vm)?;
+    let Value::Object(index) = result else {
+        return Err(Error::internal(
+            "Set algebra result allocation was not an object",
+        ));
+    };
+    let pin_count = vm.pin(&result);
+    Ok((result, index, pin_count))
+}
+
+fn copy_set_for_algebra(vm: &mut Vm, source: GcIdx) -> error::Result<(Value, GcIdx, usize)> {
+    let (result, result_index, result_pin) = new_pinned_set_result(vm)?;
+    let copy = (|| {
+        let mut queue = SetVisitQueue::new();
+        while let Some(key) = queue.next(vm, source)? {
+            with_set_traversal_value(vm, key, |vm, value| {
+                insert_set_algebra_entry(vm, result_index, value)
+            })?;
+        }
+        Ok(())
+    })();
+    if let Err(error) = copy {
+        vm.unpin_many(result_pin);
+        return Err(error);
+    }
+    Ok((result, result_index, result_pin))
 }
 
 fn extend_collection_visit_queue(
@@ -2396,13 +2719,7 @@ pub(crate) fn set_has(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error
 pub(crate) fn set_delete(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let val = args.first().cloned().unwrap_or(Value::Undefined);
     let idx = require_set_receiver(vm, this, "Set.prototype.delete")?;
-    Ok(Value::Bool(vm.heap.with_obj(idx.0, |obj| {
-        if let HeapObj::Set(s) = obj {
-            s.items.lock().shift_remove(&MapKey::new(val))
-        } else {
-            false
-        }
-    })))
+    Ok(Value::Bool(delete_set_entry(vm, idx, &MapKey::new(val))?))
 }
 pub(crate) fn set_size(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let idx = require_set_receiver(vm, this, "Set.prototype.size getter")?;
@@ -2416,6 +2733,13 @@ pub(crate) fn set_size(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> err
 }
 pub(crate) fn set_clear(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let idx = require_set_receiver(vm, this, "Set.prototype.clear")?;
+    let work = vm.heap.with_obj(idx.0, |obj| {
+        let HeapObj::Set(set) = obj else {
+            return 0;
+        };
+        set.items.lock().physical_len()
+    });
+    consume_set_native_work(vm, work)?;
     vm.heap.with_obj(idx.0, |obj| {
         if let HeapObj::Set(s) = obj {
             s.items.lock().clear();
@@ -2434,7 +2758,7 @@ pub(crate) fn set_values_list(
             s.items
                 .lock()
                 .iter()
-                .map(|k| k.0.clone())
+                .map(|key| key.0.clone())
                 .collect::<Vec<_>>()
         } else {
             Vec::new()
@@ -2463,66 +2787,57 @@ pub(crate) fn set_for_each(
     this: Option<Value>,
 ) -> error::Result<Value> {
     let cb = args.first().cloned().unwrap_or(Value::Undefined);
-    let this_arg = args.get(1).cloned();
-    let idx = require_set_receiver(vm, this.clone(), "Set.prototype.forEach")?;
+    let callback_this = args.get(1).cloned();
+    let callback_this_root = callback_this.clone().unwrap_or(Value::Undefined);
+    let receiver = this.unwrap_or(Value::Undefined);
+    let idx = require_set_receiver(vm, Some(receiver.clone()), "Set.prototype.forEach")?;
     if !is_callable(&cb, &vm.heap) {
         return Err(Error::type_err(
             "Set.prototype.forEach callback is not callable",
         ));
     }
-    let mut queue = set_keys_in_order(vm, idx);
-    let mut cursor = 0;
-    let mut last_yielded: Option<MapKey> = None;
-    while cursor < queue.len() {
-        let key = queue[cursor].clone();
-        cursor += 1;
-        let present = vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Set(set) = obj {
-                set.items.lock().contains(&key)
-            } else {
-                false
-            }
-        });
-        if !present {
-            extend_collection_visit_queue(
-                &mut queue,
-                cursor,
-                &set_keys_in_order(vm, idx),
-                last_yielded.as_ref(),
-            );
-            continue;
+    vm.try_reserve_value_roots(&[receiver.clone(), cb.clone(), callback_this_root.clone()])?;
+    let pin_count = vm.pin_many(&[receiver.clone(), cb.clone(), callback_this_root]);
+    let result = (|| {
+        let mut queue = SetVisitQueue::new();
+        while let Some(key) = queue.next(vm, idx)? {
+            with_set_traversal_value(vm, key, |vm, value| {
+                vm.call_function(
+                    &cb,
+                    &[value.clone(), value, receiver.clone()],
+                    callback_this.clone(),
+                )?;
+                Ok(())
+            })?;
         }
-        let value = key.0.clone();
-        vm.call_function(
-            &cb,
-            &[
-                value.clone(),
-                value,
-                this.clone().unwrap_or(Value::Undefined),
-            ],
-            this_arg.clone(),
-        )?;
-        last_yielded = Some(key);
-        extend_collection_visit_queue(
-            &mut queue,
-            cursor,
-            &set_keys_in_order(vm, idx),
-            last_yielded.as_ref(),
-        );
-    }
-    Ok(Value::Undefined)
+        Ok(Value::Undefined)
+    })();
+    vm.unpin_many(pin_count);
+    result
 }
 
 pub(crate) fn set_union(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let idx = require_set_receiver(vm, this, "Set.prototype.union")?;
-    let other = require_set_record(vm, args.first().cloned().unwrap_or(Value::Undefined))?;
-    let iter = set_record_keys_iterator(vm, &other)?;
-    let result = copy_set_direct(vm, idx)?;
-    for_each_set_record_iterator_key(vm, &iter, |vm, value| {
-        set_insert_direct(vm, &result, value);
-        Ok(true)
-    })?;
-    Ok(result)
+    with_set_record(vm, args, this, "Set.prototype.union", |vm, index, other| {
+        let (iterator, iterator_pins) = set_record_keys_iterator(vm, other)?;
+        let realm = vm.current_realm_global_env();
+        let operation = (|| {
+            let (result, result_index, result_pin) = match copy_set_for_algebra(vm, index) {
+                Ok(result) => result,
+                Err(error) => {
+                    return close_set_record_iterator_after_error(vm, &iterator, error, realm);
+                }
+            };
+            let iteration = for_each_set_record_iterator_key(vm, &iterator, |vm, value| {
+                insert_set_algebra_entry(vm, result_index, value)?;
+                Ok(true)
+            });
+            vm.unpin_many(result_pin);
+            iteration?;
+            Ok(result)
+        })();
+        vm.unpin_many(iterator_pins);
+        operation
+    })
 }
 
 pub(crate) fn set_intersection(
@@ -2530,47 +2845,45 @@ pub(crate) fn set_intersection(
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    let idx = require_set_receiver(vm, this, "Set.prototype.intersection")?;
-    let other = require_set_record(vm, args.first().cloned().unwrap_or(Value::Undefined))?;
-    let result = new_empty_set(vm)?;
-    let this_size = set_keys_in_order(vm, idx).len() as f64;
-    if this_size <= other.size {
-        let mut queue = set_keys_in_order(vm, idx);
-        let mut cursor = 0;
-        let mut last_yielded: Option<MapKey> = None;
-        while cursor < queue.len() {
-            let key = queue[cursor].clone();
-            cursor += 1;
-            if !set_has_direct(vm, idx, &key.0) {
-                extend_collection_visit_queue(
-                    &mut queue,
-                    cursor,
-                    &set_keys_in_order(vm, idx),
-                    last_yielded.as_ref(),
-                );
-                continue;
-            }
-            let value = key.0.clone();
-            if set_record_has(vm, &other, value.clone())? {
-                set_insert_direct(vm, &result, value);
-            }
-            last_yielded = Some(key);
-            extend_collection_visit_queue(
-                &mut queue,
-                cursor,
-                &set_keys_in_order(vm, idx),
-                last_yielded.as_ref(),
-            );
-        }
-    } else {
-        for_each_set_record_key(vm, &other, |vm, value| {
-            if set_has_direct(vm, idx, &value) {
-                set_insert_direct(vm, &result, value);
-            }
-            Ok(true)
-        })?;
-    }
-    Ok(result)
+    with_set_record(
+        vm,
+        args,
+        this,
+        "Set.prototype.intersection",
+        |vm, index, other| {
+            let (result, result_index, result_pin) = new_pinned_set_result(vm)?;
+            let this_size = vm.heap.with_obj(index.0, |object| {
+                let HeapObj::Set(set) = object else {
+                    return 0;
+                };
+                set.items.lock().len()
+            }) as f64;
+            let operation = (|| {
+                if this_size <= other.size {
+                    let mut queue = SetVisitQueue::new();
+                    while let Some(key) = queue.next(vm, index)? {
+                        with_set_traversal_value(vm, key, |vm, value| {
+                            if set_record_has(vm, other, value.clone())? {
+                                insert_set_algebra_entry(vm, result_index, value)?;
+                            }
+                            Ok(())
+                        })?;
+                    }
+                    Ok(())
+                } else {
+                    for_each_set_record_key(vm, other, |vm, value| {
+                        if set_has_direct(vm, index, &value) {
+                            insert_set_algebra_entry(vm, result_index, value)?;
+                        }
+                        Ok(true)
+                    })
+                }
+            })();
+            vm.unpin_many(result_pin);
+            operation?;
+            Ok(result)
+        },
+    )
 }
 
 pub(crate) fn set_difference(
@@ -2578,45 +2891,43 @@ pub(crate) fn set_difference(
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    let idx = require_set_receiver(vm, this, "Set.prototype.difference")?;
-    let other = require_set_record(vm, args.first().cloned().unwrap_or(Value::Undefined))?;
-    let result = copy_set_direct(vm, idx)?;
-    let this_size = set_keys_in_order(vm, idx).len() as f64;
-    if this_size <= other.size {
-        let mut queue = set_keys_in_order(vm, idx);
-        let mut cursor = 0;
-        let mut last_yielded: Option<MapKey> = None;
-        while cursor < queue.len() {
-            let key = queue[cursor].clone();
-            cursor += 1;
-            if !set_has_direct(vm, idx, &key.0) {
-                extend_collection_visit_queue(
-                    &mut queue,
-                    cursor,
-                    &set_keys_in_order(vm, idx),
-                    last_yielded.as_ref(),
-                );
-                continue;
-            }
-            let value = key.0.clone();
-            if set_record_has(vm, &other, value.clone())? {
-                set_delete_direct(vm, &result, &value);
-            }
-            last_yielded = Some(key);
-            extend_collection_visit_queue(
-                &mut queue,
-                cursor,
-                &set_keys_in_order(vm, idx),
-                last_yielded.as_ref(),
-            );
-        }
-    } else {
-        for_each_set_record_key(vm, &other, |vm, value| {
-            set_delete_direct(vm, &result, &value);
-            Ok(true)
-        })?;
-    }
-    Ok(result)
+    with_set_record(
+        vm,
+        args,
+        this,
+        "Set.prototype.difference",
+        |vm, index, other| {
+            let this_size = vm.heap.with_obj(index.0, |object| {
+                let HeapObj::Set(set) = object else {
+                    return 0;
+                };
+                set.items.lock().len()
+            }) as f64;
+            let (result, result_index, result_pin) = copy_set_for_algebra(vm, index)?;
+            let operation = (|| {
+                if this_size <= other.size {
+                    let mut queue = SetVisitQueue::new();
+                    while let Some(key) = queue.next(vm, result_index)? {
+                        with_set_traversal_value(vm, key, |vm, value| {
+                            if set_record_has(vm, other, value.clone())? {
+                                set_delete_direct(vm, &result, &value)?;
+                            }
+                            Ok(())
+                        })?;
+                    }
+                    Ok(())
+                } else {
+                    for_each_set_record_key(vm, other, |vm, value| {
+                        set_delete_direct(vm, &result, &value)?;
+                        Ok(true)
+                    })
+                }
+            })();
+            vm.unpin_many(result_pin);
+            operation?;
+            Ok(result)
+        },
+    )
 }
 
 pub(crate) fn set_symmetric_difference(
@@ -2624,19 +2935,37 @@ pub(crate) fn set_symmetric_difference(
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    let idx = require_set_receiver(vm, this, "Set.prototype.symmetricDifference")?;
-    let other = require_set_record(vm, args.first().cloned().unwrap_or(Value::Undefined))?;
-    let iter = set_record_keys_iterator(vm, &other)?;
-    let result = copy_set_direct(vm, idx)?;
-    for_each_set_record_iterator_key(vm, &iter, |vm, value| {
-        if set_has_direct(vm, idx, &value) {
-            set_delete_direct(vm, &result, &value);
-        } else {
-            set_insert_direct(vm, &result, value);
-        }
-        Ok(true)
-    })?;
-    Ok(result)
+    with_set_record(
+        vm,
+        args,
+        this,
+        "Set.prototype.symmetricDifference",
+        |vm, index, other| {
+            let (iterator, iterator_pins) = set_record_keys_iterator(vm, other)?;
+            let realm = vm.current_realm_global_env();
+            let operation = (|| {
+                let (result, result_index, result_pin) = match copy_set_for_algebra(vm, index) {
+                    Ok(result) => result,
+                    Err(error) => {
+                        return close_set_record_iterator_after_error(vm, &iterator, error, realm);
+                    }
+                };
+                let iteration = for_each_set_record_iterator_key(vm, &iterator, |vm, value| {
+                    if set_has_direct(vm, index, &value) {
+                        set_delete_direct(vm, &result, &value)?;
+                    } else {
+                        insert_set_algebra_entry(vm, result_index, value)?;
+                    }
+                    Ok(true)
+                });
+                vm.unpin_many(result_pin);
+                iteration?;
+                Ok(result)
+            })();
+            vm.unpin_many(iterator_pins);
+            operation
+        },
+    )
 }
 
 pub(crate) fn set_is_subset_of(
@@ -2644,38 +2973,33 @@ pub(crate) fn set_is_subset_of(
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    let idx = require_set_receiver(vm, this, "Set.prototype.isSubsetOf")?;
-    let other = require_set_record(vm, args.first().cloned().unwrap_or(Value::Undefined))?;
-    if (set_keys_in_order(vm, idx).len() as f64) > other.size {
-        return Ok(Value::Bool(false));
-    }
-    let mut queue = set_keys_in_order(vm, idx);
-    let mut cursor = 0;
-    let mut last_yielded: Option<MapKey> = None;
-    while cursor < queue.len() {
-        let key = queue[cursor].clone();
-        cursor += 1;
-        if !set_has_direct(vm, idx, &key.0) {
-            extend_collection_visit_queue(
-                &mut queue,
-                cursor,
-                &set_keys_in_order(vm, idx),
-                last_yielded.as_ref(),
-            );
-            continue;
-        }
-        if !set_record_has(vm, &other, key.0.clone())? {
-            return Ok(Value::Bool(false));
-        }
-        last_yielded = Some(key);
-        extend_collection_visit_queue(
-            &mut queue,
-            cursor,
-            &set_keys_in_order(vm, idx),
-            last_yielded.as_ref(),
-        );
-    }
-    Ok(Value::Bool(true))
+    with_set_record(
+        vm,
+        args,
+        this,
+        "Set.prototype.isSubsetOf",
+        |vm, index, other| {
+            let this_size = vm.heap.with_obj(index.0, |object| {
+                let HeapObj::Set(set) = object else {
+                    return 0;
+                };
+                set.items.lock().len()
+            }) as f64;
+            if this_size > other.size {
+                return Ok(Value::Bool(false));
+            }
+            let mut queue = SetVisitQueue::new();
+            while let Some(key) = queue.next(vm, index)? {
+                let present = with_set_traversal_value(vm, key, |vm, value| {
+                    set_record_has(vm, other, value)
+                })?;
+                if !present {
+                    return Ok(Value::Bool(false));
+                }
+            }
+            Ok(Value::Bool(true))
+        },
+    )
 }
 
 pub(crate) fn set_is_superset_of(
@@ -2683,20 +3007,32 @@ pub(crate) fn set_is_superset_of(
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    let idx = require_set_receiver(vm, this, "Set.prototype.isSupersetOf")?;
-    let other = require_set_record(vm, args.first().cloned().unwrap_or(Value::Undefined))?;
-    if (set_keys_in_order(vm, idx).len() as f64) < other.size {
-        return Ok(Value::Bool(false));
-    }
-    let mut result = true;
-    for_each_set_record_key(vm, &other, |vm, value| {
-        if !set_has_direct(vm, idx, &value) {
-            result = false;
-            return Ok(false);
-        }
-        Ok(true)
-    })?;
-    Ok(Value::Bool(result))
+    with_set_record(
+        vm,
+        args,
+        this,
+        "Set.prototype.isSupersetOf",
+        |vm, index, other| {
+            let this_size = vm.heap.with_obj(index.0, |object| {
+                let HeapObj::Set(set) = object else {
+                    return 0;
+                };
+                set.items.lock().len()
+            }) as f64;
+            if this_size < other.size {
+                return Ok(Value::Bool(false));
+            }
+            let mut result = true;
+            for_each_set_record_key(vm, other, |vm, value| {
+                if !set_has_direct(vm, index, &value) {
+                    result = false;
+                    return Ok(false);
+                }
+                Ok(true)
+            })?;
+            Ok(Value::Bool(result))
+        },
+    )
 }
 
 pub(crate) fn set_is_disjoint_from(
@@ -2704,48 +3040,42 @@ pub(crate) fn set_is_disjoint_from(
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    let idx = require_set_receiver(vm, this, "Set.prototype.isDisjointFrom")?;
-    let other = require_set_record(vm, args.first().cloned().unwrap_or(Value::Undefined))?;
-    let this_size = set_keys_in_order(vm, idx).len() as f64;
-    if this_size <= other.size {
-        let mut queue = set_keys_in_order(vm, idx);
-        let mut cursor = 0;
-        let mut last_yielded: Option<MapKey> = None;
-        while cursor < queue.len() {
-            let key = queue[cursor].clone();
-            cursor += 1;
-            if !set_has_direct(vm, idx, &key.0) {
-                extend_collection_visit_queue(
-                    &mut queue,
-                    cursor,
-                    &set_keys_in_order(vm, idx),
-                    last_yielded.as_ref(),
-                );
-                continue;
+    with_set_record(
+        vm,
+        args,
+        this,
+        "Set.prototype.isDisjointFrom",
+        |vm, index, other| {
+            let this_size = vm.heap.with_obj(index.0, |object| {
+                let HeapObj::Set(set) = object else {
+                    return 0;
+                };
+                set.items.lock().len()
+            }) as f64;
+            if this_size <= other.size {
+                let mut queue = SetVisitQueue::new();
+                while let Some(key) = queue.next(vm, index)? {
+                    let present = with_set_traversal_value(vm, key, |vm, value| {
+                        set_record_has(vm, other, value)
+                    })?;
+                    if present {
+                        return Ok(Value::Bool(false));
+                    }
+                }
+                Ok(Value::Bool(true))
+            } else {
+                let mut result = true;
+                for_each_set_record_key(vm, other, |vm, value| {
+                    if set_has_direct(vm, index, &value) {
+                        result = false;
+                        return Ok(false);
+                    }
+                    Ok(true)
+                })?;
+                Ok(Value::Bool(result))
             }
-            if set_record_has(vm, &other, key.0.clone())? {
-                return Ok(Value::Bool(false));
-            }
-            last_yielded = Some(key);
-            extend_collection_visit_queue(
-                &mut queue,
-                cursor,
-                &set_keys_in_order(vm, idx),
-                last_yielded.as_ref(),
-            );
-        }
-        Ok(Value::Bool(true))
-    } else {
-        let mut result = true;
-        for_each_set_record_key(vm, &other, |vm, value| {
-            if set_has_direct(vm, idx, &value) {
-                result = false;
-                return Ok(false);
-            }
-            Ok(true)
-        })?;
-        Ok(Value::Bool(result))
-    }
+        },
+    )
 }
 
 pub(crate) fn set_constructor(
@@ -2782,7 +3112,7 @@ pub(crate) fn set_constructor(
         vm.set_constructor_live_before_allocation = Some(vm.heap.live_count());
     }
     let allocation = vm.alloc(HeapObj::Set(SetData {
-        items: Mutex::new(IndexSet::new()),
+        items: Mutex::new(crate::value::SetStorage::new()),
         props: Mutex::new(IndexMap::new()),
         proto: Mutex::new(Some(proto)),
         extensible: AtomicBool::new(true),

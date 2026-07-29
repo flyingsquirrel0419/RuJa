@@ -2590,11 +2590,11 @@ are replaced or deleted. Failed provisional Realm construction removes both
 new registries with the rest of the intrinsic graph.
 
 Native `Set.prototype.add` canonicalizes through `MapKey`, checks whether the
-key is new, reserves `IndexSet` capacity, and mutates only after reservation.
-Duplicate insertion needs no capacity and therefore cannot fail at that
-boundary. Set composition algorithms retain their existing separate storage
-pipeline; broad algebra iterator/root/storage hardening is intentionally not
-mixed into this constructor unit.
+key is new, reserves both ordered-slot and hash-index capacity, and mutates only
+after reservation. Duplicate insertion needs no capacity and therefore cannot
+fail at that boundary. The constructor unit originally left composition as a
+separate audit; the later Set algebra section below now completes that shared
+storage, iterator, root, Realm, and Fuel pipeline.
 
 ```text
 [Decision Log]
@@ -2603,7 +2603,7 @@ mixed into this constructor unit.
 - 검토한 주요 대안: Patch the global wrapper, clone Map behavior without Realm registries, harden all Set algebra storage in the same unit, or reuse the proven direct iterator/close helpers and isolate constructor/native-add storage.
 - 선택한 방식: Install Realm-local Set and Set Iterator intrinsics, root prototype/iterable before VM allocation, reserve the maximum live constructor roots, cache the adder and direct iterator record, use zero-argument metered steps, close only catchable post-step adder failures, and reserve native Set storage before mutation.
 - 다른 대안 대신 이 방식을 선택한 이유: Global wrapper changes affect unfinished consumers; main-Realm fallback fails foreign construction; broad Set algebra hardening adds independent iterator-close/root problems. The narrow shared helpers repair the complete constructor boundary without introducing partial composition semantics.
-- 장점, 단점 및 영향: Direct evidence covers Proxy order, cache/receiver/arity, built-in overrides, close and non-close precedence, foreign Set/iterator/error identities, registry GC survival and rollback, forced GC, all root/storage failure sites, duplicate no-reserve insertion, host Fuel, exact-cap allocation, pin restoration, and retry. Set algebra and WeakSet remain explicit adjacent audits.
+- 장점, 단점 및 영향: Direct evidence covers Proxy order, cache/receiver/arity, built-in overrides, close and non-close precedence, foreign Set/iterator/error identities, registry GC survival and rollback, forced GC, all root/storage failure sites, duplicate no-reserve insertion, host Fuel, exact-cap allocation, pin restoration, and retry. Set algebra and weak collections were retained as separately reviewable follow-up units and are now documented in their later sections.
 ```
 
 ## `Map.groupBy` iterator, Realm, and collection pipeline
@@ -3164,6 +3164,41 @@ The vendored crate retains its upstream MIT OR Apache-2.0 license files.
 - 선택한 방식: Vendor regress 0.11.1; validate logical resource preconditions for every u/v pattern at construction; lazily compile canonical pattern code points and native UTF-16 input; route sentinel-bearing u/v inputs and existing-backend compile fallbacks through a bounded PikeVM; add bounded named-capture prepass/lowering, exact sticky execution, logical-symbol and duplicate-name backreferences, operand-first iv folding, balanced alternation IR, shared byte-based state/backreference accounting, metered global collection, batched offset conversion, and UTF-16 boundary preservation.
 - 다른 대안 대신 이 방식을 선택한 이유: Sentinel relocation is mathematically insufficient; prefix encoding requires complete rewrites of literals, classes, properties, complements, lookarounds, and captures; property-only repair leaves literals and dot wrong; global replacement widens performance and compatibility risk; the upstream UTF-16 backtracker has no sandbox bound. A narrow native UTF-16 fallback preserves the established fast path and supplies the required logical domain directly.
 - 장점, 단점 및 영향: Lone surrogates and U+F0000..U+F07FF scalars now differ across literals, properties, complements, dot, captures, backreferences, global/sticky matching, and d indices. Two exact generated Test262 files became admissible in this unit. Large flat alternatives have logarithmic IR depth, endpoint conversion is linear, and live branch state has a byte cap. The fallback maintains a second parser for its bounded domain and remains cooperative DFS under explicit work and state limits; the later string-set unit extends that parser under the same bounds.
+```
+
+---
+
+## Set algebra live traversal and resource ownership
+
+Set uses generation-ordered slots for specification order and a
+`HashMap<MapKey, usize>` for average-O(1) membership. Deletion tombstones the
+existing slot; reinsertion appends a new generation. Iterator cursors store
+that generation rather than a Vec index, so allocation-free stable compaction
+can remove tombstones without invalidating active iterators. Compaction runs
+when tombstones reach `max(live entries, 64)`, bounding constant-live churn.
+Set iterators, `forEach`, and composition algorithms naturally observe entries
+added after their current generation without cloning or rescanning the Set.
+Fuel is charged before each visited physical slot and before compaction/clear
+work; a Fuel failure precedes mutation.
+
+The seven composition methods first build a rooted SetRecord containing the
+observed object, numeric size, `has`, and `keys`. Iterator branches cache the
+iterator's `next` property once. Values yielded by internal and external
+iteration receive fallible temporary roots before callbacks or result
+publication. Union and symmetric difference acquire the iterator before
+copying the receiver and close it if later catchable host allocation fails;
+post-step catchable failures close through the cached iterator record while
+non-catchable Fuel remains a host abort. Results use the active Realm's
+immutable Set prototype and GC-retrying allocation path.
+
+```text
+[Decision Log]
+- 목적과 의도: Make all Set composition methods specification-correct under live mutation, deletion/reinsertion, foreign Realms, GC, Fuel, and catchable host allocation failure.
+- 기존 구현 및 제약 조건: Composition used main-Realm results, incompletely rooted SetRecord and iterator state, optimized internal iterators past observable next lookup and return, iterated the receiver instead of the result snapshot in one difference branch, and refreshed value-only snapshots with quadratic-to-cubic work that could not distinguish deleted/reinserted generations.
+- 검토한 주요 대안: Keep IndexSet and clone snapshots, add generation comparisons to the refresh queue, globally wrap iterators, shift-remove ordered entries, or represent SetData as append-only slots plus a membership index.
+- 선택한 방식: Store ordered generation slots and a key-to-slot hash index; tombstone deletion and append reinsertion; keep generation cursors across stable in-place compaction; compact at a bounded tombstone ratio; meter traversal, compaction, and clear before mutation; root one yielded value at a time; cache generic iterator methods; and close active iterators on catchable post-acquisition failures while preserving original throw priority.
+- 다른 대안 대신 이 방식을 선택한 이유: Snapshot refresh remains superlinear and duplicates key roots, shifting raw indices invalidates live cursors, wrapper iterators alter observability, and uncompacted append-only slots permit unbounded constant-live host memory. Generation cursors preserve specification order while allowing allocation-free compaction and average-O(1) membership.
+- 장점, 단점 및 영향: Set algebra, ordinary Set iterators, and forEach share stable live-order semantics; callback mutation is linear in bounded physical slots; result growth is fallible and atomic; constant-live churn stays bounded; and Realm/GC/close behavior has deterministic tests. A non-empty collection may retain capacity from a larger historical live peak until clear or empty, matching the remaining native-container capacity model.
 ```
 
 ---
