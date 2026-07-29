@@ -1813,7 +1813,11 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                 self.assertFalse(SET_ALGEBRA_FILES & files, name)
 
         test_root = Path(test262_runner.TEST262) / "test"
-        if test_root.is_dir():
+        try:
+            test_root_available = test_root.is_dir()
+        except OSError:
+            test_root_available = False
+        if test_root_available:
             for relative, features in SET_ALGEBRA_FEATURES.items():
                 path = test_root / relative
                 self.assertTrue(path.is_file(), relative)

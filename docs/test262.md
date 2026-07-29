@@ -12340,6 +12340,9 @@ and then admits only those seven proved paths.
 
 The shared runner/analyzer manifest freezes all seven paths and exact metadata,
 rejects future or outside files, and retains any additional unsupported feature.
+Its optional local live-metadata probe treats absent or inaccessible checkouts
+as unavailable; the workflow setup job supplies an explicit checkout and
+therefore performs the authoritative live probe.
 The full workflow sparse-checks all seven directories and hard-requires
 `PASS=186 FAIL=0 SKIP=0 TOTAL=186 RAN=186`. The complete 383-file Set sweep is
 **351 pass / 2 fail / 30 skip**; both failures remain the independent
