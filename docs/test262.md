@@ -12358,6 +12358,17 @@ all-target/all-feature release tests including
 **325/325** library tests, warnings-denied Clippy, rustfmt, tooling **145/145**
 with four absent-checkout probes skipped, and exact Set algebra **186/186**.
 
+Implementation commit `9dc89b8` is pushed. Ordinary CI `30426806030` passes
+**2/2** and full run `30426233118` passes **38/38**; its dedicated Set-algebra
+job hard-gates **186/186**. Against preceding full run `30411263253`, 30/32
+raw result artifacts are byte-identical. The built-ins shard has the intended
+**+7 pass / -7 skip** movement to **16639/4217/2809/3/0**. The annexB shard
+only removes two contention timeouts present in the preceding raw artifact;
+normalizing that known noise establishes 31/32 identity. The normalized
+aggregate is **32260 pass / 5028 fail / 11178 skip / 3 timeout / 0 error** over
+48469, with 37288 run. The independent failure content set is unchanged from
+`4d596150d0ed50123f4d0ecdc0a187da21e74991fc858a9e10732c4fa95afa40`.
+
 ```text
 [Decision Log]
 - 목적과 의도: Admit the seven Set composition constructibility files only after proving their complete iterator, live-order, Realm, GC, Fuel, and storage behavior.
@@ -12365,7 +12376,7 @@ with four absent-checkout probes skipped, and exact Set algebra **186/186**.
 - 검토한 주요 대안: Remove Reflect.construct or set-methods globally, admit directory prefixes, rely on forced green counts, retain all skips, or freeze the exact seven metadata records after deterministic runtime tests.
 - 선택한 방식: Freeze the seven not-a-constructor paths and exact two-feature sets in shared tooling; add a literal 186-file CI gate; pair admission with direct mutation, iterator-close, Realm, GC, reservation, Fuel, and retry evidence.
 - 다른 대안 대신 이 방식을 선택한 이유: Global gates and prefixes overclaim unrelated or future behavior, forced counts do not change supported-subset accounting, and Test262 constructibility files cannot prove host resource ownership or complexity bounds.
-- 장점, 단점 및 영향: Official movement is exactly seven skips replaced by passes with no new failures. Full Set gains seven passes and retains its two known independent failures; full-matrix artifact comparison remains the post-push evidence gate.
+- 장점, 단점 및 영향: Official movement is exactly seven skips replaced by passes with no new failures. Full Set gains seven passes and retains its two known independent failures; post-push full-matrix comparison confirms built-ins-only normalized movement.
 ```
 
 ## Why the full-suite rate is not higher

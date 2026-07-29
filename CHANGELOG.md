@@ -19,6 +19,14 @@
   order, iterator caching and close, foreign Realms, forced GC, root/storage
   failpoint sequences, post-step close, exact-cap Set-result/pair failure,
   Fuel-atomic compaction/clear, pin cleanup, and clean retry.
+  Implementation commit `9dc89b8` passes ordinary CI `30426806030` (**2/2**)
+  and full CI `30426233118` (**38/38**), including the dedicated **186/186**
+  Set-algebra gate. Against `30411263253`, normalized full-matrix movement is
+  exactly **+7 pass / -7 skip** in built-ins; aggregate results are
+  **32260 pass / 5028 fail / 11178 skip / 3 timeout / 0 error** over 48469,
+  with 37288 run. Thirty artifacts are byte-identical, annexB differs only
+  because two prior contention timeouts passed, and built-ins contains the
+  intended admission.
 
 - `WeakMap` and `WeakSet` now execute iterable constructors through direct,
   cached synchronous iterator records. They perform one `@@iterator` Get with
