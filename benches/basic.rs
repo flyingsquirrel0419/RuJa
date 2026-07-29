@@ -1,8 +1,13 @@
 use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion};
 use indexmap::IndexMap;
+use parking_lot::Mutex;
 use ruja::gc::Heap;
-use ruja::value::{ArrayData, PropertyKey};
+use ruja::value::{
+    ArrayData, FinalizationRegistryCell, FinalizationRegistryData, PromiseData, PromiseHandler,
+    PromiseStatus, PropertyKey,
+};
 use ruja::{Value, Vm};
+use std::sync::atomic::AtomicBool;
 
 fn bench_fib(c: &mut Criterion) {
     let src = r#"
@@ -69,6 +74,73 @@ fn bench_dense_array_gc(c: &mut Criterion) {
     c.bench_function("gc_dense_primitive_array_100k", |b| {
         b.iter(|| heap.collect(black_box(&[array])))
     });
+}
+
+fn bench_cursorized_record_gc(c: &mut Criterion) {
+    let promise_heap = Heap::new();
+    let promise = promise_heap
+        .allocate(ruja::HeapObj::Promise(PromiseData {
+            state: Mutex::new(PromiseStatus::Pending),
+            result: Mutex::new(Value::Undefined),
+            handlers: Mutex::new(
+                (0..100_000)
+                    .map(|_| PromiseHandler {
+                        on_fulfilled: Value::Undefined,
+                        on_rejected: Value::Undefined,
+                        derived: None,
+                        continuation: None,
+                    })
+                    .collect(),
+            ),
+            props: Mutex::new(IndexMap::new()),
+            proto: Mutex::new(None),
+            extensible: AtomicBool::new(true),
+        }))
+        .expect("Promise GC fixture allocation failed");
+    c.bench_function("gc_promise_handlers_100k", |b| {
+        b.iter(|| promise_heap.collect(black_box(&[promise])))
+    });
+    c.bench_function(
+        "gc_promise_handlers_incremental_slice_100k_budget_256",
+        |b| {
+            b.iter(|| {
+                promise_heap.collect_incremental(black_box(&[promise]), black_box(256));
+            })
+        },
+    );
+
+    let registry_heap = Heap::new();
+    let registry = registry_heap
+        .allocate(ruja::HeapObj::FinalizationRegistry(
+            FinalizationRegistryData {
+                cleanup_callback: Value::Undefined,
+                cells: Mutex::new(
+                    (0..100_000)
+                        .map(|_| FinalizationRegistryCell {
+                            target: None,
+                            held_value: Value::Undefined,
+                            unregister_token: None,
+                        })
+                        .collect(),
+                ),
+                cleanup_scheduled: AtomicBool::new(false),
+                props: Mutex::new(IndexMap::new()),
+                proto: Mutex::new(None),
+                extensible: AtomicBool::new(true),
+            },
+        ))
+        .expect("FinalizationRegistry GC fixture allocation failed");
+    c.bench_function("gc_finalization_cells_100k", |b| {
+        b.iter(|| registry_heap.collect(black_box(&[registry])))
+    });
+    c.bench_function(
+        "gc_finalization_cells_incremental_slice_100k_budget_256",
+        |b| {
+            b.iter(|| {
+                registry_heap.collect_incremental(black_box(&[registry]), black_box(256));
+            })
+        },
+    );
 }
 
 fn bench_array_index_set(c: &mut Criterion) {
@@ -589,6 +661,7 @@ criterion_group!(
     bench_tight_loop,
     bench_array_push,
     bench_dense_array_gc,
+    bench_cursorized_record_gc,
     bench_array_index_set,
     bench_native_indexed_loops,
     bench_property_key_maps,

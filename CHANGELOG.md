@@ -4,6 +4,31 @@
 
 ### Changed
 
+- Finite-budget incremental GC now cursorizes pending Promise handlers and
+  FinalizationRegistry cells alongside Array and internal Iterator vectors.
+  Each pass snapshots record count, charges removed or compacted slots, scans
+  the current slice under one lock, and relies on the existing access barrier
+  for growth, replacement, and registry `retain` compaction. Promise handler
+  traversal is shared with the direct tracer through an always-inlined helper;
+  registry targets and unregister tokens remain weak while held values remain
+  strong. Exact tests cover multi-root ordering, one-record accounting,
+  batching, Mark- and Retrace-phase growth, removal, settlement-style
+  result/drain mutation, dirty revisits, cleanup-callback and held-only
+  liveness, private-edge LIFO order, retain compaction, direct tracing, and
+  `usize::MAX` completion. Dedicated budget-256 Criterion cases exercise the
+  finite cursor path in addition to full-GC fast-path A/B fixtures.
+  One handler's nested AsyncFunction stack/local/catch vectors and other large
+  object payloads remain atomic follow-ups. Same-host quick full-GC A/B samples
+  show Promise handlers at **1.3170-1.3337 ms** before versus
+  **1.2913-1.3226 ms** after, and registry cells at **332.37-338.25 us** before
+  versus **306.86-312.13 us** after; this is no-regression evidence rather than
+  a general throughput claim. Local gates pass all-target/all-feature tests and
+  release library tests with **353/353**, focused GC **39/39**, warnings-denied
+  Clippy, rustfmt, wasm32, doctest **1/1**, all Criterion smoke targets, and
+  Python tooling **145/145** with four expected absent-checkout skips. Pinned
+  Promise/FinalizationRegistry Test262 is **489 pass / 0 fail / 287 skip** over
+  776 files.
+
 - Finite-budget incremental GC now cursorizes dense Array and internal
   Iterator item vectors through the same LIFO work stack as cell headers.
   Each pass snapshots its vector length, counts down to retain prior child

@@ -99,6 +99,8 @@ struct VecTrace {
 enum VecTraceKind {
     ArrayItems,
     IteratorItems,
+    PromiseHandlers,
+    FinalizationRegistryCells,
 }
 
 struct CellTrace {
@@ -209,6 +211,24 @@ fn trace_cell(cells: &[GcCell], index: usize, cursorize_vectors: bool) -> CellTr
                 next: iterator.items.lock().len(),
             })
         }
+        (true, HeapObj::Promise(promise)) => {
+            trace_properties_and_prototype(obj.as_ref(), &mut before);
+            push_value(&promise.result.lock(), &mut before);
+            Some(VecTrace {
+                owner: index,
+                kind: VecTraceKind::PromiseHandlers,
+                next: promise.handlers.lock().len(),
+            })
+        }
+        (true, HeapObj::FinalizationRegistry(registry)) => {
+            trace_properties_and_prototype(obj.as_ref(), &mut before);
+            push_value(&registry.cleanup_callback, &mut before);
+            Some(VecTrace {
+                owner: index,
+                kind: VecTraceKind::FinalizationRegistryCells,
+                next: registry.cells.lock().len(),
+            })
+        }
         (true, _) => {
             trace_obj_impl(obj.as_ref(), &mut before);
             None
@@ -271,6 +291,22 @@ fn trace_vec_slots(
             let start = next.min(end);
             for value in &items[start..end] {
                 push_value(value, &mut roots);
+            }
+        }
+        (VecTraceKind::PromiseHandlers, HeapObj::Promise(promise)) => {
+            let handlers = promise.handlers.lock();
+            let end = trace.next.min(handlers.len());
+            let start = next.min(end);
+            for handler in &handlers[start..end] {
+                trace_promise_handler(handler, &mut roots);
+            }
+        }
+        (VecTraceKind::FinalizationRegistryCells, HeapObj::FinalizationRegistry(registry)) => {
+            let cells = registry.cells.lock();
+            let end = trace.next.min(cells.len());
+            let start = next.min(end);
+            for cell in &cells[start..end] {
+                push_value(&cell.held_value, &mut roots);
             }
         }
         _ => {}
@@ -362,6 +398,81 @@ fn trace_properties_and_prototype(obj: &HeapObj, worklist: &mut Vec<usize>) {
     }
     if let Some(proto) = obj.proto().lock().as_ref() {
         push_value(proto, worklist);
+    }
+}
+
+#[inline(always)]
+fn trace_promise_handler(handler: &crate::value::PromiseHandler, worklist: &mut Vec<usize>) {
+    push_value(&handler.on_fulfilled, worklist);
+    push_value(&handler.on_rejected, worklist);
+    if let Some(derived) = &handler.derived {
+        push_value(&derived.promise, worklist);
+        push_value(&derived.resolve, worklist);
+        push_value(&derived.reject, worklist);
+    }
+    if let Some(continuation) = &handler.continuation {
+        match continuation {
+            crate::value::PromiseContinuation::DynamicImport {
+                capability, realm, ..
+            } => {
+                push_value(&capability.promise, worklist);
+                push_value(&capability.resolve, worklist);
+                push_value(&capability.reject, worklist);
+                worklist.push(realm.0);
+            }
+            crate::value::PromiseContinuation::AsyncGenerator { generator, .. } => {
+                worklist.push(generator.0)
+            }
+            crate::value::PromiseContinuation::AsyncFromSyncIterator {
+                capability,
+                iterator,
+                realm,
+                ..
+            } => {
+                push_value(&capability.promise, worklist);
+                push_value(&capability.resolve, worklist);
+                push_value(&capability.reject, worklist);
+                if let Some(iterator) = iterator {
+                    push_value(iterator, worklist);
+                }
+                worklist.push(realm.0);
+            }
+            crate::value::PromiseContinuation::ArrayFromAsync(frame) => {
+                push_value(&frame.capability.promise, worklist);
+                push_value(&frame.capability.resolve, worklist);
+                push_value(&frame.capability.reject, worklist);
+                worklist.push(frame.realm.0);
+                for value in [
+                    &frame.target,
+                    &frame.source,
+                    &frame.iterator,
+                    &frame.next_method,
+                    &frame.mapper,
+                    &frame.this_arg,
+                ] {
+                    push_value(value, worklist);
+                }
+                if let crate::value::ArrayFromAsyncAwaitKind::IteratorClose { original_reason } =
+                    &frame.await_kind
+                {
+                    push_value(original_reason, worklist);
+                }
+            }
+            crate::value::PromiseContinuation::AsyncFunction(frame) => {
+                push_value(&frame.capability.promise, worklist);
+                push_value(&frame.capability.resolve, worklist);
+                push_value(&frame.capability.reject, worklist);
+                push_value(&frame.callee, worklist);
+                push_value(&frame.this_val, worklist);
+                push_value(&frame.new_target, worklist);
+                push_value(&frame.finally_completion_val, worklist);
+                worklist.push(frame.env.0);
+                worklist.extend(frame.catch_stack.iter().map(|(_, _, env, _)| env.0));
+                for value in frame.stack.iter().chain(frame.locals.iter()) {
+                    push_value(value, worklist);
+                }
+            }
+        }
     }
 }
 
@@ -513,81 +624,8 @@ fn trace_obj_impl(obj: &HeapObj, worklist: &mut Vec<usize>) {
         }
         HeapObj::Promise(p) => {
             push_value(&p.result.lock(), worklist);
-            for h in p.handlers.lock().iter() {
-                push_value(&h.on_fulfilled, worklist);
-                push_value(&h.on_rejected, worklist);
-                if let Some(derived) = &h.derived {
-                    push_value(&derived.promise, worklist);
-                    push_value(&derived.resolve, worklist);
-                    push_value(&derived.reject, worklist);
-                }
-                if let Some(continuation) = &h.continuation {
-                    match continuation {
-                        crate::value::PromiseContinuation::DynamicImport {
-                            capability,
-                            realm,
-                            ..
-                        } => {
-                            push_value(&capability.promise, worklist);
-                            push_value(&capability.resolve, worklist);
-                            push_value(&capability.reject, worklist);
-                            worklist.push(realm.0);
-                        }
-                        crate::value::PromiseContinuation::AsyncGenerator { generator, .. } => {
-                            worklist.push(generator.0)
-                        }
-                        crate::value::PromiseContinuation::AsyncFromSyncIterator {
-                            capability,
-                            iterator,
-                            realm,
-                            ..
-                        } => {
-                            push_value(&capability.promise, worklist);
-                            push_value(&capability.resolve, worklist);
-                            push_value(&capability.reject, worklist);
-                            if let Some(iterator) = iterator {
-                                push_value(iterator, worklist);
-                            }
-                            worklist.push(realm.0);
-                        }
-                        crate::value::PromiseContinuation::ArrayFromAsync(frame) => {
-                            push_value(&frame.capability.promise, worklist);
-                            push_value(&frame.capability.resolve, worklist);
-                            push_value(&frame.capability.reject, worklist);
-                            worklist.push(frame.realm.0);
-                            for value in [
-                                &frame.target,
-                                &frame.source,
-                                &frame.iterator,
-                                &frame.next_method,
-                                &frame.mapper,
-                                &frame.this_arg,
-                            ] {
-                                push_value(value, worklist);
-                            }
-                            if let crate::value::ArrayFromAsyncAwaitKind::IteratorClose {
-                                original_reason,
-                            } = &frame.await_kind
-                            {
-                                push_value(original_reason, worklist);
-                            }
-                        }
-                        crate::value::PromiseContinuation::AsyncFunction(frame) => {
-                            push_value(&frame.capability.promise, worklist);
-                            push_value(&frame.capability.resolve, worklist);
-                            push_value(&frame.capability.reject, worklist);
-                            push_value(&frame.callee, worklist);
-                            push_value(&frame.this_val, worklist);
-                            push_value(&frame.new_target, worklist);
-                            push_value(&frame.finally_completion_val, worklist);
-                            worklist.push(frame.env.0);
-                            worklist.extend(frame.catch_stack.iter().map(|(_, _, env, _)| env.0));
-                            for value in frame.stack.iter().chain(frame.locals.iter()) {
-                                push_value(value, worklist);
-                            }
-                        }
-                    }
-                }
+            for handler in p.handlers.lock().iter() {
+                trace_promise_handler(handler, worklist);
             }
         }
         HeapObj::Generator(g) => {
@@ -1077,8 +1115,9 @@ impl Heap {
 mod tests {
     use super::*;
     use crate::value::{
-        GcIdx, IteratorData, PrivateNameKey, PrivateSlot, PrivateSlotKey, PropertyDescriptor,
-        PropertyKey, Value, WeakKey, WeakMapData,
+        FinalizationRegistryCell, FinalizationRegistryData, GcIdx, IteratorData, PrivateNameKey,
+        PrivateSlot, PrivateSlotKey, PromiseData, PromiseHandler, PromiseStatus,
+        PropertyDescriptor, PropertyKey, Value, WeakKey, WeakMapData,
     };
     use std::sync::Arc;
 
@@ -1104,6 +1143,8 @@ mod tests {
                 units.saturating_add(match obj.as_deref() {
                     Some(HeapObj::Array(array)) => array.items.lock().len(),
                     Some(HeapObj::Iterator(iterator)) => iterator.items.lock().len(),
+                    Some(HeapObj::Promise(promise)) => promise.handlers.lock().len(),
+                    Some(HeapObj::FinalizationRegistry(registry)) => registry.cells.lock().len(),
                     _ => 0,
                 })
             })
@@ -1141,6 +1182,40 @@ mod tests {
             for_in: Mutex::new(None),
             async_from_sync: AtomicBool::new(false),
             done: AtomicBool::new(false),
+        })
+    }
+
+    fn promise(handlers: Vec<PromiseHandler>) -> HeapObj {
+        HeapObj::Promise(PromiseData {
+            state: Mutex::new(PromiseStatus::Pending),
+            result: Mutex::new(Value::Undefined),
+            handlers: Mutex::new(handlers),
+            props: Mutex::new(indexmap::IndexMap::new()),
+            proto: Mutex::new(None),
+            extensible: AtomicBool::new(true),
+        })
+    }
+
+    fn promise_handler(on_fulfilled: Value, on_rejected: Value) -> PromiseHandler {
+        PromiseHandler {
+            on_fulfilled,
+            on_rejected,
+            derived: None,
+            continuation: None,
+        }
+    }
+
+    fn finalization_registry(
+        cleanup_callback: Value,
+        cells: Vec<FinalizationRegistryCell>,
+    ) -> HeapObj {
+        HeapObj::FinalizationRegistry(FinalizationRegistryData {
+            cleanup_callback,
+            cells: Mutex::new(cells),
+            cleanup_scheduled: AtomicBool::new(false),
+            props: Mutex::new(indexmap::IndexMap::new()),
+            proto: Mutex::new(None),
+            extensible: AtomicBool::new(true),
         })
     }
 
@@ -1819,6 +1894,711 @@ mod tests {
 
         assert_eq!(heap.live_count(), 2);
         assert_eq!(heap.allocate(HeapObj::placeholder()).unwrap(), garbage);
+    }
+
+    #[test]
+    fn promise_handler_tracer_preserves_multi_root_push_order() {
+        let mut roots = Vec::new();
+        let handler = PromiseHandler {
+            on_fulfilled: Value::Object(GcIdx(1)),
+            on_rejected: Value::Object(GcIdx(2)),
+            derived: Some(crate::value::PromiseReactionCapability {
+                promise: Value::Object(GcIdx(3)),
+                resolve: Value::Object(GcIdx(4)),
+                reject: Value::Object(GcIdx(5)),
+            }),
+            continuation: Some(crate::value::PromiseContinuation::AsyncGenerator {
+                generator: GcIdx(6),
+                kind: crate::value::AsyncGeneratorAwaitKind::Resume,
+            }),
+        };
+
+        trace_promise_handler(&handler, &mut roots);
+
+        assert_eq!(roots, [1, 2, 3, 4, 5, 6]);
+    }
+
+    #[test]
+    fn promise_handler_cursor_charges_one_record_not_each_root() {
+        let heap = Heap::new();
+        let roots: Vec<_> = (0..6)
+            .map(|_| heap.allocate(HeapObj::placeholder()).unwrap())
+            .collect();
+        let high_handler = PromiseHandler {
+            on_fulfilled: Value::Object(GcIdx(roots[0])),
+            on_rejected: Value::Object(GcIdx(roots[1])),
+            derived: Some(crate::value::PromiseReactionCapability {
+                promise: Value::Object(GcIdx(roots[2])),
+                resolve: Value::Object(GcIdx(roots[3])),
+                reject: Value::Object(GcIdx(roots[4])),
+            }),
+            continuation: Some(crate::value::PromiseContinuation::AsyncGenerator {
+                generator: GcIdx(roots[5]),
+                kind: crate::value::AsyncGeneratorAwaitKind::Resume,
+            }),
+        };
+        let owner = heap
+            .allocate(promise(vec![
+                promise_handler(Value::Undefined, Value::Undefined),
+                high_handler,
+            ]))
+            .unwrap();
+
+        heap.collect_incremental(&[owner], 1);
+        heap.collect_incremental(&[owner], 1);
+
+        let state = heap.incremental_mark.lock();
+        let state = state.as_ref().unwrap();
+        assert_eq!(
+            pending_vec_trace(state, owner, VecTraceKind::PromiseHandlers).map(|trace| trace.next),
+            Some(1)
+        );
+        for root in roots {
+            assert!(state.queued[root]);
+            assert!(!state.marked[root]);
+        }
+    }
+
+    #[test]
+    fn promise_and_finalization_cursors_batch_finite_budget() {
+        let fixtures = [
+            (
+                promise(
+                    (0..5)
+                        .map(|_| promise_handler(Value::Undefined, Value::Undefined))
+                        .collect(),
+                ),
+                VecTraceKind::PromiseHandlers,
+            ),
+            (
+                finalization_registry(
+                    Value::Undefined,
+                    (0..5)
+                        .map(|_| FinalizationRegistryCell {
+                            target: None,
+                            held_value: Value::Undefined,
+                            unregister_token: None,
+                        })
+                        .collect(),
+                ),
+                VecTraceKind::FinalizationRegistryCells,
+            ),
+        ];
+
+        for (object, kind) in fixtures {
+            let heap = Heap::new();
+            let owner = heap.allocate(object).unwrap();
+            heap.collect_incremental(&[owner], 1);
+            heap.collect_incremental(&[owner], 3);
+            assert_eq!(
+                pending_vec_trace(heap.incremental_mark.lock().as_ref().unwrap(), owner, kind)
+                    .map(|trace| trace.next),
+                Some(2)
+            );
+        }
+    }
+
+    #[test]
+    fn promise_and_finalization_cursors_snapshot_growth() {
+        {
+            let heap = Heap::new();
+            let owner = heap.allocate(promise(Vec::new())).unwrap();
+            let first = heap.allocate(HeapObj::placeholder()).unwrap();
+            let appended = heap.allocate(HeapObj::placeholder()).unwrap();
+            let garbage = heap.allocate(HeapObj::placeholder()).unwrap();
+            heap.with_obj(owner, |object| {
+                let HeapObj::Promise(promise) = object else {
+                    panic!("promise fixture lost its type");
+                };
+                promise.handlers.lock().push(promise_handler(
+                    Value::Object(GcIdx(first)),
+                    Value::Undefined,
+                ));
+            });
+            heap.collect_incremental(&[owner], 1);
+            heap.with_obj(owner, |object| {
+                let HeapObj::Promise(promise) = object else {
+                    panic!("promise fixture lost its type");
+                };
+                promise.handlers.lock().push(promise_handler(
+                    Value::Object(GcIdx(appended)),
+                    Value::Undefined,
+                ));
+            });
+            heap.collect_incremental(&[owner], 1);
+            {
+                let state = heap.incremental_mark.lock();
+                let state = state.as_ref().unwrap();
+                assert!(pending_vec_trace(state, owner, VecTraceKind::PromiseHandlers).is_none());
+                assert!(!state.marked[appended]);
+            }
+            finish_incremental(&heap, &[owner], 1);
+            assert_eq!(heap.live_count(), 3);
+            assert_eq!(heap.allocate(HeapObj::placeholder()).unwrap(), garbage);
+        }
+
+        {
+            let heap = Heap::new();
+            let owner = heap
+                .allocate(finalization_registry(Value::Undefined, Vec::new()))
+                .unwrap();
+            let first = heap.allocate(HeapObj::placeholder()).unwrap();
+            let appended = heap.allocate(HeapObj::placeholder()).unwrap();
+            let garbage = heap.allocate(HeapObj::placeholder()).unwrap();
+            heap.with_obj(owner, |object| {
+                let HeapObj::FinalizationRegistry(registry) = object else {
+                    panic!("registry fixture lost its type");
+                };
+                registry.cells.lock().push(FinalizationRegistryCell {
+                    target: None,
+                    held_value: Value::Object(GcIdx(first)),
+                    unregister_token: None,
+                });
+            });
+            heap.collect_incremental(&[owner], 1);
+            heap.with_obj(owner, |object| {
+                let HeapObj::FinalizationRegistry(registry) = object else {
+                    panic!("registry fixture lost its type");
+                };
+                registry.cells.lock().push(FinalizationRegistryCell {
+                    target: None,
+                    held_value: Value::Object(GcIdx(appended)),
+                    unregister_token: None,
+                });
+            });
+            heap.collect_incremental(&[owner], 1);
+            {
+                let state = heap.incremental_mark.lock();
+                let state = state.as_ref().unwrap();
+                assert!(
+                    pending_vec_trace(state, owner, VecTraceKind::FinalizationRegistryCells,)
+                        .is_none()
+                );
+                assert!(!state.marked[appended]);
+            }
+            finish_incremental(&heap, &[owner], 1);
+            assert_eq!(heap.live_count(), 3);
+            assert_eq!(heap.allocate(HeapObj::placeholder()).unwrap(), garbage);
+        }
+    }
+
+    #[test]
+    fn promise_and_finalization_retrace_growth_queues_fresh_snapshots() {
+        {
+            let heap = Heap::new();
+            let owner = heap
+                .allocate(promise(vec![promise_handler(
+                    Value::Undefined,
+                    Value::Undefined,
+                )]))
+                .unwrap();
+            let appended = heap.allocate(HeapObj::placeholder()).unwrap();
+            let garbage = heap.allocate(HeapObj::placeholder()).unwrap();
+
+            for _ in 0..128 {
+                heap.collect_incremental(&[owner], 1);
+                let state = heap.incremental_mark.lock();
+                let state = state.as_ref().unwrap();
+                if matches!(state.phase, IncrementalPhase::Retrace { cursor: 1 })
+                    && pending_vec_trace(state, owner, VecTraceKind::PromiseHandlers)
+                        .is_some_and(|trace| trace.next == 1)
+                {
+                    break;
+                }
+            }
+            heap.collect_incremental(&[owner], 1);
+            heap.with_obj(owner, |object| {
+                let HeapObj::Promise(promise) = object else {
+                    panic!("promise fixture lost its type");
+                };
+                promise.handlers.lock().push(promise_handler(
+                    Value::Object(GcIdx(appended)),
+                    Value::Undefined,
+                ));
+            });
+            assert_eq!(
+                heap.incremental_mark.lock().as_ref().unwrap().dirty,
+                [owner]
+            );
+            finish_incremental(&heap, &[owner], 1);
+
+            assert_eq!(heap.live_count(), 2);
+            assert_eq!(heap.allocate(HeapObj::placeholder()).unwrap(), garbage);
+            assert_ne!(heap.allocate(HeapObj::placeholder()).unwrap(), appended);
+        }
+
+        {
+            let heap = Heap::new();
+            let owner = heap
+                .allocate(finalization_registry(
+                    Value::Undefined,
+                    vec![FinalizationRegistryCell {
+                        target: None,
+                        held_value: Value::Undefined,
+                        unregister_token: None,
+                    }],
+                ))
+                .unwrap();
+            let appended = heap.allocate(HeapObj::placeholder()).unwrap();
+            let garbage = heap.allocate(HeapObj::placeholder()).unwrap();
+
+            for _ in 0..128 {
+                heap.collect_incremental(&[owner], 1);
+                let state = heap.incremental_mark.lock();
+                let state = state.as_ref().unwrap();
+                if matches!(state.phase, IncrementalPhase::Retrace { cursor: 1 })
+                    && pending_vec_trace(state, owner, VecTraceKind::FinalizationRegistryCells)
+                        .is_some_and(|trace| trace.next == 1)
+                {
+                    break;
+                }
+            }
+            heap.collect_incremental(&[owner], 1);
+            heap.with_obj(owner, |object| {
+                let HeapObj::FinalizationRegistry(registry) = object else {
+                    panic!("registry fixture lost its type");
+                };
+                registry.cells.lock().push(FinalizationRegistryCell {
+                    target: None,
+                    held_value: Value::Object(GcIdx(appended)),
+                    unregister_token: None,
+                });
+            });
+            assert_eq!(
+                heap.incremental_mark.lock().as_ref().unwrap().dirty,
+                [owner]
+            );
+            finish_incremental(&heap, &[owner], 1);
+
+            assert_eq!(heap.live_count(), 2);
+            assert_eq!(heap.allocate(HeapObj::placeholder()).unwrap(), garbage);
+            assert_ne!(heap.allocate(HeapObj::placeholder()).unwrap(), appended);
+        }
+    }
+
+    #[test]
+    fn promise_settlement_style_result_and_drain_is_retraced() {
+        let heap = Heap::new();
+        let owner = heap
+            .allocate(promise(vec![promise_handler(
+                Value::Undefined,
+                Value::Undefined,
+            )]))
+            .unwrap();
+        let result = heap.allocate(HeapObj::placeholder()).unwrap();
+        let garbage = heap.allocate(HeapObj::placeholder()).unwrap();
+
+        for _ in 0..128 {
+            heap.collect_incremental(&[owner], 1);
+            let state = heap.incremental_mark.lock();
+            let state = state.as_ref().unwrap();
+            if matches!(state.phase, IncrementalPhase::Retrace { cursor: 1 })
+                && pending_vec_trace(state, owner, VecTraceKind::PromiseHandlers)
+                    .is_some_and(|trace| trace.next == 1)
+            {
+                break;
+            }
+        }
+        heap.collect_incremental(&[owner], 1);
+        heap.with_obj(owner, |object| {
+            let HeapObj::Promise(promise) = object else {
+                panic!("promise fixture lost its type");
+            };
+            *promise.result.lock() = Value::Object(GcIdx(result));
+            let drained: Vec<_> = promise.handlers.lock().drain(..).collect();
+            assert_eq!(drained.len(), 1);
+        });
+        assert_eq!(
+            heap.incremental_mark.lock().as_ref().unwrap().dirty,
+            [owner]
+        );
+        finish_incremental(&heap, &[owner], 1);
+
+        assert_eq!(heap.live_count(), 2);
+        assert_eq!(heap.allocate(HeapObj::placeholder()).unwrap(), garbage);
+        assert_ne!(heap.allocate(HeapObj::placeholder()).unwrap(), result);
+    }
+
+    #[test]
+    fn finalization_cleanup_callback_survives_finite_cursor_tracing() {
+        let heap = Heap::new();
+        let callback = heap.allocate(HeapObj::placeholder()).unwrap();
+        let owner = heap
+            .allocate(finalization_registry(
+                Value::Object(GcIdx(callback)),
+                vec![FinalizationRegistryCell {
+                    target: None,
+                    held_value: Value::Undefined,
+                    unregister_token: None,
+                }],
+            ))
+            .unwrap();
+        let garbage = heap.allocate(HeapObj::placeholder()).unwrap();
+
+        heap.collect_incremental(&[owner], 1);
+        finish_incremental(&heap, &[owner], 1);
+
+        assert_eq!(heap.live_count(), 2);
+        assert_eq!(heap.allocate(HeapObj::placeholder()).unwrap(), garbage);
+        assert_ne!(heap.allocate(HeapObj::placeholder()).unwrap(), callback);
+    }
+
+    #[test]
+    fn promise_and_finalization_cursors_charge_removed_slots() {
+        let fixtures = [
+            (
+                promise(vec![
+                    promise_handler(Value::Undefined, Value::Undefined),
+                    promise_handler(Value::Undefined, Value::Undefined),
+                ]),
+                VecTraceKind::PromiseHandlers,
+            ),
+            (
+                finalization_registry(
+                    Value::Undefined,
+                    vec![
+                        FinalizationRegistryCell {
+                            target: None,
+                            held_value: Value::Undefined,
+                            unregister_token: None,
+                        },
+                        FinalizationRegistryCell {
+                            target: None,
+                            held_value: Value::Undefined,
+                            unregister_token: None,
+                        },
+                    ],
+                ),
+                VecTraceKind::FinalizationRegistryCells,
+            ),
+        ];
+
+        for (object, kind) in fixtures {
+            let heap = Heap::new();
+            let owner = heap.allocate(object).unwrap();
+            heap.collect_incremental(&[owner], 1);
+            heap.with_obj(owner, |object| match object {
+                HeapObj::Promise(promise) => promise.handlers.lock().truncate(1),
+                HeapObj::FinalizationRegistry(registry) => registry.cells.lock().truncate(1),
+                _ => panic!("cursor fixture lost its type"),
+            });
+            heap.collect_incremental(&[owner], 1);
+            assert_eq!(
+                pending_vec_trace(heap.incremental_mark.lock().as_ref().unwrap(), owner, kind)
+                    .map(|trace| trace.next),
+                Some(1),
+                "a removed snapshot slot must still consume one work unit"
+            );
+        }
+    }
+
+    #[test]
+    fn promise_handler_cursor_can_be_redirtied() {
+        let heap = Heap::new();
+        let owner = heap.allocate(promise(Vec::new())).unwrap();
+        let original_low = heap.allocate(HeapObj::placeholder()).unwrap();
+        let original_high = heap.allocate(HeapObj::placeholder()).unwrap();
+        let first_replacement = heap.allocate(HeapObj::placeholder()).unwrap();
+        let final_replacement = heap.allocate(HeapObj::placeholder()).unwrap();
+        let garbage = heap.allocate(HeapObj::placeholder()).unwrap();
+        heap.with_obj(owner, |object| {
+            let HeapObj::Promise(promise) = object else {
+                panic!("promise fixture lost its type");
+            };
+            promise.handlers.lock().extend([
+                promise_handler(Value::Object(GcIdx(original_low)), Value::Undefined),
+                promise_handler(Value::Object(GcIdx(original_high)), Value::Undefined),
+            ]);
+        });
+
+        for _ in 0..128 {
+            heap.collect_incremental(&[owner], 1);
+            let state = heap.incremental_mark.lock();
+            let state = state.as_ref().unwrap();
+            if matches!(state.phase, IncrementalPhase::Retrace { cursor: 1 })
+                && pending_vec_trace(state, owner, VecTraceKind::PromiseHandlers)
+                    .is_some_and(|trace| trace.next == 2)
+            {
+                break;
+            }
+        }
+        heap.collect_incremental(&[owner], 1);
+        heap.with_obj(owner, |object| {
+            let HeapObj::Promise(promise) = object else {
+                panic!("promise fixture lost its type");
+            };
+            promise.handlers.lock()[1].on_fulfilled = Value::Object(GcIdx(first_replacement));
+        });
+        assert_eq!(
+            heap.incremental_mark.lock().as_ref().unwrap().dirty,
+            [owner]
+        );
+
+        let cells_len = heap.cells.lock().len();
+        for _ in 0..256 {
+            heap.collect_incremental(&[owner], 1);
+            let state = heap.incremental_mark.lock();
+            let state = state.as_ref().unwrap();
+            if matches!(state.phase, IncrementalPhase::Retrace { cursor } if cursor == cells_len)
+                && state.dirty.is_empty()
+                && pending_vec_trace(state, owner, VecTraceKind::PromiseHandlers)
+                    .is_some_and(|trace| trace.next == 2)
+            {
+                break;
+            }
+        }
+        heap.collect_incremental(&[owner], 1);
+        heap.with_obj(owner, |object| {
+            let HeapObj::Promise(promise) = object else {
+                panic!("promise fixture lost its type");
+            };
+            promise.handlers.lock()[1].on_fulfilled = Value::Object(GcIdx(final_replacement));
+        });
+        assert_eq!(
+            heap.incremental_mark.lock().as_ref().unwrap().dirty,
+            [owner]
+        );
+        finish_incremental(&heap, &[owner], 1);
+
+        assert_eq!(heap.live_count(), 5);
+        assert_eq!(heap.allocate(HeapObj::placeholder()).unwrap(), garbage);
+        assert_ne!(
+            heap.allocate(HeapObj::placeholder()).unwrap(),
+            final_replacement
+        );
+    }
+
+    #[test]
+    fn finalization_cursor_traces_only_held_values() {
+        let heap = Heap::new();
+        let target = heap.allocate(HeapObj::placeholder()).unwrap();
+        let held = heap.allocate(HeapObj::placeholder()).unwrap();
+        let token = heap.allocate(HeapObj::placeholder()).unwrap();
+        let garbage = heap.allocate(HeapObj::placeholder()).unwrap();
+        let owner = heap
+            .allocate(finalization_registry(
+                Value::Undefined,
+                vec![FinalizationRegistryCell {
+                    target: Some(Value::Object(GcIdx(target))),
+                    held_value: Value::Object(GcIdx(held)),
+                    unregister_token: Some(Value::Object(GcIdx(token))),
+                }],
+            ))
+            .unwrap();
+
+        heap.collect_incremental(&[owner], 1);
+        finish_incremental(&heap, &[owner], 1);
+
+        assert_eq!(heap.live_count(), 2);
+        assert!(heap.with_obj(owner, |object| {
+            let HeapObj::FinalizationRegistry(registry) = object else {
+                return false;
+            };
+            let cells = registry.cells.lock();
+            cells[0].target.is_none()
+                && cells[0].unregister_token.is_none()
+                && cells[0].held_value == Value::Object(GcIdx(held))
+        }));
+        let reclaimed: std::collections::HashSet<_> = (0..3)
+            .map(|_| heap.allocate(HeapObj::placeholder()).unwrap())
+            .collect();
+        assert_eq!(reclaimed, [target, token, garbage].into_iter().collect());
+    }
+
+    #[test]
+    fn usize_max_uses_direct_promise_and_finalization_traces() {
+        let heap = Heap::new();
+        let promise_root = heap.allocate(HeapObj::placeholder()).unwrap();
+        let registry_root = heap.allocate(HeapObj::placeholder()).unwrap();
+        let promise = heap
+            .allocate(promise(vec![promise_handler(
+                Value::Object(GcIdx(promise_root)),
+                Value::Undefined,
+            )]))
+            .unwrap();
+        let registry = heap
+            .allocate(finalization_registry(
+                Value::Undefined,
+                vec![FinalizationRegistryCell {
+                    target: None,
+                    held_value: Value::Object(GcIdx(registry_root)),
+                    unregister_token: None,
+                }],
+            ))
+            .unwrap();
+
+        let cells = heap.cells.lock();
+        let promise_trace = trace_cell(&cells, promise, false);
+        let registry_trace = trace_cell(&cells, registry, false);
+        assert!(promise_trace.vector.is_none());
+        assert!(registry_trace.vector.is_none());
+        assert_eq!(promise_trace.before, [promise_root]);
+        assert_eq!(registry_trace.before, [registry_root]);
+    }
+
+    #[test]
+    fn promise_cursor_preserves_fixed_vector_private_lifo_order() {
+        let heap = Heap::new();
+        let fixed = heap.allocate(HeapObj::placeholder()).unwrap();
+        let slot = heap.allocate(HeapObj::placeholder()).unwrap();
+        let private = heap.allocate(HeapObj::placeholder()).unwrap();
+        let owner = heap
+            .allocate(promise(vec![promise_handler(
+                Value::Object(GcIdx(slot)),
+                Value::Undefined,
+            )]))
+            .unwrap();
+        heap.with_obj(owner, |object| {
+            let HeapObj::Promise(promise) = object else {
+                panic!("promise fixture lost its type");
+            };
+            *promise.result.lock() = Value::Object(GcIdx(fixed));
+        });
+        heap.with_private_elements(owner, |elements| {
+            elements.insert(
+                PrivateSlotKey::Private(PrivateNameKey {
+                    id: 7,
+                    description: Arc::from("cursor-order"),
+                }),
+                PrivateSlot::Value(Value::Object(GcIdx(private))),
+            );
+        });
+
+        heap.collect_incremental(&[owner], 1);
+        assert_eq!(
+            heap.incremental_mark
+                .lock()
+                .as_ref()
+                .unwrap()
+                .worklist
+                .last(),
+            Some(&TraceWork::Cell(private))
+        );
+        heap.collect_incremental(&[owner], 1);
+        assert_eq!(
+            pending_vec_trace(
+                heap.incremental_mark.lock().as_ref().unwrap(),
+                owner,
+                VecTraceKind::PromiseHandlers,
+            )
+            .map(|trace| trace.next),
+            Some(1)
+        );
+        heap.collect_incremental(&[owner], 1);
+        let state = heap.incremental_mark.lock();
+        let state = state.as_ref().unwrap();
+        assert_eq!(state.worklist.last(), Some(&TraceWork::Cell(slot)));
+        assert!(state.worklist.contains(&TraceWork::Cell(fixed)));
+    }
+
+    #[test]
+    fn finalization_retain_compaction_is_retraced() {
+        let heap = Heap::new();
+        let owner = heap
+            .allocate(finalization_registry(Value::Undefined, Vec::new()))
+            .unwrap();
+        let low = heap.allocate(HeapObj::placeholder()).unwrap();
+        let middle = heap.allocate(HeapObj::placeholder()).unwrap();
+        let high = heap.allocate(HeapObj::placeholder()).unwrap();
+        let late = heap.allocate(HeapObj::placeholder()).unwrap();
+        let garbage = heap.allocate(HeapObj::placeholder()).unwrap();
+        heap.with_obj(owner, |object| {
+            let HeapObj::FinalizationRegistry(registry) = object else {
+                panic!("registry fixture lost its type");
+            };
+            registry.cells.lock().extend([
+                FinalizationRegistryCell {
+                    target: None,
+                    held_value: Value::Object(GcIdx(low)),
+                    unregister_token: None,
+                },
+                FinalizationRegistryCell {
+                    target: None,
+                    held_value: Value::Object(GcIdx(middle)),
+                    unregister_token: None,
+                },
+                FinalizationRegistryCell {
+                    target: None,
+                    held_value: Value::Object(GcIdx(high)),
+                    unregister_token: None,
+                },
+            ]);
+        });
+
+        for _ in 0..128 {
+            heap.collect_incremental(&[owner], 1);
+            let state = heap.incremental_mark.lock();
+            let state = state.as_ref().unwrap();
+            if matches!(state.phase, IncrementalPhase::Retrace { cursor: 1 })
+                && pending_vec_trace(state, owner, VecTraceKind::FinalizationRegistryCells)
+                    .is_some_and(|trace| trace.next == 3)
+            {
+                break;
+            }
+        }
+        heap.collect_incremental(&[owner], 1);
+        heap.with_obj(owner, |object| {
+            let HeapObj::FinalizationRegistry(registry) = object else {
+                panic!("registry fixture lost its type");
+            };
+            let mut cells = registry.cells.lock();
+            cells[0].held_value = Value::Object(GcIdx(late));
+            cells.retain(|cell| cell.held_value != Value::Object(GcIdx(middle)));
+        });
+        assert_eq!(
+            heap.incremental_mark.lock().as_ref().unwrap().dirty,
+            [owner]
+        );
+        finish_incremental(&heap, &[owner], 1);
+
+        assert_eq!(heap.live_count(), 5);
+        assert_eq!(heap.allocate(HeapObj::placeholder()).unwrap(), garbage);
+        assert_ne!(heap.allocate(HeapObj::placeholder()).unwrap(), late);
+    }
+
+    #[test]
+    fn usize_max_completes_pending_promise_and_finalization_cursors() {
+        let fixtures = [
+            (
+                promise(vec![
+                    promise_handler(Value::Undefined, Value::Undefined),
+                    promise_handler(Value::Undefined, Value::Undefined),
+                ]),
+                VecTraceKind::PromiseHandlers,
+            ),
+            (
+                finalization_registry(
+                    Value::Undefined,
+                    vec![
+                        FinalizationRegistryCell {
+                            target: None,
+                            held_value: Value::Undefined,
+                            unregister_token: None,
+                        },
+                        FinalizationRegistryCell {
+                            target: None,
+                            held_value: Value::Undefined,
+                            unregister_token: None,
+                        },
+                    ],
+                ),
+                VecTraceKind::FinalizationRegistryCells,
+            ),
+        ];
+
+        for (object, kind) in fixtures {
+            let heap = Heap::new();
+            let owner = heap.allocate(object).unwrap();
+            heap.collect_incremental(&[owner], 1);
+            assert_eq!(
+                pending_vec_trace(heap.incremental_mark.lock().as_ref().unwrap(), owner, kind)
+                    .map(|trace| trace.next),
+                Some(2)
+            );
+            heap.collect_incremental(&[owner], usize::MAX);
+            assert!(heap.incremental_mark.lock().is_none());
+            assert_eq!(heap.live_count(), 1);
+        }
     }
 
     #[test]

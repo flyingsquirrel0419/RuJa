@@ -267,13 +267,14 @@ cargo bench --bench basic -- \
   --sample-size 10
 ```
 
-## Incremental dense vector tracing
+## Incremental vector and record tracing
 
-Finite-budget GC represents Array and internal Iterator item vectors as
-snapshot-length cursors. Slots that fit the current slice are scanned under one
-lock while each slot still consumes one work unit. The ordinary `collect()`
-path uses `usize::MAX`, so newly reached vectors retain the preceding direct
-atomic tracer instead of constructing cursor work.
+Finite-budget GC represents Array/internal Iterator items, Promise handlers,
+and FinalizationRegistry cells as snapshot-length cursors. Records that fit the
+current slice are scanned under one lock while each record still consumes one
+work unit. The ordinary `collect()` path uses `usize::MAX`, so newly reached
+vectors retain the preceding direct atomic tracer instead of constructing
+cursor work.
 
 The `gc_dense_primitive_array_100k` benchmark allocates one rooted Array with
 100,000 numeric items and repeatedly performs a complete Mark, Retrace, and
@@ -283,8 +284,23 @@ with Criterion's quick profile. This narrow same-host sample shows that finite
 cursor support did not regress the full-GC dense-vector path; it is not a claim
 about end-to-end VM throughput or finite-slice pause distributions.
 
+Two additional fixtures isolate 100,000 pending Promise handlers and 100,000
+FinalizationRegistry cells. A sequential same-host quick A/B against the parent
+collector measured Promise handlers at **1.3170-1.3337 ms** before and
+**1.2913-1.3226 ms** after cursor support. Registry cells measured
+**332.37-338.25 us** before and **306.86-312.13 us** after. These full-GC
+`usize::MAX` samples establish no regression for the retained direct path; they
+do not establish a general speedup or finite-slice latency distribution.
+Separate `*_incremental_slice_100k_budget_256` cases repeatedly execute one
+finite slice against the same fixtures, ensuring Criterion smoke coverage
+actually enters the cursorized path. Their aggregate timing includes periodic
+cycle setup, retrace, and sweep, so it is a regression signal rather than a
+pure per-record latency claim.
+
 ```sh
-cargo bench --bench basic -- gc_dense_primitive_array_100k --quick
+cargo bench --bench basic -- \
+  'gc_dense_primitive_array_100k|gc_promise_handlers.*100k|gc_finalization_cells.*100k' \
+  --quick
 ```
 
 ## Reproducing

@@ -41,26 +41,28 @@ reference cycles. Collection runs at safe points only (after a run settles,
 and throttled at frame boundaries). Incremental marking via
 `collect_incremental(roots, budget)` charges trace work units: one per newly
 traced cell header, physical pre-sweep retrace slot, dirty revisit, and Array
-or internal Iterator vector slot. Array/Iterator cursors snapshot the
-pass-start length and count down so growth cannot extend a pass; consecutive
-slots use one lock scope while retaining per-slot accounting. The
+or internal Iterator item, Promise handler, or FinalizationRegistry cell.
+Cursorized vectors snapshot the pass-start length and count down so growth
+cannot extend a pass; consecutive slots use one lock scope while retaining
+per-slot accounting. The
 `usize::MAX` stop-the-world path keeps the direct atomic vector tracer instead
 of constructing resumable state. The retrace phase stores its physical cursor
 across calls. Access to an already-scanned object conservatively queues its
 identity once, so edges added between slices are traced before sweep. Sweep,
-ordinary property tables, and other container payloads remain atomic, so the
+ordinary property tables, Promise continuation payloads, and other container
+payloads remain atomic, so the
 collector does not claim a strict pause-time bound. There is no
 generational collector. A `gc_pins` stack lets call paths pin
 heap values held in Rust locals across allocations that could trigger a GC.
 
 ```text
 [Decision Log]
-- 목적과 의도: Bound the previously unmetered pre-sweep mutation retrace and the dominant stable Vec-backed object edges without weakening incremental GC liveness or slowing the unbounded full-collection path.
-- 기존 구현 및 제약 조건: The finite budget originally stopped only initial cell marking; final root closure, complete marked-cell retrace, Array/Iterator vectors, and sweep ran atomically. Interior-mutability containers can change between slices, allocation continues, and sweep cannot safely pause without a stronger root/mutation barrier.
+- 목적과 의도: Bound the pre-sweep mutation retrace and live stable Vec-backed object edges without weakening incremental GC liveness or slowing the unbounded full-collection path.
+- 기존 구현 및 제약 조건: The finite budget originally stopped only initial cell marking; final root closure, complete marked-cell retrace, Array/Iterator items, Promise handlers, FinalizationRegistry cells, and sweep ran atomically. Interior-mutability containers can change between slices, allocation continues, FinalizationRegistry targets/tokens are weak, and sweep cannot safely pause without a stronger root/mutation barrier.
 - 검토한 주요 대안: Cursorize sweep immediately, remove final retrace, persist borrowed guards or copied vectors, scan one vector slot under fresh locks, batch all finite vector work without per-slot accounting, or combine a snapshot-length cursor with conservative object-access dirtiness.
-- 선택한 방식: Persist one LIFO `TraceWork` stack containing cell headers and Array/Iterator vector cursors. Snapshot pass-start vector length, count down to preserve prior reverse visitation, charge every snapshot slot including removed slots, batch only the current slice's remaining slots under one lock, and place discovered children above the continuation. Keep the direct atomic vector tracer for `usize::MAX`. Active access is both a current root and a dirty owner; its RAII guard runs the post-access barrier during normal return or unwind.
+- 선택한 방식: Persist one LIFO `TraceWork` stack containing cell headers and cursors for Array/Iterator items, Promise handlers, and FinalizationRegistry cells. Snapshot pass-start vector length, count down to preserve prior reverse visitation, charge every snapshot slot including removed slots, batch only the current slice's remaining slots under one lock, and place discovered children above the continuation. Share one always-inlined Promise-handler root visitor between finite and direct tracing, trace only registry held values, and keep the direct atomic vector tracer for `usize::MAX`. Active access is both a current root and a dirty owner; its RAII guard runs the post-access barrier during normal return or unwind.
 - 다른 대안 대신 이 방식을 선택한 이유: Borrowed guards cannot cross calls; copied vectors multiply memory and clone cost; per-slot locking regresses dense arrays; live-length cursors can be extended indefinitely; and pausing sweep can free a cell before a later host edge publishes it. Snapshot cursors plus retrace/dirty passes preserve liveness and termination while retaining the existing fast full-GC traversal.
-- 장점, 단점 및 영향: `budget=0` performs no trace or sweep on a non-empty heap; `budget=1` advances one cell, retrace/dirty header, or Array/Iterator slot. Growth is found by the fresh retrace or dirty revisit, shrink still consumes bounded snapshot work, newly queued roots preempt parked cursors, and `usize::MAX` completes pending cursors without yielding. Root/bitmap setup, ordinary properties, non-Array/Iterator containers, weak cleanup, and sweep can still take linear native time and remain explicit follow-ups.
+- 장점, 단점 및 영향: `budget=0` performs no trace or sweep on a non-empty heap; `budget=1` advances one cell, retrace/dirty header, or cursorized record. Growth is found by the fresh retrace or dirty revisit, shrink/retain compaction still consumes bounded snapshot work, newly queued roots preempt parked cursors, and `usize::MAX` completes pending cursors without yielding. One Promise handler can still expose large AsyncFunction stack/local/catch vectors within one unit. Root/bitmap setup, ordinary properties, Map/Set/WeakMap storage, LazyGenerator state, nested Promise continuations, weak cleanup, and sweep remain explicit cursorization follow-ups.
 ```
 
 Native functions carry `Option<NativeConstructMode>` metadata instead of

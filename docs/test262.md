@@ -1,5 +1,23 @@
 # test262 conformance
 
+## Incremental Promise/FinalizationRegistry GC cursor evidence
+
+The local compatibility check uses pinned Test262
+`d1d583db95a521218f3eb8341a887fd63eda8ff1` and the current release binary.
+`built-ins/Promise` plus `built-ins/FinalizationRegistry` reports **489 pass /
+0 fail / 287 skip / 0 timeout / 0 error** over 776 files, with all 489 admitted
+files passing. This collector-only unit intentionally changes no Test262
+admission metadata; the run proves that cursorized Promise handlers and
+FinalizationRegistry held values preserve the supported observable surface.
+Direct Rust tests separately cover finite-budget accounting and weak
+target/token liveness, which Test262 cannot observe deterministically.
+
+```sh
+TEST262=/root/test262 RUJA=target/release/ruja \
+  python3 tools/test262_runner.py \
+  built-ins/Promise built-ins/FinalizationRegistry
+```
+
 ## Incremental Array/Iterator GC cursor evidence
 
 The incremental collector's Array and internal Iterator vector cursors change
