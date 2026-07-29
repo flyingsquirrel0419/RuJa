@@ -27,7 +27,12 @@
   Clippy, rustfmt, wasm32, doctest **1/1**, all Criterion smoke targets, and
   Python tooling **145/145** with four expected absent-checkout skips. Pinned
   Promise/FinalizationRegistry Test262 is **489 pass / 0 fail / 287 skip** over
-  776 files.
+  776 files. Implementation commit `39cf24c` passes ordinary CI
+  `30445593804` (**2/2**) and full CI `30445593831` (**38/38**). Against the
+  preceding clean full run `30439701818`, all **32/32** result artifacts are
+  byte-identical with content-set hash `22f72e0e...`; aggregate remains
+  **32260 pass / 5028 fail / 11178 skip / 3 timeout / 0 error** over 48469
+  files, with 37288 run.
 
 - Finite-budget incremental GC now cursorizes dense Array and internal
   Iterator item vectors through the same LIFO work stack as cell headers.

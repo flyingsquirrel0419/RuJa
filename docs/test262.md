@@ -12,6 +12,14 @@ FinalizationRegistry held values preserve the supported observable surface.
 Direct Rust tests separately cover finite-budget accounting and weak
 target/token liveness, which Test262 cannot observe deterministically.
 
+Implementation commit `39cf24c` passes ordinary CI `30445593804` (**2/2**)
+and all **38/38** jobs in full run `30445593831`. Against preceding clean run
+`30439701818`, all **32/32** Test262 result artifacts are byte-identical and
+both content sets hash to
+`22f72e0ea8d1b12f567652faa184e51c4ed41108ec38e5a389b64ab3c921e66f`.
+Aggregate remains **32260 pass / 5028 fail / 11178 skip / 3 timeout / 0
+error** over 48469 files, with 37288 run.
+
 ```sh
 TEST262=/root/test262 RUJA=target/release/ruja \
   python3 tools/test262_runner.py \
