@@ -267,6 +267,26 @@ cargo bench --bench basic -- \
   --sample-size 10
 ```
 
+## Incremental dense vector tracing
+
+Finite-budget GC represents Array and internal Iterator item vectors as
+snapshot-length cursors. Slots that fit the current slice are scanned under one
+lock while each slot still consumes one work unit. The ordinary `collect()`
+path uses `usize::MAX`, so newly reached vectors retain the preceding direct
+atomic tracer instead of constructing cursor work.
+
+The `gc_dense_primitive_array_100k` benchmark allocates one rooted Array with
+100,000 numeric items and repeatedly performs a complete Mark, Retrace, and
+Sweep cycle. Sequential forced builds on the parent collector and current
+source measured **238.29-242.58 us** and **228.53-228.56 us**, respectively,
+with Criterion's quick profile. This narrow same-host sample shows that finite
+cursor support did not regress the full-GC dense-vector path; it is not a claim
+about end-to-end VM throughput or finite-slice pause distributions.
+
+```sh
+cargo bench --bench basic -- gc_dense_primitive_array_100k --quick
+```
+
 ## Reproducing
 
 ```sh

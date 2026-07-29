@@ -39,23 +39,28 @@ source ─► Lexer ─► Parser ─► Compiler ─► Bytecode ─► VM
 A mark-and-sweep collector with optional incremental marking reclaims
 reference cycles. Collection runs at safe points only (after a run settles,
 and throttled at frame boundaries). Incremental marking via
-`collect_incremental(roots, budget)` limits newly traced cells and physical
-cells visited by the pre-sweep mutation retrace. The retrace phase stores a
-cursor across calls. Access to an already-scanned object conservatively queues
-its identity once, so edges added between slices are traced before sweep.
-Sweep remains atomic, and tracing one large object is not yet subdivided, so
-the collector does not claim a strict pause-time bound. There is no
+`collect_incremental(roots, budget)` charges trace work units: one per newly
+traced cell header, physical pre-sweep retrace slot, dirty revisit, and Array
+or internal Iterator vector slot. Array/Iterator cursors snapshot the
+pass-start length and count down so growth cannot extend a pass; consecutive
+slots use one lock scope while retaining per-slot accounting. The
+`usize::MAX` stop-the-world path keeps the direct atomic vector tracer instead
+of constructing resumable state. The retrace phase stores its physical cursor
+across calls. Access to an already-scanned object conservatively queues its
+identity once, so edges added between slices are traced before sweep. Sweep,
+ordinary property tables, and other container payloads remain atomic, so the
+collector does not claim a strict pause-time bound. There is no
 generational collector. A `gc_pins` stack lets call paths pin
 heap values held in Rust locals across allocations that could trigger a GC.
 
 ```text
 [Decision Log]
-- 목적과 의도: Bound the previously unmetered pre-sweep mutation retrace without weakening incremental GC liveness or pretending the remaining collector phases are bounded.
-- 기존 구현 및 제약 조건: The finite budget stopped only initial marking; final root closure, a complete marked-cell retrace, and sweep all ran in the completing call. Heap objects expose interior-mutability containers through shared accessors, allocation can continue between slices, and sweep cannot safely pause without a stronger root/mutation barrier.
-- 검토한 주요 대안: Cursorize sweep immediately, remove the final retrace, rescan every marked cell on every slice, instrument every interior container mutation first, or persist a retrace cursor with conservative object-access dirtiness.
-- 선택한 방식: Persist explicit Mark/Retrace phases, charge each marked trace and each physical retrace slot, requeue current roots during Retrace, keep heap objects visible through Arc-owned cells, treat active object accesses as roots, and deduplicate already-scanned objects accessed through with_obj or private-element mutation before allowing the existing atomic sweep.
-- 다른 대안 대신 이 방식을 선택한 이유: Pausing sweep can free a cell before a later host root or edge publishes it; removing retrace loses mutations; repeated full rescans are quadratic; and migrating every interior container is a much larger unit. Conservative dirty tracking preserves safety while making retrace progress observable and bounded by cells per call.
-- 장점, 단점 및 영향: budget=0 performs no trace or sweep on a non-empty heap; budget=1 advances retrace by one physical slot or one dirty revisit; late roots, allocations, ordinary properties, active reentrant object access, private elements, and ephemeron chains remain live. Arc cloning adds one atomic reference-count pair to each object access. A large cell trace, root/bitmap setup, weak cleanup, and atomic sweep can still take linear native time and remain explicit follow-ups.
+- 목적과 의도: Bound the previously unmetered pre-sweep mutation retrace and the dominant stable Vec-backed object edges without weakening incremental GC liveness or slowing the unbounded full-collection path.
+- 기존 구현 및 제약 조건: The finite budget originally stopped only initial cell marking; final root closure, complete marked-cell retrace, Array/Iterator vectors, and sweep ran atomically. Interior-mutability containers can change between slices, allocation continues, and sweep cannot safely pause without a stronger root/mutation barrier.
+- 검토한 주요 대안: Cursorize sweep immediately, remove final retrace, persist borrowed guards or copied vectors, scan one vector slot under fresh locks, batch all finite vector work without per-slot accounting, or combine a snapshot-length cursor with conservative object-access dirtiness.
+- 선택한 방식: Persist one LIFO `TraceWork` stack containing cell headers and Array/Iterator vector cursors. Snapshot pass-start vector length, count down to preserve prior reverse visitation, charge every snapshot slot including removed slots, batch only the current slice's remaining slots under one lock, and place discovered children above the continuation. Keep the direct atomic vector tracer for `usize::MAX`. Active access is both a current root and a dirty owner; its RAII guard runs the post-access barrier during normal return or unwind.
+- 다른 대안 대신 이 방식을 선택한 이유: Borrowed guards cannot cross calls; copied vectors multiply memory and clone cost; per-slot locking regresses dense arrays; live-length cursors can be extended indefinitely; and pausing sweep can free a cell before a later host edge publishes it. Snapshot cursors plus retrace/dirty passes preserve liveness and termination while retaining the existing fast full-GC traversal.
+- 장점, 단점 및 영향: `budget=0` performs no trace or sweep on a non-empty heap; `budget=1` advances one cell, retrace/dirty header, or Array/Iterator slot. Growth is found by the fresh retrace or dirty revisit, shrink still consumes bounded snapshot work, newly queued roots preempt parked cursors, and `usize::MAX` completes pending cursors without yielding. Root/bitmap setup, ordinary properties, non-Array/Iterator containers, weak cleanup, and sweep can still take linear native time and remain explicit follow-ups.
 ```
 
 Native functions carry `Option<NativeConstructMode>` metadata instead of

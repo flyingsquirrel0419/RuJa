@@ -4,6 +4,31 @@
 
 ### Changed
 
+- Finite-budget incremental GC now cursorizes dense Array and internal
+  Iterator item vectors through the same LIFO work stack as cell headers.
+  Each pass snapshots its vector length, counts down to retain prior child
+  visitation order, charges removed slots, batches the current slice under one
+  lock, and lets newly queued roots and discovered children preempt the parked
+  continuation. Growth is caught by the fresh physical retrace or a
+  deduplicated dirty revisit, including mutation during an already-running
+  dirty vector pass. Active object callbacks now queue both root and dirty
+  barriers before nested collection, and their RAII guard runs the post-access
+  barrier on normal return or unwind. `usize::MAX` completes existing cursors
+  but keeps the direct atomic vector tracer for newly reached objects, avoiding
+  resumable-state overhead in full GC. Exact tests cover one-slot progress,
+  finite batching, zero/MAX budgets, LIFO priority, Array/Iterator growth,
+  Array shrink, repeated dirty replacement, active re-entry, and panic unwind.
+  Other object payloads and sweep remain atomic. A reproducible 100k primitive
+  dense-Array benchmark measures the parent collector at **238.29-242.58 us**
+  and this implementation at **228.53-228.56 us** in sequential quick runs;
+  this is no-regression evidence, not a general throughput claim. Local gates
+  pass all-target/all-feature tests with library **339/339** and every
+  integration/benchmark smoke target, release library **339/339**, focused GC
+  **25/25**, warnings-denied Clippy, rustfmt, wasm32, doctest **1/1**, and
+  Python tooling **145/145** with four expected absent-checkout skips. Pinned
+  Array/Iterator/WeakMap/WeakSet/WeakRef/FinalizationRegistry Test262 is
+  **3788 pass / 0 fail / 109 skip** over 3897 files.
+
 - Incremental GC now persists explicit Mark and Retrace phases. Finite budgets
   apply to newly traced cells and every physical cell visited by the pre-sweep
   mutation retrace instead of being disabled during finalization. Access to an
@@ -14,8 +39,8 @@
   current mutated object instead of observing an empty cell. Tests cover
   `budget=0`, exact one-slot retrace progress, mutation after cursor passage,
   dirty deduplication, late roots, allocation, re-entrant collection,
-  ephemeron chains, private elements, and final reuse. Sweep remains atomic and large-object tracing is
-  not yet cursorized, preserving the existing safety boundary without
+  ephemeron chains, private elements, and final reuse. Sweep and non-Array/
+  Iterator large-object tracing remain atomic, preserving the existing safety boundary without
   overstating full pause-time bounds. Local gates pass all-target/all-feature
   release tests with library **330/330**, focused GC **16/16**, warnings-denied
   Clippy, rustfmt, wasm32, doctest, Python tooling **145/145**, and pinned

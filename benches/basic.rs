@@ -1,6 +1,7 @@
 use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion};
 use indexmap::IndexMap;
-use ruja::value::PropertyKey;
+use ruja::gc::Heap;
+use ruja::value::{ArrayData, PropertyKey};
 use ruja::{Value, Vm};
 
 fn bench_fib(c: &mut Criterion) {
@@ -48,6 +49,25 @@ fn bench_array_push(c: &mut Criterion) {
             let mut vm = Vm::new().expect("failed to initialize VM");
             vm.run(src).expect("array push failed")
         })
+    });
+}
+
+fn bench_dense_array_gc(c: &mut Criterion) {
+    let heap = Heap::new();
+    let array = heap
+        .allocate(ruja::HeapObj::Array(ArrayData::new(Vec::new(), None)))
+        .expect("dense GC fixture allocation failed");
+    heap.with_obj(array, |object| {
+        let ruja::HeapObj::Array(array) = object else {
+            panic!("dense GC fixture lost its type");
+        };
+        array
+            .items
+            .lock()
+            .extend((0..100_000).map(|value| Value::Number(value.into())));
+    });
+    c.bench_function("gc_dense_primitive_array_100k", |b| {
+        b.iter(|| heap.collect(black_box(&[array])))
     });
 }
 
@@ -568,6 +588,7 @@ criterion_group!(
     bench_fib,
     bench_tight_loop,
     bench_array_push,
+    bench_dense_array_gc,
     bench_array_index_set,
     bench_native_indexed_loops,
     bench_property_key_maps,

@@ -62,21 +62,50 @@ struct ActiveObjectAccess<'a> {
 
 impl Drop for ActiveObjectAccess<'_> {
     fn drop(&mut self) {
-        let cells = self.heap.cells.lock();
-        cells[self.index]
-            .active_accesses
-            .fetch_sub(1, Ordering::Relaxed);
+        {
+            let cells = self.heap.cells.lock();
+            cells[self.index]
+                .active_accesses
+                .fetch_sub(1, Ordering::Relaxed);
+        }
+        self.heap.note_incremental_access(self.index);
     }
 }
 
 struct IncrementalMark {
     marked: Vec<bool>,
     queued: Vec<bool>,
-    worklist: Vec<usize>,
+    worklist: Vec<TraceWork>,
     pending_ephemerons: std::collections::HashMap<usize, Vec<crate::value::Value>>,
     phase: IncrementalPhase,
     dirty: Vec<usize>,
     dirty_queued: Vec<bool>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TraceWork {
+    Cell(usize),
+    VecEdges(VecTrace),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct VecTrace {
+    owner: usize,
+    kind: VecTraceKind,
+    next: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum VecTraceKind {
+    ArrayItems,
+    IteratorItems,
+}
+
+struct CellTrace {
+    before: Vec<usize>,
+    vector: Option<VecTrace>,
+    after: Vec<usize>,
+    ephemerons: Vec<(crate::value::WeakKey, crate::value::Value)>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -89,7 +118,7 @@ impl IncrementalMark {
     fn queue_index(&mut self, index: usize) {
         if index < self.marked.len() && !self.marked[index] && !self.queued[index] {
             self.queued[index] = true;
-            self.worklist.push(index);
+            self.worklist.push(TraceWork::Cell(index));
         }
     }
 
@@ -136,24 +165,62 @@ fn trace_private_slot(slot: &crate::value::PrivateSlot, worklist: &mut Vec<usize
     }
 }
 
-fn trace_cell(
-    cells: &[GcCell],
-    index: usize,
-) -> (
-    Vec<usize>,
-    Vec<(crate::value::WeakKey, crate::value::Value)>,
-) {
+fn trace_cell(cells: &[GcCell], index: usize, cursorize_vectors: bool) -> CellTrace {
     let Some(cell) = cells.get(index) else {
-        return (Vec::new(), Vec::new());
+        return CellTrace {
+            before: Vec::new(),
+            vector: None,
+            after: Vec::new(),
+            ephemerons: Vec::new(),
+        };
     };
     let obj_ref = cell.obj.lock();
     let Some(obj) = obj_ref.as_ref() else {
-        return (Vec::new(), Vec::new());
+        return CellTrace {
+            before: Vec::new(),
+            vector: None,
+            after: Vec::new(),
+            ephemerons: Vec::new(),
+        };
     };
-    let mut children = Vec::new();
-    trace_obj(obj.as_ref(), &mut children);
+    let mut before = Vec::new();
+    let mut after = Vec::new();
+    let vector = match (cursorize_vectors, obj.as_ref()) {
+        (false, _) => {
+            trace_obj_impl(obj.as_ref(), &mut before);
+            None
+        }
+        (true, HeapObj::Array(array)) => {
+            trace_properties_and_prototype(obj.as_ref(), &mut before);
+            if let Some(map) = array.arguments_map.lock().as_ref() {
+                after.push(map.env.0);
+            }
+            Some(VecTrace {
+                owner: index,
+                kind: VecTraceKind::ArrayItems,
+                next: array.items.lock().len(),
+            })
+        }
+        (true, HeapObj::Iterator(iterator)) => {
+            trace_iterator_auxiliary_edges(iterator, &mut after);
+            Some(VecTrace {
+                owner: index,
+                kind: VecTraceKind::IteratorItems,
+                next: iterator.items.lock().len(),
+            })
+        }
+        (true, _) => {
+            trace_obj_impl(obj.as_ref(), &mut before);
+            None
+        }
+    };
+    let private_children = if vector.is_some() {
+        &mut after
+    } else {
+        &mut before
+    };
     for slot in cell.private_elements.lock().values() {
-        trace_private_slot(slot, &mut children);
+        trace_private_slot(slot, private_children);
     }
     let ephemerons = match obj.as_ref() {
         HeapObj::WeakMap(map) => map
@@ -164,7 +231,64 @@ fn trace_cell(
             .collect(),
         _ => Vec::new(),
     };
-    (children, ephemerons)
+    CellTrace {
+        before,
+        vector: vector.filter(|trace| trace.next > 0),
+        after,
+        ephemerons,
+    }
+}
+
+fn trace_vec_slots(
+    cells: &Mutex<Vec<GcCell>>,
+    trace: VecTrace,
+    limit: usize,
+) -> (Vec<usize>, usize) {
+    let obj = {
+        let cells = cells.lock();
+        cells
+            .get(trace.owner)
+            .and_then(|cell| cell.obj.lock().clone())
+    };
+    let count = trace.next.min(limit);
+    let next = trace.next - count;
+    let Some(obj) = obj else {
+        return (Vec::new(), next);
+    };
+    let mut roots = Vec::new();
+    match (trace.kind, obj.as_ref()) {
+        (VecTraceKind::ArrayItems, HeapObj::Array(array)) => {
+            let items = array.items.lock();
+            let end = trace.next.min(items.len());
+            let start = next.min(end);
+            for value in &items[start..end] {
+                push_value(value, &mut roots);
+            }
+        }
+        (VecTraceKind::IteratorItems, HeapObj::Iterator(iterator)) => {
+            let items = iterator.items.lock();
+            let end = trace.next.min(items.len());
+            let start = next.min(end);
+            for value in &items[start..end] {
+                push_value(value, &mut roots);
+            }
+        }
+        _ => {}
+    }
+    (roots, next)
+}
+
+fn schedule_trace(state: &mut IncrementalMark, trace: CellTrace) {
+    for child in trace.before {
+        state.queue_index(child);
+    }
+    if let Some(vector) = trace.vector {
+        state.worklist.push(TraceWork::VecEdges(vector));
+    }
+    for child in trace.after {
+        state.queue_index(child);
+    }
+    queue_ephemerons(state, trace.ephemerons);
 }
 
 fn queue_ephemerons(
@@ -192,32 +316,61 @@ fn queue_ephemerons(
     }
 }
 
-/// Push reachable child indices of `obj` onto `worklist`. Called while NOT
-/// holding the cells mutex, so it may lock any object field freely. WeakMap
-/// ephemeron values are deliberately deferred to the collector's fixed-point
-/// phase after this ordinary strong-edge trace.
+/// Push reachable child indices of `obj` onto `worklist`. WeakMap ephemeron
+/// values are deliberately deferred to the collector's fixed-point phase after
+/// this ordinary strong-edge trace.
 pub fn trace_obj(obj: &HeapObj, worklist: &mut Vec<usize>) {
+    trace_obj_impl(obj, worklist);
+}
+
+fn trace_iterator_auxiliary_edges(
+    iterator: &crate::value::IteratorData,
+    worklist: &mut Vec<usize>,
+) {
+    if let Some(lazy) = iterator.lazy_iter.lock().as_ref() {
+        push_value(lazy, worklist);
+    }
+    if let Some(next) = iterator.lazy_next.lock().as_ref() {
+        push_value(next, worklist);
+    }
+    if let Some(generator) = iterator.generator.lock().as_ref() {
+        push_value(generator, worklist);
+    }
+    if let Some(state) = iterator.for_in.lock().as_ref() {
+        if let Some(object) = state.object.as_ref() {
+            push_value(object, worklist);
+        }
+        for root in &state.traversal_roots {
+            push_value(root, worklist);
+        }
+    }
+}
+
+fn trace_properties_and_prototype(obj: &HeapObj, worklist: &mut Vec<usize>) {
+    let props = obj.props();
+    for (_, desc) in props.lock().iter() {
+        if !desc.is_accessor {
+            push_value(&desc.value, worklist);
+        } else {
+            if let Some(getter) = &desc.get {
+                push_value(getter, worklist);
+            }
+            if let Some(setter) = &desc.set {
+                push_value(setter, worklist);
+            }
+        }
+    }
+    if let Some(proto) = obj.proto().lock().as_ref() {
+        push_value(proto, worklist);
+    }
+}
+
+fn trace_obj_impl(obj: &HeapObj, worklist: &mut Vec<usize>) {
     if let HeapObj::Iterator(it) = obj {
-        for v in it.items.lock().iter() {
-            push_value(v, worklist);
+        for value in it.items.lock().iter() {
+            push_value(value, worklist);
         }
-        if let Some(lazy) = it.lazy_iter.lock().as_ref() {
-            push_value(lazy, worklist);
-        }
-        if let Some(next) = it.lazy_next.lock().as_ref() {
-            push_value(next, worklist);
-        }
-        if let Some(gen) = it.generator.lock().as_ref() {
-            push_value(gen, worklist);
-        }
-        if let Some(state) = it.for_in.lock().as_ref() {
-            if let Some(object) = state.object.as_ref() {
-                push_value(object, worklist);
-            }
-            for root in &state.traversal_roots {
-                push_value(root, worklist);
-            }
-        }
+        trace_iterator_auxiliary_edges(it, worklist);
         return;
     }
     if let HeapObj::Environment(e) = obj {
@@ -240,22 +393,7 @@ pub fn trace_obj(obj: &HeapObj, worklist: &mut Vec<usize>) {
             worklist.push(env.0);
         }
     }
-    let props = obj.props();
-    for (_, desc) in props.lock().iter() {
-        if !desc.is_accessor {
-            push_value(&desc.value, worklist);
-        } else {
-            if let Some(g) = &desc.get {
-                push_value(g, worklist);
-            }
-            if let Some(s) = &desc.set {
-                push_value(s, worklist);
-            }
-        }
-    }
-    if let Some(proto) = obj.proto().lock().as_ref() {
-        push_value(proto, worklist);
-    }
+    trace_properties_and_prototype(obj, worklist);
     match obj {
         HeapObj::Object(o) => {
             for slot in o.private_fields.lock().values() {
@@ -263,8 +401,8 @@ pub fn trace_obj(obj: &HeapObj, worklist: &mut Vec<usize>) {
             }
         }
         HeapObj::Array(a) => {
-            for v in a.items.lock().iter() {
-                push_value(v, worklist);
+            for value in a.items.lock().iter() {
+                push_value(value, worklist);
             }
             if let Some(map) = a.arguments_map.lock().as_ref() {
                 worklist.push(map.env.0);
@@ -586,14 +724,14 @@ impl Heap {
         self.collect_incremental(roots, usize::MAX);
     }
 
-    /// Incremental GC: trace or retrace up to `budget` cells, then sweep if
-    /// marking is done.
+    /// Incremental GC: process up to `budget` trace work units, then sweep if
+    /// marking is done. Cell headers, retrace visits, and cursorized vector
+    /// slots each consume one unit.
     /// With `usize::MAX`, a new cycle is a full stop-the-world collection and an
     /// existing cycle is completed without yielding while retaining its prior
     /// marks. Finite-budget cycles snapshot roots on their first slice. New
     /// allocations are queued by `allocate`, while the final retrace catches
-    /// edges added through the heap access APIs between slices. Direct mutation
-    /// through the public cell storage is outside that barrier contract.
+    /// edges added through the heap access APIs between slices.
     pub fn collect_incremental(&self, roots: &[usize], budget: usize) {
         let mut state_slot = self.incremental_mark.lock();
         let cells_len = self.cells.lock().len();
@@ -630,38 +768,63 @@ impl Heap {
             for (index, cell) in cells.iter().enumerate() {
                 if cell.active_accesses.load(Ordering::Relaxed) > 0 {
                     state.queue_index(index);
+                    state.queue_dirty(index);
                 }
             }
         }
 
         let mut traced_this_slice = 0usize;
         loop {
-            while let Some(idx) = state.worklist.pop() {
-                if idx < state.queued.len() {
-                    state.queued[idx] = false;
-                }
-                if idx >= cells_len || state.marked[idx] {
-                    continue;
-                }
-                if traced_this_slice >= budget && budget != usize::MAX {
-                    state.queue_index(idx);
-                    *state_slot = Some(state);
-                    return;
-                }
-                state.marked[idx] = true;
-                traced_this_slice = traced_this_slice.saturating_add(1);
+            while let Some(work) = state.worklist.pop() {
+                match work {
+                    TraceWork::Cell(index) => {
+                        if index < state.queued.len() {
+                            state.queued[index] = false;
+                        }
+                        if index >= cells_len || state.marked[index] {
+                            continue;
+                        }
+                        if traced_this_slice >= budget && budget != usize::MAX {
+                            state.queue_index(index);
+                            *state_slot = Some(state);
+                            return;
+                        }
+                        state.marked[index] = true;
+                        traced_this_slice = traced_this_slice.saturating_add(1);
 
-                let (children, ephemerons) = {
-                    let cells = self.cells.lock();
-                    trace_cell(&cells, idx)
-                };
-                for child in children {
-                    state.queue_index(child);
-                }
-                queue_ephemerons(&mut state, ephemerons);
-                if let Some(values) = state.pending_ephemerons.remove(&idx) {
-                    for value in values {
-                        state.queue_value(&value);
+                        let trace = {
+                            let cells = self.cells.lock();
+                            trace_cell(&cells, index, budget != usize::MAX)
+                        };
+                        schedule_trace(&mut state, trace);
+                        if let Some(values) = state.pending_ephemerons.remove(&index) {
+                            for value in values {
+                                state.queue_value(&value);
+                            }
+                        }
+                    }
+                    TraceWork::VecEdges(trace) => {
+                        let remaining = if budget == usize::MAX {
+                            trace.next
+                        } else {
+                            budget.saturating_sub(traced_this_slice)
+                        };
+                        if remaining == 0 {
+                            state.worklist.push(TraceWork::VecEdges(trace));
+                            *state_slot = Some(state);
+                            return;
+                        }
+                        let (roots, next) = trace_vec_slots(&self.cells, trace, remaining);
+                        let processed = trace.next - next;
+                        traced_this_slice = traced_this_slice.saturating_add(processed);
+                        if next > 0 {
+                            state
+                                .worklist
+                                .push(TraceWork::VecEdges(VecTrace { next, ..trace }));
+                        }
+                        for root in roots {
+                            state.queue_index(root);
+                        }
                     }
                 }
             }
@@ -692,14 +855,11 @@ impl Heap {
                         traced_this_slice = traced_this_slice.saturating_add(1);
                         state.phase = IncrementalPhase::Retrace { cursor };
                         if state.marked[index] {
-                            let (children, ephemerons) = {
+                            let trace = {
                                 let cells = self.cells.lock();
-                                trace_cell(&cells, index)
+                                trace_cell(&cells, index, budget != usize::MAX)
                             };
-                            for child in children {
-                                state.queue_index(child);
-                            }
-                            queue_ephemerons(&mut state, ephemerons);
+                            schedule_trace(&mut state, trace);
                         }
                         if !state.worklist.is_empty() {
                             break;
@@ -718,14 +878,11 @@ impl Heap {
                         }
                         traced_this_slice = traced_this_slice.saturating_add(1);
                         if state.marked[index] {
-                            let (children, ephemerons) = {
+                            let trace = {
                                 let cells = self.cells.lock();
-                                trace_cell(&cells, index)
+                                trace_cell(&cells, index, budget != usize::MAX)
                             };
-                            for child in children {
-                                state.queue_index(child);
-                            }
-                            queue_ephemerons(&mut state, ephemerons);
+                            schedule_trace(&mut state, trace);
                         }
                         if !state.worklist.is_empty() {
                             break;
@@ -906,7 +1063,6 @@ impl Heap {
         };
         let result = f(obj.as_ref());
         drop(active_access);
-        self.note_incremental_access(idx);
         result
     }
 
@@ -921,8 +1077,8 @@ impl Heap {
 mod tests {
     use super::*;
     use crate::value::{
-        GcIdx, PrivateNameKey, PrivateSlot, PrivateSlotKey, PropertyDescriptor, PropertyKey, Value,
-        WeakKey, WeakMapData,
+        GcIdx, IteratorData, PrivateNameKey, PrivateSlot, PrivateSlotKey, PropertyDescriptor,
+        PropertyKey, Value, WeakKey, WeakMapData,
     };
     use std::sync::Arc;
 
@@ -941,7 +1097,18 @@ mod tests {
     }
 
     fn finish_incremental(heap: &Heap, roots: &[usize], budget: usize) {
-        let max_slices = heap.cells.lock().len().saturating_mul(4).max(16);
+        let work_units = {
+            let cells = heap.cells.lock();
+            cells.iter().fold(cells.len(), |units, cell| {
+                let obj = cell.obj.lock();
+                units.saturating_add(match obj.as_deref() {
+                    Some(HeapObj::Array(array)) => array.items.lock().len(),
+                    Some(HeapObj::Iterator(iterator)) => iterator.items.lock().len(),
+                    _ => 0,
+                })
+            })
+        };
+        let max_slices = work_units.saturating_mul(16).max(64);
         for _ in 0..max_slices {
             if heap.incremental_mark.lock().is_none() {
                 return;
@@ -949,6 +1116,32 @@ mod tests {
             heap.collect_incremental(roots, budget);
         }
         panic!("incremental collection did not finish within {max_slices} slices");
+    }
+
+    fn pending_vec_trace(
+        state: &IncrementalMark,
+        owner: usize,
+        kind: VecTraceKind,
+    ) -> Option<VecTrace> {
+        state.worklist.iter().rev().find_map(|work| match work {
+            TraceWork::VecEdges(trace) if trace.owner == owner && trace.kind == kind => {
+                Some(*trace)
+            }
+            _ => None,
+        })
+    }
+
+    fn iterator(items: Vec<Value>, lazy: Option<Value>) -> HeapObj {
+        HeapObj::Iterator(IteratorData {
+            items: Mutex::new(items),
+            index: AtomicUsize::new(0),
+            lazy_iter: Mutex::new(lazy),
+            lazy_next: Mutex::new(None),
+            generator: Mutex::new(None),
+            for_in: Mutex::new(None),
+            async_from_sync: AtomicBool::new(false),
+            done: AtomicBool::new(false),
+        })
     }
 
     #[test]
@@ -1334,6 +1527,440 @@ mod tests {
         assert_eq!(heap.live_count(), 0);
         let fresh = heap.allocate(HeapObj::placeholder()).unwrap();
         assert_eq!(fresh, garbage);
+    }
+
+    #[test]
+    fn incremental_array_items_consume_one_budget_unit_per_slot() {
+        let heap = Heap::new();
+        let owner = heap
+            .allocate(HeapObj::Array(crate::value::ArrayData::new(
+                Vec::new(),
+                None,
+            )))
+            .unwrap();
+        let garbage = heap.allocate(HeapObj::placeholder()).unwrap();
+        heap.with_obj(owner, |object| {
+            let HeapObj::Array(array) = object else {
+                panic!("array fixture lost its type");
+            };
+            array
+                .items
+                .lock()
+                .extend((0..8).map(|value| Value::Number(value.into())));
+        });
+
+        heap.collect_incremental(&[owner], 1);
+        assert_eq!(
+            pending_vec_trace(
+                heap.incremental_mark.lock().as_ref().unwrap(),
+                owner,
+                VecTraceKind::ArrayItems,
+            )
+            .map(|trace| trace.next),
+            Some(8)
+        );
+
+        for remaining in (0..8).rev() {
+            heap.collect_incremental(&[owner], 1);
+            let next = pending_vec_trace(
+                heap.incremental_mark.lock().as_ref().unwrap(),
+                owner,
+                VecTraceKind::ArrayItems,
+            )
+            .map(|trace| trace.next);
+            assert_eq!(next, (remaining > 0).then_some(remaining));
+            assert_eq!(heap.live_count(), 2, "partial trace must not sweep");
+        }
+
+        finish_incremental(&heap, &[owner], 1);
+        assert_eq!(heap.live_count(), 1);
+        let fresh = heap.allocate(HeapObj::placeholder()).unwrap();
+        assert_eq!(fresh, garbage);
+    }
+
+    #[test]
+    fn usize_max_completes_pending_array_and_iterator_traces() {
+        let heap = Heap::new();
+        let array_child = heap.allocate(HeapObj::placeholder()).unwrap();
+        let iterator_item = heap.allocate(HeapObj::placeholder()).unwrap();
+        let iterator_lazy = heap.allocate(HeapObj::placeholder()).unwrap();
+        let array = heap
+            .allocate(HeapObj::Array(crate::value::ArrayData::new(
+                Vec::new(),
+                None,
+            )))
+            .unwrap();
+        heap.with_obj(array, |object| {
+            let HeapObj::Array(array) = object else {
+                panic!("array fixture lost its type");
+            };
+            array.items.lock().push(Value::Object(GcIdx(array_child)));
+        });
+        let iterator = heap
+            .allocate(iterator(
+                vec![Value::Object(GcIdx(iterator_item))],
+                Some(Value::Object(GcIdx(iterator_lazy))),
+            ))
+            .unwrap();
+        let garbage = heap.allocate(HeapObj::placeholder()).unwrap();
+
+        heap.collect_incremental(&[array, iterator], 1);
+        assert!(heap.incremental_mark.lock().is_some());
+        heap.collect_incremental(&[array, iterator], usize::MAX);
+
+        assert!(heap.incremental_mark.lock().is_none());
+        assert_eq!(heap.live_count(), 5);
+        let fresh = heap.allocate(HeapObj::placeholder()).unwrap();
+        assert_eq!(fresh, garbage);
+        for retained in [array_child, iterator_item, iterator_lazy] {
+            assert_ne!(fresh, retained);
+        }
+    }
+
+    #[test]
+    fn newly_queued_cell_preempts_a_parked_vec_trace() {
+        let heap = Heap::new();
+        let owner = heap
+            .allocate(HeapObj::Array(crate::value::ArrayData::new(
+                Vec::new(),
+                None,
+            )))
+            .unwrap();
+        heap.with_obj(owner, |object| {
+            let HeapObj::Array(array) = object else {
+                panic!("array fixture lost its type");
+            };
+            array
+                .items
+                .lock()
+                .extend([Value::Number(1.0), Value::Number(2.0), Value::Number(3.0)]);
+        });
+
+        heap.collect_incremental(&[owner], 1);
+        let late = heap.allocate(HeapObj::placeholder()).unwrap();
+        assert_eq!(
+            heap.incremental_mark
+                .lock()
+                .as_ref()
+                .unwrap()
+                .worklist
+                .last(),
+            Some(&TraceWork::Cell(late))
+        );
+
+        heap.collect_incremental(&[owner], 1);
+        let state = heap.incremental_mark.lock();
+        let state = state.as_ref().unwrap();
+        assert!(state.marked[late]);
+        assert_eq!(
+            pending_vec_trace(state, owner, VecTraceKind::ArrayItems).map(|trace| trace.next),
+            Some(3)
+        );
+    }
+
+    #[test]
+    fn array_vec_trace_snapshots_growth_and_charges_removed_slots() {
+        {
+            let heap = Heap::new();
+            let owner = heap
+                .allocate(HeapObj::Array(crate::value::ArrayData::new(
+                    Vec::new(),
+                    None,
+                )))
+                .unwrap();
+            let retained = heap.allocate(HeapObj::placeholder()).unwrap();
+            let appended = heap.allocate(HeapObj::placeholder()).unwrap();
+            let garbage = heap.allocate(HeapObj::placeholder()).unwrap();
+            heap.with_obj(owner, |object| {
+                let HeapObj::Array(array) = object else {
+                    panic!("array fixture lost its type");
+                };
+                array.items.lock().push(Value::Object(GcIdx(retained)));
+            });
+
+            heap.collect_incremental(&[owner], 1);
+            heap.with_obj(owner, |object| {
+                let HeapObj::Array(array) = object else {
+                    panic!("array fixture lost its type");
+                };
+                array.items.lock().push(Value::Object(GcIdx(appended)));
+            });
+            heap.collect_incremental(&[owner], 1);
+            {
+                let state = heap.incremental_mark.lock();
+                let state = state.as_ref().unwrap();
+                assert!(pending_vec_trace(state, owner, VecTraceKind::ArrayItems).is_none());
+                assert!(
+                    !state.marked[appended],
+                    "append is outside the current snapshot"
+                );
+            }
+            finish_incremental(&heap, &[owner], 1);
+
+            assert_eq!(heap.live_count(), 3);
+            assert_eq!(heap.allocate(HeapObj::placeholder()).unwrap(), garbage);
+        }
+
+        {
+            let heap = Heap::new();
+            let owner = heap
+                .allocate(HeapObj::Array(crate::value::ArrayData::new(
+                    Vec::new(),
+                    None,
+                )))
+                .unwrap();
+            let retained = heap.allocate(HeapObj::placeholder()).unwrap();
+            let removed = heap.allocate(HeapObj::placeholder()).unwrap();
+            let garbage = heap.allocate(HeapObj::placeholder()).unwrap();
+            heap.with_obj(owner, |object| {
+                let HeapObj::Array(array) = object else {
+                    panic!("array fixture lost its type");
+                };
+                array.items.lock().extend([
+                    Value::Object(GcIdx(retained)),
+                    Value::Object(GcIdx(removed)),
+                ]);
+            });
+
+            heap.collect_incremental(&[owner], 1);
+            heap.with_obj(owner, |object| {
+                let HeapObj::Array(array) = object else {
+                    panic!("array fixture lost its type");
+                };
+                array.items.lock().truncate(1);
+            });
+            heap.collect_incremental(&[owner], 1);
+            {
+                let state = heap.incremental_mark.lock();
+                let state = state.as_ref().unwrap();
+                assert_eq!(
+                    pending_vec_trace(state, owner, VecTraceKind::ArrayItems)
+                        .map(|trace| trace.next),
+                    Some(1),
+                    "a removed snapshot slot still consumes one work unit"
+                );
+                assert!(!state.marked[removed]);
+            }
+            finish_incremental(&heap, &[owner], 1);
+
+            assert_eq!(heap.live_count(), 2);
+            assert_eq!(heap.allocate(HeapObj::placeholder()).unwrap(), garbage);
+            assert_eq!(heap.allocate(HeapObj::placeholder()).unwrap(), removed);
+        }
+    }
+
+    #[test]
+    fn iterator_auxiliary_edges_precede_item_continuation() {
+        let heap = Heap::new();
+        let item = heap.allocate(HeapObj::placeholder()).unwrap();
+        let lazy = heap.allocate(HeapObj::placeholder()).unwrap();
+        let owner = heap
+            .allocate(iterator(
+                vec![Value::Object(GcIdx(item))],
+                Some(Value::Object(GcIdx(lazy))),
+            ))
+            .unwrap();
+        let garbage = heap.allocate(HeapObj::placeholder()).unwrap();
+
+        heap.collect_incremental(&[owner], 1);
+        {
+            let state = heap.incremental_mark.lock();
+            let state = state.as_ref().unwrap();
+            assert_eq!(state.worklist.last(), Some(&TraceWork::Cell(lazy)));
+            assert_eq!(
+                pending_vec_trace(state, owner, VecTraceKind::IteratorItems)
+                    .map(|trace| trace.next),
+                Some(1)
+            );
+        }
+        finish_incremental(&heap, &[owner], 1);
+
+        assert_eq!(heap.live_count(), 3);
+        assert_eq!(heap.allocate(HeapObj::placeholder()).unwrap(), garbage);
+    }
+
+    #[test]
+    fn iterator_vec_trace_batches_finite_budget_and_snapshots_growth() {
+        let heap = Heap::new();
+        let appended = heap.allocate(HeapObj::placeholder()).unwrap();
+        let owner = heap
+            .allocate(iterator(
+                vec![Value::Number(1.0), Value::Number(2.0), Value::Number(3.0)],
+                None,
+            ))
+            .unwrap();
+        let garbage = heap.allocate(HeapObj::placeholder()).unwrap();
+
+        heap.collect_incremental(&[owner], 1);
+        heap.collect_incremental(&[owner], 2);
+        assert_eq!(
+            pending_vec_trace(
+                heap.incremental_mark.lock().as_ref().unwrap(),
+                owner,
+                VecTraceKind::IteratorItems,
+            )
+            .map(|trace| trace.next),
+            Some(1)
+        );
+        heap.with_obj(owner, |object| {
+            let HeapObj::Iterator(iterator) = object else {
+                panic!("iterator fixture lost its type");
+            };
+            iterator.items.lock().push(Value::Object(GcIdx(appended)));
+        });
+        heap.collect_incremental(&[owner], 1);
+        {
+            let state = heap.incremental_mark.lock();
+            let state = state.as_ref().unwrap();
+            assert!(pending_vec_trace(state, owner, VecTraceKind::IteratorItems).is_none());
+            assert!(!state.marked[appended]);
+        }
+        finish_incremental(&heap, &[owner], 1);
+
+        assert_eq!(heap.live_count(), 2);
+        assert_eq!(heap.allocate(HeapObj::placeholder()).unwrap(), garbage);
+    }
+
+    #[test]
+    fn dirty_array_trace_can_be_redirtied() {
+        let heap = Heap::new();
+        let owner = heap
+            .allocate(HeapObj::Array(crate::value::ArrayData::new(
+                Vec::new(),
+                None,
+            )))
+            .unwrap();
+        let original_low = heap.allocate(HeapObj::placeholder()).unwrap();
+        let original_high = heap.allocate(HeapObj::placeholder()).unwrap();
+        let first_replacement = heap.allocate(HeapObj::placeholder()).unwrap();
+        let final_replacement = heap.allocate(HeapObj::placeholder()).unwrap();
+        let garbage = heap.allocate(HeapObj::placeholder()).unwrap();
+        heap.with_obj(owner, |object| {
+            let HeapObj::Array(array) = object else {
+                panic!("array fixture lost its type");
+            };
+            array.items.lock().extend([
+                Value::Object(GcIdx(original_low)),
+                Value::Object(GcIdx(original_high)),
+            ]);
+        });
+
+        for _ in 0..128 {
+            heap.collect_incremental(&[owner], 1);
+            let state = heap.incremental_mark.lock();
+            let state = state.as_ref().unwrap();
+            if matches!(state.phase, IncrementalPhase::Retrace { cursor: 1 })
+                && pending_vec_trace(state, owner, VecTraceKind::ArrayItems)
+                    .is_some_and(|trace| trace.next == 2)
+            {
+                break;
+            }
+        }
+        heap.collect_incremental(&[owner], 1);
+        heap.with_obj(owner, |object| {
+            let HeapObj::Array(array) = object else {
+                panic!("array fixture lost its type");
+            };
+            array.items.lock()[1] = Value::Object(GcIdx(first_replacement));
+        });
+        assert_eq!(
+            heap.incremental_mark.lock().as_ref().unwrap().dirty,
+            [owner]
+        );
+
+        let cells_len = heap.cells.lock().len();
+        let mut dirty_trace_started = false;
+        for _ in 0..256 {
+            heap.collect_incremental(&[owner], 1);
+            let state = heap.incremental_mark.lock();
+            let state = state.as_ref().unwrap();
+            if matches!(state.phase, IncrementalPhase::Retrace { cursor } if cursor == cells_len)
+                && state.dirty.is_empty()
+                && pending_vec_trace(state, owner, VecTraceKind::ArrayItems)
+                    .is_some_and(|trace| trace.next == 2)
+            {
+                dirty_trace_started = true;
+                break;
+            }
+        }
+        assert!(dirty_trace_started, "dirty Array trace must begin");
+        heap.collect_incremental(&[owner], 1);
+        heap.with_obj(owner, |object| {
+            let HeapObj::Array(array) = object else {
+                panic!("array fixture lost its type");
+            };
+            array.items.lock()[1] = Value::Object(GcIdx(final_replacement));
+        });
+        assert_eq!(
+            heap.incremental_mark.lock().as_ref().unwrap().dirty,
+            [owner],
+            "a mutation during a dirty trace must schedule another full pass"
+        );
+        finish_incremental(&heap, &[owner], 1);
+
+        assert_eq!(heap.live_count(), 5);
+        let fresh = heap.allocate(HeapObj::placeholder()).unwrap();
+        assert_eq!(fresh, garbage);
+        assert_ne!(fresh, final_replacement);
+    }
+
+    #[test]
+    fn active_reentrant_mutation_after_inner_slice_survives() {
+        let heap = Heap::new();
+        let owner = heap.allocate(HeapObj::placeholder()).unwrap();
+        let child = heap.allocate(HeapObj::placeholder()).unwrap();
+        let garbage = heap.allocate(HeapObj::placeholder()).unwrap();
+
+        heap.collect_incremental(&[owner], 1);
+        heap.with_obj(owner, |object| {
+            heap.collect_incremental(&[owner], 1);
+            assert!(matches!(
+                heap.incremental_mark
+                    .lock()
+                    .as_ref()
+                    .map(|state| state.phase),
+                Some(IncrementalPhase::Retrace { cursor: 1 })
+            ));
+            object.props().lock().insert(
+                PropertyKey::from("late"),
+                PropertyDescriptor::data(Value::Object(GcIdx(child))),
+            );
+            heap.collect_incremental(&[], usize::MAX);
+        });
+
+        assert_eq!(heap.live_count(), 2);
+        let fresh = heap.allocate(HeapObj::placeholder()).unwrap();
+        assert_eq!(fresh, garbage);
+        assert_ne!(fresh, child);
+    }
+
+    #[test]
+    fn active_object_unwind_runs_the_incremental_post_barrier() {
+        let heap = Heap::new();
+        let owner = heap.allocate(HeapObj::placeholder()).unwrap();
+        let child = heap.allocate(HeapObj::placeholder()).unwrap();
+        let garbage = heap.allocate(HeapObj::placeholder()).unwrap();
+
+        heap.collect_incremental(&[owner], 1);
+        heap.collect_incremental(&[owner], 1);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            heap.with_obj(owner, |object| {
+                object.props().lock().insert(
+                    PropertyKey::from("late"),
+                    PropertyDescriptor::data(Value::Object(GcIdx(child))),
+                );
+                panic!("host callback panic");
+            });
+        }));
+        assert!(result.is_err());
+        assert_eq!(
+            heap.incremental_mark.lock().as_ref().unwrap().dirty,
+            [owner]
+        );
+
+        finish_incremental(&heap, &[owner], 1);
+        assert_eq!(heap.live_count(), 2);
+        assert_eq!(heap.allocate(HeapObj::placeholder()).unwrap(), garbage);
     }
 
     #[test]

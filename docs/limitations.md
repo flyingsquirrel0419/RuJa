@@ -268,15 +268,17 @@ guarantees are required.
   memory for the VM lifetime. `Symbol.for` identities are rejected by
   `CanBeHeldWeakly` as required. A collectible Symbol arena remains a resource
   management follow-up, not an observable identity or method-semantics gap.
-- Incremental GC's `budget` limits newly traced heap cells and physical cells
-  visited by the resumable pre-sweep mutation retrace, not all native tracing
-  work. Already-scanned objects accessed between retrace slices are
+- Incremental GC's `budget` limits trace work units: heap-cell headers,
+  physical and dirty pre-sweep retrace visits, and each Array/internal Iterator
+  vector slot. Vector cursors use a pass-start length snapshot, and a removed
+  slot still consumes one unit. Consecutive slots fitting the current slice
+  share one lock scope; `usize::MAX` intentionally uses the direct atomic
+  tracer. Already-scanned objects accessed between retrace slices are
   conservatively deduplicated and revisited before sweep. One large object's
-  properties or WeakMap entries, root/bitmap setup, weak cleanup, and the
-  atomic sweep can still each take linear time in their local input. Worklist
-  identities are deduplicated and ephemeron chains are linear, but strict
-  pause-time bounds still require cursorized object tracing and a barrier-safe
-  resumable sweep in later collector units.
+  ordinary properties, Map/Set/WeakMap entries, root/bitmap setup, weak
+  cleanup, and the atomic sweep can still each take linear time in their local
+  input. Strict pause-time bounds still require cursorizing those sources and
+  adding a barrier-safe resumable sweep in later collector units.
 - `WeakRef` supports object, unregistered Symbol, and well-known Symbol
   targets. Object targets are cleared by GC once unreachable and are kept
   alive through the current job after construction or `deref()`.

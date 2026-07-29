@@ -1,5 +1,17 @@
 # test262 conformance
 
+## Incremental Array/Iterator GC cursor evidence
+
+The incremental collector's Array and internal Iterator vector cursors change
+pause accounting and mutation liveness, not ECMAScript admission. Against
+pinned test262 `d1d583db95a521218f3eb8341a887fd63eda8ff1`, the combined
+`built-ins/Array`, `built-ins/Iterator`, `built-ins/WeakMap`,
+`built-ins/WeakSet`, `built-ins/WeakRef`, and
+`built-ins/FinalizationRegistry` run reports **3788 pass / 0 fail / 109 skip /
+3897 total**, with all 3788 executed files passing. The weak directories guard
+the existing ephemeron interaction while the Array/Iterator directories cover
+the two newly cursorized stable vectors. No admission manifest changed.
+
 RuJa runs the [test262](https://github.com/tc39/test262) conformance suite
 via `tools/test262_runner.py`. The runner uses the **real test262 harness**
 (`sta.js`, `assert.js`, and per-test `includes:` such as `propertyHelper.js`
