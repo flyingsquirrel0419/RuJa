@@ -9286,15 +9286,22 @@ class ClassSubclassBuiltinAdmissionTests(unittest.TestCase):
 
     def test_residual_subclass_builtin_live_metadata(self):
         test_root = Path(test262_runner.TEST262) / "test"
-        if not test_root.is_dir():
+        try:
+            checkout_available = test_root.is_dir()
+        except (OSError, PermissionError):
+            checkout_available = False
+        if not checkout_available:
             self.skipTest("live Test262 checkout is unavailable")
         for relative, expected_features in (
             CLASS_SUBCLASS_BUILTIN_FEATURES_BY_FILE.items()
         ):
             path = test_root / relative
-            if not path.is_file():
-                self.skipTest("live Test262 checkout is incomplete")
-            meta = test262_runner.parse_meta(path.read_text())
+            try:
+                if not path.is_file():
+                    self.skipTest("live Test262 checkout is incomplete")
+                meta = test262_runner.parse_meta(path.read_text())
+            except (OSError, PermissionError):
+                self.skipTest("live Test262 checkout is inaccessible")
             self.assertEqual(
                 frozenset(meta.get("features", [])), expected_features, relative
             )
