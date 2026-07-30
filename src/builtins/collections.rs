@@ -66,7 +66,7 @@ pub(crate) fn new_collection_iterator(
     }));
     vm.unpin_many(pin_count);
     let iterator = Value::Object(allocation?);
-    vm.keep_during_job(&iterator);
+    vm.keep_during_job(&iterator)?;
     Ok(iterator)
 }
 
@@ -109,7 +109,7 @@ fn string_iterator_method(
     }));
     vm.unpin_many(pin_count);
     let iterator = Value::Object(allocation?);
-    vm.keep_during_job(&iterator);
+    vm.keep_during_job(&iterator)?;
     Ok(iterator)
 }
 
@@ -2251,16 +2251,18 @@ pub(crate) fn weak_ref_constructor(
     }
 
     let proto = native_constructor_prototype_with_default(vm, "WeakRef", vm.object_proto.clone())?;
-    let weak_ref = vm
-        .heap
-        .allocate(HeapObj::WeakRef(crate::value::WeakRefData {
-            target: Mutex::new(Some(target.clone())),
-            props: Mutex::new(IndexMap::new()),
-            proto: Mutex::new(Some(proto)),
-            extensible: AtomicBool::new(true),
-        }))?;
-    vm.keep_during_job(&target);
-    Ok(Value::Object(GcIdx(weak_ref)))
+    vm.try_reserve_value_roots(std::slice::from_ref(&proto))?;
+    let proto_pin = vm.pin(&proto);
+    let weak_ref = vm.alloc(HeapObj::WeakRef(crate::value::WeakRefData {
+        target: Mutex::new(Some(target.clone())),
+        props: Mutex::new(IndexMap::new()),
+        proto: Mutex::new(Some(proto)),
+        extensible: AtomicBool::new(true),
+    }));
+    vm.unpin_many(proto_pin);
+    let weak_ref = weak_ref?;
+    vm.keep_during_job(&target)?;
+    Ok(Value::Object(weak_ref))
 }
 
 pub(crate) fn weak_ref_deref(
@@ -2283,7 +2285,7 @@ pub(crate) fn weak_ref_deref(
         ));
     };
     if let Some(target) = target {
-        vm.keep_during_job(&target);
+        vm.keep_during_job(&target)?;
         Ok(target)
     } else {
         Ok(Value::Undefined)
@@ -2331,17 +2333,23 @@ pub(crate) fn finalization_registry_constructor(
         "FinalizationRegistry",
         vm.object_proto.clone(),
     )?;
-    let registry = vm.heap.allocate(HeapObj::FinalizationRegistry(
+    let realm = vm.current_realm_global_env();
+    vm.try_reserve_value_roots(std::slice::from_ref(&proto))?;
+    let proto_pin = vm.pin(&proto);
+    let registry = vm.alloc(HeapObj::FinalizationRegistry(
         crate::value::FinalizationRegistryData {
             cleanup_callback,
+            realm,
             cells: Mutex::new(Vec::new()),
+            cleanup_pending: AtomicBool::new(false),
             cleanup_scheduled: AtomicBool::new(false),
             props: Mutex::new(IndexMap::new()),
             proto: Mutex::new(Some(proto)),
             extensible: AtomicBool::new(true),
         },
-    ))?;
-    Ok(Value::Object(GcIdx(registry)))
+    ));
+    vm.unpin_many(proto_pin);
+    Ok(Value::Object(registry?))
 }
 
 pub(crate) fn finalization_registry_register(
@@ -2371,18 +2379,35 @@ pub(crate) fn finalization_registry_register(
             ))
         }
     };
+    #[cfg(test)]
+    if std::mem::take(&mut vm.fail_next_finalization_cell_reservation) {
+        return Err(Error::range(
+            "FinalizationRegistry cell storage is too large",
+        ));
+    }
+    vm.consume_fuel()?;
     vm.heap.with_obj(registry.0, |obj| {
-        if let HeapObj::FinalizationRegistry(registry) = obj {
-            registry
-                .cells
-                .lock()
-                .push(crate::value::FinalizationRegistryCell {
-                    target: Some(target),
-                    held_value,
-                    unregister_token,
-                });
+        let HeapObj::FinalizationRegistry(registry) = obj else {
+            return Err(Error::internal(
+                "FinalizationRegistry target lost its internal data",
+            ));
+        };
+        let mut cells = registry.cells.lock();
+        if cells.len() >= super::call_arguments::MAX_MATERIALIZED_CALL_ARGUMENTS {
+            return Err(Error::range(
+                "FinalizationRegistry cell storage is too large",
+            ));
         }
-    });
+        cells
+            .try_reserve(1)
+            .map_err(|_| Error::range("FinalizationRegistry cell storage is too large"))?;
+        cells.push(crate::value::FinalizationRegistryCell {
+            target: Some(target),
+            held_value,
+            unregister_token,
+        });
+        Ok(())
+    })?;
     Ok(Value::Undefined)
 }
 
@@ -2398,6 +2423,13 @@ pub(crate) fn finalization_registry_unregister(
             "FinalizationRegistry unregister token cannot be held weakly",
         ));
     }
+    let cell_count = vm.heap.with_obj(registry.0, |obj| {
+        let HeapObj::FinalizationRegistry(registry) = obj else {
+            return 0;
+        };
+        registry.cells.lock().len()
+    });
+    vm.consume_fuel_units(cell_count.min(i64::MAX as usize) as i64)?;
     let removed = vm.heap.with_obj(registry.0, |obj| {
         let HeapObj::FinalizationRegistry(registry) = obj else {
             return false;
@@ -2405,6 +2437,10 @@ pub(crate) fn finalization_registry_unregister(
         let mut cells = registry.cells.lock();
         let old_len = cells.len();
         cells.retain(|cell| cell.unregister_token.as_ref() != Some(&token));
+        registry.cleanup_pending.store(
+            cells.iter().any(|cell| cell.target.is_none()),
+            std::sync::atomic::Ordering::Relaxed,
+        );
         cells.len() != old_len
     });
     Ok(Value::Bool(removed))
@@ -2413,40 +2449,119 @@ pub(crate) fn finalization_registry_unregister(
 pub(crate) fn run_finalization_registry_cleanup_job(
     vm: &mut Vm,
     registry: GcIdx,
-) -> error::Result<()> {
+) -> error::Result<bool> {
     let registry_value = Value::Object(registry);
-    let pin_count = vm.pin(&registry_value);
-    let cleanup = vm.heap.with_obj(registry.0, |obj| {
+    vm.try_reserve_value_roots(std::slice::from_ref(&registry_value))?;
+    let registry_pin = vm.pin(&registry_value);
+    let realm = vm.heap.with_obj(registry.0, |obj| {
         let HeapObj::FinalizationRegistry(registry) = obj else {
             return None;
         };
-        registry
-            .cleanup_scheduled
-            .store(false, std::sync::atomic::Ordering::Relaxed);
-        let mut pending = Vec::new();
-        registry.cells.lock().retain(|cell| {
-            if cell.target.is_none() {
-                pending.push(cell.held_value.clone());
-                false
-            } else {
-                true
-            }
-        });
-        Some((registry.cleanup_callback.clone(), pending))
+        Some(registry.realm)
     });
-    if let Some((callback, pending)) = cleanup {
-        let pending_pin_count = vm.pin_many(&pending);
-        for held_value in &pending {
-            let _ = vm.call_function(
-                &callback,
-                std::slice::from_ref(held_value),
-                Some(Value::Undefined),
-            );
-        }
-        vm.unpin_many(pending_pin_count);
-    }
-    vm.unpin(pin_count);
-    Ok(())
+    let Some(realm) = realm else {
+        vm.unpin_many(registry_pin);
+        return Ok(true);
+    };
+    let result = vm.with_execution_context(
+        crate::vm::ExecutionContext {
+            realm_env: realm,
+            kind: crate::vm::ExecutionContextKind::Job,
+        },
+        |vm| {
+            vm.heap.with_obj(registry.0, |obj| {
+                if let HeapObj::FinalizationRegistry(registry) = obj {
+                    registry
+                        .cleanup_scheduled
+                        .store(false, std::sync::atomic::Ordering::Relaxed);
+                }
+            });
+
+            loop {
+                let Some((callback, pending_index, held_value, cell_count)) =
+                    vm.heap.with_obj(registry.0, |obj| {
+                        let HeapObj::FinalizationRegistry(registry) = obj else {
+                            return None;
+                        };
+                        let cells = registry.cells.lock();
+                        cells
+                            .iter()
+                            .enumerate()
+                            .find(|(_, cell)| cell.target.is_none())
+                            .map(|(index, cell)| {
+                                (
+                                    registry.cleanup_callback.clone(),
+                                    index,
+                                    cell.held_value.clone(),
+                                    cells.len(),
+                                )
+                            })
+                    })
+                else {
+                    vm.heap.with_obj(registry.0, |obj| {
+                        if let HeapObj::FinalizationRegistry(registry) = obj {
+                            registry
+                                .cleanup_pending
+                                .store(false, std::sync::atomic::Ordering::Relaxed);
+                        }
+                    });
+                    return Ok(true);
+                };
+
+                vm.consume_fuel_units(cell_count.min(i64::MAX as usize) as i64)?;
+                #[cfg(test)]
+                if std::mem::take(&mut vm.fail_next_finalization_cleanup_reservation) {
+                    return Err(Error::range(
+                        "FinalizationRegistry cleanup storage is too large",
+                    ));
+                }
+                vm.try_reserve_value_roots(&[
+                    callback.clone(),
+                    held_value.clone(),
+                    callback.clone(),
+                    held_value.clone(),
+                ])?;
+                let cleanup_pins = vm.pin(&callback) + vm.pin(&held_value);
+                let removed = vm.heap.with_obj(registry.0, |obj| {
+                    let HeapObj::FinalizationRegistry(registry) = obj else {
+                        return false;
+                    };
+                    let mut cells = registry.cells.lock();
+                    if cells
+                        .get(pending_index)
+                        .is_some_and(|cell| cell.target.is_none())
+                    {
+                        cells.remove(pending_index);
+                        registry.cleanup_pending.store(
+                            cells.iter().any(|cell| cell.target.is_none()),
+                            std::sync::atomic::Ordering::Relaxed,
+                        );
+                        true
+                    } else {
+                        false
+                    }
+                });
+                let callback_result = if removed {
+                    Some(vm.call_function_with_reserved_roots(
+                        &callback,
+                        std::slice::from_ref(&held_value),
+                        Some(Value::Undefined),
+                    ))
+                } else {
+                    None
+                };
+                vm.unpin_many(cleanup_pins);
+                if let Some(Err(error)) = callback_result {
+                    if error.catchable() {
+                        return Ok(false);
+                    }
+                    return Err(error);
+                }
+            }
+        },
+    );
+    vm.unpin_many(registry_pin);
+    result
 }
 
 pub(crate) fn map_clear(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {

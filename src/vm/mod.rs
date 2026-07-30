@@ -258,6 +258,7 @@ pub(crate) enum NewTargetPrototype {
 
 #[derive(Clone)]
 pub(crate) enum ExecutionContextKind {
+    Job,
     Interpreted {
         callee: Value,
     },
@@ -383,6 +384,12 @@ pub struct Vm {
     #[cfg(test)]
     pub(crate) fail_next_get_prototype_scratch_reservation: bool,
     #[cfg(test)]
+    pub(crate) fail_next_finalization_cell_reservation: bool,
+    #[cfg(test)]
+    pub(crate) fail_next_finalization_cleanup_reservation: bool,
+    #[cfg(test)]
+    pub(crate) fail_next_kept_object_reservation: bool,
+    #[cfg(test)]
     pub(crate) fail_get_prototype_reservation_site: Option<GetPrototypeReservationSite>,
     #[cfg(test)]
     pub(crate) fail_property_traversal_reservation_site: Option<PropertyTraversalReservationSite>,
@@ -452,7 +459,7 @@ pub struct Vm {
     /// length snapshot, so recursive suppression preserves observable ordering.
     pub(crate) active_array_joins: Vec<GcIdx>,
     /// WeakRef targets kept alive until the current ECMAScript job finishes.
-    pub(crate) kept_objects: Vec<usize>,
+    pub(crate) kept_objects: HashSet<usize>,
     /// Collected yield values while running a generator function body (eager,
     /// legacy fallback path). Lazy generators use per-frame gen-state instead.
     pub(crate) current_yields: Vec<Value>,
@@ -495,6 +502,8 @@ pub struct Vm {
     pub(crate) realm_set_prototypes: HashMap<usize, Value>,
     pub(crate) realm_weakmap_prototypes: HashMap<usize, Value>,
     pub(crate) realm_weakset_prototypes: HashMap<usize, Value>,
+    pub(crate) realm_weakref_prototypes: HashMap<usize, Value>,
+    pub(crate) realm_finalization_registry_prototypes: HashMap<usize, Value>,
     /// Realm global environment -> synchronous generator intrinsics.
     pub(crate) realm_generator_prototypes: HashMap<usize, Value>,
     pub(crate) realm_generator_function_constructors: HashMap<usize, Value>,
@@ -1104,6 +1113,12 @@ impl Vm {
             #[cfg(test)]
             fail_next_get_prototype_scratch_reservation: false,
             #[cfg(test)]
+            fail_next_finalization_cell_reservation: false,
+            #[cfg(test)]
+            fail_next_finalization_cleanup_reservation: false,
+            #[cfg(test)]
+            fail_next_kept_object_reservation: false,
+            #[cfg(test)]
             fail_get_prototype_reservation_site: None,
             #[cfg(test)]
             fail_property_traversal_reservation_site: None,
@@ -1166,7 +1181,7 @@ impl Vm {
             #[cfg(test)]
             fail_inline_cache_reservation: None,
             active_array_joins: Vec::new(),
-            kept_objects: Vec::new(),
+            kept_objects: HashSet::new(),
             current_yields: Vec::new(),
             next_symbol_id: 16,
             next_private_name_id: 1,
@@ -1205,6 +1220,8 @@ impl Vm {
             realm_set_prototypes: HashMap::new(),
             realm_weakmap_prototypes: HashMap::new(),
             realm_weakset_prototypes: HashMap::new(),
+            realm_weakref_prototypes: HashMap::new(),
+            realm_finalization_registry_prototypes: HashMap::new(),
             realm_generator_prototypes: HashMap::new(),
             realm_generator_function_constructors: HashMap::new(),
             realm_generator_function_prototypes: HashMap::new(),
@@ -2798,6 +2815,8 @@ impl Vm {
         self.realm_set_prototypes.remove(&realm);
         self.realm_weakmap_prototypes.remove(&realm);
         self.realm_weakset_prototypes.remove(&realm);
+        self.realm_weakref_prototypes.remove(&realm);
+        self.realm_finalization_registry_prototypes.remove(&realm);
         self.realm_generator_prototypes.remove(&realm);
         self.realm_generator_function_constructors.remove(&realm);
         self.realm_generator_function_prototypes.remove(&realm);
@@ -3053,14 +3072,14 @@ impl Vm {
     pub(crate) fn current_native_callee(&self) -> Option<&Value> {
         match &self.execution_contexts.last()?.kind {
             ExecutionContextKind::Native { callee, .. } => Some(callee),
-            ExecutionContextKind::Interpreted { .. } => None,
+            ExecutionContextKind::Job | ExecutionContextKind::Interpreted { .. } => None,
         }
     }
 
     pub(crate) fn current_native_new_target(&self) -> Option<&Value> {
         match &self.execution_contexts.last()?.kind {
             ExecutionContextKind::Native { new_target, .. } => new_target.as_ref(),
-            ExecutionContextKind::Interpreted { .. } => None,
+            ExecutionContextKind::Job | ExecutionContextKind::Interpreted { .. } => None,
         }
     }
 
@@ -3073,7 +3092,7 @@ impl Vm {
                 NewTargetPrototype::Observed(prototype) => Some(prototype),
                 NewTargetPrototype::FallbackRealm(_) => None,
             },
-            ExecutionContextKind::Interpreted { .. } => None,
+            ExecutionContextKind::Job | ExecutionContextKind::Interpreted { .. } => None,
         }
     }
 
@@ -3086,7 +3105,7 @@ impl Vm {
                 NewTargetPrototype::FallbackRealm(realm) => Some(*realm),
                 NewTargetPrototype::Observed(_) => None,
             },
-            ExecutionContextKind::Interpreted { .. } => None,
+            ExecutionContextKind::Job | ExecutionContextKind::Interpreted { .. } => None,
         }
     }
 
@@ -3106,7 +3125,7 @@ impl Vm {
             .last()
             .and_then(|context| match &context.kind {
                 ExecutionContextKind::Interpreted { .. } => Some(context.realm_env),
-                ExecutionContextKind::Native { .. } => None,
+                ExecutionContextKind::Job | ExecutionContextKind::Native { .. } => None,
             });
         let env = context_env
             .or_else(|| self.frames.last().map(|frame| frame.env))

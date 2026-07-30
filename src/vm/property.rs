@@ -4632,6 +4632,7 @@ impl Vm {
         for context in &self.execution_contexts {
             roots.push(context.realm_env.0);
             match &context.kind {
+                ExecutionContextKind::Job => {}
                 ExecutionContextKind::Interpreted { callee } => {
                     Self::push_value_roots(&mut roots, callee);
                 }
@@ -4920,6 +4921,12 @@ impl Vm {
         for v in self.realm_weakset_prototypes.values() {
             Self::push_value_roots(&mut roots, v);
         }
+        for v in self.realm_weakref_prototypes.values() {
+            Self::push_value_roots(&mut roots, v);
+        }
+        for v in self.realm_finalization_registry_prototypes.values() {
+            Self::push_value_roots(&mut roots, v);
+        }
         for v in self.realm_generator_prototypes.values() {
             Self::push_value_roots(&mut roots, v);
         }
@@ -5043,7 +5050,7 @@ impl Vm {
         }
         // Pinned temporary roots (e.g. Promise handlers held across call_function).
         roots.extend_from_slice(&self.gc_pins);
-        roots.extend_from_slice(&self.kept_objects);
+        roots.extend(self.kept_objects.iter().copied());
         {
             let external = self.external_jobs.lock();
             for value in external.wait_roots.values() {
@@ -5057,12 +5064,21 @@ impl Vm {
         roots
     }
 
-    pub(crate) fn keep_during_job(&mut self, value: &Value) {
+    pub(crate) fn keep_during_job(&mut self, value: &Value) -> error::Result<()> {
         if let Value::Object(idx) = value {
-            if !self.kept_objects.contains(&idx.0) {
-                self.kept_objects.push(idx.0);
+            if self.kept_objects.contains(&idx.0) {
+                return Ok(());
             }
+            #[cfg(test)]
+            if std::mem::take(&mut self.fail_next_kept_object_reservation) {
+                return Err(Error::range("kept-object set is too large"));
+            }
+            self.kept_objects
+                .try_reserve(1)
+                .map_err(|_| Error::range("kept-object set is too large"))?;
+            self.kept_objects.insert(idx.0);
         }
+        Ok(())
     }
 
     pub(crate) fn clear_kept_objects(&mut self) {
@@ -5070,7 +5086,14 @@ impl Vm {
     }
 
     pub(crate) fn schedule_finalization_cleanup_jobs(&mut self) {
-        for registry in self.heap.take_pending_finalization_registries() {
+        let Some(registries) = self.heap.take_pending_finalization_registries() else {
+            return;
+        };
+        if self.microtask_queue.try_reserve(registries.len()).is_err() {
+            self.heap.reset_finalization_cleanup_scheduled(&registries);
+            return;
+        }
+        for registry in registries {
             self.microtask_queue
                 .push_back(Microtask::FinalizationCleanup {
                     registry: GcIdx(registry),
@@ -5565,8 +5588,11 @@ impl Vm {
                 settlement.map(|_| ())
             }
             Microtask::FinalizationCleanup { registry } => {
-                crate::builtins::run_finalization_registry_cleanup_job(self, registry)?;
-                self.schedule_finalization_cleanup_jobs();
+                let completed =
+                    crate::builtins::run_finalization_registry_cleanup_job(self, registry)?;
+                if completed {
+                    self.schedule_finalization_cleanup_jobs();
+                }
                 Ok(())
             }
         }

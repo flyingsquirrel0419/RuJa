@@ -986,7 +986,7 @@ impl Vm {
     pub(crate) fn native_callee_closure(&self) -> Option<GcIdx> {
         match &self.execution_contexts.last()?.kind {
             ExecutionContextKind::Native { .. } => Some(self.execution_contexts.last()?.realm_env),
-            ExecutionContextKind::Interpreted { .. } => None,
+            ExecutionContextKind::Job | ExecutionContextKind::Interpreted { .. } => None,
         }
     }
 
@@ -1219,6 +1219,20 @@ impl Vm {
                 .cloned()
                 .unwrap_or(fallback));
         }
+        if intrinsic == "WeakRef" {
+            return Ok(self
+                .realm_weakref_prototypes
+                .get(&realm.0)
+                .cloned()
+                .unwrap_or(fallback));
+        }
+        if intrinsic == "FinalizationRegistry" {
+            return Ok(self
+                .realm_finalization_registry_prototypes
+                .get(&realm.0)
+                .cloned()
+                .unwrap_or(fallback));
+        }
         if intrinsic == "Function" {
             return Ok(self
                 .realm_function_prototypes
@@ -1354,6 +1368,29 @@ impl Vm {
         this: Option<Value>,
         default_has_instance: Option<&mut Option<HasInstanceHandlerCall>>,
     ) -> error::Result<Value> {
+        self.call_function_dispatch_with_roots(func, args, this, default_has_instance, false)
+    }
+
+    /// Enter `[[Call]]` after the caller has reserved the dispatcher's initial
+    /// callee, argument, and receiver pins. Wrapper work remains part of the
+    /// invoked value's own `[[Call]]` and keeps its normal fallible boundaries.
+    pub(crate) fn call_function_with_reserved_roots(
+        &mut self,
+        func: &Value,
+        args: &[Value],
+        this: Option<Value>,
+    ) -> error::Result<Value> {
+        self.call_function_dispatch_with_roots(func, args, this, None, true)
+    }
+
+    fn call_function_dispatch_with_roots(
+        &mut self,
+        func: &Value,
+        args: &[Value],
+        this: Option<Value>,
+        default_has_instance: Option<&mut Option<HasInstanceHandlerCall>>,
+        roots_reserved: bool,
+    ) -> error::Result<Value> {
         if self.frames.len() >= MAX_CALL_STACK_DEPTH {
             return Err(Error::range("Maximum call stack size exceeded"));
         }
@@ -1377,7 +1414,14 @@ impl Vm {
                 .checked_add(Self::value_root_count(this_value))
                 .ok_or_else(|| Error::range("temporary root set is too large"))?;
         }
-        self.try_reserve_gc_pins(required_roots)?;
+        if !roots_reserved {
+            self.try_reserve_gc_pins(required_roots)?;
+        } else {
+            debug_assert!(
+                self.gc_pins.capacity().saturating_sub(self.gc_pins.len()) >= required_roots,
+                "pre-reserved call roots must cover the initial call pins"
+            );
+        }
         // Pin the callee, args, and receiver as GC roots for the duration of this call:
         // reading the function kind and building the call frame involve heap
         // allocations that can trigger a GC, which would otherwise collect

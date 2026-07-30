@@ -3448,6 +3448,39 @@ locales use ICU's documented root fallback.
 - 장점, 단점 및 영향: The exact 74-file Collator/localeCompare boundary is Realm-correct, GC-traced, UTF-16-aware, and backed by reproducible data. ICU compiled data increases binary/link size and native data is outside the heap-object cap. General search tailoring and the shared this-value harness remain bounded follow-up work with NumberFormat/DateTimeFormat.
 ```
 
+### Weak-reference Realm, resource, and cleanup boundary
+
+WeakRef and FinalizationRegistry prototypes are immutable Realm registry roots,
+not values rediscovered through replaceable global bindings. Construction pins
+the selected prototype and allocates through the VM's GC-retry path. WeakRef's
+per-job target roots use a fallible identity set, avoiding the prior quadratic
+Vec duplicate scan while retaining the ECMAScript job-liveness guarantee.
+
+FinalizationRegistry registration reserves cell storage before publication and
+caps native cell count at the shared materialization boundary. Unregister and
+cleanup scans consume Fuel before mutation. Each registry stores and traces its
+constructor Realm; the cleanup job enters that Realm before callback dispatch,
+whose own function Realm then becomes active. Cleanup selects one cleared cell,
+preflights both its outer pins and nested callback-call roots, removes that cell,
+then invokes the callback outside the registry lock. The next selection observes
+callback-time unregister or registration. Catchable callback errors are
+contained at the host-job boundary and leave later cells eligible for a future
+job; non-catchable Fuel propagates to the host. Sweep publishes one atomic
+pending bit per registry, so scheduling scans bounded heap cells rather than
+rescanning every native cell vector. Pending-registry collection and microtask
+queue growth reserve fallibly and reset publication flags if scheduling cannot
+allocate, so cleanup is postponed rather than causing a host OOM path.
+
+```text
+[Decision Log]
+- 목적과 의도: Freeze the complete WeakRef/FinalizationRegistry surface while making weak cleanup obey Realm identity, cellwise specification order, and sandbox resource rules.
+- 기존 구현 및 제약 조건: All 76 Test262 surface files passed, but prototype fallback consulted mutable Realm globals, constructors bypassed GC retry, job-kept roots used quadratic infallible Vec growth, registry cells and scheduling grew infallibly, and cleanup removed every dead cell before callbacks while swallowing Fuel.
+- 검토한 주요 대안: Treat 76/76 as complete without runtime changes, keep prefix admission, batch all holdings before callbacks, propagate every callback throw, make public GC fallible, or add immutable registries plus transactional fallible scheduling and cellwise cleanup.
+- 선택한 방식: Root original prototypes per Realm; store and trace each registry's constructor Realm; use VM allocation and complete callback dispatcher-entry root preflights; store job-kept identities in a fallible HashSet; meter/cap cell operations; publish one sweep-time pending bit; reserve scheduling before publishing flags; remove and invoke one cleanup cell at a time; contain catchable errors while propagating Fuel.
+- 다른 대안 대신 이 방식을 선택한 이유: Surface tests contain no GC cleanup execution and could not prove sandbox safety; prefix admission silently accepts future files; batching violates callback-time unregister and abrupt ordering; propagating catchable cleanup errors exposes host jobs to script; changing GC's public contract would widen unrelated embedding APIs.
+- 장점, 단점 및 영향: Constructor/job/callback Realm separation, Realm tampering, heap-cap retry, nested-call allocation failure, unregister re-entry, catchable throw, and Fuel abort behavior are directly tested and the 76-file policy is scope-closed. Sweep still scans bounded heap cells atomically; native cell bytes remain outside heap-object accounting, and non-GC Symbol targets can remain live until a future Symbol-arena unit.
+```
+
 ---
 
 **Next:** [Features](features.md) · [Known limitations](limitations.md) · [Back to README](../README.md)

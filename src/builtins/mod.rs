@@ -4114,6 +4114,9 @@ fn install_weak_ref_constructor_in_env(
 
     let constructor = Value::Object(constructor);
     let prototype = Value::Object(prototype);
+    let realm = crate::environment::global_env_root(&vm.heap, env);
+    vm.realm_weakref_prototypes
+        .insert(realm.0, prototype.clone());
     if let Some(global) = global {
         define_realm_global(vm, env, global, "WeakRef", constructor.clone());
     } else {
@@ -4172,6 +4175,9 @@ fn install_finalization_registry_constructor_in_env(
 
     let constructor = Value::Object(constructor);
     let prototype = Value::Object(prototype);
+    let realm = crate::environment::global_env_root(&vm.heap, env);
+    vm.realm_finalization_registry_prototypes
+        .insert(realm.0, prototype.clone());
     if let Some(global) = global {
         define_realm_global(vm, env, global, "FinalizationRegistry", constructor.clone());
     } else {
@@ -10325,7 +10331,7 @@ fn iterator_from(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Re
                 extensible: AtomicBool::new(true),
             },
         ))?);
-        vm.keep_during_job(&wrapper);
+        vm.keep_during_job(&wrapper)?;
         Ok(wrapper)
     })();
     vm.unpin_many(pin_count);
@@ -10397,7 +10403,7 @@ fn valid_iterator_wrapper_return(
             private_fields: Mutex::new(std::collections::HashMap::new()),
             primitive: Mutex::new(None),
         }))?);
-        vm.keep_during_job(&result);
+        vm.keep_during_job(&result)?;
         return Ok(result);
     }
     if !is_callable(&return_method, &vm.heap) {

@@ -2781,7 +2781,7 @@ pub(crate) fn gen_result_in_env(
         }
     });
     let result_obj = Value::Object(obj_idx);
-    vm.keep_during_job(&result_obj);
+    vm.keep_during_job(&result_obj)?;
     if is_async_gen {
         wrap_generator_result_in_env(vm, result_obj, env)
     } else {

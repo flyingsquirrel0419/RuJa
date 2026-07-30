@@ -6,7 +6,7 @@ use ruja::value::{
     ArrayData, FinalizationRegistryCell, FinalizationRegistryData, MapData, MapKey, PromiseData,
     PromiseHandler, PromiseStatus, PropertyKey,
 };
-use ruja::{Value, Vm};
+use ruja::{GcIdx, Value, Vm};
 use std::sync::atomic::AtomicBool;
 
 fn bench_fib(c: &mut Criterion) {
@@ -114,6 +114,7 @@ fn bench_cursorized_record_gc(c: &mut Criterion) {
         .allocate(ruja::HeapObj::FinalizationRegistry(
             FinalizationRegistryData {
                 cleanup_callback: Value::Undefined,
+                realm: GcIdx(usize::MAX),
                 cells: Mutex::new(
                     (0..100_000)
                         .map(|_| FinalizationRegistryCell {
@@ -123,6 +124,7 @@ fn bench_cursorized_record_gc(c: &mut Criterion) {
                         })
                         .collect(),
                 ),
+                cleanup_pending: AtomicBool::new(true),
                 cleanup_scheduled: AtomicBool::new(false),
                 props: Mutex::new(IndexMap::new()),
                 proto: Mutex::new(None),

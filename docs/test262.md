@@ -12623,3 +12623,30 @@ supportedValuesOf boundary.
 - 다른 대안 대신 이 방식을 선택한 이유: Global admission overclaims future services, metadata-only admission hides Realm/constructibility cases, dropping search leaves a known behavior gap, and fake constructors corrupt the larger ECMA-402 roadmap. Exact ownership proves implemented behavior without claiming absent formatters.
 - 장점, 단점 및 영향: Supported policy now matches real constructor, option, comparison, Realm, and String integration behavior. One visible skip remains and will become executable when NumberFormat and DateTimeFormat land.
 ```
+
+## WeakRef and FinalizationRegistry exact admission
+
+Pinned Test262 contains **29** files below `built-ins/WeakRef` and **47** below
+`built-ins/FinalizationRegistry`. The 76-row manifest freezes every path and
+its complete feature metadata. Runner and analyzer remove broad WeakRef,
+FinalizationRegistry, Reflect, Symbol, and related weak-collection gates only
+for those exact rows; a future file in either directory remains skipped until
+its metadata and runtime behavior are audited.
+
+The exact manifest and complete two-directory scope both require **76 pass / 0
+fail / 0 skip**. Direct Rust tests extend beyond the nondeterministic Test262
+surface: immutable foreign-Realm fallback after global poisoning, exact heap-cap
+GC retry, fallible kept-root and cell publication, pending-cleanup preservation,
+constructor/job/callback Realm separation, complete dispatcher-entry root preflight,
+callback-time unregister, catchable abrupt containment, non-catchable Fuel
+propagation, pin balance, and VM recovery.
+
+```text
+[Decision Log]
+- 목적과 의도: Turn the already executable WeakRef and FinalizationRegistry surface into an exact conformance boundary while closing GC, Realm, and sandbox gaps not exercised by Test262.
+- 기존 구현 및 제약 조건: Directory-prefix exceptions ran all current 76 files successfully but admitted future paths automatically; no pinned file executes collection or cleanup callbacks; native storage and callback ordering still had independent bugs.
+- 검토한 주요 대안: Keep informational 76/76 output, admit directory prefixes, freeze paths without metadata, add runner-only tests, or freeze complete metadata alongside semantic runtime and resource tests.
+- 선택한 방식: Store 76 exact path/feature rows, share them in runner and analyzer, assert live-checkout equality and disjointness, gate exact and whole scopes in dedicated CI, and pair this with direct GC/Realm/resource regressions.
+- 다른 대안 대신 이 방식을 선택한 이유: Informational and prefix policies cannot detect drift, path-only manifests can hide new feature dependencies, and Test262 alone cannot observe nondeterministic cleanup. The combined boundary proves both standard surface and deterministic host invariants.
+- 장점, 단점 및 영향: WeakRef 29/29 and FinalizationRegistry 47/47 are independently reproducible with no hidden skip. Future tests fail scope closure until reviewed; local Symbol reclamation remains outside this unit.
+```

@@ -4,6 +4,21 @@
 
 ### Changed
 
+- Hardened `WeakRef` and `FinalizationRegistry` as a complete frozen
+  weak-reference unit. Constructor fallback now uses immutable Realm-local
+  prototype registries and both branded objects allocate through GC retry.
+  WeakRef job-kept roots use a fallible O(1) identity set. FinalizationRegistry
+  stores and traces its constructor Realm, marks pending cleanup during sweep,
+  and enters that Realm for its cleanup job. Cell growth, unregister scans,
+  cleanup selection, nested callback roots, and job scheduling are bounded or
+  fallible; cleanup removes and invokes one cell at a time, respects
+  callback-time `unregister`, contains catchable callback throws, and
+  propagates non-catchable Fuel aborts without losing later cells.
+  The exact pinned Test262 manifest freezes all 29 WeakRef and 47
+  FinalizationRegistry files with their audited metadata at **76/0/0**; a
+  dedicated full-workflow job also requires the complete two-directory scope
+  to remain **76 pass / 0 fail / 0 skip**.
+
 - Added Realm-local, callable/constructable `Intl.Collator` backed by pinned
   ICU4X 2.2 compiled collation data. Construction implements ordered locale and
   option coercion, `co`/`kn`/`kf` negotiation, subclass and constructor-Realm

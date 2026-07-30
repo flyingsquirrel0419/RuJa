@@ -1587,7 +1587,9 @@ pub struct FinalizationRegistryCell {
 
 pub struct FinalizationRegistryData {
     pub cleanup_callback: Value,
+    pub realm: GcIdx,
     pub cells: Mutex<Vec<FinalizationRegistryCell>>,
+    pub cleanup_pending: AtomicBool,
     pub cleanup_scheduled: AtomicBool,
     pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
     pub proto: Mutex<Option<Value>>,

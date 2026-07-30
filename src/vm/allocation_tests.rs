@@ -20538,6 +20538,297 @@ fn weak_collection_constructor_allocation_retries_at_exact_heap_cap() {
 }
 
 #[test]
+fn weak_ref_and_finalization_registry_resource_failures_are_retryable() {
+    for constructor_name in ["WeakRef", "FinalizationRegistry"] {
+        let mut vm = Vm::new().expect("VM should initialize");
+        vm.run(
+            "var weakResourceTarget = {}; \
+             var weakResourceCallback = function () {}; \
+             var weakResourcePrototype = { marker: 42 }; \
+             var WeakResourceNewTarget = function () {}; \
+             WeakResourceNewTarget.prototype = weakResourcePrototype;",
+        )
+        .expect("weak resource fixture should initialize");
+        let constructor = vm.get_global(constructor_name);
+        let new_target = vm.get_global("WeakResourceNewTarget");
+        let argument = vm.get_global(if constructor_name == "WeakRef" {
+            "weakResourceTarget"
+        } else {
+            "weakResourceCallback"
+        });
+        let expected_prototype = vm.get_global("weakResourcePrototype");
+        vm.gc();
+        let baseline_live = vm.heap.live_count();
+        let baseline_pins = vm.gc_pins.len();
+        for _ in 0..64 {
+            let _garbage = vm.new_object().expect("garbage object should allocate");
+        }
+        vm.set_max_heap_objects(Some(baseline_live + 1));
+        let result = vm
+            .construct_with_new_target(&constructor, &[argument], &new_target)
+            .expect("weak object allocation should collect and retry");
+        let Value::Object(index) = result else {
+            panic!("weak construction must return an object");
+        };
+        let actual_prototype = vm.heap.with_obj(index.0, |object| match object {
+            HeapObj::WeakRef(reference) if constructor_name == "WeakRef" => {
+                reference.proto.lock().clone()
+            }
+            HeapObj::FinalizationRegistry(registry)
+                if constructor_name == "FinalizationRegistry" =>
+            {
+                registry.proto.lock().clone()
+            }
+            _ => None,
+        });
+        assert_eq!(actual_prototype, Some(expected_prototype));
+        assert_eq!(vm.heap.live_count(), baseline_live + 1);
+        vm.set_max_heap_objects(None);
+        assert_eq!(vm.gc_pins.len(), baseline_pins);
+    }
+
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.fail_next_kept_object_reservation = true;
+    let keep_error = vm
+        .run("new WeakRef({})")
+        .expect_err("WeakRef kept-object reservation failure should propagate");
+    assert_eq!(keep_error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(
+        vm.run("new WeakRef({}).deref() !== undefined")
+            .expect("WeakRef should recover after kept-object reservation failure"),
+        Value::Bool(true)
+    );
+    vm.run(
+        r#"
+        var finalizationCleaned = [];
+        var finalizationRegistry = new FinalizationRegistry(function (held) {
+          finalizationCleaned.push(held);
+        });
+        var finalizationTarget = {};
+        var finalizationToken = {};
+        "#,
+    )
+    .expect("FinalizationRegistry fixture should initialize");
+    let baseline_pins = vm.gc_pins.len();
+
+    vm.fail_next_finalization_cell_reservation = true;
+    let register_error = vm
+        .run("finalizationRegistry.register(finalizationTarget, 1, finalizationToken)")
+        .expect_err("cell reservation failure should propagate");
+    assert_eq!(register_error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(
+        vm.run("finalizationRegistry.unregister(finalizationToken)")
+            .expect("failed registration must not publish a cell"),
+        Value::Bool(false)
+    );
+    vm.run("finalizationRegistry.register(finalizationTarget, 1, finalizationToken)")
+        .expect("registration should recover after reservation failure");
+    vm.run("finalizationTarget = null")
+        .expect("target should become unreachable");
+    vm.clear_kept_objects();
+    vm.gc();
+
+    vm.fail_next_finalization_cleanup_reservation = true;
+    let cleanup_error = vm
+        .run_microtasks()
+        .expect_err("cleanup buffer reservation failure should propagate");
+    assert_eq!(cleanup_error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(
+        vm.run("finalizationCleaned.length")
+            .expect("failed cleanup must retain pending holdings"),
+        Value::Number(0.0)
+    );
+    vm.gc();
+    vm.run_microtasks()
+        .expect("cleanup should recover after reservation failure");
+    assert_eq!(
+        vm.run("finalizationCleaned.join(',')")
+            .expect("recovered cleanup should run exactly once"),
+        Value::String(Arc::from("1"))
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    vm.run(
+        r#"
+        var rootPreflightLog = [];
+        var rootPreflightRegistry = new FinalizationRegistry(function (held) {
+          rootPreflightLog.push(held);
+        });
+        var rootPreflightTarget = {};
+        rootPreflightRegistry.register(rootPreflightTarget, 2);
+        rootPreflightTarget = null;
+        "#,
+    )
+    .expect("root-preflight cleanup fixture should initialize");
+    vm.clear_kept_objects();
+    vm.gc();
+    vm.gc_pin_reservation_failure_countdown = Some(1);
+    let preflight_error = vm
+        .run_microtasks()
+        .expect_err("nested callback root preflight should remain fallible");
+    assert_eq!(preflight_error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.gc_pin_reservation_failure_countdown, None);
+    assert_eq!(
+        vm.run("rootPreflightLog.length")
+            .expect("preflight failure must retain the pending holding"),
+        Value::Number(0.0)
+    );
+    vm.gc();
+    vm.run_microtasks()
+        .expect("root-preflight cleanup should recover");
+    assert_eq!(
+        vm.run("rootPreflightLog.join(',')")
+            .expect("recovered root-preflight callback should run once"),
+        Value::String(Arc::from("2"))
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+}
+
+#[test]
+fn finalization_registry_stores_constructor_realm_independently() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.run(
+        r#"
+        var registryConstructorRealm = $262.createRealm().global;
+        var registryPrototypeRealm = $262.createRealm().global;
+        var RegistryNewTarget = new registryPrototypeRealm.Function();
+        RegistryNewTarget.prototype = undefined;
+        var crossRealmRegistry = Reflect.construct(
+          registryConstructorRealm.FinalizationRegistry,
+          [function () {}],
+          RegistryNewTarget
+        );
+        "#,
+    )
+    .expect("cross-Realm FinalizationRegistry fixture should initialize");
+
+    let constructor_global = vm.get_global("registryConstructorRealm");
+    let registry = vm.get_global("crossRealmRegistry");
+    let Value::Object(registry_index) = registry else {
+        panic!("FinalizationRegistry fixture should be an object");
+    };
+    let stored_realm = vm.heap.with_obj(registry_index.0, |object| {
+        let HeapObj::FinalizationRegistry(registry) = object else {
+            panic!("fixture should retain FinalizationRegistry data");
+        };
+        registry.realm
+    });
+    assert_eq!(vm.realm_global_for_env(stored_realm), constructor_global);
+    assert_eq!(
+        vm.run(
+            "Object.getPrototypeOf(crossRealmRegistry) === registryPrototypeRealm.FinalizationRegistry.prototype"
+        )
+        .expect("newTarget Realm prototype should remain independently observable"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn finalization_cleanup_is_cellwise_and_preserves_host_aborts() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "abortFinalizationFuel",
+        |_, _, _| Err(crate::error::Error::fuel("finalization fuel abort")),
+        0,
+    )
+    .expect("fuel abort helper should register");
+    vm.run(
+        r#"
+        var cleanupLog = [];
+        var secondToken = {};
+        var cellwiseRegistry = new FinalizationRegistry(function (held) {
+          cleanupLog.push(held);
+          if (held === 1) cleanupLog.push(cellwiseRegistry.unregister(secondToken));
+        });
+        var firstTarget = {};
+        var secondTarget = {};
+        cellwiseRegistry.register(firstTarget, 1);
+        cellwiseRegistry.register(secondTarget, 2, secondToken);
+        firstTarget = secondTarget = null;
+        "#,
+    )
+    .expect("cellwise cleanup fixture should initialize");
+    vm.clear_kept_objects();
+    vm.gc();
+    vm.run_microtasks()
+        .expect("cellwise cleanup should complete");
+    assert_eq!(
+        vm.run("cleanupLog.join(',')")
+            .expect("cellwise cleanup log should remain readable"),
+        Value::String(Arc::from("1,true"))
+    );
+
+    vm.run(
+        r#"
+        var throwingCleanupCalls = 0;
+        var throwingRegistry = new FinalizationRegistry(function () {
+          throwingCleanupCalls++;
+          throw new Error("cleanup failure");
+        });
+        var throwingTargetOne = {};
+        var throwingTargetTwo = {};
+        throwingRegistry.register(throwingTargetOne, 1);
+        throwingRegistry.register(throwingTargetTwo, 2);
+        throwingTargetOne = throwingTargetTwo = null;
+        "#,
+    )
+    .expect("throwing cleanup fixture should initialize");
+    vm.clear_kept_objects();
+    vm.gc();
+    vm.run_microtasks()
+        .expect("catchable cleanup errors should remain inside the host job");
+    assert_eq!(
+        vm.run("throwingCleanupCalls")
+            .expect("first cleanup should stop after one catchable throw"),
+        Value::Number(1.0)
+    );
+    vm.gc();
+    vm.run_microtasks()
+        .expect("remaining cell should be eligible for a later cleanup job");
+    assert_eq!(
+        vm.run("throwingCleanupCalls")
+            .expect("later cleanup should retry the remaining cell"),
+        Value::Number(2.0)
+    );
+
+    vm.run(
+        r#"
+        var fuelCleanupLog = [];
+        var fuelCleanupEnabled = true;
+        var fuelRegistry = new FinalizationRegistry(function (held) {
+          if (fuelCleanupEnabled) abortFinalizationFuel();
+          fuelCleanupLog.push(held);
+        });
+        var fuelTargetOne = {};
+        var fuelTargetTwo = {};
+        fuelRegistry.register(fuelTargetOne, 1);
+        fuelRegistry.register(fuelTargetTwo, 2);
+        fuelTargetOne = fuelTargetTwo = null;
+        "#,
+    )
+    .expect("fuel cleanup fixture should initialize");
+    vm.clear_kept_objects();
+    vm.gc();
+    let fuel_error = vm
+        .run_microtasks()
+        .expect_err("cleanup callback Fuel must propagate as a host abort");
+    assert_eq!(fuel_error.kind, crate::error::ErrorKind::Fuel);
+    let fuel_cleanup_log = vm.get_global("fuelCleanupLog");
+    assert_eq!(
+        vm.get_property(&fuel_cleanup_log, "length")
+            .expect("Fuel-aborted cleanup log should remain directly readable"),
+        Value::Number(0.0)
+    );
+    vm.run("fuelCleanupEnabled = false")
+        .expect("cleanup retry should disable the abort");
+    assert_eq!(
+        vm.run("fuelCleanupLog.join(',')")
+            .expect("retried cleanup log should remain readable"),
+        Value::String(Arc::from("2"))
+    );
+}
+
+#[test]
 fn object_group_by_reservations_close_only_active_iterators_and_restore_pins() {
     let mut vm = Vm::new().expect("VM should initialize");
     vm.register_fn(

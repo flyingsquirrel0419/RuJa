@@ -50,6 +50,9 @@ try:
     from test262_weak_collection_admission import (
         WEAK_COLLECTION_FEATURES, WEAK_COLLECTION_FILES,
     )
+    from test262_weak_reference_admission import (
+        WEAK_REFERENCE_FILES, weak_reference_features,
+    )
     from test262_native_construct_admission import (
         NATIVE_CONSTRUCT_FEATURES, NATIVE_CONSTRUCT_FILES,
     )
@@ -261,6 +264,9 @@ except ModuleNotFoundError:
     from tools.test262_set_algebra_admission import SET_ALGEBRA_FEATURES, SET_ALGEBRA_FILES
     from tools.test262_weak_collection_admission import (
         WEAK_COLLECTION_FEATURES, WEAK_COLLECTION_FILES,
+    )
+    from tools.test262_weak_reference_admission import (
+        WEAK_REFERENCE_FILES, weak_reference_features,
     )
     from tools.test262_native_construct_admission import (
         NATIVE_CONSTRUCT_FEATURES, NATIVE_CONSTRUCT_FILES,
@@ -2107,19 +2113,33 @@ def atomics_sync_path(path):
     rel_text = rel.as_posix()
     return rel_text.startswith(ATOMICS_SYNC_PREFIXES) or rel_text in ATOMICS_SYNC_FILES
 
+def weak_reference_scope_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except (OSError, ValueError):
+        return False
+    relative = rel.as_posix()
+    return relative.startswith(WEAK_REF_PREFIXES) or relative.startswith(
+        FINALIZATION_REGISTRY_PREFIXES
+    )
+
 def weak_ref_path(path):
     try:
         rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
     except ValueError:
         return False
-    return rel.as_posix().startswith(WEAK_REF_PREFIXES)
+    relative = rel.as_posix()
+    return relative in WEAK_REFERENCE_FILES and relative.startswith(WEAK_REF_PREFIXES)
 
 def finalization_registry_path(path):
     try:
         rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
     except ValueError:
         return False
-    return rel.as_posix().startswith(FINALIZATION_REGISTRY_PREFIXES)
+    relative = rel.as_posix()
+    return relative in WEAK_REFERENCE_FILES and relative.startswith(
+        FINALIZATION_REGISTRY_PREFIXES
+    )
 
 def error_stack_path(path):
     try:
@@ -3482,6 +3502,13 @@ def array_from_async_features(path):
 
 def should_skip(meta, path=None):
     feats = set(meta.get('features', []))
+    if (
+        path is not None
+        and weak_reference_scope_path(path)
+        and not weak_ref_path(path)
+        and not finalization_registry_path(path)
+    ):
+        return True
     if (
         path is not None
         and intl_canonical_locales_scope_path(path)

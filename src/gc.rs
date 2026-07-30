@@ -244,6 +244,7 @@ fn trace_cell(cells: &[GcCell], index: usize, cursorize_vectors: bool) -> CellTr
         HeapObj::FinalizationRegistry(registry) => {
             trace_properties_and_prototype(obj.as_ref(), &mut before);
             push_value(&registry.cleanup_callback, &mut before);
+            before.push(registry.realm.0);
             Some(VecTrace {
                 owner: index,
                 kind: VecTraceKind::FinalizationRegistryCells,
@@ -614,6 +615,7 @@ fn trace_obj_impl(obj: &HeapObj, worklist: &mut Vec<usize>) {
         HeapObj::WeakSet(_) | HeapObj::WeakRef(_) => {}
         HeapObj::FinalizationRegistry(registry) => {
             push_value(&registry.cleanup_callback, worklist);
+            worklist.push(registry.realm.0);
             for cell in registry.cells.lock().iter() {
                 push_value(&cell.held_value, worklist);
             }
@@ -1022,11 +1024,13 @@ impl Heap {
                         }
                     }
                     HeapObj::FinalizationRegistry(registry) => {
+                        let mut cleanup_pending = registry.cleanup_pending.load(Ordering::Relaxed);
                         for cell in registry.cells.lock().iter_mut() {
                             if matches!(cell.target.as_ref(), Some(crate::value::Value::Object(idx))
                                 if idx.0 >= marked.len() || !marked[idx.0])
                             {
                                 cell.target = None;
+                                cleanup_pending = true;
                             }
                             if matches!(cell.unregister_token.as_ref(), Some(crate::value::Value::Object(idx))
                                 if idx.0 >= marked.len() || !marked[idx.0])
@@ -1034,6 +1038,9 @@ impl Heap {
                                 cell.unregister_token = None;
                             }
                         }
+                        registry
+                            .cleanup_pending
+                            .store(cleanup_pending, Ordering::Relaxed);
                     }
                     _ => {}
                 }
@@ -1055,28 +1062,52 @@ impl Heap {
         }
     }
 
-    pub fn take_pending_finalization_registries(&self) -> Vec<usize> {
+    pub fn take_pending_finalization_registries(&self) -> Option<Vec<usize>> {
         let cells = self.cells.lock();
-        cells
+        let pending_count = cells
             .iter()
-            .enumerate()
-            .filter_map(|(idx, cell)| {
+            .filter(|cell| {
                 let obj = cell.obj.lock();
-                let HeapObj::FinalizationRegistry(registry) = obj.as_deref()? else {
-                    return None;
+                let Some(HeapObj::FinalizationRegistry(registry)) = obj.as_deref() else {
+                    return false;
                 };
-                let has_pending = registry
-                    .cells
-                    .lock()
-                    .iter()
-                    .any(|cell| cell.target.is_none());
-                if has_pending && !registry.cleanup_scheduled.swap(true, Ordering::Relaxed) {
-                    Some(idx)
-                } else {
-                    None
-                }
+                registry.cleanup_pending.load(Ordering::Relaxed)
+                    && !registry.cleanup_scheduled.load(Ordering::Relaxed)
             })
-            .collect()
+            .count();
+        let mut pending = Vec::new();
+        pending.try_reserve_exact(pending_count).ok()?;
+        for (idx, cell) in cells.iter().enumerate() {
+            if pending.len() == pending_count {
+                break;
+            }
+            let obj = cell.obj.lock();
+            let Some(HeapObj::FinalizationRegistry(registry)) = obj.as_deref() else {
+                continue;
+            };
+            if registry.cleanup_pending.load(Ordering::Relaxed)
+                && registry
+                    .cleanup_scheduled
+                    .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
+                    .is_ok()
+            {
+                pending.push(idx);
+            }
+        }
+        Some(pending)
+    }
+
+    pub fn reset_finalization_cleanup_scheduled(&self, registries: &[usize]) {
+        let cells = self.cells.lock();
+        for registry in registries {
+            let Some(cell) = cells.get(*registry) else {
+                continue;
+            };
+            let obj = cell.obj.lock();
+            if let Some(HeapObj::FinalizationRegistry(registry)) = obj.as_deref() {
+                registry.cleanup_scheduled.store(false, Ordering::Relaxed);
+            }
+        }
     }
 
     pub fn live_count(&self) -> usize {
@@ -1291,9 +1322,13 @@ mod tests {
         cleanup_callback: Value,
         cells: Vec<FinalizationRegistryCell>,
     ) -> HeapObj {
+        // Collector fixtures do not construct Realm environments. The marker
+        // deliberately ignores this out-of-range root after tracing the slot.
         HeapObj::FinalizationRegistry(FinalizationRegistryData {
             cleanup_callback,
+            realm: GcIdx(usize::MAX),
             cells: Mutex::new(cells),
+            cleanup_pending: AtomicBool::new(false),
             cleanup_scheduled: AtomicBool::new(false),
             props: Mutex::new(indexmap::IndexMap::new()),
             proto: Mutex::new(None),
@@ -2958,7 +2993,7 @@ mod tests {
         assert!(promise_trace.vector.is_none());
         assert!(registry_trace.vector.is_none());
         assert_eq!(promise_trace.before, [promise_root]);
-        assert_eq!(registry_trace.before, [registry_root]);
+        assert_eq!(registry_trace.before, [usize::MAX, registry_root]);
     }
 
     #[test]

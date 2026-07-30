@@ -68,6 +68,11 @@ from test262_weak_collection_admission import (
     WEAK_COLLECTION_FEATURES,
     WEAK_COLLECTION_FILES,
 )
+from test262_weak_reference_admission import (
+    WEAK_REFERENCE_FEATURES,
+    WEAK_REFERENCE_FILES,
+    weak_reference_features,
+)
 from test262_native_construct_admission import (
     NATIVE_CONSTRUCT_FEATURES,
     NATIVE_CONSTRUCT_FILES,
@@ -589,10 +594,14 @@ class AsyncAdmissionTests(unittest.TestCase):
 
 
 class WeakRefAdmissionTests(unittest.TestCase):
-    def test_weak_ref_features_are_admitted_only_inside_builtin_path(self):
+    def test_weak_ref_features_are_admitted_only_for_exact_builtin_paths(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            inside = root / "test/built-ins/WeakRef/prototype/deref/case.js"
+            inside = (
+                root
+                / "test/built-ins/WeakRef/prototype/deref/return-object-target.js"
+            )
+            future = root / "test/built-ins/WeakRef/prototype/deref/future.js"
             outside = root / "test/built-ins/Other/case.js"
             meta = {
                 "flags": [],
@@ -609,6 +618,7 @@ class WeakRefAdmissionTests(unittest.TestCase):
                 tool.TEST262 = str(root)
                 try:
                     self.assertFalse(tool.should_skip(meta, inside))
+                    self.assertTrue(tool.should_skip(meta, future))
                     self.assertTrue(tool.should_skip(meta, outside))
                 finally:
                     tool.TEST262 = original_root
@@ -2376,6 +2386,112 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                         )
                 finally:
                     tool.TEST262 = original_root
+
+    def test_weak_reference_manifest_is_exact_live_disjoint_and_shared(self):
+        self.assertEqual(len(WEAK_REFERENCE_FILES), 76)
+        self.assertEqual(
+            WEAK_REFERENCE_FILES, frozenset(WEAK_REFERENCE_FEATURES)
+        )
+        self.assertEqual(
+            sum(path.startswith("built-ins/WeakRef/") for path in WEAK_REFERENCE_FILES),
+            29,
+        )
+        self.assertEqual(
+            sum(
+                path.startswith("built-ins/FinalizationRegistry/")
+                for path in WEAK_REFERENCE_FILES
+            ),
+            47,
+        )
+
+        for name, files in vars(test262_runner).items():
+            if name == "WEAK_REFERENCE_FILES" or not name.endswith("_FILES"):
+                continue
+            if not isinstance(files, (set, frozenset)) or not all(
+                isinstance(path, str) for path in files
+            ):
+                continue
+            self.assertFalse(WEAK_REFERENCE_FILES & files, name)
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        try:
+            test_root_available = test_root.is_dir()
+        except OSError:
+            test_root_available = False
+        if test_root_available:
+            live = {
+                path.relative_to(test_root).as_posix()
+                for area in ("WeakRef", "FinalizationRegistry")
+                for path in (test_root / "built-ins" / area).rglob("*.js")
+            }
+            self.assertEqual(live, WEAK_REFERENCE_FILES)
+            for relative, features in WEAK_REFERENCE_FEATURES.items():
+                path = test_root / relative
+                metadata = test262_runner.parse_meta(path.read_text())
+                self.assertEqual(
+                    frozenset(metadata.get("features", [])), features, relative
+                )
+                self.assertEqual(metadata.get("flags", []), [], relative)
+                self.assertIsNone(metadata.get("negative"), relative)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            weak = root / "test/built-ins/WeakRef/constructor.js"
+            registry = root / "test/built-ins/FinalizationRegistry/constructor.js"
+            weak_future = root / "test/built-ins/WeakRef/future.js"
+            registry_future = (
+                root / "test/built-ins/FinalizationRegistry/future.js"
+            )
+            outside = root / "test/built-ins/Map/weak-reference.js"
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    self.assertTrue(tool.weak_ref_path(weak))
+                    self.assertTrue(tool.finalization_registry_path(registry))
+                    self.assertFalse(
+                        tool.should_skip({"features": ["WeakRef"]}, weak)
+                    )
+                    self.assertFalse(
+                        tool.should_skip(
+                            {"features": ["FinalizationRegistry"]}, registry
+                        )
+                    )
+                    for path in (weak_future, registry_future, outside):
+                        self.assertFalse(tool.weak_ref_path(path))
+                        self.assertFalse(tool.finalization_registry_path(path))
+                    self.assertTrue(
+                        tool.should_skip({"features": ["WeakRef"]}, weak_future)
+                    )
+                    self.assertTrue(
+                        tool.should_skip(
+                            {"features": ["FinalizationRegistry"]},
+                            registry_future,
+                        )
+                    )
+                    self.assertFalse(
+                        tool.should_skip(
+                            {"features": ["FinalizationRegistry"]}, outside
+                        )
+                    )
+                finally:
+                    tool.TEST262 = original_root
+
+        self.assertEqual(
+            weak_reference_features("built-ins/WeakRef/constructor.js"),
+            frozenset({"WeakRef"}),
+        )
+        self.assertEqual(
+            weak_reference_features(
+                "built-ins/FinalizationRegistry/proto-from-ctor-realm.js"
+            ),
+            frozenset(
+                {"FinalizationRegistry", "cross-realm", "Reflect", "Symbol"}
+            ),
+        )
+        self.assertEqual(
+            weak_reference_features("built-ins/WeakRef/future.js"), frozenset()
+        )
 
     def test_native_construct_manifest_is_exact_and_shared(self):
         expected = {
@@ -9014,10 +9130,15 @@ class FinalizationRegistryAdmissionTests(unittest.TestCase):
             root = Path(temp_dir)
             inside = (
                 root
-                / "test/built-ins/FinalizationRegistry/prototype/register/case.js"
+                / "test/built-ins/FinalizationRegistry/prototype/register/custom-this.js"
             )
             weak_ref_brand = (
-                root / "test/built-ins/WeakRef/prototype/deref/brand.js"
+                root
+                / "test/built-ins/WeakRef/prototype/deref/this-does-not-have-internal-target-throws.js"
+            )
+            future = (
+                root
+                / "test/built-ins/FinalizationRegistry/prototype/register/future.js"
             )
             outside = root / "test/built-ins/Other/case.js"
             feature_only = {"flags": [], "features": ["FinalizationRegistry"]}
@@ -9042,6 +9163,7 @@ class FinalizationRegistryAdmissionTests(unittest.TestCase):
                     self.assertFalse(tool.should_skip(feature_only, outside))
                     self.assertFalse(tool.should_skip(combined, inside))
                     self.assertFalse(tool.should_skip(combined, weak_ref_brand))
+                    self.assertTrue(tool.should_skip(combined, future))
                     self.assertTrue(tool.should_skip(combined, outside))
                 finally:
                     tool.TEST262 = original_root

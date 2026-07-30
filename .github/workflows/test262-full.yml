@@ -178,6 +178,50 @@ jobs:
           grep -q '^RATE=100.0 PASS=226 FAIL=0 SKIP=0 TOTAL=226 RAN=226$' \
             weak_collections_result.txt
 
+  weak-references:
+    needs: [build, setup]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download RuJa binary
+        uses: actions/download-artifact@v4
+        with:
+          name: ruja-release
+          path: target/release/
+      - run: chmod +x target/release/ruja
+      - name: Checkout pinned WeakRef and FinalizationRegistry tests
+        uses: actions/checkout@v4
+        with:
+          repository: tc39/test262
+          ref: ${{ env.TEST262_REV }}
+          path: test262
+          sparse-checkout: |
+            harness
+            test/built-ins/WeakRef
+            test/built-ins/FinalizationRegistry
+      - name: Verify the frozen weak-reference manifest
+        run: >-
+          PYTHONPATH=tools TEST262="$GITHUB_WORKSPACE/test262"
+          python3 -m unittest
+          test262_tooling_test.ModuleCoreAdmissionTests.test_weak_reference_manifest_is_exact_live_disjoint_and_shared
+      - name: Require the exact weak-reference boundary to pass
+        run: |
+          mapfile -t files < <(sed -e '/^#/d' -e '/^$/d' \
+            tools/test262_weak_reference_admission.data | cut -d'|' -f1)
+          TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
+            "${files[@]}" > weak_reference_result.txt 2>&1
+          cat weak_reference_result.txt
+          grep -q '^RATE=100.0 PASS=76 FAIL=0 SKIP=0 TOTAL=76 RAN=76$' \
+            weak_reference_result.txt
+      - name: Require the full weak-reference scope to stay closed
+        run: |
+          TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
+            built-ins/WeakRef built-ins/FinalizationRegistry \
+            > weak_reference_scope_result.txt 2>&1
+          cat weak_reference_scope_result.txt
+          grep -q '^RATE=100.0 PASS=76 FAIL=0 SKIP=0 TOTAL=76 RAN=76$' \
+            weak_reference_scope_result.txt
+
   set-algebra:
     needs: [build, setup]
     runs-on: ubuntu-latest

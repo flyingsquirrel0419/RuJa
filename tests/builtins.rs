@@ -22353,6 +22353,30 @@ fn weak_ref_validates_receivers_and_uses_new_target_realm() {
 }
 
 #[test]
+fn weak_ref_and_finalization_registry_use_immutable_realm_prototypes() {
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var weakRefPrototype = other.WeakRef.prototype;
+            var registryPrototype = other.FinalizationRegistry.prototype;
+            var NewTarget = new other.Function();
+            NewTarget.prototype = undefined;
+            other.WeakRef = null;
+            other.FinalizationRegistry = null;
+            var weak = Reflect.construct(WeakRef, [{}], NewTarget);
+            var registry = Reflect.construct(
+              FinalizationRegistry, [function () {}], NewTarget
+            );
+            [
+              Object.getPrototypeOf(weak) === weakRefPrototype,
+              Object.getPrototypeOf(registry) === registryPrototype
+            ].join("|");
+        "#),
+        Value::String(Arc::from("true|true"))
+    );
+}
+
+#[test]
 fn weak_ref_target_is_cleared_after_collection() {
     let mut vm = Vm::new().expect("failed to initialize VM");
     assert_eq!(
@@ -22562,7 +22586,7 @@ fn finalization_registry_cleanup_runs_after_gc_and_unregister_suppresses_it() {
     .expect("failed to register throwing cleanup callback");
     vm.gc();
     vm.run_microtasks()
-        .expect("cleanup callback errors should be host-reported, not propagated");
+        .expect("cleanup callback errors should be contained, not propagated");
 }
 
 #[test]

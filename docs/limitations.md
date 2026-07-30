@@ -291,11 +291,21 @@ guarantees are required.
   barrier-safe resumable sweep in later collector units.
 - `WeakRef` supports object, unregistered Symbol, and well-known Symbol
   targets. Object targets are cleared by GC once unreachable and are kept
-  alive through the current job after construction or `deref()`.
+  alive through the current job after construction or `deref()` using a
+  fallible identity set. Because Symbols are not GC-managed, local Symbol
+  targets may remain observable for the VM lifetime.
   `FinalizationRegistry` stores targets and unregister tokens weakly, retains
   held values strongly, and schedules cleanup callbacks at VM job checkpoints
-  after collection. As required by ECMAScript, callback timing is
-  nondeterministic and embedders must not depend on cleanup running promptly.
+  after collection. Registries retain their constructor Realm for cleanup-job
+  execution, while callback calls enter the callback function's own Realm.
+  Cell storage is capped at the engine's one-million-entry native
+  materialization boundary and remains outside the heap-object count;
+  registration and linear unregister/cleanup work consume Fuel. Sweep records
+  pending cleanup in one atomic registry bit instead of rescanning every cell
+  during scheduling. Cleanup job queue allocation failure postpones cleanup
+  rather than aborting the host.
+  As required by ECMAScript, callback timing is nondeterministic and embedders
+  must not depend on cleanup running promptly.
 - Revoked Proxy cells currently mark themselves revoked but retain strong
   target and handler references in their heap storage. Calls and internal
   methods reject the revoked Proxy correctly, but a target or handler that is
