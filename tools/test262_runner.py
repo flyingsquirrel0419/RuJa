@@ -209,6 +209,10 @@ try:
         intl_supported_values_features,
     )
     from test262_intl_locale_admission import INTL_LOCALE_FILES, intl_locale_features
+    from test262_intl_collator_admission import (
+        INTL_COLLATOR_FILES,
+        intl_collator_features,
+    )
     from test262_import_meta_admission import IMPORT_META_FILES
     from test262_iterator_admission import ITERATOR_CORE_FEATURES, ITERATOR_CORE_FILES
     from test262_json_parse_admission import JSON_PARSE_FILES
@@ -419,6 +423,10 @@ except ModuleNotFoundError:
     from tools.test262_intl_locale_admission import (
         INTL_LOCALE_FILES,
         intl_locale_features,
+    )
+    from tools.test262_intl_collator_admission import (
+        INTL_COLLATOR_FILES,
+        intl_collator_features,
     )
     from tools.test262_import_meta_admission import IMPORT_META_FILES
     from tools.test262_iterator_admission import ITERATOR_CORE_FEATURES, ITERATOR_CORE_FILES
@@ -2472,6 +2480,34 @@ def intl_locale_path_features(path):
         return frozenset()
     return intl_locale_features(rel.as_posix())
 
+def intl_collator_path(path):
+    if path is None:
+        return False
+    try:
+        rel = Path(path).resolve().relative_to(Path(TEST262).resolve() / "test")
+    except (OSError, ValueError):
+        return False
+    return rel.as_posix() in INTL_COLLATOR_FILES
+
+def intl_collator_scope_path(path):
+    if path is None:
+        return False
+    try:
+        rel = Path(path).resolve().relative_to(Path(TEST262).resolve() / "test")
+    except (OSError, ValueError):
+        return False
+    relative = rel.as_posix()
+    return relative.startswith("intl402/Collator/") or relative.startswith(
+        "intl402/String/prototype/localeCompare/"
+    )
+
+def intl_collator_path_features(path):
+    try:
+        rel = Path(path).resolve().relative_to(Path(TEST262).resolve() / "test")
+    except (OSError, ValueError):
+        return frozenset()
+    return intl_collator_features(rel.as_posix())
+
 def import_meta_path(path):
     if path is None:
         return False
@@ -3461,6 +3497,8 @@ def should_skip(meta, path=None):
         return True
     if path is not None and intl_locale_scope_path(path) and not intl_locale_path(path):
         return True
+    if path is not None and intl_collator_scope_path(path) and not intl_collator_path(path):
+        return True
     if path is not None and module_core_path(path):
         feats.discard("generators")
     if path is not None and module_namespace_path(path):
@@ -3485,6 +3523,8 @@ def should_skip(meta, path=None):
         feats.difference_update(intl_supported_values_path_features(path))
     if path is not None and intl_locale_path(path):
         feats.difference_update(intl_locale_path_features(path))
+    if path is not None and intl_collator_path(path):
+        feats.difference_update(intl_collator_path_features(path))
     if path is not None and import_meta_path(path):
         feats.difference_update({
             "import.meta", "dynamic-import", "generators", "async-functions",

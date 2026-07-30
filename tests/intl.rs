@@ -194,7 +194,7 @@ fn supported_values_of_returns_fresh_sorted_required_data() {
             ].join(":");
         "#),
         Value::String(Arc::from(
-            "16:buddhist:roc:true:0:0:78:true:true:445:true:true:false:true:45:true:true:true"
+            "16:buddhist:roc:true:10:0:78:true:true:445:true:true:false:true:45:true:true:true"
         ))
     );
 }
@@ -488,5 +488,126 @@ fn locale_list_and_tag_scans_are_fuel_bounded_and_reusable() {
         vm.run("new Intl.Locale(Intl.getCanonicalLocales('en-us')[0]).toString()")
             .expect("VM should remain reusable after Intl fuel aborts"),
         Value::String(Arc::from("en-US"))
+    );
+}
+
+#[test]
+fn collator_constructor_resolves_options_and_caches_bound_compare() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            var values = {
+              usage: "sort", localeMatcher: "best fit", collation: "eor",
+              numeric: true, caseFirst: "lower", sensitivity: "accent",
+              ignorePunctuation: true
+            };
+            var options = new Proxy(values, {
+              get: function (target, key) {
+                log.push(key);
+                return target[key];
+              }
+            });
+            var collator = Intl.Collator("de-u-co-phonebk", options);
+            var resolved = collator.resolvedOptions();
+            var compare = collator.compare;
+            [
+              Object.getPrototypeOf(collator) === Intl.Collator.prototype,
+              Object.prototype.toString.call(collator),
+              Intl.Collator.name, Intl.Collator.length,
+              compare === collator.compare,
+              compare.name, compare.length,
+              Object.getOwnPropertyNames(compare).join(","),
+              resolved.locale, resolved.usage, resolved.sensitivity,
+              resolved.ignorePunctuation, resolved.collation,
+              resolved.numeric, resolved.caseFirst,
+              compare("2", "10") < 0,
+              compare("o\u0308", "ö"),
+              log.join(",")
+            ].join(":");
+        "#),
+        Value::String(Arc::from(
+            "true:[object Intl.Collator]:Collator:0:true::2:length,name:de:sort:accent:true:eor:true:lower:true:0:usage,localeMatcher,collation,numeric,caseFirst,sensitivity,ignorePunctuation"
+        ))
+    );
+}
+
+#[test]
+fn collator_uses_method_realms_and_survives_collection_cycles() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+            var other = $262.createRealm().global;
+            var collator = new Intl.Collator("de-u-co-phonebk", { numeric: true });
+            var compare = collator.compare;
+        "#,
+    )
+    .expect("failed to create Collator fixtures");
+    vm.gc();
+    assert_eq!(
+        vm.run(
+            r#"
+                var resolved = other.Intl.Collator.prototype.resolvedOptions.call(collator);
+                var NewTarget = new other.Function();
+                NewTarget.prototype = undefined;
+                [
+                  compare("2", "10") < 0,
+                  compare("o\u0308", "ö"),
+                  Object.getPrototypeOf(resolved) === other.Object.prototype,
+                  Object.getPrototypeOf(
+                    Reflect.construct(Intl.Collator, [], NewTarget)
+                  ) === other.Intl.Collator.prototype
+                ].join(":");
+            "#,
+        )
+        .expect("Collator cycle should remain live"),
+        Value::String(Arc::from("true:0:true:true"))
+    );
+}
+
+#[test]
+fn search_collators_ignore_sort_collation_requests() {
+    assert_eq!(
+        run(r#"
+            var option = new Intl.Collator("de", {
+              usage: "search", collation: "eor"
+            }).resolvedOptions();
+            var extension = new Intl.Collator(
+              "de-u-co-phonebk", { usage: "search" }
+            ).resolvedOptions();
+            [
+              option.collation,
+              option.locale.includes("-u-co-"),
+              extension.collation,
+              extension.locale.includes("-u-co-")
+            ].join(":");
+        "#),
+        Value::String(Arc::from("default:false:default:false"))
+    );
+}
+
+#[test]
+fn locale_compare_uses_intrinsic_collator_after_string_coercion() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            var other = $262.createRealm().global;
+            var nativeCompare = Function.prototype.toString.call(
+              new Intl.Collator().compare
+            ).includes("[native code]");
+            var left = { toString: function () { log.push("left"); return "2"; } };
+            var right = { toString: function () { log.push("right"); return "10"; } };
+            Object.defineProperty(Intl, "Collator", {
+              get: function () { throw new Error("poisoned"); },
+              configurable: true
+            });
+            var result = String.prototype.localeCompare.call(
+              left, right, "en", { numeric: true }
+            );
+            var foreign = other.String.prototype.localeCompare.call(
+              "2", "10", "en", { numeric: true }
+            );
+            [result < 0, foreign < 0, nativeCompare, log.join(",")].join(":");
+        "#),
+        Value::String(Arc::from("true:true:true:left,right"))
     );
 }

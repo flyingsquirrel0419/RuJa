@@ -322,8 +322,12 @@
   subdivisions, likely regions, and `001` inheritance follow ECMA-402 priority.
   `Intl.supportedValuesOf` exposes fresh Realm-local sorted Arrays for calendar,
   collation, currency, numbering-system, primary time-zone, and sanctioned
-  simple-unit keys; formatter-dependent capability sets stay empty until their
-  service constructors exist.
+  simple-unit keys. Realm-local `Intl.Collator` is callable and constructable,
+  negotiates `co`/`kn`/`kf`, caches its bound UTF-16 compare function, and
+  returns exact Realm-local resolved options. `String.prototype.localeCompare`
+  uses the immutable method-Realm Collator intrinsic. The collation capability
+  set contains only values confirmed in ICU4X baked data; currency stays empty
+  until NumberFormat or DisplayNames exists.
   Constructor/prototype fallback and fresh result Arrays/objects are
   Realm-correct. Locale, option, likely-subtag, and index scans consume VM fuel
 

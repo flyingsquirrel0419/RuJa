@@ -5267,6 +5267,7 @@ fn populate_test262_realm(vm: &mut Vm, realm_env: GcIdx) -> error::Result<Value>
         &[
             ("valueOf", string_value_of, 0),
             ("toString", string_proto_to_string, 0),
+            ("localeCompare", str_locale_compare, 1),
         ],
         realm_env,
     )?;

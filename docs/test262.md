@@ -12562,18 +12562,20 @@ fuel precharging.
 ## `Intl.supportedValuesOf` exact admission
 
 Pinned Test262 has 25 files below `intl402/Intl/supportedValuesOf`. The frozen
-standalone manifest owns 15 files covering the built-in contract, key
+standalone manifest owns 16 files covering the built-in contract, key
 coercion/errors, all six result shapes, required calendar and numbering-system
-members, primary/noncontinental time zones, and sanctioned units. Exact local
-and CI execution requires **15 pass / 0 fail / 0 skip**. A second whole-scope
-gate requires **15 pass / 0 fail / 10 skip** so formatter-dependent
-DateTimeFormat, DisplayNames, Collator, NumberFormat, and RelativeTimeFormat
+members, primary/noncontinental time zones, sanctioned units, and Collator
+acceptance of every published collation. Exact local and CI execution requires
+**16 pass / 0 fail / 0 skip**. A second whole-scope gate requires **16 pass / 0
+fail / 9 skip** so formatter-dependent DateTimeFormat, DisplayNames,
+NumberFormat, and RelativeTimeFormat
 files cannot enter accidentally.
 
-Tooling compares the 15-file manifest to every live non-formatter file and
+Tooling compares the 16-file manifest to every live non-formatter file plus the
+one completed Collator integration file and
 requires exact feature metadata in both runner and analyzer. `Intl-enumeration`
 remains a broad skip everywhere else; only the frozen paths remove their actual
-feature sets. Future siblings and all ten held formatter files remain
+feature sets. Future siblings and all nine held formatter files remain
 scope-closed even if their metadata changes.
 
 Direct tests additionally cover detached function-Realm Arrays and errors,
@@ -12587,7 +12589,37 @@ CLDR 48.2 commit `11299982335beb974c1c63c45265184e759c0f41`.
 - 목적과 의도: Move the independently complete Intl.supportedValuesOf behavior into measurable supported conformance without claiming absent formatters.
 - 기존 구현 및 제약 조건: All 25 files shared the broad Intl-enumeration gate; ten instantiate service constructors that RuJa does not implement, while the other 15 completely specify the standalone method and data invariants.
 - 검토한 주요 대안: Remove Intl-enumeration globally, admit the directory prefix, leave all files skipped, report forced runs only, or freeze the standalone metadata and separately assert the held formatter boundary.
-- 선택한 방식: Freeze 15 exact paths and metadata, scope-close the whole directory, hard-gate 15/0/0, and independently hard-gate the full directory at 15/0/10.
+- 선택한 방식: Freeze 16 exact paths and metadata, including the provider-validated Collator acceptance file; scope-close the whole directory, hard-gate 16/0/0, and independently hard-gate the full directory at 16/0/9.
 - 다른 대안 대신 이 방식을 선택한 이유: Global and prefix admission create false formatter support, skips hide completed behavior, and forced-green output does not affect supported policy. Dual exact/scope gates prove both progress and restraint.
-- 장점, 단점 및 영향: Supported accounting gains exactly 15 passes with no failures; ten formatter integration files remain explicit future work and cannot drift into execution silently.
+- 장점, 단점 및 영향: Supported accounting gains 16 passes with no failures; nine formatter integration files remain explicit future work and cannot drift into execution silently.
+```
+
+## `Intl.Collator` exact admission
+
+Pinned Test262 contains 65 files below `intl402/Collator` and ten below
+`intl402/String/prototype/localeCompare`. The exact manifest owns 74. The only
+held path, `Collator/this-value-ignored.js`, invokes the shared Intl constructor
+harness, which also requires absent NumberFormat and DateTimeFormat. Dedicated
+local and CI gates require **74 pass / 0 fail / 0 skip** over the manifest and
+**74 pass / 0 fail / 1 skip** over the complete 75-file scope.
+
+The runner and analyzer scope-close both directories and remove Reflect,
+cross-Realm, Symbol, and `Symbol.toStringTag` gates only for files whose exact
+metadata is frozen. Direct tests cover constructor and prototype descriptors,
+ordered option getters, `co`/`kn`/`kf` precedence, bound function identity and
+native metadata, method-Realm results, foreign constructor fallback, GC cycles,
+UTF-16 canonical equivalence, Thai punctuation, numeric comparison, intrinsic
+taint resistance, search/sort collation separation, and comparison resource
+accounting. The same capability
+matrix advances `collations-accepted-by-Collator.js` into the separate
+supportedValuesOf boundary.
+
+```text
+[Decision Log]
+- 목적과 의도: Admit the first complete ECMA-402 service constructor and its String integration as an exact measurable support boundary.
+- 기존 구현 및 제약 조건: All 75 files were hidden by broad Intl/Reflect gates; ICU4X compiled data omits general search collations; one shared harness instantiates two still-absent constructors.
+- 검토한 주요 대안: Remove Intl gates globally, admit only metadata-free tests, exclude usage/search behavior, fabricate NumberFormat/DateTimeFormat stubs, or freeze every independently executable Collator and localeCompare path.
+- 선택한 방식: Freeze 74 exact paths and their actual feature metadata, retain only the cross-constructor harness as a scope-closed skip, and hard-gate both exact and whole-scope counts.
+- 다른 대안 대신 이 방식을 선택한 이유: Global admission overclaims future services, metadata-only admission hides Realm/constructibility cases, dropping search leaves a known behavior gap, and fake constructors corrupt the larger ECMA-402 roadmap. Exact ownership proves implemented behavior without claiming absent formatters.
+- 장점, 단점 및 영향: Supported policy now matches real constructor, option, comparison, Realm, and String integration behavior. One visible skip remains and will become executable when NumberFormat and DateTimeFormat land.
 ```

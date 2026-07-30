@@ -250,6 +250,10 @@ from test262_intl_locale_admission import (
     INTL_LOCALE_INFO_FILES,
     intl_locale_features,
 )
+from test262_intl_collator_admission import (
+    INTL_COLLATOR_FILES,
+    intl_collator_features,
+)
 from test262_import_meta_admission import IMPORT_META_FILES
 from test262_iterator_admission import ITERATOR_CORE_FEATURES, ITERATOR_CORE_FILES
 from test262_json_parse_admission import JSON_PARSE_FILES
@@ -1442,7 +1446,7 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                 test262_runner.TEST262, test262_analyze.TEST262 = original_roots
 
     def test_intl_supported_values_manifest_is_exact_live_and_shared(self):
-        self.assertEqual(len(INTL_SUPPORTED_VALUES_FILES), 15)
+        self.assertEqual(len(INTL_SUPPORTED_VALUES_FILES), 16)
         builtin = "intl402/Intl/supportedValuesOf/builtin.js"
         calendar = "intl402/Intl/supportedValuesOf/calendars.js"
         formatter = (
@@ -1471,6 +1475,9 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                 for path in root.glob("*.js")
                 if "-accepted-by-" not in path.name
             }
+            collator_file = root / "collations-accepted-by-Collator.js"
+            if collator_file.exists():
+                live.add(collator_file.relative_to(checkout).as_posix())
             self.assertEqual(live, INTL_SUPPORTED_VALUES_FILES)
             for relative in live:
                 meta = test262_runner.parse_meta((checkout / relative).read_text())
@@ -1525,6 +1532,73 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                             {"features": ["Intl-enumeration"]}, broad_only
                         )
                     )
+            finally:
+                test262_runner.TEST262, test262_analyze.TEST262 = original_roots
+
+    def test_intl_collator_manifest_is_exact_live_and_shared(self):
+        self.assertEqual(len(INTL_COLLATOR_FILES), 74)
+        realm_file = "intl402/Collator/proto-from-ctor-realm.js"
+        compare_builtin = "intl402/Collator/prototype/compare/builtin.js"
+        locale_compare = (
+            "intl402/String/prototype/localeCompare/taint-Intl-Collator.js"
+        )
+        excluded = "intl402/Collator/this-value-ignored.js"
+        future = "intl402/Collator/future-test.js"
+        self.assertIn(realm_file, INTL_COLLATOR_FILES)
+        self.assertIn(compare_builtin, INTL_COLLATOR_FILES)
+        self.assertIn(locale_compare, INTL_COLLATOR_FILES)
+        self.assertNotIn(excluded, INTL_COLLATOR_FILES)
+        self.assertNotIn(future, INTL_COLLATOR_FILES)
+        self.assertEqual(
+            intl_collator_features(realm_file),
+            frozenset({"cross-realm", "Reflect", "Symbol"}),
+        )
+        self.assertEqual(
+            intl_collator_features(compare_builtin),
+            frozenset({"Reflect.construct"}),
+        )
+        self.assertEqual(intl_collator_features(future), frozenset())
+
+        checkout = Path(test262_runner.TEST262) / "test"
+        try:
+            checkout_available = checkout.exists()
+        except OSError:
+            checkout_available = False
+        if checkout_available:
+            live = {
+                path.relative_to(checkout).as_posix()
+                for root in (
+                    checkout / "intl402/Collator",
+                    checkout / "intl402/String/prototype/localeCompare",
+                )
+                for path in root.rglob("*.js")
+                if path.relative_to(checkout).as_posix() != excluded
+            }
+            self.assertEqual(live, INTL_COLLATOR_FILES)
+            for relative in live:
+                meta = test262_runner.parse_meta((checkout / relative).read_text())
+                self.assertEqual(
+                    intl_collator_features(relative),
+                    frozenset(meta.get("features", [])),
+                )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            original_roots = (test262_runner.TEST262, test262_analyze.TEST262)
+            try:
+                test262_runner.TEST262 = temp_dir
+                test262_analyze.TEST262 = temp_dir
+                admitted = Path(temp_dir) / "test" / realm_file
+                held = Path(temp_dir) / "test" / excluded
+                unknown = Path(temp_dir) / "test" / future
+                for tool in (test262_runner, test262_analyze):
+                    self.assertFalse(
+                        tool.should_skip(
+                            {"features": ["cross-realm", "Reflect", "Symbol"]},
+                            admitted,
+                        )
+                    )
+                    self.assertTrue(tool.should_skip({"features": []}, held))
+                    self.assertTrue(tool.should_skip({"features": []}, unknown))
             finally:
                 test262_runner.TEST262, test262_analyze.TEST262 = original_roots
 

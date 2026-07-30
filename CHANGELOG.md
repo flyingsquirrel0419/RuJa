@@ -4,15 +4,28 @@
 
 ### Changed
 
+- Added Realm-local, callable/constructable `Intl.Collator` backed by pinned
+  ICU4X 2.2 compiled collation data. Construction implements ordered locale and
+  option coercion, `co`/`kn`/`kf` negotiation, subclass and constructor-Realm
+  prototype behavior, cached non-constructible bound compare functions,
+  UTF-16 comparison, fresh Realm-local `resolvedOptions`, and exact Thai,
+  numeric, case, sensitivity, punctuation, German phonebook/search behavior.
+  `String.prototype.localeCompare` now constructs the method Realm's immutable
+  intrinsic Collator without consulting a mutable global binding. Collator
+  objects and compare cycles are GC-traced and comparison work is fuel-metered
+  with fallible UTF-16 buffers. The frozen Test262 boundary passes **74/0/0**;
+  the 75-file scope is **74 pass / 0 fail / 1 skip**, where the held shared
+  harness requires the absent NumberFormat and DateTimeFormat constructors.
+
 - Added Realm-local `Intl.supportedValuesOf` with observable `ToString`, exact
   key validation, fresh Arrays, and deterministic sorted data for the 16
   required calendars, 78 simple-digit numbering systems, 445 primary IANA time
-  zones, and 45 sanctioned simple units. Collation and currency lists remain
-  empty until their formatter providers exist, so the API does not advertise
-  unsupported service behavior. Result publication is fuel-precharged,
+  zones, 45 sanctioned simple units, and 10 provider-validated collations.
+  Currency remains empty until its formatter providers exist, so the API does
+  not advertise unsupported service behavior. Result publication is fuel-precharged,
   fallible, rooted across GC retry, and covered by reservation and exact heap
-  cap failures. A frozen 15-file Test262 manifest passes **15/0/0**; the full
-  25-file directory reports **15 pass / 0 fail / 10 formatter-dependent skip**.
+  cap failures. A frozen 16-file Test262 manifest passes **16/0/0**; the full
+  25-file directory reports **16 pass / 0 fail / 9 formatter-dependent skip**.
 
 - Completed the `Intl.Locale-info` surface. `Intl.Locale` now observes and
   canonicalizes `firstDayOfWeek`, exposes its branded accessor, and implements

@@ -1071,6 +1071,7 @@ pub enum HeapObj {
     ArrayBuffer(ArrayBufferData),
     DataView(DataViewData),
     IntlLocale(IntlLocaleData),
+    IntlCollator(IntlCollatorData),
 }
 
 /// Immutable ECMA-402 Locale internal slots attached to an ordinary object.
@@ -1088,6 +1089,26 @@ pub struct IntlLocaleRecord {
 
 pub struct IntlLocaleData {
     pub record: std::sync::OnceLock<IntlLocaleRecord>,
+    pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
+    pub proto: Mutex<Option<Value>>,
+    pub extensible: AtomicBool,
+}
+
+/// Immutable ECMA-402 Collator slots and the compiled ICU4X comparator.
+pub struct IntlCollatorRecord {
+    pub locale: Arc<str>,
+    pub usage: Arc<str>,
+    pub collation: Arc<str>,
+    pub numeric: bool,
+    pub case_first: Arc<str>,
+    pub sensitivity: Arc<str>,
+    pub ignore_punctuation: bool,
+    pub collator: icu_collator::CollatorBorrowed<'static>,
+}
+
+pub struct IntlCollatorData {
+    pub record: std::sync::OnceLock<IntlCollatorRecord>,
+    pub bound_compare: Mutex<Option<Value>>,
     pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
     pub proto: Mutex<Option<Value>>,
     pub extensible: AtomicBool,
@@ -1884,6 +1905,7 @@ impl HeapObj {
             HeapObj::ArrayBuffer(a) => &a.props,
             HeapObj::DataView(d) => &d.props,
             HeapObj::IntlLocale(locale) => &locale.props,
+            HeapObj::IntlCollator(collator) => &collator.props,
             HeapObj::Iterator(_) => panic!("iterator has no props"),
             HeapObj::Environment(_) => panic!("env has no props"),
         }
@@ -1913,6 +1935,7 @@ impl HeapObj {
             HeapObj::ArrayBuffer(a) => &a.proto,
             HeapObj::DataView(d) => &d.proto,
             HeapObj::IntlLocale(locale) => &locale.proto,
+            HeapObj::IntlCollator(collator) => &collator.proto,
             HeapObj::Environment(_) => panic!("env has no proto"),
             HeapObj::Iterator(_) => panic!("iterator has no proto"),
         }
@@ -1974,6 +1997,7 @@ impl HeapObj {
             HeapObj::ArrayBuffer(_) => "ArrayBuffer",
             HeapObj::DataView(_) => "DataView",
             HeapObj::IntlLocale(_) => "Object",
+            HeapObj::IntlCollator(_) => "Object",
         }
     }
 
@@ -2001,6 +2025,7 @@ impl HeapObj {
             HeapObj::ArrayBuffer(buffer) => buffer.extensible.load(Ordering::Relaxed),
             HeapObj::DataView(view) => view.extensible.load(Ordering::Relaxed),
             HeapObj::IntlLocale(locale) => locale.extensible.load(Ordering::Relaxed),
+            HeapObj::IntlCollator(collator) => collator.extensible.load(Ordering::Relaxed),
             HeapObj::ModuleNamespace(_) => false,
             _ => true,
         }
@@ -2027,6 +2052,7 @@ impl HeapObj {
             HeapObj::ArrayBuffer(buffer) => &buffer.extensible,
             HeapObj::DataView(view) => &view.extensible,
             HeapObj::IntlLocale(locale) => &locale.extensible,
+            HeapObj::IntlCollator(collator) => &collator.extensible,
             _ => return,
         };
         extensible.store(false, Ordering::Relaxed);

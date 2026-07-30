@@ -585,6 +585,11 @@ fn trace_obj_impl(obj: &HeapObj, worklist: &mut Vec<usize>) {
                 }
             }
         }
+        HeapObj::IntlCollator(collator) => {
+            if let Some(compare) = collator.bound_compare.lock().as_ref() {
+                push_value(compare, worklist);
+            }
+        }
         HeapObj::Environment(e) => {
             for (_, b) in e.vars.lock().iter() {
                 push_value(&b.value.lock(), worklist);

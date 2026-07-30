@@ -3352,9 +3352,9 @@ region-to-time-zone lists. Time-zone generation combines Windows territory
 mappings with region-encoded timezone entries, rewrites aliases through each
 entry's canonical IANA identifier, deduplicates, and sorts. The generated
 calendar identifiers define RuJa's current Locale-info `AvailableCalendars`
-set independently of formatter constructors. Until Collator and NumberFormat
-exist, their specified no-matching-locale fallbacks are `emoji`/`eor` and
-`latn`.
+set independently of formatter constructors. Collation results now share the
+provider-validated Collator matrix; numbering systems retain the `latn`
+no-matching-locale fallback until NumberFormat exists.
 
 Every returned Array and ordinary information object is allocated from the
 active native function Realm. Arrays are rooted before containing objects can
@@ -3386,9 +3386,10 @@ The existing pinned generator emits the ECMA-402 fixed 16-calendar and
 primary time-zone identifiers. Time-zone generation maps `Etc/UTC` and
 `Etc/GMT` links to `UTC`, removes `Etc/Unknown`, and retains primary geographic
 and nonzero `Etc/GMT` identifiers. Collation and currency are
-implementation-defined formatter capability sets; both remain empty until
-their service constructors establish real support. This avoids advertising
-values that no RuJa formatter can consume.
+implementation-defined formatter capability sets. Collator now publishes ten
+values confirmed against ICU4X baked metadata and accepted by RuJa's locale
+matrix; currency remains empty until NumberFormat or DisplayNames establishes
+real support. This avoids advertising values no RuJa service can consume.
 
 List entry count and string chunks consume fuel before any result allocation.
 The native Vec reserves fallibly; contained values and the Realm Array
@@ -3401,9 +3402,50 @@ documented native-memory limitation.
 - 목적과 의도: Implement the complete standalone Intl.supportedValuesOf contract while preserving honest formatter capability reporting and sandbox guarantees.
 - 기존 구현 및 제약 조건: Locale-info already generated regional data, but no global capability lists or formatter constructors existed; broad Intl-enumeration gating hid 25 files, ten of which directly instantiate absent formatters.
 - 검토한 주요 대안: Return test-only literals, expose every CLDR collation/currency, wait for all formatters, admit the whole directory, query host ICU at runtime, or generate fixed/pinned data and scope-close formatter integration.
-- 선택한 방식: Extend the pinned CLDR generator with normative fixed lists and primary time-zone filtering; expose empty formatter-owned capability sets; publish through the method Realm with shared fuel/allocation handling; freeze the 15 standalone files and retain ten formatter files as skips.
+- 선택한 방식: Extend the pinned CLDR generator with normative fixed lists and primary time-zone filtering; initially expose empty formatter-owned capability sets, then let Collator supply its provider-validated collation set; publish through the method Realm with shared fuel/allocation handling; freeze the standalone files and retain absent-formatter files as skips.
 - 다른 대안 대신 이 방식을 선택한 이유: Test literals and host providers are incomplete or nondeterministic, fabricated formatter capabilities violate the API meaning, formatter-first coupling delays an independent standard function, and directory admission would claim behavior RuJa cannot execute.
-- 장점, 단점 및 영향: Six-key enumeration is deterministic, Realm-correct, GC-safe, fuel-bounded, wasm-compatible, and exact over the standalone pinned boundary. Collation/currency output intentionally broadens only when real formatter providers land; ten integration tests remain visible skips rather than false support.
+- 장점, 단점 및 영향: Six-key enumeration is deterministic, Realm-correct, GC-safe, fuel-bounded, wasm-compatible, and exact over the standalone pinned boundary. Collation output broadened with the real Collator provider and currency remains empty; nine absent-formatter integration tests remain visible skips rather than false support.
+```
+
+### `Intl.Collator` provider, Realm, and comparison flow
+
+Each Realm installs a callable and constructable `%Intl.Collator%` plus its
+prototype and roots both in Realm registries. Instances use the dedicated
+`HeapObj::IntlCollator` brand. A one-time record owns resolved locale/usage/
+collation/numeric/case-first/sensitivity/punctuation slots and an ICU4X
+`CollatorBorrowed<'static>`; a separate traced slot caches the anonymous bound
+compare function. The resulting Collator/Function cycle is ordinary
+mark-and-sweep data and disappears when no external root remains.
+
+Locale lists reuse the canonical locale operation. Availability is
+conservative: the language must receive script and region data from ICU4X's
+CLDR likely-subtag provider, excluding arbitrary reserved identifiers and
+`und`/`zxx`. `co`, `kn`, and `kf` are negotiated independently; supported
+options override supported Unicode extensions, while unsupported options do
+not displace a valid extension. Ten collation types were checked directly
+against ICU4X 2.2 baked `CollationMetadataV1` and form one sorted matrix shared
+by construction, `supportedValuesOf("collation")`, and
+`Locale.prototype.getCollations`.
+
+Sensitivity maps to ICU strength/case-level options, punctuation maps to
+shifted alternate handling with punctuation max-variable, and comparison uses
+potentially ill-formed UTF-16 slices so lone surrogates follow ECMA string
+semantics. String conversion order is observable before Collator construction.
+`String.prototype.localeCompare` constructs the immutable method-Realm
+Collator intrinsic, never the replaceable `Intl.Collator` property, preserving
+Realm prototypes, heap-cap allocation order, and constructor semantics.
+ICU4X compiled data omits general search collations; German search uses
+phonebook primary weights to preserve AE/Ä equivalence, and other search
+locales use ICU's documented root fallback.
+
+```text
+[Decision Log]
+- 목적과 의도: Add a real locale-sensitive comparison service while preserving ECMA-402 observability, Realm isolation, GC safety, and sandbox resource boundaries.
+- 기존 구현 및 제약 조건: String.localeCompare only normalized NFC and compared Rust strings; no Collator brand, locale negotiation, bound compare identity, search behavior, or formatter capability source existed. ICU4X has broad deterministic collation data and direct UTF-16 comparison but silently falls back for unsupported locale/type requests and omits search tailoring data.
+- 검토한 주요 대안: Keep lexical comparison, wrap host ICU, construct an ICU comparator on every call, store forgeable ordinary properties, report every ICU enum as supported, accept every valid locale, or add a branded object with a conservative provider-aligned capability boundary.
+- 선택한 방식: Pin icu_collator 2.2.0 compiled data; store one borrowed comparator in a branded heap record; cache and trace a Realm-native bound function; use CLDR likely-subtag availability plus a baked-metadata-validated collation matrix; construct the intrinsic service from localeCompare; meter scans/comparison and reserve UTF-16 buffers fallibly.
+- 다른 대안 대신 이 방식을 선택한 이유: Lexical and host behavior are non-conforming or nondeterministic; per-call reconstruction loses object/heap semantics; properties and prototypes cannot prove brands; enum presence and parser validity do not prove provider support. The selected split makes fallback and optional capability claims explicit and auditable.
+- 장점, 단점 및 영향: The exact 74-file Collator/localeCompare boundary is Realm-correct, GC-traced, UTF-16-aware, and backed by reproducible data. ICU compiled data increases binary/link size and native data is outside the heap-object cap. General search tailoring and the shared this-value harness remain bounded follow-up work with NumberFormat/DateTimeFormat.
 ```
 
 ---

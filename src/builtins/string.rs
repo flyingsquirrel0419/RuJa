@@ -488,14 +488,9 @@ pub(crate) fn str_locale_compare(
     let right = vm
         .to_string(args.first().unwrap_or(&Value::Undefined))?
         .to_string();
-    let left = left.nfc().collect::<String>();
-    let right = right.nfc().collect::<String>();
-    let result = match left.as_str().cmp(right.as_str()) {
-        std::cmp::Ordering::Less => -1.0,
-        std::cmp::Ordering::Equal => 0.0,
-        std::cmp::Ordering::Greater => 1.0,
-    };
-    Ok(Value::Number(result))
+    let locales = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let options = args.get(2).cloned().unwrap_or(Value::Undefined);
+    super::intl::compare_strings_with_collator(vm, &left, &right, locales, options)
 }
 
 pub(crate) fn str_trim(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {

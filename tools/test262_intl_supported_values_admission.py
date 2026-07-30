@@ -25,6 +25,9 @@ for _name in ("calendars.js", "collations.js"):
         f"intl402/Intl/supportedValuesOf/{_name}"
     ] |= frozenset({"Intl.Locale", "Array.prototype.includes"})
 INTL_SUPPORTED_VALUES_FEATURES[
+    "intl402/Intl/supportedValuesOf/collations-accepted-by-Collator.js"
+] |= frozenset({"Array.prototype.includes"})
+INTL_SUPPORTED_VALUES_FEATURES[
     "intl402/Intl/supportedValuesOf/numberingSystems.js"
 ] |= frozenset({"Intl.Locale"})
 for _name in (

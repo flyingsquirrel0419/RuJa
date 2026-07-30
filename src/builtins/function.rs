@@ -22,7 +22,11 @@ pub(crate) fn function_to_string(
         let (name, is_native) = vm.heap.with_obj(idx.0, |o| {
             if let HeapObj::Function(fun) = o {
                 let n = fun.name.as_ref().map(|s| s.to_string()).unwrap_or_default();
-                let native = matches!(fun.kind, crate::value::FunctionKind::Native { .. });
+                let native = matches!(
+                    fun.kind,
+                    crate::value::FunctionKind::Native { .. }
+                        | crate::value::FunctionKind::Bound { .. }
+                );
                 (n, native)
             } else {
                 (String::new(), true)

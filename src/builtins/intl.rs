@@ -7,15 +7,19 @@ use super::intl_locale_info::{
     TIME_ZONES, WEEK_INFORMATION,
 };
 use super::{
-    accessor_get_prop, const_prop, data_prop, make_value_array_in_current_realm,
-    native_constructor_prototype_with_default,
+    accessor_get_prop, builtin_function_own_props, const_prop, data_prop,
+    make_value_array_in_current_realm, native_constructor_prototype_with_default,
 };
 use crate::error::{self, Error};
 use crate::value::{
-    GcIdx, HeapObj, IntlLocaleData, IntlLocaleRecord, NativeConstructMode, ObjectData,
-    PropertyDescriptor, PropertyKey, Value,
+    FunctionData, FunctionKind, GcIdx, HeapObj, IntlCollatorData, IntlCollatorRecord,
+    IntlLocaleData, IntlLocaleRecord, NativeConstructMode, ObjectData, PropertyDescriptor,
+    PropertyKey, Value,
 };
 use crate::vm::{NativeFn, Vm};
+use icu_collator::options::{AlternateHandling, CaseLevel, CollatorOptions, MaxVariable, Strength};
+use icu_collator::preferences::{CollationCaseFirst, CollationNumericOrdering, CollationType};
+use icu_collator::{Collator, CollatorPreferences};
 use icu_locale::extensions::unicode;
 use icu_locale::{Locale, LocaleCanonicalizer, LocaleExpander};
 use indexmap::{IndexMap, IndexSet};
@@ -25,6 +29,9 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 const MAX_SAFE_LENGTH: f64 = 9_007_199_254_740_991.0;
+const SUPPORTED_VALUE_COLLATIONS: &[&str] = &[
+    "compat", "dict", "emoji", "eor", "phonebk", "pinyin", "stroke", "trad", "unihan", "zhuyin",
+];
 
 fn generated_alias<'a>(
     tables: &'a [(&str, &[(&str, &str)])],
@@ -521,6 +528,7 @@ fn get_string_option(
     if value.is_undefined() {
         return Ok(None);
     }
+    vm.try_reserve_value_roots(std::slice::from_ref(&value))?;
     let pin_count = vm.pin(&value);
     let result = vm.to_string(&value).and_then(|value| {
         vm.consume_fuel_units(value.len().div_ceil(64).min(i64::MAX as usize) as i64)?;
@@ -805,9 +813,11 @@ fn canonicalize_list(vm: &mut Vm, locales: &Value) -> error::Result<Vec<Value>> 
     }
 
     let object = vm.to_object(locales)?;
+    vm.try_reserve_value_roots(std::slice::from_ref(&object))?;
     let object_pin = vm.pin(&object);
     let completion = (|| {
         let length_value = vm.get_property(&object, "length")?;
+        vm.try_reserve_value_roots(std::slice::from_ref(&length_value))?;
         let length_pin = vm.pin(&length_value);
         let length_result = to_length(vm, &length_value);
         vm.unpin_many(length_pin);
@@ -827,6 +837,7 @@ fn canonicalize_list(vm: &mut Vm, locales: &Value) -> error::Result<Vec<Value>> 
                 let canonical = if let Some(tag) = locale_tag(vm, &value) {
                     tag
                 } else {
+                    vm.try_reserve_value_roots(std::slice::from_ref(&value))?;
                     let value_pin = vm.pin(&value);
                     let tag_result = vm.to_string(&value);
                     vm.unpin_many(value_pin);
@@ -850,6 +861,633 @@ fn canonicalize_list(vm: &mut Vm, locales: &Value) -> error::Result<Vec<Value>> 
     })();
     vm.unpin_many(object_pin);
     completion
+}
+
+#[derive(Default)]
+struct RequestedCollatorOptions {
+    usage: Option<String>,
+    collation: Option<String>,
+    numeric: Option<bool>,
+    case_first: Option<String>,
+    sensitivity: Option<String>,
+    ignore_punctuation: Option<bool>,
+}
+
+fn collator_string_option(
+    vm: &mut Vm,
+    options: Option<&Value>,
+    name: &str,
+    allowed: &[&str],
+) -> error::Result<Option<String>> {
+    let value = get_string_option(vm, options, name)?;
+    if value
+        .as_deref()
+        .is_some_and(|value| !allowed.contains(&value))
+    {
+        return Err(Error::range(format!("Invalid {name} option")));
+    }
+    Ok(value)
+}
+
+fn read_collator_options(
+    vm: &mut Vm,
+    options: Option<&Value>,
+) -> error::Result<RequestedCollatorOptions> {
+    let usage = collator_string_option(vm, options, "usage", &["sort", "search"])?;
+    let _locale_matcher =
+        collator_string_option(vm, options, "localeMatcher", &["lookup", "best fit"])?;
+    let collation = get_string_option(vm, options, "collation")?.map(|value| {
+        value
+            .split('-')
+            .map(str::to_ascii_lowercase)
+            .collect::<Vec<_>>()
+            .join("-")
+    });
+    if collation
+        .as_deref()
+        .is_some_and(|value| !valid_unicode_type(value))
+    {
+        return Err(Error::range("Invalid collation option"));
+    }
+    let numeric = get_boolean_option(vm, options, "numeric")?;
+    let case_first =
+        collator_string_option(vm, options, "caseFirst", &["upper", "lower", "false"])?;
+    Ok(RequestedCollatorOptions {
+        usage,
+        collation,
+        numeric,
+        case_first,
+        sensitivity: None,
+        ignore_punctuation: None,
+    })
+}
+
+fn collator_locale_supported(tag: &str) -> bool {
+    let Ok(parts) = locale_tag_parts(tag) else {
+        return false;
+    };
+    if matches!(parts.language.as_str(), "und" | "zxx") {
+        return false;
+    }
+    let Ok(mut language): Result<Locale, _> = parts.language.parse() else {
+        return false;
+    };
+    LocaleExpander::new_extended().maximize(&mut language.id);
+    language.id.script.is_some() && language.id.region.is_some()
+}
+
+fn collator_collation_supported(language: &str, collation: &str) -> bool {
+    match collation {
+        "emoji" | "eor" => true,
+        "compat" => language == "ar",
+        "dict" => language == "si",
+        "phonebk" => language == "de",
+        "pinyin" | "stroke" | "unihan" | "zhuyin" => language == "zh",
+        "trad" => matches!(language, "es" | "zh"),
+        _ => false,
+    }
+}
+
+fn available_collations_for_language(language: &str) -> Vec<&'static str> {
+    SUPPORTED_VALUE_COLLATIONS
+        .iter()
+        .copied()
+        .filter(|collation| collator_collation_supported(language, collation))
+        .collect()
+}
+
+fn icu_collation_type(collation: &str) -> Option<CollationType> {
+    Some(match collation {
+        "compat" => CollationType::Compat,
+        "dict" => CollationType::Dict,
+        "emoji" => CollationType::Emoji,
+        "eor" => CollationType::Eor,
+        "phonebk" => CollationType::Phonebk,
+        "pinyin" => CollationType::Pinyin,
+        "stroke" => CollationType::Stroke,
+        "trad" => CollationType::Trad,
+        "unihan" => CollationType::Unihan,
+        "zhuyin" => CollationType::Zhuyin,
+        _ => return None,
+    })
+}
+
+fn canonical_collator_base(tag: &str) -> error::Result<(String, UnicodeExtension, String)> {
+    let (without_unicode, extension) = remove_unicode_extension(tag);
+    let mut parts = locale_tag_parts(&without_unicode)?;
+    parts.suffix.clear();
+    let language = parts.language.clone();
+    Ok((compose_locale_tag(&parts), extension, language))
+}
+
+fn extension_boolean(value: Option<&String>) -> Option<bool> {
+    match value.map(String::as_str) {
+        Some("") | Some("true") => Some(true),
+        Some("false") => Some(false),
+        _ => None,
+    }
+}
+
+fn collator_sensitivity_options(sensitivity: &str) -> CollatorOptions {
+    let mut options = CollatorOptions::default();
+    match sensitivity {
+        "base" => options.strength = Some(Strength::Primary),
+        "accent" => options.strength = Some(Strength::Secondary),
+        "case" => {
+            options.strength = Some(Strength::Primary);
+            options.case_level = Some(CaseLevel::On);
+        }
+        "variant" => options.strength = Some(Strength::Tertiary),
+        _ => unreachable!("validated Collator sensitivity"),
+    }
+    options
+}
+
+fn initialize_collator_record(
+    vm: &mut Vm,
+    requested_locales: Vec<Value>,
+    mut options: RequestedCollatorOptions,
+    options_object: Option<&Value>,
+) -> error::Result<IntlCollatorRecord> {
+    let requested = requested_locales
+        .iter()
+        .filter_map(|value| match value {
+            Value::String(value) if collator_locale_supported(value) => Some(value.as_ref()),
+            _ => None,
+        })
+        .next()
+        .unwrap_or("en");
+    let (mut base, extension, mut language) = canonical_collator_base(requested)?;
+    if matches!(language.as_str(), "und" | "zxx") {
+        base = "en".to_string();
+        language = "en".to_string();
+    }
+
+    let usage = options.usage.as_deref().unwrap_or("sort");
+    let extension_collation = (usage == "sort")
+        .then(|| extension.keywords.get("co"))
+        .flatten()
+        .filter(|value| {
+            !matches!(value.as_str(), "search" | "standard")
+                && collator_collation_supported(&language, value)
+        })
+        .cloned();
+    let option_collation = (usage == "sort")
+        .then_some(options.collation.as_ref())
+        .flatten()
+        .filter(|value| {
+            !matches!(value.as_str(), "search" | "standard")
+                && collator_collation_supported(&language, value)
+        })
+        .cloned();
+    let collation = option_collation
+        .clone()
+        .or_else(|| extension_collation.clone())
+        .unwrap_or_else(|| "default".to_string());
+
+    let extension_case_first = extension
+        .keywords
+        .get("kf")
+        .filter(|value| matches!(value.as_str(), "upper" | "lower" | "false"))
+        .cloned();
+    let case_first = options
+        .case_first
+        .clone()
+        .or_else(|| extension_case_first.clone());
+    let extension_numeric = extension_boolean(extension.keywords.get("kn"));
+    let numeric = options.numeric.or(extension_numeric);
+
+    let mut resolved_extension = UnicodeExtension::default();
+    if let Some(value) = extension_collation.as_ref() {
+        if option_collation
+            .as_ref()
+            .is_none_or(|option| option == value)
+        {
+            resolved_extension
+                .keywords
+                .insert("co".to_string(), value.clone());
+        }
+    }
+    if let Some(value) = extension_case_first.as_ref() {
+        if options
+            .case_first
+            .as_ref()
+            .is_none_or(|option| option == value)
+        {
+            resolved_extension
+                .keywords
+                .insert("kf".to_string(), value.clone());
+        }
+    }
+    if let Some(value) = extension_numeric {
+        if options.numeric.is_none_or(|option| option == value) {
+            resolved_extension.keywords.insert(
+                "kn".to_string(),
+                if value {
+                    String::new()
+                } else {
+                    "false".to_string()
+                },
+            );
+        }
+    }
+    let resolved_locale = canonicalize_locale_metered(
+        vm,
+        &restore_unicode_extension(base.clone(), resolved_extension),
+    )?;
+
+    options.sensitivity = collator_string_option(
+        vm,
+        options_object,
+        "sensitivity",
+        &["base", "accent", "case", "variant"],
+    )?;
+    options.ignore_punctuation = get_boolean_option(vm, options_object, "ignorePunctuation")?;
+
+    let locale = base
+        .parse::<Locale>()
+        .map_err(|_| Error::internal("resolved Collator locale is invalid"))?;
+    let mut preferences = CollatorPreferences::from(locale);
+    if usage == "search" {
+        // ICU4X compiled data intentionally omits search collations. German
+        // phonebook primary weights preserve the required AE/Ä search
+        // equivalence; other locales use ICU's root search fallback.
+        preferences.collation_type = Some(if language == "de" {
+            CollationType::Phonebk
+        } else {
+            CollationType::Search
+        });
+    } else if collation != "default" {
+        preferences.collation_type = icu_collation_type(&collation);
+    }
+    preferences.case_first = case_first.as_deref().map(|value| match value {
+        "upper" => CollationCaseFirst::Upper,
+        "lower" => CollationCaseFirst::Lower,
+        "false" => CollationCaseFirst::False,
+        _ => unreachable!("validated Collator caseFirst"),
+    });
+    preferences.numeric_ordering = numeric.map(|value| {
+        if value {
+            CollationNumericOrdering::True
+        } else {
+            CollationNumericOrdering::False
+        }
+    });
+
+    let sensitivity = options
+        .sensitivity
+        .as_deref()
+        .unwrap_or(if usage == "search" { "base" } else { "variant" });
+    let mut collator_options = collator_sensitivity_options(sensitivity);
+    if let Some(ignore) = options.ignore_punctuation {
+        collator_options.alternate_handling = Some(if ignore {
+            AlternateHandling::Shifted
+        } else {
+            AlternateHandling::NonIgnorable
+        });
+        if ignore {
+            collator_options.max_variable = Some(MaxVariable::Punctuation);
+        }
+    }
+    let collator = Collator::try_new(preferences, collator_options)
+        .map_err(|error| Error::internal(format!("Collator data unavailable: {error}")))?;
+    let resolved = collator.resolved_options();
+    let resolved_case_first = match resolved.case_first {
+        CollationCaseFirst::Upper => "upper",
+        CollationCaseFirst::Lower => "lower",
+        _ => "false",
+    };
+    let resolved_numeric = resolved.numeric == CollationNumericOrdering::True;
+    let ignore_punctuation = resolved.alternate_handling == AlternateHandling::Shifted
+        && matches!(
+            resolved.max_variable,
+            MaxVariable::Punctuation | MaxVariable::Symbol | MaxVariable::Currency
+        );
+
+    Ok(IntlCollatorRecord {
+        locale: resolved_locale,
+        usage: Arc::from(usage),
+        collation: Arc::from(collation),
+        numeric: resolved_numeric,
+        case_first: Arc::from(resolved_case_first),
+        sensitivity: Arc::from(sensitivity),
+        ignore_punctuation,
+        collator,
+    })
+}
+
+fn new_collator_record(
+    vm: &mut Vm,
+    locales: Value,
+    raw_options: Value,
+) -> error::Result<IntlCollatorRecord> {
+    vm.try_reserve_value_roots(std::slice::from_ref(&locales))?;
+    let locales_pin = vm.pin(&locales);
+    let requested = canonicalize_list(vm, &locales);
+    vm.unpin_many(locales_pin);
+    let requested = requested?;
+    let options = if raw_options.is_undefined() {
+        None
+    } else {
+        Some(vm.to_object(&raw_options)?)
+    };
+    if let Some(options) = options.as_ref() {
+        vm.try_reserve_value_roots(std::slice::from_ref(options))?;
+    }
+    let options_pin = options.as_ref().map(|value| vm.pin(value)).unwrap_or(0);
+    let requested_options = read_collator_options(vm, options.as_ref());
+    let result = requested_options.and_then(|requested_options| {
+        initialize_collator_record(vm, requested, requested_options, options.as_ref())
+    });
+    vm.unpin_many(options_pin);
+    result
+}
+
+fn intl_collator_constructor(
+    vm: &mut Vm,
+    args: &[Value],
+    _: Option<Value>,
+) -> error::Result<Value> {
+    let locales = args.first().cloned().unwrap_or(Value::Undefined);
+    let options = args.get(1).cloned().unwrap_or(Value::Undefined);
+    vm.try_reserve_gc_pins(5)?;
+    let mut pin_count = vm.pin_many(&[locales.clone(), options.clone()]);
+    let result = (|| {
+        let realm = vm.native_callee_closure().unwrap_or(vm.global);
+        let fallback = vm
+            .realm_intl_collator_prototypes
+            .get(&realm.0)
+            .cloned()
+            .ok_or_else(|| Error::internal("Intl.Collator prototype is not installed"))?;
+        let prototype = if vm.current_native_new_target().is_some() {
+            native_constructor_prototype_with_default(vm, "Intl.Collator", fallback)?
+        } else {
+            fallback
+        };
+        pin_count += vm.pin(&prototype);
+        let index = vm.alloc(HeapObj::IntlCollator(IntlCollatorData {
+            record: std::sync::OnceLock::new(),
+            bound_compare: Mutex::new(None),
+            props: Mutex::new(IndexMap::new()),
+            proto: Mutex::new(Some(prototype)),
+            extensible: AtomicBool::new(true),
+        }))?;
+        let object = Value::Object(index);
+        pin_count += vm.pin(&object);
+        let record = new_collator_record(vm, locales, options)?;
+        vm.heap.with_obj(index.0, |heap_object| {
+            let HeapObj::IntlCollator(collator) = heap_object else {
+                unreachable!("new Intl.Collator object changed representation")
+            };
+            collator
+                .record
+                .set(record)
+                .map_err(|_| Error::internal("Intl.Collator initialized twice"))
+        })?;
+        Ok(object)
+    })();
+    vm.unpin_many(pin_count);
+    result
+}
+
+fn require_collator_index(vm: &Vm, this: Option<Value>) -> error::Result<GcIdx> {
+    let Value::Object(index) = this.unwrap_or(Value::Undefined) else {
+        return Err(Error::type_err(
+            "Intl.Collator method called on incompatible receiver",
+        ));
+    };
+    let valid = vm.heap.with_obj(index.0, |object| {
+        matches!(object, HeapObj::IntlCollator(collator) if collator.record.get().is_some())
+    });
+    if valid {
+        Ok(index)
+    } else {
+        Err(Error::type_err(
+            "Intl.Collator method called on incompatible receiver",
+        ))
+    }
+}
+
+fn collator_utf16(value: &str) -> error::Result<Vec<u16>> {
+    let length = crate::value::utf16_len(value);
+    let mut units = Vec::new();
+    units
+        .try_reserve_exact(length)
+        .map_err(|_| Error::range("Collator input is too large"))?;
+    for ch in value.chars() {
+        if let Some(unit) = crate::value::utf16_single_unit_from_internal_char(ch) {
+            units.push(unit);
+        } else {
+            let mut buffer = [0; 2];
+            units.extend_from_slice(ch.encode_utf16(&mut buffer));
+        }
+    }
+    Ok(units)
+}
+
+fn compare_with_record(
+    vm: &mut Vm,
+    record_index: GcIdx,
+    left: &str,
+    right: &str,
+) -> error::Result<Value> {
+    // UTF-8 byte length bounds UTF-16 unit count and is O(1), so fuel is
+    // charged before either input is scanned or buffers are allocated.
+    let work = left.len().saturating_add(right.len());
+    vm.consume_fuel_units(work.div_ceil(64).min(i64::MAX as usize) as i64)?;
+    let left = collator_utf16(left)?;
+    let right = collator_utf16(right)?;
+    let ordering = vm.heap.with_obj(record_index.0, |object| {
+        let HeapObj::IntlCollator(collator) = object else {
+            unreachable!("validated Collator changed representation")
+        };
+        collator
+            .record
+            .get()
+            .expect("validated Collator is initialized")
+            .collator
+            .compare_utf16(&left, &right)
+    });
+    Ok(Value::Number(match ordering {
+        std::cmp::Ordering::Less => -1.0,
+        std::cmp::Ordering::Equal => 0.0,
+        std::cmp::Ordering::Greater => 1.0,
+    }))
+}
+
+fn collator_bound_compare(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let index = require_collator_index(vm, this)?;
+    let left = vm.to_string(args.first().unwrap_or(&Value::Undefined))?;
+    let right = vm.to_string(args.get(1).unwrap_or(&Value::Undefined))?;
+    compare_with_record(vm, index, &left, &right)
+}
+
+fn create_bound_collator_compare(
+    vm: &mut Vm,
+    collator: Value,
+    realm: GcIdx,
+) -> error::Result<Value> {
+    vm.try_reserve_gc_pins(2)?;
+    let realm = crate::environment::global_env_root(&vm.heap, realm);
+    let collator_pin = vm.pin(&collator);
+    let target = match vm.new_native_function_in_env_with_gc_retry(
+        "",
+        collator_bound_compare as NativeFn,
+        2,
+        realm,
+    ) {
+        Ok(target) => target,
+        Err(error) => {
+            vm.unpin_many(collator_pin);
+            return Err(error);
+        }
+    };
+    let target_value = Value::Object(target);
+    let target_pin = vm.pin(&target_value);
+    let function_proto = vm
+        .realm_function_prototypes
+        .get(&realm.0)
+        .cloned()
+        .unwrap_or_else(|| vm.function_proto.clone());
+    let result = vm.alloc(HeapObj::Function(FunctionData {
+        name: Some(Arc::from("")),
+        kind: FunctionKind::Bound {
+            target,
+            this_val: collator,
+            bound_args: Vec::new(),
+            constructable: false,
+        },
+        closure: realm,
+        lexical_new_target: Value::Undefined,
+        home_object: Mutex::new(None),
+        is_class_ctor: AtomicBool::new(false),
+        prototype: Mutex::new(None),
+        proto: Mutex::new(match function_proto {
+            Value::Object(_) => Some(function_proto),
+            _ => None,
+        }),
+        props: Mutex::new(builtin_function_own_props("", 2)),
+        extensible: AtomicBool::new(true),
+        private_fields: Mutex::new(std::collections::HashMap::new()),
+    }));
+    vm.unpin_many(target_pin + collator_pin);
+    result.map(Value::Object)
+}
+
+fn collator_compare_getter(vm: &mut Vm, _: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let collator_value = this.unwrap_or(Value::Undefined);
+    let index = require_collator_index(vm, Some(collator_value.clone()))?;
+    if let Some(compare) = vm.heap.with_obj(index.0, |object| {
+        let HeapObj::IntlCollator(collator) = object else {
+            unreachable!("validated Collator changed representation")
+        };
+        collator.bound_compare.lock().clone()
+    }) {
+        return Ok(compare);
+    }
+    vm.try_reserve_gc_pins(1)?;
+    let realm = vm.native_callee_closure().unwrap_or(vm.global);
+    let compare = create_bound_collator_compare(vm, collator_value, realm)?;
+    let compare_pin = vm.pin(&compare);
+    vm.heap.with_obj(index.0, |object| {
+        let HeapObj::IntlCollator(collator) = object else {
+            unreachable!("validated Collator changed representation")
+        };
+        *collator.bound_compare.lock() = Some(compare.clone());
+    });
+    vm.unpin_many(compare_pin);
+    Ok(compare)
+}
+
+fn collator_resolved_options(
+    vm: &mut Vm,
+    _: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let index = require_collator_index(vm, this)?;
+    let values = vm.heap.with_obj(index.0, |object| {
+        let HeapObj::IntlCollator(collator) = object else {
+            unreachable!("validated Collator changed representation")
+        };
+        let record = collator
+            .record
+            .get()
+            .expect("validated Collator is initialized");
+        vec![
+            ("locale", Value::String(record.locale.clone())),
+            ("usage", Value::String(record.usage.clone())),
+            ("sensitivity", Value::String(record.sensitivity.clone())),
+            ("ignorePunctuation", Value::Bool(record.ignore_punctuation)),
+            ("collation", Value::String(record.collation.clone())),
+            ("numeric", Value::Bool(record.numeric)),
+            ("caseFirst", Value::String(record.case_first.clone())),
+        ]
+    });
+    locale_info_object(vm, values)
+}
+
+fn collator_supported_locales_of(
+    vm: &mut Vm,
+    args: &[Value],
+    _: Option<Value>,
+) -> error::Result<Value> {
+    let locales = args.first().cloned().unwrap_or(Value::Undefined);
+    let options = args.get(1).cloned().unwrap_or(Value::Undefined);
+    vm.try_reserve_gc_pins(1)?;
+    let locales_pin = vm.pin(&locales);
+    let requested = canonicalize_list(vm, &locales);
+    vm.unpin_many(locales_pin);
+    let requested = requested?;
+    let options = if options.is_undefined() {
+        None
+    } else {
+        Some(vm.to_object(&options)?)
+    };
+    vm.try_reserve_gc_pins(usize::from(options.is_some()))?;
+    let options_pin = options.as_ref().map(|value| vm.pin(value)).unwrap_or(0);
+    let matcher = collator_string_option(
+        vm,
+        options.as_ref(),
+        "localeMatcher",
+        &["lookup", "best fit"],
+    );
+    vm.unpin_many(options_pin);
+    matcher?;
+    let supported = requested
+        .into_iter()
+        .filter(|value| match value {
+            Value::String(tag) => collator_locale_supported(tag),
+            _ => false,
+        })
+        .collect();
+    make_value_array_in_current_realm(vm, supported)
+}
+
+pub(crate) fn compare_strings_with_collator(
+    vm: &mut Vm,
+    left: &str,
+    right: &str,
+    locales: Value,
+    options: Value,
+) -> error::Result<Value> {
+    let realm = vm.native_callee_closure().unwrap_or(vm.global);
+    let constructor = vm
+        .realm_intl_collator_constructors
+        .get(&realm.0)
+        .cloned()
+        .ok_or_else(|| Error::internal("Intl.Collator constructor is not installed"))?;
+    // Keep these three roots plus Construct's constructor, two arguments, and
+    // newTarget in one fallible reservation before any pin can reallocate.
+    vm.try_reserve_gc_pins(7)?;
+    let pin_count = vm.pin_many(&[constructor.clone(), locales.clone(), options.clone()]);
+    let collator = vm.construct(&constructor, &[locales, options]);
+    vm.unpin_many(pin_count);
+    let index = require_collator_index(vm, Some(collator?))?;
+    compare_with_record(vm, index, left, right)
 }
 
 fn intl_locale_constructor(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
@@ -1175,7 +1813,9 @@ fn locale_get_collations(vm: &mut Vm, _: &[Value], this: Option<Value>) -> error
     if let Some(collation) = record.collation {
         return make_value_array_in_current_realm(vm, vec![Value::String(collation)]);
     }
-    intl_string_list_value(vm, &["emoji", "eor"])
+    let language = locale_tag_parts_metered(vm, &record.locale)?.language;
+    let collations = available_collations_for_language(&language);
+    intl_string_list_value(vm, &collations)
 }
 
 fn locale_get_hour_cycles(vm: &mut Vm, _: &[Value], this: Option<Value>) -> error::Result<Value> {
@@ -1322,6 +1962,7 @@ fn intl_get_canonical_locales(
     _: Option<Value>,
 ) -> error::Result<Value> {
     let locales = args.first().cloned().unwrap_or(Value::Undefined);
+    vm.try_reserve_value_roots(std::slice::from_ref(&locales))?;
     let locales_pin = vm.pin(&locales);
     let list = canonicalize_list(vm, &locales);
     vm.unpin_many(locales_pin);
@@ -1332,9 +1973,9 @@ fn intl_supported_values_of(vm: &mut Vm, args: &[Value], _: Option<Value>) -> er
     let key = vm.to_string(args.first().unwrap_or(&Value::Undefined))?;
     let values = match key.as_ref() {
         "calendar" => SUPPORTED_VALUE_CALENDARS,
-        // Formatter-dependent lists remain empty until their service
-        // constructors establish which values RuJa actually supports.
-        "collation" | "currency" => &[],
+        "collation" => SUPPORTED_VALUE_COLLATIONS,
+        // Currency remains formatter-dependent until NumberFormat exists.
+        "currency" => &[],
         "numberingSystem" => SUPPORTED_VALUE_NUMBERING_SYSTEMS,
         "timeZone" => SUPPORTED_VALUE_TIME_ZONES,
         "unit" => SUPPORTED_VALUE_UNITS,
@@ -1464,16 +2105,124 @@ fn build_locale_intrinsic_in_env(
     result
 }
 
+fn build_collator_intrinsic_in_env(
+    vm: &mut Vm,
+    env: GcIdx,
+    object_proto: Value,
+) -> error::Result<Value> {
+    vm.try_reserve_gc_pins(6)?;
+    let mut pin_count = vm.pin(&object_proto);
+    let result = (|| {
+        let resolved_options = Value::Object(vm.new_native_function_in_env_with_gc_retry(
+            "resolvedOptions",
+            collator_resolved_options as NativeFn,
+            0,
+            env,
+        )?);
+        pin_count += vm.pin(&resolved_options);
+        let compare_getter = Value::Object(vm.new_native_function_in_env_with_gc_retry(
+            "get compare",
+            collator_compare_getter as NativeFn,
+            0,
+            env,
+        )?);
+        pin_count += vm.pin(&compare_getter);
+
+        let mut prototype_props = IndexMap::new();
+        prototype_props
+            .try_reserve(4)
+            .map_err(|_| Error::range("Intl.Collator prototype is too large"))?;
+        prototype_props.insert(
+            PropertyKey::from("compare"),
+            accessor_get_prop(compare_getter),
+        );
+        prototype_props.insert(
+            PropertyKey::from("resolvedOptions"),
+            data_prop(resolved_options),
+        );
+        let mut tag = PropertyDescriptor::data(Value::String(Arc::from("Intl.Collator")));
+        tag.writable = false;
+        tag.enumerable = false;
+        tag.configurable = true;
+        prototype_props.insert(
+            PropertyKey::symbol(vm.well_known_symbols.to_string_tag),
+            tag,
+        );
+        let prototype = Value::Object(vm.alloc(HeapObj::Object(ObjectData {
+            props: Mutex::new(prototype_props),
+            proto: Mutex::new(Some(object_proto)),
+            extensible: AtomicBool::new(true),
+            class_name: None,
+            private_fields: Mutex::new(std::collections::HashMap::new()),
+            primitive: Mutex::new(None),
+        }))?);
+        pin_count += vm.pin(&prototype);
+
+        let constructor = Value::Object(vm.new_native_constructor_in_env_with_gc_retry(
+            "Collator",
+            intl_collator_constructor as NativeFn,
+            0,
+            env,
+            NativeConstructMode::InternalEagerPrototype,
+        )?);
+        pin_count += vm.pin(&constructor);
+        let supported_locales = Value::Object(vm.new_native_function_in_env_with_gc_retry(
+            "supportedLocalesOf",
+            collator_supported_locales_of as NativeFn,
+            1,
+            env,
+        )?);
+        pin_count += vm.pin(&supported_locales);
+
+        let Value::Object(constructor_index) = &constructor else {
+            unreachable!("native constructor allocation returned a non-object")
+        };
+        vm.heap.with_obj(constructor_index.0, |object| {
+            let HeapObj::Function(function) = object else {
+                unreachable!("native constructor allocation returned a non-function")
+            };
+            *function.prototype.lock() = Some(prototype.clone());
+            let mut props = function.props.lock();
+            props.insert(
+                PropertyKey::from("prototype"),
+                const_prop(prototype.clone()),
+            );
+            props.insert(
+                PropertyKey::from("supportedLocalesOf"),
+                data_prop(supported_locales),
+            );
+        });
+        let Value::Object(prototype_index) = &prototype else {
+            unreachable!("Collator prototype allocation returned a non-object")
+        };
+        vm.heap.with_obj(prototype_index.0, |object| {
+            object.props().lock().insert(
+                PropertyKey::from("constructor"),
+                data_prop(constructor.clone()),
+            );
+        });
+
+        vm.realm_intl_collator_constructors
+            .insert(env.0, constructor.clone());
+        vm.realm_intl_collator_prototypes.insert(env.0, prototype);
+        Ok(constructor)
+    })();
+    vm.unpin_many(pin_count);
+    result
+}
+
 pub(crate) fn build_intl_in_env(
     vm: &mut Vm,
     env: GcIdx,
     object_proto: Value,
 ) -> error::Result<Value> {
-    vm.try_reserve_gc_pins(4)?;
+    vm.try_reserve_gc_pins(5)?;
     let mut pin_count = vm.pin(&object_proto);
     let result = (|| {
         let locale = build_locale_intrinsic_in_env(vm, env, object_proto.clone())?;
         pin_count += vm.pin(&locale);
+        let collator = build_collator_intrinsic_in_env(vm, env, object_proto.clone())?;
+        pin_count += vm.pin(&collator);
         let canonical_locales_idx = vm.new_native_function_in_env_with_gc_retry(
             "getCanonicalLocales",
             intl_get_canonical_locales as NativeFn,
@@ -1493,8 +2242,9 @@ pub(crate) fn build_intl_in_env(
 
         let mut props = IndexMap::new();
         props
-            .try_reserve(4)
+            .try_reserve(5)
             .map_err(|_| Error::range("Intl namespace is too large"))?;
+        props.insert(PropertyKey::from("Collator"), data_prop(collator));
         props.insert(PropertyKey::from("Locale"), data_prop(locale));
         props.insert(
             PropertyKey::from("getCanonicalLocales"),
@@ -1529,9 +2279,12 @@ pub(crate) fn build_intl_in_env(
 #[cfg(test)]
 mod tests {
     use super::{
-        canonical_subdivision_region, canonicalize_locale, region_preference, string_list_data,
-        week_information, CALENDAR_PREFERENCES, HOUR_CYCLES, TIME_ZONES,
+        canonical_subdivision_region, canonicalize_locale, collator_supported_locales_of,
+        compare_strings_with_collator, compare_with_record, region_preference,
+        require_collator_index, string_list_data, week_information, CALENDAR_PREFERENCES,
+        HOUR_CYCLES, TIME_ZONES,
     };
+    use crate::error::ErrorKind;
     use crate::value::Value;
     use crate::vm::OwnKeyConsumerReservationSite;
     use crate::vm::Vm;
@@ -1604,6 +2357,64 @@ mod tests {
             Value::String(Arc::from("buddhist"))
         );
         assert_eq!(vm.gc_pins.len(), baseline_pins);
+    }
+
+    #[test]
+    fn collator_resource_failures_release_roots_and_recover() {
+        let mut vm = Vm::new().expect("failed to initialize VM");
+        let baseline_pins = vm.gc_pins.len();
+
+        vm.fail_next_gc_pin_reservation = true;
+        let compare_error =
+            compare_strings_with_collator(&mut vm, "a", "b", Value::Undefined, Value::Undefined)
+                .expect_err("localeCompare root reservation should fail first");
+        assert_eq!(compare_error.kind, ErrorKind::Range);
+        assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+        vm.fail_next_gc_pin_reservation = true;
+        let locales_error =
+            collator_supported_locales_of(&mut vm, &[Value::String(Arc::from("en"))], None)
+                .expect_err("supportedLocalesOf root reservation should fail first");
+        assert_eq!(locales_error.kind, ErrorKind::Range);
+        assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+        let collator = vm
+            .run("new Intl.Collator('en')")
+            .expect("Collator should recover after reservation failures");
+        let index = require_collator_index(&vm, Some(collator))
+            .expect("constructed Collator should retain its brand");
+        let input = "é".repeat(1024);
+        vm.set_fuel(Some(0));
+        let fuel_error = compare_with_record(&mut vm, index, &input, &input)
+            .expect_err("comparison should charge fuel before scanning inputs");
+        assert_eq!(fuel_error.kind, ErrorKind::Fuel);
+        assert_eq!(vm.fuel_remaining(), Some(0));
+        vm.set_fuel(None);
+        assert_eq!(
+            compare_with_record(&mut vm, index, &input, &input)
+                .expect("comparison should recover after a fuel error"),
+            Value::Number(0.0)
+        );
+        assert_eq!(vm.gc_pins.len(), baseline_pins);
+    }
+
+    #[test]
+    fn unreachable_collator_bound_compare_cycle_is_collected() {
+        let mut vm = Vm::new().expect("failed to initialize VM");
+        vm.gc();
+        vm.run("(function () { var collator = new Intl.Collator(); collator.compare; })()")
+            .expect("failed to create unreachable Collator cycle");
+        let with_cycle = vm.heap.live_count();
+        vm.gc();
+        assert!(
+            vm.heap.live_count() < with_cycle,
+            "unreachable Collator and bound compare should be collected"
+        );
+        assert_eq!(
+            vm.run("new Intl.Collator().compare('a', 'a')")
+                .expect("VM should remain reusable after cycle collection"),
+            Value::Number(0.0)
+        );
     }
 
     #[test]

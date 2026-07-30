@@ -551,6 +551,9 @@ pub struct Vm {
     /// Realm global environment -> `%Intl.Locale%` and its prototype.
     pub(crate) realm_intl_locale_constructors: HashMap<usize, Value>,
     pub(crate) realm_intl_locale_prototypes: HashMap<usize, Value>,
+    /// Realm global environment -> `%Intl.Collator%` and its prototype.
+    pub(crate) realm_intl_collator_constructors: HashMap<usize, Value>,
+    pub(crate) realm_intl_collator_prototypes: HashMap<usize, Value>,
     /// Realm global environment index -> `%RegExpStringIteratorPrototype%`.
     pub(crate) realm_regexp_string_iterator_prototypes: HashMap<usize, Value>,
     /// Realm global environment index -> that Realm's original intrinsic
@@ -1229,6 +1232,8 @@ impl Vm {
             realm_regexp_prototypes: HashMap::new(),
             realm_intl_locale_constructors: HashMap::new(),
             realm_intl_locale_prototypes: HashMap::new(),
+            realm_intl_collator_constructors: HashMap::new(),
+            realm_intl_collator_prototypes: HashMap::new(),
             realm_regexp_string_iterator_prototypes: HashMap::new(),
             realm_array_buffer_prototypes: HashMap::new(),
             realm_typed_array_constructors: HashMap::new(),
@@ -2824,6 +2829,8 @@ impl Vm {
         self.realm_regexp_prototypes.remove(&realm);
         self.realm_intl_locale_constructors.remove(&realm);
         self.realm_intl_locale_prototypes.remove(&realm);
+        self.realm_intl_collator_constructors.remove(&realm);
+        self.realm_intl_collator_prototypes.remove(&realm);
         self.realm_regexp_string_iterator_prototypes.remove(&realm);
         self.realm_array_buffer_prototypes.remove(&realm);
         self.realm_typed_array_constructors

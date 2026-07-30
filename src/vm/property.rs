@@ -5001,6 +5001,12 @@ impl Vm {
         for v in self.realm_intl_locale_prototypes.values() {
             Self::push_value_roots(&mut roots, v);
         }
+        for v in self.realm_intl_collator_constructors.values() {
+            Self::push_value_roots(&mut roots, v);
+        }
+        for v in self.realm_intl_collator_prototypes.values() {
+            Self::push_value_roots(&mut roots, v);
+        }
         for v in self.realm_regexp_string_iterator_prototypes.values() {
             Self::push_value_roots(&mut roots, v);
         }

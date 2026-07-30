@@ -557,18 +557,19 @@ guarantees are required.
   interop are implemented. The VM heap cap does not account for BigInt limb or
   Arc allocations, so large parsing, multiplication, and shifts can still hit
   host OOM rather than a catchable JavaScript error
-- ECMA-402 currently includes `%Intl%`, `Intl.getCanonicalLocales`, locale
-  identifier canonicalization, and the complete `Intl.Locale` constructor,
-  accessor, likely-subtag, and Locale-info data surface. Collation and numbering
-  methods use the ECMA-402 formatter-absence fallbacks until their service
-  constructors land. `Intl.supportedValuesOf` implements all six keys and the
-  required calendar, simple-digit numbering-system, primary-time-zone, and
-  sanctioned-unit sets; its collation and currency capability sets are empty
-  until Collator, NumberFormat, and DisplayNames exist. Formatter constructors,
-  locale negotiation and formatting data, and legacy constructor fallback
-  semantics remain unsupported. Array, TypedArray, String, Number, BigInt, and Date
-  locale-sensitive methods therefore retain their documented non-ECMA-402
-  behavior until those formatter units land. Locale-info and
+- ECMA-402 currently includes `%Intl%`, `Intl.getCanonicalLocales`, the complete
+  `Intl.Locale` surface, and Realm-local `Intl.Collator`. Collator uses ICU4X
+  2.2 compiled data, CLDR likely-subtag locale availability, a conservative
+  provider-validated collation matrix, UTF-16 comparison, and method-Realm
+  intrinsic construction for `String.prototype.localeCompare`. ICU4X omits
+  general search-collation data; German search uses phonebook primary weights,
+  while other search locales use ICU's root fallback. `Intl.supportedValuesOf`
+  implements all six keys and publishes the 10 collations that the same matrix
+  accepts; currency remains empty. NumberFormat, DateTimeFormat, DisplayNames,
+  RelativeTimeFormat, PluralRules, ListFormat, and Segmenter remain unsupported.
+  Array, TypedArray, Number, BigInt, and Date locale-sensitive methods retain
+  their documented non-ECMA-402 behavior until those formatter units land.
+  Locale-info and
   supportedValuesOf result counts and string chunks are fuel-precharged and Vec
   growth is fallible, but their bounded static strings become fresh `Arc<str>`
   values whose bytes are not charged to the VM heap-object cap

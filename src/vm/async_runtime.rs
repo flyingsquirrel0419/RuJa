@@ -1177,6 +1177,13 @@ impl Vm {
                 .cloned()
                 .unwrap_or(fallback));
         }
+        if intrinsic == "Intl.Collator" {
+            return Ok(self
+                .realm_intl_collator_prototypes
+                .get(&realm.0)
+                .cloned()
+                .unwrap_or(fallback));
+        }
         if intrinsic == "Promise" {
             return Ok(self
                 .realm_promise_prototypes

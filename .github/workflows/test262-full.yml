@@ -337,6 +337,50 @@ jobs:
           grep -q '^RATE=100.0 PASS=52 FAIL=0 SKIP=0 TOTAL=52 RAN=52$' \
             intl_locale_info_result.txt
 
+  intl-collator:
+    needs: [build, setup]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download RuJa binary
+        uses: actions/download-artifact@v4
+        with:
+          name: ruja-release
+          path: target/release/
+      - run: chmod +x target/release/ruja
+      - name: Checkout pinned Intl.Collator tests
+        uses: actions/checkout@v4
+        with:
+          repository: tc39/test262
+          ref: ${{ env.TEST262_REV }}
+          path: test262
+          sparse-checkout: |
+            harness
+            test/intl402/Collator
+            test/intl402/String/prototype/localeCompare
+      - name: Verify the frozen Intl.Collator manifest
+        run: >-
+          PYTHONPATH=tools TEST262="$GITHUB_WORKSPACE/test262"
+          python3 -m unittest
+          test262_tooling_test.ModuleCoreAdmissionTests.test_intl_collator_manifest_is_exact_live_and_shared
+      - name: Require the exact admitted boundary to pass
+        run: |
+          mapfile -t files < <(sed -e '/^#/d' -e '/^$/d' \
+            tools/test262_intl_collator_admission.txt)
+          TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
+            "${files[@]}" > intl_collator_result.txt 2>&1
+          cat intl_collator_result.txt
+          grep -q '^RATE=100.0 PASS=74 FAIL=0 SKIP=0 TOTAL=74 RAN=74$' \
+            intl_collator_result.txt
+      - name: Require the full Collator scope to stay closed
+        run: |
+          TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
+            intl402/Collator intl402/String/prototype/localeCompare \
+            > intl_collator_scope_result.txt 2>&1
+          cat intl_collator_scope_result.txt
+          grep -q '^RATE=100.0 PASS=74 FAIL=0 SKIP=1 TOTAL=75 RAN=74$' \
+            intl_collator_scope_result.txt
+
   intl-supported-values:
     needs: [build, setup]
     runs-on: ubuntu-latest
@@ -370,7 +414,7 @@ jobs:
             "${files[@]}" \
             > intl_supported_values_result.txt 2>&1
           cat intl_supported_values_result.txt
-          grep -q '^RATE=100.0 PASS=15 FAIL=0 SKIP=0 TOTAL=15 RAN=15$' \
+          grep -q '^RATE=100.0 PASS=16 FAIL=0 SKIP=0 TOTAL=16 RAN=16$' \
             intl_supported_values_result.txt
       - name: Require formatter-dependent files to remain closed
         run: |
@@ -378,7 +422,7 @@ jobs:
             intl402/Intl/supportedValuesOf \
             > intl_supported_values_scope_result.txt 2>&1
           cat intl_supported_values_scope_result.txt
-          grep -q '^RATE=100.0 PASS=15 FAIL=0 SKIP=10 TOTAL=25 RAN=15$' \
+          grep -q '^RATE=100.0 PASS=16 FAIL=0 SKIP=9 TOTAL=25 RAN=16$' \
             intl_supported_values_scope_result.txt
 
   test262-full:

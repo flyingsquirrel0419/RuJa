@@ -4,6 +4,7 @@ intl402/Intl/supportedValuesOf/calendars-required-by-intl-era-monthcode.js
 intl402/Intl/supportedValuesOf/calendars.js
 intl402/Intl/supportedValuesOf/coerced-to-string.js
 intl402/Intl/supportedValuesOf/collations.js
+intl402/Intl/supportedValuesOf/collations-accepted-by-Collator.js
 intl402/Intl/supportedValuesOf/currencies.js
 intl402/Intl/supportedValuesOf/invalid-key.js
 intl402/Intl/supportedValuesOf/length.js
