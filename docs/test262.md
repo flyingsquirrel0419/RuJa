@@ -12624,6 +12624,33 @@ supportedValuesOf boundary.
 - 장점, 단점 및 영향: Supported policy now matches real constructor, option, comparison, Realm, and String integration behavior. One visible skip remains and will become executable when NumberFormat and DateTimeFormat land.
 ```
 
+## RegExp named-group exact admission
+
+Pinned Test262 has 86 independently executable `regexp-named-groups` paths
+not already owned by the match-indices or duplicate-name manifests. They
+comprise 26 `built-ins/RegExp/named-groups` files, eight named-group-specific
+`RegExp.prototype[Symbol.replace]` files, and 52 RegExp-literal files. The
+runner and analyzer remove only `regexp-named-groups` for these exact paths.
+All current and future siblings retain the broad gate unless separately
+audited.
+
+The exact manifest requires **86 pass / 0 fail / 0 skip**. A second gate runs
+the related built-in and literal scope, including the existing 14
+duplicate-name paths and adjacent `poisoned-stdlib.js`, and requires **100 pass
+/ 0 fail / 1 skip**. The skip is intentional: that file also declares
+`Symbol.iterator`, whose independent admission is outside this unit. Existing
+seven-file match-indices and 19-file duplicate-name manifests remain disjoint.
+
+```text
+[Decision Log]
+- 목적과 의도: Convert proven named-capture behavior from forced-green evidence into exact supported-policy coverage.
+- 기존 구현 및 제약 조건: Broad regexp-named-groups skipping hid passing parser, matcher, groups-object, and replacement behavior; sparse built-ins-only audits also missed the literal early-error family.
+- 검토한 주요 대안: Admit only 35 built-in paths, remove the feature globally, use path prefixes, include poisoned-stdlib.js by lifting every declared feature, or audit the complete pinned corpus and freeze only the independent dependency.
+- 선택한 방식: Audit the complete pinned corpus, freeze 86 paths and only their regexp-named-groups dependency, verify live metadata and manifest disjointness, test future-path rejection in both tools, and gate exact plus related-scope counts.
+- 다른 대안 대신 이 방식을 선택한 이유: Built-ins-only scope understates real support; broad policies drift; lifting Symbol.iterator couples unrelated capability claims. Exact single-feature ownership measures the completed behavior without hiding the remaining dependency.
+- 장점, 단점 및 영향: Full-matrix supported accounting advances by 86 passes and 86 fewer skips with no expected failure or timeout change. One scope skip remains explicit; later runtime resource hardening does not need to reshape this policy boundary.
+```
+
 ## WeakRef and FinalizationRegistry exact admission
 
 Pinned Test262 contains **29** files below `built-ins/WeakRef` and **47** below

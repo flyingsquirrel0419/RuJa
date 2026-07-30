@@ -84,6 +84,7 @@ try:
     from test262_regexp_match_indices_admission import (
         REGEXP_MATCH_INDICES_FEATURES, REGEXP_MATCH_INDICES_FILES,
     )
+    from test262_regexp_named_groups_admission import REGEXP_NAMED_GROUPS_FEATURES
     from test262_regexp_duplicate_named_groups_admission import (
         REGEXP_DUPLICATE_NAMED_GROUPS_FEATURES,
         REGEXP_DUPLICATE_NAMED_GROUPS_FILES,
@@ -299,6 +300,7 @@ except ModuleNotFoundError:
     from tools.test262_regexp_match_indices_admission import (
         REGEXP_MATCH_INDICES_FEATURES, REGEXP_MATCH_INDICES_FILES,
     )
+    from tools.test262_regexp_named_groups_admission import REGEXP_NAMED_GROUPS_FEATURES
     from tools.test262_regexp_duplicate_named_groups_admission import (
         REGEXP_DUPLICATE_NAMED_GROUPS_FEATURES,
         REGEXP_DUPLICATE_NAMED_GROUPS_FILES,
@@ -3402,6 +3404,13 @@ def regexp_match_indices_features(path):
         return frozenset()
     return REGEXP_MATCH_INDICES_FEATURES.get(rel.as_posix(), frozenset())
 
+def regexp_named_groups_features(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except (OSError, ValueError):
+        return frozenset()
+    return REGEXP_NAMED_GROUPS_FEATURES.get(rel.as_posix(), frozenset())
+
 def regexp_duplicate_named_groups_features(path):
     try:
         rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
@@ -3669,6 +3678,7 @@ def should_skip(meta, path=None):
         feats.difference_update(promise_finally_features(path))
     if path is not None:
         feats.difference_update(regexp_match_indices_features(path))
+        feats.difference_update(regexp_named_groups_features(path))
         feats.difference_update(regexp_duplicate_named_groups_features(path))
         feats.difference_update(regexp_unicode_sets_features(path))
         feats.difference_update(regexp_uv_flags_features(path))

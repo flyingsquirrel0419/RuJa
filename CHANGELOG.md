@@ -4,6 +4,14 @@
 
 ### Changed
 
+- Froze the independently complete RegExp named-capture surface into an exact
+  86-file Test262 admission. The boundary covers named-group execution,
+  replacement coercion, Unicode and non-Unicode names and references, and
+  RegExp-literal early errors while leaving `poisoned-stdlib.js` behind its
+  separate `Symbol.iterator` gate. A dedicated full-workflow job requires the
+  exact boundary at **86/0/0** and the related 101-file scope at **100 pass /
+  0 fail / 1 explicit skip**; future sibling paths remain skipped.
+
 - Hardened `WeakRef` and `FinalizationRegistry` as a complete frozen
   weak-reference unit. Constructor fallback now uses immutable Realm-local
   prototype registries and both branded objects allocate through GC retry.

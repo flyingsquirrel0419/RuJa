@@ -3483,4 +3483,25 @@ allocate, so cleanup is postponed rather than causing a host OOM path.
 
 ---
 
+### RegExp named-group conformance ownership
+
+Named capture syntax and runtime behavior span parser early errors, matcher
+capture metadata, result-object publication, and replacement substitution.
+Those implementation paths already serve more RegExp features, so supported
+Test262 policy owns the completed named-group surface through one exact
+path-to-feature map rather than a directory or feature-wide exception. The
+runner and analyzer consume the same immutable map. Existing match-indices and
+duplicate-name maps remain separate owners, preventing one feature unit from
+silently broadening another.
+
+```text
+[Decision Log]
+- 목적과 의도: Publish the already conforming named-capture surface as measurable support without admitting unaudited future files or unrelated Symbol behavior.
+- 기존 구현 및 제약 조건: Named groups already execute across literals, exec, indices, and replacement, but regexp-named-groups remained a global skip except for match-indices and duplicate-name exact maps; one adjacent replacement test also requires Symbol.iterator.
+- 검토한 주요 대안: Remove the feature gate globally, admit directory prefixes, merge every RegExp admission, keep informational forced runs only, or freeze the independently passing paths under a shared exact map.
+- 선택한 방식: Freeze 86 disjoint paths, remove only regexp-named-groups for those paths in both policy tools, retain poisoned-stdlib.js as one explicit scope skip, and hard-gate exact and related-scope counts in CI.
+- 다른 대안 대신 이 방식을 선택한 이유: Global and prefix admission accept future behavior without review; merging ownership obscures dependencies; forced runs do not improve supported accounting; lifting Symbol.iterator here would claim unrelated semantics.
+- 장점, 단점 및 영향: Supported accounting gains 86 passes with no runtime semantic change, future siblings remain closed, and one unrelated dependency stays visible. Matcher caching, native-allocation fallibility, and replacement streaming remain separate runtime-hardening units.
+```
+
 **Next:** [Features](features.md) · [Known limitations](limitations.md) · [Back to README](../README.md)
