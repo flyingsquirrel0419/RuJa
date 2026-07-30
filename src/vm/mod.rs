@@ -203,6 +203,18 @@ pub(crate) enum RegExpMaterializationReservationSite {
     ExecResultProperties,
 }
 
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RegExpReplacementReservationSite {
+    CollectedResults,
+    InputUtf16Units,
+    Captures,
+    ReplacerArguments,
+    SubstitutionOutput,
+    FinalOutput,
+    FinalString,
+}
+
 pub(crate) use conversions::{to_int32, to_uint32};
 pub(crate) use property::{
     ProxyDefinePropertyDescriptor, ProxyDefinePropertyOutcome, TypedArrayDefineDescriptor,
@@ -475,6 +487,9 @@ pub struct Vm {
     #[cfg(test)]
     pub(crate) fail_regexp_materialization_reservation:
         Option<(RegExpMaterializationReservationSite, usize)>,
+    #[cfg(test)]
+    pub(crate) fail_regexp_replacement_reservation:
+        Option<(RegExpReplacementReservationSite, usize)>,
     /// Receiver identities currently traversing Array stringification methods.
     /// Join checks after separator coercion and toLocaleString checks after its
     /// length snapshot, so recursive suppression preserves observable ordering.
@@ -1203,6 +1218,8 @@ impl Vm {
             fail_inline_cache_reservation: None,
             #[cfg(test)]
             fail_regexp_materialization_reservation: None,
+            #[cfg(test)]
+            fail_regexp_replacement_reservation: None,
             active_array_joins: Vec::new(),
             kept_objects: HashSet::new(),
             current_yields: Vec::new(),

@@ -596,6 +596,19 @@ guarantees are required.
   `Object(x)`) now store the wrapped primitive, so `.valueOf()` and
   `ToPrimitive` resolve to it (`new Number(5) + 1 === 6`). Boxed-string
   `.toString()` still falls back to the default object form.
+- Builtin `RegExp.prototype[Symbol.replace]` now fallibly reserves its result,
+  capture, callback-argument, substitution, UTF-16 output, non-ASCII input
+  cache, and UTF-8 decode containers, with Fuel charged before native work.
+  ASCII input is borrowed and non-ASCII input is encoded once, so repeated
+  source substitutions do not rescan the full UTF-8 string. Existing
+  string-valued input, match, capture, and callback returns retain their
+  `Arc<str>` storage, including repeated `exec` arguments. This is not a
+  runtime-wide OOM guarantee: `ToString` of non-string input, replacement,
+  match, capture, named capture, or callback returns and final result
+  `Arc<str>` publication,
+  dynamic named-group `PropertyKey` creation, error strings, matcher/vendor and
+  compiler metadata, and unrelated legacy String paths still allocate through
+  infallible host APIs.
 
 ---
 

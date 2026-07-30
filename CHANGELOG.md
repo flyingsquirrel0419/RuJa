@@ -4,6 +4,19 @@
 
 ### Changed
 
+- Hardened builtin `RegExp.prototype[Symbol.replace]` replacement
+  materialization. Collected results, captures, callback arguments,
+  substitution scratch, final UTF-16 output, and UTF-8 decoding now reserve
+  fallibly and consume Fuel before native work. Input slicing and Unicode
+  empty-match advancement share one ASCII-borrowed or fallibly cached UTF-16
+  source, avoiding repeated full-string scans and 32-bit index overflow.
+  Existing strings remain shared through `Arc<str>` for callback publication;
+  result collection completes before callbacks, backward matches still run
+  substitutions before output suppression, and reservation failures preserve
+  prior observable effects. Deterministic tests cover every growth site,
+  conditional bypass, Realm identity, GC/pin cleanup, retry, ordering, large
+  `lastIndex`, UTF-16 sentinel parity, and exact template/callback Fuel bounds.
+
 - Made builtin RegExp `exec` post-match native containers allocator-fallible
   and fuel-metered. Capture ranges, endpoint sorting and UTF-16 offset maps,
   result values and Array presence bitmaps, named groups, match-indices pair

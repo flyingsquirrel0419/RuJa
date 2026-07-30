@@ -6,7 +6,8 @@ use super::{
     OrdinaryPropertyStorageReservationSite, OwnKeyConsumerReservationSite,
     PropertyTraversalReservationSite, ProxyDefinePropertyReservationSite,
     ProxyDescriptorReservationSite, ProxyOwnKeysReservationSite,
-    RegExpMaterializationReservationSite, SetReservationSite, Vm, WeakCollectionReservationSite,
+    RegExpMaterializationReservationSite, RegExpReplacementReservationSite, SetReservationSite, Vm,
+    WeakCollectionReservationSite,
 };
 use crate::bytecode::{Chunk, Op};
 use crate::value::{
@@ -7875,6 +7876,534 @@ fn regexp_symbol_replace_named_groups_obey_the_exact_heap_cap() {
     );
     assert!(vm.heap.live_count() <= exact_limit);
     vm.set_max_heap_objects(None);
+}
+
+#[test]
+fn regexp_replacement_reservations_are_ordered_realm_correct_and_retryable() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.run(
+        r#"
+        var replacementStorageRegexp = /(a)(b)/g;
+        var replacementStorageCalls = 0;
+        function replacementStorageCallback() {
+          replacementStorageCalls += 1;
+          return "X";
+        }
+        var replacementForeignRealm = $262.createRealm().global;
+        var replacementForeignRegexp = replacementForeignRealm.RegExp("(a)(b)");
+        var replacementForeignCall = replacementForeignRealm.Function(
+          "regexp",
+          "replacement",
+          "try { return regexp[Symbol.replace]('ab', replacement); } " +
+            "catch (error) { return error; }"
+        );
+        "#,
+    )
+    .expect("replacement reservation fixtures should initialize");
+    vm.gc();
+    let baseline_live = vm.heap.live_count();
+    let baseline_pins = vm.gc_pins.len();
+
+    let regexp = vm.get_global("replacementStorageRegexp");
+    let callback = vm.get_global("replacementStorageCallback");
+    vm.fail_regexp_replacement_reservation =
+        Some((RegExpReplacementReservationSite::CollectedResults, 0));
+    vm.set_fuel(Some(0));
+    let error = crate::builtins::regexp::regexp_symbol_replace(
+        &mut vm,
+        &[Value::String("abab".into()), callback.clone()],
+        Some(regexp.clone()),
+    )
+    .expect_err("Fuel must precede replacement-result reservation");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(
+        vm.fail_regexp_replacement_reservation,
+        Some((RegExpReplacementReservationSite::CollectedResults, 0))
+    );
+    vm.set_fuel(None);
+    let error = crate::builtins::regexp::regexp_symbol_replace(
+        &mut vm,
+        &[Value::String("abab".into()), callback],
+        Some(regexp),
+    )
+    .expect_err("result reservation must fail after sufficient Fuel");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fail_regexp_replacement_reservation, None);
+    assert_eq!(vm.get_global("replacementStorageCalls"), Value::Number(0.0));
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    for (countdown, expected_last_index) in [(0usize, 2.0), (1usize, 4.0)] {
+        vm.run("replacementStorageCalls = 0; replacementStorageRegexp.lastIndex = 0;")
+            .expect("result fixture should reset");
+        vm.fail_regexp_replacement_reservation = Some((
+            RegExpReplacementReservationSite::CollectedResults,
+            countdown,
+        ));
+        let error = vm
+            .run("replacementStorageRegexp[Symbol.replace]('abab', replacementStorageCallback);")
+            .expect_err("the selected result reservation must fail");
+        assert_eq!(error.kind, crate::error::ErrorKind::Range);
+        assert_main_realm_range_error(&vm, error.as_ref());
+        assert_eq!(vm.fail_regexp_replacement_reservation, None);
+        assert_eq!(vm.get_global("replacementStorageCalls"), Value::Number(0.0));
+        assert_eq!(
+            vm.run("replacementStorageRegexp.lastIndex;")
+                .expect("lastIndex should remain readable"),
+            Value::Number(expected_last_index)
+        );
+        assert_eq!(vm.gc_pins.len(), baseline_pins);
+        drop(error);
+        vm.gc();
+        assert_eq!(vm.heap.live_count(), baseline_live);
+        assert_eq!(
+            vm.run(
+                "replacementStorageCalls = 0; replacementStorageRegexp[Symbol.replace]('abab', replacementStorageCallback);"
+            )
+            .expect("result reservation should recover immediately"),
+            Value::String("XX".into())
+        );
+        assert_eq!(vm.get_global("replacementStorageCalls"), Value::Number(2.0));
+        vm.gc();
+        assert_eq!(vm.heap.live_count(), baseline_live);
+    }
+
+    vm.fail_regexp_replacement_reservation =
+        Some((RegExpReplacementReservationSite::CollectedResults, 2));
+    assert_eq!(
+        vm.run("replacementStorageRegexp[Symbol.replace]('abab', 'X');")
+            .expect("two matches must require exactly two result reservations"),
+        Value::String("XX".into())
+    );
+    assert_eq!(
+        vm.fail_regexp_replacement_reservation,
+        Some((RegExpReplacementReservationSite::CollectedResults, 0))
+    );
+    vm.fail_regexp_replacement_reservation = None;
+
+    let cases = [
+        (
+            RegExpReplacementReservationSite::InputUtf16Units,
+            "/a/[Symbol.replace]('\u{03A9}a', 'X');",
+            "\u{03A9}X",
+            0.0,
+        ),
+        (
+            RegExpReplacementReservationSite::Captures,
+            "/(a)(b)/[Symbol.replace]('ab', replacementStorageCallback);",
+            "X",
+            0.0,
+        ),
+        (
+            RegExpReplacementReservationSite::ReplacerArguments,
+            "/(a)(b)/[Symbol.replace]('ab', replacementStorageCallback);",
+            "X",
+            0.0,
+        ),
+        (
+            RegExpReplacementReservationSite::SubstitutionOutput,
+            "/(a)(b)/[Symbol.replace]('ab', '[$1][$2]');",
+            "[a][b]",
+            0.0,
+        ),
+        (
+            RegExpReplacementReservationSite::FinalOutput,
+            "/(a)(b)/[Symbol.replace]('ab', replacementStorageCallback);",
+            "X",
+            1.0,
+        ),
+        (
+            RegExpReplacementReservationSite::FinalString,
+            "/(a)(b)/[Symbol.replace]('ab', replacementStorageCallback);",
+            "X",
+            1.0,
+        ),
+    ];
+    for (site, expression, expected, callback_calls_before_failure) in cases {
+        vm.run("replacementStorageCalls = 0;")
+            .expect("callback count should reset");
+        vm.fail_regexp_replacement_reservation = Some((site, 0));
+        let error = match vm.run(expression) {
+            Err(error) => error,
+            Ok(value) => panic!("{site:?} unexpectedly returned {value:?}"),
+        };
+        assert_eq!(error.kind, crate::error::ErrorKind::Range, "{site:?}");
+        assert_main_realm_range_error(&vm, error.as_ref());
+        assert_eq!(vm.fail_regexp_replacement_reservation, None, "{site:?}");
+        assert_eq!(
+            vm.get_global("replacementStorageCalls"),
+            Value::Number(callback_calls_before_failure),
+            "{site:?}"
+        );
+        assert_eq!(vm.gc_pins.len(), baseline_pins, "{site:?}");
+        drop(error);
+        vm.gc();
+        assert_eq!(vm.heap.live_count(), baseline_live, "{site:?}");
+        assert_eq!(
+            vm.run(expression)
+                .unwrap_or_else(|error| panic!("{site:?} retry failed: {error}")),
+            Value::String(expected.into()),
+            "{site:?}"
+        );
+    }
+
+    for site in [
+        RegExpReplacementReservationSite::CollectedResults,
+        RegExpReplacementReservationSite::ReplacerArguments,
+        RegExpReplacementReservationSite::FinalString,
+    ] {
+        vm.fail_regexp_replacement_reservation = Some((site, 0));
+        assert_eq!(
+            vm.run(
+                r#"
+                (function () {
+                  var error = replacementForeignCall(
+                    replacementForeignRegexp,
+                    replacementStorageCallback
+                  );
+                  return error instanceof replacementForeignRealm.RangeError &&
+                    !(error instanceof RangeError);
+                })();
+                "#,
+            )
+            .expect("foreign replacement failure should materialize"),
+            Value::Bool(true),
+            "{site:?}"
+        );
+        assert_eq!(vm.fail_regexp_replacement_reservation, None, "{site:?}");
+        assert_eq!(vm.gc_pins.len(), baseline_pins);
+    }
+
+    let bypass_cases = [
+        (
+            RegExpReplacementReservationSite::CollectedResults,
+            "/z/[Symbol.replace]('a', 'X');",
+            "a",
+        ),
+        (
+            RegExpReplacementReservationSite::InputUtf16Units,
+            "/a/[Symbol.replace]('ascii', 'X');",
+            "Xscii",
+        ),
+        (
+            RegExpReplacementReservationSite::Captures,
+            "/a/[Symbol.replace]('a', replacementStorageCallback);",
+            "X",
+        ),
+        (
+            RegExpReplacementReservationSite::ReplacerArguments,
+            "/a/[Symbol.replace]('a', 'X');",
+            "X",
+        ),
+        (
+            RegExpReplacementReservationSite::SubstitutionOutput,
+            "/a/[Symbol.replace]('a', replacementStorageCallback);",
+            "X",
+        ),
+        (
+            RegExpReplacementReservationSite::SubstitutionOutput,
+            "/(a)?b/[Symbol.replace]('b', '$1');",
+            "",
+        ),
+        (
+            RegExpReplacementReservationSite::FinalOutput,
+            "/(?:)/[Symbol.replace]('', '');",
+            "",
+        ),
+        (
+            RegExpReplacementReservationSite::FinalString,
+            "/(?:)/[Symbol.replace]('', '');",
+            "",
+        ),
+    ];
+    for (site, expression, expected) in bypass_cases {
+        vm.fail_regexp_replacement_reservation = Some((site, 0));
+        assert_eq!(
+            vm.run(expression)
+                .unwrap_or_else(|error| panic!("{site:?} bypass failed: {error}")),
+            Value::String(expected.into()),
+            "{site:?}"
+        );
+        assert_eq!(
+            vm.fail_regexp_replacement_reservation,
+            Some((site, 0)),
+            "{site:?}"
+        );
+        vm.fail_regexp_replacement_reservation = None;
+    }
+
+    let growth_paths = [
+        (
+            RegExpReplacementReservationSite::SubstitutionOutput,
+            "/a/[Symbol.replace]('a', '$$');",
+        ),
+        (
+            RegExpReplacementReservationSite::SubstitutionOutput,
+            "/b/[Symbol.replace]('ab', '$`');",
+        ),
+        (
+            RegExpReplacementReservationSite::SubstitutionOutput,
+            r#"/a/[Symbol.replace]('ab', "$'");"#,
+        ),
+        (
+            RegExpReplacementReservationSite::SubstitutionOutput,
+            "/a/[Symbol.replace]('a', '$&');",
+        ),
+        (
+            RegExpReplacementReservationSite::SubstitutionOutput,
+            "/(a)/[Symbol.replace]('a', '$1');",
+        ),
+        (
+            RegExpReplacementReservationSite::SubstitutionOutput,
+            "/(a)/[Symbol.replace]('a', '$2');",
+        ),
+        (
+            RegExpReplacementReservationSite::SubstitutionOutput,
+            "/(?<x>a)/[Symbol.replace]('a', '$<x>');",
+        ),
+        (
+            RegExpReplacementReservationSite::SubstitutionOutput,
+            "/a/[Symbol.replace]('a', '$<');",
+        ),
+        (
+            RegExpReplacementReservationSite::FinalOutput,
+            "/b/[Symbol.replace]('ab', function () { return ''; });",
+        ),
+        (
+            RegExpReplacementReservationSite::FinalOutput,
+            "/a/[Symbol.replace]('a', 'X');",
+        ),
+        (
+            RegExpReplacementReservationSite::FinalOutput,
+            "/a/[Symbol.replace]('ab', '');",
+        ),
+    ];
+    for (site, expression) in growth_paths {
+        vm.fail_regexp_replacement_reservation = Some((site, 0));
+        let error = match vm.run(expression) {
+            Err(error) => error,
+            Ok(value) => panic!("{site:?} growth path returned {value:?}"),
+        };
+        assert_eq!(error.kind, crate::error::ErrorKind::Range, "{expression}");
+        assert_eq!(vm.fail_regexp_replacement_reservation, None, "{expression}");
+        assert_eq!(vm.gc_pins.len(), baseline_pins, "{expression}");
+    }
+
+    vm.run(
+        r#"
+        var replacementInputEvents = [];
+        var replacementInputReceiver = {
+          get flags() { replacementInputEvents.push("flags"); return "g"; },
+          exec: function () { replacementInputEvents.push("exec"); return null; }
+        };
+        Object.defineProperty(replacementInputReceiver, "lastIndex", {
+          configurable: true,
+          get: function () { return 0; },
+          set: function () { replacementInputEvents.push("set"); }
+        });
+        "#,
+    )
+    .expect("input reservation ordering fixture should initialize");
+    vm.fail_regexp_replacement_reservation =
+        Some((RegExpReplacementReservationSite::InputUtf16Units, 0));
+    let error = vm
+        .run("RegExp.prototype[Symbol.replace].call(replacementInputReceiver, '\u{03A9}', 'X');")
+        .expect_err("non-ASCII input cache reservation should fail");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(
+        vm.run("replacementInputEvents.join(',');")
+            .expect("input reservation events should remain observable"),
+        Value::String("flags,set".into())
+    );
+
+    assert_eq!(
+        vm.run(
+            r#"
+            var replacementHugeIndexCalls = 0;
+            var replacementHugeIndexReceiver = {
+              flags: "g",
+              lastIndex: 0,
+              exec: function () {
+                replacementHugeIndexCalls += 1;
+                if (replacementHugeIndexCalls > 1) return null;
+                this.lastIndex = Number.MAX_SAFE_INTEGER;
+                return { 0: "", length: 1, index: 0, groups: undefined };
+              }
+            };
+            var replacementHugeIndexOutput = RegExp.prototype[Symbol.replace].call(
+              replacementHugeIndexReceiver,
+              "z",
+              "X"
+            );
+            [replacementHugeIndexOutput, replacementHugeIndexCalls,
+             replacementHugeIndexReceiver.lastIndex].join("|");
+            "#,
+        )
+        .expect("large empty-match lastIndex should advance without host overflow"),
+        Value::String("Xz|2|9007199254740992".into())
+    );
+
+    assert_eq!(
+        vm.run(
+            r#"
+            var replacementOverlapCalls = 0;
+            var replacementOverlapExecCalls = 0;
+            var replacementOverlapReceiver = {
+              flags: "g",
+              lastIndex: 0,
+              exec: function () {
+                replacementOverlapExecCalls += 1;
+                if (replacementOverlapExecCalls === 1) {
+                  return {
+                    0: "bc", length: 1, index: 1,
+                    groups: {
+                      get x() { replacementOverlapCalls += 1; return "FIRST"; }
+                    }
+                  };
+                }
+                if (replacementOverlapExecCalls === 2) {
+                  return {
+                    0: "a", length: 1, index: 0,
+                    groups: {
+                      get x() { replacementOverlapCalls += 1; return "SECOND"; }
+                    }
+                  };
+                }
+                return null;
+              }
+            };
+            var replacementOverlapOutput = RegExp.prototype[Symbol.replace].call(
+              replacementOverlapReceiver,
+              "abcd",
+              "$<x>"
+            );
+            [replacementOverlapOutput, replacementOverlapCalls].join("|");
+            "#,
+        )
+        .expect("overlapping substitutions must preserve named getter observation"),
+        Value::String("aFIRSTd|2".into())
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+}
+
+#[test]
+fn regexp_replacement_reservations_preserve_observable_step_order() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.run(
+        r#"
+        var replacementOrderEvents = [];
+        var replacementOrderResult = {
+          get length() { replacementOrderEvents.push("length"); return 2; },
+          get 0() { replacementOrderEvents.push("zero"); return "a"; },
+          get 1() { replacementOrderEvents.push("capture"); return "a"; },
+          get index() { replacementOrderEvents.push("index"); return 0; },
+          get groups() { replacementOrderEvents.push("groups"); return undefined; }
+        };
+        var replacementOrderReceiver = {
+          flags: "",
+          exec: function () { replacementOrderEvents.push("exec"); return replacementOrderResult; }
+        };
+        function replacementOrderCallback() {
+          replacementOrderEvents.push("callback");
+          return "X";
+        }
+        "#,
+    )
+    .expect("replacement ordering fixtures should initialize");
+    let receiver = vm.get_global("replacementOrderReceiver");
+    let callback = vm.get_global("replacementOrderCallback");
+
+    vm.fail_regexp_replacement_reservation =
+        Some((RegExpReplacementReservationSite::CollectedResults, 0));
+    crate::builtins::regexp::regexp_symbol_replace(
+        &mut vm,
+        &[Value::String("a".into()), callback.clone()],
+        Some(receiver.clone()),
+    )
+    .expect_err("result reservation should fail before result property access");
+    assert_eq!(
+        vm.run("replacementOrderEvents.join(',');")
+            .expect("result events should stringify"),
+        Value::String("exec".into())
+    );
+
+    vm.run("replacementOrderEvents.length = 0;")
+        .expect("events should reset");
+    vm.fail_regexp_replacement_reservation = Some((RegExpReplacementReservationSite::Captures, 0));
+    crate::builtins::regexp::regexp_symbol_replace(
+        &mut vm,
+        &[Value::String("a".into()), callback.clone()],
+        Some(receiver.clone()),
+    )
+    .expect_err("capture reservation should precede capture getters");
+    assert_eq!(
+        vm.run("replacementOrderEvents.join(',');")
+            .expect("capture events should stringify"),
+        Value::String("exec,length,zero,index".into())
+    );
+
+    vm.run(
+        r#"
+        replacementOrderEvents.length = 0;
+        var replacementOrderExecCount = 0;
+        replacementOrderReceiver.flags = "g";
+        replacementOrderReceiver.exec = function () {
+          replacementOrderExecCount += 1;
+          replacementOrderEvents.push("exec" + replacementOrderExecCount);
+          return replacementOrderExecCount === 1 ? replacementOrderResult : null;
+        };
+        "#,
+    )
+    .expect("global ordering fixture should reset");
+    vm.fail_regexp_replacement_reservation =
+        Some((RegExpReplacementReservationSite::ReplacerArguments, 0));
+    crate::builtins::regexp::regexp_symbol_replace(
+        &mut vm,
+        &[Value::String("a".into()), callback],
+        Some(receiver),
+    )
+    .expect_err("argument reservation should follow collection and groups");
+    assert_eq!(
+        vm.run("replacementOrderEvents.join(',');")
+            .expect("argument events should stringify"),
+        Value::String("exec1,zero,exec2,length,zero,index,capture,groups".into())
+    );
+
+    vm.run(
+        r#"
+        replacementOrderEvents.length = 0;
+        replacementOrderReceiver.flags = "";
+        replacementOrderResult = {
+          get length() { replacementOrderEvents.push("length"); return 1; },
+          get 0() { replacementOrderEvents.push("zero"); return "a"; },
+          get index() { replacementOrderEvents.push("index"); return 0; },
+          get groups() {
+            replacementOrderEvents.push("groups");
+            return {
+              get x() {
+                replacementOrderEvents.push("named");
+                return { toString: function () {
+                  replacementOrderEvents.push("string"); return "X";
+                } };
+              }
+            };
+          }
+        };
+        replacementOrderReceiver.exec = function () {
+          replacementOrderEvents.push("exec");
+          return replacementOrderResult;
+        };
+        "#,
+    )
+    .expect("named substitution fixture should reset");
+    vm.fail_regexp_replacement_reservation =
+        Some((RegExpReplacementReservationSite::SubstitutionOutput, 0));
+    vm.run("RegExp.prototype[Symbol.replace].call(replacementOrderReceiver, 'a', '$<x>');")
+        .expect_err("substitution reservation should follow named ToString");
+    assert_eq!(
+        vm.run("replacementOrderEvents.join(',');")
+            .expect("substitution events should stringify"),
+        Value::String("exec,length,zero,index,groups,named,string".into())
+    );
 }
 
 #[test]

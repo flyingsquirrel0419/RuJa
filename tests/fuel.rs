@@ -199,6 +199,44 @@ fn regexp_exec_materialization_has_an_exact_fuel_boundary() {
 }
 
 #[test]
+fn regexp_replacement_materialization_has_exact_fuel_boundaries() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        globalThis.replacementFuelInput = "ab".repeat(128);
+        globalThis.replacementFuelCallback = function (match, capture) {
+          return capture + match;
+        };
+        "#,
+    )
+    .expect("RegExp replacement fuel fixtures should initialize");
+
+    const BUDGET: i64 = 10_000_000;
+    for expression in [
+        r#"/(a)(b)/g[Symbol.replace](replacementFuelInput, "$2$1$`$&$'");"#,
+        r#"/(?<left>a)(b)/g[Symbol.replace](replacementFuelInput, "$<left>");"#,
+        "/(a)(b)/g[Symbol.replace](replacementFuelInput, replacementFuelCallback);",
+    ] {
+        vm.set_fuel(Some(BUDGET));
+        vm.run(expression)
+            .expect("a large fuel budget should finish RegExp replacement");
+        let required = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+        assert!(required > 128, "replacement native work must consume fuel");
+
+        vm.set_fuel(Some(required - 1));
+        let error = vm
+            .run(expression)
+            .expect_err("one unit below the measured boundary must fail");
+        assert_eq!(error.kind, ruja::ErrorKind::Fuel);
+
+        vm.set_fuel(Some(required));
+        vm.run(expression)
+            .expect("the exact measured replacement fuel boundary should succeed");
+        assert_eq!(vm.fuel_remaining(), Some(0));
+    }
+}
+
+#[test]
 fn regexp_named_group_hashing_consumes_name_length_fuel() {
     let mut vm = Vm::new().expect("failed to initialize VM");
     vm.run(

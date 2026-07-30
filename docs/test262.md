@@ -12693,6 +12693,53 @@ indices groups charge full key hashing.
 - 장점, 단점 및 영향: Native container failure is deterministic without changing Test262 admission, while broad RegExp output remains comparable to the prior baseline. This evidence does not claim fallible string payloads, compiler/backend metadata, replacement containers, matcher allocation, or legacy String paths.
 ```
 
+## RegExp replacement native-container boundary
+
+This hardening unit does not widen Test262 admission. JavaScript cannot force a
+Rust reservation failure, so direct VM tests own failure evidence and the
+unchanged replacement and complete RegExp scopes detect semantic drift.
+
+The reservation matrix covers non-ASCII input UTF-16 caching, collected
+results, captures, functional-replacer arguments, static-substitution scratch,
+final UTF-16 output, and exact UTF-8 decoding. Each actual-growth failure must
+produce the active Realm's `RangeError`, consume only its selected hook,
+restore pin depth and post-GC live count, and permit an immediate retry.
+Collected-result countdowns prove all `exec` calls precede callbacks and retain
+the last `lastIndex` side effect. Foreign-Realm probes cover early, callback
+argument, and final decoding failures.
+
+Conditional probes require ASCII input, zero captures, static replacement,
+functional replacement, and empty output to leave their unreachable hooks
+armed. An observable custom receiver proves flags access and global
+`lastIndex` assignment precede non-ASCII cache reservation, while `exec` does
+not. A second custom receiver sets an empty match's `lastIndex` to
+`Number.MAX_SAFE_INTEGER`; replacement terminates without host-width overflow.
+Overlapping backward matches still invoke both named-group getters but commit
+only the forward replacement. UTF-16 conversion parity covers empty, ASCII,
+BMP, astral, lone high/low surrogate, and sentinel-collision sequences.
+
+Template and functional-replacer Fuel regressions measure a successful
+128-match operation, require `required - 1` to fail non-catchably, and require
+the exact measured budget to finish at zero. Source scanning, copied UTF-16
+units, capture observation, callback argument publication, template delimiter
+search, final decoding, and actual reservation all occur inside that boundary.
+
+At pinned revision `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the direct
+`RegExp.prototype[Symbol.replace]` scope is **68 pass / 0 fail / 2 skip**.
+The complete `built-ins/RegExp` scope remains **1223 pass / 0 fail / 656
+skip**, the exact named-group boundary remains **86/0/0**, and its related
+scope remains **100 pass / 0 fail / 1 skip**. No admission rule changed.
+
+```text
+[Decision Log]
+- 목적과 의도: Prove failure ordering, cleanup, retry, UTF-16 behavior, and cooperative work bounds for the native containers owned by builtin @@replace without changing conformance policy.
+- 기존 구현 및 제약 조건: Existing RegExp Test262 passed but could not inject native OOM, exact Fuel boundaries were absent, repeated source slicing could be superlinear, and wasm32 could overflow after narrowing a large empty-match lastIndex.
+- 검토한 주요 대안: Rely on Test262 alone, force process OOM, add line-specific failpoints, broaden RegExp admission, test only final output, or combine runtime-wide JS-string/property-key allocation changes.
+- 선택한 방식: Use typed actual-growth failpoints and direct Realm/GC/order/retry assertions, exact dynamic Fuel boundaries, UTF-16 parity vectors, large-index custom exec, and unchanged focused plus complete RegExp corpus comparisons.
+- 다른 대안 대신 이 방식을 선택한 이유: Real OOM is unsafe and nondeterministic; Test262 cannot address host allocation; line-specific hooks mirror implementation details; policy changes are unrelated; final-output-only tests miss collection and callback ordering; common JS-string storage needs a separate cross-module design.
+- 장점, 단점 및 영향: Deterministic tests cover every owned growth phase and conditional bypass while broad corpus evidence guards semantics. ToString-created and final-result Arc publication, dynamic PropertyKey allocation, matcher/compiler storage, and legacy String paths remain explicitly outside this claim.
+```
+
 ## RegExp named-group exact admission
 
 Pinned Test262 has 86 independently executable `regexp-named-groups` paths

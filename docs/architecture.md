@@ -3543,6 +3543,49 @@ does not roll back an already specified `lastIndex` write.
 - 장점, 단점 및 영향: Every owned container failure is a Realm-correct catchable RangeError, pins and failed partial objects are collectible, duplicate property order and indices identity survive retry, and native work has an exact cooperative Fuel boundary. String/Arc payload allocation, capture-name/compiler metadata, backend capture conversion and input boundary tables, replacement containers, matcher/vendor allocation, and legacy String paths remain separate units.
 ```
 
+### RegExp replacement native-container boundary
+
+Builtin `RegExp.prototype[Symbol.replace]` owns seven variable native
+containers after observable input, replacement, and flags coercion: the
+non-ASCII input cache, collected result List, each capture List,
+functional-replacer arguments, static-substitution scratch, final UTF-16
+output, and the UTF-8 decode buffer.
+Each container consumes Fuel and uses checked `try_reserve_exact` growth before
+mutation. A typed test-only failpoint follows actual capacity growth, so it
+models production reservation rather than logical append count.
+
+After the required global `lastIndex = 0` write, input indexing uses one
+`RegExpUtf16Source`. ASCII input remains borrowed; non-ASCII input is encoded
+once into a fallibly reserved `Vec<u16>`. Empty-match advancement reads this
+source with checked `u64` arithmetic, while `$`` and `$'` slicing and final
+source copying use bounded ranges from the same representation. Replacement
+template parsing streams directly into reusable match-local UTF-16 scratch.
+A failed `$<name>` close-delimiter search is remembered, and successful
+searches advance past the delimiter, keeping parser search work linear in the
+template. Output is committed only after callback or named-capture observation,
+so backward-position matches retain their required effects without changing
+the result.
+
+Collected results reserve, pin, and append immediately after each successful
+`exec`, before global empty-match processing. All results remain rooted until
+replacement ends, preserving the specification's collect-before-callback
+contract. Existing string-valued input, match, capture, and callback returns
+remain shared as `Arc<str>` instead of being copied into temporary Rust
+`String` values, including every repeated `exec` argument. `ToString` of a
+non-string value may still allocate a new Arc payload. The final UTF-16 output
+uses an exact fallible UTF-8 byte reservation,
+including lone-surrogate sentinel parity, before publication.
+
+```text
+[Decision Log]
+- 목적과 의도: Make builtin replacement's owned native storage catchable and metered, while removing repeated UTF-16 scans and preserving every observable RegExp replacement ordering rule.
+- 기존 구현 및 제약 조건: Results, captures, callback arguments, substitutions, and output grew infallibly; source ranges rescanned UTF-8 from the beginning; empty-match advancement allocated a fresh UTF-16 vector and narrowed ToLength to usize; final UTF-16 decoding and callback string preparation copied through infallible buffers.
+- 검토한 주요 대안: Pre-reserve all storage at entry, retain per-slice conversion, build every string as owned UTF-16, publish partial output before callbacks, redesign all JS strings/property keys in the same patch, or isolate the containers directly owned by @@replace.
+- 선택한 방식: Preserve observable coercions and global lastIndex setup; borrow ASCII or fallibly cache non-ASCII input once; reserve each phase at its specification boundary; append substitutions and output as UTF-16; retain existing Arc strings; decode through one exact fallible String buffer; inject failures only at real growth.
+- 다른 대안 대신 이 방식을 선택한 이유: Entry reservation changes trap order and over-reserves paths never taken; repeated conversion is superlinear; universal UTF-16 ownership penalizes ASCII; partial output complicates abrupt completion; a runtime-wide JS-string/key allocator is too broad for one auditable unit. Phase ownership gives deterministic failure and retry evidence without claiming unrelated allocations.
+- 장점, 단점 및 영향: Replacement container failures are Realm-correct RangeErrors, Fuel has exact boundaries, pins and native temporaries unwind on every abrupt path, Unicode slicing is linear in copied output, and large lastIndex cannot overflow wasm32 usize. ToString-created and final-result Arc<str> publication, dynamic named-group PropertyKey allocation, error-message strings, compiler/backend metadata, vendor matcher storage, and legacy String builtin paths remain runtime-wide follow-ups rather than covered OOM guarantees.
+```
+
 ### RegExp named-group conformance ownership
 
 Named capture syntax and runtime behavior span parser early errors, matcher

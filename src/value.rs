@@ -2329,6 +2329,20 @@ pub fn utf16_from_str(s: &str) -> Vec<u16> {
     units
 }
 
+pub(crate) fn try_utf16_from_str(s: &str) -> Result<Vec<u16>, std::collections::TryReserveError> {
+    let mut units = Vec::new();
+    units.try_reserve_exact(utf16_len(s))?;
+    for ch in s.chars() {
+        if let Some(unit) = sentinel_to_surrogate(ch) {
+            units.push(unit);
+        } else {
+            let mut buf = [0; 2];
+            units.extend_from_slice(ch.encode_utf16(&mut buf));
+        }
+    }
+    Ok(units)
+}
+
 /// Decode an internal JS string into logical Unicode pattern symbols: valid
 /// surrogate pairs become one scalar and lone surrogates remain code points in
 /// the surrogate range.
@@ -2404,8 +2418,40 @@ pub(crate) fn utf16_to_scalar_string(s: &str) -> Result<String, std::string::Fro
 /// cannot directly represent them. Valid pairs whose scalar value collides with
 /// that sentinel range are kept as two sentinel-backed code units so later
 /// UTF-16 round trips preserve the original JS string length.
-pub fn utf16_to_string(units: &[u16]) -> String {
-    let mut out = String::new();
+fn decoded_utf16_byte_len(units: &[u16]) -> usize {
+    let mut bytes = 0usize;
+    let mut i = 0;
+    while i < units.len() {
+        let unit = units[i];
+        if (0xD800..=0xDBFF).contains(&unit) && i + 1 < units.len() {
+            let low = units[i + 1];
+            if (0xDC00..=0xDFFF).contains(&low) {
+                let cp = 0x10000 + (((unit as u32 - 0xD800) << 10) | (low as u32 - 0xDC00));
+                if (SURROGATE_SENTINEL_BASE..=SURROGATE_SENTINEL_BASE + 0x7FF).contains(&cp) {
+                    bytes = bytes.saturating_add(
+                        surrogate_to_sentinel(unit).len_utf8()
+                            + surrogate_to_sentinel(low).len_utf8(),
+                    );
+                    i += 2;
+                    continue;
+                } else if let Some(ch) = char::from_u32(cp) {
+                    bytes = bytes.saturating_add(ch.len_utf8());
+                    i += 2;
+                    continue;
+                }
+            }
+        }
+        if (0xD800..=0xDFFF).contains(&unit) {
+            bytes = bytes.saturating_add(surrogate_to_sentinel(unit).len_utf8());
+        } else if let Some(ch) = char::from_u32(unit as u32) {
+            bytes = bytes.saturating_add(ch.len_utf8());
+        }
+        i += 1;
+    }
+    bytes
+}
+
+fn append_decoded_utf16(out: &mut String, units: &[u16]) {
     let mut i = 0;
     while i < units.len() {
         let unit = units[i];
@@ -2432,6 +2478,20 @@ pub fn utf16_to_string(units: &[u16]) -> String {
         }
         i += 1;
     }
+}
+
+pub(crate) fn try_utf16_to_string(
+    units: &[u16],
+) -> Result<String, std::collections::TryReserveError> {
+    let mut out = String::new();
+    out.try_reserve_exact(decoded_utf16_byte_len(units))?;
+    append_decoded_utf16(&mut out, units);
+    Ok(out)
+}
+
+pub fn utf16_to_string(units: &[u16]) -> String {
+    let mut out = String::new();
+    append_decoded_utf16(&mut out, units);
     out
 }
 
@@ -2577,4 +2637,36 @@ pub fn utf16_last_index_of(s: &str, needle: &str, end: usize) -> Option<usize> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod utf16_fallible_tests {
+    use super::{decoded_utf16_byte_len, try_utf16_from_str, try_utf16_to_string, utf16_to_string};
+
+    #[test]
+    fn fallible_utf16_conversion_matches_canonical_conversion() {
+        let cases: &[&[u16]] = &[
+            &[],
+            &[b'a' as u16, b'b' as u16],
+            &[0x03A9],
+            &[0xD83D, 0xDE00],
+            &[0xD800],
+            &[0xDC00],
+            &[0xDB80, 0xDC00],
+            &[0xD800, b'x' as u16, 0xDC00, 0xD83D, 0xDE00],
+        ];
+
+        for units in cases {
+            let expected = utf16_to_string(units);
+            assert_eq!(decoded_utf16_byte_len(units), expected.len());
+            assert_eq!(
+                try_utf16_to_string(units).expect("small UTF-16 decode should reserve"),
+                expected
+            );
+            assert_eq!(
+                try_utf16_from_str(&expected).expect("small UTF-16 encode should reserve"),
+                *units
+            );
+        }
+    }
 }
