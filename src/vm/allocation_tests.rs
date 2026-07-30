@@ -7878,6 +7878,841 @@ fn regexp_symbol_replace_named_groups_obey_the_exact_heap_cap() {
 }
 
 #[test]
+fn regexp_core_root_reservation_failures_are_ordered_balanced_and_retryable() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("GC hook should register");
+    vm.run(
+        r#"
+        var regexpRootEvents = [];
+        var searchRootReceiver = {
+          lastIndex: { saved: true },
+          exec: function () { return { index: 3 }; }
+        };
+        var toStringRootReceiver = {
+          source: { toString: function () { return "s"; } },
+          get flags() {
+            regexpRootEvents.push("flags");
+            return { toString: function () { return "g"; } };
+          }
+        };
+        var matchRootReceiver = {
+          flags: {
+            toString: function () {
+              regexpRootEvents.push("match-flags-string");
+              return "";
+            }
+          },
+          exec: function () { return null; }
+        };
+        var replaceRootReceiver = {
+          flags: "",
+          exec: function () { return null; }
+        };
+        var replaceRootInput = {
+          toString: function () {
+            regexpRootEvents.push("replace-input");
+            return "a";
+          }
+        };
+        var replaceRootValue = {
+          toString: function () { return "x"; }
+        };
+        var splitRootReceiver = /,/;
+        var indicesRootReceiver = /(?<x>a)/d;
+        "#,
+    )
+    .expect("RegExp root fixtures should initialize");
+    let baseline_pins = vm.gc_pins.len();
+
+    let search_receiver = vm.get_global("searchRootReceiver");
+    vm.fail_next_gc_pin_reservation = true;
+    let error = crate::builtins::regexp::regexp_symbol_search(
+        &mut vm,
+        &[Value::String("abc".into())],
+        Some(search_receiver.clone()),
+    )
+    .expect_err("search lastIndex root reservation must remain catchable");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range, "{error}");
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(
+        crate::builtins::regexp::regexp_symbol_search(
+            &mut vm,
+            &[Value::String("abc".into())],
+            Some(search_receiver),
+        )
+        .expect("search should recover after reservation failure"),
+        Value::Number(3.0)
+    );
+
+    let to_string_receiver = vm.get_global("toStringRootReceiver");
+    vm.fail_next_gc_pin_reservation = true;
+    let error =
+        crate::builtins::regexp::regexp_to_string(&mut vm, &[], Some(to_string_receiver.clone()))
+            .expect_err("source root reservation must precede the flags getter");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(
+        vm.run("regexpRootEvents.join('|')")
+            .expect("RegExp root event log should remain readable"),
+        Value::String("".into())
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(
+        crate::builtins::regexp::regexp_to_string(&mut vm, &[], Some(to_string_receiver))
+            .expect("toString should recover after reservation failure"),
+        Value::String("/s/g".into())
+    );
+
+    vm.run("regexpRootEvents.length = 0")
+        .expect("RegExp root event log should reset");
+    let match_receiver = vm.get_global("matchRootReceiver");
+    vm.fail_next_gc_pin_reservation = true;
+    let error = crate::builtins::regexp::regexp_symbol_match(
+        &mut vm,
+        &[Value::String("a".into())],
+        Some(match_receiver.clone()),
+    )
+    .expect_err("flags root reservation must precede its coercion");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(
+        vm.run("regexpRootEvents.join('|')")
+            .expect("match event log should remain readable"),
+        Value::String("".into())
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(
+        crate::builtins::regexp::regexp_symbol_match(
+            &mut vm,
+            &[Value::String("a".into())],
+            Some(match_receiver),
+        )
+        .expect("match should recover after reservation failure"),
+        Value::Null
+    );
+
+    vm.run("regexpRootEvents.length = 0")
+        .expect("RegExp root event log should reset");
+    let replace_receiver = vm.get_global("replaceRootReceiver");
+    let replace_input = vm.get_global("replaceRootInput");
+    let replace_value = vm.get_global("replaceRootValue");
+    vm.fail_next_gc_pin_reservation = true;
+    let error = crate::builtins::regexp::regexp_symbol_replace(
+        &mut vm,
+        &[replace_input.clone(), replace_value.clone()],
+        Some(replace_receiver.clone()),
+    )
+    .expect_err("replace entry roots must reserve as one batch");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(
+        vm.run("regexpRootEvents.join('|')")
+            .expect("replace event log should remain readable"),
+        Value::String("".into())
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(
+        crate::builtins::regexp::regexp_symbol_replace(
+            &mut vm,
+            &[replace_input, replace_value],
+            Some(replace_receiver),
+        )
+        .expect("replace should recover after reservation failure"),
+        Value::String("a".into())
+    );
+
+    let split_receiver = vm.get_global("splitRootReceiver");
+    vm.fail_next_gc_pin_reservation = true;
+    let error = crate::builtins::regexp::regexp_symbol_split(
+        &mut vm,
+        &[Value::String("a,b".into())],
+        Some(split_receiver.clone()),
+    )
+    .expect_err("split receiver root reservation must remain catchable");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    crate::builtins::regexp::regexp_symbol_split(
+        &mut vm,
+        &[Value::String("a,b".into())],
+        Some(split_receiver),
+    )
+    .expect("split should recover after reservation failure");
+
+    let indices_receiver = vm.get_global("indicesRootReceiver");
+    for (countdown, label) in [
+        (None, "exec result"),
+        (Some(1), "groups object"),
+        (Some(2), "indices batch"),
+    ] {
+        match countdown {
+            Some(countdown) => vm.gc_pin_reservation_failure_countdown = Some(countdown),
+            None => vm.fail_next_gc_pin_reservation = true,
+        }
+        let completion = crate::builtins::regexp::regexp_exec(
+            &mut vm,
+            &[Value::String("a".into())],
+            Some(indices_receiver.clone()),
+        );
+        let error = match completion {
+            Ok(value) => panic!("{label} reservation unexpectedly returned {value:?}"),
+            Err(error) => error,
+        };
+        assert_eq!(error.kind, crate::error::ErrorKind::Range, "{label}");
+        assert_eq!(vm.gc_pins.len(), baseline_pins, "{label}");
+        assert!(!vm.fail_next_gc_pin_reservation, "{label}");
+        assert_eq!(vm.gc_pin_reservation_failure_countdown, None, "{label}");
+        vm.gc();
+    }
+    let result = crate::builtins::regexp::regexp_exec(
+        &mut vm,
+        &[Value::String("a".into())],
+        Some(indices_receiver),
+    )
+    .expect("indices exec should recover after every reservation failure");
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    let groups = vm
+        .get_property(&result, "groups")
+        .expect("groups result should exist");
+    assert_eq!(
+        vm.get_property(&groups, "x")
+            .expect("named group should survive retry"),
+        Value::String("a".into())
+    );
+    let indices = vm
+        .get_property(&result, "indices")
+        .expect("indices result should exist");
+    let indices_groups = vm
+        .get_property(&indices, "groups")
+        .expect("indices groups should exist");
+    assert!(matches!(
+        vm.get_property(&indices_groups, "x")
+            .expect("named index group should survive retry"),
+        Value::Object(_)
+    ));
+
+    assert_eq!(
+        vm.run(
+            r#"
+            var searchReads = 0;
+            var restoredPrevious = false;
+            var searchGcReceiver = {
+              get lastIndex() {
+                forceGc();
+                return searchReads++ === 0 ? { marker: 9 } : 0;
+              },
+              set lastIndex(value) {
+                forceGc();
+                if (typeof value === "object") restoredPrevious = value.marker === 9;
+              },
+              exec: function () {
+                forceGc();
+                return {
+                  get index() { forceGc(); return 7; }
+                };
+              }
+            };
+            var searchGcResult = RegExp.prototype[Symbol.search].call(
+              searchGcReceiver, "x"
+            );
+
+            var toStringGcReceiver = {
+              get source() {
+                forceGc();
+                return {
+                  toString: function () { forceGc(); return "s"; }
+                };
+              },
+              get flags() {
+                forceGc();
+                return {
+                  toString: function () { forceGc(); return "g"; }
+                };
+              }
+            };
+            var toStringGcResult = RegExp.prototype.toString.call(toStringGcReceiver);
+
+            var matchCalls = 0;
+            var matchGcReceiver = {
+              lastIndex: 0,
+              get flags() {
+                forceGc();
+                return {
+                  toString: function () { forceGc(); return "g"; }
+                };
+              },
+              exec: function () {
+                forceGc();
+                if (matchCalls++ !== 0) return null;
+                return {
+                  get 0() {
+                    forceGc();
+                    return {
+                      toString: function () { forceGc(); return "a"; }
+                    };
+                  }
+                };
+              }
+            };
+            var matchGcResult = RegExp.prototype[Symbol.match].call(
+              matchGcReceiver, "a"
+            );
+            [
+              searchGcResult,
+              restoredPrevious,
+              toStringGcResult,
+              matchGcResult.join("|")
+            ].join(";");
+            "#,
+        )
+        .expect("RegExp fresh intermediates should survive every observable GC"),
+        Value::String("7;true;/s/g;a".into())
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+}
+
+fn sweep_regexp_root_reservations<F, G>(
+    vm: &mut Vm,
+    label: &str,
+    minimum_failures: usize,
+    operation: F,
+    validate: G,
+) where
+    F: FnMut(&mut Vm) -> crate::error::Result<Value>,
+    G: FnMut(&mut Vm, &Value),
+{
+    sweep_regexp_root_reservations_with_prepare(
+        vm,
+        label,
+        minimum_failures,
+        |_| {},
+        operation,
+        validate,
+    );
+}
+
+fn sweep_regexp_root_reservations_with_prepare<P, F, G>(
+    vm: &mut Vm,
+    label: &str,
+    minimum_failures: usize,
+    mut prepare: P,
+    mut operation: F,
+    mut validate: G,
+) where
+    P: FnMut(&mut Vm),
+    F: FnMut(&mut Vm) -> crate::error::Result<Value>,
+    G: FnMut(&mut Vm, &Value),
+{
+    let baseline_pins = vm.gc_pins.len();
+    for countdown in 0..256usize {
+        prepare(vm);
+        vm.gc_pin_reservation_failure_countdown = Some(countdown);
+        match operation(vm) {
+            Err(error) => {
+                assert_eq!(error.kind, crate::error::ErrorKind::Range, "{label}");
+                assert_eq!(vm.gc_pin_reservation_failure_countdown, None, "{label}");
+                assert_eq!(vm.gc_pins.len(), baseline_pins, "{label}");
+                vm.gc();
+            }
+            Ok(value) => {
+                vm.gc_pin_reservation_failure_countdown = None;
+                assert!(
+                    countdown >= minimum_failures,
+                    "{label} reached success after only {countdown} reservations"
+                );
+                assert_eq!(vm.gc_pins.len(), baseline_pins, "{label}");
+                validate(vm, &value);
+                return;
+            }
+        }
+    }
+    panic!("{label} did not complete within the reservation sweep bound");
+}
+
+#[test]
+fn regexp_core_nested_root_reservations_unwind_at_every_reachable_site() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "armRegexpRootReservation",
+        |vm, _, _| {
+            vm.gc_pin_reservation_failure_countdown = Some(1);
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("RegExp root failure hook should register");
+    vm.run(
+        r#"
+        var sweepToString = {
+          source: { toString: function () { return "a"; } },
+          flags: { toString: function () { return "g"; } }
+        };
+        var sweepSearch = /a/;
+        var sweepMatch = /a/g;
+        var sweepMatchAll = /a/g;
+        var sweepSplit = /,/;
+        var sweepReplace = /(?<x>a)/g;
+        var sweepExec = /(?<x>a)/d;
+
+        var genericConstructorPattern = {
+          [Symbol.match]: true,
+          get source() {
+            return { toString: function () { return "a"; } };
+          },
+          get flags() {
+            return { toString: function () { return "g"; } };
+          }
+        };
+
+        var genericMatchCalls = 0;
+        var genericMatchLastIndex = 0;
+        var genericMatchReceiver = {
+          get flags() {
+            return { toString: function () { return "g"; } };
+          },
+          get lastIndex() {
+            return { valueOf: function () { return genericMatchLastIndex; } };
+          },
+          set lastIndex(value) { genericMatchLastIndex = value; },
+          exec: function () {
+            if (genericMatchCalls++ !== 0) return null;
+            return {
+              get 0() {
+                return { toString: function () { return ""; } };
+              }
+            };
+          }
+        };
+
+        var genericIteratorCalls = 0;
+        var genericIteratorLastIndex = 0;
+        function GenericMatchAllSpecies() {
+          return {
+            get lastIndex() {
+              return {
+                valueOf: function () { return genericIteratorLastIndex; }
+              };
+            },
+            set lastIndex(value) { genericIteratorLastIndex = value; },
+            exec: function () {
+              if (genericIteratorCalls++ !== 0) return null;
+              return {
+                get 0() {
+                  return { toString: function () { return ""; } };
+                }
+              };
+            }
+          };
+        }
+        var genericMatchAllReceiver = {
+          constructor: { [Symbol.species]: GenericMatchAllSpecies },
+          get flags() {
+            return { toString: function () { return "g"; } };
+          },
+          get lastIndex() {
+            return { valueOf: function () { return 0; } };
+          }
+        };
+
+        var genericSplitDone = false;
+        var genericSplitLastIndex = 0;
+        function GenericSplitSpecies() {
+          return {
+            get lastIndex() {
+              return {
+                valueOf: function () { return genericSplitLastIndex; }
+              };
+            },
+            set lastIndex(value) { genericSplitLastIndex = value; },
+            exec: function () {
+              if (genericSplitDone) return null;
+              genericSplitDone = true;
+              genericSplitLastIndex = 1;
+              return {
+                0: "a",
+                get length() {
+                  return { valueOf: function () { return 2; } };
+                },
+                get 1() { return { capture: true }; }
+              };
+            }
+          };
+        }
+        var genericSplitReceiver = {
+          constructor: { [Symbol.species]: GenericSplitSpecies },
+          get flags() {
+            return { toString: function () { return ""; } };
+          }
+        };
+
+        var genericReplaceCalls = 0;
+        var genericReplaceLastIndex = 0;
+        var genericReplaceReceiver = {
+          get flags() {
+            return { toString: function () { return "g"; } };
+          },
+          get lastIndex() {
+            return { valueOf: function () { return genericReplaceLastIndex; } };
+          },
+          set lastIndex(value) { genericReplaceLastIndex = value; },
+          exec: function () {
+            if (genericReplaceCalls++ !== 0) return null;
+            return {
+              get 0() {
+                return { toString: function () { return ""; } };
+              },
+              get length() {
+                return { valueOf: function () { return 2; } };
+              },
+              get 1() {
+                return { toString: function () { return "capture"; } };
+              },
+              get index() {
+                return { valueOf: function () { return 0; } };
+              },
+              get groups() { return { name: "named" }; }
+            };
+          }
+        };
+        function genericReplaceCallback() { return "x"; }
+        "#,
+    )
+    .expect("RegExp sweep fixtures should initialize");
+
+    sweep_regexp_root_reservations(
+        &mut vm,
+        "constructor",
+        2,
+        |vm| vm.run("new RegExp('a', 'g')"),
+        |vm, value| {
+            assert_eq!(
+                vm.get_property(value, "source")
+                    .expect("constructed RegExp should expose source"),
+                Value::String("a".into())
+            );
+        },
+    );
+    sweep_regexp_root_reservations(
+        &mut vm,
+        "generic constructor",
+        4,
+        |vm| vm.run("new RegExp(genericConstructorPattern)"),
+        |vm, value| {
+            assert_eq!(
+                vm.get_property(value, "flags")
+                    .expect("generic constructed RegExp should expose flags"),
+                Value::String("g".into())
+            );
+        },
+    );
+
+    let to_string = vm.get_global("sweepToString");
+    sweep_regexp_root_reservations(
+        &mut vm,
+        "toString",
+        2,
+        |vm| crate::builtins::regexp::regexp_to_string(vm, &[], Some(to_string.clone())),
+        |_vm, value| assert_eq!(value, &Value::String("/a/g".into())),
+    );
+
+    let search = vm.get_global("sweepSearch");
+    sweep_regexp_root_reservations(
+        &mut vm,
+        "search",
+        1,
+        |vm| {
+            crate::builtins::regexp::regexp_symbol_search(
+                vm,
+                &[Value::String("a".into())],
+                Some(search.clone()),
+            )
+        },
+        |_vm, value| assert_eq!(value, &Value::Number(0.0)),
+    );
+
+    let matched = vm.get_global("sweepMatch");
+    sweep_regexp_root_reservations(
+        &mut vm,
+        "match",
+        2,
+        |vm| {
+            crate::builtins::regexp::regexp_symbol_match(
+                vm,
+                &[Value::String("a".into())],
+                Some(matched.clone()),
+            )
+        },
+        |vm, value| {
+            assert_eq!(
+                vm.get_property(value, "0")
+                    .expect("match sweep result should expose its first item"),
+                Value::String("a".into())
+            );
+        },
+    );
+    let generic_match = vm.get_global("genericMatchReceiver");
+    sweep_regexp_root_reservations_with_prepare(
+        &mut vm,
+        "generic match",
+        4,
+        |vm| {
+            vm.run("genericMatchCalls = 0; genericMatchLastIndex = 0;")
+                .expect("generic match sweep should reset");
+        },
+        |vm| {
+            crate::builtins::regexp::regexp_symbol_match(
+                vm,
+                &[Value::String("a".into())],
+                Some(generic_match.clone()),
+            )
+        },
+        |vm, value| {
+            assert_eq!(
+                vm.get_property(value, "0")
+                    .expect("generic match should expose its empty item"),
+                Value::String("".into())
+            );
+        },
+    );
+
+    let match_all = vm.get_global("sweepMatchAll");
+    sweep_regexp_root_reservations(
+        &mut vm,
+        "matchAll",
+        2,
+        |vm| {
+            crate::builtins::regexp::regexp_symbol_match_all(
+                vm,
+                &[Value::String("a".into())],
+                Some(match_all.clone()),
+            )
+        },
+        |_vm, value| assert!(matches!(value, Value::Object(_))),
+    );
+    let generic_match_all = vm.get_global("genericMatchAllReceiver");
+    sweep_regexp_root_reservations_with_prepare(
+        &mut vm,
+        "generic matchAll",
+        5,
+        |vm| {
+            vm.run("genericIteratorCalls = 0; genericIteratorLastIndex = 0;")
+                .expect("generic matchAll sweep should reset");
+        },
+        |vm| {
+            crate::builtins::regexp::regexp_symbol_match_all(
+                vm,
+                &[Value::String("a".into())],
+                Some(generic_match_all.clone()),
+            )
+        },
+        |_vm, value| assert!(matches!(value, Value::Object(_))),
+    );
+
+    let split = vm.get_global("sweepSplit");
+    sweep_regexp_root_reservations(
+        &mut vm,
+        "split",
+        5,
+        |vm| {
+            crate::builtins::regexp::regexp_symbol_split(
+                vm,
+                &[Value::String("a,b".into())],
+                Some(split.clone()),
+            )
+        },
+        |vm, value| {
+            assert_eq!(
+                vm.get_property(value, "0")
+                    .expect("split sweep result should expose its first item"),
+                Value::String("a".into())
+            );
+            assert_eq!(
+                vm.get_property(value, "1")
+                    .expect("split sweep result should expose its second item"),
+                Value::String("b".into())
+            );
+        },
+    );
+    let generic_split = vm.get_global("genericSplitReceiver");
+    sweep_regexp_root_reservations_with_prepare(
+        &mut vm,
+        "generic split",
+        8,
+        |vm| {
+            vm.run("genericSplitDone = false; genericSplitLastIndex = 0;")
+                .expect("generic split sweep should reset");
+        },
+        |vm| {
+            crate::builtins::regexp::regexp_symbol_split(
+                vm,
+                &[Value::String("a".into())],
+                Some(generic_split.clone()),
+            )
+        },
+        |vm, value| {
+            assert_eq!(
+                vm.get_property(value, "length")
+                    .expect("generic split should expose result length"),
+                Value::Number(3.0)
+            );
+            assert!(matches!(
+                vm.get_property(value, "1")
+                    .expect("generic split should retain object capture"),
+                Value::Object(_)
+            ));
+        },
+    );
+
+    let replace = vm.get_global("sweepReplace");
+    sweep_regexp_root_reservations(
+        &mut vm,
+        "replace",
+        6,
+        |vm| {
+            crate::builtins::regexp::regexp_symbol_replace(
+                vm,
+                &[Value::String("aa".into()), Value::String("$<x>".into())],
+                Some(replace.clone()),
+            )
+        },
+        |_vm, value| assert_eq!(value, &Value::String("aa".into())),
+    );
+    let generic_replace = vm.get_global("genericReplaceReceiver");
+    let generic_replace_callback = vm.get_global("genericReplaceCallback");
+    sweep_regexp_root_reservations_with_prepare(
+        &mut vm,
+        "generic functional replace",
+        10,
+        |vm| {
+            vm.run("genericReplaceCalls = 0; genericReplaceLastIndex = 0;")
+                .expect("generic replace sweep should reset");
+        },
+        |vm| {
+            crate::builtins::regexp::regexp_symbol_replace(
+                vm,
+                &[Value::String("a".into()), generic_replace_callback.clone()],
+                Some(generic_replace.clone()),
+            )
+        },
+        |_vm, value| assert_eq!(value, &Value::String("xa".into())),
+    );
+
+    let exec = vm.get_global("sweepExec");
+    sweep_regexp_root_reservations(
+        &mut vm,
+        "exec",
+        3,
+        |vm| {
+            crate::builtins::regexp::regexp_exec(
+                vm,
+                &[Value::String("a".into())],
+                Some(exec.clone()),
+            )
+        },
+        |vm, value| {
+            let groups = vm
+                .get_property(value, "groups")
+                .expect("exec sweep result should expose groups");
+            assert_eq!(
+                vm.get_property(&groups, "x")
+                    .expect("exec sweep result should expose named capture"),
+                Value::String("a".into())
+            );
+            assert!(matches!(
+                vm.get_property(value, "indices")
+                    .expect("exec sweep result should expose indices"),
+                Value::Object(_)
+            ));
+        },
+    );
+
+    let baseline_pins = vm.gc_pins.len();
+    for countdown in 0..256usize {
+        vm.run("genericIteratorCalls = 0; genericIteratorLastIndex = 0;")
+            .expect("generic iterator sweep should reset");
+        let iterator = crate::builtins::regexp::regexp_symbol_match_all(
+            &mut vm,
+            &[Value::String("a".into())],
+            Some(generic_match_all.clone()),
+        )
+        .expect("iterator sweep setup should succeed");
+        let next = vm
+            .get_property(&iterator, "next")
+            .expect("RegExp iterator should expose next");
+        vm.gc_pin_reservation_failure_countdown = Some(countdown);
+        match vm.call_function(&next, &[], Some(iterator)) {
+            Err(error) => {
+                assert_eq!(error.kind, crate::error::ErrorKind::Range, "iterator next");
+                assert_eq!(vm.gc_pins.len(), baseline_pins, "iterator next");
+                assert_eq!(
+                    vm.gc_pin_reservation_failure_countdown, None,
+                    "iterator next"
+                );
+                vm.gc();
+            }
+            Ok(result) => {
+                vm.gc_pin_reservation_failure_countdown = None;
+                assert!(
+                    countdown >= 2,
+                    "iterator next reached success after only {countdown} reservations"
+                );
+                assert_eq!(vm.gc_pins.len(), baseline_pins, "iterator next");
+                assert_eq!(
+                    vm.get_property(&result, "done")
+                        .expect("iterator result should expose done"),
+                    Value::Bool(false)
+                );
+                break;
+            }
+        }
+        if countdown == 255 {
+            panic!("iterator next did not complete within the reservation sweep bound");
+        }
+    }
+
+    assert_eq!(
+        vm.run(
+            r#"
+            var regexpRootRealm = $262.createRealm().global;
+            regexpRootRealm.armRegexpRootReservation = armRegexpRootReservation;
+            regexpRootRealm.regexpRootEvents = [];
+            var foreignRootToString = regexpRootRealm.eval(`({
+              source: "a",
+              get flags() {
+                regexpRootEvents.push("flags");
+                armRegexpRootReservation();
+                return {
+                  toString() {
+                    regexpRootEvents.push("coerce");
+                    return "g";
+                  }
+                };
+              }
+            })`);
+            try {
+              regexpRootRealm.RegExp.prototype.toString.call(foreignRootToString);
+              "no-error";
+            } catch (error) {
+              [
+                error instanceof regexpRootRealm.RangeError,
+                error instanceof RangeError,
+                regexpRootRealm.regexpRootEvents.join(",")
+              ].join("|");
+            }
+            "#,
+        )
+        .expect("foreign RegExp root failure should remain catchable"),
+        Value::String("true|false|flags".into())
+    );
+    assert_eq!(vm.gc_pin_reservation_failure_countdown, None);
+    assert_eq!(vm.gc_pins.len(), baseline_pins, "foreign toString");
+}
+
+#[test]
 fn regexp_constructor_roots_intermediates_across_observable_gc() {
     let mut vm = Vm::new().expect("VM should initialize");
     vm.register_fn(

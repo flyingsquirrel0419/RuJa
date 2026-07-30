@@ -131,6 +131,11 @@ The following resource limits are enforced:
   Named-capture preprocessing is separately capped at 1,024 named groups, 64
   duplicates per name, 65,536 stored path segments, 1,000,000 comparison
   units, and 16,384 duplicate-backreference alternatives.
+  Temporary RegExp GC roots reserve fallibly before publication, including one
+  exact preflight for all match-indices pair/group roots. Capture boundary,
+  capture-name, groups-property, replacement-result, and compiled-matcher
+  native containers are still outside the heap-object cap; their remaining
+  fallible growth and matcher caching are separate resource-hardening work.
   Direct repeated global `RegExp.prototype.exec`
   still prepares the logical input from its current `lastIndex` on each call;
   hosts should set VM fuel or an external deadline for very large manual exec

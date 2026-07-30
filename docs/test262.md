@@ -12624,6 +12624,32 @@ supportedValuesOf boundary.
 - 장점, 단점 및 영향: Supported policy now matches real constructor, option, comparison, Realm, and String integration behavior. One visible skip remains and will become executable when NumberFormat and DateTimeFormat land.
 ```
 
+## RegExp temporary-root failure boundary
+
+RegExp conformance files exercise extensive getter, custom-exec, replacement,
+Realm, groups, and indices ordering, but ordinary Test262 cannot deterministically
+exhaust the host vector that stores temporary GC roots. Direct VM regressions
+therefore complement the unchanged exact Test262 policies.
+
+The root-reservation sweep retries constructor, `toString`, search, match,
+matchAll, split, replacement, builtin exec, match indices, and RegExp iterator
+`next` with failure countdowns from zero through the final reachable root
+publication. Every injected failure must be a catchable `RangeError`, consume
+the selected failpoint, restore the baseline pin depth, and permit an exact
+successful retry. Separate fresh-object probes force GC in later getters,
+setters, coercions, custom exec functions, and capture accessors to prove the
+new semantic roots are live rather than only reservation-safe.
+
+```text
+[Decision Log]
+- 목적과 의도: Verify RegExp host-resource and GC invariants that deterministic conformance tests cannot trigger.
+- 기존 구현 및 제약 조건: Passing Test262 covered observable order but not native root-vector allocation failure; first-site-only failpoints could miss leaks at nested result, groups, pair, iterator, and replacement reservations.
+- 검토한 주요 대안: Rely on broad tests, test only the entry reservation, add one failpoint per source line, force a real OOM, or sweep the shared reservation countdown across complete operations.
+- 선택한 방식: Sweep every reachable reservation until success for each operation, assert pin balance after each failure, and pair that with forced-GC fresh-intermediate behavior tests.
+- 다른 대안 대신 이 방식을 선택한 이유: Broad tests and one-site probes provide weak negative evidence; line-specific failpoints duplicate implementation structure; real OOM is nondeterministic and unsafe. Countdown sweeps cover changing nested call graphs while retaining exact cleanup assertions.
+- 장점, 단점 및 영향: Later-site leaks and partial indices publication become deterministic regressions without changing Test262 admission. The sweep is internal VM evidence and does not claim matcher-cache or native-container fallibility.
+```
+
 ## RegExp named-group exact admission
 
 Pinned Test262 has 86 independently executable `regexp-named-groups` paths

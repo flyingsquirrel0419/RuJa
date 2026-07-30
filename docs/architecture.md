@@ -3483,6 +3483,33 @@ allocate, so cleanup is postponed rather than causing a host OOM path.
 
 ---
 
+### RegExp temporary-root publication
+
+RegExp methods retain values returned by observable getters, custom `exec`,
+constructors, and coercions while later calls may collect the heap. Every such
+value is now published through a RegExp-local fallible pin helper: it counts
+all GC roots represented by the value, reserves the complete batch, and only
+then appends indices to the VM root stack. Multi-value entry and initialization
+batches reserve atomically. Values observed one at a time reserve immediately
+after the observable operation, preserving specification ordering.
+
+Match-indices knows its future object count before nested materialization. It
+reserves one root for every participating pair plus one optional groups object
+before allocating the first pair. Existing raw pins in that loop therefore
+cannot grow the root vector or fail halfway through publication. Outer cleanup
+boundaries release all earlier roots when a later reservation, getter,
+coercion, allocation, or callback fails.
+
+```text
+[Decision Log]
+- 목적과 의도: Prevent host allocation aborts and stale heap identities when RegExp methods retain temporary objects across observable re-entry.
+- 기존 구현 및 제약 조건: RegExp used infallible gc_pins growth at dozens of sites; search, match, and toString also left fresh lastIndex, exec-result, flags, source, and capture values unrooted across later getters or coercions. Reservation must not move ahead of observable specification steps.
+- 검토한 주요 대안: Rely on native call frames, reserve one large entry batch for each method, make pin globally fallible, catch allocator panic, or add local exact reservation immediately before every RegExp publication.
+- 선택한 방식: Use single-value and atomic multi-value RegExp pin helpers, retain existing cleanup scopes, add missing semantic roots, and preflight the statically known indices pair/groups batch before nested allocation.
+- 다른 대안 대신 이 방식을 선택한 이유: Native Rust locals are not GC roots; entry-wide reservation changes getter ordering and over-reserves attacker-controlled paths; a global pin API migration is a separate cross-module unit; panic recovery cannot restore allocator or VM invariants. Local post-observation reservation preserves behavior and bounds this change.
+- 장점, 단점 및 영향: Root growth failure is a catchable RangeError, every prior pin is released, fresh intermediates survive forced GC, and retry remains possible without rolling back earlier observable side effects. Native capture/name/property containers and repeated matcher compilation remain separate hardening work.
+```
+
 ### RegExp named-group conformance ownership
 
 Named capture syntax and runtime behavior span parser early errors, matcher

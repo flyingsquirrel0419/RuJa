@@ -90,22 +90,22 @@ pub(crate) fn regexp_constructor(
             } else {
                 supplied_flags.clone()
             };
-            pin_count += vm.pin(&pattern_source);
-            pin_count += vm.pin(&flags);
+            pin_count += regexp_try_pin_value(vm, &pattern_source)?;
+            pin_count += regexp_try_pin_value(vm, &flags)?;
             (pattern_source, flags)
         } else if pattern_is_regexp {
             let pattern_source = vm.get_property(&pattern, "source")?;
-            pin_count += vm.pin(&pattern_source);
+            pin_count += regexp_try_pin_value(vm, &pattern_source)?;
             let flags = if supplied_flags.is_undefined() {
                 vm.get_property(&pattern, "flags")?
             } else {
                 supplied_flags.clone()
             };
-            pin_count += vm.pin(&flags);
+            pin_count += regexp_try_pin_value(vm, &flags)?;
             (pattern_source, flags)
         } else {
-            pin_count += vm.pin(&pattern);
-            pin_count += vm.pin(&supplied_flags);
+            pin_count += regexp_try_pin_value(vm, &pattern)?;
+            pin_count += regexp_try_pin_value(vm, &supplied_flags)?;
             (pattern.clone(), supplied_flags.clone())
         };
 
@@ -190,7 +190,7 @@ fn regexp_alloc(vm: &mut Vm, proto: Value) -> error::Result<Value> {
         regexp_internal_slot_key(REGEXP_MATCHER_SLOT),
         crate::value::PrivateSlot::Value(Value::Bool(true)),
     )]);
-    let pin_count = vm.pin(&proto);
+    let pin_count = regexp_try_pin_value(vm, &proto)?;
     let result = vm
         .alloc(HeapObj::Object(crate::value::ObjectData {
             props: Mutex::new(props),
@@ -211,7 +211,7 @@ fn regexp_initialize(
     pattern: Value,
     flags: Value,
 ) -> error::Result<Value> {
-    let pin_count = vm.pin_many(&[object.clone(), pattern.clone(), flags.clone()]);
+    let pin_count = regexp_try_pin_values(vm, &[object.clone(), pattern.clone(), flags.clone()])?;
     let result = (|| {
         let pattern = if pattern.is_undefined() {
             String::new()
@@ -314,18 +314,28 @@ pub(crate) fn regexp_symbol_search(
         .to_string(args.first().unwrap_or(&Value::Undefined))?
         .to_string();
     let previous_last_index = vm.get_property(&rx, "lastIndex")?;
-    if !same_value(&previous_last_index, &Value::Number(0.0)) {
-        vm.set_property_strict(&rx, "lastIndex", Value::Number(0.0))?;
-    }
-    let result = regexp_exec_dispatch(vm, &rx, &s)?;
-    let current_last_index = vm.get_property(&rx, "lastIndex")?;
-    if !same_value(&current_last_index, &previous_last_index) {
-        vm.set_property_strict(&rx, "lastIndex", previous_last_index)?;
-    }
-    if result.is_null() {
-        return Ok(Value::Number(-1.0));
-    }
-    vm.get_property(&result, "index")
+    let previous_pin = regexp_try_pin_value(vm, &previous_last_index)?;
+    let completion = (|| {
+        if !same_value(&previous_last_index, &Value::Number(0.0)) {
+            vm.set_property_strict(&rx, "lastIndex", Value::Number(0.0))?;
+        }
+        let result = regexp_exec_dispatch(vm, &rx, &s)?;
+        let result_pin = regexp_try_pin_value(vm, &result)?;
+        let completion = (|| {
+            let current_last_index = vm.get_property(&rx, "lastIndex")?;
+            if !same_value(&current_last_index, &previous_last_index) {
+                vm.set_property_strict(&rx, "lastIndex", previous_last_index.clone())?;
+            }
+            if result.is_null() {
+                return Ok(Value::Number(-1.0));
+            }
+            vm.get_property(&result, "index")
+        })();
+        vm.unpin_many(result_pin);
+        completion
+    })();
+    vm.unpin_many(previous_pin);
+    completion
 }
 
 pub(crate) fn regexp_symbol_match(
@@ -340,7 +350,7 @@ pub(crate) fn regexp_symbol_match(
         .to_string(args.first().unwrap_or(&Value::Undefined))?
         .to_string();
     let flags_value = vm.get_property(&rx, "flags")?;
-    let flags = vm.to_string(&flags_value)?.to_string();
+    let flags = regexp_rooted_to_string(vm, &flags_value)?;
     let global = flags.contains('g');
     if !global {
         return regexp_exec_dispatch(vm, &rx, &s);
@@ -369,14 +379,22 @@ pub(crate) fn regexp_symbol_match(
             }
             return make_value_array(vm, matches);
         }
-        let matched_value = vm.get_property(&result, "0")?;
-        let matched = vm.to_string(&matched_value)?.to_string();
-        if matched.is_empty() {
-            let last_index = vm.get_property(&rx, "lastIndex")?;
-            let this_index = regexp_to_length(vm, &last_index)? as usize;
-            let next_index = advance_string_index(&s, this_index, full_unicode);
-            set_regexp_last_index(vm, &rx, next_index as f64)?;
-        }
+        let result_pin = regexp_try_pin_value(vm, &result)?;
+        let matched: error::Result<String> = (|| {
+            let matched_value = vm.get_property(&result, "0")?;
+            let matched = regexp_rooted_to_string(vm, &matched_value)?;
+            if matched.is_empty() {
+                let last_index = vm.get_property(&rx, "lastIndex")?;
+                let last_index_pin = regexp_try_pin_value(vm, &last_index)?;
+                let this_index = regexp_to_length(vm, &last_index);
+                vm.unpin_many(last_index_pin);
+                let next_index = advance_string_index(&s, this_index? as usize, full_unicode);
+                set_regexp_last_index(vm, &rx, next_index as f64)?;
+            }
+            Ok(matched)
+        })();
+        vm.unpin_many(result_pin);
+        let matched = matched?;
         matches.push(Value::String(Arc::from(matched.as_str())));
     }
 }
@@ -442,19 +460,19 @@ pub(crate) fn regexp_symbol_match_all(
         .to_string();
     let default_constructor = vm.current_realm_regexp_constructor();
     let constructor = regexp_species_constructor(vm, &rx, default_constructor)?;
-    let mut pin_count = vm.pin(&constructor);
+    let mut pin_count = regexp_try_pin_value(vm, &constructor)?;
     let result = (|| {
         let flags_value = vm.get_property(&rx, "flags")?;
-        pin_count += vm.pin(&flags_value);
+        pin_count += regexp_try_pin_value(vm, &flags_value)?;
         let flags = vm.to_string(&flags_value)?.to_string();
 
         let matcher = vm.construct(
             &constructor,
             &[rx.clone(), Value::String(Arc::from(flags.as_str()))],
         )?;
-        pin_count += vm.pin(&matcher);
+        pin_count += regexp_try_pin_value(vm, &matcher)?;
         let last_index_value = vm.get_property(&rx, "lastIndex")?;
-        pin_count += vm.pin(&last_index_value);
+        pin_count += regexp_try_pin_value(vm, &last_index_value)?;
         let last_index = regexp_to_length(vm, &last_index_value)?;
         set_regexp_last_index(vm, &matcher, last_index)?;
         let global = flags.contains('g');
@@ -474,17 +492,17 @@ pub(crate) fn regexp_symbol_split(
         return Err(Error::type_err("RegExp method called on non-object"));
     };
 
-    let mut pin_count = vm.pin(&rx);
+    let mut pin_count = regexp_try_pin_value(vm, &rx)?;
     let result = (|| {
         let string = vm
             .to_string(args.first().unwrap_or(&Value::Undefined))?
             .to_string();
         let default_constructor = vm.current_realm_regexp_constructor();
         let constructor = regexp_species_constructor(vm, &rx, default_constructor)?;
-        pin_count += vm.pin(&constructor);
+        pin_count += regexp_try_pin_value(vm, &constructor)?;
 
         let flags_value = vm.get_property(&rx, "flags")?;
-        pin_count += vm.pin(&flags_value);
+        pin_count += regexp_try_pin_value(vm, &flags_value)?;
         let flags = vm.to_string(&flags_value)?.to_string();
         let full_unicode = flags.contains('u') || flags.contains('v');
         let new_flags = if flags.contains('y') {
@@ -497,10 +515,10 @@ pub(crate) fn regexp_symbol_split(
             &constructor,
             &[rx.clone(), Value::String(Arc::from(new_flags.as_str()))],
         )?;
-        pin_count += vm.pin(&splitter);
+        pin_count += regexp_try_pin_value(vm, &splitter)?;
 
         let array = array_create_in_current_realm(vm, 0)?;
-        pin_count += vm.pin(&array);
+        pin_count += regexp_try_pin_value(vm, &array)?;
         let limit = match args.get(1) {
             None | Some(Value::Undefined) => u32::MAX as usize,
             Some(value) => crate::vm::to_uint32(vm.to_number(value)?) as usize,
@@ -532,10 +550,10 @@ pub(crate) fn regexp_symbol_split(
                 continue;
             }
 
-            let match_pin = vm.pin(&match_result);
+            let match_pin = regexp_try_pin_value(vm, &match_result)?;
             let reached_limit: error::Result<bool> = (|| {
                 let last_index_value = vm.get_property(&splitter, "lastIndex")?;
-                let last_index_pin = vm.pin(&last_index_value);
+                let last_index_pin = regexp_try_pin_value(vm, &last_index_value)?;
                 let match_end = regexp_to_length(vm, &last_index_value);
                 vm.unpin_many(last_index_pin);
                 let match_end = (match_end? as usize).min(size);
@@ -559,7 +577,7 @@ pub(crate) fn regexp_symbol_split(
 
                 last_match_end = match_end;
                 let result_length_value = vm.get_property(&match_result, "length")?;
-                let result_length_pin = vm.pin(&result_length_value);
+                let result_length_pin = regexp_try_pin_value(vm, &result_length_value)?;
                 let result_length = regexp_to_length(vm, &result_length_value);
                 vm.unpin_many(result_length_pin);
                 let capture_count = (result_length? as usize).saturating_sub(1);
@@ -568,7 +586,7 @@ pub(crate) fn regexp_symbol_split(
                     vm.consume_fuel()?;
                     let key = PropertyKey::from_integer_index(capture_index as u64);
                     let next_capture = vm.get_property_by_key(&match_result, &key)?;
-                    let capture_pin = vm.pin(&next_capture);
+                    let capture_pin = regexp_try_pin_value(vm, &next_capture)?;
                     let append_result = regexp_split_append(vm, &array, length_a, next_capture);
                     vm.unpin_many(capture_pin);
                     append_result?;
@@ -621,7 +639,7 @@ fn new_regexp_string_iterator(
         .get(&realm.0)
         .cloned()
         .ok_or_else(|| Error::internal("missing RegExp String Iterator prototype intrinsic"))?;
-    let pin_count = vm.pin_many(&[matcher.clone(), prototype.clone()]);
+    let pin_count = regexp_try_pin_values(vm, &[matcher.clone(), prototype.clone()])?;
     let result = vm
         .alloc(HeapObj::RegExpStringIterator(RegExpStringIteratorData {
             matcher,
@@ -651,7 +669,7 @@ pub(crate) fn setup_regexp_string_iterator_proto_in_env(
 ) -> error::Result<Value> {
     let next_fn = vm.new_native_function_in_env("next", regexp_string_iterator_next, 0, realm)?;
     let roots = [Value::Object(next_fn), iterator_base.clone()];
-    let pin_count = vm.pin_many(&roots);
+    let pin_count = regexp_try_pin_values(vm, &roots)?;
     let result = (|| {
         let proto_idx = vm.alloc(HeapObj::Object(ObjectData {
             props: Mutex::new(IndexMap::new()),
@@ -730,15 +748,15 @@ fn regexp_string_iterator_next(
         return gen_result(vm, Value::Undefined, true, false);
     }
 
-    let mut pin_count = vm.pin(&result);
+    let mut pin_count = regexp_try_pin_value(vm, &result)?;
     let outcome = (|| {
         if global {
             let matched_value = vm.get_property(&result, "0")?;
-            pin_count += vm.pin(&matched_value);
+            pin_count += regexp_try_pin_value(vm, &matched_value)?;
             let matched = vm.to_string(&matched_value)?.to_string();
             if matched.is_empty() {
                 let last_index = vm.get_property(&matcher, "lastIndex")?;
-                pin_count += vm.pin(&last_index);
+                pin_count += regexp_try_pin_value(vm, &last_index)?;
                 let this_index = regexp_to_length(vm, &last_index)? as usize;
                 let next_index = advance_string_index(&string, this_index, full_unicode);
                 set_regexp_last_index(vm, &matcher, next_index as f64)?;
@@ -814,6 +832,16 @@ fn same_value(a: &Value, b: &Value) -> bool {
     }
 }
 
+fn regexp_try_pin_value(vm: &mut Vm, value: &Value) -> error::Result<usize> {
+    vm.try_reserve_value_roots(std::slice::from_ref(value))?;
+    Ok(vm.pin(value))
+}
+
+fn regexp_try_pin_values(vm: &mut Vm, values: &[Value]) -> error::Result<usize> {
+    vm.try_reserve_value_roots(values)?;
+    Ok(vm.pin_many(values))
+}
+
 pub(crate) fn regexp_to_string(
     vm: &mut Vm,
     _args: &[Value],
@@ -825,12 +853,22 @@ pub(crate) fn regexp_to_string(
         ));
     };
     let source_value = vm.get_property(&this_value, "source")?;
-    let flags_value = vm.get_property(&this_value, "flags")?;
-    let source = vm.to_string(&source_value)?.to_string();
-    let flags = vm.to_string(&flags_value)?.to_string();
-    Ok(Value::String(Arc::from(
-        format!("/{source}/{flags}").as_str(),
-    )))
+    let source_pin = regexp_try_pin_value(vm, &source_value)?;
+    let completion = (|| {
+        let flags_value = vm.get_property(&this_value, "flags")?;
+        let flags_pin = regexp_try_pin_value(vm, &flags_value)?;
+        let completion = (|| {
+            let source = vm.to_string(&source_value)?.to_string();
+            let flags = vm.to_string(&flags_value)?.to_string();
+            Ok(Value::String(Arc::from(
+                format!("/{source}/{flags}").as_str(),
+            )))
+        })();
+        vm.unpin_many(flags_pin);
+        completion
+    })();
+    vm.unpin_many(source_pin);
+    completion
 }
 
 pub(crate) fn regexp_symbol_replace(
@@ -842,7 +880,7 @@ pub(crate) fn regexp_symbol_replace(
         return Err(Error::type_err("RegExp method called on non-object"));
     };
     let replace_value = args.get(1).cloned().unwrap_or(Value::Undefined);
-    let mut persistent_pins = vm.pin(&rx) + vm.pin(&replace_value);
+    let mut persistent_pins = regexp_try_pin_values(vm, &[rx.clone(), replace_value.clone()])?;
     let result = (|| {
         let string = regexp_rooted_to_string(vm, args.first().unwrap_or(&Value::Undefined))?;
         let string_length = crate::value::utf16_len(&string);
@@ -869,14 +907,14 @@ pub(crate) fn regexp_symbol_replace(
             if match_result.is_null() {
                 break;
             }
-            persistent_pins += vm.pin(&match_result);
+            persistent_pins += regexp_try_pin_value(vm, &match_result)?;
 
             if global {
                 let matched_value = vm.get_property(&match_result, "0")?;
                 let matched = regexp_rooted_to_string(vm, &matched_value)?;
                 if matched.is_empty() {
                     let last_index_value = vm.get_property(&rx, "lastIndex")?;
-                    let last_index_pin = vm.pin(&last_index_value);
+                    let last_index_pin = regexp_try_pin_value(vm, &last_index_value)?;
                     let this_index = regexp_to_length(vm, &last_index_value);
                     vm.unpin_many(last_index_pin);
                     let this_index = this_index? as usize;
@@ -899,7 +937,7 @@ pub(crate) fn regexp_symbol_replace(
         for match_result in &results {
             vm.consume_fuel()?;
             let result_length_value = vm.get_property(match_result, "length")?;
-            let result_length_pin = vm.pin(&result_length_value);
+            let result_length_pin = regexp_try_pin_value(vm, &result_length_value)?;
             let result_length = regexp_to_length(vm, &result_length_value);
             vm.unpin_many(result_length_pin);
             let result_length = result_length?;
@@ -914,7 +952,7 @@ pub(crate) fn regexp_symbol_replace(
             let match_length = crate::value::utf16_len(&matched);
 
             let index_value = vm.get_property(match_result, "index")?;
-            let index_pin = vm.pin(&index_value);
+            let index_pin = regexp_try_pin_value(vm, &index_value)?;
             let raw_position = regexp_to_integer_or_infinity(vm, &index_value);
             vm.unpin_many(index_pin);
             let raw_position = raw_position?;
@@ -939,7 +977,7 @@ pub(crate) fn regexp_symbol_replace(
             }
 
             let named_captures = vm.get_property(match_result, "groups")?;
-            let named_captures_pin = vm.pin(&named_captures);
+            let named_captures_pin = regexp_try_pin_value(vm, &named_captures)?;
             let replacement = (|| {
                 if functional_replace {
                     let mut replacer_args = Vec::with_capacity(captures_count + 4);
@@ -969,9 +1007,10 @@ pub(crate) fn regexp_symbol_replace(
                         }
                         Some(vm.to_object(&named_captures)?)
                     };
-                    let object_pin = named_captures_object
-                        .as_ref()
-                        .map_or(0, |object| vm.pin(object));
+                    let object_pin = match named_captures_object.as_ref() {
+                        Some(object) => regexp_try_pin_value(vm, object)?,
+                        None => 0,
+                    };
                     let substitution = regexp_get_substitution(
                         vm,
                         &matched,
@@ -1008,7 +1047,7 @@ pub(crate) fn regexp_symbol_replace(
 }
 
 fn regexp_rooted_to_string(vm: &mut Vm, value: &Value) -> error::Result<String> {
-    let pin_count = vm.pin(value);
+    let pin_count = regexp_try_pin_value(vm, value)?;
     let result = vm.to_string(value).map(|string| string.to_string());
     vm.unpin_many(pin_count);
     result
@@ -1465,7 +1504,7 @@ pub(crate) fn regexp_exec(
                 .map(|(start, _)| start)
                 .unwrap_or(start);
             let result = make_regexp_exec_array(vm, items)?;
-            let result_pin = vm.pin(&result);
+            let result_pin = regexp_try_pin_value(vm, &result)?;
             let completion = (|| {
                 let groups = make_regexp_groups_object_from_ranges(
                     vm,
@@ -1473,7 +1512,7 @@ pub(crate) fn regexp_exec(
                     &capture_ranges,
                     &capture_names,
                 )?;
-                let groups_pin = vm.pin(&groups);
+                let groups_pin = regexp_try_pin_value(vm, &groups)?;
                 let completion = (|| {
                     let indices = flags
                         .contains('d')
@@ -1637,6 +1676,17 @@ fn make_regexp_indices_array(
     let mut pair_values = Vec::with_capacity(pairs.len());
     let mut pin_count = 0usize;
     let completion = (|| {
+        // Reserve every persistent nested-result root before the first pair
+        // allocation, so the raw pair/group pins cannot grow midway.
+        let future_roots = pairs
+            .iter()
+            .filter(|pair| pair.is_some())
+            .count()
+            .checked_add(usize::from(!capture_names.is_empty()))
+            .ok_or_else(|| Error::range("temporary root set is too large"))?;
+        if future_roots != 0 {
+            vm.try_reserve_gc_pins(future_roots)?;
+        }
         for pair in pairs {
             vm.consume_fuel()?;
             let value = match pair {

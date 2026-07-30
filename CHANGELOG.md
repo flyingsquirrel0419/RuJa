@@ -4,6 +4,16 @@
 
 ### Changed
 
+- Made every temporary GC-root publication in the RegExp core fallible before
+  mutation. Constructor, search, match, matchAll, split, replacement, iterator,
+  `toString`, exec, groups, and match-indices paths now reserve exact value-root
+  capacity before pinning; `@@search`, `@@match`, and `toString` also retain
+  previously unrooted fresh getter/exec results across later observable calls.
+  Match-indices preflights all future pair and groups roots as one batch, so a
+  reservation failure cannot expose partial nested materialization. Forced-GC
+  and countdown sweeps cover every reachable reservation, pin cleanup, abrupt
+  ordering, and retry.
+
 - Froze the independently complete RegExp named-capture surface into an exact
   86-file Test262 admission. The boundary covers named-group execution,
   replacement coercion, Unicode and non-Unicode names and references, and
