@@ -21546,6 +21546,92 @@ fn regexp_symbol_replace_uses_generic_exec_results_and_utf16_positions() {
 
 #[test]
 fn unicode_regexp_resource_limits_are_validated_at_construction() {
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var localResource;
+            var localSyntax;
+            var foreignResource;
+            var foreignCallResource;
+            var unicodeSetsResource;
+            var literalResource;
+            var alternateLiteralResource;
+            var literalFlagPriority;
+            var alternateLiteralFlagPriority;
+            var escapedLiteralFlagPriority;
+            var alternateEscapedLiteralFlagPriority;
+            var idOnlyLiteralFlagPriority;
+            var alternateIdOnlyLiteralFlagPriority;
+            var nestedResource;
+            var fancyNestedResource;
+            var flagPriority;
+            var lastIndexOrder;
+            var outOfRangeReset;
+            try { new RegExp("\\p{Letter}".repeat(65), "u"); }
+            catch (error) {
+              localResource = error instanceof RangeError && !(error instanceof SyntaxError);
+            }
+            try { new RegExp("(", "u"); }
+            catch (error) {
+              localSyntax = error instanceof SyntaxError && !(error instanceof RangeError);
+            }
+            foreignResource = other.Function("pattern", `
+              try { new RegExp(pattern, "u"); }
+              catch (error) {
+                return error instanceof RangeError && !(error instanceof SyntaxError);
+              }
+              return false;
+            `)("\\p{Letter}".repeat(65));
+            try { other.RegExp("\\p{Letter}".repeat(65), "u"); }
+            catch (error) {
+              foreignCallResource = error instanceof other.RangeError &&
+                !(error instanceof RangeError);
+            }
+            try { new RegExp("[\\q{" + "a".repeat(257) + "}]", "v"); }
+            catch (error) { unicodeSetsResource = error instanceof RangeError; }
+            try { eval("/[\\q{" + "a".repeat(257) + "}]/v"); }
+            catch (error) { literalResource = error instanceof RangeError; }
+            try { eval("{} /[\\q{" + "a".repeat(257) + "}]/v;"); }
+            catch (error) { alternateLiteralResource = error instanceof RangeError; }
+            try { eval("/[\\q{" + "a".repeat(257) + "}]/v1;"); }
+            catch (error) { literalFlagPriority = error instanceof SyntaxError; }
+            try { eval("{} /[\\q{" + "a".repeat(257) + "}]/v1;"); }
+            catch (error) { alternateLiteralFlagPriority = error instanceof SyntaxError; }
+            try { eval("/[\\q{" + "a".repeat(257) + "}]/v\\u0031;"); }
+            catch (error) { escapedLiteralFlagPriority = error instanceof SyntaxError; }
+            try { eval("{} /[\\q{" + "a".repeat(257) + "}]/v\\u0031;"); }
+            catch (error) { alternateEscapedLiteralFlagPriority = error instanceof SyntaxError; }
+            try { eval("/[\\q{" + "a".repeat(257) + "}]/v" + String.fromCodePoint(0x37A) + ";"); }
+            catch (error) { idOnlyLiteralFlagPriority = error instanceof SyntaxError; }
+            try { eval("{} /[\\q{" + "a".repeat(257) + "}]/v" + String.fromCodePoint(0x37A) + ";"); }
+            catch (error) { alternateIdOnlyLiteralFlagPriority = error instanceof SyntaxError; }
+            try { new RegExp("(".repeat(257) + "a" + ")".repeat(257), "u"); }
+            catch (error) { nestedResource = error instanceof RangeError; }
+            try { new RegExp("(?=".repeat(65) + "a" + ")".repeat(65)); }
+            catch (error) { fancyNestedResource = error instanceof RangeError; }
+            try { new RegExp("a".repeat(262145), "ux"); }
+            catch (error) { flagPriority = error instanceof SyntaxError; }
+            var marker = {};
+            var ordered = /a/g;
+            ordered.lastIndex = { valueOf: function () { throw marker; } };
+            try { ordered.exec("a"); }
+            catch (error) { lastIndexOrder = error === marker; }
+            var outOfRange = /a/g;
+            outOfRange.lastIndex = Number.MAX_SAFE_INTEGER;
+            outOfRangeReset = outOfRange.exec("a") === null && outOfRange.lastIndex === 0;
+            [localResource, localSyntax, foreignResource, foreignCallResource,
+             unicodeSetsResource, literalResource, alternateLiteralResource,
+             literalFlagPriority, alternateLiteralFlagPriority,
+             escapedLiteralFlagPriority, alternateEscapedLiteralFlagPriority,
+             idOnlyLiteralFlagPriority, alternateIdOnlyLiteralFlagPriority,
+             nestedResource, fancyNestedResource, flagPriority,
+             lastIndexOrder, outOfRangeReset,
+             new RegExp("a", "u").test("a")].join("|");
+        "#),
+        Value::String(Arc::from(
+            "true|true|true|true|true|true|true|true|true|true|true|true|true|true|true|true|true|true|true"
+        ))
+    );
     assert!(run_err(r#"new RegExp("\\p{Letter}".repeat(65), "u");"#)
         .contains("too many property operands"));
     assert_eq!(

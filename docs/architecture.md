@@ -3204,6 +3204,30 @@ stored alternative-path segments, 1,000,000 path-comparison units, and 16,384
 duplicate-backreference alternatives. These limits prevent legal-size source
 from turning duplicate-name analysis into quadratic allocation or CPU work.
 
+RegExp validation and compilation preserve `Syntax` versus `Resource` as a
+typed internal result through the dynamic constructor and every runtime
+compile call site. Flags are validated before the allocation-avoiding source
+cap. The Rust backend classifies compiled-size and structured AST nesting or
+capture limits as resources; fancy-regex classifies NFA size and parser
+recursion limits; regress tags each parser, named-capture, and string-set
+resource guard directly. Only the final builtin boundary chooses
+`SyntaxError` or the active Realm's `RangeError`. Runtime matcher work-limit
+errors remain non-catchable Fuel aborts. Oversized Unicode source is rejected
+before general pattern validation to avoid allocating validator copies, after
+complete dynamic or literal flag validation. Backend selection retains
+fallback semantics: a limit in one candidate backend is not observable when
+another bounded backend compiles the same ECMAScript pattern successfully.
+
+```text
+[Decision Log]
+- 목적과 의도: Preserve the semantic distinction between invalid RegExp syntax and implementation resource exhaustion across every compiler/backend boundary.
+- 기존 구현 및 제약 조건: Compiler helpers returned String, constructor and legacy String paths mapped every failure to SyntaxError, regress exposed only diagnostic text, and Unicode patterns intentionally fall back between multiple bounded backends.
+- 검토한 주요 대안: Match diagnostic strings, classify every compiler failure as RangeError, remove fallback, eagerly compile and store every matcher, or carry a narrow typed result to the JavaScript error boundary.
+- 선택한 방식: Add typed syntax/resource results in RuJa and regress, classify structured Rust/fancy variants, validate flags before bounded pattern work, share one JavaScript mapper across all compile callers, and retain successful fallback.
+- 다른 대안 대신 이 방식을 선택한 이유: Message matching is brittle; blanket RangeError corrupts real syntax diagnostics; removing fallback regresses supported semantics; matcher storage changes execution ordering and ownership beyond this unit. Typed propagation is narrow and reviewable.
+- 장점, 단점 및 영향: Dynamic resource limits now produce Realm-correct RangeError while reachable malformed-pattern diagnostics remain SyntaxError, and backend fallback stays transparent. Exec observes and bounds lastIndex before compilation; matcher caching, deterministic exec compile-failure injection, compiler allocation failpoints, and compiled-matcher storage remain separate work.
+```
+
 The vendored crate retains its upstream MIT OR Apache-2.0 license files.
 
 ```text

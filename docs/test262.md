@@ -12740,6 +12740,47 @@ scope remains **100 pass / 0 fail / 1 skip**. No admission rule changed.
 - 장점, 단점 및 영향: Deterministic tests cover every owned growth phase and conditional bypass while broad corpus evidence guards semantics. ToString-created and final-result Arc publication, dynamic PropertyKey allocation, matcher/compiler storage, and legacy String paths remain explicitly outside this claim.
 ```
 
+## RegExp compiler/backend error classification
+
+This resource unit does not change Test262 admission. Dynamic RegExp
+construction now keeps syntax and implementation resource failures distinct
+through the lexer-facing validator, Rust regex, fancy-regex, and regress
+adapters. Invalid flags are diagnosed before bounded pattern work. Structured
+compiled-size, nesting, capture, named-group, and UnicodeSets limits produce
+the active Realm's catchable `RangeError`; malformed syntax remains
+`SyntaxError`. A backend-local limit remains invisible when another bounded
+backend compiles the same pattern successfully.
+
+Direct tests cover local and foreign construction, cross-Realm constructor
+calls, Unicode property count, UnicodeSets sequence length, Rust/logical and
+fancy nesting, invalid syntax, invalid-flag priority, typed vendor guards, and
+fancy runtime Fuel classification. `RegExpBuiltinExec` now observes and bounds
+`lastIndex` before compilation and backend-input preparation, including the
+out-of-range reset/null path without narrowing a larger safe integer to host
+`usize`. RegExp literal validation carries a dedicated resource token into the
+parser, so valid bounded-resource rejection is a catchable `RangeError` while
+ordinary lexical failures stay `SyntaxError`. Both normal and block-following
+literal paths consume the complete `IdentifierPart` flag run before resource
+validation, preserving invalid-flag priority. Compiled-matcher caching,
+deterministic exec compile-failure injection, and native compiler allocation
+failpoints remain separate units.
+
+At pinned revision `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, generated
+UnicodeSets remains **142/0/0**, complete `built-ins/RegExp` remains **1223
+pass / 0 fail / 656 skip**, complete `language/literals/regexp` is **236 pass /
+0 fail / 2 skip**, the named-group exact boundary remains **86/0/0**, and its
+related scope remains **100 pass / 0 fail / 1 skip**.
+
+```text
+[Decision Log]
+- 목적과 의도: Correct observable error kinds and ordering for bounded RegExp validation and compilation without widening supported Test262 policy.
+- 기존 구현 및 제약 조건: String-only errors made every compiler failure a SyntaxError, v validation erased regress resource identity, flags could lose priority to source preflight, and exec compiled before observing lastIndex.
+- 검토한 주요 대안: Match text, treat all compile errors as RangeError, remove backend fallback, combine matcher caching and allocation failpoints, or introduce typed boundaries and repair only observable ordering.
+- 선택한 방식: Tag resource guards at their source, classify structured Rust/fancy errors, share one mapper across compile callers, validate flags first, and move lastIndex/out-of-range handling ahead of matcher preparation.
+- 다른 대안 대신 이 방식을 선택한 이유: Text is unstable; blanket classification corrupts syntax; fallback is intentional bounded compatibility; caching and injected allocation require distinct ownership tests. The selected change closes deterministic behavior with narrow scope.
+- 장점, 단점 및 영향: Dynamic construction, literal validation, and runtime compile paths now preserve SyntaxError versus RangeError and Realm identity, while successful fallback and Test262 counts remain unchanged. Compiler storage and deterministic allocation failure injection remain explicit follow-ups.
+```
+
 ## RegExp named-group exact admission
 
 Pinned Test262 has 86 independently executable `regexp-named-groups` paths

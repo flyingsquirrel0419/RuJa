@@ -1704,17 +1704,38 @@ impl<'a> Lexer<'a> {
             return TokenKind::LexError("unterminated regular expression literal".to_string());
         }
         let mut flags = String::new();
-        while let Some(c) = self.peek() {
-            if c.is_ascii_alphabetic() {
-                flags.push(c as char);
+        while let Some(byte) = self.peek() {
+            if byte == b'\\' && self.peek_at(1) == Some(b'u') {
+                flags.push('\\');
                 self.advance();
-            } else {
+                self.advance();
                 break;
             }
+            if byte < 0x80 {
+                let ch = byte as char;
+                if !is_regexp_group_id_continue(ch) {
+                    break;
+                }
+                flags.push(ch);
+                self.advance();
+            } else {
+                let (ch, len) = decode_utf8_at(&self.src[self.pos..]);
+                if len == 0 || !is_regexp_group_id_continue(ch) {
+                    break;
+                }
+                flags.push(ch);
+                for _ in 0..len {
+                    self.advance();
+                }
+            }
         }
-        match validate_regex_literal(&pattern, &flags) {
+        if let Err(message) = validate_regex_flags(&flags) {
+            return TokenKind::LexError(message);
+        }
+        match validate_regex_pattern_for_constructor(&pattern, &flags) {
             Ok(()) => TokenKind::Regex(pattern, flags),
-            Err(msg) => TokenKind::LexError(msg),
+            Err(RegexValidationError::Syntax(message)) => TokenKind::LexError(message),
+            Err(RegexValidationError::Resource(message)) => TokenKind::ResourceError(message),
         }
     }
 
@@ -2109,20 +2130,50 @@ impl<'a> Lexer<'a> {
     }
 }
 
-pub(crate) fn validate_regex_literal(pattern: &str, flags: &str) -> Result<(), String> {
-    validate_regex_flags(flags)?;
-    validate_regex_named_groups(pattern, flags)?;
-    validate_regex_unicode_mode_syntax(pattern, flags)?;
-    validate_regex_class_ranges(pattern, flags)?;
-    regex_quantifier_metadata(pattern, flags)?;
-    validate_regex_assertion_quantifiers(pattern, flags)?;
-    validate_regex_modifier_groups(pattern)?;
+pub(crate) enum RegexValidationError {
+    Syntax(String),
+    Resource(String),
+}
+
+impl RegexValidationError {
+    fn into_message(self) -> String {
+        match self {
+            Self::Syntax(message) | Self::Resource(message) => message,
+        }
+    }
+}
+
+pub(crate) fn validate_regex_flags_for_constructor(flags: &str) -> Result<(), String> {
+    validate_regex_flags(flags)
+}
+
+pub(crate) fn validate_regex_pattern_for_constructor(
+    pattern: &str,
+    flags: &str,
+) -> Result<(), RegexValidationError> {
+    validate_regex_named_groups(pattern, flags).map_err(RegexValidationError::Syntax)?;
+    validate_regex_unicode_mode_syntax(pattern, flags).map_err(RegexValidationError::Syntax)?;
+    validate_regex_class_ranges(pattern, flags).map_err(RegexValidationError::Syntax)?;
+    regex_quantifier_metadata(pattern, flags).map_err(RegexValidationError::Syntax)?;
+    validate_regex_assertion_quantifiers(pattern, flags).map_err(RegexValidationError::Syntax)?;
+    validate_regex_modifier_groups(pattern).map_err(RegexValidationError::Syntax)?;
     if flags.contains('v') {
         let code_points = crate::value::utf16_code_points_from_str(pattern);
-        regress::Regex::validate_syntax(code_points.into_iter(), flags)
-            .map_err(|error| error.to_string())?;
+        regress::Regex::validate_syntax(code_points.into_iter(), flags).map_err(|error| {
+            if error.is_resource_limit() {
+                RegexValidationError::Resource(error.to_string())
+            } else {
+                RegexValidationError::Syntax(error.to_string())
+            }
+        })?;
     }
     Ok(())
+}
+
+pub(crate) fn validate_regex_literal(pattern: &str, flags: &str) -> Result<(), String> {
+    validate_regex_flags(flags)?;
+    validate_regex_pattern_for_constructor(pattern, flags)
+        .map_err(RegexValidationError::into_message)
 }
 
 fn validate_regex_named_groups(pattern: &str, flags: &str) -> Result<(), String> {

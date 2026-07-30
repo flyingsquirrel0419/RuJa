@@ -224,18 +224,23 @@ fn regexp_initialize(
             vm.to_string(&flags)?.to_string()
         };
 
+        crate::lexer::validate_regex_flags_for_constructor(&flags).map_err(Error::syntax)?;
         if flags.contains('u') || flags.contains('v') {
             validate_logical_utf16_source_length(&pattern)
-                .map_err(|e| Error::syntax(format!("Invalid regex: {}", e)))?;
+                .map_err(|e| Error::range(format!("Invalid regex: {e}")))?;
         }
-        crate::lexer::validate_regex_literal(&pattern, &flags).map_err(Error::syntax)?;
+        crate::lexer::validate_regex_pattern_for_constructor(&pattern, &flags).map_err(
+            |error| match error {
+                crate::lexer::RegexValidationError::Syntax(message) => Error::syntax(message),
+                crate::lexer::RegexValidationError::Resource(message) => Error::range(message),
+            },
+        )?;
         // Validate the pattern eagerly so bad regexes throw at construction time.
         if flags.contains('u') || flags.contains('v') {
             validate_logical_utf16_construction_limits(&pattern, &flags)
-                .map_err(|e| Error::syntax(format!("Invalid regex: {}", e)))?;
+                .map_err(regexp_compile_error)?;
         }
-        compile_regex_for_input(&pattern, &flags, "")
-            .map_err(|e| Error::syntax(format!("Invalid regex: {}", e)))?;
+        compile_regex_for_input(&pattern, &flags, "").map_err(regexp_compile_error)?;
         let Value::Object(object_idx) = object else {
             unreachable!("RegExpAlloc must return an object");
         };
@@ -1793,21 +1798,6 @@ pub(crate) fn regexp_exec(
         .to_string(args.first().unwrap_or(&Value::Undefined))?
         .to_string();
     let flags = read_regexp_flags(vm, &this).unwrap_or_default();
-    let re = if flags.contains('u') || flags.contains('v') {
-        compile_regex_for_input(&source, &flags, &input)
-    } else {
-        // The non-Unicode matcher runs on a sentinel-backed UTF-16 view so
-        // lastIndex may address either half of a supplementary code point.
-        compile_regex_for_code_units(&source, &flags)
-    }
-    .map_err(|e| Error::syntax(format!("Invalid regex: {}", e)))?;
-    let backend_input = regexp_backend_input(
-        vm,
-        &input,
-        &flags,
-        matches!(re, CompiledRegex::LogicalUtf16(_)),
-    )?;
-    let capture_names = regex_capture_names(&source, &flags).map_err(Error::syntax)?;
     let global = flags.contains('g');
     let sticky = flags.contains('y');
     let this_value = match &this {
@@ -1821,14 +1811,9 @@ pub(crate) fn regexp_exec(
         }
         _ => 0.0,
     };
-    // Start position: for global/sticky, read lastIndex; else 0.
-    let start: usize = if global || sticky {
-        last_idx as usize
-    } else {
-        0
-    };
-    let utf16_len = backend_input.utf16_len();
-    if start > utf16_len {
+    let start_number = if global || sticky { last_idx } else { 0.0 };
+    let input_utf16_len = crate::value::utf16_len(&input);
+    if start_number > input_utf16_len as f64 {
         if global || sticky {
             if let Some(value) = &this_value {
                 set_regexp_last_index(vm, value, 0.0)?;
@@ -1836,6 +1821,25 @@ pub(crate) fn regexp_exec(
         }
         return Ok(Value::Null);
     }
+    let start = start_number as usize;
+
+    let re = if flags.contains('u') || flags.contains('v') {
+        compile_regex_for_input(&source, &flags, &input)
+    } else {
+        // The non-Unicode matcher runs on a sentinel-backed UTF-16 view so
+        // lastIndex may address either half of a supplementary code point.
+        compile_regex_for_code_units(&source, &flags)
+    }
+    .map_err(regexp_compile_error)?;
+    let backend_input = regexp_backend_input(
+        vm,
+        &input,
+        &flags,
+        matches!(re, CompiledRegex::LogicalUtf16(_)),
+    )?;
+    let capture_names = regex_capture_names(&source, &flags).map_err(Error::syntax)?;
+    let utf16_len = backend_input.utf16_len();
+    debug_assert!(start <= utf16_len);
     let Some(start_byte) = backend_input.byte_index_for_utf16(start) else {
         if global || sticky {
             if let Some(value) = &this_value {

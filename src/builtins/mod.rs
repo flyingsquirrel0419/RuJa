@@ -125,6 +125,19 @@ enum CompiledRegex {
     },
 }
 
+#[derive(Debug)]
+enum RegexCompileError {
+    Syntax(String),
+    Resource(String),
+}
+
+fn regexp_compile_error(error: RegexCompileError) -> Arc<Error> {
+    match error {
+        RegexCompileError::Syntax(message) => Error::syntax(format!("Invalid regex: {message}")),
+        RegexCompileError::Resource(message) => Error::range(format!("Invalid regex: {message}")),
+    }
+}
+
 #[derive(Clone, Copy)]
 struct RegexModifierState {
     dot_all: bool,
@@ -134,7 +147,7 @@ struct RegexModifierState {
 /// Compile a regex pattern applying ES flags: `i` (case-insensitive),
 /// `m` (multiline ^/$), `s` (dotall). Other flags (`g`/`y`/`u`) do not affect
 /// the regex engine here and are handled by the caller.
-fn compile_regex(source: &str, flags: &str) -> Result<CompiledRegex, String> {
+fn compile_regex(source: &str, flags: &str) -> Result<CompiledRegex, RegexCompileError> {
     compile_regex_with_input_mode(source, flags, false)
 }
 
@@ -142,7 +155,7 @@ fn compile_regex_for_input(
     source: &str,
     flags: &str,
     input: &str,
-) -> Result<CompiledRegex, String> {
+) -> Result<CompiledRegex, RegexCompileError> {
     let unicode_mode = flags.contains('u') || flags.contains('v');
     let contains_surrogate_backing = input.chars().any(|ch| {
         crate::value::utf16_single_unit_from_internal_char(ch)
@@ -210,29 +223,52 @@ fn logical_utf16_flags(flags: &str) -> regress::Flags {
     logical_flags
 }
 
-fn validate_logical_utf16_construction_limits(source: &str, flags: &str) -> Result<(), String> {
-    validate_logical_utf16_source(source)?;
+fn validate_logical_utf16_construction_limits(
+    source: &str,
+    flags: &str,
+) -> Result<(), RegexCompileError> {
+    validate_logical_utf16_source(source).map_err(RegexCompileError::Resource)?;
     let code_points = logical_utf16_pattern_code_points(source);
     regress::Regex::validate_unicode_resource_limits(
         code_points.into_iter(),
         logical_utf16_flags(flags),
     )
-    .map_err(|error| error.to_string())
+    .map_err(|error| {
+        if error.is_resource_limit() {
+            RegexCompileError::Resource(error.to_string())
+        } else {
+            RegexCompileError::Syntax(error.to_string())
+        }
+    })
 }
 
-fn compile_logical_utf16_regex(source: &str, flags: &str) -> Result<CompiledRegex, String> {
-    validate_logical_utf16_source(source)?;
+fn compile_logical_utf16_regex(
+    source: &str,
+    flags: &str,
+) -> Result<CompiledRegex, RegexCompileError> {
+    validate_logical_utf16_source(source).map_err(RegexCompileError::Resource)?;
     let code_points = logical_utf16_pattern_code_points(source);
     let logical_flags = logical_utf16_flags(flags);
-    let regex = regress::Regex::from_unicode(code_points.into_iter(), logical_flags)
-        .map_err(|error| error.to_string())?;
+    let regex =
+        regress::Regex::from_unicode(code_points.into_iter(), logical_flags).map_err(|error| {
+            if error.is_resource_limit() {
+                RegexCompileError::Resource(error.to_string())
+            } else {
+                RegexCompileError::Syntax(error.to_string())
+            }
+        })?;
     if regex.bounded_execution_state_cost() > REGEX_LOGICAL_UTF16_WORK_LIMIT {
-        return Err("logical UTF-16 regex program is too large".to_string());
+        return Err(RegexCompileError::Resource(
+            "logical UTF-16 regex program is too large".to_string(),
+        ));
     }
     Ok(CompiledRegex::LogicalUtf16(regex))
 }
 
-fn compile_regex_for_code_units(source: &str, flags: &str) -> Result<CompiledRegex, String> {
+fn compile_regex_for_code_units(
+    source: &str,
+    flags: &str,
+) -> Result<CompiledRegex, RegexCompileError> {
     compile_regex_with_input_mode(source, flags, true)
 }
 
@@ -240,11 +276,12 @@ fn compile_regex_with_input_mode(
     source: &str,
     flags: &str,
     code_unit_input: bool,
-) -> Result<CompiledRegex, String> {
+) -> Result<CompiledRegex, RegexCompileError> {
     let capture_count = regex_capture_count(source);
-    let capture_names = regex_capture_names(source, flags)?;
+    let capture_names = regex_capture_names(source, flags).map_err(RegexCompileError::Syntax)?;
     let capture_indices = regex_capture_indices_by_name(&capture_names);
-    let rewritten_source = rewrite_named_regex_groups_for_backend(source, flags, &capture_indices)?;
+    let rewritten_source = rewrite_named_regex_groups_for_backend(source, flags, &capture_indices)
+        .map_err(RegexCompileError::Syntax)?;
     let uses_backreference = regex_uses_backreference(
         &rewritten_source,
         capture_count,
@@ -252,7 +289,8 @@ fn compile_regex_with_input_mode(
     );
     let uses_lookaround = regex_uses_lookaround(&rewritten_source);
     let needs_capture_correction = regex_contains_quantified_capture_group(&rewritten_source);
-    let quantifiers = crate::lexer::regex_quantifier_metadata(source, flags)?;
+    let quantifiers = crate::lexer::regex_quantifier_metadata(source, flags)
+        .map_err(RegexCompileError::Syntax)?;
     let requires_counter_backend = quantifiers.requires_counter_backend;
     if uses_backreference || uses_lookaround || requires_counter_backend {
         let normalized = normalize_regex_for_backend(
@@ -263,7 +301,8 @@ fn compile_regex_with_input_mode(
             true,
             false,
             &capture_indices,
-        )?;
+        )
+        .map_err(RegexCompileError::Syntax)?;
         return build_fancy_regex_with_repeat_fallback(
             &normalized,
             flags,
@@ -281,7 +320,8 @@ fn compile_regex_with_input_mode(
         false,
         true,
         &capture_indices,
-    )?;
+    )
+    .map_err(RegexCompileError::Syntax)?;
     let mut b = RustRegexBuilder::new(&rust_normalized.source);
     b.case_insensitive(flags.contains('i'));
     b.multi_line(flags.contains('m'));
@@ -297,12 +337,13 @@ fn compile_regex_with_input_mode(
                 true,
                 false,
                 &capture_indices,
-            )?;
+            )
+            .map_err(RegexCompileError::Syntax)?;
             return build_fancy_regex(&normalized, flags, true)
                 .map(CompiledRegex::Fancy)
-                .map_err(|error| error.to_string());
+                .map_err(fancy_regex_compile_error);
         }
-        Err(error) => return Err(error.to_string()),
+        Err(error) => return Err(rust_regex_compile_error(error, &rust_normalized.source)),
     };
     if rust_normalized.relaxed_unicode_word_boundary {
         let boundary_normalized = normalize_regex_for_backend(
@@ -313,14 +354,15 @@ fn compile_regex_with_input_mode(
             false,
             false,
             &capture_indices,
-        )?;
+        )
+        .map_err(RegexCompileError::Syntax)?;
         let mut boundary_builder = RustRegexBuilder::new(&boundary_normalized.source);
         boundary_builder.case_insensitive(flags.contains('i'));
         boundary_builder.multi_line(flags.contains('m'));
         boundary_builder.dot_matches_new_line(flags.contains('s'));
         let boundary_fast = boundary_builder
             .build()
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| rust_regex_compile_error(error, &boundary_normalized.source))?;
         let exact_normalized = normalize_regex_for_backend(
             &rewritten_source,
             flags,
@@ -329,7 +371,8 @@ fn compile_regex_with_input_mode(
             true,
             false,
             &capture_indices,
-        )?;
+        )
+        .map_err(RegexCompileError::Syntax)?;
         let exact = build_fancy_regex_with_repeat_fallback(
             &exact_normalized,
             flags,
@@ -371,7 +414,8 @@ fn compile_regex_with_input_mode(
         true,
         false,
         &capture_indices,
-    )?;
+    )
+    .map_err(RegexCompileError::Syntax)?;
     let captures = build_fancy_regex_with_repeat_fallback(
         &capture_normalized,
         flags,
@@ -402,7 +446,7 @@ fn build_fancy_regex_with_repeat_fallback(
     flags: &str,
     non_delegated_repeats: bool,
     has_braced_repeat: bool,
-) -> Result<fancy_regex::Regex, String> {
+) -> Result<fancy_regex::Regex, RegexCompileError> {
     match build_fancy_regex(normalized, flags, non_delegated_repeats) {
         Ok(regex) => Ok(regex),
         Err(error)
@@ -410,9 +454,44 @@ fn build_fancy_regex_with_repeat_fallback(
                 && has_braced_repeat
                 && fancy_regex_size_limit_exceeded(&error) =>
         {
-            build_fancy_regex(normalized, flags, true).map_err(|error| error.to_string())
+            build_fancy_regex(normalized, flags, true).map_err(fancy_regex_compile_error)
         }
-        Err(error) => Err(error.to_string()),
+        Err(error) => Err(fancy_regex_compile_error(error)),
+    }
+}
+
+fn rust_regex_compile_error(error: regex::Error, source: &str) -> RegexCompileError {
+    match error {
+        regex::Error::CompiledTooBig(_) => RegexCompileError::Resource(error.to_string()),
+        regex::Error::Syntax(_) if rust_regex_syntax_resource_limit(source) => {
+            RegexCompileError::Resource(error.to_string())
+        }
+        regex::Error::Syntax(_) => RegexCompileError::Syntax(error.to_string()),
+        _ => RegexCompileError::Syntax(error.to_string()),
+    }
+}
+
+fn rust_regex_syntax_resource_limit(source: &str) -> bool {
+    let mut parser = regex_syntax::ast::parse::ParserBuilder::new().build();
+    parser.parse(source).is_err_and(|error| {
+        matches!(
+            error.kind(),
+            regex_syntax::ast::ErrorKind::CaptureLimitExceeded
+                | regex_syntax::ast::ErrorKind::NestLimitExceeded(_)
+        )
+    })
+}
+
+fn fancy_regex_compile_error(error: fancy_regex::Error) -> RegexCompileError {
+    if fancy_regex_size_limit_exceeded(&error)
+        || matches!(
+            error,
+            fancy_regex::Error::ParseError(_, fancy_regex::ParseError::RecursionExceeded)
+        )
+    {
+        RegexCompileError::Resource(error.to_string())
+    } else {
+        RegexCompileError::Syntax(error.to_string())
     }
 }
 
@@ -1139,6 +1218,51 @@ mod compiled_regex_tests {
     use super::*;
 
     #[test]
+    fn compiler_and_runtime_errors_preserve_resource_kind() {
+        assert!(matches!(
+            rust_regex_compile_error(regex::Error::CompiledTooBig(1), "a"),
+            RegexCompileError::Resource(_)
+        ));
+        let nested = format!("{}a{}", "(".repeat(251), ")".repeat(251));
+        let nested_error = RustRegexBuilder::new(&nested)
+            .build()
+            .expect_err("backend nesting limit should reject the pattern");
+        assert!(matches!(
+            rust_regex_compile_error(nested_error, &nested),
+            RegexCompileError::Resource(_)
+        ));
+
+        let normalized = NormalizedRegex {
+            source: "(".to_string(),
+            backref_sets: Vec::new(),
+            relaxed_unicode_word_boundary: false,
+        };
+        let syntax = build_fancy_regex(&normalized, "", false)
+            .expect_err("invalid source should fail compilation");
+        assert!(matches!(
+            fancy_regex_compile_error(syntax),
+            RegexCompileError::Syntax(_)
+        ));
+        let nested = NormalizedRegex {
+            source: format!("{}a{}", "(?=".repeat(65), ")".repeat(65)),
+            backref_sets: Vec::new(),
+            relaxed_unicode_word_boundary: false,
+        };
+        let nested_error = build_fancy_regex(&nested, "u", false)
+            .expect_err("fancy backend nesting limit should reject the pattern");
+        assert!(matches!(
+            fancy_regex_compile_error(nested_error),
+            RegexCompileError::Resource(_)
+        ));
+
+        let runtime = regex_runtime_error(fancy_regex::Error::RuntimeError(
+            fancy_regex::RuntimeError::BacktrackLimitExceeded,
+        ));
+        assert_eq!(runtime.kind, crate::error::ErrorKind::Fuel);
+        assert!(!runtime.catchable());
+    }
+
+    #[test]
     fn unicode_word_class_agreement_detects_rust_only_characters() {
         assert!(rust_and_ecmascript_unicode_word_classes_agree("a_9ſK"));
         assert!(!rust_and_ecmascript_unicode_word_classes_agree("é"));
@@ -1555,7 +1679,10 @@ impl<'t> From<fancy_regex::Captures<'t>> for CompiledCaptures<'t> {
 }
 
 fn regex_runtime_error(error: fancy_regex::Error) -> Arc<Error> {
-    Error::syntax(format!("Invalid regex match: {error}"))
+    match error {
+        fancy_regex::Error::RuntimeError(_) => Error::fuel(format!("Invalid regex match: {error}")),
+        _ => Error::syntax(format!("Invalid regex match: {error}")),
+    }
 }
 
 // Rust regex uses Unicode Nd/White_Space; ECMAScript uses ASCII digits and

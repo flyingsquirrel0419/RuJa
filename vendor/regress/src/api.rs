@@ -1146,19 +1146,36 @@ mod bounded_utf16_tests {
             .map(|index| format!("(?<q{index}>a)"))
             .collect::<String>();
         assert!(
-            Regex::validate_unicode_resource_limits(unique.chars().map(u32::from), "u").is_err()
+            Regex::validate_unicode_resource_limits(unique.chars().map(u32::from), "u")
+                .unwrap_err()
+                .is_resource_limit()
         );
-        assert!(Regex::with_flags(&unique, "u").is_err());
+        assert!(
+            Regex::with_flags(&unique, "u")
+                .unwrap_err()
+                .is_resource_limit()
+        );
 
         let duplicate_branches = (0..65).map(|_| "(?<q>a)").collect::<Vec<_>>().join("|");
-        assert!(Regex::with_flags(&format!("(?:{duplicate_branches})"), "u").is_err());
+        assert!(
+            Regex::with_flags(&format!("(?:{duplicate_branches})"), "u")
+                .unwrap_err()
+                .is_resource_limit()
+        );
 
         let bounded_branches = (0..64).map(|_| "(?<q>a)").collect::<Vec<_>>().join("|");
         let expanded = format!("(?:{bounded_branches}){}", r"\k<q>".repeat(257));
         assert!(
-            Regex::validate_unicode_resource_limits(expanded.chars().map(u32::from), "u").is_err()
+            Regex::validate_unicode_resource_limits(expanded.chars().map(u32::from), "u")
+                .unwrap_err()
+                .is_resource_limit()
         );
-        assert!(Regex::with_flags(&expanded, "u").is_err());
+        assert!(
+            Regex::with_flags(&expanded, "u")
+                .unwrap_err()
+                .is_resource_limit()
+        );
+        assert!(!Regex::with_flags("(", "u").unwrap_err().is_resource_limit());
     }
 }
 

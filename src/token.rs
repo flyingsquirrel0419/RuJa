@@ -137,6 +137,9 @@ pub enum TokenKind {
     /// A lexer-level error (e.g. an invalid escape sequence in a
     /// string/template literal). Parsers must turn this into a SyntaxError.
     LexError(String),
+    /// A valid construct exceeded a bounded lexer-owned resource policy.
+    /// Parsers must preserve this as a RangeError.
+    ResourceError(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]

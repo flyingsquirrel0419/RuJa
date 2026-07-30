@@ -696,6 +696,9 @@ impl Parser {
             if let TokenKind::LexError(msg) = &t.kind {
                 return Err(error::Error::syntax(msg.clone()));
             }
+            if let TokenKind::ResourceError(msg) = &t.kind {
+                return Err(error::Error::range(msg.clone()));
+            }
         }
         // Detect a leading "use strict" directive from the raw token stream
         // *before* parsing the body, so that nested function declarations
@@ -3965,9 +3968,22 @@ impl Parser {
 
         let mut flags = String::new();
         loop {
+            if self.peek_at_tok(0).had_escape {
+                return Err(error::Error::syntax(
+                    "invalid escaped regular expression flag".to_string(),
+                ));
+            }
             match self.peek().clone() {
                 TokenKind::Ident(s) => {
                     flags.push_str(&s);
+                    self.advance();
+                }
+                TokenKind::Number(number) | TokenKind::LegacyNumber(number) => {
+                    if number.fract() == 0.0 {
+                        flags.push_str(&format!("{number:.0}"));
+                    } else {
+                        flags.push_str(&number.to_string());
+                    }
                     self.advance();
                 }
                 other if other.as_keyword_str().is_some() => {
@@ -3978,7 +3994,17 @@ impl Parser {
             }
         }
 
-        crate::lexer::validate_regex_literal(&pattern, &flags).map_err(error::Error::syntax)?;
+        crate::lexer::validate_regex_flags_for_constructor(&flags).map_err(error::Error::syntax)?;
+        crate::lexer::validate_regex_pattern_for_constructor(&pattern, &flags).map_err(
+            |error| match error {
+                crate::lexer::RegexValidationError::Syntax(message) => {
+                    error::Error::syntax(message)
+                }
+                crate::lexer::RegexValidationError::Resource(message) => {
+                    error::Error::range(message)
+                }
+            },
+        )?;
         Ok(Expr::Regex(Arc::from(pattern), Arc::from(flags)))
     }
 

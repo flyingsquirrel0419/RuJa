@@ -45,6 +45,20 @@ const MAX_STRING_SET_TRIE_NODE_UPPER_BOUND: usize = 65_536;
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Error {
     pub text: String,
+    kind: ErrorKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+enum ErrorKind {
+    Syntax,
+    ResourceLimit,
+}
+
+impl Error {
+    /// Whether compilation stopped at an implementation resource boundary.
+    pub fn is_resource_limit(&self) -> bool {
+        self.kind == ErrorKind::ResourceLimit
+    }
 }
 
 impl fmt::Display for Error {
@@ -410,6 +424,17 @@ where
 {
     Err(Error {
         text: text.to_string(),
+        kind: ErrorKind::Syntax,
+    })
+}
+
+fn resource_error<S, T>(text: S) -> Result<T, Error>
+where
+    S: ToString,
+{
+    Err(Error {
+        text: text.to_string(),
+        kind: ErrorKind::ResourceLimit,
     })
 }
 
@@ -650,7 +675,7 @@ where
             .string_set_materialization_cost
             .saturating_add(additional);
         if next > MAX_STRING_SET_MATERIALIZATION_COST {
-            return error("String-valued UnicodeSets materialization is too large");
+            return resource_error("String-valued UnicodeSets materialization is too large");
         }
         self.string_set_materialization_cost = next;
         let mut alternatives =
@@ -684,7 +709,7 @@ where
     fn consume_disjunction(&mut self) -> Result<ir::Node, Error> {
         self.depth += 1;
         if self.depth > MAX_NESTING_DEPTH {
-            return error("Regular expression is too deeply nested");
+            return resource_error("Regular expression is too deeply nested");
         }
         let mut terms = vec![self.consume_term()?];
         while self.try_consume('|') {
@@ -827,7 +852,7 @@ where
                         self.consume('(');
                         let group = self.group_count;
                         if self.group_count as usize >= MAX_CAPTURE_GROUPS {
-                            return error("Capture group count limit exceeded");
+                            return resource_error("Capture group count limit exceeded");
                         }
                         self.group_count += 1;
 
@@ -908,7 +933,7 @@ where
                 }
                 let quantifee = result.split_off(start_offset);
                 if self.loop_count as usize >= MAX_LOOPS {
-                    return error("Loop count limit exceeded");
+                    return resource_error("Loop count limit exceeded");
                 }
                 self.loop_count += 1;
                 result.push(ir::Node::Loop {
@@ -1352,7 +1377,7 @@ where
             0x5B /* [ */ => {
                 self.depth += 1;
                 if self.depth > MAX_NESTING_DEPTH {
-                    return error("Regular expression is too deeply nested");
+                    return resource_error("Regular expression is too deeply nested");
                 }
                 self.consume('[');
                 let negate_set = self.try_consume('^');
@@ -1389,7 +1414,7 @@ where
                                 Some(0x7D /* } */) => {
                                     self.consume('}');
                                     if alternatives.len() >= MAX_STRING_SET_ALTERNATIVE_COUNT {
-                                        return error(
+                                        return resource_error(
                                             "String-valued UnicodeSets materialization is too large",
                                         );
                                     }
@@ -1399,7 +1424,7 @@ where
                                 Some(0x7C /* | */) => {
                                     self.consume('|');
                                     if alternatives.len() >= MAX_STRING_SET_ALTERNATIVE_COUNT {
-                                        return error(
+                                        return resource_error(
                                             "String-valued UnicodeSets materialization is too large",
                                         );
                                     }
@@ -1410,7 +1435,7 @@ where
                                 Some(_) => {
                                     let code_point = self.consume_class_set_character()?;
                                     if alternative.len() >= MAX_STRING_SET_SEQUENCE_LENGTH {
-                                        return error(
+                                        return resource_error(
                                             "String-valued UnicodeSets sequence is too large",
                                         );
                                     }
@@ -1943,7 +1968,9 @@ where
                             .duplicate_backref_expansion
                             .saturating_add(group_indices.len());
                         if self.duplicate_backref_expansion > MAX_DUPLICATE_BACKREF_EXPANSION {
-                            return error("Duplicate named backreference expansion is too large");
+                            return resource_error(
+                                "Duplicate named backreference expansion is too large",
+                            );
                         }
                         let mut alternatives: Vec<_> = group_indices
                             .iter()
@@ -2162,7 +2189,9 @@ where
                             .saturating_add(groups.len());
                         if self.duplicate_backref_expansion > MAX_DUPLICATE_BACKREF_EXPANSION {
                             self.input = original_input;
-                            return error("Duplicate named backreference expansion is too large");
+                            return resource_error(
+                                "Duplicate named backreference expansion is too large",
+                            );
                         }
                     }
                 }
@@ -2252,7 +2281,7 @@ where
                     if let Some(name) = group_name {
                         named_group_count += 1;
                         if named_group_count > MAX_NAMED_CAPTURE_GROUPS {
-                            return error("Too many named capture groups");
+                            return resource_error("Too many named capture groups");
                         }
                         // Build current alternative path from depth 0 to current depth.
                         let mut segments = Vec::new();
@@ -2261,13 +2290,13 @@ where
                         }
                         path_segment_count = path_segment_count.saturating_add(segments.len());
                         if path_segment_count > MAX_NAMED_CAPTURE_PATH_SEGMENTS {
-                            return error("Named capture group paths are too large");
+                            return resource_error("Named capture group paths are too large");
                         }
 
                         // Record this location.
                         let locations = named_group_locations.entry(name.clone()).or_default();
                         if locations.len() >= MAX_DUPLICATE_CAPTURE_GROUPS_PER_NAME {
-                            return error("Too many capture groups share one name");
+                            return resource_error("Too many capture groups share one name");
                         }
                         locations.push(AlternativePath { segments });
 
@@ -2326,7 +2355,7 @@ where
                     comparison_work = comparison_work
                         .saturating_add(paths[i].segments.len().min(paths[j].segments.len()));
                     if comparison_work > MAX_DUPLICATE_PATH_COMPARISON_WORK {
-                        return error("Duplicate capture group comparison is too large");
+                        return resource_error("Duplicate capture group comparison is too large");
                     }
                     if paths[i].conflicts_with(&paths[j]) {
                         return error("Duplicate capture group name");
@@ -2404,10 +2433,10 @@ where
             }
         });
         if string_set_cost > MAX_STRING_SET_EMISSION_COST {
-            return error("String-valued UnicodeSets program is too large");
+            return resource_error("String-valued UnicodeSets program is too large");
         }
         if string_set_trie_nodes > MAX_STRING_SET_TRIE_NODE_UPPER_BOUND {
-            return error("String-valued UnicodeSets trie is too large");
+            return resource_error("String-valued UnicodeSets trie is too large");
         }
         Ok(re)
     }

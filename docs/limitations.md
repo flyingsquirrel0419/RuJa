@@ -108,8 +108,9 @@ The following resource limits are enforced:
   each file to a known baseline, and investigate every changed shard.
 - **Regex execution bounds**: ordinary matching uses the RE2-style,
   linear-time Rust `regex` backend. Backreferences use the vendored
-  `fancy-regex` backend; that path has a finite work limit and reports an
-  `Invalid regex match` error when exhausted. Repeated-capture patterns use a
+  `fancy-regex` backend; that path has a finite work limit and raises a
+  non-catchable Fuel abort reported as `Invalid regex match` when exhausted.
+  Repeated-capture patterns use a
   hybrid: the linear matcher prefilters match boundaries, and the bounded
   backend reconstructs captures only for successful matches. Capture clearing
   is charged per slot and uses bitset-backed copy-on-write state. Native
@@ -136,17 +137,20 @@ The following resource limits are enforced:
   post-match capture ranges, endpoints, UTF-16 offset map, result vectors and
   presence bitmaps, named groups, indices Arrays/groups, and result properties
   also reserve fallibly and consume conservative Fuel before native work.
-  Their native bytes remain outside the heap-object count. String/Arc payloads,
-  capture-name/compiler metadata, backend capture conversion and input boundary
-  tables, replacement containers, legacy String paths, and compiled-matcher
-  storage remain separate resource-hardening work.
+  Their native bytes remain outside the heap-object count. RegExp syntax and
+  compiler/backend limits now retain typed classification and report dynamic
+  host resource rejection as Realm-correct `RangeError`; successful bounded
+  backend fallback remains transparent. String/Arc payloads, fallible
+  capture-name/compiler metadata allocation, backend capture conversion and
+  input boundary tables, legacy String-path materialization, and
+  compiled-matcher storage remain separate resource-hardening work.
   Direct repeated global `RegExp.prototype.exec`
   still prepares the logical input from its current `lastIndex` on each call;
   hosts should set VM fuel or an external deadline for very large manual exec
   loops. Unmodified non-sticky Unicode `Symbol.match` uses a single prepared
   iterator, while observable custom-exec paths retain specification re-entry.
-  Logical UTF-16 exhaustion is a non-catchable fuel abort; the older fancy
-  backend reports `Invalid regex match`. Native
+  Logical UTF-16 and fancy backend work-limit exhaustion are non-catchable Fuel
+  aborts reported as `Invalid regex match`. Native
   matching is still cooperative rather than preemptible, so hosts that need a
   hard wall-clock deadline must use a separately killable process.
 - **String/array caps**: `"x".repeat(n)` is capped at 256 MiB output.

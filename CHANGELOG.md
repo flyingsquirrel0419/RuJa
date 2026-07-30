@@ -4,6 +4,18 @@
 
 ### Changed
 
+- Split RegExp syntax diagnostics from compiler and backend resource limits.
+  Dynamic construction now validates flags before bounded pattern work,
+  reports local Unicode, Rust regex, fancy-regex, and regress construction
+  limits as active-Realm `RangeError`, and preserves malformed patterns as
+  `SyntaxError` unless an earlier source cap is required to avoid allocation.
+  Literal flags consume the complete `IdentifierPart` run before bounded
+  pattern work. The vendored logical backend exposes a typed resource-limit
+  bit instead of requiring message matching; Rust and fancy adapters classify
+  their structured size, nesting, and runtime-work variants. All constructor,
+  exec, search, match, and legacy replacement compile call sites share the
+  same mapper, while a successful alternate backend remains a valid fallback.
+
 - Hardened builtin `RegExp.prototype[Symbol.replace]` replacement
   materialization. Collected results, captures, callback arguments,
   substitution scratch, final UTF-16 output, and UTF-8 decoding now reserve
