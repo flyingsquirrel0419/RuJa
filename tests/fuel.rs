@@ -170,6 +170,66 @@ fn regexp_match_indices_materialization_consumes_fuel() {
 }
 
 #[test]
+fn regexp_exec_materialization_has_an_exact_fuel_boundary() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        globalThis.manyExecCaptures = new RegExp("a" + "()".repeat(200));
+        "#,
+    )
+    .expect("RegExp exec fuel fixture should initialize");
+
+    const BUDGET: i64 = 1_000_000;
+    vm.set_fuel(Some(BUDGET));
+    vm.run("manyExecCaptures.exec('a');")
+        .expect("a large fuel budget should finish RegExp exec materialization");
+    let required = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+    assert!(required > 200, "capture materialization must consume fuel");
+
+    vm.set_fuel(Some(required - 1));
+    let error = vm
+        .run("manyExecCaptures.exec('a');")
+        .expect_err("one unit below the measured boundary must fail");
+    assert_eq!(error.kind, ruja::ErrorKind::Fuel);
+
+    vm.set_fuel(Some(required));
+    vm.run("manyExecCaptures.exec('a');")
+        .expect("the exact measured fuel boundary should succeed");
+    assert_eq!(vm.fuel_remaining(), Some(0));
+}
+
+#[test]
+fn regexp_named_group_hashing_consumes_name_length_fuel() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        globalThis.shortNamedExec = /(?<a>a)/d;
+        globalThis.longNamedExec = new RegExp(
+          "(?<" + "a".repeat(4096) + ">a)",
+          "d"
+        );
+        "#,
+    )
+    .expect("named-group hashing fixtures should initialize");
+
+    const BUDGET: i64 = 1_000_000;
+    vm.set_fuel(Some(BUDGET));
+    vm.run("shortNamedExec.exec('a');")
+        .expect("short named-group exec should finish");
+    let short_work = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+
+    vm.set_fuel(Some(BUDGET));
+    vm.run("longNamedExec.exec('a');")
+        .expect("long named-group exec should finish");
+    let long_work = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+
+    assert!(
+        long_work >= short_work + 8_000,
+        "both string and indices groups must charge full name hashing"
+    );
+}
+
+#[test]
 fn fuel_can_be_refilled_between_runs() {
     let mut vm = Vm::new().expect("failed to initialize VM");
     vm.set_fuel(Some(100));

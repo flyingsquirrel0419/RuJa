@@ -132,10 +132,14 @@ The following resource limits are enforced:
   duplicates per name, 65,536 stored path segments, 1,000,000 comparison
   units, and 16,384 duplicate-backreference alternatives.
   Temporary RegExp GC roots reserve fallibly before publication, including one
-  exact preflight for all match-indices pair/group roots. Capture boundary,
-  capture-name, groups-property, replacement-result, and compiled-matcher
-  native containers are still outside the heap-object cap; their remaining
-  fallible growth and matcher caching are separate resource-hardening work.
+  exact preflight for all match-indices pair/group roots. Builtin exec's
+  post-match capture ranges, endpoints, UTF-16 offset map, result vectors and
+  presence bitmaps, named groups, indices Arrays/groups, and result properties
+  also reserve fallibly and consume conservative Fuel before native work.
+  Their native bytes remain outside the heap-object count. String/Arc payloads,
+  capture-name/compiler metadata, backend capture conversion and input boundary
+  tables, replacement containers, legacy String paths, and compiled-matcher
+  storage remain separate resource-hardening work.
   Direct repeated global `RegExp.prototype.exec`
   still prepares the logical input from its current `lastIndex` on each call;
   hosts should set VM fuel or an external deadline for very large manual exec

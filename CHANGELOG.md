@@ -4,6 +4,19 @@
 
 ### Changed
 
+- Made builtin RegExp `exec` post-match native containers allocator-fallible
+  and fuel-metered. Capture ranges, endpoint sorting and UTF-16 offset maps,
+  result values and Array presence bitmaps, named groups, match-indices pair
+  Arrays and groups, and final result properties reserve before mutation and
+  report catchable `RangeError` on growth failure. Named-group maps are built
+  before heap publication, preserving duplicate-name insertion order while
+  replacing only an earlier unmatched value. Global and sticky `lastIndex`
+  now publish the matched end before all result materialization, matching
+  `RegExpBuiltinExec`; later resource failure does not roll that side effect
+  back. Deterministic tests cover every reservation site, nested countdowns,
+  GC/pin cleanup, immediate retry, Realm identity, conditional branches, and
+  Fuel-before-reservation plus capture-name hashing boundaries.
+
 - Made every temporary GC-root publication in the RegExp core fallible before
   mutation. Constructor, search, match, matchAll, split, replacement, iterator,
   `toString`, exec, groups, and match-indices paths now reserve exact value-root

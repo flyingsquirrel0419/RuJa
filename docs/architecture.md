@@ -3510,6 +3510,39 @@ coercion, allocation, or callback fails.
 - 장점, 단점 및 영향: Root growth failure is a catchable RangeError, every prior pin is released, fresh intermediates survive forced GC, and retry remains possible without rolling back earlier observable side effects. Native capture/name/property containers and repeated matcher compilation remain separate hardening work.
 ```
 
+### RegExp post-match container publication
+
+Builtin `RegExp.prototype.exec` separates the matcher result from its native
+post-match materialization. For global and sticky expressions, match zero's
+UTF-16 end is computed and written to `lastIndex` first, as required by
+`RegExpBuiltinExec`. Capture ranges and result payloads are then built in
+fallibly reserved local vectors. Endpoint sorting prepays conservative
+`n log n` Fuel; byte-to-UTF-16 conversion reserves its offset map and prepays
+both endpoint and input-scan work. String slicing and copying are conservatively
+charged by input bytes per capture candidate, and named-group map insertion
+prepays every capture-name byte before hashing.
+
+Result and indices Arrays use `ArrayData::try_new`, including the dense
+presence bitmap. Named string and indices groups build a reserved local
+`IndexMap` before allocating the null-prototype heap object. `IndexMap::entry`
+retains the first property position for duplicate names and replaces an
+earlier `undefined` only when a later alternative participated. All
+participating indices pairs and the indices-groups object retain the existing
+batch root preflight; the outer indices and exec-result property maps reserve
+before their first insertion. Thus a catchable reservation failure cannot
+publish a partial groups object or partially decorated result Array, and it
+does not roll back an already specified `lastIndex` write.
+
+```text
+[Decision Log]
+- 목적과 의도: Make the complete builtin-exec post-match native container layer catchable, metered, and atomic while preserving RegExpBuiltinExec side-effect order.
+- 기존 구현 및 제약 조건: Matcher capture vectors already existed, but capture boundary conversion used infallible Vec/HashMap collection, Array presence used ArrayData::new, groups mutated a heap object while native maps grew, and result properties inserted without reservation. Global/sticky lastIndex was incorrectly delayed until after capture strings were copied.
+- 검토한 주요 대안: Reserve all future storage before matching or lastIndex publication, impose a smaller capture limit, mutate heap maps one property at a time, retain a separate matched-name IndexSet, combine compiler/backend/replacement allocations into one patch, or isolate the post-match ownership boundary.
+- 선택한 방식: Publish match zero's end first; prepay conservative Fuel before each reservation and native operation for capture, endpoint, sort, scan, slice, full name-byte hashing, presence, and property work; exact-reserve local vectors and presence maps at their specification phase; construct groups maps locally with entry replacement; allocate heap objects only after native maps are complete; inject deterministic failure at each owned reservation.
+- 다른 대안 대신 이 방식을 선택한 이유: Entry-wide reservation changes observable lastIndex and setter ordering; lower caps reject valid programs; incremental heap mutation permits partial publication; IndexSet duplicates storage and allocation; compiler/backend/replacement paths have different typed-error and callback-order contracts. The isolated boundary can be proved end to end without overstating allocator coverage.
+- 장점, 단점 및 영향: Every owned container failure is a Realm-correct catchable RangeError, pins and failed partial objects are collectible, duplicate property order and indices identity survive retry, and native work has an exact cooperative Fuel boundary. String/Arc payload allocation, capture-name/compiler metadata, backend capture conversion and input boundary tables, replacement containers, matcher/vendor allocation, and legacy String paths remain separate units.
+```
+
 ### RegExp named-group conformance ownership
 
 Named capture syntax and runtime behavior span parser early errors, matcher

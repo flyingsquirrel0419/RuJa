@@ -12650,6 +12650,49 @@ new semantic roots are live rather than only reservation-safe.
 - 장점, 단점 및 영향: Later-site leaks and partial indices publication become deterministic regressions without changing Test262 admission. The sweep is internal VM evidence and does not claim matcher-cache or native-container fallibility.
 ```
 
+## RegExp post-match native-container boundary
+
+The supported RegExp policy is unchanged by this resource-hardening unit.
+Ordinary Test262 cannot deterministically fail Rust `Vec`, `HashMap`,
+`IndexMap`, or Array presence-bitmap reservation, so direct VM tests provide
+the allocation evidence while the frozen named-group, duplicate-name,
+match-indices, and complete supported RegExp runs detect semantic drift.
+
+One reservation-site matrix covers capture ranges, endpoints, UTF-16 offset
+maps, result values and presence, string groups properties, indices values,
+every participating pair's values and presence, indices groups and outer
+presence/properties, and final exec-result properties. Each injected failure
+must materialize the active Realm's `RangeError`, consume the selected failpoint,
+restore pin depth and post-GC live count, preserve the already published
+global `lastIndex`, and permit an immediate exact retry. Early, nested, and
+final-property failures repeat through a foreign Realm. The pair sites fail at
+every participating countdown, while the next countdown succeeds and leaves
+the hook armed. The retry proves duplicate-name key order, later
+participating-value selection, explicit unmatched elements, and
+`indices.groups[name] === indices[captureIndex]` identity.
+
+Conditional probes require no-match execution to bypass every site, non-`d`
+execution to bypass every indices reservation,
+unnamed execution to bypass both groups maps while publishing
+`indices.groups === undefined`. A separate non-`d` probe covers the
+three-property result map. The ordinary post-match UTF-16 offset `HashMap` is
+covered; the pre-match backend-input boundary table remains outside this unit.
+The Fuel regression measures one successful large-capture exec, requires
+`required - 1` to fail non-catchably, and requires the exact measured budget
+to finish at zero. A zero-Fuel plus reservation-failpoint probe proves Fuel
+precedes native growth, and a 4,096-byte capture name proves both string and
+indices groups charge full key hashing.
+
+```text
+[Decision Log]
+- 목적과 의도: Prove allocator failure, work accounting, side-effect ordering, GC cleanup, and retry for the builtin-exec containers that Test262 cannot force.
+- 기존 구현 및 제약 조건: Existing Test262 and direct tests proved RegExp values and temporary roots, but real allocator exhaustion was nondeterministic and heap caps do not cover Rust container bytes. Equal corpus totals could also hide a semantic ordering regression.
+- 검토한 주요 대안: Rely on broad conformance, force process OOM, test only the first reservation, widen supported policy, or combine replacement/compiler/backend allocation tests.
+- 선택한 방식: Add one typed countdown failpoint over every owned reservation, assert Realm/RangeError/lastIndex/pin/live/immediate-retry invariants and conditional bypass, measure exact Fuel priority and size boundaries including name hashing, and rerun the unchanged exact and complete RegExp conformance surfaces.
+- 다른 대안 대신 이 방식을 선택한 이유: Broad tests cannot exercise native allocation failure; real OOM is unsafe; first-site tests miss nested cleanup; policy widening is unrelated; adjacent allocation owners require different observable-order and error contracts.
+- 장점, 단점 및 영향: Native container failure is deterministic without changing Test262 admission, while broad RegExp output remains comparable to the prior baseline. This evidence does not claim fallible string payloads, compiler/backend metadata, replacement containers, matcher allocation, or legacy String paths.
+```
+
 ## RegExp named-group exact admission
 
 Pinned Test262 has 86 independently executable `regexp-named-groups` paths

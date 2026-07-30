@@ -5,8 +5,8 @@ use super::{
     InlineCacheReservationSite, MapReservationSite, Microtask, OrdinaryOwnKeysReservationSite,
     OrdinaryPropertyStorageReservationSite, OwnKeyConsumerReservationSite,
     PropertyTraversalReservationSite, ProxyDefinePropertyReservationSite,
-    ProxyDescriptorReservationSite, ProxyOwnKeysReservationSite, SetReservationSite, Vm,
-    WeakCollectionReservationSite,
+    ProxyDescriptorReservationSite, ProxyOwnKeysReservationSite,
+    RegExpMaterializationReservationSite, SetReservationSite, Vm, WeakCollectionReservationSite,
 };
 use crate::bytecode::{Chunk, Op};
 use crate::value::{
@@ -8173,6 +8173,345 @@ fn regexp_core_root_reservation_failures_are_ordered_balanced_and_retryable() {
         Value::String("7;true;/s/g;a".into())
     );
     assert_eq!(vm.gc_pins.len(), baseline_pins);
+}
+
+#[test]
+fn regexp_exec_materialization_reservations_are_atomic_ordered_and_retryable() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.run(
+        r#"
+        var materializationRegexp = /(?:(?<x>a)|(?<y>a)(?<x>b))(?:(?<z>c)|(?<z>d))/dg;
+        var materializationPlainRegexp = /(?<x>a)/d;
+        var materializationInput = "abc";
+        var materializationForeignRealm = $262.createRealm().global;
+        var materializationForeignRegexp = materializationForeignRealm.RegExp("(?<x>a)", "d");
+        var materializationForeignCall = materializationForeignRealm.Function(
+          "regexp",
+          "try { regexp.exec('a'); } catch (error) { return error; }"
+        );
+        "#,
+    )
+    .expect("RegExp materialization fixtures should initialize");
+    vm.gc();
+    let baseline_live = vm.heap.live_count();
+    let baseline_pins = vm.gc_pins.len();
+
+    let plain_regexp = vm.get_global("materializationPlainRegexp");
+    vm.fail_regexp_materialization_reservation =
+        Some((RegExpMaterializationReservationSite::CaptureRanges, 0));
+    vm.set_fuel(Some(0));
+    let error = crate::builtins::regexp::regexp_exec(
+        &mut vm,
+        &[Value::String("a".into())],
+        Some(plain_regexp.clone()),
+    )
+    .expect_err("Fuel must precede capture-range reservation");
+    assert_eq!(error.kind, crate::error::ErrorKind::Fuel);
+    assert_eq!(
+        vm.fail_regexp_materialization_reservation,
+        Some((RegExpMaterializationReservationSite::CaptureRanges, 0))
+    );
+    vm.set_fuel(None);
+    let error = crate::builtins::regexp::regexp_exec(
+        &mut vm,
+        &[Value::String("a".into())],
+        Some(plain_regexp),
+    )
+    .expect_err("reservation must fail after sufficient Fuel");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fail_regexp_materialization_reservation, None);
+
+    let failures = [
+        (RegExpMaterializationReservationSite::CaptureRanges, 0, true),
+        (
+            RegExpMaterializationReservationSite::CaptureEndpoints,
+            0,
+            true,
+        ),
+        (
+            RegExpMaterializationReservationSite::BoundaryOffsets,
+            0,
+            true,
+        ),
+        (RegExpMaterializationReservationSite::ResultItems, 0, true),
+        (
+            RegExpMaterializationReservationSite::ResultArrayPresence,
+            0,
+            true,
+        ),
+        (
+            RegExpMaterializationReservationSite::GroupsProperties,
+            0,
+            true,
+        ),
+        (RegExpMaterializationReservationSite::IndicesValues, 0, true),
+        (
+            RegExpMaterializationReservationSite::IndicesPairItems,
+            0,
+            true,
+        ),
+        (
+            RegExpMaterializationReservationSite::IndicesPairItems,
+            1,
+            true,
+        ),
+        (
+            RegExpMaterializationReservationSite::IndicesPairItems,
+            2,
+            true,
+        ),
+        (
+            RegExpMaterializationReservationSite::IndicesPairItems,
+            3,
+            true,
+        ),
+        (
+            RegExpMaterializationReservationSite::IndicesPairPresence,
+            0,
+            true,
+        ),
+        (
+            RegExpMaterializationReservationSite::IndicesPairPresence,
+            1,
+            true,
+        ),
+        (
+            RegExpMaterializationReservationSite::IndicesPairPresence,
+            2,
+            true,
+        ),
+        (
+            RegExpMaterializationReservationSite::IndicesPairPresence,
+            3,
+            true,
+        ),
+        (
+            RegExpMaterializationReservationSite::IndicesGroupsProperties,
+            0,
+            true,
+        ),
+        (
+            RegExpMaterializationReservationSite::IndicesArrayPresence,
+            0,
+            true,
+        ),
+        (
+            RegExpMaterializationReservationSite::IndicesResultProperties,
+            0,
+            true,
+        ),
+        (
+            RegExpMaterializationReservationSite::ExecResultProperties,
+            0,
+            true,
+        ),
+    ];
+
+    for (site, countdown, last_index_was_published) in failures {
+        vm.run("materializationRegexp.lastIndex = 0;")
+            .expect("lastIndex should reset before injected failure");
+        vm.fail_regexp_materialization_reservation = Some((site, countdown));
+        let error = vm
+            .run("materializationRegexp.exec(materializationInput);")
+            .expect_err("the selected RegExp materialization reservation must fail");
+        assert_eq!(error.kind, crate::error::ErrorKind::Range, "{site:?}");
+        assert_main_realm_range_error(&vm, error.as_ref());
+        assert_eq!(
+            vm.fail_regexp_materialization_reservation, None,
+            "{site:?} countdown {countdown}"
+        );
+        assert_eq!(vm.gc_pins.len(), baseline_pins, "{site:?}");
+        assert_eq!(
+            vm.run("materializationRegexp.lastIndex;")
+                .expect("lastIndex should remain readable"),
+            Value::Number(if last_index_was_published { 3.0 } else { 0.0 }),
+            "{site:?} countdown {countdown}"
+        );
+        drop(error);
+        vm.gc();
+        assert_eq!(vm.heap.live_count(), baseline_live, "{site:?}");
+        vm.run("materializationRegexp.lastIndex = 0;")
+            .expect("lastIndex should reset before immediate retry");
+        let retry = vm
+            .run("materializationRegexp.exec(materializationInput);")
+            .unwrap_or_else(|error| panic!("{site:?} retry failed: {error}"));
+        assert!(matches!(retry, Value::Object(_)), "{site:?}");
+        drop(retry);
+        vm.run("materializationRegexp.lastIndex = 0;")
+            .expect("lastIndex should reset after immediate retry");
+        vm.gc();
+        assert_eq!(vm.heap.live_count(), baseline_live, "{site:?} retry");
+    }
+
+    for site in [
+        RegExpMaterializationReservationSite::IndicesPairItems,
+        RegExpMaterializationReservationSite::IndicesPairPresence,
+    ] {
+        vm.run("materializationRegexp.lastIndex = 0;")
+            .expect("lastIndex should reset before pair success boundary");
+        vm.fail_regexp_materialization_reservation = Some((site, 4));
+        let result = vm
+            .run("materializationRegexp.exec(materializationInput);")
+            .expect("four participating pairs must consume exactly four reservations");
+        assert!(matches!(result, Value::Object(_)));
+        assert_eq!(vm.fail_regexp_materialization_reservation, Some((site, 0)));
+        vm.fail_regexp_materialization_reservation = None;
+        drop(result);
+        vm.run("materializationRegexp.lastIndex = 0;")
+            .expect("lastIndex should reset after pair success boundary");
+        vm.gc();
+        assert_eq!(vm.heap.live_count(), baseline_live);
+    }
+
+    for site in [
+        RegExpMaterializationReservationSite::CaptureRanges,
+        RegExpMaterializationReservationSite::CaptureEndpoints,
+        RegExpMaterializationReservationSite::BoundaryOffsets,
+        RegExpMaterializationReservationSite::ResultItems,
+        RegExpMaterializationReservationSite::ResultArrayPresence,
+        RegExpMaterializationReservationSite::GroupsProperties,
+        RegExpMaterializationReservationSite::IndicesValues,
+        RegExpMaterializationReservationSite::IndicesPairItems,
+        RegExpMaterializationReservationSite::IndicesPairPresence,
+        RegExpMaterializationReservationSite::IndicesGroupsProperties,
+        RegExpMaterializationReservationSite::IndicesArrayPresence,
+        RegExpMaterializationReservationSite::IndicesResultProperties,
+        RegExpMaterializationReservationSite::ExecResultProperties,
+    ] {
+        vm.fail_regexp_materialization_reservation = Some((site, 0));
+        assert_eq!(
+            vm.run("/never/.exec('a');")
+                .expect("no-match must bypass post-match materialization"),
+            Value::Null,
+            "{site:?}"
+        );
+        assert_eq!(
+            vm.fail_regexp_materialization_reservation,
+            Some((site, 0)),
+            "{site:?}"
+        );
+        vm.fail_regexp_materialization_reservation = None;
+    }
+
+    for site in [
+        RegExpMaterializationReservationSite::IndicesValues,
+        RegExpMaterializationReservationSite::IndicesPairItems,
+        RegExpMaterializationReservationSite::IndicesPairPresence,
+        RegExpMaterializationReservationSite::IndicesGroupsProperties,
+        RegExpMaterializationReservationSite::IndicesArrayPresence,
+        RegExpMaterializationReservationSite::IndicesResultProperties,
+    ] {
+        vm.fail_regexp_materialization_reservation = Some((site, 0));
+        vm.run("/a/.exec('a');")
+            .expect("non-indices exec must bypass every indices reservation");
+        assert_eq!(
+            vm.fail_regexp_materialization_reservation,
+            Some((site, 0)),
+            "{site:?}"
+        );
+        vm.fail_regexp_materialization_reservation = None;
+    }
+
+    for site in [
+        RegExpMaterializationReservationSite::CaptureRanges,
+        RegExpMaterializationReservationSite::IndicesPairPresence,
+        RegExpMaterializationReservationSite::ExecResultProperties,
+    ] {
+        vm.fail_regexp_materialization_reservation = Some((site, 0));
+        assert_eq!(
+            vm.run(
+                r#"
+                var materializationForeignError = materializationForeignCall(
+                  materializationForeignRegexp
+                );
+                materializationForeignError instanceof materializationForeignRealm.RangeError &&
+                  !(materializationForeignError instanceof RangeError);
+                "#,
+            )
+            .expect("foreign RegExp failure should materialize"),
+            Value::Bool(true),
+            "{site:?}"
+        );
+        assert_eq!(vm.fail_regexp_materialization_reservation, None);
+        assert_eq!(vm.gc_pins.len(), baseline_pins);
+    }
+
+    vm.run("materializationRegexp.lastIndex = 0;")
+        .expect("lastIndex should reset before retry");
+    let result = vm
+        .run("materializationRegexp.exec(materializationInput);")
+        .expect("RegExp exec should recover after every reservation failure");
+    vm.define_global("materializationResult", result);
+    assert_eq!(
+        vm.run(
+            r#"
+            [
+              materializationResult.groups.x,
+              materializationResult.groups.y,
+              materializationResult.groups.z,
+              Object.keys(materializationResult.groups).join(","),
+              materializationResult.indices.groups.x === materializationResult.indices[3],
+              materializationResult.indices.groups.y === materializationResult.indices[2],
+              materializationResult.indices.groups.z === materializationResult.indices[4],
+              Object.keys(materializationResult.indices.groups).join(","),
+              materializationResult.indices[0].join(","),
+              materializationResult.indices[3].join(","),
+              Object.keys(materializationResult).join(",")
+            ].join("|");
+            "#,
+        )
+        .expect("retried RegExp materialization should remain intact"),
+        Value::String(Arc::from(
+            "b|a|c|x,y,z|true|true|true|x,y,z|0,3|1,2|0,1,2,3,4,5,index,input,groups,indices"
+        ))
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    vm.fail_regexp_materialization_reservation = Some((
+        RegExpMaterializationReservationSite::ExecResultProperties,
+        0,
+    ));
+    let error = vm
+        .run("/a/.exec('a');")
+        .expect_err("non-indices exec must reserve its three result properties");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fail_regexp_materialization_reservation, None);
+    drop(error);
+    assert_eq!(
+        vm.run(
+            "var plainMaterializationResult = /a/.exec('a'); Object.keys(plainMaterializationResult).join(',');"
+        )
+        .expect("non-indices exec should recover after property reservation failure"),
+        Value::String("0,index,input,groups".into())
+    );
+
+    vm.fail_regexp_materialization_reservation =
+        Some((RegExpMaterializationReservationSite::GroupsProperties, 0));
+    vm.run("/a/d.exec('a');")
+        .expect("unnamed exec must not reserve a string groups map");
+    assert_eq!(
+        vm.fail_regexp_materialization_reservation,
+        Some((RegExpMaterializationReservationSite::GroupsProperties, 0))
+    );
+
+    vm.fail_regexp_materialization_reservation = Some((
+        RegExpMaterializationReservationSite::IndicesGroupsProperties,
+        0,
+    ));
+    assert_eq!(
+        vm.run("/a/d.exec('a').indices.groups;")
+            .expect("unnamed indices must publish an undefined groups property"),
+        Value::Undefined
+    );
+    assert_eq!(
+        vm.fail_regexp_materialization_reservation,
+        Some((
+            RegExpMaterializationReservationSite::IndicesGroupsProperties,
+            0
+        ))
+    );
+
+    vm.fail_regexp_materialization_reservation = None;
 }
 
 fn sweep_regexp_root_reservations<F, G>(

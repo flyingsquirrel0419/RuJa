@@ -1476,26 +1476,53 @@ pub(crate) fn regexp_exec(
     };
     match m {
         Some(caps) => {
-            let capture_ranges = regexp_capture_index_pairs(&caps, &backend_input);
-            let items: Vec<Value> = capture_ranges
+            if global || sticky {
+                let match_end = if let Some(matched) = caps.get(0) {
+                    let lookup_work = backend_input.byte_to_utf16.as_ref().map_or(
+                        backend_input.as_str().len(),
+                        |boundaries| {
+                            if boundaries.len() <= 1 {
+                                0
+                            } else {
+                                (usize::BITS - (boundaries.len() - 1).leading_zeros()) as usize
+                            }
+                        },
+                    );
+                    consume_regexp_materialization_work(vm, lookup_work)?;
+                    backend_input
+                        .utf16_offset_for_byte(matched.end())
+                        .expect("match end must map to a UTF-16 offset")
+                } else {
+                    start
+                };
+                if let Some(value) = &this_value {
+                    set_regexp_last_index(vm, value, match_end as f64)?;
+                }
+            }
+            let capture_ranges = regexp_capture_index_pairs(vm, &caps, &backend_input)?;
+            consume_regexp_materialization_work(vm, capture_ranges.len().saturating_mul(2))?;
+            let copy_work = capture_ranges
                 .iter()
-                .map(|range| match range {
+                .filter(|range| range.is_some())
+                .count()
+                .saturating_mul(input.len());
+            consume_regexp_materialization_work(vm, copy_work)?;
+            regexp_materialization_preflight(
+                vm,
+                #[cfg(test)]
+                crate::vm::RegExpMaterializationReservationSite::ResultItems,
+            )?;
+            let mut items = Vec::new();
+            items
+                .try_reserve_exact(capture_ranges.len())
+                .map_err(|_| regexp_materialization_storage_error())?;
+            for range in &capture_ranges {
+                items.push(match range {
                     Some((start, end)) => Value::String(Arc::from(
                         crate::value::utf16_slice(&input, *start, *end).as_str(),
                     )),
                     None => Value::Undefined,
-                })
-                .collect();
-            if global || sticky {
-                let match_end = capture_ranges
-                    .first()
-                    .copied()
-                    .flatten()
-                    .map(|(_, end)| end)
-                    .unwrap_or(start);
-                if let Some(value) = &this_value {
-                    set_regexp_last_index(vm, value, match_end as f64)?;
-                }
+                });
             }
             let match_start = capture_ranges
                 .first()
@@ -1518,7 +1545,7 @@ pub(crate) fn regexp_exec(
                         .contains('d')
                         .then(|| make_regexp_indices_array(vm, &capture_ranges, &capture_names))
                         .transpose()?;
-                    add_regexp_exec_result_props(
+                    add_builtin_regexp_exec_result_props(
                         vm,
                         &result,
                         match_start,
@@ -1551,48 +1578,142 @@ fn make_regexp_exec_array(vm: &mut Vm, items: Vec<Value>) -> error::Result<Value
     // operation can retry GC without exposing unrooted object-valued locals.
     debug_assert!(items.iter().all(|value| !matches!(value, Value::Object(_))));
     let prototype = vm.array_prototype_for_env(vm.current_realm_global_env());
-    vm.alloc(HeapObj::Array(ArrayData::new(items, Some(prototype))))
-        .map(Value::Object)
+    regexp_materialization_preflight(
+        vm,
+        #[cfg(test)]
+        crate::vm::RegExpMaterializationReservationSite::ResultArrayPresence,
+    )?;
+    let array = ArrayData::try_new(items, Some(prototype))
+        .map_err(|_| regexp_materialization_storage_error())?;
+    vm.alloc(HeapObj::Array(array)).map(Value::Object)
+}
+
+fn regexp_materialization_storage_error() -> Arc<Error> {
+    Error::range("RegExp result materialization storage is too large")
+}
+
+#[cfg(test)]
+fn take_regexp_materialization_reservation_failure(
+    vm: &mut Vm,
+    site: crate::vm::RegExpMaterializationReservationSite,
+) -> bool {
+    let Some((configured_site, remaining)) = vm.fail_regexp_materialization_reservation else {
+        return false;
+    };
+    if configured_site != site {
+        return false;
+    }
+    if remaining != 0 {
+        vm.fail_regexp_materialization_reservation = Some((configured_site, remaining - 1));
+        return false;
+    }
+    vm.fail_regexp_materialization_reservation = None;
+    true
+}
+
+fn regexp_materialization_preflight(
+    _vm: &mut Vm,
+    #[cfg(test)] site: crate::vm::RegExpMaterializationReservationSite,
+) -> error::Result<()> {
+    #[cfg(test)]
+    if take_regexp_materialization_reservation_failure(_vm, site) {
+        return Err(regexp_materialization_storage_error());
+    }
+    Ok(())
+}
+
+fn consume_regexp_materialization_work(vm: &mut Vm, work: usize) -> error::Result<()> {
+    vm.consume_fuel_units(work.min(i64::MAX as usize) as i64)
 }
 
 fn regexp_capture_index_pairs(
+    vm: &mut Vm,
     caps: &CompiledCaptures<'_>,
     backend_input: &RegExpBackendInput<'_>,
-) -> Vec<Option<(usize, usize)>> {
-    let byte_ranges: Vec<Option<(usize, usize)>> = caps
+) -> error::Result<Vec<Option<(usize, usize)>>> {
+    consume_regexp_materialization_work(vm, caps.len())?;
+    regexp_materialization_preflight(
+        vm,
+        #[cfg(test)]
+        crate::vm::RegExpMaterializationReservationSite::CaptureRanges,
+    )?;
+    let mut byte_ranges = Vec::new();
+    byte_ranges
+        .try_reserve_exact(caps.len())
+        .map_err(|_| regexp_materialization_storage_error())?;
+    for capture in caps.iter() {
+        byte_ranges.push(capture.map(|matched| (matched.start(), matched.end())));
+    }
+
+    if let Some(boundaries) = &backend_input.byte_to_utf16 {
+        let lookup_levels = if boundaries.len() <= 1 {
+            0
+        } else {
+            (usize::BITS - (boundaries.len() - 1).leading_zeros()) as usize
+        };
+        consume_regexp_materialization_work(
+            vm,
+            byte_ranges
+                .len()
+                .saturating_mul(2)
+                .saturating_mul(lookup_levels),
+        )?;
+        for (start, end) in byte_ranges.iter_mut().flatten() {
+            *start = backend_input
+                .utf16_offset_for_byte(*start)
+                .expect("capture start must map to a UTF-16 offset");
+            *end = backend_input
+                .utf16_offset_for_byte(*end)
+                .expect("capture end must map to a UTF-16 offset");
+        }
+        return Ok(byte_ranges);
+    }
+
+    let endpoint_capacity = byte_ranges
         .iter()
-        .map(|capture| capture.map(|matched| (matched.start(), matched.end())))
-        .collect();
-    let mut endpoints: Vec<usize> = byte_ranges
-        .iter()
-        .flatten()
-        .flat_map(|(start, end)| [*start, *end])
-        .collect();
+        .filter(|range| range.is_some())
+        .count()
+        .checked_mul(2)
+        .ok_or_else(regexp_materialization_storage_error)?;
+    consume_regexp_materialization_work(vm, endpoint_capacity)?;
+    regexp_materialization_preflight(
+        vm,
+        #[cfg(test)]
+        crate::vm::RegExpMaterializationReservationSite::CaptureEndpoints,
+    )?;
+    let mut endpoints = Vec::new();
+    endpoints
+        .try_reserve_exact(endpoint_capacity)
+        .map_err(|_| regexp_materialization_storage_error())?;
+    for (start, end) in byte_ranges.iter().flatten() {
+        endpoints.push(*start);
+        endpoints.push(*end);
+    }
+    let sort_levels = if endpoints.len() <= 1 {
+        0
+    } else {
+        (usize::BITS - (endpoints.len() - 1).leading_zeros()) as usize
+    };
+    consume_regexp_materialization_work(vm, endpoints.len().saturating_mul(sort_levels))?;
     endpoints.sort_unstable();
     endpoints.dedup();
-
-    if backend_input.byte_to_utf16.is_some() {
-        return byte_ranges
-            .into_iter()
-            .map(|range| {
-                range.map(|(start, end)| {
-                    (
-                        backend_input
-                            .utf16_offset_for_byte(start)
-                            .expect("capture start must map to a UTF-16 offset"),
-                        backend_input
-                            .utf16_offset_for_byte(end)
-                            .expect("capture end must map to a UTF-16 offset"),
-                    )
-                })
-            })
-            .collect();
-    }
 
     // Convert all capture boundaries in one left-to-right pass. Re-scanning
     // the input once per capture makes a large, attacker-controlled pattern
     // quadratic in the number of captures and input length.
-    let mut utf16_offsets = std::collections::HashMap::with_capacity(endpoints.len());
+    consume_regexp_materialization_work(
+        vm,
+        endpoints.len().saturating_add(backend_input.as_str().len()),
+    )?;
+    regexp_materialization_preflight(
+        vm,
+        #[cfg(test)]
+        crate::vm::RegExpMaterializationReservationSite::BoundaryOffsets,
+    )?;
+    let mut utf16_offsets = std::collections::HashMap::new();
+    utf16_offsets
+        .try_reserve(endpoints.len())
+        .map_err(|_| regexp_materialization_storage_error())?;
     let mut previous_byte = 0usize;
     let mut previous_utf16 = 0usize;
     for endpoint in endpoints {
@@ -1602,21 +1723,35 @@ fn regexp_capture_index_pairs(
         previous_byte = endpoint;
     }
 
-    byte_ranges
-        .into_iter()
-        .map(|range| {
-            range.map(|(start, end)| {
-                (
-                    *utf16_offsets
-                        .get(&start)
-                        .expect("capture start must have a UTF-16 offset"),
-                    *utf16_offsets
-                        .get(&end)
-                        .expect("capture end must have a UTF-16 offset"),
-                )
-            })
-        })
-        .collect()
+    for (start, end) in byte_ranges.iter_mut().flatten() {
+        *start = *utf16_offsets
+            .get(start)
+            .expect("capture start must have a UTF-16 offset");
+        *end = *utf16_offsets
+            .get(end)
+            .expect("capture end must have a UTF-16 offset");
+    }
+    Ok(byte_ranges)
+}
+
+fn insert_regexp_group_property(
+    props: &mut IndexMap<PropertyKey, PropertyDescriptor>,
+    name: &Arc<str>,
+    value: Value,
+) {
+    use indexmap::map::Entry;
+
+    match props.entry(PropertyKey::from(name.clone())) {
+        Entry::Vacant(entry) => {
+            entry.insert(PropertyDescriptor::data(value));
+        }
+        Entry::Occupied(mut entry) => {
+            debug_assert!(entry.get().value.is_undefined() || value.is_undefined());
+            if entry.get().value.is_undefined() && !value.is_undefined() {
+                entry.get_mut().value = value;
+            }
+        }
+    }
 }
 
 fn make_regexp_groups_object_from_ranges(
@@ -1628,42 +1763,42 @@ fn make_regexp_groups_object_from_ranges(
     if names.is_empty() {
         return Ok(Value::Undefined);
     }
+    consume_regexp_materialization_work(vm, names.len())?;
+    let name_work = names.iter().fold(0usize, |work, capture| {
+        work.saturating_add(capture.name.len())
+    });
+    let copy_work = names.len().saturating_mul(input.len());
+    consume_regexp_materialization_work(vm, name_work.saturating_add(copy_work))?;
+    regexp_materialization_preflight(
+        vm,
+        #[cfg(test)]
+        crate::vm::RegExpMaterializationReservationSite::GroupsProperties,
+    )?;
+    let mut props = IndexMap::new();
+    props
+        .try_reserve(names.len())
+        .map_err(|_| regexp_materialization_storage_error())?;
+    for capture in names {
+        let value = ranges
+            .get(capture.index)
+            .ok_or_else(|| Error::internal("RegExp capture metadata is misaligned"))?
+            .to_owned()
+            .map(|(start, end)| {
+                Value::String(Arc::from(
+                    crate::value::utf16_slice(input, start, end).as_str(),
+                ))
+            })
+            .unwrap_or(Value::Undefined);
+        insert_regexp_group_property(&mut props, &capture.name, value);
+    }
     let groups = vm.alloc(HeapObj::Object(ObjectData {
-        props: Mutex::new(IndexMap::new()),
+        props: Mutex::new(props),
         proto: Mutex::new(None),
         extensible: AtomicBool::new(true),
         class_name: Some(Arc::from("Object")),
         private_fields: Mutex::new(std::collections::HashMap::new()),
         primitive: Mutex::new(None),
     }))?;
-    vm.heap.with_obj(groups.0, |object| {
-        let props = object.props();
-        let mut props = props.lock();
-        let mut matched_names = IndexSet::new();
-        for capture in names {
-            let value = ranges
-                .get(capture.index)
-                .copied()
-                .flatten()
-                .map(|(start, end)| {
-                    Value::String(Arc::from(
-                        crate::value::utf16_slice(input, start, end).as_str(),
-                    ))
-                })
-                .unwrap_or(Value::Undefined);
-            if matched_names.contains(&capture.name) {
-                debug_assert!(value.is_undefined());
-                continue;
-            }
-            if !value.is_undefined() {
-                matched_names.insert(capture.name.clone());
-            }
-            props.insert(
-                PropertyKey::from(capture.name.clone()),
-                PropertyDescriptor::data(value),
-            );
-        }
-    });
     Ok(Value::Object(groups))
 }
 
@@ -1673,28 +1808,54 @@ fn make_regexp_indices_array(
     capture_names: &[RegexCaptureName],
 ) -> error::Result<Value> {
     let prototype = vm.array_prototype_for_env(vm.current_realm_global_env());
-    let mut pair_values = Vec::with_capacity(pairs.len());
+    let participating_pairs = pairs.iter().filter(|pair| pair.is_some()).count();
+    let pair_work = pairs
+        .len()
+        .saturating_mul(2)
+        .saturating_add(participating_pairs.saturating_mul(4))
+        .saturating_add(1);
+    consume_regexp_materialization_work(vm, pair_work)?;
+    regexp_materialization_preflight(
+        vm,
+        #[cfg(test)]
+        crate::vm::RegExpMaterializationReservationSite::IndicesValues,
+    )?;
+    let mut pair_values = Vec::new();
+    pair_values
+        .try_reserve_exact(pairs.len())
+        .map_err(|_| regexp_materialization_storage_error())?;
     let mut pin_count = 0usize;
     let completion = (|| {
         // Reserve every persistent nested-result root before the first pair
         // allocation, so the raw pair/group pins cannot grow midway.
-        let future_roots = pairs
-            .iter()
-            .filter(|pair| pair.is_some())
-            .count()
+        let future_roots = participating_pairs
             .checked_add(usize::from(!capture_names.is_empty()))
             .ok_or_else(|| Error::range("temporary root set is too large"))?;
         if future_roots != 0 {
             vm.try_reserve_gc_pins(future_roots)?;
         }
         for pair in pairs {
-            vm.consume_fuel()?;
             let value = match pair {
                 Some((start, end)) => {
-                    let pair = vm.alloc(HeapObj::Array(ArrayData::new(
-                        vec![Value::Number(*start as f64), Value::Number(*end as f64)],
-                        Some(prototype.clone()),
-                    )))?;
+                    regexp_materialization_preflight(
+                        vm,
+                        #[cfg(test)]
+                        crate::vm::RegExpMaterializationReservationSite::IndicesPairItems,
+                    )?;
+                    let mut pair_items = Vec::new();
+                    pair_items
+                        .try_reserve_exact(2)
+                        .map_err(|_| regexp_materialization_storage_error())?;
+                    pair_items.push(Value::Number(*start as f64));
+                    pair_items.push(Value::Number(*end as f64));
+                    regexp_materialization_preflight(
+                        vm,
+                        #[cfg(test)]
+                        crate::vm::RegExpMaterializationReservationSite::IndicesPairPresence,
+                    )?;
+                    let pair_data = ArrayData::try_new(pair_items, Some(prototype.clone()))
+                        .map_err(|_| regexp_materialization_storage_error())?;
+                    let pair = vm.alloc(HeapObj::Array(pair_data))?;
                     let value = Value::Object(pair);
                     pin_count += vm.pin(&value);
                     value
@@ -1707,8 +1868,28 @@ fn make_regexp_indices_array(
         let groups = if capture_names.is_empty() {
             Value::Undefined
         } else {
+            consume_regexp_materialization_work(vm, capture_names.len())?;
+            let name_work = capture_names.iter().fold(0usize, |work, capture| {
+                work.saturating_add(capture.name.len())
+            });
+            consume_regexp_materialization_work(vm, name_work)?;
+            regexp_materialization_preflight(
+                vm,
+                #[cfg(test)]
+                crate::vm::RegExpMaterializationReservationSite::IndicesGroupsProperties,
+            )?;
+            let mut props = IndexMap::new();
+            props
+                .try_reserve(capture_names.len())
+                .map_err(|_| regexp_materialization_storage_error())?;
+            for capture in capture_names {
+                let value = pair_values
+                    .get(capture.index)
+                    .ok_or_else(|| Error::internal("RegExp capture metadata is misaligned"))?;
+                insert_regexp_group_property(&mut props, &capture.name, value.clone());
+            }
             let groups = vm.alloc(HeapObj::Object(ObjectData {
-                props: Mutex::new(IndexMap::new()),
+                props: Mutex::new(props),
                 proto: Mutex::new(None),
                 extensible: AtomicBool::new(true),
                 class_name: Some(Arc::from("Object")),
@@ -1720,34 +1901,28 @@ fn make_regexp_indices_array(
             let Value::Object(groups_idx) = groups else {
                 unreachable!("indices groups allocation must return an object");
             };
-            vm.heap.with_obj(groups_idx.0, |object| {
-                let props = object.props();
-                let mut props = props.lock();
-                let mut matched_names = IndexSet::new();
-                for capture in capture_names {
-                    if let Some(value) = pair_values.get(capture.index) {
-                        if matched_names.contains(&capture.name) {
-                            debug_assert!(value.is_undefined());
-                            continue;
-                        }
-                        if !value.is_undefined() {
-                            matched_names.insert(capture.name.clone());
-                        }
-                        props.insert(
-                            PropertyKey::from(capture.name.clone()),
-                            enumerable_data_prop(value.clone()),
-                        );
-                    }
-                }
-            });
             Value::Object(groups_idx)
         };
 
-        let indices = ArrayData::new(pair_values, Some(prototype));
-        indices
-            .props
-            .lock()
-            .insert(PropertyKey::from("groups"), enumerable_data_prop(groups));
+        regexp_materialization_preflight(
+            vm,
+            #[cfg(test)]
+            crate::vm::RegExpMaterializationReservationSite::IndicesArrayPresence,
+        )?;
+        let indices = ArrayData::try_new(pair_values, Some(prototype))
+            .map_err(|_| regexp_materialization_storage_error())?;
+        regexp_materialization_preflight(
+            vm,
+            #[cfg(test)]
+            crate::vm::RegExpMaterializationReservationSite::IndicesResultProperties,
+        )?;
+        {
+            let mut props = indices.props.lock();
+            props
+                .try_reserve(1)
+                .map_err(|_| regexp_materialization_storage_error())?;
+            props.insert(PropertyKey::from("groups"), enumerable_data_prop(groups));
+        }
         vm.alloc(HeapObj::Array(indices)).map(Value::Object)
     })();
     vm.unpin_many(pin_count);
@@ -1875,6 +2050,27 @@ fn enumerable_data_prop(value: Value) -> PropertyDescriptor {
     }
 }
 
+fn populate_regexp_exec_result_props(
+    props: &mut IndexMap<PropertyKey, PropertyDescriptor>,
+    match_start: usize,
+    input: &str,
+    groups: Value,
+    indices: Option<Value>,
+) {
+    props.insert(
+        PropertyKey::from("index"),
+        enumerable_data_prop(Value::Number(match_start as f64)),
+    );
+    props.insert(
+        PropertyKey::from("input"),
+        enumerable_data_prop(Value::String(Arc::from(input))),
+    );
+    props.insert(PropertyKey::from("groups"), enumerable_data_prop(groups));
+    if let Some(indices) = indices {
+        props.insert(PropertyKey::from("indices"), enumerable_data_prop(indices));
+    }
+}
+
 pub(crate) fn add_regexp_exec_result_props(
     vm: &mut Vm,
     result: &Value,
@@ -1889,20 +2085,38 @@ pub(crate) fn add_regexp_exec_result_props(
     vm.heap.with_obj(idx.0, |obj| {
         let props = obj.props();
         let mut props = props.lock();
-        props.insert(
-            PropertyKey::from("index"),
-            enumerable_data_prop(Value::Number(match_start as f64)),
-        );
-        props.insert(
-            PropertyKey::from("input"),
-            enumerable_data_prop(Value::String(Arc::from(input))),
-        );
-        props.insert(PropertyKey::from("groups"), enumerable_data_prop(groups));
-        if let Some(indices) = indices {
-            props.insert(PropertyKey::from("indices"), enumerable_data_prop(indices));
-        }
+        populate_regexp_exec_result_props(&mut props, match_start, input, groups, indices);
     });
     Ok(())
+}
+
+fn add_builtin_regexp_exec_result_props(
+    vm: &mut Vm,
+    result: &Value,
+    match_start: usize,
+    input: &str,
+    groups: Value,
+    indices: Option<Value>,
+) -> error::Result<()> {
+    let Value::Object(idx) = result else {
+        return Ok(());
+    };
+    let additional = 3 + usize::from(indices.is_some());
+    consume_regexp_materialization_work(vm, additional.saturating_add(input.len()))?;
+    regexp_materialization_preflight(
+        vm,
+        #[cfg(test)]
+        crate::vm::RegExpMaterializationReservationSite::ExecResultProperties,
+    )?;
+    vm.heap.with_obj(idx.0, |obj| -> error::Result<()> {
+        let props = obj.props();
+        let mut props = props.lock();
+        props
+            .try_reserve(additional)
+            .map_err(|_| regexp_materialization_storage_error())?;
+        populate_regexp_exec_result_props(&mut props, match_start, input, groups, indices);
+        Ok(())
+    })
 }
 
 fn set_regexp_last_index(vm: &mut Vm, target: &Value, value: f64) -> error::Result<()> {

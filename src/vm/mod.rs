@@ -185,6 +185,24 @@ pub(crate) enum InlineCacheReservationSite {
     PropertyMap,
 }
 
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RegExpMaterializationReservationSite {
+    CaptureRanges,
+    CaptureEndpoints,
+    BoundaryOffsets,
+    ResultItems,
+    ResultArrayPresence,
+    GroupsProperties,
+    IndicesValues,
+    IndicesPairItems,
+    IndicesPairPresence,
+    IndicesGroupsProperties,
+    IndicesArrayPresence,
+    IndicesResultProperties,
+    ExecResultProperties,
+}
+
 pub(crate) use conversions::{to_int32, to_uint32};
 pub(crate) use property::{
     ProxyDefinePropertyDescriptor, ProxyDefinePropertyOutcome, TypedArrayDefineDescriptor,
@@ -454,6 +472,9 @@ pub struct Vm {
     pub(crate) fail_array_length_reservation: Option<(ArrayLengthReservationSite, usize)>,
     #[cfg(test)]
     pub(crate) fail_inline_cache_reservation: Option<InlineCacheReservationSite>,
+    #[cfg(test)]
+    pub(crate) fail_regexp_materialization_reservation:
+        Option<(RegExpMaterializationReservationSite, usize)>,
     /// Receiver identities currently traversing Array stringification methods.
     /// Join checks after separator coercion and toLocaleString checks after its
     /// length snapshot, so recursive suppression preserves observable ordering.
@@ -1180,6 +1201,8 @@ impl Vm {
             fail_array_length_reservation: None,
             #[cfg(test)]
             fail_inline_cache_reservation: None,
+            #[cfg(test)]
+            fail_regexp_materialization_reservation: None,
             active_array_joins: Vec::new(),
             kept_objects: HashSet::new(),
             current_yields: Vec::new(),
