@@ -352,9 +352,10 @@ pub(crate) fn str_search(vm: &mut Vm, args: &[Value], this: Option<Value>) -> er
 
 fn regexp_search_internal(vm: &mut Vm, regexp: Value, s: &str) -> error::Result<Value> {
     let regexp = Some(regexp);
-    let source = read_regexp_source(vm, &regexp)?;
-    let flags = read_regexp_flags(vm, &regexp).unwrap_or_default();
-    let re = compile_regex_for_input(&source, &flags, s).map_err(regexp_compile_error)?;
+    let source = read_regexp_source_arc(vm, &regexp)?;
+    let flags = read_regexp_flags_arc(vm, &regexp)?;
+    let re = compile_regex_for_input_cached(vm, source.clone(), &flags, s)
+        .map_err(regexp_compile_error)?;
     meter_logical_regex_input(vm, &re, s)?;
     let matched = if flags.contains('y') {
         re.find_at(s, 0)?.filter(|m| m.start() == 0)
@@ -581,11 +582,11 @@ pub(crate) fn str_replace(
         );
         if is_regexp_obj {
             let regexp = Some(Value::Object(*idx));
-            let source = read_regexp_source(vm, &regexp)?;
-            let flags_str = read_regexp_flags(vm, &regexp).unwrap_or_default();
+            let source = read_regexp_source_arc(vm, &regexp)?;
+            let flags_str = read_regexp_flags_arc(vm, &regexp)?;
             let global = flags_str.contains('g');
-            let re =
-                compile_regex_for_input(&source, &flags_str, &s).map_err(regexp_compile_error)?;
+            let re = compile_regex_for_input_cached(vm, source.clone(), &flags_str, &s)
+                .map_err(regexp_compile_error)?;
             meter_logical_regex_input(vm, &re, &s)?;
             let capture_names = regex_capture_names(&source, &flags_str).map_err(Error::syntax)?;
             if is_fn {
@@ -1005,9 +1006,10 @@ pub(crate) fn str_match_all(
 
 pub(super) fn regexp_match_internal(vm: &mut Vm, regexp: Value, s: &str) -> error::Result<Value> {
     let regexp = Some(regexp);
-    let source = read_regexp_source(vm, &regexp)?;
-    let flags_str = read_regexp_flags(vm, &regexp).unwrap_or_default();
-    let re = compile_regex_for_input(&source, &flags_str, s).map_err(regexp_compile_error)?;
+    let source = read_regexp_source_arc(vm, &regexp)?;
+    let flags_str = read_regexp_flags_arc(vm, &regexp)?;
+    let re = compile_regex_for_input_cached(vm, source.clone(), &flags_str, s)
+        .map_err(regexp_compile_error)?;
     meter_logical_regex_input(vm, &re, s)?;
     let capture_names = regex_capture_names(&source, &flags_str).map_err(Error::syntax)?;
     let global = flags_str.contains('g');

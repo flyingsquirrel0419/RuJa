@@ -213,15 +213,15 @@ fn regexp_initialize(
 ) -> error::Result<Value> {
     let pin_count = regexp_try_pin_values(vm, &[object.clone(), pattern.clone(), flags.clone()])?;
     let result = (|| {
-        let pattern = if pattern.is_undefined() {
-            String::new()
+        let pattern: Arc<str> = if pattern.is_undefined() {
+            Arc::from("")
         } else {
-            vm.to_string(&pattern)?.to_string()
+            vm.to_string(&pattern)?
         };
-        let flags = if flags.is_undefined() {
-            String::new()
+        let flags: Arc<str> = if flags.is_undefined() {
+            Arc::from("")
         } else {
-            vm.to_string(&flags)?.to_string()
+            vm.to_string(&flags)?
         };
 
         crate::lexer::validate_regex_flags_for_constructor(&flags).map_err(Error::syntax)?;
@@ -240,7 +240,13 @@ fn regexp_initialize(
             validate_logical_utf16_construction_limits(&pattern, &flags)
                 .map_err(regexp_compile_error)?;
         }
-        compile_regex_for_input(&pattern, &flags, "").map_err(regexp_compile_error)?;
+        let constructor_mode = if flags.contains('u') || flags.contains('v') {
+            RegExpCompileMode::ScalarPreferred
+        } else {
+            RegExpCompileMode::Utf16CodeUnits
+        };
+        compile_regex_cached(vm, pattern.clone(), &flags, constructor_mode)
+            .map_err(regexp_compile_error)?;
         let Value::Object(object_idx) = object else {
             unreachable!("RegExpAlloc must return an object");
         };
@@ -249,11 +255,11 @@ fn regexp_initialize(
                 let mut private_fields = obj.private_fields.lock();
                 private_fields.insert(
                     regexp_internal_slot_key(REGEXP_SOURCE_SLOT),
-                    crate::value::PrivateSlot::Value(Value::String(Arc::from(pattern.as_str()))),
+                    crate::value::PrivateSlot::Value(Value::String(pattern.clone())),
                 );
                 private_fields.insert(
                     regexp_internal_slot_key(REGEXP_FLAGS_SLOT),
-                    crate::value::PrivateSlot::Value(Value::String(Arc::from(flags.as_str()))),
+                    crate::value::PrivateSlot::Value(Value::String(flags.clone())),
                 );
                 private_fields.insert(
                     regexp_internal_slot_key(REGEXP_HAS_INDICES_SLOT),
@@ -1796,11 +1802,11 @@ pub(crate) fn regexp_exec(
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    let source = read_regexp_source(vm, &this)?;
+    let source = read_regexp_source_arc(vm, &this)?;
     let input = vm
         .to_string(args.first().unwrap_or(&Value::Undefined))?
         .to_string();
-    let flags = read_regexp_flags(vm, &this).unwrap_or_default();
+    let flags = read_regexp_flags_arc(vm, &this)?;
     let global = flags.contains('g');
     let sticky = flags.contains('y');
     let this_value = match &this {
@@ -1826,7 +1832,8 @@ pub(crate) fn regexp_exec(
     }
     let start = start_number as usize;
 
-    let re = compile_regexp_for_exec(vm, &source, &flags, &input).map_err(regexp_compile_error)?;
+    let re = compile_regexp_for_exec(vm, source.clone(), &flags, &input)
+        .map_err(regexp_compile_error)?;
     let backend_input = regexp_backend_input(
         vm,
         &input,
@@ -1971,22 +1978,25 @@ fn inject_regexp_exec_compile_failure(
 
 pub(super) fn compile_regexp_for_exec(
     _vm: &mut Vm,
-    source: &str,
+    source: Arc<str>,
     flags: &str,
     input: &str,
 ) -> Result<CompiledRegex, RegexCompileError> {
-    let compiled = if flags.contains('u') || flags.contains('v') {
-        compile_regex_for_input(source, flags, input)
-    } else {
-        // The non-Unicode matcher runs on a sentinel-backed UTF-16 view so
-        // lastIndex may address either half of a supplementary code point.
-        compile_regex_for_code_units(source, flags)
-    }?;
+    let mode =
+        regexp_compile_mode_for_input(flags, input, !flags.contains('u') && !flags.contains('v'));
+    if let Some(matcher) = regexp_matcher_cache_get(_vm, &source, flags, mode) {
+        return Ok(matcher);
+    }
+    #[cfg(test)]
+    {
+        _vm.regexp_matcher_compile_count += 1;
+    }
+    let compiled = compile_regex_for_mode(&source, flags, mode)?;
 
     #[cfg(test)]
-    return inject_regexp_exec_compile_failure(_vm, compiled);
+    let compiled = inject_regexp_exec_compile_failure(_vm, compiled)?;
 
-    #[cfg(not(test))]
+    regexp_matcher_cache_put(_vm, source, flags, mode, compiled.clone());
     Ok(compiled)
 }
 
@@ -2541,12 +2551,34 @@ fn set_regexp_last_index(vm: &mut Vm, target: &Value, value: f64) -> error::Resu
 }
 
 pub(crate) fn read_regexp_source(vm: &mut Vm, this: &Option<Value>) -> error::Result<String> {
-    read_regexp_field(vm, this, "source")
+    read_regexp_source_arc(vm, this).map(|source| source.to_string())
 }
 
 /// Read the `flags` string of a RegExp object.
 pub(crate) fn read_regexp_flags(vm: &mut Vm, this: &Option<Value>) -> error::Result<String> {
-    read_regexp_field(vm, this, "flags")
+    read_regexp_flags_arc(vm, this).map(|flags| flags.to_string())
+}
+
+pub(crate) fn read_regexp_source_arc(vm: &mut Vm, this: &Option<Value>) -> error::Result<Arc<str>> {
+    read_regexp_private_string_arc(vm, this, REGEXP_SOURCE_SLOT)
+}
+
+pub(crate) fn read_regexp_flags_arc(vm: &mut Vm, this: &Option<Value>) -> error::Result<Arc<str>> {
+    read_regexp_private_string_arc(vm, this, REGEXP_FLAGS_SLOT)
+}
+
+fn read_regexp_private_string_arc(
+    vm: &mut Vm,
+    this: &Option<Value>,
+    slot_name: &str,
+) -> error::Result<Arc<str>> {
+    let Some(Value::Object(idx)) = this else {
+        return Err(Error::type_err("not a RegExp"));
+    };
+    match read_regexp_private_string(vm, *idx, slot_name) {
+        Some(Value::String(value)) => Ok(value),
+        _ => Err(Error::type_err("not a RegExp")),
+    }
 }
 
 /// Read a string field (`source`/`flags`/`lastIndex`) from a RegExp object.

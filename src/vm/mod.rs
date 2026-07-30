@@ -392,6 +392,9 @@ pub struct Vm {
     /// read and invalidation paths borrow `&str` without allocating a key.
     pub(crate) ic: std::collections::HashMap<usize, std::collections::HashMap<String, Value>>,
     pub(crate) ic_entry_count: usize,
+    /// Bounded VM-local cache of immutable compiled RegExp matchers. Entries
+    /// contain no GC values and are keyed only by semantic compiler inputs.
+    pub(crate) regexp_matcher_cache: crate::builtins::RegExpMatcherCache,
     /// Temporary GC roots pinned across operations that hold heap values in
     /// Rust locals (e.g. a Promise handler while `call_function` runs, which
     /// may itself trigger a GC). Push indices on entry, pop on exit.
@@ -407,6 +410,12 @@ pub struct Vm {
     reference_box_discard_count: usize,
     #[cfg(test)]
     pub(crate) fail_next_gc_pin_reservation: bool,
+    #[cfg(test)]
+    pub(crate) fail_next_regexp_matcher_cache_reservation: bool,
+    #[cfg(test)]
+    pub(crate) regexp_matcher_compile_count: usize,
+    #[cfg(test)]
+    pub(crate) regexp_matcher_cache_hit_count: usize,
     #[cfg(test)]
     pub(crate) gc_pin_reservation_failure_countdown: Option<usize>,
     #[cfg(test)]
@@ -1134,6 +1143,7 @@ impl Vm {
             microtask_queue: std::collections::VecDeque::new(),
             ic: std::collections::HashMap::new(),
             ic_entry_count: 0,
+            regexp_matcher_cache: crate::builtins::RegExpMatcherCache::default(),
             gc_pins: Vec::new(),
             reference_box_cache: None,
             #[cfg(test)]
@@ -1144,6 +1154,12 @@ impl Vm {
             reference_box_discard_count: 0,
             #[cfg(test)]
             fail_next_gc_pin_reservation: false,
+            #[cfg(test)]
+            fail_next_regexp_matcher_cache_reservation: false,
+            #[cfg(test)]
+            regexp_matcher_compile_count: 0,
+            #[cfg(test)]
+            regexp_matcher_cache_hit_count: 0,
             #[cfg(test)]
             gc_pin_reservation_failure_countdown: None,
             #[cfg(test)]

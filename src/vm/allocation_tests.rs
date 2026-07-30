@@ -8705,6 +8705,165 @@ fn regexp_core_root_reservation_failures_are_ordered_balanced_and_retryable() {
 }
 
 #[test]
+fn regexp_matcher_cache_reuses_modes_realms_and_recovers_from_publication_failure() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    clear_regexp_matcher_cache(&mut vm);
+    vm.run("var matcherCacheRegexp = /a/g;")
+        .expect("cache fixture should initialize");
+    assert_eq!(vm.regexp_matcher_compile_count, 1);
+    assert_eq!(vm.regexp_matcher_cache.len_for_test(), 1);
+
+    vm.run("matcherCacheRegexp.exec('a'); matcherCacheRegexp.lastIndex = 0;")
+        .expect("first exec should use the constructor matcher");
+    vm.gc();
+    vm.run("matcherCacheRegexp.exec('a'); matcherCacheRegexp.lastIndex = 0;")
+        .expect("cached matcher should survive GC");
+    assert_eq!(vm.regexp_matcher_compile_count, 1);
+    assert_eq!(vm.regexp_matcher_cache_hit_count, 2);
+
+    assert_eq!(
+        vm.run(
+            r#"
+            var matcherCacheOrder = [];
+            matcherCacheRegexp.lastIndex = {
+              valueOf: function () {
+                matcherCacheOrder.push("lastIndex");
+                return 0;
+              }
+            };
+            matcherCacheRegexp.exec({
+              toString: function () {
+                matcherCacheOrder.push("input");
+                return "a";
+              }
+            });
+            matcherCacheRegexp.lastIndex = 0;
+            matcherCacheOrder.join(",");
+            "#,
+        )
+        .expect("cache-hit coercions should preserve RegExpBuiltinExec order"),
+        Value::String("input,lastIndex".into())
+    );
+    assert_eq!(vm.regexp_matcher_compile_count, 1);
+    assert_eq!(vm.regexp_matcher_cache_hit_count, 3);
+
+    let mut reentrant = Vm::new().expect("VM should initialize");
+    reentrant
+        .register_fn(
+            "forceGc",
+            |vm, _, _| {
+                vm.gc();
+                Ok(Value::Undefined)
+            },
+            0,
+        )
+        .expect("GC test hook should register");
+    assert_eq!(
+        reentrant
+            .run(
+                r#"
+            var matcherCacheOuter = /a/g;
+            matcherCacheOuter[Symbol.replace] = null;
+            var matcherCacheReplacementCalls = 0;
+            var matcherCacheReplacement = "aa".replace(
+              matcherCacheOuter,
+              function () {
+                matcherCacheReplacementCalls++;
+                for (var i = 0; i < 20; i++) {
+                  new RegExp("nested-cache-" + i).test("no match");
+                }
+                forceGc();
+                return "A";
+              }
+            );
+            matcherCacheReplacement + ":" + matcherCacheReplacementCalls;
+            "#,
+            )
+            .expect("reentrant eviction must not invalidate the active matcher"),
+        Value::String("AA:2".into())
+    );
+
+    vm.run(
+        r#"
+        var matcherCacheRealm = $262.createRealm().global;
+        var matcherCacheForeign = matcherCacheRealm.RegExp("a", "y");
+        matcherCacheForeign.exec("a");
+        "#,
+    )
+    .expect("equivalent foreign matcher should share the VM cache");
+    assert_eq!(vm.regexp_matcher_compile_count, 1);
+    assert_eq!(vm.regexp_matcher_cache_hit_count, 5);
+
+    clear_regexp_matcher_cache(&mut vm);
+    vm.run("var matcherCacheUnicode = /./gu;")
+        .expect("Unicode cache fixture should initialize");
+    assert_eq!(vm.regexp_matcher_compile_count, 1);
+    vm.run("matcherCacheUnicode.exec('a'); matcherCacheUnicode.lastIndex = 0;")
+        .expect("scalar Unicode exec should hit the constructor matcher");
+    assert_eq!(vm.regexp_matcher_compile_count, 1);
+    assert_eq!(vm.regexp_matcher_cache_hit_count, 1);
+    vm.run(
+        "matcherCacheUnicode.exec(String.fromCharCode(0xD800)); matcherCacheUnicode.lastIndex = 0;",
+    )
+    .expect("first surrogate exec should compile the logical matcher");
+    assert_eq!(vm.regexp_matcher_compile_count, 2);
+    assert_eq!(vm.regexp_matcher_cache.len_for_test(), 1);
+    vm.run(
+        "matcherCacheUnicode.exec(String.fromCharCode(0xD800)); matcherCacheUnicode.lastIndex = 0;",
+    )
+    .expect("second surrogate exec should hit the logical matcher");
+    assert_eq!(vm.regexp_matcher_compile_count, 2);
+    assert_eq!(vm.regexp_matcher_cache_hit_count, 2);
+
+    clear_regexp_matcher_cache(&mut vm);
+    vm.run("var matcherCacheOptimized = /a/gu;")
+        .expect("optimized match fixture should initialize");
+    vm.run("matcherCacheOptimized[Symbol.match]('a');")
+        .expect("optimized String matcher should share the constructor cache");
+    assert_eq!(vm.regexp_matcher_compile_count, 1);
+    assert_eq!(vm.regexp_matcher_cache_hit_count, 1);
+
+    let mut failed = Vm::new().expect("VM should initialize");
+    failed.fail_next_regexp_matcher_cache_reservation = true;
+    failed
+        .run("var matcherCacheFailure = /failure/g;")
+        .expect("cache publication failure must not fail construction");
+    assert!(failed.regexp_matcher_cache.is_empty_for_test());
+    assert_eq!(failed.regexp_matcher_compile_count, 1);
+    failed
+        .run("matcherCacheFailure.exec('failure'); matcherCacheFailure.lastIndex = 0;")
+        .expect("first exec should recompile and publish after failure");
+    failed
+        .run("matcherCacheFailure.exec('failure'); matcherCacheFailure.lastIndex = 0;")
+        .expect("second exec should use the recovered cache");
+    assert_eq!(failed.regexp_matcher_compile_count, 2);
+    assert_eq!(failed.regexp_matcher_cache_hit_count, 1);
+
+    let mut injected = Vm::new().expect("VM should initialize");
+    injected
+        .run("var matcherCacheInjected = /injected/g;")
+        .expect("injection fixture should initialize");
+    injected.fail_regexp_exec_compile = Some(0);
+    injected
+        .run("matcherCacheInjected.exec('injected'); matcherCacheInjected.lastIndex = 0;")
+        .expect("cache hit must not consume a compile-only failure");
+    assert_eq!(injected.fail_regexp_exec_compile, Some(0));
+    clear_regexp_matcher_cache(&mut injected);
+    let error = injected
+        .run("matcherCacheInjected.exec('injected');")
+        .expect_err("cache miss should consume the terminal compile failure");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(injected.fail_regexp_exec_compile, None);
+    assert!(injected.regexp_matcher_cache.is_empty_for_test());
+    drop(error);
+    injected
+        .run("matcherCacheInjected.exec('injected');")
+        .expect("retry should compile and publish after injected failure");
+    assert_eq!(injected.regexp_matcher_compile_count, 2);
+    assert_eq!(injected.regexp_matcher_cache.len_for_test(), 1);
+}
+
+#[test]
 fn regexp_exec_compile_failures_preserve_order_realm_and_retry() {
     let mut vm = Vm::new().expect("VM should initialize");
     vm.run(
@@ -8781,6 +8940,7 @@ fn regexp_exec_compile_failures_preserve_order_realm_and_retry() {
     )
     .expect("RegExp exec compile-failure fixtures should initialize");
     let baseline_pins = vm.gc_pins.len();
+    clear_regexp_matcher_cache(&mut vm);
 
     vm.fail_regexp_exec_compile = Some(0);
     let error = vm
@@ -8797,6 +8957,7 @@ fn regexp_exec_compile_failures_preserve_order_realm_and_retry() {
     );
     drop(error);
 
+    clear_regexp_matcher_cache(&mut vm);
     vm.fail_regexp_exec_compile = Some(0);
     assert_eq!(
         vm.run(
@@ -8812,6 +8973,7 @@ fn regexp_exec_compile_failures_preserve_order_realm_and_retry() {
         Value::String("a|2".into())
     );
 
+    clear_regexp_matcher_cache(&mut vm);
     vm.fail_regexp_exec_compile = Some(0);
     assert_eq!(
         vm.run(
@@ -8828,6 +8990,7 @@ fn regexp_exec_compile_failures_preserve_order_realm_and_retry() {
     );
     assert_eq!(vm.fail_regexp_exec_compile, None);
 
+    clear_regexp_matcher_cache(&mut vm);
     vm.fail_regexp_exec_compile = Some(0);
     assert_eq!(
         vm.run(
@@ -8847,6 +9010,7 @@ fn regexp_exec_compile_failures_preserve_order_realm_and_retry() {
 
     compile_out_of_range_bypasses_exec_failure(&mut vm);
 
+    clear_regexp_matcher_cache(&mut vm);
     vm.fail_regexp_exec_compile = Some(0);
     let error = vm
         .run("compileFrozenLastIndexRegexp.exec('a');")
@@ -8855,6 +9019,7 @@ fn regexp_exec_compile_failures_preserve_order_realm_and_retry() {
     assert_eq!(vm.fail_regexp_exec_compile, Some(0));
     vm.fail_regexp_exec_compile = None;
 
+    clear_regexp_matcher_cache(&mut vm);
     vm.fail_regexp_exec_compile = Some(0);
     assert_eq!(
         vm.run(
@@ -8928,6 +9093,7 @@ fn regexp_exec_compile_failures_preserve_order_realm_and_retry() {
 
     vm.run("compileEvents.length = 0;")
         .expect("nested compile event log should reset");
+    clear_regexp_matcher_cache(&mut vm);
     vm.fail_regexp_exec_compile = Some(1);
     let error = vm
         .run("compileNestedOuter.exec(compileNestedInput);")
@@ -8941,6 +9107,7 @@ fn regexp_exec_compile_failures_preserve_order_realm_and_retry() {
     );
     drop(error);
 
+    clear_regexp_matcher_cache(&mut vm);
     vm.fail_regexp_exec_compile = Some(0);
     vm.fail_regexp_materialization_reservation =
         Some((RegExpMaterializationReservationSite::ResultItems, 0));
@@ -8964,6 +9131,7 @@ fn regexp_exec_compile_failures_preserve_order_realm_and_retry() {
     ] {
         vm.run(&format!("{regexp_name}.lastIndex = 0;"))
             .expect("backend fixture lastIndex should reset");
+        clear_regexp_matcher_cache(&mut vm);
         vm.fail_regexp_exec_compile = Some(0);
         let error = match vm.run(&format!("{regexp_name}.exec({input_expression});")) {
             Err(error) => error,
@@ -8988,6 +9156,7 @@ fn regexp_exec_compile_failures_preserve_order_realm_and_retry() {
 
 fn compile_out_of_range_bypasses_exec_failure(vm: &mut Vm) {
     for regexp_name in ["compileOutOfRangeRegexp", "compileOutOfRangeStickyRegexp"] {
+        clear_regexp_matcher_cache(vm);
         vm.run(&format!("{regexp_name}.lastIndex = 2;"))
             .expect("out-of-range fixture should initialize");
         vm.fail_regexp_exec_compile = Some(0);
@@ -9345,6 +9514,12 @@ fn regexp_exec_materialization_reservations_are_atomic_ordered_and_retryable() {
     );
 
     vm.fail_regexp_materialization_reservation = None;
+}
+
+fn clear_regexp_matcher_cache(vm: &mut Vm) {
+    vm.regexp_matcher_cache.clear_for_test();
+    vm.regexp_matcher_compile_count = 0;
+    vm.regexp_matcher_cache_hit_count = 0;
 }
 
 fn sweep_regexp_root_reservations<F, G>(

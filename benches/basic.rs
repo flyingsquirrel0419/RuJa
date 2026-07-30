@@ -679,6 +679,30 @@ fn bench_bigint_storage(c: &mut Criterion) {
     });
 }
 
+fn bench_regexp_matcher_cache(c: &mut Criterion) {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        var cachedExecRegexp = /a/;
+        function cachedRegexpExecLoop() {
+          var matched = 0;
+          for (var i = 0; i < 10000; i++) {
+            if (cachedExecRegexp.test("a")) matched += 1;
+          }
+          return matched;
+        }
+        "#,
+    )
+    .expect("RegExp cache benchmark fixture failed");
+    let function = vm.get_global("cachedRegexpExecLoop");
+    c.bench_function("regexp_cached_exec_10k", |b| {
+        b.iter(|| {
+            vm.call_function(&function, &[], None)
+                .expect("cached RegExp exec failed")
+        })
+    });
+}
+
 criterion_group!(
     benches,
     bench_fib,
@@ -693,6 +717,7 @@ criterion_group!(
     bench_inline_cache,
     bench_ordinary_set_receiver,
     bench_integrity_level,
-    bench_bigint_storage
+    bench_bigint_storage,
+    bench_regexp_matcher_cache
 );
 criterion_main!(benches);

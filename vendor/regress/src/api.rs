@@ -602,6 +602,12 @@ impl Regex {
             .saturating_add(conditional_backrefs)
     }
 
+    /// Conservative retained-memory charge for a compiled matcher.
+    pub fn memory_usage(&self) -> usize {
+        self.bounded_execution_state_cost()
+            .saturating_mul(core::mem::size_of::<crate::insn::Insn>().max(64))
+    }
+
     /// Returns an iterator for matches found in 'text' starting at index `start`.
     #[cfg(feature = "utf16")]
     pub fn find_from_ucs2<'r, 't>(

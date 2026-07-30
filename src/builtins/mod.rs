@@ -106,23 +106,102 @@ impl<'t> CompiledCaptures<'t> {
     }
 }
 
-enum CompiledRegex {
-    Rust(RustRegex),
-    Fancy(fancy_regex::Regex),
-    LogicalUtf16(regress::Regex),
+#[derive(Clone)]
+pub(crate) enum CompiledRegex {
+    Rust(Arc<RustRegex>),
+    Fancy(Arc<fancy_regex::Regex>),
+    LogicalUtf16(Arc<regress::Regex>),
     // Assertion erasure is rejection-only. The capture-erased exact linear
     // matcher may select language bounds, but never supplies capture slots.
     PrefilteredExact {
-        prefilter: RustRegex,
-        boundary_fast: RustRegex,
-        exact: fancy_regex::Regex,
-        linear_exact: Option<fancy_regex::Regex>,
+        prefilter: Arc<RustRegex>,
+        boundary_fast: Arc<RustRegex>,
+        exact: Arc<fancy_regex::Regex>,
+        linear_exact: Option<Arc<fancy_regex::Regex>>,
         needs_capture_correction: bool,
     },
     CaptureCorrected {
-        fast: RustRegex,
-        captures: fancy_regex::Regex,
+        fast: Arc<RustRegex>,
+        captures: Arc<fancy_regex::Regex>,
     },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RegExpCompileMode {
+    ScalarPreferred,
+    Utf16CodeUnits,
+    LogicalUtf16Required,
+}
+
+pub(crate) struct RegExpMatcherCacheEntry {
+    source: Arc<str>,
+    compile_flags: u8,
+    mode: RegExpCompileMode,
+    matcher: CompiledRegex,
+    matcher_charge: usize,
+}
+
+#[derive(Default)]
+pub(crate) struct RegExpMatcherCache {
+    entries: std::collections::VecDeque<RegExpMatcherCacheEntry>,
+    source_bytes: usize,
+    matcher_bytes: usize,
+}
+
+impl RegExpMatcherCache {
+    fn debug_assert_invariants(&self) {
+        debug_assert!(self.entries.len() <= MAX_REGEXP_MATCHER_CACHE_ENTRIES);
+        debug_assert!(self.source_bytes <= MAX_REGEXP_MATCHER_CACHE_SOURCE_BYTES);
+        debug_assert!(self.matcher_bytes <= MAX_REGEXP_MATCHER_CACHE_BYTES);
+        debug_assert_eq!(
+            self.source_bytes,
+            self.entries
+                .iter()
+                .map(|entry| entry.source.len())
+                .sum::<usize>()
+        );
+        debug_assert_eq!(
+            self.matcher_bytes,
+            self.entries
+                .iter()
+                .map(|entry| entry.matcher_charge)
+                .sum::<usize>()
+        );
+    }
+
+    #[cfg(test)]
+    pub(crate) fn clear_for_test(&mut self) {
+        self.entries.clear();
+        self.source_bytes = 0;
+        self.matcher_bytes = 0;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn len_for_test(&self) -> usize {
+        self.entries.len()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn is_empty_for_test(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn source_bytes_for_test(&self) -> usize {
+        self.source_bytes
+    }
+
+    #[cfg(test)]
+    pub(crate) fn matcher_bytes_for_test(&self) -> usize {
+        self.matcher_bytes
+    }
+
+    #[cfg(test)]
+    pub(crate) fn contains_source_for_test(&self, source: &str) -> bool {
+        self.entries
+            .iter()
+            .any(|entry| entry.source.as_ref() == source)
+    }
 }
 
 #[derive(Debug)]
@@ -145,10 +224,224 @@ struct RegexModifierState {
 }
 
 /// Compile a regex pattern applying ES flags: `i` (case-insensitive),
-/// `m` (multiline ^/$), `s` (dotall). Other flags (`g`/`y`/`u`) do not affect
-/// the regex engine here and are handled by the caller.
+/// `m` (multiline ^/$), `s` (dotall), and Unicode semantics (`u`/`v`). The
+/// caller handles state-only flags (`d`/`g`/`y`) outside the matcher.
 fn compile_regex(source: &str, flags: &str) -> Result<CompiledRegex, RegexCompileError> {
     compile_regex_with_input_mode(source, flags, false)
+}
+
+pub(crate) const MAX_REGEXP_MATCHER_CACHE_ENTRIES: usize = 16;
+const MAX_REGEXP_MATCHER_CACHE_SOURCE_BYTES: usize = 256 * 1024;
+const MAX_REGEXP_MATCHER_CACHE_SINGLE_SOURCE_BYTES: usize = 64 * 1024;
+const MAX_REGEXP_MATCHER_CACHE_BYTES: usize = 128 * 1024 * 1024;
+const MAX_REGEXP_MATCHER_CACHE_SINGLE_BYTES: usize = 128 * 1024 * 1024;
+const MAX_RUST_CACHE_SOURCE_BYTES: usize = 4 * 1024;
+const RUST_REGEX_NFA_SIZE_LIMIT: usize = 10 * 1024 * 1024;
+const RUST_REGEX_DFA_CACHE_LIMIT: usize = 2 * 1024 * 1024;
+// One shared pool may retain forward/reverse Pike state in addition to the
+// explicitly bounded NFAs and lazy-DFA caches. This charge leaves headroom for
+// those capture-free tables and all structural allocations.
+const RUST_CAPTURE_FREE_CACHE_CHARGE: usize = MAX_REGEXP_MATCHER_CACHE_BYTES;
+
+fn regexp_compile_flags(flags: &str) -> u8 {
+    u8::from(flags.contains('i'))
+        | (u8::from(flags.contains('m')) << 1)
+        | (u8::from(flags.contains('s')) << 2)
+        | (u8::from(flags.contains('u')) << 3)
+        | (u8::from(flags.contains('v')) << 4)
+}
+
+fn cache_budget_exceeded(current: usize, additional: usize, maximum: usize) -> bool {
+    current
+        .checked_add(additional)
+        .is_none_or(|total| total > maximum)
+}
+
+fn rust_matcher_cache_eligible(source: &str) -> bool {
+    source.len() <= MAX_RUST_CACHE_SOURCE_BYTES && regex_capture_count(source) == 0
+}
+
+fn regexp_compile_mode_for_input(
+    flags: &str,
+    input: &str,
+    force_code_units: bool,
+) -> RegExpCompileMode {
+    if force_code_units {
+        return RegExpCompileMode::Utf16CodeUnits;
+    }
+    let unicode_mode = flags.contains('u') || flags.contains('v');
+    let contains_surrogate_backing = unicode_mode
+        && input.chars().any(|ch| {
+            crate::value::utf16_single_unit_from_internal_char(ch)
+                .is_some_and(|unit| (0xd800..=0xdfff).contains(&unit))
+        });
+    if contains_surrogate_backing {
+        RegExpCompileMode::LogicalUtf16Required
+    } else {
+        RegExpCompileMode::ScalarPreferred
+    }
+}
+
+fn compile_regex_for_mode(
+    source: &str,
+    flags: &str,
+    mode: RegExpCompileMode,
+) -> Result<CompiledRegex, RegexCompileError> {
+    match mode {
+        RegExpCompileMode::ScalarPreferred if flags.contains('u') || flags.contains('v') => {
+            compile_regex(source, flags).or_else(|_| compile_logical_utf16_regex(source, flags))
+        }
+        RegExpCompileMode::ScalarPreferred => compile_regex(source, flags),
+        RegExpCompileMode::Utf16CodeUnits => compile_regex_for_code_units(source, flags),
+        RegExpCompileMode::LogicalUtf16Required => compile_logical_utf16_regex(source, flags),
+    }
+}
+
+fn regexp_matcher_cache_get(
+    vm: &mut Vm,
+    source: &str,
+    flags: &str,
+    mode: RegExpCompileMode,
+) -> Option<CompiledRegex> {
+    let compile_flags = regexp_compile_flags(flags);
+    let position = vm.regexp_matcher_cache.entries.iter().position(|entry| {
+        entry.mode == mode
+            && entry.compile_flags == compile_flags
+            && entry.source.as_ref() == source
+    })?;
+    let entry = vm
+        .regexp_matcher_cache
+        .entries
+        .remove(position)
+        .expect("RegExp cache position must remain valid");
+    let matcher = entry.matcher.clone();
+    vm.regexp_matcher_cache.entries.push_back(entry);
+    #[cfg(test)]
+    {
+        vm.regexp_matcher_cache_hit_count += 1;
+    }
+    Some(matcher)
+}
+
+fn regexp_matcher_cache_put(
+    vm: &mut Vm,
+    source: Arc<str>,
+    flags: &str,
+    mode: RegExpCompileMode,
+    matcher: CompiledRegex,
+) -> bool {
+    if source.len() > MAX_REGEXP_MATCHER_CACHE_SINGLE_SOURCE_BYTES {
+        return false;
+    }
+    if matches!(matcher, CompiledRegex::Rust(_)) && !rust_matcher_cache_eligible(&source) {
+        return false;
+    }
+    let Some(matcher_charge) = matcher.cache_charge() else {
+        return false;
+    };
+    if matcher_charge > MAX_REGEXP_MATCHER_CACHE_SINGLE_BYTES {
+        return false;
+    }
+
+    let compile_flags = regexp_compile_flags(flags);
+    if let Some(position) = vm.regexp_matcher_cache.entries.iter().position(|entry| {
+        entry.mode == mode
+            && entry.compile_flags == compile_flags
+            && entry.source.as_ref() == source.as_ref()
+    }) {
+        let old = vm
+            .regexp_matcher_cache
+            .entries
+            .remove(position)
+            .expect("RegExp cache position must remain valid");
+        vm.regexp_matcher_cache.source_bytes = vm
+            .regexp_matcher_cache
+            .source_bytes
+            .checked_sub(old.source.len())
+            .expect("RegExp cache source accounting must remain balanced");
+        vm.regexp_matcher_cache.matcher_bytes = vm
+            .regexp_matcher_cache
+            .matcher_bytes
+            .checked_sub(old.matcher_charge)
+            .expect("RegExp cache matcher accounting must remain balanced");
+    }
+
+    while vm.regexp_matcher_cache.entries.len() >= MAX_REGEXP_MATCHER_CACHE_ENTRIES
+        || cache_budget_exceeded(
+            vm.regexp_matcher_cache.source_bytes,
+            source.len(),
+            MAX_REGEXP_MATCHER_CACHE_SOURCE_BYTES,
+        )
+        || cache_budget_exceeded(
+            vm.regexp_matcher_cache.matcher_bytes,
+            matcher_charge,
+            MAX_REGEXP_MATCHER_CACHE_BYTES,
+        )
+    {
+        let Some(evicted) = vm.regexp_matcher_cache.entries.pop_front() else {
+            break;
+        };
+        vm.regexp_matcher_cache.source_bytes = vm
+            .regexp_matcher_cache
+            .source_bytes
+            .checked_sub(evicted.source.len())
+            .expect("RegExp cache source accounting must remain balanced");
+        vm.regexp_matcher_cache.matcher_bytes = vm
+            .regexp_matcher_cache
+            .matcher_bytes
+            .checked_sub(evicted.matcher_charge)
+            .expect("RegExp cache matcher accounting must remain balanced");
+    }
+
+    if vm.regexp_matcher_cache.entries.len() == vm.regexp_matcher_cache.entries.capacity() {
+        #[cfg(test)]
+        if vm.fail_next_regexp_matcher_cache_reservation {
+            vm.fail_next_regexp_matcher_cache_reservation = false;
+            return false;
+        }
+        if vm.regexp_matcher_cache.entries.try_reserve(1).is_err() {
+            return false;
+        }
+    }
+    vm.regexp_matcher_cache.source_bytes = vm
+        .regexp_matcher_cache
+        .source_bytes
+        .checked_add(source.len())
+        .expect("bounded RegExp cache source accounting cannot overflow");
+    vm.regexp_matcher_cache.matcher_bytes = vm
+        .regexp_matcher_cache
+        .matcher_bytes
+        .checked_add(matcher_charge)
+        .expect("bounded RegExp cache matcher accounting cannot overflow");
+    vm.regexp_matcher_cache
+        .entries
+        .push_back(RegExpMatcherCacheEntry {
+            source,
+            compile_flags,
+            mode,
+            matcher,
+            matcher_charge,
+        });
+    vm.regexp_matcher_cache.debug_assert_invariants();
+    true
+}
+
+fn compile_regex_cached(
+    vm: &mut Vm,
+    source: Arc<str>,
+    flags: &str,
+    mode: RegExpCompileMode,
+) -> Result<CompiledRegex, RegexCompileError> {
+    if let Some(matcher) = regexp_matcher_cache_get(vm, &source, flags, mode) {
+        return Ok(matcher);
+    }
+    #[cfg(test)]
+    {
+        vm.regexp_matcher_compile_count += 1;
+    }
+    let matcher = compile_regex_for_mode(&source, flags, mode)?;
+    regexp_matcher_cache_put(vm, source, flags, mode, matcher.clone());
+    Ok(matcher)
 }
 
 fn compile_regex_for_input(
@@ -156,21 +449,21 @@ fn compile_regex_for_input(
     flags: &str,
     input: &str,
 ) -> Result<CompiledRegex, RegexCompileError> {
-    let unicode_mode = flags.contains('u') || flags.contains('v');
-    let contains_surrogate_backing = input.chars().any(|ch| {
-        crate::value::utf16_single_unit_from_internal_char(ch)
-            .is_some_and(|unit| (0xd800..=0xdfff).contains(&unit))
-    });
-    if !unicode_mode {
-        return compile_regex(source, flags);
-    }
+    compile_regex_for_mode(
+        source,
+        flags,
+        regexp_compile_mode_for_input(flags, input, false),
+    )
+}
 
-    if !contains_surrogate_backing {
-        return compile_regex(source, flags)
-            .or_else(|_| compile_logical_utf16_regex(source, flags));
-    }
-
-    compile_logical_utf16_regex(source, flags)
+fn compile_regex_for_input_cached(
+    vm: &mut Vm,
+    source: Arc<str>,
+    flags: &str,
+    input: &str,
+) -> Result<CompiledRegex, RegexCompileError> {
+    let mode = regexp_compile_mode_for_input(flags, input, false);
+    compile_regex_cached(vm, source, flags, mode)
 }
 
 fn validate_logical_utf16_source_length(source: &str) -> Result<(), String> {
@@ -262,7 +555,7 @@ fn compile_logical_utf16_regex(
             "logical UTF-16 regex program is too large".to_string(),
         ));
     }
-    Ok(CompiledRegex::LogicalUtf16(regex))
+    Ok(CompiledRegex::LogicalUtf16(Arc::new(regex)))
 }
 
 fn compile_regex_for_code_units(
@@ -309,6 +602,7 @@ fn compile_regex_with_input_mode(
             requires_counter_backend,
             quantifiers.has_braced,
         )
+        .map(Arc::new)
         .map(CompiledRegex::Fancy);
     }
 
@@ -323,6 +617,8 @@ fn compile_regex_with_input_mode(
     )
     .map_err(RegexCompileError::Syntax)?;
     let mut b = RustRegexBuilder::new(&rust_normalized.source);
+    b.size_limit(RUST_REGEX_NFA_SIZE_LIMIT)
+        .dfa_size_limit(RUST_REGEX_DFA_CACHE_LIMIT);
     b.case_insensitive(flags.contains('i'));
     b.multi_line(flags.contains('m'));
     b.dot_matches_new_line(flags.contains('s'));
@@ -340,6 +636,7 @@ fn compile_regex_with_input_mode(
             )
             .map_err(RegexCompileError::Syntax)?;
             return build_fancy_regex(&normalized, flags, true)
+                .map(Arc::new)
                 .map(CompiledRegex::Fancy)
                 .map_err(fancy_regex_compile_error);
         }
@@ -357,6 +654,9 @@ fn compile_regex_with_input_mode(
         )
         .map_err(RegexCompileError::Syntax)?;
         let mut boundary_builder = RustRegexBuilder::new(&boundary_normalized.source);
+        boundary_builder
+            .size_limit(RUST_REGEX_NFA_SIZE_LIMIT)
+            .dfa_size_limit(RUST_REGEX_DFA_CACHE_LIMIT);
         boundary_builder.case_insensitive(flags.contains('i'));
         boundary_builder.multi_line(flags.contains('m'));
         boundary_builder.dot_matches_new_line(flags.contains('s'));
@@ -373,37 +673,37 @@ fn compile_regex_with_input_mode(
             &capture_indices,
         )
         .map_err(RegexCompileError::Syntax)?;
-        let exact = build_fancy_regex_with_repeat_fallback(
+        let exact = Arc::new(build_fancy_regex_with_repeat_fallback(
             &exact_normalized,
             flags,
             false,
             quantifiers.has_braced,
-        )?;
+        )?);
         let linear_exact = if needs_capture_correction {
             let normalized = NormalizedRegex {
                 source: erase_backend_capture_groups(&exact_normalized.source),
                 backref_sets: Vec::new(),
                 relaxed_unicode_word_boundary: false,
             };
-            Some(build_fancy_regex_with_repeat_fallback(
+            Some(Arc::new(build_fancy_regex_with_repeat_fallback(
                 &normalized,
                 flags,
                 false,
                 quantifiers.has_braced,
-            )?)
+            )?))
         } else {
             None
         };
         return Ok(CompiledRegex::PrefilteredExact {
-            prefilter: fast,
-            boundary_fast,
+            prefilter: Arc::new(fast),
+            boundary_fast: Arc::new(boundary_fast),
             exact,
             linear_exact,
             needs_capture_correction,
         });
     }
     if !needs_capture_correction {
-        return Ok(CompiledRegex::Rust(fast));
+        return Ok(CompiledRegex::Rust(Arc::new(fast)));
     }
 
     let capture_normalized = normalize_regex_for_backend(
@@ -416,13 +716,16 @@ fn compile_regex_with_input_mode(
         &capture_indices,
     )
     .map_err(RegexCompileError::Syntax)?;
-    let captures = build_fancy_regex_with_repeat_fallback(
+    let captures = Arc::new(build_fancy_regex_with_repeat_fallback(
         &capture_normalized,
         flags,
         false,
         quantifiers.has_braced,
-    )?;
-    Ok(CompiledRegex::CaptureCorrected { fast, captures })
+    )?);
+    Ok(CompiledRegex::CaptureCorrected {
+        fast: Arc::new(fast),
+        captures,
+    })
 }
 
 fn build_fancy_regex(
@@ -506,6 +809,19 @@ fn fancy_regex_size_limit_exceeded(error: &fancy_regex::Error) -> bool {
 }
 
 impl CompiledRegex {
+    fn cache_charge(&self) -> Option<usize> {
+        match self {
+            CompiledRegex::Rust(_) => Some(RUST_CAPTURE_FREE_CACHE_CHARGE),
+            // fancy-regex delegates to scratch-pool-owning regex-automata
+            // matchers and does not expose a finite retained-cache bound.
+            CompiledRegex::Fancy(_) => None,
+            CompiledRegex::LogicalUtf16(regex) => regex
+                .memory_usage()
+                .checked_add(core::mem::size_of::<regress::Regex>()),
+            CompiledRegex::PrefilteredExact { .. } | CompiledRegex::CaptureCorrected { .. } => None,
+        }
+    }
+
     fn find<'t>(&self, input: &'t str) -> error::Result<Option<CompiledMatch<'t>>> {
         self.find_at(input, 0)
     }
@@ -1267,13 +1583,13 @@ mod compiled_regex_tests {
         let mut vm = Vm::new().expect("VM should initialize");
         vm.fail_regexp_exec_compile = Some(0);
         assert!(matches!(
-            regexp::compile_regexp_for_exec(&mut vm, "(", "", ""),
+            regexp::compile_regexp_for_exec(&mut vm, Arc::from("("), "", ""),
             Err(RegexCompileError::Syntax(_))
         ));
         assert_eq!(vm.fail_regexp_exec_compile, Some(0));
 
         assert!(matches!(
-            regexp::compile_regexp_for_exec(&mut vm, "a", "", "a"),
+            regexp::compile_regexp_for_exec(&mut vm, Arc::from("a"), "", "a"),
             Err(RegexCompileError::Resource(_))
         ));
         assert_eq!(vm.fail_regexp_exec_compile, None);
@@ -1284,7 +1600,7 @@ mod compiled_regex_tests {
         assert!(matches!(
             regexp::compile_regexp_for_exec(
                 &mut Vm::new().expect("VM should initialize"),
-                "a",
+                Arc::from("a"),
                 "",
                 "a"
             ),
@@ -1293,7 +1609,7 @@ mod compiled_regex_tests {
         assert!(matches!(
             regexp::compile_regexp_for_exec(
                 &mut Vm::new().expect("VM should initialize"),
-                "(?=a)a",
+                Arc::from("(?=a)a"),
                 "",
                 "a"
             ),
@@ -1302,7 +1618,7 @@ mod compiled_regex_tests {
         assert!(matches!(
             regexp::compile_regexp_for_exec(
                 &mut Vm::new().expect("VM should initialize"),
-                "(a){1,1000000}",
+                Arc::from("(a){1,1000000}"),
                 "",
                 "a"
             ),
@@ -1312,7 +1628,7 @@ mod compiled_regex_tests {
         assert!(matches!(
             regexp::compile_regexp_for_exec(
                 &mut Vm::new().expect("VM should initialize"),
-                ".",
+                Arc::from("."),
                 "u",
                 &lone_surrogate
             ),
@@ -1321,12 +1637,299 @@ mod compiled_regex_tests {
         assert!(matches!(
             regexp::compile_regexp_for_exec(
                 &mut Vm::new().expect("VM should initialize"),
-                r"\p{RGI_Emoji}",
+                Arc::from(r"\p{RGI_Emoji}"),
                 "v",
                 "😀"
             ),
             Ok(CompiledRegex::LogicalUtf16(_))
         ));
+    }
+
+    #[test]
+    fn matcher_cache_charge_covers_every_compiled_backend_variant() {
+        let fixtures = [
+            compile_regex("a", "").expect("Rust fixture should compile"),
+            compile_regex("(?=a)a", "").expect("fancy fixture should compile"),
+            compile_regex("(a){1,1000000}", "").expect("counter fallback fixture should compile"),
+            compile_logical_utf16_regex(".", "u").expect("logical fixture should compile"),
+            compile_regex("(a?b??)*", "").expect("capture-corrected fixture should compile"),
+            compile_regex(r"\b(a?b??)*", "iu").expect("prefiltered fixture should compile"),
+        ];
+
+        assert!(matches!(fixtures[0], CompiledRegex::Rust(_)));
+        assert!(matches!(fixtures[1], CompiledRegex::Fancy(_)));
+        assert!(matches!(fixtures[2], CompiledRegex::Fancy(_)));
+        assert!(matches!(fixtures[3], CompiledRegex::LogicalUtf16(_)));
+        assert!(matches!(
+            fixtures[4],
+            CompiledRegex::CaptureCorrected { .. }
+        ));
+        assert!(matches!(
+            fixtures[5],
+            CompiledRegex::PrefilteredExact { .. }
+        ));
+
+        for (index, matcher) in fixtures.into_iter().enumerate() {
+            let charge = matcher.cache_charge();
+            let cacheable = matches!(index, 0 | 3);
+            assert_eq!(charge.is_some(), cacheable);
+            let mut vm = Vm::new().expect("VM should initialize");
+            assert_eq!(
+                regexp_matcher_cache_put(
+                    &mut vm,
+                    Arc::from(format!("backend-{index}")),
+                    "",
+                    RegExpCompileMode::ScalarPreferred,
+                    matcher,
+                ),
+                cacheable
+            );
+            if let Some(charge) = charge {
+                assert!(charge > 0);
+                assert!(charge <= MAX_REGEXP_MATCHER_CACHE_SINGLE_BYTES);
+                assert_eq!(vm.regexp_matcher_cache.matcher_bytes_for_test(), charge);
+            }
+        }
+
+        let captured = compile_regex("(a)", "").expect("captured Rust fixture should compile");
+        assert!(matches!(captured, CompiledRegex::Rust(_)));
+        assert!(!regexp_matcher_cache_put(
+            &mut Vm::new().expect("VM should initialize"),
+            Arc::from("(a)"),
+            "",
+            RegExpCompileMode::ScalarPreferred,
+            captured,
+        ));
+    }
+
+    fn logical_cache_accounting_matcher() -> CompiledRegex {
+        compile_logical_utf16_regex("", "u").expect("logical accounting fixture should compile")
+    }
+
+    #[test]
+    fn matcher_cache_semantic_flags_miss_once_then_hit() {
+        for (source, flags, input, expected) in [
+            ("a", "i", "A", true),
+            ("^.$", "m", "\na\n", true),
+            ("^.$", "s", "\n", true),
+            (".", "u", "😀", true),
+            (".", "v", "😀", true),
+        ] {
+            let mut vm = Vm::new().expect("VM should initialize");
+            compile_regex_cached(
+                &mut vm,
+                Arc::from(source),
+                "",
+                RegExpCompileMode::ScalarPreferred,
+            )
+            .expect("unflagged comparison matcher should compile");
+            let matcher = compile_regex_cached(
+                &mut vm,
+                Arc::from(source),
+                flags,
+                RegExpCompileMode::ScalarPreferred,
+            )
+            .expect("flagged matcher should compile separately");
+            assert_eq!(
+                matcher
+                    .find(input)
+                    .expect("matcher should execute")
+                    .is_some(),
+                expected
+            );
+            compile_regex_cached(
+                &mut vm,
+                Arc::from(source),
+                flags,
+                RegExpCompileMode::ScalarPreferred,
+            )
+            .expect("second flagged compilation should hit");
+            assert_eq!(vm.regexp_matcher_compile_count, 2, "flag {flags}");
+            assert_eq!(vm.regexp_matcher_cache_hit_count, 1, "flag {flags}");
+        }
+    }
+
+    #[test]
+    fn matcher_cache_keys_eviction_and_best_effort_publication_are_bounded() {
+        let mut vm = Vm::new().expect("VM should initialize");
+        let source: Arc<str> = Arc::from("a");
+        compile_regex_cached(
+            &mut vm,
+            source.clone(),
+            "gyd",
+            RegExpCompileMode::Utf16CodeUnits,
+        )
+        .expect("first matcher should compile");
+        assert_eq!(vm.regexp_matcher_compile_count, 1);
+        assert_eq!(vm.regexp_matcher_cache.len_for_test(), 1);
+
+        compile_regex_cached(
+            &mut vm,
+            source.clone(),
+            "",
+            RegExpCompileMode::Utf16CodeUnits,
+        )
+        .expect("non-compiling flags should share a matcher");
+        assert_eq!(vm.regexp_matcher_compile_count, 1);
+        assert_eq!(vm.regexp_matcher_cache_hit_count, 1);
+
+        compile_regex_cached(
+            &mut vm,
+            source.clone(),
+            "i",
+            RegExpCompileMode::Utf16CodeUnits,
+        )
+        .expect("ignoreCase needs a distinct matcher");
+        compile_regex_cached(&mut vm, source, "", RegExpCompileMode::ScalarPreferred)
+            .expect("scalar input needs a distinct matcher");
+        for flags in ["m", "s", "u", "v"] {
+            compile_regex_cached(
+                &mut vm,
+                Arc::from("a"),
+                flags,
+                RegExpCompileMode::ScalarPreferred,
+            )
+            .expect("each matcher-semantic flag needs a distinct entry");
+        }
+        assert_eq!(vm.regexp_matcher_compile_count, 7);
+        assert_eq!(vm.regexp_matcher_cache.len_for_test(), 1);
+
+        let mut failed = Vm::new().expect("VM should initialize");
+        failed.fail_next_regexp_matcher_cache_reservation = true;
+        compile_regex_cached(
+            &mut failed,
+            Arc::from("failure"),
+            "",
+            RegExpCompileMode::ScalarPreferred,
+        )
+        .expect("cache allocation failure must not fail compilation");
+        assert!(failed.regexp_matcher_cache.is_empty_for_test());
+        assert!(!failed.fail_next_regexp_matcher_cache_reservation);
+        assert_eq!(failed.regexp_matcher_compile_count, 1);
+        compile_regex_cached(
+            &mut failed,
+            Arc::from("failure"),
+            "",
+            RegExpCompileMode::ScalarPreferred,
+        )
+        .expect("second compilation should publish after reservation recovers");
+        compile_regex_cached(
+            &mut failed,
+            Arc::from("failure"),
+            "",
+            RegExpCompileMode::ScalarPreferred,
+        )
+        .expect("third compilation should hit the cache");
+        assert_eq!(failed.regexp_matcher_compile_count, 2);
+        assert_eq!(failed.regexp_matcher_cache_hit_count, 1);
+
+        let matcher = compile_regex("a", "").expect("fixture should compile");
+        let oversized: Arc<str> =
+            Arc::from("a".repeat(MAX_REGEXP_MATCHER_CACHE_SINGLE_SOURCE_BYTES + 1));
+        assert!(!regexp_matcher_cache_put(
+            &mut failed,
+            oversized,
+            "",
+            RegExpCompileMode::ScalarPreferred,
+            matcher
+        ));
+
+        let mut lru = Vm::new().expect("VM should initialize");
+        let accounting_matcher = logical_cache_accounting_matcher();
+        for index in 0..MAX_REGEXP_MATCHER_CACHE_ENTRIES {
+            let source: Arc<str> = Arc::from(format!("lru-{index}"));
+            assert!(regexp_matcher_cache_put(
+                &mut lru,
+                source,
+                "",
+                RegExpCompileMode::ScalarPreferred,
+                accounting_matcher.clone(),
+            ));
+        }
+        assert_eq!(
+            lru.regexp_matcher_cache.len_for_test(),
+            MAX_REGEXP_MATCHER_CACHE_ENTRIES
+        );
+        regexp_matcher_cache_get(&mut lru, "lru-0", "", RegExpCompileMode::ScalarPreferred)
+            .expect("touching the oldest matcher should refresh it");
+        let overflow_source: Arc<str> = Arc::from("lru-overflow");
+        assert!(regexp_matcher_cache_put(
+            &mut lru,
+            overflow_source,
+            "",
+            RegExpCompileMode::ScalarPreferred,
+            accounting_matcher.clone(),
+        ));
+        assert_eq!(
+            lru.regexp_matcher_cache.len_for_test(),
+            MAX_REGEXP_MATCHER_CACHE_ENTRIES
+        );
+        assert!(lru.regexp_matcher_cache.contains_source_for_test("lru-0"));
+        assert!(!lru.regexp_matcher_cache.contains_source_for_test("lru-1"));
+        assert!(
+            lru.regexp_matcher_cache.source_bytes_for_test()
+                <= MAX_REGEXP_MATCHER_CACHE_SOURCE_BYTES
+        );
+        assert!(
+            lru.regexp_matcher_cache.matcher_bytes_for_test() <= MAX_REGEXP_MATCHER_CACHE_BYTES
+        );
+
+        let active =
+            regexp_matcher_cache_get(&mut lru, "lru-0", "", RegExpCompileMode::ScalarPreferred)
+                .expect("active matcher should be retained independently of the cache");
+        for index in 0..=MAX_REGEXP_MATCHER_CACHE_ENTRIES {
+            let source: Arc<str> = Arc::from(format!("evict-{index}"));
+            assert!(regexp_matcher_cache_put(
+                &mut lru,
+                source,
+                "",
+                RegExpCompileMode::ScalarPreferred,
+                accounting_matcher.clone(),
+            ));
+        }
+        assert!(!lru.regexp_matcher_cache.contains_source_for_test("lru-0"));
+        assert!(active
+            .find("")
+            .expect("evicted active matcher should remain usable")
+            .is_some());
+
+        let mut matcher_budget = Vm::new().expect("VM should initialize");
+        for index in 0..5 {
+            compile_regex_cached(
+                &mut matcher_budget,
+                Arc::from(format!("rust{index}")),
+                "",
+                RegExpCompileMode::ScalarPreferred,
+            )
+            .expect("Rust matcher budget fixture should compile");
+        }
+        assert_eq!(matcher_budget.regexp_matcher_cache.len_for_test(), 1);
+        assert!(!matcher_budget
+            .regexp_matcher_cache
+            .contains_source_for_test("rust0"));
+        assert_eq!(
+            matcher_budget.regexp_matcher_cache.matcher_bytes_for_test(),
+            RUST_CAPTURE_FREE_CACHE_CHARGE
+        );
+
+        let mut source_budget = Vm::new().expect("VM should initialize");
+        let accounting_matcher = logical_cache_accounting_matcher();
+        for index in 0..5 {
+            let mut source = "x".repeat(MAX_REGEXP_MATCHER_CACHE_SINGLE_SOURCE_BYTES - 1);
+            source.push(char::from(b'0' + index));
+            assert!(regexp_matcher_cache_put(
+                &mut source_budget,
+                Arc::from(source),
+                "",
+                RegExpCompileMode::ScalarPreferred,
+                accounting_matcher.clone(),
+            ));
+        }
+        assert_eq!(source_budget.regexp_matcher_cache.len_for_test(), 4);
+        assert_eq!(
+            source_budget.regexp_matcher_cache.source_bytes_for_test(),
+            MAX_REGEXP_MATCHER_CACHE_SOURCE_BYTES
+        );
     }
 
     #[test]

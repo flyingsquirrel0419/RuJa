@@ -3225,7 +3225,7 @@ another bounded backend compiles the same ECMAScript pattern successfully.
 - 검토한 주요 대안: Match diagnostic strings, classify every compiler failure as RangeError, remove fallback, eagerly compile and store every matcher, or carry a narrow typed result to the JavaScript error boundary.
 - 선택한 방식: Add typed syntax/resource results in RuJa and regress, classify structured Rust/fancy variants, validate flags before bounded pattern work, share one JavaScript mapper across all compile callers, and retain successful fallback.
 - 다른 대안 대신 이 방식을 선택한 이유: Message matching is brittle; blanket RangeError corrupts real syntax diagnostics; removing fallback regresses supported semantics; matcher storage changes execution ordering and ownership beyond this unit. Typed propagation is narrow and reviewable.
-- 장점, 단점 및 영향: Dynamic resource limits now produce Realm-correct RangeError while reachable malformed-pattern diagnostics remain SyntaxError, and backend fallback stays transparent. Exec observes and bounds lastIndex before compilation; the deterministic terminal-failure boundary is documented below, while matcher caching, compiler allocation failpoints, and compiled-matcher storage remain separate work.
+- 장점, 단점 및 영향: Dynamic resource limits now produce Realm-correct RangeError while reachable malformed-pattern diagnostics remain SyntaxError, and backend fallback stays transparent. Exec observes and bounds lastIndex before compilation; the deterministic terminal-failure and bounded matcher-cache boundaries are documented below, while compiler allocation failpoints remain separate work.
 ```
 
 ### RegExp exec terminal compilation boundary
@@ -3256,7 +3256,7 @@ branded RegExp.
 - 검토한 주요 대안: Inject before backend selection, inject Syntax and Resource indiscriminately, force process OOM, patch every vendor allocation in the same unit, cache matchers immediately, or inject only after terminal success and keep actual allocation work separate.
 - 선택한 방식: Centralize exec compilation, preserve genuine errors, apply a test-only one-shot/countdown Resource result only after successful terminal compilation, keep it before all later preparation/publication, and route test through the existing dynamic RegExpExec dispatcher.
 - 다른 대안 대신 이 방식을 선택한 이유: Pre-backend injection changes fallback semantics; synthetic Syntax is unreachable for an initialized matcher and can mask real diagnostics; process OOM is nondeterministic; vendor fallibility and cache publication have independent ownership contracts. A post-success hook proves ordering without overstating production allocation guarantees.
-- 장점, 단점 및 영향: Backend fallback remains transparent, method-Realm RangeError identity and unchanged lastIndex are deterministic, nested failure unwinds cleanly, immediate retry succeeds, and custom exec is specification-observable. Compiled matchers are still rebuilt per builtin exec, and vendor/compiler allocation is still not catchable until later cache and allocation units.
+- 장점, 단점 및 영향: Backend fallback remains transparent, method-Realm RangeError identity and unchanged lastIndex are deterministic, nested failure unwinds cleanly, immediate retry succeeds, and custom exec is specification-observable. The bounded cache below reuses admitted terminal matchers; compiler and vendor allocation remain non-catchable, and unbounded matcher variants still rebuild.
 ```
 
 The vendored crate retains its upstream MIT OR Apache-2.0 license files.
@@ -3562,7 +3562,7 @@ coercion, allocation, or callback fails.
 - 검토한 주요 대안: Rely on native call frames, reserve one large entry batch for each method, make pin globally fallible, catch allocator panic, or add local exact reservation immediately before every RegExp publication.
 - 선택한 방식: Use single-value and atomic multi-value RegExp pin helpers, retain existing cleanup scopes, add missing semantic roots, and preflight the statically known indices pair/groups batch before nested allocation.
 - 다른 대안 대신 이 방식을 선택한 이유: Native Rust locals are not GC roots; entry-wide reservation changes getter ordering and over-reserves attacker-controlled paths; a global pin API migration is a separate cross-module unit; panic recovery cannot restore allocator or VM invariants. Local post-observation reservation preserves behavior and bounds this change.
-- 장점, 단점 및 영향: Root growth failure is a catchable RangeError, every prior pin is released, fresh intermediates survive forced GC, and retry remains possible without rolling back earlier observable side effects. Native capture/name/property containers and repeated matcher compilation remain separate hardening work.
+- 장점, 단점 및 영향: Root growth failure is a catchable RangeError, every prior pin is released, fresh intermediates survive forced GC, and retry remains possible without rolling back earlier observable side effects. Native capture/name/property containers and compiler metadata remain separate hardening work; bounded matcher reuse is described below.
 ```
 
 ### RegExp post-match container publication
@@ -3595,7 +3595,7 @@ does not roll back an already specified `lastIndex` write.
 - 검토한 주요 대안: Reserve all future storage before matching or lastIndex publication, impose a smaller capture limit, mutate heap maps one property at a time, retain a separate matched-name IndexSet, combine compiler/backend/replacement allocations into one patch, or isolate the post-match ownership boundary.
 - 선택한 방식: Publish match zero's end first; prepay conservative Fuel before each reservation and native operation for capture, endpoint, sort, scan, slice, full name-byte hashing, presence, and property work; exact-reserve local vectors and presence maps at their specification phase; construct groups maps locally with entry replacement; allocate heap objects only after native maps are complete; inject deterministic failure at each owned reservation.
 - 다른 대안 대신 이 방식을 선택한 이유: Entry-wide reservation changes observable lastIndex and setter ordering; lower caps reject valid programs; incremental heap mutation permits partial publication; IndexSet duplicates storage and allocation; compiler/backend/replacement paths have different typed-error and callback-order contracts. The isolated boundary can be proved end to end without overstating allocator coverage.
-- 장점, 단점 및 영향: Every owned container failure is a Realm-correct catchable RangeError, pins and failed partial objects are collectible, duplicate property order and indices identity survive retry, and native work has an exact cooperative Fuel boundary. String/Arc payload allocation, capture-name/compiler metadata, backend capture conversion and input boundary tables, replacement containers, matcher/vendor allocation, and legacy String paths remain separate units.
+- 장점, 단점 및 영향: Every owned container failure is a Realm-correct catchable RangeError, pins and failed partial objects are collectible, duplicate property order and indices identity survive retry, and native work has an exact cooperative Fuel boundary. String/Arc payload allocation, capture-name/compiler metadata, backend capture conversion and input boundary tables, replacement containers, compiler/vendor allocation, and legacy String paths remain separate units.
 ```
 
 ### RegExp replacement native-container boundary
@@ -3638,7 +3638,7 @@ including lone-surrogate sentinel parity, before publication.
 - 검토한 주요 대안: Pre-reserve all storage at entry, retain per-slice conversion, build every string as owned UTF-16, publish partial output before callbacks, redesign all JS strings/property keys in the same patch, or isolate the containers directly owned by @@replace.
 - 선택한 방식: Preserve observable coercions and global lastIndex setup; borrow ASCII or fallibly cache non-ASCII input once; reserve each phase at its specification boundary; append substitutions and output as UTF-16; retain existing Arc strings; decode through one exact fallible String buffer; inject failures only at real growth.
 - 다른 대안 대신 이 방식을 선택한 이유: Entry reservation changes trap order and over-reserves paths never taken; repeated conversion is superlinear; universal UTF-16 ownership penalizes ASCII; partial output complicates abrupt completion; a runtime-wide JS-string/key allocator is too broad for one auditable unit. Phase ownership gives deterministic failure and retry evidence without claiming unrelated allocations.
-- 장점, 단점 및 영향: Replacement container failures are Realm-correct RangeErrors, Fuel has exact boundaries, pins and native temporaries unwind on every abrupt path, Unicode slicing is linear in copied output, and large lastIndex cannot overflow wasm32 usize. ToString-created and final-result Arc<str> publication, dynamic named-group PropertyKey allocation, error-message strings, compiler/backend metadata, vendor matcher storage, and legacy String builtin paths remain runtime-wide follow-ups rather than covered OOM guarantees.
+- 장점, 단점 및 영향: Replacement container failures are Realm-correct RangeErrors, Fuel has exact boundaries, pins and native temporaries unwind on every abrupt path, Unicode slicing is linear in copied output, and large lastIndex cannot overflow wasm32 usize. ToString-created and final-result Arc<str> publication, dynamic named-group PropertyKey allocation, error-message strings, compiler/backend allocation, and legacy String builtin paths remain runtime-wide follow-ups rather than covered OOM guarantees.
 ```
 
 ### RegExp named-group conformance ownership
@@ -3659,7 +3659,48 @@ silently broadening another.
 - 검토한 주요 대안: Remove the feature gate globally, admit directory prefixes, merge every RegExp admission, keep informational forced runs only, or freeze the independently passing paths under a shared exact map.
 - 선택한 방식: Freeze 86 disjoint paths, remove only regexp-named-groups for those paths in both policy tools, retain poisoned-stdlib.js as one explicit scope skip, and hard-gate exact and related-scope counts in CI.
 - 다른 대안 대신 이 방식을 선택한 이유: Global and prefix admission accept future behavior without review; merging ownership obscures dependencies; forced runs do not improve supported accounting; lifting Symbol.iterator here would claim unrelated semantics.
-- 장점, 단점 및 영향: Supported accounting gains 86 passes with no runtime semantic change, future siblings remain closed, and one unrelated dependency stays visible. Matcher caching, native-allocation fallibility, and replacement streaming remain separate runtime-hardening units.
+- 장점, 단점 및 영향: Supported accounting gains 86 passes with no runtime semantic change, future siblings remain closed, and one unrelated dependency stays visible. Native compiler-allocation fallibility remains a separate runtime-hardening unit.
+```
+
+### VM-local compiled RegExp matcher cache
+
+RegExp construction and builtin execution share immutable compiled matchers
+through one VM-local LRU. A key owns the canonical source `Arc<str>`, the five
+compiler-semantic flag bits `i/m/s/u/v`, and one input domain:
+scalar-preferred, UTF-16 code units, or logical UTF-16 required. The state and
+result flags `d/g/y` share a matcher, and Realm identity is deliberately absent
+because compiled programs contain no JavaScript heap values. Cache entries are
+therefore outside GC tracing and remain valid across collection and GcIdx reuse.
+
+`RegExpBuiltinExec` still performs receiver validation, input `ToString`,
+`lastIndex` coercion, and the global/sticky out-of-range reset before lookup.
+A miss completes backend selection and fallback before the test-only terminal
+failure hook; only a successful terminal matcher is offered to the cache. A hit
+leaves that hook armed. Constructor seeding and internal String paths use the
+same key rules. Cache publication reserves the native LRU best-effort: failure
+drops only the cache candidate and returns the successfully compiled matcher.
+
+Every `CompiledRegex` backend handle is `Arc`-owned at RuJa's enum boundary, so
+LRU hits and active-call clones allocate no new backend state and eviction cannot
+invalidate a matcher already in use. Vendored `Clone` implementations are left
+unchanged. Retention permits at most 16 entries, 256 KiB of source, 64 KiB per
+source, and a 128 MiB conservative matcher charge. Rust compilation pins its
+existing 10 MiB NFA and 2 MiB lazy-DFA limits explicitly; only capture-free
+sources up to 4 KiB are cacheable and consume the complete 128 MiB matcher
+budget. The logical UTF-16 backend reports a deliberately overestimated
+compiled-storage charge. Fancy, prefiltered/capture-corrected composite,
+captured Rust, large-source, overflowing, and oversized matchers execute
+normally but are not cached because a finite retained scratch-pool bound is not
+available at their public API boundary.
+
+```text
+[Decision Log]
+- 목적과 의도: Reuse terminal RegExp compilation without changing ECMAScript observation order, GC ownership, Realm error identity, or the sandbox's native-memory bound.
+- 기존 구현 및 제약 조건: Every constructor/exec/internal String route rebuilt a matcher; backend Clone could duplicate programs or scratch pools; regex-automata retains mutable execution caches; fancy/composite backends do not expose a finite total retained-memory bound; cache allocation itself must not turn successful compilation into JavaScript failure.
+- 검토한 주요 대안: Store a matcher on every RegExp heap object, use a process-global cache, key by all flags or Realm, cache every backend by source length, change vendor Clone semantics, or keep a VM-local semantic LRU with conservative admission.
+- 선택한 방식: Keep one VM-owned LRU keyed by source, i/m/s/u/v, and input domain; Arc-wrap backend values only in RuJa; publish after terminal success on a best-effort basis; enforce checked entry/source/matcher accounting; admit only bounded logical programs and small capture-free Rust programs while running all other variants uncached.
+- 다른 대안 대신 이 방식을 선택한 이유: Per-object storage scales with live heap objects and needs GC slot ownership; a global cache crosses VM policy boundaries; d/g/y and Realm do not alter compilation; source size does not bound backend scratch; vendor Arc conversion changes public no_std and clone behavior. Conservative admission preserves correctness and a defensible memory ceiling.
+- 장점, 단점 및 영향: Repeated common matchers and logical fallback programs reuse allocation-free handles across Realms and GC, publication failure is invisible, failures remain uncached, and reentrant eviction is safe. The 128 MiB whole-budget Rust charge intentionally retains only one Rust matcher at a time, and fancy, composite, captured, or large Rust patterns still recompile; broader reuse requires backend APIs that expose complete immutable plus retained-scratch bounds.
 ```
 
 **Next:** [Features](features.md) · [Known limitations](limitations.md) · [Back to README](../README.md)

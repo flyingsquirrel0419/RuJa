@@ -4,6 +4,20 @@
 
 ### Changed
 
+- Added a bounded VM-local cache for reusable compiled RegExp matchers without
+  changing `RegExpBuiltinExec` observation order. Keys contain immutable source,
+  only compiler-semantic `i/m/s/u/v` flags, and the scalar/code-unit/logical
+  UTF-16 input domain; `d/g/y` and Realm identity do not split equivalent
+  entries. Cache hits clone RuJa-owned `Arc` handles without allocating, while
+  publication is best-effort and never replaces a successful compilation with
+  an error. LRU retention is bounded by entry, source, and conservative matcher
+  budgets. Only small capture-free Rust matchers and bounded logical UTF-16
+  matchers are admitted; fancy, composite, captured, and oversized matchers run
+  uncached because their retained scratch pools lack a finite public bound.
+  Tests cover semantic keys, constructor seeding, GC and cross-Realm reuse,
+  coercion order, reentrant eviction, every backend policy, budget eviction,
+  publication failure, and compile-failure retry.
+
 - Made the `RegExpBuiltinExec` terminal compilation boundary deterministically
   testable without bypassing real backend selection or fallback. The test-only
   countdown can replace only a successfully compiled matcher with a typed
