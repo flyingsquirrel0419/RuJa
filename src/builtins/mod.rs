@@ -1263,6 +1263,73 @@ mod compiled_regex_tests {
     }
 
     #[test]
+    fn exec_compile_injection_preserves_real_errors_and_targets_success() {
+        let mut vm = Vm::new().expect("VM should initialize");
+        vm.fail_regexp_exec_compile = Some(0);
+        assert!(matches!(
+            regexp::compile_regexp_for_exec(&mut vm, "(", "", ""),
+            Err(RegexCompileError::Syntax(_))
+        ));
+        assert_eq!(vm.fail_regexp_exec_compile, Some(0));
+
+        assert!(matches!(
+            regexp::compile_regexp_for_exec(&mut vm, "a", "", "a"),
+            Err(RegexCompileError::Resource(_))
+        ));
+        assert_eq!(vm.fail_regexp_exec_compile, None);
+    }
+
+    #[test]
+    fn exec_compile_backend_fixtures_select_expected_variants() {
+        assert!(matches!(
+            regexp::compile_regexp_for_exec(
+                &mut Vm::new().expect("VM should initialize"),
+                "a",
+                "",
+                "a"
+            ),
+            Ok(CompiledRegex::Rust(_))
+        ));
+        assert!(matches!(
+            regexp::compile_regexp_for_exec(
+                &mut Vm::new().expect("VM should initialize"),
+                "(?=a)a",
+                "",
+                "a"
+            ),
+            Ok(CompiledRegex::Fancy(_))
+        ));
+        assert!(matches!(
+            regexp::compile_regexp_for_exec(
+                &mut Vm::new().expect("VM should initialize"),
+                "(a){1,1000000}",
+                "",
+                "a"
+            ),
+            Ok(CompiledRegex::Fancy(_))
+        ));
+        let lone_surrogate = crate::value::utf16_to_string(&[0xd800]);
+        assert!(matches!(
+            regexp::compile_regexp_for_exec(
+                &mut Vm::new().expect("VM should initialize"),
+                ".",
+                "u",
+                &lone_surrogate
+            ),
+            Ok(CompiledRegex::LogicalUtf16(_))
+        ));
+        assert!(matches!(
+            regexp::compile_regexp_for_exec(
+                &mut Vm::new().expect("VM should initialize"),
+                r"\p{RGI_Emoji}",
+                "v",
+                "😀"
+            ),
+            Ok(CompiledRegex::LogicalUtf16(_))
+        ));
+    }
+
+    #[test]
     fn unicode_word_class_agreement_detects_rust_only_characters() {
         assert!(rust_and_ecmascript_unicode_word_classes_agree("a_9ſK"));
         assert!(!rust_and_ecmascript_unicode_word_classes_agree("é"));

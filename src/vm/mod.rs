@@ -490,6 +490,8 @@ pub struct Vm {
     #[cfg(test)]
     pub(crate) fail_regexp_replacement_reservation:
         Option<(RegExpReplacementReservationSite, usize)>,
+    #[cfg(test)]
+    pub(crate) fail_regexp_exec_compile: Option<usize>,
     /// Receiver identities currently traversing Array stringification methods.
     /// Join checks after separator coercion and toLocaleString checks after its
     /// length snapshot, so recursive suppression preserves observable ordering.
@@ -1220,6 +1222,8 @@ impl Vm {
             fail_regexp_materialization_reservation: None,
             #[cfg(test)]
             fail_regexp_replacement_reservation: None,
+            #[cfg(test)]
+            fail_regexp_exec_compile: None,
             active_array_joins: Vec::new(),
             kept_objects: HashSet::new(),
             current_yields: Vec::new(),

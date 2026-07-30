@@ -4,6 +4,16 @@
 
 ### Changed
 
+- Made the `RegExpBuiltinExec` terminal compilation boundary deterministically
+  testable without bypassing real backend selection or fallback. The test-only
+  countdown can replace only a successfully compiled matcher with a typed
+  resource failure; genuine compiler errors preserve the pending injection.
+  Tests freeze input and `lastIndex` ordering, global/sticky short circuits,
+  method-Realm errors, re-entry in both directions, backend variants,
+  post-compile Fuel/materialization priority, unchanged state, and immediate
+  retry. `RegExp.prototype.test` now uses dynamic `RegExpExec`, observing custom
+  `exec` getters and call results in specification order.
+
 - Split RegExp syntax diagnostics from compiler and backend resource limits.
   Dynamic construction now validates flags before bounded pattern work,
   reports local Unicode, Rust regex, fancy-regex, and regress construction

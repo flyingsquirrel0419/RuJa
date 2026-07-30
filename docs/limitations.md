@@ -140,7 +140,11 @@ The following resource limits are enforced:
   Their native bytes remain outside the heap-object count. RegExp syntax and
   compiler/backend limits now retain typed classification and report dynamic
   host resource rejection as Realm-correct `RangeError`; successful bounded
-  backend fallback remains transparent. String/Arc payloads, fallible
+  backend fallback remains transparent. A test-only post-success countdown
+  proves terminal exec compile ordering, method-Realm errors, re-entry, and
+  retry without bypassing real backend selection; it does not make vendor
+  allocation fallible. `RegExp.prototype.test` now observes dynamic custom
+  `exec` as required. String/Arc payloads, fallible
   capture-name/compiler metadata allocation, backend capture conversion and
   input boundary tables, legacy String-path materialization, and
   compiled-matcher storage remain separate resource-hardening work.
@@ -200,8 +204,8 @@ guarantees are required.
 - RegExp construction, `IsRegExp`, Realm fallback, the String-symbol methods,
   character-class escapes, active-ignoreCase `\w`/`\W` lowering, and `d`-flag
   match indices are implemented and audited, but full RegExp conformance is
-  not complete. The current `built-ins/RegExp` diagnostic is **1093 pass / 0
-  fail / 786 skip / 0 timeout** over the admitted 1,093 executions.
+  not complete. The current `built-ins/RegExp` diagnostic is **1223 pass / 0
+  fail / 656 skip / 0 timeout** over 1,879 files.
   Quantifier integers are represented independently of host width and compile
   to bounded non-expanding counters. The complete lookbehind subtree is
   **17/17**. Embedded empty classes now lower
@@ -375,9 +379,9 @@ guarantees are required.
   [test262.md](test262.md#supported-subset) for the exact list). The full
   suite is run in CI, excluding `intl402` and all staging tests except the two
   exact variable-length TypedArray `preventExtensions` shards. The latest
-  verified full result is 65.8% of all matrix files and 86.2% of pass-or-fail
+  verified full result is 66.8% of all matrix files and 86.6% of pass-or-fail
   executed files
-  (**31,901 pass / 5,110 fail / 11,455 skip / 3 timeout / 0 error**); within
+  (**32,376 pass / 5,028 fail / 11,062 skip / 3 timeout / 0 error**); within
   the supported subset, tests currently run at 100%.
   Full ES conformance is not claimed. See
   [test262.md](test262.md) for current numbers and the failure breakdown.

@@ -8705,6 +8705,310 @@ fn regexp_core_root_reservation_failures_are_ordered_balanced_and_retryable() {
 }
 
 #[test]
+fn regexp_exec_compile_failures_preserve_order_realm_and_retry() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.run(
+        r#"
+        var compileEvents = [];
+        var compileInput = {
+          toString: function () { compileEvents.push("input"); return "ba"; }
+        };
+        var compileIndex = {
+          valueOf: function () { compileEvents.push("lastIndex"); return 1; }
+        };
+        var compileRegexp = /a/g;
+        compileRegexp.lastIndex = compileIndex;
+        var compileOutOfRangeRegexp = /a/g;
+        var compileOutOfRangeStickyRegexp = /a/y;
+        var compileFrozenLastIndexRegexp = /a/g;
+        compileFrozenLastIndexRegexp.lastIndex = 2;
+        Object.defineProperty(compileFrozenLastIndexRegexp, "lastIndex", {
+          writable: false
+        });
+        var compileNonGlobalRegexp = /a/;
+        compileNonGlobalRegexp.lastIndex = 9007199254740991;
+        var compileMutatedIndexRegexp = /a/g;
+        var compileMutatedIndexInput = {
+          toString: function () {
+            compileMutatedIndexRegexp.lastIndex = 2;
+            return "a";
+          }
+        };
+        var compileAbruptRegexp = /a/g;
+        var compileAbruptMarker = {};
+        var compileAbruptInput = {
+          toString: function () { throw compileAbruptMarker; }
+        };
+        var compileAbruptIndexRegexp = /a/g;
+        compileAbruptIndexRegexp.lastIndex = {
+          valueOf: function () { throw compileAbruptMarker; }
+        };
+        var compileNestedInner = /b/;
+        var compileNestedOuter = /a/;
+        var compileNestedInput = {
+          toString: function () {
+            compileEvents.push("outer-input");
+            compileEvents.push(compileNestedInner.exec("b")[0]);
+            return "a";
+          }
+        };
+        var compileInverseNestedCaught = false;
+        var compileInverseNestedInner = /b/;
+        var compileInverseNestedOuter = /a/;
+        var compileInverseNestedInput = {
+          toString: function () {
+            try { compileInverseNestedInner.exec("b"); }
+            catch (error) {
+              compileInverseNestedCaught = error instanceof RangeError;
+            }
+            return "a";
+          }
+        };
+        var compileForeignRealm = $262.createRealm().global;
+        var compileMainExec = RegExp.prototype.exec;
+        var compileForeignExec = compileForeignRealm.RegExp.prototype.exec;
+        var compileForeignRegexp = compileForeignRealm.RegExp("a", "g");
+        var compileMainRegexp = /a/g;
+        var compileRustRegexp = /a/g;
+        var compileFancyRegexp = /(?=a)a/g;
+        var compileFallbackRegexp = /(a){1,1000000}/g;
+        var compileLogicalRegexp = /./ug;
+        var compileLogicalInput = String.fromCharCode(0xD800);
+        var compileCustomExecRegexp = /a/;
+        compileCustomExecRegexp.exec = function () { return null; };
+        var compileOptimizedMatchRegexp = /a/gu;
+        "#,
+    )
+    .expect("RegExp exec compile-failure fixtures should initialize");
+    let baseline_pins = vm.gc_pins.len();
+
+    vm.fail_regexp_exec_compile = Some(0);
+    let error = vm
+        .run("compileRegexp.exec(compileInput);")
+        .expect_err("injected exec compilation must fail");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_main_realm_range_error(&vm, error.as_ref());
+    assert_eq!(vm.fail_regexp_exec_compile, None);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(
+        vm.run("compileEvents.join(',') + '|' + (compileRegexp.lastIndex === compileIndex);")
+            .expect("compile failure ordering should remain observable"),
+        Value::String("input,lastIndex|true".into())
+    );
+    drop(error);
+
+    vm.fail_regexp_exec_compile = Some(0);
+    assert_eq!(
+        vm.run(
+            "compileInverseNestedOuter.exec(compileInverseNestedInput)[0] + '|' + compileInverseNestedCaught;"
+        )
+        .expect("outer exec should recover after a caught inner compile failure"),
+        Value::String("a|true".into())
+    );
+    assert_eq!(vm.fail_regexp_exec_compile, None);
+    assert_eq!(
+        vm.run("compileRegexp.exec('ba')[0] + '|' + compileRegexp.lastIndex;")
+            .expect("exec must retry immediately after injected compilation failure"),
+        Value::String("a|2".into())
+    );
+
+    vm.fail_regexp_exec_compile = Some(0);
+    assert_eq!(
+        vm.run(
+            r#"
+            var compileMainMethodError;
+            try { compileMainExec.call(compileForeignRegexp, "a"); }
+            catch (error) { compileMainMethodError = error; }
+            compileMainMethodError instanceof RangeError &&
+              !(compileMainMethodError instanceof compileForeignRealm.RangeError);
+            "#,
+        )
+        .expect("main method compile failure should use the main Realm"),
+        Value::Bool(true)
+    );
+    assert_eq!(vm.fail_regexp_exec_compile, None);
+
+    vm.fail_regexp_exec_compile = Some(0);
+    assert_eq!(
+        vm.run(
+            r#"
+            var compileForeignMethodError;
+            try { compileForeignExec.call(compileMainRegexp, "a"); }
+            catch (error) { compileForeignMethodError = error; }
+            compileForeignMethodError instanceof compileForeignRealm.RangeError &&
+              !(compileForeignMethodError instanceof RangeError);
+            "#,
+        )
+        .expect("foreign method compile failure should use the foreign Realm"),
+        Value::Bool(true)
+    );
+    assert_eq!(vm.fail_regexp_exec_compile, None);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    compile_out_of_range_bypasses_exec_failure(&mut vm);
+
+    vm.fail_regexp_exec_compile = Some(0);
+    let error = vm
+        .run("compileFrozenLastIndexRegexp.exec('a');")
+        .expect_err("non-writable out-of-range lastIndex must fail before compilation");
+    assert_eq!(error.kind, crate::error::ErrorKind::Type);
+    assert_eq!(vm.fail_regexp_exec_compile, Some(0));
+    vm.fail_regexp_exec_compile = None;
+
+    vm.fail_regexp_exec_compile = Some(0);
+    assert_eq!(
+        vm.run(
+            "compileMutatedIndexRegexp.exec(compileMutatedIndexInput) === null && compileMutatedIndexRegexp.lastIndex === 0;"
+        )
+        .expect("input coercion should precede the lastIndex range check"),
+        Value::Bool(true)
+    );
+    assert_eq!(vm.fail_regexp_exec_compile, Some(0));
+    vm.fail_regexp_exec_compile = None;
+
+    vm.fail_regexp_exec_compile = Some(0);
+    let error = vm
+        .run("compileNonGlobalRegexp.exec('a');")
+        .expect_err("non-global lastIndex must not bypass compilation");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fail_regexp_exec_compile, None);
+    assert_eq!(
+        vm.run("compileNonGlobalRegexp.lastIndex;")
+            .expect("non-global lastIndex should remain unchanged"),
+        Value::Number(9_007_199_254_740_991.0)
+    );
+
+    vm.fail_regexp_exec_compile = Some(0);
+    assert_eq!(
+        vm.run("compileCustomExecRegexp.test('a');")
+            .expect("RegExp.prototype.test must dispatch to an overridden exec"),
+        Value::Bool(false)
+    );
+    assert_eq!(vm.fail_regexp_exec_compile, Some(0));
+    assert_eq!(
+        vm.run("compileOptimizedMatchRegexp[Symbol.match]('a')[0];")
+            .expect("optimized Unicode match must remain outside builtin exec compilation"),
+        Value::String("a".into())
+    );
+    assert_eq!(vm.fail_regexp_exec_compile, Some(0));
+    vm.fail_regexp_exec_compile = None;
+
+    let logical_regexp = vm.get_global("compileLogicalRegexp");
+    let logical_input = vm.get_global("compileLogicalInput");
+    vm.fail_regexp_exec_compile = Some(0);
+    vm.set_fuel(Some(0));
+    let error =
+        crate::builtins::regexp::regexp_exec(&mut vm, &[logical_input], Some(logical_regexp))
+            .expect_err("compile failure must precede Unicode backend-input Fuel");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fail_regexp_exec_compile, None);
+    vm.set_fuel(None);
+
+    vm.fail_regexp_exec_compile = Some(0);
+    assert_eq!(
+        vm.run(
+            "try { compileAbruptRegexp.exec(compileAbruptInput); false; } catch (error) { error === compileAbruptMarker; }"
+        )
+        .expect("input abrupt completion should be catchable"),
+        Value::Bool(true)
+    );
+    assert_eq!(vm.fail_regexp_exec_compile, Some(0));
+    vm.fail_regexp_exec_compile = None;
+
+    vm.fail_regexp_exec_compile = Some(0);
+    assert_eq!(
+        vm.run(
+            "try { compileAbruptIndexRegexp.exec('a'); false; } catch (error) { error === compileAbruptMarker; }"
+        )
+        .expect("lastIndex abrupt completion should be catchable"),
+        Value::Bool(true)
+    );
+    assert_eq!(vm.fail_regexp_exec_compile, Some(0));
+    vm.fail_regexp_exec_compile = None;
+
+    vm.run("compileEvents.length = 0;")
+        .expect("nested compile event log should reset");
+    vm.fail_regexp_exec_compile = Some(1);
+    let error = vm
+        .run("compileNestedOuter.exec(compileNestedInput);")
+        .expect_err("countdown must target the outer compile boundary");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fail_regexp_exec_compile, None);
+    assert_eq!(
+        vm.run("compileEvents.join(',');")
+            .expect("nested compile events should remain readable"),
+        Value::String("outer-input,b".into())
+    );
+    drop(error);
+
+    vm.fail_regexp_exec_compile = Some(0);
+    vm.fail_regexp_materialization_reservation =
+        Some((RegExpMaterializationReservationSite::ResultItems, 0));
+    let error = vm
+        .run("compileRustRegexp.exec('a');")
+        .expect_err("compile failure must precede result materialization");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fail_regexp_exec_compile, None);
+    assert_eq!(
+        vm.fail_regexp_materialization_reservation,
+        Some((RegExpMaterializationReservationSite::ResultItems, 0))
+    );
+    vm.fail_regexp_materialization_reservation = None;
+    drop(error);
+
+    for (regexp_name, input_expression) in [
+        ("compileRustRegexp", "'a'"),
+        ("compileFancyRegexp", "'a'"),
+        ("compileFallbackRegexp", "'a'"),
+        ("compileLogicalRegexp", "compileLogicalInput"),
+    ] {
+        vm.run(&format!("{regexp_name}.lastIndex = 0;"))
+            .expect("backend fixture lastIndex should reset");
+        vm.fail_regexp_exec_compile = Some(0);
+        let error = match vm.run(&format!("{regexp_name}.exec({input_expression});")) {
+            Err(error) => error,
+            Ok(value) => {
+                panic!("{regexp_name} injected compilation should fail, returned {value:?}")
+            }
+        };
+        assert_eq!(error.kind, crate::error::ErrorKind::Range, "{regexp_name}");
+        assert_eq!(vm.fail_regexp_exec_compile, None, "{regexp_name}");
+        drop(error);
+        assert!(
+            matches!(
+                vm.run(&format!("{regexp_name}.exec({input_expression});"))
+                    .unwrap_or_else(|error| panic!("{regexp_name} retry failed: {error}")),
+                Value::Object(_)
+            ),
+            "{regexp_name}"
+        );
+    }
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+}
+
+fn compile_out_of_range_bypasses_exec_failure(vm: &mut Vm) {
+    for regexp_name in ["compileOutOfRangeRegexp", "compileOutOfRangeStickyRegexp"] {
+        vm.run(&format!("{regexp_name}.lastIndex = 2;"))
+            .expect("out-of-range fixture should initialize");
+        vm.fail_regexp_exec_compile = Some(0);
+        assert_eq!(
+            vm.run(&format!(
+                "{regexp_name}.exec('a') === null && {regexp_name}.lastIndex === 0;"
+            ))
+            .expect("out-of-range lastIndex should return before compilation"),
+            Value::Bool(true),
+            "{regexp_name}"
+        );
+        assert_eq!(vm.fail_regexp_exec_compile, Some(0), "{regexp_name}");
+        let error = vm
+            .run(&format!("{regexp_name}.exec('a');"))
+            .expect_err("next in-range exec must consume the preserved failure");
+        assert_eq!(error.kind, crate::error::ErrorKind::Range, "{regexp_name}");
+        assert_eq!(vm.fail_regexp_exec_compile, None, "{regexp_name}");
+    }
+}
+
+#[test]
 fn regexp_exec_materialization_reservations_are_atomic_ordered_and_retryable() {
     let mut vm = Vm::new().expect("VM should initialize");
     vm.run(

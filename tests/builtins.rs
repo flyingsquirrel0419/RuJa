@@ -19368,6 +19368,49 @@ fn promise_constructor_requires_new_and_calls_executor_with_undefined_this() {
 // --- RegExp ---
 
 #[test]
+fn regexp_test_uses_dynamic_regexp_exec() {
+    assert_eq!(
+        run(r#"
+            var events = [];
+            var receiver = /a/;
+            Object.defineProperty(receiver, "exec", {
+              get: function () {
+                events.push("exec");
+                return function (input) {
+                  events.push(this === receiver ? "this" : "wrong-this");
+                  events.push(input);
+                  return null;
+                };
+              }
+            });
+            var input = {
+              toString: function () { events.push("input"); return "a"; }
+            };
+            var result = RegExp.prototype.test.call(receiver, input);
+            result + "|" + events.join(",");
+            "#,),
+        Value::String(Arc::from("false|input,exec,this,a"))
+    );
+    assert_eq!(
+        run(r#"
+            var generic = {
+              exec: function (input) { return { 0: input, length: 1 }; }
+            };
+            RegExp.prototype.test.call(generic, "x");
+            "#,),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run("var r = /a/; r.exec = 1; r.test('a');"),
+        Value::Bool(true)
+    );
+    assert!(
+        run_err("var r = /a/; r.exec = function () { return 1; }; r.test('a');")
+            .contains("TypeError")
+    );
+}
+
+#[test]
 fn regex_literal_test() {
     assert_eq!(run("/abc/.test('xabcy');"), Value::Bool(true));
     assert_eq!(run("/abc/.test('xyz');"), Value::Bool(false));

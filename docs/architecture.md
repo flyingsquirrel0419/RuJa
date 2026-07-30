@@ -3225,7 +3225,38 @@ another bounded backend compiles the same ECMAScript pattern successfully.
 - 검토한 주요 대안: Match diagnostic strings, classify every compiler failure as RangeError, remove fallback, eagerly compile and store every matcher, or carry a narrow typed result to the JavaScript error boundary.
 - 선택한 방식: Add typed syntax/resource results in RuJa and regress, classify structured Rust/fancy variants, validate flags before bounded pattern work, share one JavaScript mapper across all compile callers, and retain successful fallback.
 - 다른 대안 대신 이 방식을 선택한 이유: Message matching is brittle; blanket RangeError corrupts real syntax diagnostics; removing fallback regresses supported semantics; matcher storage changes execution ordering and ownership beyond this unit. Typed propagation is narrow and reviewable.
-- 장점, 단점 및 영향: Dynamic resource limits now produce Realm-correct RangeError while reachable malformed-pattern diagnostics remain SyntaxError, and backend fallback stays transparent. Exec observes and bounds lastIndex before compilation; matcher caching, deterministic exec compile-failure injection, compiler allocation failpoints, and compiled-matcher storage remain separate work.
+- 장점, 단점 및 영향: Dynamic resource limits now produce Realm-correct RangeError while reachable malformed-pattern diagnostics remain SyntaxError, and backend fallback stays transparent. Exec observes and bounds lastIndex before compilation; the deterministic terminal-failure boundary is documented below, while matcher caching, compiler allocation failpoints, and compiled-matcher storage remain separate work.
+```
+
+### RegExp exec terminal compilation boundary
+
+`RegExpBuiltinExec` now routes its Unicode/input-sensitive and non-Unicode
+compiler choices through one terminal helper. In tests, a VM-local countdown
+can replace only an already successful terminal result with a typed resource
+failure. The real compiler therefore still selects Rust, fancy, or logical
+UTF-16 execution and completes every bounded fallback first. A genuine syntax
+or resource error returns unchanged and leaves the countdown armed. The
+injected matcher is dropped before backend-input preparation, capture-name
+materialization, matching, `lastIndex` publication, or result construction.
+
+This boundary fixes evidence rather than claiming allocator coverage inside
+third-party compilers. Direct tests establish both countdown directions under
+re-entry, main/foreign method Realm selection, input and `lastIndex` abrupt
+priority, global/sticky out-of-range reset, non-global large-index behavior,
+Rust/fancy/size-fallback/logical variants, materialization bypass, and retry
+without repairing preserved state. `RegExp.prototype.test` now performs input
+`ToString` and dynamic `RegExpExec`; callable custom `exec` methods are observed
+and an absent/non-callable override falls back to builtin execution only for a
+branded RegExp.
+
+```text
+[Decision Log]
+- 목적과 의도: Freeze the exact observable boundary of exec-time matcher compilation before adding matcher ownership and allocation hardening, while repairing RegExp.prototype.test's dynamic RegExpExec semantics.
+- 기존 구현 및 제약 조건: RegExp instances compile again during builtin exec, Test262 cannot force terminal compiler resource failure, an early synthetic error could hide successful backend fallback or replace a genuine compiler error, and test called the builtin matcher directly instead of observing an overridden exec.
+- 검토한 주요 대안: Inject before backend selection, inject Syntax and Resource indiscriminately, force process OOM, patch every vendor allocation in the same unit, cache matchers immediately, or inject only after terminal success and keep actual allocation work separate.
+- 선택한 방식: Centralize exec compilation, preserve genuine errors, apply a test-only one-shot/countdown Resource result only after successful terminal compilation, keep it before all later preparation/publication, and route test through the existing dynamic RegExpExec dispatcher.
+- 다른 대안 대신 이 방식을 선택한 이유: Pre-backend injection changes fallback semantics; synthetic Syntax is unreachable for an initialized matcher and can mask real diagnostics; process OOM is nondeterministic; vendor fallibility and cache publication have independent ownership contracts. A post-success hook proves ordering without overstating production allocation guarantees.
+- 장점, 단점 및 영향: Backend fallback remains transparent, method-Realm RangeError identity and unchanged lastIndex are deterministic, nested failure unwinds cleanly, immediate retry succeeds, and custom exec is specification-observable. Compiled matchers are still rebuilt per builtin exec, and vendor/compiler allocation is still not catchable until later cache and allocation units.
 ```
 
 The vendored crate retains its upstream MIT OR Apache-2.0 license files.

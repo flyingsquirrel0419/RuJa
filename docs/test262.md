@@ -96,7 +96,7 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 65.8% of all matrix files; 86.2% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 66.8% of all matrix files; 86.6% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (12761 pass / 0 fail / 7678 skip / 20439 total on the current pinned checkout) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
@@ -12761,9 +12761,9 @@ out-of-range reset/null path without narrowing a larger safe integer to host
 parser, so valid bounded-resource rejection is a catchable `RangeError` while
 ordinary lexical failures stay `SyntaxError`. Both normal and block-following
 literal paths consume the complete `IdentifierPart` flag run before resource
-validation, preserving invalid-flag priority. Compiled-matcher caching,
-deterministic exec compile-failure injection, and native compiler allocation
-failpoints remain separate units.
+validation, preserving invalid-flag priority. The deterministic terminal exec
+failure boundary is documented below; compiled-matcher caching and native
+compiler allocation failpoints remain separate units.
 
 At pinned revision `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, generated
 UnicodeSets remains **142/0/0**, complete `built-ins/RegExp` remains **1223
@@ -12778,7 +12778,36 @@ related scope remains **100 pass / 0 fail / 1 skip**.
 - 검토한 주요 대안: Match text, treat all compile errors as RangeError, remove backend fallback, combine matcher caching and allocation failpoints, or introduce typed boundaries and repair only observable ordering.
 - 선택한 방식: Tag resource guards at their source, classify structured Rust/fancy errors, share one mapper across compile callers, validate flags first, and move lastIndex/out-of-range handling ahead of matcher preparation.
 - 다른 대안 대신 이 방식을 선택한 이유: Text is unstable; blanket classification corrupts syntax; fallback is intentional bounded compatibility; caching and injected allocation require distinct ownership tests. The selected change closes deterministic behavior with narrow scope.
-- 장점, 단점 및 영향: Dynamic construction, literal validation, and runtime compile paths now preserve SyntaxError versus RangeError and Realm identity, while successful fallback and Test262 counts remain unchanged. Compiler storage and deterministic allocation failure injection remain explicit follow-ups.
+- 장점, 단점 및 영향: Dynamic construction, literal validation, and runtime compile paths now preserve SyntaxError versus RangeError and Realm identity, while successful fallback and Test262 counts remain unchanged. The next section closes deterministic exec failure evidence; compiler storage and actual allocation fallibility remain explicit follow-ups.
+```
+
+## RegExp exec terminal compilation and dynamic test dispatch
+
+This unit changes no Test262 admission policy. A test-only VM countdown now
+acts after successful terminal `RegExpBuiltinExec` compilation and before
+backend-input preparation. Real syntax/resource failures leave it armed, and
+Rust, fancy, compiled-size fallback, and logical UTF-16 routes are asserted
+directly. Ordering tests cover input coercion, `lastIndex` coercion and reset,
+non-writable reset failure, non-global large indices, main/foreign method
+Realms, nested success/failure in both directions, post-compile Fuel and
+materialization priority, unchanged state, and retry.
+
+`RegExp.prototype.test` now follows dynamic `RegExpExec`: input `ToString`
+precedes the `exec` lookup, callable overrides receive the original receiver
+and converted string, primitive results throw `TypeError`, and a non-callable
+override falls back only through the branded builtin path. Complete
+`built-ins/RegExp` remains **1223 pass / 0 fail / 656 skip** at pinned revision
+`9e61c12835c5e4a3bdba93850427e6742c4f64c4`; focused verification is repeated
+before publication.
+
+```text
+[Decision Log]
+- 목적과 의도: Add deterministic conformance evidence for terminal exec compilation and restore the standard observable RegExp.prototype.test dispatch path without widening supported policy.
+- 기존 구현 및 제약 조건: Test262 cannot force host compiler failure, an initialized RegExp normally has valid syntax, backend fallback must remain invisible, and test bypassed custom exec by calling builtin matching directly.
+- 검토한 주요 대안: Admit more tests without a runtime change, inject before compilation, force allocator failure, expose a public testing API, combine matcher caching, or use a cfg(test) post-success countdown plus focused dynamic-dispatch regressions.
+- 선택한 방식: Keep the hook VM-local and test-only, consume it only after terminal compile success, verify every observable priority directly, fix test to use RegExpExec, and retain the existing exact RegExp admission boundary.
+- 다른 대안 대신 이 방식을 선택한 이유: Policy cannot prove native failure ordering; early injection corrupts fallback; real OOM is unsafe; a public hook expands API surface; caching changes ownership and cache-hit ordering. The selected boundary is deterministic and production-neutral except for the required test semantics fix.
+- 장점, 단점 및 영향: Existing conformance counts remain stable while custom exec and resource-order behavior gain direct coverage. The hook does not make vendor allocation fallible, and repeated compilation/cache publication remain explicit next units.
 ```
 
 ## RegExp named-group exact admission

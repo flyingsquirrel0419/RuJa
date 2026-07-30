@@ -301,10 +301,13 @@ pub(crate) fn regexp_test(
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    Ok(Value::Bool(!matches!(
-        regexp_exec(vm, args, this)?,
-        Value::Null
-    )))
+    let Some(rx @ Value::Object(_)) = this else {
+        return Err(Error::type_err("not a RegExp"));
+    };
+    let input = vm.to_string(args.first().unwrap_or(&Value::Undefined))?;
+    Ok(Value::Bool(
+        !regexp_exec_dispatch(vm, &rx, &input)?.is_null(),
+    ))
 }
 
 pub(crate) fn regexp_symbol_search(
@@ -1823,14 +1826,7 @@ pub(crate) fn regexp_exec(
     }
     let start = start_number as usize;
 
-    let re = if flags.contains('u') || flags.contains('v') {
-        compile_regex_for_input(&source, &flags, &input)
-    } else {
-        // The non-Unicode matcher runs on a sentinel-backed UTF-16 view so
-        // lastIndex may address either half of a supplementary code point.
-        compile_regex_for_code_units(&source, &flags)
-    }
-    .map_err(regexp_compile_error)?;
+    let re = compile_regexp_for_exec(vm, &source, &flags, &input).map_err(regexp_compile_error)?;
     let backend_input = regexp_backend_input(
         vm,
         &input,
@@ -1953,6 +1949,45 @@ pub(crate) fn regexp_exec(
             Ok(Value::Null)
         }
     }
+}
+
+#[cfg(test)]
+fn inject_regexp_exec_compile_failure(
+    vm: &mut Vm,
+    compiled: CompiledRegex,
+) -> Result<CompiledRegex, RegexCompileError> {
+    let Some(remaining) = vm.fail_regexp_exec_compile else {
+        return Ok(compiled);
+    };
+    if remaining != 0 {
+        vm.fail_regexp_exec_compile = Some(remaining - 1);
+        return Ok(compiled);
+    }
+    vm.fail_regexp_exec_compile = None;
+    Err(RegexCompileError::Resource(
+        "injected RegExp exec compile failure".to_string(),
+    ))
+}
+
+pub(super) fn compile_regexp_for_exec(
+    _vm: &mut Vm,
+    source: &str,
+    flags: &str,
+    input: &str,
+) -> Result<CompiledRegex, RegexCompileError> {
+    let compiled = if flags.contains('u') || flags.contains('v') {
+        compile_regex_for_input(source, flags, input)
+    } else {
+        // The non-Unicode matcher runs on a sentinel-backed UTF-16 view so
+        // lastIndex may address either half of a supplementary code point.
+        compile_regex_for_code_units(source, flags)
+    }?;
+
+    #[cfg(test)]
+    return inject_regexp_exec_compile_failure(_vm, compiled);
+
+    #[cfg(not(test))]
+    Ok(compiled)
 }
 
 fn make_regexp_exec_array(vm: &mut Vm, items: Vec<Value>) -> error::Result<Value> {
