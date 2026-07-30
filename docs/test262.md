@@ -97,7 +97,7 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 66.8% of all matrix files; 86.6% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (12761 pass / 0 fail / 7678 skip / 20439 total on the current pinned checkout) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (12765 pass / 0 fail / 7674 skip / 20439 total on the current pinned checkout) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
@@ -2647,13 +2647,14 @@ or derived construction rejects `new.target`. The complete
 `language/statements/class/subclass/` path reports **109 pass / 0 fail / 0
 skip**, and the supported subset rises to **8127 pass / 0 fail / 12311 skip**.
 
-Focused built-in subclass admission local check:
+Historical built-in subclass admission check:
 the statement and expression `class/subclass-builtins/` paths now exercise
 subclass construction for implemented AggregateError,
 ArrayBuffer/DataView/TypedArray, Promise, and WeakMap/WeakSet constructors.
-The path-scoped exception does not admit SharedArrayBuffer or WeakRef, whose
-globals remain unimplemented. The combined paths report **68 pass / 0 fail / 4
-skip**, and the supported subset rises to **8161 pass / 0 fail / 12277 skip**.
+At this earlier boundary, SharedArrayBuffer and WeakRef were not yet
+implemented, so the combined paths reported **68 pass / 0 fail / 4 skip**.
+Both globals and their subclass construction are now implemented; the exact
+four-file follow-up at the end of this document supersedes that skip boundary.
 
 Focused property Reference member-compound local check:
 ordinary member compound assignments now create an explicit property Reference
@@ -12862,4 +12863,33 @@ propagation, pin balance, and VM recovery.
 - 선택한 방식: Store 76 exact path/feature rows, share them in runner and analyzer, assert live-checkout equality and disjointness, gate exact and whole scopes in dedicated CI, and pair this with direct GC/Realm/resource regressions.
 - 다른 대안 대신 이 방식을 선택한 이유: Informational and prefix policies cannot detect drift, path-only manifests can hide new feature dependencies, and Test262 alone cannot observe nondeterministic cleanup. The combined boundary proves both standard surface and deterministic host invariants.
 - 장점, 단점 및 영향: WeakRef 29/29 and FinalizationRegistry 47/47 are independently reproducible with no hidden skip. Future tests fail scope closure until reviewed; local Symbol reclamation remains outside this unit.
+```
+
+## SharedArrayBuffer and WeakRef subclass completion
+
+The two `class/subclass-builtins` directories contain one declaration and one
+expression test for each of `SharedArrayBuffer` and `WeakRef`. Those four files
+were the only residual skips after both constructors and their derived
+`NewTarget` behavior became supported. A shared exact map removes only the
+single matching feature from each pinned path. The exact cohort is **4 pass /
+0 fail / 0 skip**; the complete statement and expression directories are now
+**72 pass / 0 fail / 0 skip**. The supported language subset is **12,765 pass /
+0 fail / 7,674 skip** over 20,439 files.
+
+Tooling tests freeze all four path-to-feature rows and their live metadata.
+Future sibling names, the same feature outside `class/subclass-builtins`, and
+an admitted path carrying any additional unsupported feature remain skipped.
+This closes the class exotic boundary without adding `SharedArrayBuffer` or
+`WeakRef` to the existing directory-wide allow-list. Full-matrix setup runs
+the exact live-metadata test against the pinned checkout before constructing
+the job matrix.
+
+```text
+[Decision Log]
+- 목적과 의도: Publish the final implemented built-in subclass cases without widening class or global feature policy.
+- 기존 구현 및 제약 조건: SharedArrayBuffer and WeakRef construction, prototype selection through NewTarget, and the complete four-file runtime behavior already pass, but the older class/subclass-builtins allow-list predates both globals and leaves all four hidden.
+- 검토한 주요 대안: Add both features to the directory-wide allow-list, admit every currently passing skipped class test, use informational forced-run evidence only, or freeze the four residual path-to-feature rows.
+- 선택한 방식: Share one four-row exact map between runner and analyzer, remove only each row's matching feature, validate pinned flags/features, and assert future, outside, and extra-feature rejection.
+- 다른 대안 대신 이 방식을 선택한 이유: Directory-wide admission accepts future tests implicitly; the broader class corpus needs a frozen strict/sloppy-aware audit; forced evidence does not correct supported accounting. Four exact rows match the complete residual exotic surface.
+- 장점, 단점 및 영향: Both subclass directories become 72/72 with no hidden skip, policy drift is tested, and unrelated SharedArrayBuffer/WeakRef gates remain intact. This unit changes conformance ownership, not runtime semantics.
 ```

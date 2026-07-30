@@ -54,6 +54,12 @@ jobs:
           TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
           test262_tooling_test.ModuleCoreAdmissionTests.test_language_early_error_admission_is_exact_and_shared
           -v
+      - name: Verify exact class built-in subclass admission
+        working-directory: tools
+        run: >-
+          TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
+          test262_tooling_test.ClassSubclassBuiltinAdmissionTests
+          -v
       - name: Verify exact static import-attribute admission
         working-directory: tools
         run: >-

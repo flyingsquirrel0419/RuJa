@@ -11,6 +11,9 @@ try:
     from test262_class_destructuring_admission import CLASS_DESTRUCTURING_FILES
     from test262_decorator_admission import DECORATOR_FILES
     from test262_class_private_admission import CLASS_PRIVATE_FEATURES_BY_FILE
+    from test262_class_subclass_builtin_admission import (
+        CLASS_SUBCLASS_BUILTIN_FEATURES_BY_FILE,
+    )
     from test262_class_public_field_admission import CLASS_PUBLIC_FIELD_FILES
     from test262_date_to_primitive_admission import DATE_TO_PRIMITIVE_FILES
     from test262_generator_function_admission import (
@@ -227,6 +230,9 @@ except ModuleNotFoundError:
     from tools.test262_class_destructuring_admission import CLASS_DESTRUCTURING_FILES
     from tools.test262_decorator_admission import DECORATOR_FILES
     from tools.test262_class_private_admission import CLASS_PRIVATE_FEATURES_BY_FILE
+    from tools.test262_class_subclass_builtin_admission import (
+        CLASS_SUBCLASS_BUILTIN_FEATURES_BY_FILE,
+    )
     from tools.test262_class_public_field_admission import CLASS_PUBLIC_FIELD_FILES
     from tools.test262_date_to_primitive_admission import DATE_TO_PRIMITIVE_FILES
     from tools.test262_generator_function_admission import (
@@ -2359,6 +2365,15 @@ def class_subclass_builtins_path(path):
         return False
     return rel.as_posix().startswith(CLASS_SUBCLASS_BUILTINS_PREFIXES)
 
+def class_subclass_builtin_features(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except ValueError:
+        return frozenset()
+    return CLASS_SUBCLASS_BUILTIN_FEATURES_BY_FILE.get(
+        rel.as_posix(), frozenset()
+    )
+
 def module_core_path(path):
     try:
         rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
@@ -3853,6 +3868,8 @@ def should_skip(meta, path=None):
         feats.difference_update(CLASS_SUBCLASS_FEATURES)
     if path is not None and class_subclass_builtins_path(path):
         feats.difference_update(CLASS_SUBCLASS_BUILTINS_FEATURES)
+    if path is not None:
+        feats.difference_update(class_subclass_builtin_features(path))
     if feats & SKIP_FEATURES:
         return True
     flags = meta.get('flags', [])

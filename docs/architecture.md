@@ -3703,4 +3703,24 @@ available at their public API boundary.
 - 장점, 단점 및 영향: Repeated common matchers and logical fallback programs reuse allocation-free handles across Realms and GC, publication failure is invisible, failures remain uncached, and reentrant eviction is safe. The 128 MiB whole-budget Rust charge intentionally retains only one Rust matcher at a time, and fancy, composite, captured, or large Rust patterns still recompile; broader reuse requires backend APIs that expose complete immutable plus retained-scratch bounds.
 ```
 
+### Residual built-in subclass ownership
+
+The broad `class/subclass-builtins` policy owns only its established constructor
+families. Later constructor families use exact path-to-feature rows rather than
+expanding that prefix allow-list. `SharedArrayBuffer` and `WeakRef` therefore
+contribute exactly four admitted files: declaration and expression forms for
+each constructor. Runner and analyzer consume the same immutable map, while
+tooling verifies live metadata and rejects future siblings, outside paths, and
+extra unsupported dependencies.
+
+```text
+[Decision Log]
+- 목적과 의도: Keep built-in subclass conformance ownership closed as newly implemented constructors are added.
+- 기존 구현 및 제약 조건: The existing prefix policy predates SharedArrayBuffer and WeakRef; adding their feature names there would automatically own unknown future files under the directory.
+- 검토한 주요 대안: Expand the prefix feature set, create separate prefix rules, leave the tests skipped, or use one shared exact map.
+- 선택한 방식: Add four exact path-to-feature rows and apply them after the established prefix policy in both tools.
+- 다른 대안 대신 이 방식을 선택한 이유: Exact rows express the complete current residual surface and preserve review of future tests without duplicating runtime logic.
+- 장점, 단점 및 영향: Current declaration/expression coverage is complete and symmetric; unrelated feature gates do not move. Each new subclass test requires explicit metadata review.
+```
+
 **Next:** [Features](features.md) · [Known limitations](limitations.md) · [Back to README](../README.md)

@@ -4,6 +4,16 @@
 
 ### Changed
 
+- Admitted the final four implemented class built-in subclass tests for
+  `SharedArrayBuffer` and `WeakRef` through one exact path-to-feature map shared
+  by the Test262 runner and analyzer. The map covers declaration and expression
+  forms only; future siblings, outside paths, and files with any additional
+  unsupported feature remain skipped. The pinned exact cohort passes
+  **4/4**, and the complete two `class/subclass-builtins` directories now pass
+  **72/72** with no skips. The supported language subset advances to
+  **12,765 pass / 0 fail / 7,674 skip** over 20,439 files. Full-matrix setup
+  runs the live metadata test against its pinned checkout before fan-out.
+
 - Added a bounded VM-local cache for reusable compiled RegExp matchers without
   changing `RegExpBuiltinExec` observation order. Keys contain immutable source,
   only compiler-semantic `i/m/s/u/v` flags, and the scalar/code-unit/logical

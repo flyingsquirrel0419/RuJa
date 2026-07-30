@@ -21,6 +21,10 @@ from test262_class_private_admission import (
     CLASS_PRIVATE_FILES,
     PRIVATE_CLASS_FEATURES,
 )
+from test262_class_subclass_builtin_admission import (
+    CLASS_SUBCLASS_BUILTIN_FEATURES_BY_FILE,
+    CLASS_SUBCLASS_BUILTIN_FILES,
+)
 from test262_class_public_field_admission import CLASS_PUBLIC_FIELD_FILES
 from test262_date_to_primitive_admission import DATE_TO_PRIMITIVE_FILES
 from test262_generator_function_admission import (
@@ -9221,6 +9225,82 @@ class AtomicsSyncAdmissionTests(unittest.TestCase):
                     self.assertTrue(tool.should_skip(meta, outside))
                 finally:
                     tool.TEST262 = original_root
+
+
+class ClassSubclassBuiltinAdmissionTests(unittest.TestCase):
+    def test_residual_subclass_builtin_admission_is_exact(self):
+        expected = {
+            f"language/{goal}/class/subclass-builtins/subclass-{name}.js": frozenset(
+                {name}
+            )
+            for goal in ("expressions", "statements")
+            for name in ("SharedArrayBuffer", "WeakRef")
+        }
+        self.assertEqual(CLASS_SUBCLASS_BUILTIN_FEATURES_BY_FILE, expected)
+        self.assertEqual(CLASS_SUBCLASS_BUILTIN_FILES, frozenset(expected))
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            future = root / (
+                "test/language/expressions/class/subclass-builtins/"
+                "subclass-SharedArrayBuffer-future.js"
+            )
+            outside = root / "test/language/expressions/class/subclass-SharedArrayBuffer.js"
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for relative, features in expected.items():
+                        path = root / "test" / relative
+                        meta = {"flags": [], "features": sorted(features)}
+                        self.assertEqual(
+                            tool.class_subclass_builtin_features(path), features
+                        )
+                        self.assertFalse(tool.should_skip(meta, path))
+                        self.assertTrue(
+                            tool.should_skip(
+                                {
+                                    "flags": [],
+                                    "features": [*sorted(features), "decorators"],
+                                },
+                                path,
+                            )
+                        )
+                    self.assertEqual(
+                        tool.class_subclass_builtin_features(future), frozenset()
+                    )
+                    self.assertTrue(
+                        tool.should_skip(
+                            {"flags": [], "features": ["SharedArrayBuffer"]},
+                            future,
+                        )
+                    )
+                    self.assertTrue(
+                        tool.should_skip(
+                            {"flags": [], "features": ["SharedArrayBuffer"]},
+                            outside,
+                        )
+                    )
+                finally:
+                    tool.TEST262 = original_root
+
+    def test_residual_subclass_builtin_live_metadata(self):
+        test_root = Path(test262_runner.TEST262) / "test"
+        if not test_root.is_dir():
+            self.skipTest("live Test262 checkout is unavailable")
+        for relative, expected_features in (
+            CLASS_SUBCLASS_BUILTIN_FEATURES_BY_FILE.items()
+        ):
+            path = test_root / relative
+            if not path.is_file():
+                self.skipTest("live Test262 checkout is incomplete")
+            meta = test262_runner.parse_meta(path.read_text())
+            self.assertEqual(
+                frozenset(meta.get("features", [])), expected_features, relative
+            )
+            self.assertEqual(meta.get("flags", []), ["generated"], relative)
+            self.assertFalse(test262_runner.should_skip(meta, path), relative)
+            self.assertFalse(test262_analyze.should_skip(meta, path), relative)
 
 
 class FinalizationRegistryAdmissionTests(unittest.TestCase):
