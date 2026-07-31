@@ -27,6 +27,14 @@ pass / 7 fail** to **7 pass / 0 fail**. The 324-file core
 Clippy, all-target/all-feature Rust tests, rustfmt, and Test262 tooling
 **163/163** pass.
 
+Implementation commit `cb080c5` passes ordinary CI `30631392802` (**3/3**)
+and full matrix `30631392782` (**45/45**). Against preceding full run
+`30624215959`, **31/32** result artifacts are byte-identical and only Annex B
+changes by **+7 pass / -7 fail**. Aggregate is **33,019 pass / 4,389 fail /
+11,058 skip / 3 timeout / 0 error** over 48,469 files and 37,408 completed
+pass/fail executions. Filename-sorted result content hashes to
+`5dfbb2cc10a220e0443a647dfa15ee03607f0e26f17e80696f46d7fd397cc1f4`.
+
 ```text
 [Decision Log]
 - 목적과 의도: runner 예외 없이 Annex B.3.9의 sloppy call assignment-target 평가 순서와 strict/Module early error를 구현한다.
@@ -34,7 +42,7 @@ Clippy, all-target/all-feature Rust tests, rustfmt, and Test262 tooling
 - 검토한 주요 대안: exact path admission, call AST를 Reference로 일반화, 모든 call target에 단순 ThrowReference 추가, 또는 parser의 Annex B gate와 context별 compiler/runtime completion 처리를 결합하기.
 - 선택한 방식: parser는 sloppy ordinary call과 비논리 assignment/update/loop 위치만 허용한다. 일반 표현식은 call abrupt를 보존하고, for-in/of는 내부 catch로 call abrupt를 대체한 뒤 iterator guard를 제거하고 ReferenceError를 던진다. finally completion은 guard별 stack record로 저장한다.
 - 다른 대안 대신 이 방식을 선택한 이유: admission은 엔진 결함을 숨기고 call을 일반 Reference로 만들면 PutValue가 잘못 허용된다. 단순 ThrowReference는 for-in/of의 abrupt-replacement 및 no-close 순서를 위반한다. guard별 record만 nested finally와 suspension을 손실 없이 표현한다.
-- 장점, 단점 및 영향: exact cohort가 7/0이고 Annex B가 정확히 +7/-7 이동한다. core negatives는 무회귀이며 nested finally, catch unwind, generator/async suspension, GC root 회귀가 Rust tests로 고정됐다. 일반 for-await AsyncIteratorClose와 for-await 문맥 early error는 별도 공용 작업으로 남는다.
+- 장점, 단점 및 영향: exact cohort가 7/0이고 Annex B가 정확히 +7/-7 이동한다. core negatives는 무회귀이며 nested finally, catch unwind, generator/async suspension, GC root 회귀가 Rust tests로 고정됐다. full CI artifact 비교도 Annex B 단일 delta를 확인한다. 일반 for-await AsyncIteratorClose와 for-await 문맥 early error는 별도 공용 작업으로 남는다.
 ```
 
 ## Annex B HTML-like comments

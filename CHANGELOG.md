@@ -15,7 +15,12 @@
   compilation uses independent control stacks. Pinned Test262 moves the exact
   cohort from **0/7** to **7/0** and full Annex B from **833/179/74** to
   **840/172/74**; the core 324-file assignment-target cohort remains
-  **316/0/8**, and the supported subset remains **12,765/0/7,674**.
+  **316/0/8**, and the supported subset remains **12,765/0/7,674**. Ordinary
+  CI `30631392802` passes 3/3 and full matrix `30631392782` passes 45/45.
+  Against `30624215959`, 31/32 result artifacts are byte-identical and only
+  Annex B changes by **+7/-7**. Aggregate is **33,019 pass / 4,389 fail /
+  11,058 skip / 3 timeout / 0 error**; filename-sorted content hash is
+  `5dfbb2cc10a220e0443a647dfa15ee03607f0e26f17e80696f46d7fd397cc1f4`.
 
 - Implemented Annex B.1.1 HTML-like comments for Script, eval, and dynamic
   Function source while preserving the Module lexical grammar. `<!--` consumes
