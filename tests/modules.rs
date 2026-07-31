@@ -29,6 +29,8 @@ fn module_source_goal_is_strict_and_has_undefined_top_level_this() {
     assert!(Parser::parse("var await = 1;").is_ok());
     assert!(Parser::parse_module("function f(await) { return await; }").is_ok());
     assert!(Parser::parse_module("function f() { await 1; }").is_err());
+    assert!(Parser::parse_module("function duplicate() {} var duplicate;").is_err());
+    assert!(Parser::parse_module("var duplicate; function duplicate() {}").is_err());
 
     let mut vm = Vm::new().expect("failed to initialize VM");
     assert!(vm.run_module("with ({}) {}").is_err());

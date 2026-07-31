@@ -4,6 +4,23 @@
 
 ### Changed
 
+- Corrected declaration static semantics by classifying top-level function
+  declarations from their source grammar: Script and FunctionBody declarations
+  are var-scoped regardless of strictness, while Module and Block declarations
+  are lexical. This closes the 37 dynamic-import and six function-statement
+  strict variants left by dual Test262 execution, restoring the pinned
+  supported subset to **12,765 pass / 0 fail / 7,674 skip / 20,439 total**.
+  FunctionBody lexical/var intersections are rejected during parsing.
+
+- Completed FunctionDeclarationInstantiation for functions with parameter
+  expressions. Their body var/function names are instantiated in the separate
+  body environment, same-named initialized parameter values are copied before
+  body function installation, and parameter-initializer closures keep the
+  outer parameter binding. Destructuring carriers now use a non-source internal
+  namespace, preventing collisions with legal names such as `__arg0`. Tests
+  cover simple, default, rest, destructured, strict, Module, arrow FunctionBody,
+  and stack-balanced function installation.
+
 - Corrected Test262 execution semantics so files without a strictness flag run
   once in non-strict mode and once in strict mode, while `onlyStrict`,
   `noStrict`, `module`, and `raw` retain their required single execution.

@@ -750,11 +750,12 @@ impl Parser {
                 body.push(self.parse_stmt()?);
             }
         }
-        check_statement_list_declaration_early_errors(
-            &body,
-            self.is_strict_context,
-            StatementListScope::Script,
-        )?;
+        let statement_list_scope = if self.source_type == SourceType::Module {
+            StatementListScope::Module
+        } else {
+            StatementListScope::Script
+        };
+        check_statement_list_declaration_early_errors(&body, statement_list_scope)?;
         Self::check_module_early_errors(&body, &import_entries, &export_entries)?;
         Self::normalize_import_reexports(&import_entries, &mut export_entries);
         Self::validate_private_names_statement_list(&body, inherited_private_names)?;
@@ -1250,8 +1251,7 @@ impl Parser {
                 &stmt.node,
                 &mut lexical,
                 &mut vars,
-                true,
-                StatementListScope::Script,
+                StatementListScope::Module,
             );
         }
         let declared: Vec<Arc<str>> = lexical.into_iter().chain(vars).collect();
@@ -1682,11 +1682,7 @@ impl Parser {
             Ok(())
         })?;
         self.expect(&TokenKind::RBrace, "}")?;
-        check_statement_list_declaration_early_errors(
-            &body,
-            self.is_strict_context,
-            StatementListScope::Block,
-        )?;
+        check_statement_list_declaration_early_errors(&body, StatementListScope::Block)?;
         Ok(self.stmt(StmtNode::Block(body)))
     }
 
@@ -1805,7 +1801,9 @@ impl Parser {
                 // rest may be a destructuring pattern: `function f(...[a, b])`
                 if self.check(&TokenKind::LBracket) || self.check(&TokenKind::LBrace) {
                     let p = self.parse_destructure_pattern()?;
-                    let tmp = format!("__arg{}", params.len());
+                    // Keep compiler-only carriers outside IdentifierName so
+                    // source bindings can never collide with them.
+                    let tmp = format!("#arg{}", params.len());
                     self.cur_rest_param = Some(Arc::from(tmp.as_str()));
                     self.cur_param_destructure_decls.push((p, tmp, None));
                     break;
@@ -1817,7 +1815,7 @@ impl Parser {
             if self.check(&TokenKind::LBracket) || self.check(&TokenKind::LBrace) {
                 // Destructuring parameter: `function f([a, b])` / `f({x, y})`.
                 let p = self.parse_destructure_pattern()?;
-                let tmp = format!("__arg{}", params.len());
+                let tmp = format!("#arg{}", params.len());
                 params.push(Arc::from(tmp.as_str()));
                 self.cur_param_defaults.push(None);
                 let default = if self.eat(&TokenKind::Assign) {
@@ -1937,6 +1935,7 @@ impl Parser {
                 Ok(())
             })?;
             p.expect(&TokenKind::RBrace, "}")?;
+            check_statement_list_declaration_early_errors(&body, StatementListScope::FunctionBody)?;
             Ok(body)
         });
         self.function_depth -= 1;
@@ -1983,6 +1982,7 @@ impl Parser {
                 Ok(())
             })?;
             p.expect(&TokenKind::RBrace, "}")?;
+            check_statement_list_declaration_early_errors(&body, StatementListScope::FunctionBody)?;
             Ok(body)
         });
         self.function_depth -= 1;
@@ -1996,7 +1996,7 @@ impl Parser {
 
     /// Take the destructuring-parameter declarations collected by the most
     /// recent `parse_params` and turn them into a prelude of `let <pat> =
-    /// __argN;` statements to prepend to a function body.
+    /// #argN;` statements to prepend to a function body.
     fn take_dstr_prelude(&mut self) -> Vec<Stmt> {
         let dstr_decls = std::mem::take(&mut self.cur_param_destructure_decls);
         Self::dstr_prelude_from(dstr_decls)
@@ -2007,7 +2007,7 @@ impl Parser {
             .into_iter()
             .map(|(pattern, tmp, default)| {
                 // If the destructuring parameter had a default, the binding
-                // source is `__argN === undefined ? <default> : __argN`. We
+                // source is `#argN === undefined ? <default> : #argN`. We
                 // encode that by wrapping the pattern's default into the
                 // pattern via Pattern::Assign, which the compiler already
                 // lowers as "use default when the source value is undefined".
@@ -4753,7 +4753,7 @@ impl Parser {
                 // rest may itself be a destructuring pattern: `(...[a, b])`
                 if self.check(&TokenKind::LBracket) || self.check(&TokenKind::LBrace) {
                     let p = self.parse_destructure_pattern()?;
-                    let tmp = format!("__arg{}", params.len());
+                    let tmp = format!("#arg{}", params.len());
                     rest = Some(Arc::from(tmp.as_str()));
                     dstr_decls.push((p, tmp, None));
                     break;
@@ -4768,7 +4768,7 @@ impl Parser {
             if self.check(&TokenKind::LBracket) || self.check(&TokenKind::LBrace) {
                 // Destructuring parameter: `([a, b]) =>` / `({x, y}) =>`.
                 // Synthesize a positional temp param and remember the
-                // pattern so the body can bind it: `let <pat> = __argN;`.
+                // pattern so the body can bind it: `let <pat> = #argN;`.
                 // If the pattern fails to parse (e.g. `({a:1})` is an object
                 // literal, not a binding pattern), rewind and treat this as
                 // not-an-arrow so the caller parses a parenthesised expr.
@@ -4781,7 +4781,7 @@ impl Parser {
                     }
                 };
                 let _ = saved;
-                let tmp = format!("__arg{}", params.len());
+                let tmp = format!("#arg{}", params.len());
                 params.push(Arc::from(tmp.as_str()));
                 defaults.push(None);
                 // Optional default: `({a} = {}) =>`
@@ -4963,8 +4963,8 @@ impl Parser {
                 rest_param.as_ref(),
                 has_destructuring_params,
             )?;
-            // Synthesize `let <pattern> = __argN;` prelude statements that bind
-            // each destructuring parameter from its positional temp argument.
+            // Synthesize `let <pattern> = #argN;` prelude statements that bind
+            // each destructuring parameter from its internal positional carrier.
             // A parameter default wraps the pattern so the compiler applies it
             // when the source value is undefined.
             let prelude = Self::arrow_destructuring_prelude(dstr_decls);
@@ -7351,11 +7351,6 @@ impl Parser {
     }
 }
 
-/// Collect top-level declaration names from a statement node that appears
-/// directly inside a switch case body. Lexical declarations (let/const/class,
-/// and function in strict mode) go into `lexical`; var declarations (var,
-/// and function in sloppy mode) go into `var`. Does NOT descend into blocks
-/// or nested function bodies — only the case body's direct children matter.
 /// Check if a statement is a labelled function declaration (possibly nested
 /// through multiple labels).
 fn is_labelled_function(node: &StmtNode) -> bool {
@@ -7370,13 +7365,14 @@ fn is_labelled_function(node: &StmtNode) -> bool {
 enum StatementListScope {
     Script,
     Block,
+    FunctionBody,
+    Module,
 }
 
 fn collect_decl_names(
     node: &StmtNode,
     lexical: &mut Vec<Arc<str>>,
     var: &mut Vec<Arc<str>>,
-    is_strict: bool,
     scope: StatementListScope,
 ) {
     match node {
@@ -7398,7 +7394,10 @@ fn collect_decl_names(
         },
         StmtNode::FunctionDecl(f) => {
             if let Some(name) = &f.name {
-                if matches!(scope, StatementListScope::Block) || is_strict {
+                if matches!(
+                    scope,
+                    StatementListScope::Block | StatementListScope::Module
+                ) {
                     lexical.push(name.clone());
                 } else {
                     var.push(name.clone());
@@ -7456,19 +7455,12 @@ fn collect_switch_decl_names(
 
 fn check_statement_list_declaration_early_errors(
     body: &[Stmt],
-    is_strict: bool,
     scope: StatementListScope,
 ) -> error::Result<()> {
     let mut lexical_names = Vec::new();
     let mut var_names = Vec::new();
     for stmt in body {
-        collect_decl_names(
-            &stmt.node,
-            &mut lexical_names,
-            &mut var_names,
-            is_strict,
-            scope,
-        );
+        collect_decl_names(&stmt.node, &mut lexical_names, &mut var_names, scope);
     }
     for name in &lexical_names {
         if lexical_names.iter().filter(|n| *n == name).count() > 1 || var_names.contains(name) {
@@ -7950,6 +7942,17 @@ mod tests {
 
         assert!(Parser::parse("{ class A {} { class A {} } }").is_ok());
         assert!(Parser::parse("function f() {} var f;").is_ok());
+        assert!(Parser::parse("\"use strict\"; function f() {} var f;").is_ok());
+        assert!(Parser::parse("\"use strict\"; var g; function g() {}").is_ok());
+        assert!(Parser::parse("\"use strict\"; function f() {} function f() {}").is_ok());
+        assert!(Parser::parse("\"use strict\"; function* g() {} var g;").is_ok());
+        assert!(Parser::parse("function outer() { var f; function f() {} }").is_ok());
+        assert!(Parser::parse("function outer() { let f; function f() {} }").is_err());
+        assert!(Parser::parse("function outer() { function f() {} const f = 1; }").is_err());
+        assert!(Parser::parse("(() => { class F {} function F() {} })").is_err());
+        assert!(Parser::parse_module("function f() {} var f;").is_err());
+        assert!(Parser::parse_module("var g; function g() {}").is_err());
+        assert!(Parser::parse_module("function f() {} function f() {}").is_err());
         assert!(Parser::parse("class C { st\\u0061tic() {} }").is_ok());
     }
 

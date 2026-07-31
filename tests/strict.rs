@@ -51,6 +51,82 @@ fn strictness_inherits_into_nested_functions() {
 }
 
 #[test]
+fn strict_script_var_and_function_declarations_share_one_binding() {
+    assert_eq!(
+        run(r#"
+            "use strict";
+            var before = duplicate();
+            var duplicate;
+            function duplicate() { return 7; }
+            var after = duplicate;
+            var nested = (function() {
+                "use strict";
+                var local;
+                function local() { return 11; }
+                return local();
+            })();
+            [before, typeof after, after(), nested, typeof local].join(":");
+        "#),
+        Value::String("7:function:7:11:undefined".into())
+    );
+    assert_eq!(
+        run(r#"
+            "use strict";
+            function replaced() { return 1; }
+            var replaced = 9;
+            replaced;
+        "#),
+        Value::Number(9.0)
+    );
+}
+
+#[test]
+fn parameter_expression_body_vars_copy_without_rebinding_parameter_closures() {
+    assert_eq!(
+        run(r#"
+            "use strict";
+            function copied(value = 3) {
+                var value;
+                return value;
+            }
+            function replaced(value = 5, probe = () => value) {
+                function value() { return 7; }
+                return probe() + ":" + value();
+            }
+            function patterns({value} = {value: 11}, ...rest) {
+                var value;
+                var rest;
+                return value + ":" + rest.length;
+            }
+            [copied(), replaced(), patterns(undefined, 1, 2)].join("|");
+        "#),
+        Value::String("3|5:7|11:2".into())
+    );
+}
+
+#[test]
+fn destructured_parameter_carriers_cannot_collide_with_source_bindings() {
+    assert_eq!(
+        run(r#"
+            "use strict";
+            function bodyVar({value}) {
+                var __arg0;
+                return value + ":" + typeof __arg0;
+            }
+            function bodyLexical({value}) {
+                let __arg0 = 13;
+                return value + __arg0;
+            }
+            function parameter(__arg1, {value}) {
+                return __arg1 + value;
+            }
+            [bodyVar({value: 2}), bodyLexical({value: 3}), parameter(5, {value: 7})].join("|");
+        "#),
+        Value::String("2:undefined|16|12".into())
+    );
+}
+
+#[test]
 fn strict_var_destructuring_initializes_hoisted_bindings() {
     assert_eq!(
         run(r#"

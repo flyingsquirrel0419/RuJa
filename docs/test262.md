@@ -118,6 +118,40 @@ The sloppy var-name collector also includes pattern names so the shared
 Reference assignment path cannot create accidental globals from function-local
 destructuring.
 
+Strictness does not decide whether a top-level `FunctionDeclaration` is lexical
+or var-scoped. Script and FunctionBody declarations are var-scoped even in
+strict code; Module and Block declarations are lexical. The parser now carries
+that source grammar explicitly instead of using strict mode as a proxy. This
+closes all 43 remaining dual-variant failures under dynamic import and function
+statements.
+
+Functions with parameter expressions create a distinct body variable
+environment. Body var/function names are instantiated there; a same-named
+parameter's initialized value is copied before body function declarations are
+installed. Closures created by parameter initializers continue to reference the
+outer parameter environment. FunctionBody lexical/var intersections are now
+rejected before compilation. Destructuring parameter carriers use the engine's
+non-source `#` namespace so legal user bindings such as `__arg0` cannot collide
+with compiler-generated names.
+
+[Decision Log]
+- 목적과 의도: Script, FunctionBody, Module, Block의 선언 정적 의미와
+  parameter/body 환경 분리를 ECMAScript와 일치시킨다.
+- 기존 구현 및 제약 조건: strict Script 함수를 lexical로 오분류했고,
+  FunctionBody 교집합 검사가 없었다. parameter expression 뒤 body var는 새
+  환경에서 parameter 초기값을 잃거나 parameter closure를 덮어썼다.
+- 검토한 주요 대안: strict 예외만 제거하는 수정, 실패 경로 admission 축소,
+  source grammar 명시 및 body declaration instantiation 보강을 검토했다.
+- 선택한 방식: StatementList scope에 Script/FunctionBody/Module/Block을
+  명시하고, 별도 body 환경에 모든 var/function 이름을 먼저 생성한다. 같은
+  parameter 이름은 초기값을 복사한 뒤 body function으로 교체한다.
+- 다른 대안 대신 이 방식을 선택한 이유: strict 여부와 grammar 분류를 분리해
+  현재 43개뿐 아니라 module·nested function·non-simple parameter 불변식까지
+  직접 보존한다.
+- 장점, 단점 및 영향: supported subset이 dual 실행에서도 100%로 복구되고
+  parameter closure 격리가 정확해진다. 선언 인스턴스화 bytecode가 늘지만
+  parameter expression이 있는 함수에만 적용된다.
+
 RuJa does **not** claim full ES conformance. Instead, it targets a
 deliberately scoped subset of ES5.1 + selected ES2015+ features (see
 [Supported subset](#supported-subset) below). Tests requiring unsupported
@@ -135,11 +169,11 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 66.7% of all matrix files; 86.4% of executed files (dual-variant baseline) | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 99.7% (12722 pass / 43 fail / 7674 skip / 20439 total on pinned `9e61c12`) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (12765 pass / 0 fail / 7674 skip / 20439 total on pinned `9e61c12`) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
-supported-subset rate (99.7%).** It reflects the portion of the spec
+supported-subset rate (100.0%).** It reflects the portion of the spec
 RuJa actively targets. The full-suite number is published for
 transparency but is dominated by unsupported features. The CI-subset
 number is a narrow regression gate, not a conformance claim.

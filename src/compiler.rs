@@ -1395,6 +1395,7 @@ impl Compiler {
                         if kind == VarKind::Var {
                             self.chunk
                                 .emit(Op::StoreEnvName(name_idx), self.current_line);
+                            self.chunk.emit(Op::Pop, self.current_line);
                         } else {
                             self.chunk.emit(Op::InitLet(name_idx), self.current_line);
                         }
@@ -1950,12 +1951,28 @@ impl Compiler {
         for stmt in parameter_prelude {
             self.compile_stmt(stmt)?;
         }
-        if Self::has_parameter_expressions(f) {
-            let param_names: std::collections::HashSet<&str> =
-                f.params.iter().map(|p| p.as_ref()).collect();
+        let has_parameter_expressions = Self::has_parameter_expressions(f);
+        if has_parameter_expressions {
+            let mut parameter_names: std::collections::HashSet<Arc<str>> =
+                f.params.iter().cloned().collect();
+            if let Some(rest) = &f.rest_param {
+                parameter_names.insert(rest.clone());
+            }
+            for pattern in &f.param_decls {
+                let mut names = Vec::new();
+                Self::pattern_names(pattern, &mut names);
+                parameter_names.extend(names);
+            }
+            for stmt in parameter_prelude {
+                if let StmtNode::Destructure { pattern, .. } = &stmt.node {
+                    let mut names = Vec::new();
+                    Self::pattern_names(pattern, &mut names);
+                    parameter_names.extend(names);
+                }
+            }
             let lex = Self::collect_lexical_names(body_stmts);
             for (name, _) in &lex {
-                if param_names.contains(name.as_ref()) {
+                if parameter_names.contains(name) {
                     return Err(error::Error::syntax(format!(
                         "Identifier '{}' has already been declared",
                         name
@@ -1963,29 +1980,46 @@ impl Compiler {
                 }
             }
             self.chunk.emit(Op::PushFunctionScope, self.current_line);
+
+            // Parameter expressions capture the outer parameter environment.
+            // Instantiate every body var/function name in the new body
+            // environment, copying a same-named parameter's initialized value
+            // before later function declarations replace only the body binding.
+            for name in function_body_var_names(body_stmts, f.is_strict) {
+                let name_idx = self.chunk.add_constant(Value::String(name.clone()));
+                let copy_parameter = parameter_names.contains(&name);
+                if copy_parameter {
+                    self.chunk.emit(Op::LoadEnv(name_idx), self.current_line);
+                }
+                self.declare_var(&name)?;
+                self.chunk.emit(Op::HoistVar(name_idx), self.current_line);
+                if copy_parameter {
+                    self.chunk
+                        .emit(Op::StoreEnvName(name_idx), self.current_line);
+                    self.chunk.emit(Op::Pop, self.current_line);
+                }
+            }
         }
         // Hoist `var` declarations within the function body as undefined.
-        for stmt in body_stmts {
-            let mut var_names = Vec::new();
-            if f.is_strict {
-                collect_var_names_recursive_skip_functions(&stmt.node, &mut var_names);
-            } else {
-                collect_var_names_recursive(&stmt.node, &mut var_names);
-            }
-            for name in &var_names {
-                // Skip names that will be hoisted by function declaration
-                // hoisting below (declaring them as Var here would make
-                // resolve() find them and use StoreLocal instead of DeclareVar,
-                // causing a storage mismatch).
-                let is_fn_decl = body_stmts.iter().any(|s| {
-                    matches!(&s.node, StmtNode::FunctionDecl(fd) if fd.name.as_deref() == Some(&**name))
-                });
-                if is_fn_decl {
-                    continue;
+        if !has_parameter_expressions {
+            for stmt in body_stmts {
+                let mut var_names = Vec::new();
+                if f.is_strict {
+                    collect_var_names_recursive_skip_functions(&stmt.node, &mut var_names);
+                } else {
+                    collect_var_names_recursive(&stmt.node, &mut var_names);
                 }
-                self.declare_var(name)?;
-                let name_idx = self.chunk.add_constant(Value::String(name.clone()));
-                self.chunk.emit(Op::HoistVar(name_idx), self.current_line);
+                for name in &var_names {
+                    // Function declaration installation creates its binding.
+                    if body_stmts.iter().any(|s| {
+                        matches!(&s.node, StmtNode::FunctionDecl(fd) if fd.name.as_deref() == Some(&**name))
+                    }) {
+                        continue;
+                    }
+                    self.declare_var(name)?;
+                    let name_idx = self.chunk.add_constant(Value::String(name.clone()));
+                    self.chunk.emit(Op::HoistVar(name_idx), self.current_line);
+                }
             }
         }
         // Hoist function declarations: compile them first so they're available
@@ -7522,6 +7556,29 @@ fn collect_var_names_recursive_skip_functions(node: &StmtNode, out: &mut Vec<Arc
         StmtNode::Labeled(_, body) => collect_var_names_recursive_skip_functions(&body.node, out),
         _ => {}
     }
+}
+
+fn function_body_var_names(body: &[Stmt], is_strict: bool) -> Vec<Arc<str>> {
+    let mut names = Vec::new();
+    for stmt in body {
+        if is_strict {
+            collect_var_names_recursive_skip_functions(&stmt.node, &mut names);
+        } else {
+            collect_var_names_recursive(&stmt.node, &mut names);
+        }
+    }
+    if is_strict {
+        for stmt in body {
+            if let StmtNode::FunctionDecl(function) = &stmt.node {
+                if let Some(name) = &function.name {
+                    names.push(name.clone());
+                }
+            }
+        }
+    }
+    let mut unique = std::collections::HashSet::new();
+    names.retain(|name| unique.insert(name.clone()));
+    names
 }
 
 #[cfg(test)]

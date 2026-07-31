@@ -33,7 +33,7 @@ JavaScript 被编译为基于栈的字节码，在带有标记清除 GC 的自�
 ES5.1 + 类、async/await、生成器、Promise、解构赋值、
 getter/setter、标签模板、Symbol、Map/Set、WeakMap/WeakSet、
 Reflect、Proxy、Uint8Array、BigInt、Date、正则表达式等。
-**支持子集 test262 通过率: 99.7%**（12,722 通过 / 43 失败，
+**支持子集 test262 通过率: 100.0%**（12,765 通过 / 0 失败，
 排除 7,674 个不支持功能的测试）。
 与完整套件的差异请参见 [test262 一致性](../docs/test262.md)。
 支持及有意不支持的功能完整列表请参见

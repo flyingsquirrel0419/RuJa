@@ -38,10 +38,10 @@ ES5.1 + clases, async/await, generadores, Promesas, desestructuración,
 getters/setters, plantillas etiquetadas, Symbols, Map/Set, WeakMap/WeakSet,
 Reflect, Proxy, Uint8Array, BigInt, Date, expresiones regulares y más.
 Consulta [limitaciones](../docs/limitations.md) para la lista completa de
-**Tasa de aprobación del subconjunto soportado: 99.7%** (12.722 aprobadas /
-43 fallidas; 7.674 pruebas de funciones no soportadas excluidas).
-Véase [conformidad test262](../docs/test262.md) para la diferencia con la suite completa.
 características soportadas y no soportadas intencionalmente.
+**Tasa de aprobación del subconjunto soportado: 100.0%** (12.765 aprobadas /
+0 fallidas; 7.674 pruebas de funciones no soportadas excluidas).
+Véase [conformidad test262](../docs/test262.md) para la diferencia con la suite completa.
 
 ```sh
 $ cargo run --release -- examples/fib.js
