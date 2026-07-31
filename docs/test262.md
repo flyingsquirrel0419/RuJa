@@ -1,5 +1,32 @@
 # test262 conformance
 
+## Annex B for-in initializers
+
+Annex B.3.5 now admits an initializer only in a non-strict `for-in` head with
+one simple `var` BindingIdentifier. The initializer is evaluated once before
+the RHS and assigned through ResolveBinding/PutValue. Strict and Module code,
+`let`, `const`, destructuring, multiple declarations, bare assignment heads,
+and `for-of` initializers remain syntax errors. No admission metadata changed.
+
+On pinned Test262 `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, all seven
+files under `annexB/language/statements/for-in` move from **6 pass / 1 fail**
+to **7 pass / 0 fail**. Full Annex B moves from **818/194/74** to
+**819/193/74**, exactly **+1 pass / -1 fail**. The supported statements and
+expressions subset remains **12,765 pass / 0 fail / 7,674 skip / 20,439
+total**. A first broad run exposed a stale PutValue result in derived
+constructor iterator close; the final run includes its root fix and returns to
+zero failures.
+
+```text
+[Decision Log]
+- 목적과 의도: admission 예외가 아니라 Annex B.3.5의 initializer evaluation과 var-binding runtime semantics를 구현한다.
+- 기존 구현 및 제약 조건: exact positive file은 parse 단계에서 거부됐고 var loop key는 Reference 대신 current environment에 binding을 만들었다. Test262 pin과 supported-subset admission은 고정돼 있다.
+- 검토한 주요 대안: exact file만 runner에서 허용하기, initializer를 loop body에 복제하기, 또는 existing VarDecl과 Reference/PutValue를 평가 순서대로 재사용하기.
+- 선택한 방식: parser가 sloppy single-var identifier production만 허용하고 compiler가 initializer를 RHS 전에 한 번 실행한다. 모든 var loop key는 공용 Reference 저장을 사용하고 저장 결과를 Pop한다.
+- 다른 대안 대신 이 방식을 선택한 이유: runner 변경은 엔진 결함을 숨기고 body 복제는 empty iteration과 once semantics를 위반한다. 기존 Reference 경로는 with/global/eval을 같은 규칙으로 처리한다.
+- 장점, 단점 및 영향: exact cohort가 7/0, full Annex B가 정확히 +1/-1이며 supported subset은 0 fail을 유지한다. broad run이 잡은 derived constructor iterator-close 회귀도 Rust test와 focused Test262로 고정됐다.
+```
+
 ## Annex B if-clause functions
 
 Annex B.3.3 now rewrites a sloppy ordinary FunctionDeclaration in either arm

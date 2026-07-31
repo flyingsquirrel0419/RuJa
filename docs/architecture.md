@@ -72,6 +72,16 @@ item is an iteration into one control frame carrying every alias. Explicit
 `continue` resolution distinct, and pending labels are isolated while nested
 function bodies compile.
 
+Annex B.3.5 keeps its initializer on the existing `VarDecl` used as the
+`ForIn.left` node. The parser admits it only for one sloppy `var`
+BindingIdentifier. Compilation evaluates that declaration once before the RHS,
+which reuses the ordinary LoadRef/PutValue sequence and therefore captures a
+`with` object binding before initializer side effects. Per-iteration `var` key
+updates also resolve a Reference rather than declaring a binding in the loop's
+compiler scope; PutValue's expression result is immediately popped because
+loop binding evaluation has no value result. Parenthesized expressions parse
+with `+In`, even when the surrounding initializer has the `~In` restriction.
+
 ```text
 [Decision Log]
 - 목적과 의도: Annex B.3.2의 lexical block binding과 조건부 outer var binding을 분리하고, 선언이 실제 평가된 시점에만 동일한 함수 객체를 복사한다.
@@ -90,6 +100,16 @@ function bodies compile.
 - 선택한 방식: sloppy ordinary if-clause function만 synthetic Block으로 낮추고 기존 B.3.2 plan을 재사용한다. label chain은 iterative parse 후 loop frame alias로 합치며 frame kind로 break/continue 대상을 선택한다.
 - 다른 대안 대신 이 방식을 선택한 이유: runtime 특례는 BlockDeclarationInstantiation와 outer mirror 규칙을 중복시키고 parser admission만으로는 lexical binding을 만들지 못한다. 명시적 frame kind는 label/switch/iteration의 서로 다른 제어 규칙을 자료형으로 고정한다.
 - 장점, 단점 및 영향: B.3.3의 네 production과 dangling-else ownership이 한 AST 규칙으로 정렬되고 hostile label nesting은 Rust stack을 소모하지 않는다. synthetic block은 source에 없지만 declaration line metadata를 보존한다.
+```
+
+```text
+[Decision Log]
+- 목적과 의도: Annex B.3.5 initializer의 평가 순서와 var loop binding의 동적 Reference 의미론을 명세와 일치시킨다.
+- 기존 구현 및 제약 조건: parser는 모든 for-in declaration initializer를 거부했고, compiler는 var iteration key를 현재 scope의 임시 let binding처럼 생성했다. PutValue는 저장값을 stack에 남긴다.
+- 검토한 주요 대안: initializer를 첫 iteration에 평가하기, for-in 전용 저장 opcode를 추가하기, 또는 기존 VarDecl 및 Reference/PutValue 경로를 재사용하기.
+- 선택한 방식: sloppy 단일 var identifier만 admission하고 기존 VarDecl을 RHS 전에 한 번 compile한다. iteration key는 매번 ResolveBinding하며 사용하지 않는 PutValue 결과는 즉시 Pop한다.
+- 다른 대안 대신 이 방식을 선택한 이유: 첫 iteration 평가는 빈 RHS와 abrupt ordering을 깨고 전용 opcode는 with/global/eval 의미론을 중복한다. 공용 Reference 경로는 이미 이 환경 구분을 구현한다.
+- 장점, 단점 및 영향: initializer once/order/name inference, Object Environment Record, global property identity, direct eval binding kind, iterator-close stack이 한 경로로 정렬된다. 이 단위는 destructuring, let/const, strict, Module, for-of initializer를 의도적으로 허용하지 않는다.
 ```
 
 ## Module requests and typed modules

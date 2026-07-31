@@ -5,6 +5,30 @@ use common::{run, run_err};
 use ruja::{Value, Vm};
 use std::sync::Arc;
 
+#[test]
+fn for_of_var_binding_does_not_corrupt_derived_return_iterator_close() {
+    assert_eq!(
+        run(r#"
+            var iterator = {
+              [Symbol.iterator]: function() { return this; },
+              next: function() { return { done: false }; },
+              return: function() {
+                this.initialize();
+                return { done: true };
+              }
+            };
+            class Derived extends class {} {
+              constructor() {
+                iterator.initialize = () => super();
+                for (var key of iterator) return;
+              }
+            }
+            typeof new Derived();
+        "#),
+        Value::String(Arc::from("object"))
+    );
+}
+
 // --- static initialization blocks ---
 
 #[test]

@@ -5,6 +5,18 @@ use ruja::Value;
 use std::sync::Arc;
 
 #[test]
+fn for_in_var_key_uses_the_global_binding_reference() {
+    assert_eq!(
+        run(r#"
+            var key = "outer";
+            for (var key = "initial" in { final: 1 }) {}
+            key + ":" + globalThis.key;
+        "#),
+        Value::String(Arc::from("final:final"))
+    );
+}
+
+#[test]
 fn global_function_declaration_redefines_configurable_property() {
     assert_eq!(
         run(r#"

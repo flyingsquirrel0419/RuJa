@@ -2073,8 +2073,16 @@ impl Compiler {
     fn compile_for_var(&mut self, left: &Stmt) -> error::Result<()> {
         match &left.node {
             StmtNode::VarDecl { kind, decls } => {
-                // Single declarator: bind the on-stack value as a let/const in the loop scope.
                 if let Some((name, _)) = decls.first() {
+                    if *kind == VarKind::Var {
+                        // The var binding was hoisted during declaration
+                        // instantiation. Resolve it for every iteration so a
+                        // surrounding Object Environment Record is observed.
+                        self.store_identifier_target_value(name);
+                        self.chunk.emit(Op::Pop, self.current_line);
+                        return Ok(());
+                    }
+                    // Lexical heads create a fresh per-iteration binding.
                     self.declare(name, *kind)?;
                     let name_idx = self.chunk.add_constant(Value::String(name.clone()));
                     match kind {
@@ -2105,7 +2113,10 @@ impl Compiler {
                 // as ordinary assignment.
                 if let StmtNode::ExprStmt(expr) = &left.node {
                     match expr {
-                        Expr::Ident(name) => self.store_identifier_target_value(name),
+                        Expr::Ident(name) => {
+                            self.store_identifier_target_value(name);
+                            self.chunk.emit(Op::Pop, self.current_line);
+                        }
                         Expr::PrivateGet { object, name, .. } => {
                             self.compile_expr(object)?;
                             let name_idx = self.chunk.add_constant(Value::String(name.clone()));
@@ -2180,6 +2191,19 @@ impl Compiler {
             self.chunk.emit(Op::PopScope, self.current_line);
             self.pop_scope();
         } else {
+            // Annex B.3.5 evaluates a sloppy `var name = initializer`
+            // before enumerating the RHS. compile_stmt uses the ordinary
+            // Reference/PutValue path and compile_for_var ignores this saved
+            // initializer when assigning each enumerated key.
+            if matches!(
+                &left.node,
+                StmtNode::VarDecl {
+                    kind: VarKind::Var,
+                    decls
+                } if decls.first().is_some_and(|(_, init)| init.is_some())
+            ) {
+                self.compile_stmt(left)?;
+            }
             self.compile_expr(right)?;
         }
         // GetForInKeys pops the object and pushes an iterator over its string keys.

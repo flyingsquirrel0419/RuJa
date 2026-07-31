@@ -6,6 +6,20 @@ use ruja::Value;
 use std::sync::Arc;
 
 #[test]
+fn for_in_var_key_remains_a_var_binding_for_direct_eval() {
+    assert_eq!(
+        run(r#"
+            (function() {
+              for (var key = "initial" in { iterated: 1 }) {}
+              eval("var key = 'eval';");
+              return key;
+            }());
+        "#),
+        Value::String(Arc::from("eval"))
+    );
+}
+
+#[test]
 fn eval_arithmetic() {
     assert_eq!(run(r#"eval("1 + 2 * 3")"#), Value::Number(7.0));
 }

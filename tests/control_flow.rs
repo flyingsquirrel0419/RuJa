@@ -282,6 +282,80 @@ fn labelled_loop_keeps_labels_across_nested_function_compilation() {
 }
 
 #[test]
+fn annex_b_for_in_initializer_runs_once_before_rhs() {
+    assert_eq!(
+        run(r#"
+            var effects = 0, observed, iterations = 0;
+            for (var key = (++effects, -1) in (observed = key, { a: 1, b: 2 })) {
+              iterations++;
+            }
+            effects + "," + observed + "," + iterations + "," + key;
+        "#),
+        Value::String(Arc::from("1,-1,2,b"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var rhsEffects = 0;
+            try {
+              for (var key = (function() { throw 7; }()) in (rhsEffects++, {})) {}
+            } catch (error) {}
+            rhsEffects;
+        "#),
+        Value::Number(0.0)
+    );
+
+    assert_eq!(
+        run(r#"
+            var initializerEffects = 0, rhsEffects = 0;
+            var object = {};
+            Object.defineProperty(object, "key", {
+              set: function() { throw 7; }
+            });
+            try {
+              with (object) {
+                for (var key = (initializerEffects++, 1) in (rhsEffects++, {})) {}
+              }
+            } catch (error) {}
+            initializerEffects + "," + rhsEffects;
+        "#),
+        Value::String(Arc::from("1,0"))
+    );
+}
+
+#[test]
+fn annex_b_for_in_initializer_uses_binding_reference_and_named_evaluation() {
+    assert_eq!(
+        run(r#"
+            var key = 1;
+            var object = { key: 2 };
+            with (object) {
+              for (
+                var key = (object.observed = key, 3)
+                in (object.before = object.key, { item: 1 })
+              ) {}
+            }
+            key + "," + object.key + "," + object.observed + "," + object.before;
+        "#),
+        Value::String(Arc::from("1,item,2,3"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var inferred;
+            for (var key = function() {} in (inferred = key.name, {})) {}
+            inferred;
+        "#),
+        Value::String(Arc::from("key"))
+    );
+
+    assert_eq!(
+        run("for (var key = ('item' in { item: 1 }) in {}) {} key;"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn continue_out_of_switch_preserves_completion_value() {
     assert_eq!(
         run("eval('5; do { switch (\"a\") { case \"a\": { 6; continue; } } } while (false)');"),

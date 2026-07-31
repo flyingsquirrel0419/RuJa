@@ -4,6 +4,19 @@
 
 ### Changed
 
+- Implemented Annex B.3.5 initializers for sloppy `for-in` heads containing one
+  simple `var` binding. The initializer resolves and updates its binding exactly
+  once before RHS enumeration, preserves anonymous function naming, and blocks
+  RHS evaluation on abrupt completion. Parenthesized expressions restore the
+  `+In` grammar parameter. `var` keys in both `for-in` and `for-of` now assign
+  through the shared Reference/PutValue path instead of creating a transient
+  lexical binding, so `with`, global objects, and direct eval observe the right
+  binding. The unused PutValue result is discarded to keep abrupt iterator-close
+  stacks balanced. Pinned Test262 moves the seven-file B.3.5 cohort from
+  **6/1** to **7/0** and full Annex B from **818/194/74** to **819/193/74**;
+  the supported statements/expressions subset remains **12,765 pass / 0 fail /
+  7,674 skip / 20,439 total**.
+
 - Implemented Annex B.3.3 sloppy `if`-clause function declarations by lowering
   each ordinary declaration to the sole item of a synthetic block. Strict,
   Module, generator, async, labelled, and other single-statement positions keep

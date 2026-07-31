@@ -2397,15 +2397,18 @@ impl Parser {
             // Check for duplicate bound names in for-in/for-of declarations.
             self.check_for_dup_bound_names(&stmt.node)?;
             if self.check(&TokenKind::In) {
-                // for-in/for-of head declarations must not have an initializer.
+                // Annex B.3.5 admits an initializer only for a single `var`
+                // BindingIdentifier in sloppy for-in code. Patterns and
+                // lexical declarations retain the ordinary early error.
                 match &stmt.node {
-                    StmtNode::VarDecl { decls, .. } => {
+                    StmtNode::VarDecl { kind, decls } => {
                         if decls.len() != 1 {
                             return Err(error::Error::syntax(
                                 "for-in head declaration must have exactly one binding".to_string(),
                             ));
                         }
-                        if decls.iter().any(|d| d.1.is_some()) {
+                        if decls[0].1.is_some() && (*kind != VarKind::Var || self.is_strict_context)
+                        {
                             return Err(error::Error::syntax(
                                 "for-in head declaration must not have an initializer".to_string(),
                             ));
@@ -4012,7 +4015,9 @@ impl Parser {
                     self.expect(&TokenKind::Arrow, "=>")?;
                     return self.parse_arrow_body(params);
                 }
-                let e = self.parse_expr()?;
+                // Parentheses restore the +In grammar parameter even when
+                // the surrounding for-head initializer is parsed with ~In.
+                let e = self.with_in_allowed(|parser| parser.parse_expr())?;
                 self.expect(&TokenKind::RParen, ")")?;
                 self.last_primary_parenthesized = true;
                 Ok(e)
@@ -8214,6 +8219,20 @@ mod tests {
 
         assert!(Parser::parse("for (let x in {}) {}").is_ok());
         assert!(Parser::parse("for (let x of []) {}").is_ok());
+        assert!(Parser::parse("for (var x = 0 in {}) {}").is_ok());
+        assert!(Parser::parse("for (var x = ('a' in {a: 1}) in {}) {}").is_ok());
+        for src in [
+            "'use strict'; for (var x = 0 in {}) {}",
+            "for (let x = 0 in {}) {}",
+            "for (const x = 0 in {}) {}",
+            "for (var [x] = [] in {}) {}",
+            "for (var {x} = {} in {}) {}",
+            "for (var x = 0 of []) {}",
+            "for (var x = 0, y in {}) {}",
+        ] {
+            assert!(Parser::parse(src).is_err(), "{src}");
+        }
+        assert!(Parser::parse_module("for (var x = 0 in {}) {}").is_err());
     }
 
     #[test]
