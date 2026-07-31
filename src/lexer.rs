@@ -386,6 +386,12 @@ fn read_ident_escape(src: &[u8]) -> Option<(char, usize)> {
 pub struct Lexer<'a> {
     src: &'a [u8],
     source_is_internal: bool,
+    /// Annex B HTML-like comments apply to Script-derived goals, not Modules.
+    annex_b_html_comments: bool,
+    /// Initial Script goal or an inter-token line terminator permits `-->`.
+    /// This is separate from line tracking so token-internal newlines cannot
+    /// accidentally create an HTML close comment.
+    html_close_allowed: bool,
     pos: usize,
     line: usize,
     col: usize,
@@ -427,17 +433,28 @@ impl<'a> Lexer<'a> {
     /// Lex well-formed host Unicode source. Canonical internal strings from
     /// `Vm::to_string` must use the crate-private internal-source boundary.
     pub fn new(src: &'a str) -> Self {
-        Self::with_source_provenance(src, false)
+        Self::with_source_provenance(src, false, true)
     }
 
     pub(crate) fn new_internal(src: &'a str) -> Self {
-        Self::with_source_provenance(src, true)
+        Self::with_source_provenance(src, true, true)
     }
 
-    fn with_source_provenance(src: &'a str, source_is_internal: bool) -> Self {
+    /// Module lexical grammar deliberately excludes Annex B HTML comments.
+    pub(crate) fn new_module(src: &'a str) -> Self {
+        Self::with_source_provenance(src, false, false)
+    }
+
+    fn with_source_provenance(
+        src: &'a str,
+        source_is_internal: bool,
+        annex_b_html_comments: bool,
+    ) -> Self {
         Lexer {
             src: src.as_bytes(),
             source_is_internal,
+            annex_b_html_comments,
+            html_close_allowed: annex_b_html_comments,
             pos: 0,
             line: 1,
             col: 1,
@@ -569,8 +586,12 @@ impl<'a> Lexer<'a> {
     fn skip_ws_and_comments(&mut self) -> Option<TokenKind> {
         loop {
             match self.peek() {
-                Some(b' ') | Some(b'\t') | Some(b'\r') => {
+                Some(b' ') | Some(b'\t') => {
                     self.advance();
+                }
+                Some(b'\r') => {
+                    self.advance();
+                    self.html_close_allowed = true;
                 }
                 Some(0x0b) | Some(0x0c) => {
                     // vertical tab and form feed are whitespace per ES.
@@ -584,6 +605,7 @@ impl<'a> Lexer<'a> {
                 }
                 Some(b'\n') => {
                     self.advance();
+                    self.html_close_allowed = true;
                 }
                 // LS (U+2028) / PS (U+2029) line terminators: 0xE2 0x80 0xA8/0xA9
                 Some(0xE2)
@@ -591,6 +613,7 @@ impl<'a> Lexer<'a> {
                         && matches!(self.peek_at(2), Some(0xA8) | Some(0xA9)) =>
                 {
                     self.read_line_terminator_sequence();
+                    self.html_close_allowed = true;
                 }
                 Some(c) if c >= 0x80 => {
                     let (ch, len) = decode_utf8_at(&self.src[self.pos..]);
@@ -623,6 +646,7 @@ impl<'a> Lexer<'a> {
                         }
                         if self.is_line_terminator_start() {
                             self.read_line_terminator_sequence();
+                            self.html_close_allowed = true;
                             continue;
                         }
                         self.advance();
@@ -631,6 +655,32 @@ impl<'a> Lexer<'a> {
                         return Some(TokenKind::LexError(
                             "unterminated multiline comment".to_string(),
                         ));
+                    }
+                }
+                Some(b'<')
+                    if self.annex_b_html_comments
+                        && self.peek_at(1) == Some(b'!')
+                        && self.peek_at(2) == Some(b'-')
+                        && self.peek_at(3) == Some(b'-') =>
+                {
+                    for _ in 0..4 {
+                        self.advance();
+                    }
+                    while self.peek().is_some() && !self.is_line_terminator_start() {
+                        self.advance();
+                    }
+                }
+                Some(b'-')
+                    if self.annex_b_html_comments
+                        && self.html_close_allowed
+                        && self.peek_at(1) == Some(b'-')
+                        && self.peek_at(2) == Some(b'>') =>
+                {
+                    for _ in 0..3 {
+                        self.advance();
+                    }
+                    while self.peek().is_some() && !self.is_line_terminator_start() {
+                        self.advance();
                     }
                 }
                 _ => break,
@@ -1458,6 +1508,7 @@ impl<'a> Lexer<'a> {
         let col = self.col;
         let preceded_by_newline = self.saw_newline;
         self.saw_newline = false;
+        self.html_close_allowed = false;
         self.last_ident_had_escape = false;
         self.last_string_had_escape = false;
         self.last_string_had_legacy_escape = false;
@@ -3774,6 +3825,31 @@ mod tests {
     fn comments() {
         assert_eq!(kinds("1 // hi\n2"), vec![Number(1.0), Number(2.0), Eof]);
         assert_eq!(kinds("1 /* x */ 2"), vec![Number(1.0), Number(2.0), Eof]);
+    }
+
+    #[test]
+    fn annex_b_html_comments_follow_script_line_boundaries() {
+        assert_eq!(
+            kinds("1 <!-- open comment\n2"),
+            vec![Number(1.0), Number(2.0), Eof]
+        );
+        assert_eq!(kinds("--> first-line close\n1"), vec![Number(1.0), Eof]);
+        assert_eq!(
+            kinds("0\n/**/ /* second */ --> close\n1"),
+            vec![Number(0.0), Number(1.0), Eof]
+        );
+        assert_eq!(
+            kinds("0/* first\nsecond */--> close\n1"),
+            vec![Number(0.0), Number(1.0), Eof]
+        );
+        assert_eq!(
+            kinds("x-->0"),
+            vec![Ident("x".into()), Dec, Gt, Number(0.0), Eof]
+        );
+        assert_eq!(
+            kinds(concat!("'a\\", "\n", "b'-->0")),
+            vec![String("ab".into()), Dec, Gt, Number(0.0), Eof]
+        );
     }
 
     #[test]

@@ -1120,3 +1120,15 @@ fn eval_function_indices_are_offset_from_existing_functions() {
         Value::Number(1.0)
     );
 }
+
+#[test]
+fn eval_uses_the_script_html_comment_lexical_goal() {
+    assert_eq!(
+        run(r#"
+            eval("-->");
+            (0, eval)("-->");
+            eval("'use strict'; <!-- strict comment\n1;");
+        "#),
+        Value::Number(1.0)
+    );
+}

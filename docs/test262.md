@@ -1,5 +1,36 @@
 # test262 conformance
 
+## Annex B HTML-like comments
+
+Annex B.1.1 HTML-like comments now use the Script lexical goal without changing
+the Module grammar. `<!--` is a Script line comment from any inter-token
+position. `-->` is a line comment only at the initial Script goal or after an
+inter-token line terminator, including one inside a multiline comment. String
+line continuations and template-internal newlines do not enable it. Eval and
+dynamic Function source use Script behavior, while Module source retains
+ordinary operator tokenization. No Test262 admission metadata changed.
+
+Against the preceding CI binary from `30619831846`, the 14 files under
+`annexB/language/comments` and the HTML-comment files under
+`annexB/built-ins/Function` move from **1 pass / 13 fail** to **14 pass / 0
+fail**. Five core guards for same-line close markers, malformed multiline
+prefixes, and Module source remain **5/0**. Full Annex B moves from
+**820/192/74** to **833/179/74**, exactly **+13 pass / -13 fail**. The supported
+statements and expressions subset remains **12,765 pass / 0 fail / 7,674 skip
+/ 20,439 total**. Local warnings-denied Clippy, all-target/all-feature Rust
+tests including 394 library tests, doctest, wasm32, rustfmt, and Test262 tooling
+**163/163** pass.
+
+```text
+[Decision Log]
+- 목적과 의도: runner 예외 없이 Annex B.1.1의 Script HTML-like comment grammar와 Module exclusion을 구현하고 exact delta를 측정한다.
+- 기존 구현 및 제약 조건: 14개 positive 중 Function parameter SyntaxError 하나만 우연히 통과했고 나머지 13개는 lexer parse error였다. source line state는 token 내부와 token 사이 줄바꿈을 구분하지 않았다.
+- 검토한 주요 대안: 14개 path admission, source 전처리, 기존 newline flag 재사용, 또는 source-goal별 lexer mode와 독립 close-admission state.
+- 선택한 방식: Script/eval/dynamic Function에서만 marker scanner를 활성화하고 initial/inter-token line terminator state로 close marker를 제한한다. Module은 같은 bytes를 operator tokens로 유지한다.
+- 다른 대안 대신 이 방식을 선택한 이유: admission은 엔진 결함을 숨기고 전처리는 literal payload를 훼손한다. 기존 flag는 string/template 내부 줄바꿈까지 포함한다. 별도 state만 lexical input-element 경계를 보존한다.
+- 장점, 단점 및 영향: exact cohort가 14/0이고 Annex B가 정확히 +13/-13 이동하며 core negatives와 supported subset은 무회귀다. full CI artifact 비교는 구현 커밋 후 별도 근거로 기록한다.
+```
+
 ## Annex B catch var declarations
 
 Annex B.3.4 now permits direct-eval `var` and function declarations to cross a

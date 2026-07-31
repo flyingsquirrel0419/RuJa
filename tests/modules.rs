@@ -31,6 +31,27 @@ fn module_source_goal_is_strict_and_has_undefined_top_level_this() {
     assert!(Parser::parse_module("function f() { await 1; }").is_err());
     assert!(Parser::parse_module("function duplicate() {} var duplicate;").is_err());
     assert!(Parser::parse_module("var duplicate; function duplicate() {}").is_err());
+    for source in ["<!--\n", "-->\n", "/*\n*/-->\n"] {
+        assert!(Parser::parse_module(source).is_err(), "{source:?}");
+    }
+    assert!(Parser::parse("<!--\n").is_ok());
+    assert!(Parser::parse("-->\n").is_ok());
+    assert!(Parser::parse("'use strict'; <!--\n1;").is_ok());
+    assert!(Parser::parse_module("let x = 0, y = 1; x<!--y;").is_ok());
+
+    let mut lexical_goal_vm = Vm::new().expect("failed to initialize lexical-goal VM");
+    assert_eq!(
+        lexical_goal_vm
+            .run_module("let x = 0, y = 1; x<!--y;")
+            .expect("Module should tokenize the operators"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        lexical_goal_vm
+            .run("let x = 0, y = 1; x<!--y;")
+            .expect("Script should consume the HTML-open comment"),
+        Value::Number(0.0)
+    );
 
     let mut vm = Vm::new().expect("failed to initialize VM");
     assert!(vm.run_module("with ({}) {}").is_err());

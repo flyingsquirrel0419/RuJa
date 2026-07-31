@@ -2853,3 +2853,45 @@ fn unary_minus_uses_to_numeric_for_bigint_objects() {
         Value::String(Arc::from("-2"))
     );
 }
+
+#[test]
+fn annex_b_html_comments_respect_literal_and_template_boundaries() {
+    assert_eq!(
+        run(r#"
+            var regex = /<!--|-->/;
+            var raw = `<!--
+-->`;
+            var open = `${<!-- open comment
+1}`;
+            var close = `${
+--> close comment
+2}`;
+            var nested = `outer${`inner${
+--> nested close comment
+3}`}`;
+            var slash;
+            0;
+            --> keep the following slash in expression-start context
+            slash = /x/.test("x");
+            [
+              regex.test("<!--"),
+              regex.test("-->"),
+              raw,
+              open,
+              close,
+              nested,
+              slash
+            ].join("|");
+        "#),
+        Value::String(Arc::from("true|true|<!--\n-->|1|2|outerinner3|true"))
+    );
+
+    for source in [
+        concat!("'a\\", "\n", "b'-->0"),
+        "`a\nb`-->0",
+        "`a${--> not a close comment\n1}`",
+        "`outer${`inner${--> not a nested close comment\n1}`}`",
+    ] {
+        assert!(run_err(source).contains("SyntaxError"), "{source:?}");
+    }
+}

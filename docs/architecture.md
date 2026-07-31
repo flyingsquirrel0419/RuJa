@@ -34,6 +34,34 @@ source ─► Lexer ─► Parser ─► Compiler ─► Bytecode ─► VM
   Object, Array, String, Number, Boolean, Function, Math, JSON, console, RegExp,
   Map, Set, Symbol, Promise, Proxy, TypedArray, and the Error hierarchy.
 
+## Script and Module lexical goals
+
+Lexer construction fixes the source goal before tokenization. Script, direct
+and indirect eval, and dynamic Function parsing enable Annex B HTML-like
+comments; Module parsing disables them before any token is produced. Module
+source therefore interprets `<`, `!`, `--`, and `>` as ordinary operators even
+when their spelling resembles an HTML marker.
+
+Script `<!--` consumes the remaining characters on its line from any
+inter-token position. Script `-->` is admitted only by the initial Script
+lexical goal or after an input-element line terminator. `html_close_allowed`
+tracks that condition independently from source line/column accounting:
+newlines inside string continuations or template tokens advance diagnostics but
+must not admit a following close comment. A multiline comment containing a
+line terminator does admit one. Dynamic Function's existing separate parameter
+and body validation supplies the required boundary: a parameter marker has no
+synthetic leading newline, while body text is parsed after one.
+
+```text
+[Decision Log]
+- 목적과 의도: Annex B.1.1 HTML-like comments를 Script 계열 source goal에만 구현하고 Module 및 literal 내부 tokenization을 보존한다.
+- 기존 구현 및 제약 조건: lexer는 Script와 Module을 같은 comment grammar로 시작했고 HTML marker를 인식하지 않았다. `saw_newline`은 진단 line tracking과 token 사이 LineTerminator를 함께 나타내며 string/template 내부 줄바꿈에도 설정된다.
+- 검토한 주요 대안: parser에서 marker token을 사후 제거하기, source text 전처리, `saw_newline` 재사용, 또는 source-goal flag와 별도 close-admission state를 lexer에 두기.
+- 선택한 방식: Script/internal lexer만 Annex B mode를 켜고 Module lexer는 끈다. `<!--`는 line comment로 처리하며 `-->`는 initial/inter-token state에서만 처리한다. multiline comment의 실제 LineTerminator만 state를 다시 켠다.
+- 다른 대안 대신 이 방식을 선택한 이유: parser 사후 처리는 lexical goal과 ASI 정보를 잃고 전처리는 literal/regex/template 내용을 손상한다. `saw_newline` 재사용은 token 내부 줄바꿈을 오인한다. 독립 state는 명세의 input-element 경계를 직접 표현한다.
+- 장점, 단점 및 영향: first-line, whitespace/block-comment prefix, LS/PS, ASI, eval, dynamic Function, Module operator fallback, regex/template raw 및 interpolation 경계가 한 scanner 규칙으로 정렬된다. source goal은 lexer 생성 시 고정되므로 향후 새 parse entry point도 mode를 명시해야 한다.
+```
+
 ## Annex B declaration planning
 
 Sloppy Script and FunctionBody compilation performs a separate Annex B.3.2

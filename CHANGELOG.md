@@ -4,6 +4,20 @@
 
 ### Changed
 
+- Implemented Annex B.1.1 HTML-like comments for Script, eval, and dynamic
+  Function source while preserving the Module lexical grammar. `<!--` consumes
+  the rest of its line in Script-derived goals; `-->` does so only at the
+  initial Script goal or after an inter-token line terminator, including one in
+  a multiline comment. A dedicated admission state prevents string line
+  continuations and template-internal newlines from enabling `-->`. Module code
+  continues to tokenize the same characters as ordinary operators. Dynamic
+  Function parameter and body parses retain their distinct newline boundaries.
+  On pinned Test262, the 14-file HTML-comment cohort moves from **1/13** to
+  **14/0**, five core negative guards remain **5/0**, and full Annex B moves
+  from **820/192/74** to **833/179/74**, exactly **+13 pass / -13 fail**. The
+  supported statements/expressions subset remains **12,765 pass / 0 fail /
+  7,674 skip / 20,439 total**; no admission metadata changed.
+
 - Implemented Annex B.3.4 direct-eval declarations across a matching simple
   catch parameter. Sloppy eval `var` initializers now update the active catch
   binding while installing the variable-environment binding, and ordinary,

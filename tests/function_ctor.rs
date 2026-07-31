@@ -133,3 +133,22 @@ fn function_ctor_invalid_body_throws() {
     // A valid body returns a function; an invalid one errors. This body is valid.
     assert!(r.is_ok());
 }
+
+#[test]
+fn function_ctor_html_comments_observe_separate_parse_boundaries() {
+    assert_eq!(
+        run(r#"Function("<!--"); Function("-->"); Function("\n-->"); Function("/*a*/-->"); 1;"#),
+        Value::Number(1.0)
+    );
+    assert_eq!(
+        run(r#"Function("<!--", ""); Function("\n-->", ""); 1;"#),
+        Value::Number(1.0)
+    );
+    for source in [
+        r#"Function("-->", "")"#,
+        r#"Function("x-->", "")"#,
+        r#"Function("/*a*/-->", "")"#,
+    ] {
+        assert!(run_err(source).contains("SyntaxError"), "{source}");
+    }
+}

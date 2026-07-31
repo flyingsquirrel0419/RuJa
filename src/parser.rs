@@ -169,7 +169,7 @@ impl Parser {
 
     /// Parse well-formed host Unicode Module source.
     pub fn parse_module(src: &str) -> error::Result<Program> {
-        let mut lx = crate::lexer::Lexer::new(src);
+        let mut lx = crate::lexer::Lexer::new_module(src);
         let tokens = lx.tokens();
         let mut p = Parser::new(tokens);
         p.source_type = SourceType::Module;
