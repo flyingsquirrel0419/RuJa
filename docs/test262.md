@@ -30,6 +30,14 @@ The supported statements/expressions subset remains **12,765 pass / 0 fail /
 rustfmt, warnings-denied Clippy, all-target/all-feature Rust tests, vendor
 tests, wasm32 check, and Test262 tooling **163/163** pass.
 
+Implementation commit `a542780` passes ordinary CI `30648115509` (**3/3**)
+and full matrix `30648114517` (**45/45**). Against preceding full run
+`30643371359`, **31/32** Test262 result artifacts are byte-identical and only
+the built-ins result changes by **+2 pass / -2 fail**. Aggregate is **33,025
+pass / 4,383 fail / 11,058 skip / 3 timeout / 0 error** over 48,469 files and
+37,408 completed pass/fail executions. Filename-sorted result content hashes to
+`699313f49afb4ba95f54f047375b3dc2e2ee37fa7bec33f50f4e14a5f4c7e091`.
+
 ```text
 [Decision Log]
 - 목적과 의도: derived constructor body 이후 [[Construct]]가 새로 만드는 오류를 복원된 caller execution Realm에 귀속하면서 body 오류의 callee Realm을 보존한다.

@@ -15,7 +15,11 @@
   `Function/internals/Construct` moves from **2/2/2** to **4/0/2**, and full
   `built-ins/Function` moves from **419/41/49** to **421/39/49**, exactly
   **+2 pass / -2 fail**. The supported statements/expressions subset remains
-  **12,765/0/7,674**; no admission metadata changed.
+  **12,765/0/7,674**; no admission metadata changed. Implementation commit
+  `a542780` passes ordinary CI `30648115509` (**3/3**) and full matrix
+  `30648114517` (**45/45**). Against `30643371359`, **31/32** result artifacts
+  are byte-identical and only built-ins changes by **+2/-2**. Aggregate is
+  **33,025 pass / 4,383 fail / 11,058 skip / 3 timeout / 0 error**.
 
 - Function `name` and `length` now remain deleted after their configurable own
   properties are removed. Property reads no longer reconstruct those values
