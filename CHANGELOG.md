@@ -15,7 +15,14 @@
   stacks balanced. Pinned Test262 moves the seven-file B.3.5 cohort from
   **6/1** to **7/0** and full Annex B from **818/194/74** to **819/193/74**;
   the supported statements/expressions subset remains **12,765 pass / 0 fail /
-  7,674 skip / 20,439 total**.
+  7,674 skip / 20,439 total**. Ordinary CI `30615320781` passes 3/3 and full
+  matrix `30615320744` passes 45/45. The CI Annex B shard had two
+  load-sensitive timeouts; replacing only that result with the clean exact
+  rerun leaves 31/32 artifacts byte-identical to `30610833027` and changes
+  Annex B by exactly **+1 pass / -1 fail**. Corrected aggregate is **32,998
+  pass / 4,410 fail / 11,058 skip / 3 timeout / 0 error**; filename-sorted
+  result content hash is
+  `268a045ffeffdc7395bac7aad9703f28d80a2e7dbbe8cb13a4f801c5948943a4`.
 
 - Implemented Annex B.3.3 sloppy `if`-clause function declarations by lowering
   each ordinary declaration to the sole item of a synthetic block. Strict,

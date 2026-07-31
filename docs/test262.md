@@ -17,6 +17,16 @@ total**. A first broad run exposed a stale PutValue result in derived
 constructor iterator close; the final run includes its root fix and returns to
 zero failures.
 
+Implementation commit `f633a88` passes ordinary CI `30615320781` (**3/3**)
+and full matrix `30615320744` (**45/45**). The CI Annex B shard reported two
+load-sensitive timeouts in otherwise passing files. Replacing only that shard
+with the clean exact rerun gives **31/32** byte-identical result artifacts
+against `30610833027`; Annex B is the only changed result and moves exactly
+**+1 pass / -1 fail**. Corrected aggregate is **32,998 pass / 4,410 fail /
+11,058 skip / 3 timeout / 0 error** over 48,469 files and 37,408 executed
+files. Filename-sorted result content hashes to
+`268a045ffeffdc7395bac7aad9703f28d80a2e7dbbe8cb13a4f801c5948943a4`.
+
 ```text
 [Decision Log]
 - 목적과 의도: admission 예외가 아니라 Annex B.3.5의 initializer evaluation과 var-binding runtime semantics를 구현한다.
