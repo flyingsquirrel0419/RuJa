@@ -8,6 +8,8 @@ or Reflect feature gates. A frozen 35-file manifest removes only each listed
 file's live metadata features. Runner and analyzer share the same map, and
 tooling verifies the pinned metadata, manifest identity, disjoint ownership,
 future-sibling rejection, and unrelated-feature rejection.
+Ordinary tooling runs treat an absent or inaccessible external Test262 root as
+unavailable; full CI checks live metadata after its pinned checkout.
 
 The remaining `built-in-function-object.js` traverses 1,078 intrinsic objects
 and validates 553 native functions with Test262's 7.5 KiB and 9.1 KiB legacy

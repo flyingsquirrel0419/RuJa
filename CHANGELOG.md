@@ -15,7 +15,9 @@
   coexist without cache thrash, cache-state-dependent semantics, or a higher
   sandbox retained-memory ceiling. The exact directory moves from **45/0/35** to
   **80/0/0**, and complete `built-ins/Function` moves from **460/0/49** to
-  **495/0/14**, exactly **+35 pass / -35 skip**.
+  **495/0/14**, exactly **+35 pass / -35 skip**. Admission tooling safely
+  handles absent or inaccessible external Test262 roots while full CI still
+  validates the pinned live metadata.
 
 - Derived-constructor postcondition errors now use the Realm of the execution
   context that resumes construction. A foreign constructor that returns a
