@@ -20,10 +20,9 @@ immutable program, initial scratch allocation, and bounded forward/reverse DFA
 growth receive a finite conservative charge. A four-times cache-capacity
 overhead covers allocator slack and hash buckets for each 512 KiB directional
 cache. Repeated inefficient clears permanently switch that matcher to its
-finitely charged PikeVM program. PikeVM
-scratch is created and dropped for each fallback call instead of retaining
-unbounded state or recompiling the pattern. The large logical matchers and hot
-small Rust matcher therefore coexist under
+finitely charged PikeVM program. PikeVM scratch is created and dropped for each
+fallback call instead of retaining unbounded state or recompiling the pattern.
+The large logical matchers and hot small Rust matcher therefore coexist under
 the existing 128 MiB VM-local ceiling without repeated compilation. Backend
 selection depends only on the pattern and flags, not unrelated cache contents,
 preserving matcher and resource-limit semantics.
@@ -33,6 +32,14 @@ the 80-file toString directory moves from **45 pass / 0 fail / 35 skip** to
 **80 pass / 0 fail / 0 skip**. The complete 509-file `built-ins/Function`
 directory moves from **460 pass / 0 fail / 49 skip** to **495 pass / 0 fail /
 14 skip**, exactly **+35 pass / -35 skip**.
+
+Implementation commit `c3d219e` and tooling-environment fix `f6564fa` pass
+ordinary CI `30666470505` (**3/3**) and full matrix `30666470497` (**45/45**).
+Against full baseline `30655563999`, **31/32** result artifacts are identical;
+only built-ins changes by **+35 pass / -35 skip**. Aggregate is **33,101 pass /
+4,342 fail / 11,023 skip / 3 timeout / 0 error** over 48,469 files and 37,443
+completed pass/fail executions. Filename-sorted result content hashes to
+`ece081c014986f16e5dd89e5e88960f629838e637ed7cd6326e19429fe9632c7`.
 
 ```text
 [Decision Log]

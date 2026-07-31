@@ -17,7 +17,10 @@
   **80/0/0**, and complete `built-ins/Function` moves from **460/0/49** to
   **495/0/14**, exactly **+35 pass / -35 skip**. Admission tooling safely
   handles absent or inaccessible external Test262 roots while full CI still
-  validates the pinned live metadata.
+  validates the pinned live metadata. Commits `c3d219e` and `f6564fa` pass
+  ordinary CI `30666470505` (**3/3**) and full matrix `30666470497`
+  (**45/45**). Against `30655563999`, only built-ins changes by **+35/-35**;
+  aggregate is **33,101 pass / 4,342 fail / 11,023 skip / 3 timeout / 0 error**.
 
 - Derived-constructor postcondition errors now use the Realm of the execution
   context that resumes construction. A foreign constructor that returns a
