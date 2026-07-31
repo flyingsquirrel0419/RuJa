@@ -20,6 +20,7 @@ indexmap = "=2.2.6"
 icu_collator = "=2.2.0"
 icu_locale = "=2.2.0"
 regex = "1"
+regex-automata = "0.4"
 regex-syntax = "0.8"
 regress = { path = "vendor/regress", features = ["utf16"] }
 num-bigint = "0.4"

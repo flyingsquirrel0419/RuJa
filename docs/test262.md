@@ -1,5 +1,47 @@
 # test262 conformance
 
+## Complete Function toString admission
+
+The exact `built-ins/Function/prototype/toString` boundary is now fully
+admitted without removing the broad async, generator, private-method, Proxy,
+or Reflect feature gates. A frozen 35-file manifest removes only each listed
+file's live metadata features. Runner and analyzer share the same map, and
+tooling verifies the pinned metadata, manifest identity, disjoint ownership,
+future-sibling rejection, and unrelated-feature rejection.
+
+The remaining `built-in-function-object.js` traverses 1,078 intrinsic objects
+and validates 553 native functions with Test262's 7.5 KiB and 9.1 KiB legacy
+Unicode identifier matchers. Those surrogate-heavy patterns correctly use the
+bounded logical UTF-16 backend. Capture-free regular patterns now use a direct
+`regex-automata` matcher with one explicitly owned execution cache, so their
+immutable program, initial scratch allocation, and bounded forward/reverse DFA
+growth receive a finite conservative charge. A four-times cache-capacity
+overhead covers allocator slack and hash buckets for each 512 KiB directional
+cache. Repeated inefficient clears permanently switch that matcher to its
+finitely charged PikeVM program. PikeVM
+scratch is created and dropped for each fallback call instead of retaining
+unbounded state or recompiling the pattern. The large logical matchers and hot
+small Rust matcher therefore coexist under
+the existing 128 MiB VM-local ceiling without repeated compilation. Backend
+selection depends only on the pattern and flags, not unrelated cache contents,
+preserving matcher and resource-limit semantics.
+
+On pinned Test262 `9e61c12835c5e4a3bdba93850427e6742c4f64c4`,
+the 80-file toString directory moves from **45 pass / 0 fail / 35 skip** to
+**80 pass / 0 fail / 0 skip**. The complete 509-file `built-ins/Function`
+directory moves from **460 pass / 0 fail / 49 skip** to **495 pass / 0 fail /
+14 skip**, exactly **+35 pass / -35 skip**.
+
+```text
+[Decision Log]
+- 목적과 의도: 이미 구현된 async/generator/private/Proxy Function source와 전체 intrinsic NativeFunction 검증을 broad feature gate 해제 없이 supported Test262에 정확히 편입한다.
+- 기존 구현 및 제약 조건: 34개 skip은 강제 실행 시 통과했고 built-in-function-object 하나만 8초 timeout이었다. 큰 logical matcher 두 개는 유한 charge였지만 작은 Rust matcher 하나가 보수적 128 MiB 전액을 차지하며 LRU에서 둘을 반복 축출했다.
+- 검토한 주요 대안: broad feature gate 제거, 디렉터리 prefix admission, Test262 timeout 상향, Rust cache 예산 확대, cache 상태에 따른 logical backend 대체, 별도 fast UTF-16 backend, 또는 Rust 실행 cache를 직접 소유하고 계측.
+- 선택한 방식: 35개 path-to-feature manifest를 runner/analyzer가 공유한다. Capture-free regular pattern은 방향별 512 KiB explicit regex-automata hybrid cache, 4x cache-capacity overhead, retained hybrid/PikeVM NFA charge를 가진 동일 backend를 항상 사용하며 logical matcher와 같은 VM LRU에 저장한다. 비효율적인 cache clear가 반복되면 영구 PikeVM mode로 전환하고 호출별 fresh scratch를 사용한다.
+- 다른 대안 대신 이 방식을 선택한 이유: broad/prefix admission은 미래 파일과 미검증 기능을 연다. Timeout 상향은 thrash를 숨기며 예산 확대는 sandbox ceiling을 약화한다. Cache 상태 기반 backend 선택은 unrelated 실행에 따라 resource-limit 결과를 바꿀 수 있다. Explicit cache는 기존 Rust semantics와 유한 accounting을 함께 제공한다.
+- 장점, 단점 및 영향: exact directory가 80/0/0으로 닫히고 128 MiB retained bound와 RegExp semantics가 유지된다. 큰 fallback과 hot small matcher가 함께 재사용되며, exact 80/80과 live manifest metadata는 full CI의 fail-fast gate가 된다.
+```
+
 ## Function source text
 
 RuJa now retains exact parsed source for ordinary and generator functions,
@@ -51,7 +93,7 @@ executions. Filename-sorted result content hashes to
 - 검토한 주요 대안: 실패 파일 admission 제외, 모든 함수에 NativeFunction 문자열 반환, AST pretty-printer, 또는 parser source span 보존과 기존 logical UTF-16 RegExp fallback 사용.
 - 선택한 방식: production별 exact source를 FunctionDef까지 전달하고 runner 입력 byte fidelity를 복구한다. ECMAScript validator를 통과했지만 scalar/code-unit backend가 거부한 RegExp는 logical UTF-16 backend로 재시도한다.
 - 다른 대안 대신 이 방식을 선택한 이유: admission과 blanket NativeFunction은 실제 기능을 숨기며 pretty-printer는 source spelling을 복원하지 못한다. logical backend는 이미 UTF-16 semantics와 resource accounting을 제공한다.
-- 장점, 단점 및 영향: focused cohort가 45/0이 되고 line-ending 및 surrogate provenance가 Rust/tooling 회귀로 고정된다. async/private/proxy 관련 35 skip은 각 기능 admission의 별도 범위이며 이번 변경으로 넓히지 않는다.
+- 장점, 단점 및 영향: focused cohort가 45/0이 되고 line-ending 및 surrogate provenance가 Rust/tooling 회귀로 고정된다. 당시 별도 범위로 남긴 async/private/proxy 관련 35 skip은 위의 exact admission 단위에서 독립 검증 후 닫혔다.
 ```
 
 ## Derived constructor postcondition Realms

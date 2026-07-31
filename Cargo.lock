@@ -687,6 +687,7 @@ dependencies = [
  "num-traits",
  "parking_lot",
  "regex",
+ "regex-automata",
  "regex-syntax",
  "regress",
  "serde_json",

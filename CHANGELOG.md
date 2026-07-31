@@ -4,6 +4,19 @@
 
 ### Changed
 
+- Completed the exact `Function.prototype.toString` Test262 boundary. A frozen
+  35-file path-to-feature manifest admits already conforming async, generator,
+  private-method, Proxy, Reflect, and intrinsic traversal cases without
+  removing their broad feature gates. Capture-free regular expressions now use
+  a direct `regex-automata` matcher with one explicit, finitely charged
+  hybrid cache. Conservative allocator overhead is included; inefficient cache
+  clears permanently switch to a finitely charged PikeVM program with
+  per-call scratch. Hot small Rust matchers and large logical UTF-16 programs
+  coexist without cache thrash, cache-state-dependent semantics, or a higher
+  sandbox retained-memory ceiling. The exact directory moves from **45/0/35** to
+  **80/0/0**, and complete `built-ins/Function` moves from **460/0/49** to
+  **495/0/14**, exactly **+35 pass / -35 skip**.
+
 - Derived-constructor postcondition errors now use the Realm of the execution
   context that resumes construction. A foreign constructor that returns a
   primitive or leaves `this` uninitialized therefore creates its `TypeError`

@@ -58,6 +58,12 @@ use num_integer::Integer;
 use num_rational::Ratio;
 use num_traits::{FromPrimitive, Signed, ToPrimitive, Zero};
 use regex::{Regex as RustRegex, RegexBuilder as RustRegexBuilder};
+use regex_automata::{
+    hybrid::{dfa as AutomataHybridDfa, regex as AutomataHybrid},
+    nfa::thompson::{self as AutomataThompson, pikevm as AutomataPike, WhichCaptures},
+    util::syntax as AutomataSyntax,
+    Anchored as AutomataAnchored, Input as AutomataInput, MatchKind as AutomataMatchKind,
+};
 use regex_syntax::hir::{Class, ClassUnicode, ClassUnicodeRange, Hir, HirKind};
 use regex_syntax::ParserBuilder as RegexSyntaxParserBuilder;
 use std::borrow::Cow;
@@ -92,6 +98,14 @@ struct RegexCaptureName {
     index: usize,
 }
 
+pub(crate) struct BoundedRustRegex {
+    regex: AutomataHybrid::Regex,
+    cache: Mutex<AutomataHybrid::Cache>,
+    pike: AutomataPike::PikeVM,
+    pike_only: AtomicBool,
+    retained_charge: usize,
+}
+
 impl<'t> CompiledCaptures<'t> {
     fn get(&self, index: usize) -> Option<CompiledMatch<'t>> {
         self.groups.get(index).copied().flatten()
@@ -109,6 +123,7 @@ impl<'t> CompiledCaptures<'t> {
 #[derive(Clone)]
 pub(crate) enum CompiledRegex {
     Rust(Arc<RustRegex>),
+    BoundedRust(Arc<BoundedRustRegex>),
     Fancy(Arc<fancy_regex::Regex>),
     LogicalUtf16(Arc<regress::Regex>),
     // Assertion erasure is rejection-only. The capture-erased exact linear
@@ -235,13 +250,10 @@ const MAX_REGEXP_MATCHER_CACHE_SOURCE_BYTES: usize = 256 * 1024;
 const MAX_REGEXP_MATCHER_CACHE_SINGLE_SOURCE_BYTES: usize = 64 * 1024;
 const MAX_REGEXP_MATCHER_CACHE_BYTES: usize = 128 * 1024 * 1024;
 const MAX_REGEXP_MATCHER_CACHE_SINGLE_BYTES: usize = 128 * 1024 * 1024;
-const MAX_RUST_CACHE_SOURCE_BYTES: usize = 4 * 1024;
 const RUST_REGEX_NFA_SIZE_LIMIT: usize = 10 * 1024 * 1024;
 const RUST_REGEX_DFA_CACHE_LIMIT: usize = 2 * 1024 * 1024;
-// One shared pool may retain forward/reverse Pike state in addition to the
-// explicitly bounded NFAs and lazy-DFA caches. This charge leaves headroom for
-// those capture-free tables and all structural allocations.
-const RUST_CAPTURE_FREE_CACHE_CHARGE: usize = MAX_REGEXP_MATCHER_CACHE_BYTES;
+const RUST_REGEX_RETAINED_DFA_CACHE_LIMIT: usize = 512 * 1024;
+const RUST_REGEX_DFA_RETAINED_MULTIPLIER: usize = 4;
 
 fn regexp_compile_flags(flags: &str) -> u8 {
     u8::from(flags.contains('i'))
@@ -255,10 +267,6 @@ fn cache_budget_exceeded(current: usize, additional: usize, maximum: usize) -> b
     current
         .checked_add(additional)
         .is_none_or(|total| total > maximum)
-}
-
-fn rust_matcher_cache_eligible(source: &str) -> bool {
-    source.len() <= MAX_RUST_CACHE_SOURCE_BYTES && regex_capture_count(source) == 0
 }
 
 fn regexp_compile_mode_for_input(
@@ -342,16 +350,12 @@ fn regexp_matcher_cache_put(
     if source.len() > MAX_REGEXP_MATCHER_CACHE_SINGLE_SOURCE_BYTES {
         return false;
     }
-    if matches!(matcher, CompiledRegex::Rust(_)) && !rust_matcher_cache_eligible(&source) {
-        return false;
-    }
     let Some(matcher_charge) = matcher.cache_charge() else {
         return false;
     };
     if matcher_charge > MAX_REGEXP_MATCHER_CACHE_SINGLE_BYTES {
         return false;
     }
-
     let compile_flags = regexp_compile_flags(flags);
     if let Some(position) = vm.regexp_matcher_cache.entries.iter().position(|entry| {
         entry.mode == mode
@@ -625,6 +629,14 @@ fn compile_regex_with_input_mode(
         &capture_indices,
     )
     .map_err(RegexCompileError::Syntax)?;
+    if capture_count == 0
+        && !needs_capture_correction
+        && !rust_normalized.relaxed_unicode_word_boundary
+    {
+        if let Some(regex) = build_bounded_rust_regex(&rust_normalized.source, flags) {
+            return Ok(CompiledRegex::BoundedRust(Arc::new(regex)));
+        }
+    }
     let mut b = RustRegexBuilder::new(&rust_normalized.source);
     b.size_limit(RUST_REGEX_NFA_SIZE_LIMIT)
         .dfa_size_limit(RUST_REGEX_DFA_CACHE_LIMIT);
@@ -783,6 +795,124 @@ fn rust_regex_compile_error(error: regex::Error, source: &str) -> RegexCompileEr
     }
 }
 
+fn build_bounded_rust_regex(source: &str, flags: &str) -> Option<BoundedRustRegex> {
+    let syntax = AutomataSyntax::Config::new()
+        .case_insensitive(flags.contains('i'))
+        .multi_line(flags.contains('m'))
+        .dot_matches_new_line(flags.contains('s'))
+        .utf8(true);
+    let mut pike_builder = AutomataPike::PikeVM::builder();
+    pike_builder.syntax(syntax).thompson(
+        AutomataThompson::Config::new()
+            .nfa_size_limit(Some(RUST_REGEX_NFA_SIZE_LIMIT))
+            .utf8(true)
+            .which_captures(WhichCaptures::Implicit),
+    );
+    let pike = pike_builder.build(source).ok()?;
+
+    let mut builder = AutomataHybrid::Regex::builder();
+    builder
+        .syntax(syntax)
+        .thompson(
+            AutomataThompson::Config::new()
+                .nfa_size_limit(Some(RUST_REGEX_NFA_SIZE_LIMIT))
+                .utf8(true)
+                .which_captures(WhichCaptures::None),
+        )
+        .dfa(
+            AutomataHybridDfa::Config::new()
+                .cache_capacity(RUST_REGEX_RETAINED_DFA_CACHE_LIMIT)
+                .minimum_cache_clear_count(Some(3))
+                .minimum_bytes_per_state(Some(10))
+                .match_kind(AutomataMatchKind::LeftmostFirst),
+        );
+    let regex = builder.build(source).ok()?;
+    let cache = regex.create_cache();
+    // regex-automata's budget uses approximate live sizes, so charge a
+    // conservative multiplier for Vec slack and hash-table buckets. PikeVM
+    // fallback scratch is created per call and never retained.
+    let cache_charge = regex
+        .forward()
+        .get_config()
+        .get_cache_capacity()
+        .checked_add(regex.reverse().get_config().get_cache_capacity())
+        .and_then(|bytes| bytes.checked_mul(RUST_REGEX_DFA_RETAINED_MULTIPLIER))?;
+    let retained_charge = regex
+        .forward()
+        .get_nfa()
+        .memory_usage()
+        .checked_add(regex.reverse().get_nfa().memory_usage())
+        .and_then(|bytes| bytes.checked_add(pike.get_nfa().memory_usage()))
+        .and_then(|bytes| bytes.checked_add(cache_charge))
+        .and_then(|bytes| bytes.checked_add(source.len()))
+        .and_then(|bytes| bytes.checked_add(core::mem::size_of::<AutomataHybrid::Regex>()))
+        .and_then(|bytes| bytes.checked_add(core::mem::size_of::<AutomataHybrid::Cache>()))
+        .and_then(|bytes| bytes.checked_add(core::mem::size_of::<AutomataPike::PikeVM>()))
+        .and_then(|bytes| bytes.checked_add(core::mem::size_of::<BoundedRustRegex>()))?;
+    Some(BoundedRustRegex {
+        regex,
+        cache: Mutex::new(cache),
+        pike,
+        pike_only: AtomicBool::new(false),
+        retained_charge,
+    })
+}
+
+impl BoundedRustRegex {
+    fn find_at<'t>(
+        &self,
+        input: &'t str,
+        start: usize,
+        anchored: bool,
+    ) -> error::Result<Option<CompiledMatch<'t>>> {
+        let mut automata_input = AutomataInput::new(input).span(start..input.len());
+        if anchored {
+            automata_input = automata_input.anchored(AutomataAnchored::Yes);
+        }
+        if !self.pike_only.load(Ordering::Acquire) {
+            let mut cache = self.cache.lock();
+            // A waiter may have observed false before another search gave up.
+            // Recheck under the cache lock so a failed cache is never reused.
+            if !self.pike_only.load(Ordering::Acquire) {
+                match self.regex.try_search(&mut cache, &automata_input) {
+                    Ok(matched) => {
+                        return Ok(matched.map(|matched| CompiledMatch {
+                            text: &input[matched.start()..matched.end()],
+                            start: matched.start(),
+                            end: matched.end(),
+                        }));
+                    }
+                    Err(_) => {
+                        self.pike_only.store(true, Ordering::Release);
+                    }
+                }
+            }
+        }
+        let mut cache = self.pike.create_cache();
+        Ok(self
+            .pike
+            .find(&mut cache, automata_input)
+            .map(|matched| CompiledMatch {
+                text: &input[matched.start()..matched.end()],
+                start: matched.start(),
+                end: matched.end(),
+            }))
+    }
+
+    fn captures_at<'t>(
+        &self,
+        input: &'t str,
+        start: usize,
+        anchored: bool,
+    ) -> error::Result<Option<CompiledCaptures<'t>>> {
+        self.find_at(input, start, anchored).map(|matched| {
+            matched.map(|matched| CompiledCaptures {
+                groups: vec![Some(matched)],
+            })
+        })
+    }
+}
+
 fn rust_regex_syntax_resource_limit(source: &str) -> bool {
     let mut parser = regex_syntax::ast::parse::ParserBuilder::new().build();
     parser.parse(source).is_err_and(|error| {
@@ -820,7 +950,8 @@ fn fancy_regex_size_limit_exceeded(error: &fancy_regex::Error) -> bool {
 impl CompiledRegex {
     fn cache_charge(&self) -> Option<usize> {
         match self {
-            CompiledRegex::Rust(_) => Some(RUST_CAPTURE_FREE_CACHE_CHARGE),
+            CompiledRegex::Rust(_) => None,
+            CompiledRegex::BoundedRust(regex) => Some(regex.retained_charge),
             // fancy-regex delegates to scratch-pool-owning regex-automata
             // matchers and does not expose a finite retained-cache bound.
             CompiledRegex::Fancy(_) => None,
@@ -842,6 +973,7 @@ impl CompiledRegex {
     ) -> error::Result<Option<CompiledMatch<'t>>> {
         match self {
             CompiledRegex::Rust(re) => Ok(re.find_at(input, start).map(CompiledMatch::from)),
+            CompiledRegex::BoundedRust(re) => re.find_at(input, start, false),
             CompiledRegex::LogicalUtf16(_) => {
                 Ok(self.captures_at(input, start)?.and_then(|caps| caps.get(0)))
             }
@@ -886,6 +1018,11 @@ impl CompiledRegex {
     fn find_iter<'t>(&self, input: &'t str) -> error::Result<Vec<CompiledMatch<'t>>> {
         match self {
             CompiledRegex::Rust(re) => Ok(re.find_iter(input).map(CompiledMatch::from).collect()),
+            CompiledRegex::BoundedRust(_) => Ok(self
+                .captures_iter(input)?
+                .into_iter()
+                .filter_map(|captures| captures.get(0))
+                .collect()),
             CompiledRegex::LogicalUtf16(_) => Ok(self
                 .captures_iter(input)?
                 .into_iter()
@@ -976,6 +1113,7 @@ impl CompiledRegex {
     ) -> error::Result<Option<CompiledCaptures<'t>>> {
         match self {
             CompiledRegex::Rust(re) => Ok(re.captures_at(input, start).map(CompiledCaptures::from)),
+            CompiledRegex::BoundedRust(re) => re.captures_at(input, start, false),
             CompiledRegex::LogicalUtf16(re) => {
                 let units = crate::value::utf16_from_str(input);
                 let start = crate::value::utf16_len(&input[..start]);
@@ -1028,6 +1166,25 @@ impl CompiledRegex {
                 .captures_iter(input)
                 .map(CompiledCaptures::from)
                 .collect()),
+            CompiledRegex::BoundedRust(_) => {
+                let mut captures = Vec::new();
+                let mut position = 0usize;
+                while position <= input.len() {
+                    let Some(matched) = self.captures_at(input, position)? else {
+                        break;
+                    };
+                    let Some(group) = matched.get(0) else {
+                        break;
+                    };
+                    let next = next_regex_iteration_position(input, group.start(), group.end());
+                    captures.push(matched);
+                    let Some(next) = next else {
+                        break;
+                    };
+                    position = next;
+                }
+                Ok(captures)
+            }
             CompiledRegex::LogicalUtf16(re) => logical_utf16_captures_iter(re, input),
             CompiledRegex::Fancy(re) => fancy_captures_iter(re, input),
             CompiledRegex::PrefilteredExact {
@@ -1074,6 +1231,7 @@ impl CompiledRegex {
                         .is_some_and(|matched| matched.start() == start)
                 })
                 .map(CompiledCaptures::from)),
+            CompiledRegex::BoundedRust(re) => re.captures_at(input, start, true),
             CompiledRegex::LogicalUtf16(re) => {
                 let units = crate::value::utf16_from_str(input);
                 let start = crate::value::utf16_len(&input[..start]);
@@ -1121,7 +1279,8 @@ impl CompiledRegex {
     fn replace<'t>(&self, input: &'t str, replacement: &str) -> error::Result<Cow<'t, str>> {
         match self {
             CompiledRegex::Rust(re) => Ok(re.replace(input, replacement)),
-            CompiledRegex::Fancy(_)
+            CompiledRegex::BoundedRust(_)
+            | CompiledRegex::Fancy(_)
             | CompiledRegex::LogicalUtf16(_)
             | CompiledRegex::PrefilteredExact { .. }
             | CompiledRegex::CaptureCorrected { .. } => {
@@ -1133,7 +1292,8 @@ impl CompiledRegex {
     fn replace_all<'t>(&self, input: &'t str, replacement: &str) -> error::Result<Cow<'t, str>> {
         match self {
             CompiledRegex::Rust(re) => Ok(re.replace_all(input, replacement)),
-            CompiledRegex::Fancy(_)
+            CompiledRegex::BoundedRust(_)
+            | CompiledRegex::Fancy(_)
             | CompiledRegex::LogicalUtf16(_)
             | CompiledRegex::PrefilteredExact { .. }
             | CompiledRegex::CaptureCorrected { .. } => {
@@ -1613,7 +1773,7 @@ mod compiled_regex_tests {
                 "",
                 "a"
             ),
-            Ok(CompiledRegex::Rust(_))
+            Ok(CompiledRegex::BoundedRust(_))
         ));
         assert!(matches!(
             regexp::compile_regexp_for_exec(
@@ -1669,7 +1829,7 @@ mod compiled_regex_tests {
             compile_regex(r"\b(a?b??)*", "iu").expect("prefiltered fixture should compile"),
         ];
 
-        assert!(matches!(fixtures[0], CompiledRegex::Rust(_)));
+        assert!(matches!(fixtures[0], CompiledRegex::BoundedRust(_)));
         assert!(matches!(fixtures[1], CompiledRegex::Fancy(_)));
         assert!(matches!(fixtures[2], CompiledRegex::Fancy(_)));
         assert!(matches!(fixtures[3], CompiledRegex::LogicalUtf16(_)));
@@ -1763,6 +1923,149 @@ mod compiled_regex_tests {
     }
 
     #[test]
+    fn finite_rust_and_logical_matchers_coexist_and_hit() {
+        let mut vm = Vm::new().expect("VM should initialize");
+        let fallback_source: Arc<str> = Arc::from(r"[\uDC00-\uDC0B]");
+        assert!(matches!(
+            compile_regex_cached(
+                &mut vm,
+                fallback_source.clone(),
+                "",
+                RegExpCompileMode::Utf16CodeUnits,
+            ),
+            Ok(CompiledRegex::LogicalUtf16(_))
+        ));
+        assert!(matches!(
+            compile_regex_cached(
+                &mut vm,
+                Arc::from(r"\w"),
+                "",
+                RegExpCompileMode::Utf16CodeUnits,
+            ),
+            Ok(CompiledRegex::BoundedRust(_))
+        ));
+        assert!(matches!(
+            compile_regex_cached(
+                &mut vm,
+                Arc::from(r"\w"),
+                "",
+                RegExpCompileMode::Utf16CodeUnits,
+            ),
+            Ok(CompiledRegex::BoundedRust(_))
+        ));
+        assert!(matches!(
+            compile_regex_cached(
+                &mut vm,
+                fallback_source,
+                "",
+                RegExpCompileMode::Utf16CodeUnits,
+            ),
+            Ok(CompiledRegex::LogicalUtf16(_))
+        ));
+
+        assert_eq!(vm.regexp_matcher_compile_count, 2);
+        assert_eq!(vm.regexp_matcher_cache_hit_count, 2);
+        assert!(vm
+            .regexp_matcher_cache
+            .contains_source_for_test(r"[\uDC00-\uDC0B]"));
+        assert!(vm.regexp_matcher_cache.contains_source_for_test(r"\w"));
+        assert!(vm.regexp_matcher_cache.matcher_bytes_for_test() < MAX_REGEXP_MATCHER_CACHE_BYTES);
+    }
+
+    #[test]
+    fn bounded_rust_charge_covers_lazy_dfa_cache_growth() {
+        let matcher = compile_regex(r"(?:a|ab|abc|abcd|abcde)*z", "")
+            .expect("bounded Rust fixture should compile");
+        let CompiledRegex::BoundedRust(regex) = matcher else {
+            panic!("capture-free regular fixture should use bounded Rust");
+        };
+        let cache_capacity = regex
+            .regex
+            .forward()
+            .get_config()
+            .get_cache_capacity()
+            .checked_add(regex.regex.reverse().get_config().get_cache_capacity())
+            .expect("configured cache capacities should fit");
+        assert!(regex.cache.lock().memory_usage() <= cache_capacity);
+
+        let input = format!("{}z", "abcde".repeat(2_000));
+        assert!(regex
+            .find_at(&input, 0, false)
+            .expect("bounded search should complete")
+            .is_some());
+        assert!(regex.cache.lock().memory_usage() <= cache_capacity);
+
+        let conservative_cache_charge = cache_capacity
+            .checked_mul(RUST_REGEX_DFA_RETAINED_MULTIPLIER)
+            .expect("conservative cache charge should fit");
+        let immutable_charge = regex
+            .regex
+            .forward()
+            .get_nfa()
+            .memory_usage()
+            .checked_add(regex.regex.reverse().get_nfa().memory_usage())
+            .and_then(|bytes| bytes.checked_add(regex.pike.get_nfa().memory_usage()))
+            .and_then(|bytes| bytes.checked_add(conservative_cache_charge))
+            .expect("bounded matcher charge should fit");
+        assert!(regex.retained_charge >= immutable_charge);
+    }
+
+    #[test]
+    fn bounded_rust_cache_saturation_permanently_uses_pike_fallback() {
+        let source = r"[aβ]{100}";
+        let mut pike_builder = AutomataPike::PikeVM::builder();
+        pike_builder
+            .syntax(AutomataSyntax::Config::new().utf8(true))
+            .thompson(
+                AutomataThompson::Config::new()
+                    .nfa_size_limit(Some(RUST_REGEX_NFA_SIZE_LIMIT))
+                    .utf8(true)
+                    .which_captures(WhichCaptures::Implicit),
+            );
+        let pike = pike_builder
+            .build(source)
+            .expect("Pike fallback should compile");
+        let mut builder = AutomataHybrid::Regex::builder();
+        builder
+            .syntax(AutomataSyntax::Config::new().utf8(true))
+            .thompson(
+                AutomataThompson::Config::new()
+                    .nfa_size_limit(Some(RUST_REGEX_NFA_SIZE_LIMIT))
+                    .utf8(true)
+                    .which_captures(WhichCaptures::None),
+            )
+            .dfa(
+                AutomataHybridDfa::Config::new()
+                    .skip_cache_capacity_check(true)
+                    .cache_capacity(0)
+                    .minimum_cache_clear_count(Some(0))
+                    .match_kind(AutomataMatchKind::LeftmostFirst),
+            );
+        let hybrid = builder.build(source).expect("hybrid probe should compile");
+        let input = "a".repeat(101);
+        let mut probe_cache = hybrid.create_cache();
+        assert!(hybrid
+            .try_search(&mut probe_cache, &AutomataInput::new(&input))
+            .is_err());
+
+        let bounded = BoundedRustRegex {
+            cache: Mutex::new(hybrid.create_cache()),
+            regex: hybrid,
+            pike,
+            pike_only: AtomicBool::new(false),
+            retained_charge: 0,
+        };
+        for _ in 0..2 {
+            let matched = bounded
+                .find_at(&input, 0, false)
+                .expect("Pike fallback search should complete")
+                .expect("Pike fallback should match");
+            assert_eq!((matched.start(), matched.end()), (0, 100));
+            assert!(bounded.pike_only.load(Ordering::Acquire));
+        }
+    }
+
+    #[test]
     fn matcher_cache_keys_eviction_and_best_effort_publication_are_bounded() {
         let mut vm = Vm::new().expect("VM should initialize");
         let source: Arc<str> = Arc::from("a");
@@ -1805,7 +2108,7 @@ mod compiled_regex_tests {
             .expect("each matcher-semantic flag needs a distinct entry");
         }
         assert_eq!(vm.regexp_matcher_compile_count, 7);
-        assert_eq!(vm.regexp_matcher_cache.len_for_test(), 1);
+        assert_eq!(vm.regexp_matcher_cache.len_for_test(), 7);
 
         let mut failed = Vm::new().expect("VM should initialize");
         failed.fail_next_regexp_matcher_cache_reservation = true;
@@ -1916,13 +2219,75 @@ mod compiled_regex_tests {
             )
             .expect("Rust matcher budget fixture should compile");
         }
-        assert_eq!(matcher_budget.regexp_matcher_cache.len_for_test(), 1);
-        assert!(!matcher_budget
+        assert_eq!(matcher_budget.regexp_matcher_cache.len_for_test(), 5);
+        assert!(matcher_budget
             .regexp_matcher_cache
             .contains_source_for_test("rust0"));
-        assert_eq!(
-            matcher_budget.regexp_matcher_cache.matcher_bytes_for_test(),
-            RUST_CAPTURE_FREE_CACHE_CHARGE
+        assert!(
+            matcher_budget.regexp_matcher_cache.matcher_bytes_for_test()
+                < MAX_REGEXP_MATCHER_CACHE_BYTES
+        );
+
+        let mut mixed_budget = Vm::new().expect("VM should initialize");
+        let finite = logical_cache_accounting_matcher();
+        assert!(regexp_matcher_cache_put(
+            &mut mixed_budget,
+            Arc::from("finite-0"),
+            "",
+            RegExpCompileMode::Utf16CodeUnits,
+            finite.clone(),
+        ));
+        assert!(regexp_matcher_cache_put(
+            &mut mixed_budget,
+            Arc::from("finite-1"),
+            "",
+            RegExpCompileMode::Utf16CodeUnits,
+            finite.clone(),
+        ));
+        let rust = compile_regex("small", "").expect("Rust fixture should compile");
+        assert!(regexp_matcher_cache_put(
+            &mut mixed_budget,
+            Arc::from("small"),
+            "",
+            RegExpCompileMode::Utf16CodeUnits,
+            rust,
+        ));
+        assert!(mixed_budget
+            .regexp_matcher_cache
+            .contains_source_for_test("finite-0"));
+        assert!(mixed_budget
+            .regexp_matcher_cache
+            .contains_source_for_test("finite-1"));
+        assert!(mixed_budget
+            .regexp_matcher_cache
+            .contains_source_for_test("small"));
+
+        let mut finite_preempts_rust = Vm::new().expect("VM should initialize");
+        compile_regex_cached(
+            &mut finite_preempts_rust,
+            Arc::from("small"),
+            "",
+            RegExpCompileMode::Utf16CodeUnits,
+        )
+        .expect("Rust fixture should compile and publish");
+        assert!(regexp_matcher_cache_put(
+            &mut finite_preempts_rust,
+            Arc::from("finite"),
+            "",
+            RegExpCompileMode::Utf16CodeUnits,
+            finite,
+        ));
+        assert!(finite_preempts_rust
+            .regexp_matcher_cache
+            .contains_source_for_test("small"));
+        assert!(finite_preempts_rust
+            .regexp_matcher_cache
+            .contains_source_for_test("finite"));
+        assert!(
+            finite_preempts_rust
+                .regexp_matcher_cache
+                .matcher_bytes_for_test()
+                < MAX_REGEXP_MATCHER_CACHE_BYTES
         );
 
         let mut source_budget = Vm::new().expect("VM should initialize");

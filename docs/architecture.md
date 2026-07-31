@@ -3892,22 +3892,30 @@ LRU hits and active-call clones allocate no new backend state and eviction canno
 invalidate a matcher already in use. Vendored `Clone` implementations are left
 unchanged. Retention permits at most 16 entries, 256 KiB of source, 64 KiB per
 source, and a 128 MiB conservative matcher charge. Rust compilation pins its
-existing 10 MiB NFA and 2 MiB lazy-DFA limits explicitly; only capture-free
-sources up to 4 KiB are cacheable and consume the complete 128 MiB matcher
-budget. The logical UTF-16 backend reports a deliberately overestimated
-compiled-storage charge. Fancy, prefiltered/capture-corrected composite,
-captured Rust, large-source, overflowing, and oversized matchers execute
-normally but are not cached because a finite retained scratch-pool bound is not
-available at their public API boundary.
+existing 10 MiB NFA and 2 MiB lazy-DFA limits explicitly. Capture-free regular
+patterns use `regex-automata` directly with one mutex-protected execution cache,
+instead of the high-level backend's hidden scratch pool. Their charge includes
+the immutable program, initial cache allocation, wrapper structures, and a
+conservative four-times overhead over each forward and reverse 512 KiB lazy-DFA
+cache capacity for vector slack and hash-table buckets. After three inefficient
+cache clears, the matcher permanently switches to its retained, finitely
+charged PikeVM program. PikeVM scratch is created and dropped per fallback call
+rather than retained. This finite charge lets ordinary Rust and logical UTF-16
+programs coexist under the same LRU budget. The logical backend reports its own
+deliberately overestimated compiled-storage charge. Fancy,
+prefiltered/capture-corrected
+composite, captured Rust, overflowing, and oversized matchers execute normally
+but are not cached because a finite total retained bound is unavailable at
+their public API boundary.
 
 ```text
 [Decision Log]
 - 목적과 의도: Reuse terminal RegExp compilation without changing ECMAScript observation order, GC ownership, Realm error identity, or the sandbox's native-memory bound.
 - 기존 구현 및 제약 조건: Every constructor/exec/internal String route rebuilt a matcher; backend Clone could duplicate programs or scratch pools; regex-automata retains mutable execution caches; fancy/composite backends do not expose a finite total retained-memory bound; cache allocation itself must not turn successful compilation into JavaScript failure.
-- 검토한 주요 대안: Store a matcher on every RegExp heap object, use a process-global cache, key by all flags or Realm, cache every backend by source length, change vendor Clone semantics, or keep a VM-local semantic LRU with conservative admission.
-- 선택한 방식: Keep one VM-owned LRU keyed by source, i/m/s/u/v, and input domain; Arc-wrap backend values only in RuJa; publish after terminal success on a best-effort basis; enforce checked entry/source/matcher accounting; admit only bounded logical programs and small capture-free Rust programs while running all other variants uncached.
-- 다른 대안 대신 이 방식을 선택한 이유: Per-object storage scales with live heap objects and needs GC slot ownership; a global cache crosses VM policy boundaries; d/g/y and Realm do not alter compilation; source size does not bound backend scratch; vendor Arc conversion changes public no_std and clone behavior. Conservative admission preserves correctness and a defensible memory ceiling.
-- 장점, 단점 및 영향: Repeated common matchers and logical fallback programs reuse allocation-free handles across Realms and GC, publication failure is invisible, failures remain uncached, and reentrant eviction is safe. The 128 MiB whole-budget Rust charge intentionally retains only one Rust matcher at a time, and fancy, composite, captured, or large Rust patterns still recompile; broader reuse requires backend APIs that expose complete immutable plus retained-scratch bounds.
+- 검토한 주요 대안: Store a matcher on every RegExp heap object, use a process-global cache, key by all flags or Realm, cache every high-level backend by source length, change vendor Clone semantics, select a backend from current cache contents, or keep a VM-local semantic LRU with an explicit finite Rust cache.
+- 선택한 방식: Keep one VM-owned LRU keyed by source, i/m/s/u/v, and input domain; Arc-wrap backend values only in RuJa; publish after terminal success on a best-effort basis; enforce checked entry/source/matcher accounting; use one explicitly owned regex-automata hybrid cache plus a retained PikeVM program for capture-free regular patterns; charge four times both 512 KiB cache capacities and all three retained NFAs; permanently switch to PikeVM with per-call scratch after repeated inefficient clears; admit only finitely charged Rust and logical programs while running all other variants uncached.
+- 다른 대안 대신 이 방식을 선택한 이유: Per-object storage scales with live heap objects and needs GC slot ownership; a global cache crosses VM policy boundaries; d/g/y and Realm do not alter compilation; source size does not bound a hidden scratch pool; cache-state backend selection can change observable resource-limit behavior; vendor Arc conversion changes public no_std and clone behavior. Explicit cache ownership preserves stable matcher semantics and a defensible memory ceiling.
+- 장점, 단점 및 영향: Repeated common matchers and logical fallback programs coexist and reuse allocation-free handles across Realms and GC, publication failure is invisible, failures remain uncached, and reentrant eviction is safe. Explicit-cache searches serialize per matcher, while different matchers remain independent. Saturated matchers avoid repeated hybrid work and recompilation but pay a fresh bounded PikeVM scratch allocation per call. Fancy, composite, and captured Rust patterns still recompile; broader reuse requires finite retained-memory APIs for those backends.
 ```
 
 ### Residual built-in subclass ownership

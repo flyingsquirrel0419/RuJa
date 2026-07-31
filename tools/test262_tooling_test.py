@@ -239,6 +239,10 @@ from test262_function_bind_admission import (
     FUNCTION_BIND_FEATURES,
     FUNCTION_BIND_FILES,
 )
+from test262_function_tostring_admission import (
+    FUNCTION_TOSTRING_FEATURES,
+    FUNCTION_TOSTRING_FILES,
+)
 from test262_language_early_error_admission import (
     LANGUAGE_EARLY_ERROR_FEATURES,
     LANGUAGE_EARLY_ERROR_FILES,
@@ -4757,6 +4761,101 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                         self.assertFalse(tool.function_bind_path(invalid))
                         self.assertEqual(
                             tool.function_bind_features(invalid), frozenset()
+                        )
+                finally:
+                    tool.TEST262 = original_root
+
+    def test_function_tostring_admission_is_exact_live_disjoint_and_shared(self):
+        manifest = Path(__file__).with_name(
+            "test262_function_tostring_admission.txt"
+        )
+        manifest_entries = tuple(
+            line
+            for raw_line in manifest.read_text().splitlines()
+            if (line := raw_line.strip()) and not line.startswith("#")
+        )
+        self.assertEqual(len(manifest_entries), 35)
+        self.assertEqual(manifest_entries, tuple(FUNCTION_TOSTRING_FEATURES))
+        self.assertEqual(FUNCTION_TOSTRING_FILES, frozenset(manifest_entries))
+
+        tools_dir = Path(__file__).resolve().parent
+        for other_manifest in tools_dir.glob("test262_*_admission.txt"):
+            if other_manifest.name == manifest.name:
+                continue
+            other_files = {
+                line
+                for raw_line in other_manifest.read_text().splitlines()
+                if (line := raw_line.strip()) and not line.startswith("#")
+            }
+            self.assertTrue(
+                FUNCTION_TOSTRING_FILES.isdisjoint(other_files),
+                other_manifest.name,
+            )
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        if test_root.is_dir():
+            for relative, features in FUNCTION_TOSTRING_FEATURES.items():
+                path = test_root / relative
+                self.assertTrue(path.is_file(), relative)
+                metadata = test262_runner.parse_meta(path.read_text())
+                self.assertEqual(
+                    frozenset(metadata.get("features", [])), features, relative
+                )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            future = (
+                root
+                / "test/built-ins/Function/prototype/toString/future-feature.js"
+            )
+            outside = (
+                root
+                / "test/built-ins/Function/prototype/call/proxy-future.js"
+            )
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    self.assertIs(
+                        tool.FUNCTION_TOSTRING_FEATURES,
+                        FUNCTION_TOSTRING_FEATURES,
+                    )
+                    self.assertIs(
+                        tool.FUNCTION_TOSTRING_FILES, FUNCTION_TOSTRING_FILES
+                    )
+                    for relative, features in FUNCTION_TOSTRING_FEATURES.items():
+                        path = root / "test" / relative
+                        self.assertTrue(tool.function_tostring_path(path), relative)
+                        self.assertEqual(
+                            tool.function_tostring_features(path), features
+                        )
+                        self.assertFalse(
+                            tool.should_skip({"features": sorted(features)}, path),
+                            relative,
+                        )
+                        self.assertTrue(
+                            tool.should_skip(
+                                {"features": sorted(features | {"decorators"})},
+                                path,
+                            ),
+                            relative,
+                        )
+                    self.assertFalse(tool.function_tostring_path(future))
+                    self.assertEqual(
+                        tool.function_tostring_features(future), frozenset()
+                    )
+                    for rejected in (future, outside, root / "outside.js"):
+                        self.assertFalse(tool.function_tostring_path(rejected))
+                        self.assertEqual(
+                            tool.function_tostring_features(rejected), frozenset()
+                        )
+                        self.assertTrue(
+                            tool.should_skip({"features": ["Proxy"]}, rejected)
+                        )
+                    for invalid in (None, object()):
+                        self.assertFalse(tool.function_tostring_path(invalid))
+                        self.assertEqual(
+                            tool.function_tostring_features(invalid), frozenset()
                         )
                 finally:
                     tool.TEST262 = original_root

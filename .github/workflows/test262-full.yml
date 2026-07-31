@@ -72,6 +72,12 @@ jobs:
           TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
           test262_tooling_test.ModuleCoreAdmissionTests.test_function_bind_admission_is_exact_live_disjoint_and_shared
           -v
+      - name: Verify exact Function.prototype.toString admission
+        working-directory: tools
+        run: >-
+          TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
+          test262_tooling_test.ModuleCoreAdmissionTests.test_function_tostring_admission_is_exact_live_disjoint_and_shared
+          -v
       - name: Verify exact Map constructor admission
         working-directory: tools
         run: >-
@@ -565,6 +571,15 @@ jobs:
           SAFE_DIR="${DIR//\//_}"
           TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py "$DIR" > "test262_${SAFE_DIR}_result.txt" 2>&1
           cat "test262_${SAFE_DIR}_result.txt"
+      - name: Require Function.prototype.toString boundary to pass
+        if: matrix.dir == 'built-ins'
+        run: |
+          TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
+            built-ins/Function/prototype/toString \
+            > function_tostring_result.txt 2>&1
+          cat function_tostring_result.txt
+          grep -q '^RATE=100.0 PASS=80 FAIL=0 SKIP=0 TOTAL=80 RAN=80$' \
+            function_tostring_result.txt
       - name: Publish /${{ matrix.dir }} pass rate
         if: always()
         run: |

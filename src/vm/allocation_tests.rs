@@ -8807,7 +8807,7 @@ fn regexp_matcher_cache_reuses_modes_realms_and_recovers_from_publication_failur
     )
     .expect("first surrogate exec should compile the logical matcher");
     assert_eq!(vm.regexp_matcher_compile_count, 2);
-    assert_eq!(vm.regexp_matcher_cache.len_for_test(), 1);
+    assert_eq!(vm.regexp_matcher_cache.len_for_test(), 2);
     vm.run(
         "matcherCacheUnicode.exec(String.fromCharCode(0xD800)); matcherCacheUnicode.lastIndex = 0;",
     )
