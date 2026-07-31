@@ -291,6 +291,27 @@ Native bodies reuse that state, so non-object fallback does not repeat
 contexts. Ordinary interpreted receiver allocation now uses the collecting VM
 allocator while pinning its resolved prototype across a heap-cap retry.
 
+Interpreted derived constructors retain the active caller Realm immediately
+before installing the callee execution context. ECMAScript conceptually removes
+that callee context before checking the returned value and initialized `this`;
+RuJa performs local call finalization before truncating its context record. The
+snapshot lets only the post-body primitive-return `TypeError` and
+uninitialized-this `ReferenceError` use the resumed caller Realm. Body runtime
+errors continue through frame interpretation in the callee Realm, and an
+already-thrown JavaScript value is never re-materialized. `newTarget` affects
+prototype selection but not this error Realm. The caller context and Realm
+registries keep the snapshot live across collecting error allocation.
+
+```text
+[Decision Log]
+- 목적과 의도: interpreted [[Construct]]의 body 오류 Realm과 postcondition 오류 Realm을 명세 execution-context 경계대로 분리한다.
+- 기존 구현 및 제약 조건: call finalization과 callee context truncation 순서 때문에 공용 error mapper가 postcondition 오류도 callee Realm에 귀속했다.
+- 검토한 주요 대안: 공용 mapper 변경, teardown 순서 재작성, Error record에 Realm 저장, 또는 derived-only caller Realm snapshot.
+- 선택한 방식: derived call만 caller Realm을 저장하고 두 postcondition 오류를 명시적으로 materialize한다. body/setup 오류 경로는 변경하지 않는다.
+- 다른 대안 대신 이 방식을 선택한 이유: 가장 작은 상태로 spec Realm split을 직접 표현하며 native, async, generator, catch/finally teardown을 흔들지 않는다.
+- 장점, 단점 및 영향: Bound/Proxy, foreign Reflect/newTarget, nested Realm, explicit throw identity, body errors와 GC가 동일 contract를 공유한다. 향후 context truncation을 spec 순서로 이동하면 snapshot 중복 여부를 다시 평가해야 한다.
+```
+
 ```text
 [Decision Log]
 - 목적과 의도: Bound and Proxy constructor operations must preserve ECMAScript capability, Realm, argument, trap, and newTarget semantics while remaining stack-safe, fuel-bounded, linear, and GC-safe.

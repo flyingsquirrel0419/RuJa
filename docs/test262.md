@@ -1,5 +1,45 @@
 # test262 conformance
 
+## Derived constructor postcondition Realms
+
+After a derived constructor body completes, ECMAScript removes its execution
+context before validating a primitive return or retrieving an initialized
+`this` binding. The `TypeError` for a primitive return and the `ReferenceError`
+for missing `super()` therefore belong to the execution context that resumes
+construction, not the constructor's Realm.
+
+RuJa finalizes an interpreted call before removing its local execution-context
+record. Derived calls now snapshot the active caller Realm before entering the
+callee and use it only for those two post-body errors. Errors raised inside the
+body still materialize in the callee Realm, and explicit thrown objects retain
+identity. The snapshot follows the actual active context through foreign
+`Reflect.construct`; Bound and transparent Proxy forwarding and a foreign
+`newTarget` do not replace it. Caller Realm roots and the pinned call
+environment preserve the selection across forced GC.
+
+On pinned Test262 `9e61c12835c5e4a3bdba93850427e6742c4f64c4`,
+`derived-return-val-realm.js` and `derived-this-uninitialized-realm.js` move
+from **0 pass / 2 fail** to **2 pass / 0 fail**. The six-file
+`built-ins/Function/internals/Construct` directory moves from **2 pass / 2 fail
+/ 2 skip** to **4 pass / 0 fail / 2 skip**, and the complete 509-file
+`built-ins/Function` directory moves from **419 pass / 41 fail / 49 skip** to
+**421 pass / 39 fail / 49 skip**, exactly **+2 pass / -2 fail**. The remaining
+39 Function failures are the separate `Function.prototype.toString` cluster.
+The supported statements/expressions subset remains **12,765 pass / 0 fail /
+7,674 skip / 20,439 total**. No Test262 admission metadata changed. Local
+rustfmt, warnings-denied Clippy, all-target/all-feature Rust tests, vendor
+tests, wasm32 check, and Test262 tooling **163/163** pass.
+
+```text
+[Decision Log]
+- 목적과 의도: derived constructor body 이후 [[Construct]]가 새로 만드는 오류를 복원된 caller execution Realm에 귀속하면서 body 오류의 callee Realm을 보존한다.
+- 기존 구현 및 제약 조건: RuJa는 derived postcondition을 callee context record 제거 전에 수행하고 공용 mapper가 모든 오류를 최상위 interpreted context Realm에서 materialize했다.
+- 검토한 주요 대안: 모든 interpreted 오류를 caller Realm으로 이동, context/frame pop 순서 전면 재구성, Error에 deferred Realm metadata 추가, 또는 derived call에서 caller Realm을 저장해 두 postcondition에만 사용.
+- 선택한 방식: callee context 진입 직전 active caller Realm을 derived call에 한해 snapshot하고 primitive-return TypeError와 uninitialized-this ReferenceError만 그 Realm에서 즉시 materialize한다.
+- 다른 대안 대신 이 방식을 선택한 이유: 전역 변경은 body runtime 오류 Realm을 깨고 pop 순서 재구성은 frame/async/generator 경계를 넓힌다. deferred metadata는 두 오류에 비해 상태와 GC 표면이 과도하다.
+- 장점, 단점 및 영향: direct, three-Realm, foreign Reflect, Bound/Proxy, foreign newTarget, explicit throw, body error, forced GC가 명세 Realm 분리를 고정한다. RuJa의 local finalization 순서가 명세의 conceptual context removal과 다르므로 향후 call teardown 변경 시 snapshot과 이 회귀를 함께 검토해야 한다.
+```
+
 ## Configurable Function metadata
 
 Function `name` and `length` are ordinary configurable own data properties.

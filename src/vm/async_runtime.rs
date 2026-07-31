@@ -1668,6 +1668,12 @@ impl Vm {
                 lexical_new_target,
                 home_object,
             }) => {
+                // The spec removes the function execution context before
+                // derived-constructor postconditions run. RuJa finalizes the
+                // call before truncating that context below, so retain the
+                // caller Realm explicitly for errors created by those checks.
+                let constructor_postcondition_realm =
+                    func.is_derived.then(|| self.current_realm_global_env());
                 let context_depth = self.execution_contexts.len();
                 self.execution_contexts.push(ExecutionContext {
                     realm_env: closure,
@@ -1990,6 +1996,8 @@ impl Vm {
                         // constructor returned without calling super, throw a
                         // ReferenceError per spec.
                         if func.is_derived {
+                            let constructor_postcondition_realm = constructor_postcondition_realm
+                                .expect("derived constructor must retain its resumed Realm");
                             if let Ok(ref rv) = result {
                                 // Per spec [[Construct]] step 13: if a derived
                                 // constructor returns a value, it must be an
@@ -1997,9 +2005,12 @@ impl Vm {
                                 // (number, string, boolean, null) is a TypeError.
                                 let is_object = matches!(rv, Value::Object(_) | Value::Undefined);
                                 if !is_object {
-                                    return Err(Error::type_err(
-                                    "Derived constructor may only return an object or undefined",
-                                ));
+                                    return Err(self.materialize_error_in_realm(
+                                        Error::type_err(
+                                            "Derived constructor may only return an object or undefined",
+                                        ),
+                                        constructor_postcondition_realm,
+                                    ));
                                 }
                                 if !matches!(rv, Value::Object(_)) {
                                     let bound_this = self.heap.with_obj(call_env.0, |obj| {
@@ -2017,11 +2028,14 @@ impl Vm {
                                         }
                                     });
                                     result = match bound_this {
-                                    Some(this_val) => Ok(this_val),
-                                    None => Err(Error::reference(
-                                        "must call super constructor before accessing 'this' or returning"
-                                    )),
-                                };
+                                        Some(this_val) => Ok(this_val),
+                                        None => Err(self.materialize_error_in_realm(
+                                            Error::reference(
+                                                "must call super constructor before accessing 'this' or returning",
+                                            ),
+                                            constructor_postcondition_realm,
+                                        )),
+                                    };
                                 }
                             }
                         }

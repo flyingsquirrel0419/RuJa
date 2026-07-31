@@ -4,6 +4,19 @@
 
 ### Changed
 
+- Derived-constructor postcondition errors now use the Realm of the execution
+  context that resumes construction. A foreign constructor that returns a
+  primitive or leaves `this` uninitialized therefore creates its `TypeError`
+  or `ReferenceError` in the caller Realm, while errors and explicit throws
+  from inside the body retain callee-Realm provenance and identity. Bound and
+  transparent Proxy forwarding, foreign `newTarget`, borrowed foreign
+  `Reflect.construct`, and forced GC preserve that split. On pinned Test262,
+  the two exact cross-Realm Construct files move from **0/2** to **2/0**,
+  `Function/internals/Construct` moves from **2/2/2** to **4/0/2**, and full
+  `built-ins/Function` moves from **419/41/49** to **421/39/49**, exactly
+  **+2 pass / -2 fail**. The supported statements/expressions subset remains
+  **12,765/0/7,674**; no admission metadata changed.
+
 - Function `name` and `length` now remain deleted after their configurable own
   properties are removed. Property reads no longer reconstruct those values
   from internal function metadata, so inherited accessors and later

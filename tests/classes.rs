@@ -1903,6 +1903,115 @@ fn interpreted_runtime_errors_use_the_callee_realm() {
 }
 
 #[test]
+fn derived_constructor_postcondition_errors_use_the_resumed_caller_realm() {
+    assert_eq!(
+        run(r#"
+            var constructorRealm = $262.createRealm().global;
+            var callerRealm = $262.createRealm().global;
+            var PrimitiveReturn = constructorRealm.eval(
+              "(class extends Object { constructor() { return null; } })"
+            );
+            var MissingThis = constructorRealm.eval(
+              "(class extends Object { constructor() {} })"
+            );
+            var BodyError = constructorRealm.eval(
+              "(class extends Object { constructor() { null.value; } })"
+            );
+            constructorRealm.marker = {};
+            var ExplicitThrow = constructorRealm.eval(
+              "(class extends Object { constructor() { throw marker; } })"
+            );
+
+            function directError(Constructor) {
+              try { new Constructor(); }
+              catch (error) { return error; }
+            }
+
+            var directType = directError(PrimitiveReturn);
+            var directReference = directError(MissingThis);
+            var bodyType = directError(BodyError);
+            var explicitThrow = directError(ExplicitThrow);
+            var boundType = directError(PrimitiveReturn.bind(null));
+            var proxyReference = directError(new Proxy(MissingThis, {}));
+            var foreignNewTargetType;
+            try { Reflect.construct(PrimitiveReturn, [], callerRealm.Function); }
+            catch (error) { foreignNewTargetType = error; }
+            var reflectType;
+            try { callerRealm.Reflect.construct(PrimitiveReturn, []); }
+            catch (error) { reflectType = error; }
+
+            callerRealm.PrimitiveReturn = PrimitiveReturn;
+            callerRealm.MissingThis = MissingThis;
+            callerRealm.eval(`
+              try { new PrimitiveReturn(); }
+              catch (error) { globalThis.primitiveError = error; }
+              try { new MissingThis(); }
+              catch (error) { globalThis.referenceError = error; }
+            `);
+
+            [
+              directType instanceof TypeError,
+              !(directType instanceof constructorRealm.TypeError),
+              directReference instanceof ReferenceError,
+              !(directReference instanceof constructorRealm.ReferenceError),
+              bodyType instanceof constructorRealm.TypeError,
+              !(bodyType instanceof TypeError),
+              explicitThrow === constructorRealm.marker,
+              boundType instanceof TypeError,
+              !(boundType instanceof constructorRealm.TypeError),
+              proxyReference instanceof ReferenceError,
+              !(proxyReference instanceof constructorRealm.ReferenceError),
+              foreignNewTargetType instanceof TypeError,
+              !(foreignNewTargetType instanceof constructorRealm.TypeError),
+              reflectType instanceof callerRealm.TypeError,
+              !(reflectType instanceof TypeError),
+              callerRealm.primitiveError instanceof callerRealm.TypeError,
+              !(callerRealm.primitiveError instanceof constructorRealm.TypeError),
+              callerRealm.referenceError instanceof callerRealm.ReferenceError,
+              !(callerRealm.referenceError instanceof constructorRealm.ReferenceError)
+            ].every(Boolean);
+        "#),
+        Value::Bool(true)
+    );
+
+    let mut vm = Vm::new().expect("failed to initialize GC Realm VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC hook");
+    assert_eq!(
+        vm.run(
+            r#"
+            var other = $262.createRealm().global;
+            var PrimitiveReturn = other.eval(
+              "(class extends Object { constructor(collect) { collect(); return 1; } })"
+            );
+            var MissingThis = other.eval(
+              "(class extends Object { constructor(collect) { collect(); } })"
+            );
+            function usesMainRealm(Constructor, ExpectedError) {
+              try { new Constructor(forceGc); return false; }
+              catch (error) {
+                return error instanceof ExpectedError &&
+                  !(error instanceof other.TypeError) &&
+                  !(error instanceof other.ReferenceError);
+              }
+            }
+            usesMainRealm(PrimitiveReturn, TypeError) &&
+              usesMainRealm(MissingThis, ReferenceError);
+        "#
+        )
+        .expect("postcondition errors should survive forced GC"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn private_names_are_unique_per_class_evaluation() {
     assert_eq!(
         run(r#"
