@@ -18,6 +18,22 @@ pub fn new_env(
         vars: Mutex::new(IndexMap::new()),
         parent: Mutex::new(parent),
         is_function_scope,
+        annex_b_simple_catch_name: None,
+        with_object: Mutex::new(None),
+    });
+    Ok(GcIdx(heap.allocate(env)?))
+}
+
+pub fn new_catch_env(
+    heap: &Heap,
+    parent: GcIdx,
+    simple_catch_name: Option<Arc<str>>,
+) -> Result<GcIdx, crate::gc::HeapLimitExceeded> {
+    let env = HeapObj::Environment(crate::value::EnvironmentData {
+        vars: Mutex::new(IndexMap::new()),
+        parent: Mutex::new(Some(parent)),
+        is_function_scope: false,
+        annex_b_simple_catch_name: simple_catch_name,
         with_object: Mutex::new(None),
     });
     Ok(GcIdx(heap.allocate(env)?))
@@ -175,6 +191,7 @@ pub fn new_with_env(
         vars: Mutex::new(IndexMap::new()),
         parent: Mutex::new(Some(parent)),
         is_function_scope: false,
+        annex_b_simple_catch_name: None,
         with_object: Mutex::new(Some(object)),
     });
     Ok(GcIdx(heap.allocate(env)?))
@@ -204,6 +221,41 @@ pub fn has_lexical_declaration_between(
         }
         if e_idx == stop_env {
             return false;
+        }
+        cur = parent;
+    }
+    false
+}
+
+/// Annex B eval admission scans declarative environments before the variable
+/// environment, ignoring Object Environment Records and simple catch records.
+pub fn has_annex_b_blocking_binding_before(
+    heap: &Heap,
+    env: GcIdx,
+    stop_env: GcIdx,
+    name: &str,
+) -> bool {
+    let mut cur = Some(env);
+    while let Some(env_idx) = cur {
+        if env_idx == stop_env {
+            return false;
+        }
+        let (found, parent) = heap.with_obj(env_idx.0, |object| {
+            let HeapObj::Environment(environment) = object else {
+                return (false, None);
+            };
+            let is_object_environment = environment.with_object.lock().is_some();
+            let is_ignored_simple_catch = environment
+                .annex_b_simple_catch_name
+                .as_deref()
+                .is_some_and(|catch_name| catch_name == name);
+            let found = !is_object_environment
+                && !is_ignored_simple_catch
+                && environment.vars.lock().contains_key(name);
+            (found, *environment.parent.lock())
+        });
+        if found {
+            return true;
         }
         cur = parent;
     }
@@ -466,6 +518,21 @@ pub fn declare_typed(heap: &Heap, env: GcIdx, name: &str, value: Value, kind: Bi
 }
 pub fn get(heap: &Heap, env: GcIdx, name: &str) -> Option<Value> {
     get_checked(heap, env, name).ok().flatten()
+}
+
+pub fn get_own(heap: &Heap, env: GcIdx, name: &str) -> Option<Value> {
+    heap.with_obj(env.0, |object| {
+        let HeapObj::Environment(environment) = object else {
+            return None;
+        };
+        let vars = environment.vars.lock();
+        let binding = vars.get(name)?;
+        if !binding.initialized.load(Ordering::Relaxed) {
+            return None;
+        }
+        let value = binding.value.lock().clone();
+        Some(value)
+    })
 }
 
 pub fn set(heap: &Heap, env: GcIdx, name: &str, value: Value) -> bool {

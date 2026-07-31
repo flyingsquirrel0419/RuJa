@@ -110,3 +110,55 @@ fn strict_global_block_function_declaration_stays_block_scoped() {
         Value::Bool(true)
     );
 }
+
+#[test]
+fn annex_b_global_mirror_is_suppressed_when_global_var_cannot_be_declared() {
+    assert_eq!(
+        run(r#"
+            Object.preventExtensions(this);
+            $262.evalScript('{ function rujaBlockedAnnexBGlobal() {} }');
+            typeof rujaBlockedAnnexBGlobal;
+        "#),
+        Value::String(Arc::from("undefined"))
+    );
+}
+
+#[test]
+fn annex_b_global_mirror_uses_realm_global_set_semantics() {
+    assert_eq!(
+        run(r#"
+            var setterValue = "unset";
+            Object.defineProperty(this, "rujaAnnexAccessor", {
+              configurable: true,
+              get: function() { return 17; },
+              set: function(value) { setterValue = typeof value; }
+            });
+            $262.evalScript('{ function rujaAnnexAccessor() {} }');
+            setterValue + "," + rujaAnnexAccessor;
+        "#),
+        Value::String(Arc::from("function,17"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            other.eval('{ function rujaForeignAnnex() {} } globalThis.same = rujaForeignAnnex === globalThis.rujaForeignAnnex;');
+            other.same;
+        "#),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn annex_b_global_var_creation_preserves_source_order() {
+    assert_eq!(
+        run(r#"
+            { function rujaAnnexOrderFirst() {} }
+            { function rujaAnnexOrderSecond() {} }
+            Object.keys(this).filter(function(name) {
+              return name === "rujaAnnexOrderFirst" || name === "rujaAnnexOrderSecond";
+            }).join(",");
+        "#),
+        Value::String(Arc::from("rujaAnnexOrderFirst,rujaAnnexOrderSecond"))
+    );
+}

@@ -1261,6 +1261,9 @@ pub struct EnvironmentData {
     pub vars: Mutex<IndexMap<Arc<str>, Binding>>,
     pub parent: Mutex<Option<GcIdx>>,
     pub is_function_scope: bool,
+    /// Name whose binding may be ignored by the Annex B simple-catch
+    /// exception. Destructuring catch environments use `None`.
+    pub annex_b_simple_catch_name: Option<Arc<str>>,
     /// `with` statement object environment record: when `Some(obj)`, name
     /// lookups fall back to `obj`'s properties before reaching the parent.
     pub with_object: Mutex<Option<Value>>,

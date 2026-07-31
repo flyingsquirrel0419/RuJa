@@ -351,6 +351,9 @@ pub enum Op {
 
     // Environment
     PushScope,
+    /// Push the declarative environment for a catch parameter. Annex B eval
+    /// admission distinguishes this record from ordinary lexical scopes.
+    PushCatchScope(Option<usize>), // optional simple catch name index
     /// Push a child environment record that is itself a function-scope root.
     /// Used for sloppy functions with parameter expressions: parameter
     /// initializers run in the outer function environment, then body `var`
@@ -391,6 +394,9 @@ pub enum Op {
     /// without touching any `with`-object properties. Used at function/block
     /// entry to create the hoisted binding before the initializer runs.
     HoistVar(usize), // name index
+    /// Copy the current block's own lexical function binding into the
+    /// VariableEnvironment when its Annex B declaration is evaluated.
+    AnnexBMirror(usize), // name index
     DeclareLet(usize),
     DeclareConst(usize),
     DeclareEnv(usize),         // declare name in env with value from stack

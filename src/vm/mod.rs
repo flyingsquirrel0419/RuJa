@@ -1487,8 +1487,10 @@ impl Vm {
         } else {
             crate::parser::Parser::parse(src)?
         };
-        self.check_global_declaration_instantiation(&program, self.global, &self.global_this)?;
+        let annex_b_plan =
+            self.check_global_declaration_instantiation(&program, self.global, &self.global_this)?;
         let mut compiler = crate::compiler::Compiler::new();
+        compiler.set_annex_b_plan(annex_b_plan);
         let (chunk, funcs) = compiler.compile_program(&program)?;
         let chunk = if let Some(source_path) = source_path {
             self.append_compiled_functions_with_source(chunk, funcs, source_path)
@@ -1726,8 +1728,10 @@ impl Vm {
     /// declarations use non-configurable global bindings.
     pub(crate) fn eval_script_global(&mut self, src: &str) -> error::Result<Value> {
         let program = crate::parser::Parser::parse_internal(src)?;
-        self.check_global_declaration_instantiation(&program, self.global, &self.global_this)?;
+        let annex_b_plan =
+            self.check_global_declaration_instantiation(&program, self.global, &self.global_this)?;
         let mut compiler = crate::compiler::Compiler::new();
+        compiler.set_annex_b_plan(annex_b_plan);
         let (chunk, funcs) = compiler.compile_program(&program)?;
         let chunk = self.append_compiled_functions_with_active_source(chunk, funcs);
         crate::environment::declare(
@@ -1762,14 +1766,18 @@ impl Vm {
     ) -> error::Result<Value> {
         let program = crate::parser::Parser::parse_internal(src)?;
         let is_strict = program.is_strict;
-        let (_, var_names, _) = crate::compiler::Compiler::collect_global_declaration_names(
+        let (_, mut var_names, _) = crate::compiler::Compiler::collect_global_declaration_names(
             &program.body,
             program.is_strict,
         );
-        if !is_strict && global_env == self.global {
-            self.check_eval_global_declaration_instantiation(&program, global_env, &global_this)?;
-        }
+        let annex_b_plan = if is_strict {
+            crate::compiler::AnnexBDeclarationPlan::default()
+        } else {
+            self.check_eval_global_declaration_instantiation(&program, global_env, &global_this)?
+        };
+        var_names.extend(annex_b_plan.names());
         let mut compiler = crate::compiler::Compiler::new();
+        compiler.set_annex_b_plan(annex_b_plan);
         let (chunk, funcs) = compiler.compile_program(&program)?;
         let chunk = self.append_compiled_functions_with_active_source(chunk, funcs);
         let eval_env = if global_env == self.global {
@@ -1789,7 +1797,7 @@ impl Vm {
             eval_env,
             global_this.clone(),
             !is_strict && global_env == self.global,
-            false,
+            !is_strict && global_env != self.global,
             Value::Undefined,
         );
         if !is_strict && global_env != self.global {
@@ -1810,7 +1818,7 @@ impl Vm {
         program: &crate::ast::Program,
         global_env: GcIdx,
         global_this: &Value,
-    ) -> error::Result<()> {
+    ) -> error::Result<crate::compiler::AnnexBDeclarationPlan> {
         let (lexical_names, var_names, function_names) =
             crate::compiler::Compiler::collect_global_declaration_names(
                 &program.body,
@@ -1864,7 +1872,13 @@ impl Vm {
                 )));
             }
         }
-        Ok(())
+        let mut annex_b_plan =
+            crate::compiler::AnnexBDeclarationPlan::for_script(&program.body, program.is_strict);
+        annex_b_plan.retain_names(|name| {
+            !self.has_global_lexical_declaration(global_env, name)
+                && self.can_declare_global_var(global_this, name)
+        });
+        Ok(annex_b_plan)
     }
 
     fn check_eval_global_declaration_instantiation(
@@ -1872,7 +1886,7 @@ impl Vm {
         program: &crate::ast::Program,
         global_env: GcIdx,
         global_this: &Value,
-    ) -> error::Result<()> {
+    ) -> error::Result<crate::compiler::AnnexBDeclarationPlan> {
         let (_, var_names, function_names) =
             crate::compiler::Compiler::collect_global_declaration_names(
                 &program.body,
@@ -1915,7 +1929,13 @@ impl Vm {
                 )));
             }
         }
-        Ok(())
+        let mut annex_b_plan =
+            crate::compiler::AnnexBDeclarationPlan::for_script(&program.body, program.is_strict);
+        annex_b_plan.retain_names(|name| {
+            !self.has_global_lexical_declaration(global_env, name)
+                && self.can_declare_global_var(global_this, name)
+        });
+        Ok(annex_b_plan)
     }
 
     /// Evaluate a source string as a *direct* eval: run it in a child of the
@@ -1945,9 +1965,6 @@ impl Vm {
                 &program,
             )?;
         }
-        let mut compiler = crate::compiler::Compiler::new();
-        let (chunk, funcs) = compiler.compile_program(&program)?;
-        let chunk = self.append_compiled_functions_with_active_source(chunk, funcs);
         // Per spec, direct eval runs in a dedicated lexical environment whose
         // parent is the caller's environment. `let`/`const`/`class` declared in
         // eval stay local to that environment (they do NOT leak to the caller),
@@ -1968,8 +1985,22 @@ impl Vm {
             program.is_strict,
         );
         let var_env = crate::environment::function_scope_root(&self.heap, ctx.caller_env);
-        if !is_strict && var_env == self.global {
-            self.check_eval_global_declaration_instantiation(&program, var_env, &self.global_this)?;
+        let mut annex_b_plan = if is_strict {
+            crate::compiler::AnnexBDeclarationPlan::default()
+        } else if var_env == self.global {
+            self.check_eval_global_declaration_instantiation(&program, var_env, &self.global_this)?
+        } else {
+            crate::compiler::AnnexBDeclarationPlan::for_script(&program.body, false)
+        };
+        if !is_strict {
+            annex_b_plan.retain_names(|name| {
+                !crate::environment::has_annex_b_blocking_binding_before(
+                    &self.heap,
+                    ctx.caller_env,
+                    var_env,
+                    name,
+                )
+            });
         }
         if !is_strict {
             for name in &var_names {
@@ -2017,6 +2048,10 @@ impl Vm {
                 }
             }
         }
+        let mut compiler = crate::compiler::Compiler::new();
+        compiler.set_annex_b_plan(annex_b_plan);
+        let (chunk, funcs) = compiler.compile_program(&program)?;
+        let chunk = self.append_compiled_functions_with_active_source(chunk, funcs);
         let eval_env = crate::environment::new_env(&self.heap, Some(ctx.caller_env), is_strict)?;
         let result = self.execute_chunk_scoped(
             chunk,

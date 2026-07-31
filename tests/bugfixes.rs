@@ -1235,6 +1235,62 @@ fn sloppy_block_function_updates_resolved_function_binding() {
 }
 
 #[test]
+fn annex_b_block_function_keeps_lexical_and_variable_bindings_separate() {
+    assert_eq!(
+        run(r#"
+            (function() {
+              var before = typeof f;
+              if (false) { function f() { return "skipped"; } }
+              var skipped = typeof f;
+              {
+                function f() { return "mirrored"; }
+                var mirrored = f;
+                f = 123;
+                var inner = f;
+              }
+              return [before, skipped, mirrored(), inner, f()].join(",");
+            }());
+        "#),
+        Value::String(Arc::from("undefined,undefined,mirrored,123,mirrored"))
+    );
+
+    assert_eq!(
+        run(r#"
+            (function(f) { { function f() {} } return f; }(123)) === 123 &&
+            (function() {
+              var original = arguments;
+              { function arguments() {} }
+              return arguments === original;
+            }()) &&
+            (function() {
+              let f = 7;
+              { function f() { return 8; } }
+              return f;
+            }()) === 7 &&
+            (function() {
+              { function* g() {} async function a() {} }
+              return typeof g + "," + typeof a;
+            }()) === "undefined,undefined";
+        "#),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn annex_b_labelled_function_keeps_its_variable_hoist() {
+    assert_eq!(
+        run(r#"
+            (function() {
+              var before = typeof f;
+              outer: inner: function f() { return 7; }
+              return before + "," + f();
+            }());
+        "#),
+        Value::String(Arc::from("undefined,7"))
+    );
+}
+
+#[test]
 fn member_call_checks_callee_before_arguments() {
     assert_eq!(
         run("var called = false;\

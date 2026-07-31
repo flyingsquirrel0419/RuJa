@@ -423,6 +423,80 @@ impl Vm {
                         );
                     }
                 }
+                Op::AnnexBMirror(name_idx) => {
+                    let name = {
+                        let frame = self.current_frame()?;
+                        match frame.chunk.constants.get(name_idx) {
+                            Some(Value::String(name)) => name.clone(),
+                            _ => Arc::from(""),
+                        }
+                    };
+                    let block_env = self
+                        .frames
+                        .last()
+                        .map(|frame| frame.env)
+                        .unwrap_or(self.global);
+                    let value = crate::environment::get_own(&self.heap, block_env, &name)
+                        .ok_or_else(|| {
+                            Error::internal(format!(
+                                "missing Annex B block function binding '{}'",
+                                name
+                            ))
+                        })?;
+                    let variable_env =
+                        crate::environment::function_scope_root(&self.heap, block_env);
+                    let global_env = crate::environment::global_env_root(&self.heap, variable_env);
+                    let is_global = variable_env == global_env;
+                    let binding_exists =
+                        crate::environment::get_own(&self.heap, variable_env, &name).is_some();
+                    if !binding_exists {
+                        let eval_binding = self.frames.last().is_some_and(|frame| {
+                            frame.eval_global_bindings || frame.eval_deletable_bindings
+                        });
+                        if !eval_binding {
+                            return Err(Error::internal(format!(
+                                "missing Annex B variable binding '{}'",
+                                name
+                            )));
+                        }
+                        crate::environment::create_mutable_binding_exact(
+                            &self.heap,
+                            variable_env,
+                            &name,
+                            Value::Undefined,
+                        );
+                    }
+                    if is_global {
+                        // Global Environment Records route SetMutableBinding
+                        // through the Realm global object's [[Set]]. Reuse the
+                        // Reference path so accessors and descriptor failures
+                        // remain observable in both main and foreign Realms.
+                        let reference = Value::Reference(Box::new(crate::value::ReferenceRecord {
+                            base: crate::value::ReferenceBase::Environment(variable_env),
+                            name: crate::value::ReferencedName::Property(
+                                crate::value::PropertyKey::from(name.as_ref()),
+                            ),
+                            strict: false,
+                            this_value: None,
+                        }));
+                        self.put_value(&reference, value)?;
+                    } else {
+                        match crate::environment::set_checked_exact(
+                            &self.heap,
+                            variable_env,
+                            &name,
+                            value,
+                        ) {
+                            crate::environment::SetOutcome::Set => {}
+                            _ => {
+                                return Err(Error::type_err(format!(
+                                    "Cannot update Annex B variable binding '{}'",
+                                    name
+                                )));
+                            }
+                        }
+                    }
+                }
                 Op::DeclareVar(name_idx) => {
                     let name = {
                         let frame = self.current_frame()?;
@@ -1136,6 +1210,23 @@ impl Vm {
                 Op::PushScope => {
                     let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
                     let new_env = env::new_env(&self.heap, Some(cur_env), false)?;
+                    self.current_frame_mut()?.env = new_env;
+                }
+                Op::PushCatchScope(simple_name_idx) => {
+                    let cur_env = self
+                        .frames
+                        .last()
+                        .map(|frame| frame.env)
+                        .unwrap_or(self.global);
+                    let simple_catch_name = simple_name_idx.and_then(|name_idx| {
+                        self.frames.last().and_then(|frame| {
+                            match frame.chunk.constants.get(name_idx) {
+                                Some(Value::String(name)) => Some(name.clone()),
+                                _ => None,
+                            }
+                        })
+                    });
+                    let new_env = env::new_catch_env(&self.heap, cur_env, simple_catch_name)?;
                     self.current_frame_mut()?.env = new_env;
                 }
                 Op::PushFunctionScope => {

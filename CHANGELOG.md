@@ -4,6 +4,19 @@
 
 ### Changed
 
+- Implemented Annex B.3.2 block-level function outer-variable semantics for
+  Script, FunctionBody, direct eval, indirect eval, and created Realms. Block
+  and CaseBlock functions now remain lexical while an independently admitted
+  `var` binding is hoisted and updated only when its declaration is evaluated.
+  Admission rejects parameter, `arguments`, lexical, destructuring-catch, and
+  restricted/non-extensible-global conflicts; simple catch and object
+  environments retain their legacy exceptions. Global updates use the shared
+  Reference/PutValue path, preserving accessors, non-writable descriptors, and
+  foreign-Realm global identity. Pinned Test262 moves the exact 296-file
+  block/switch cohort from **161/135** to **296/0** and full Annex B from
+  **203/809/74** to **338/674/74**, while the supported subset remains
+  **12,765 pass / 0 fail / 7,674 skip / 20,439 total**.
+
 - Implemented the Annex B host exception for duplicate lexical names in sloppy
   Blocks and CaseBlocks. Duplicate names are accepted only when every binding
   is an ordinary `FunctionDeclaration`; strict code and generator, async,

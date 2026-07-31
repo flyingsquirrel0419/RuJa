@@ -1,5 +1,33 @@
 # test262 conformance
 
+## Annex B block-function outer mirrors
+
+Annex B.3.2 block and switch functions now use a lexical block binding plus a
+separately admitted outer variable binding. The outer binding is hoisted but
+receives the function object only when that declaration is evaluated. The
+same plan is filtered by FunctionDeclarationInstantiation,
+GlobalDeclarationInstantiation, and EvalDeclarationInstantiation constraints,
+including parameters, `arguments`, lexical environments, simple versus
+destructuring catch parameters, and global declaration capability.
+
+On pinned Test262 `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the exact 296
+files under Annex B function/global/eval code whose names contain
+`block-decl`, `switch-case`, or `switch-dflt` move from **161 pass / 135 fail**
+to **296 pass / 0 fail**. Complete Annex B moves from **203 pass / 809 fail /
+74 skip** to **338 pass / 674 fail / 74 skip**. The supported statements and
+expressions subset remains **12,765 pass / 0 fail / 7,674 skip / 20,439
+total**, proving no admission change or supported-language regression.
+
+```text
+[Decision Log]
+- 목적과 의도: Test262 admission을 넓히지 않고 Annex B.3.2의 실제 Function, Global, Eval semantics로 135개 실패를 제거한다.
+- 기존 구현 및 제약 조건: Block function의 lexical binding과 outer var binding이 하나로 합쳐져 declaration timing과 환경 충돌 검사를 통과하지 못했다. Test262 pin과 dual strict/sloppy 실행 계약은 고정돼 있다.
+- 검토한 주요 대안: 실패 파일만 admission에서 제외하기, 파일명 기반 특례를 넣기, sloppy block function을 계속 var-hoist하기, 또는 declaration planning과 runtime mirror를 구현하기.
+- 선택한 방식: parser 결과에서 site별 후보를 계산하고 VM declaration instantiation에서 환경별로 필터링한 뒤, 평가된 declaration만 lexical 함수 값을 outer binding으로 복사한다.
+- 다른 대안 대신 이 방식을 선택한 이유: admission 변경은 결함을 숨기고, 이름/파일 특례는 Global/Eval/Realm 경계를 재현하지 못한다. 명세 단계와 같은 분리는 exact cohort와 broader corpus를 동시에 설명한다.
+- 장점, 단점 및 영향: exact cohort가 296/0이 되고 full Annex B가 정확히 +135/-135 이동하며 supported subset은 bytecode/runtime 변화에도 0 fail을 유지한다. 남은 Annex B 실패의 큰 군집인 bare if FunctionDeclaration B.3.3은 다음 parser/runtime 단위다.
+```
+
 ## Static import attributes and typed modules
 
 The frozen manifest `tools/test262_static_import_attributes_admission.txt`

@@ -564,6 +564,70 @@ fn eval_can_define_and_call_function() {
 }
 
 #[test]
+fn annex_b_eval_mirror_uses_eval_declaration_instantiation_rules() {
+    assert_eq!(
+        run(r#"
+            (function(f) {
+              eval('var before = f; { function f() { return 2; } } var after = f;');
+              return before + "," + after();
+            }(1));
+        "#),
+        Value::String(Arc::from("1,2"))
+    );
+
+    assert_eq!(
+        run(r#"
+            (function() {
+              var f = "outer", inside;
+              { let f = "lexical"; eval('{ function f() {} }'); inside = f; }
+              return inside + "," + f;
+            }());
+        "#),
+        Value::String(Arc::from("lexical,outer"))
+    );
+
+    assert_eq!(
+        run(r#"
+            (function() {
+              var f = "outer", caught;
+              try { throw 1; } catch (f) {
+                eval('{ function f() { return 3; } }');
+                caught = f;
+              }
+              return caught + "," + f();
+            }());
+        "#),
+        Value::String(Arc::from("1,3"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var f = "global";
+            {
+              let f = "lexical";
+              eval('{ function f() {} }');
+            }
+            f;
+        "#),
+        Value::String(Arc::from("global"))
+    );
+
+    assert_eq!(
+        run(r#"
+            (function() {
+              var f = "outer", caught;
+              try { throw { f: 1 }; } catch ({ f }) {
+                eval('{ function f() {} }');
+                caught = f;
+              }
+              return caught + "," + f;
+            }());
+        "#),
+        Value::String(Arc::from("1,outer"))
+    );
+}
+
+#[test]
 fn eval_class_declaration_completion_is_empty() {
     assert_eq!(run(r#"eval("class C {}")"#), Value::Undefined);
     assert_eq!(run(r#"eval("1; class C {}")"#), Value::Number(1.0));

@@ -4,7 +4,8 @@ use crate::ast::*;
 use crate::bytecode::{Chunk, Op};
 use crate::error;
 use crate::value::Value;
-use std::collections::HashMap;
+use indexmap::IndexMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 #[allow(dead_code)]
@@ -52,6 +53,10 @@ pub struct Compiler {
     /// Module top-level bindings live in a declarative environment rather
     /// than on the Realm's global object.
     top_level_declarative: bool,
+    /// Site-specific Annex B block functions admitted for the current code
+    /// unit. Actual var declarations remain tracked separately.
+    annex_b_plan: AnnexBDeclarationPlan,
+    annex_b_plan_configured: bool,
 }
 
 #[allow(dead_code)]
@@ -152,6 +157,325 @@ impl Default for Compiler {
 type LoopFrame = (usize, Vec<usize>, Vec<usize>, Option<Arc<str>>, bool, usize);
 pub type GlobalDeclarationNames = (Vec<Arc<str>>, Vec<Arc<str>>, Vec<Arc<str>>);
 
+#[derive(Clone, Default)]
+pub(crate) struct AnnexBDeclarationPlan {
+    sites: IndexMap<usize, Arc<str>>,
+}
+
+impl AnnexBDeclarationPlan {
+    pub(crate) fn for_script(body: &[Stmt], is_strict: bool) -> Self {
+        if is_strict {
+            return Self::default();
+        }
+        let blocked = top_level_lexical_names(body);
+        let mut plan = Self::default();
+        collect_annex_b_candidates_in_code(body, &blocked, &mut plan);
+        plan
+    }
+
+    fn for_function(function: &FunctionExpr) -> Self {
+        if function.is_strict {
+            return Self::default();
+        }
+        let parameter_prelude_len = Compiler::parameter_prelude_len(function);
+        let body = &function.body[parameter_prelude_len..];
+        let mut blocked = top_level_lexical_names(body);
+        let mut parameter_names: HashSet<Arc<str>> = function.params.iter().cloned().collect();
+        if let Some(rest) = &function.rest_param {
+            parameter_names.insert(rest.clone());
+        }
+        for pattern in &function.param_decls {
+            let mut names = Vec::new();
+            Compiler::pattern_names(pattern, &mut names);
+            parameter_names.extend(names);
+        }
+        blocked.extend(parameter_names.iter().cloned());
+
+        let direct_function_names: HashSet<Arc<str>> = body
+            .iter()
+            .filter_map(|statement| match &statement.node {
+                StmtNode::FunctionDecl(declaration) => declaration.name.clone(),
+                _ => None,
+            })
+            .collect();
+        let arguments_object_needed = !function.is_arrow
+            && !parameter_names.contains("arguments")
+            && (Compiler::has_parameter_expressions(function)
+                || (!direct_function_names.contains("arguments")
+                    && !blocked.contains("arguments")));
+        if arguments_object_needed {
+            blocked.insert(Arc::from("arguments"));
+        }
+
+        let mut plan = Self::default();
+        collect_annex_b_candidates_in_code(body, &blocked, &mut plan);
+        plan
+    }
+
+    pub(crate) fn names(&self) -> Vec<Arc<str>> {
+        let mut names = Vec::new();
+        for name in self.sites.values() {
+            if !names.iter().any(|existing| existing == name) {
+                names.push(name.clone());
+            }
+        }
+        names
+    }
+
+    pub(crate) fn retain_names(&mut self, mut predicate: impl FnMut(&Arc<str>) -> bool) {
+        self.sites.retain(|_, name| predicate(name));
+    }
+
+    fn contains(&self, statement: &Stmt) -> bool {
+        self.sites.contains_key(&statement_key(statement))
+    }
+}
+
+fn statement_key(statement: &Stmt) -> usize {
+    // The plan is built and consumed synchronously against the same parsed AST;
+    // compiler-generated statements never enter it. Keeping site identity here
+    // avoids conflating same-named declarations at different evaluation sites.
+    statement as *const Stmt as usize
+}
+
+fn top_level_lexical_names(body: &[Stmt]) -> HashSet<Arc<str>> {
+    let mut names = HashSet::new();
+    for statement in body {
+        match &statement.node {
+            StmtNode::VarDecl { kind, decls } if *kind != VarKind::Var => {
+                names.extend(decls.iter().map(|(name, _)| name.clone()));
+            }
+            StmtNode::Destructure { kind, pattern, .. } if *kind != VarKind::Var => {
+                let mut pattern_names = Vec::new();
+                Compiler::pattern_names(pattern, &mut pattern_names);
+                names.extend(pattern_names);
+            }
+            StmtNode::ExprStmt(Expr::Class(class)) if class.is_declaration => {
+                if let Some(name) = &class.name {
+                    names.insert(name.clone());
+                }
+            }
+            _ => {}
+        }
+    }
+    names
+}
+
+fn statement_list_lexical_name_counts(body: &[Stmt]) -> HashMap<Arc<str>, usize> {
+    let mut counts = HashMap::new();
+    for statement in body {
+        let mut names = Vec::new();
+        match &statement.node {
+            StmtNode::VarDecl { kind, decls } if *kind != VarKind::Var => {
+                names.extend(decls.iter().map(|(name, _)| name.clone()));
+            }
+            StmtNode::Destructure { kind, pattern, .. } if *kind != VarKind::Var => {
+                Compiler::pattern_names(pattern, &mut names);
+            }
+            StmtNode::FunctionDecl(function) => {
+                if let Some(name) = &function.name {
+                    names.push(name.clone());
+                }
+            }
+            StmtNode::ExprStmt(Expr::Class(class)) if class.is_declaration => {
+                if let Some(name) = &class.name {
+                    names.push(name.clone());
+                }
+            }
+            _ => {}
+        }
+        for name in names {
+            *counts.entry(name).or_insert(0) += 1;
+        }
+    }
+    counts
+}
+
+fn statement_list_ordinary_function_counts(body: &[Stmt]) -> HashMap<Arc<str>, usize> {
+    let mut counts = HashMap::new();
+    for statement in body {
+        if let StmtNode::FunctionDecl(function) = &statement.node {
+            if !function.is_async && !function.is_generator {
+                if let Some(name) = &function.name {
+                    *counts.entry(name.clone()).or_insert(0) += 1;
+                }
+            }
+        }
+    }
+    counts
+}
+
+fn declaration_names(statement: &Stmt) -> HashSet<Arc<str>> {
+    let mut names = HashSet::new();
+    match &statement.node {
+        StmtNode::VarDecl { kind, decls } if *kind != VarKind::Var => {
+            names.extend(decls.iter().map(|(name, _)| name.clone()));
+        }
+        StmtNode::Destructure { kind, pattern, .. } if *kind != VarKind::Var => {
+            let mut pattern_names = Vec::new();
+            Compiler::pattern_names(pattern, &mut pattern_names);
+            names.extend(pattern_names);
+        }
+        _ => {}
+    }
+    names
+}
+
+fn collect_annex_b_candidates(
+    body: &[Stmt],
+    blocked: &HashSet<Arc<str>>,
+    plan: &mut AnnexBDeclarationPlan,
+) {
+    let counts = statement_list_lexical_name_counts(body);
+    let ordinary_function_counts = statement_list_ordinary_function_counts(body);
+    let mut nested_blocked = blocked.clone();
+    nested_blocked.extend(counts.keys().cloned());
+
+    for statement in body {
+        if let StmtNode::FunctionDecl(function) = &statement.node {
+            if !function.is_async && !function.is_generator {
+                if let Some(name) = &function.name {
+                    if !blocked.contains(name)
+                        && counts.get(name) == ordinary_function_counts.get(name)
+                    {
+                        plan.sites.insert(statement_key(statement), name.clone());
+                    }
+                }
+            }
+            continue;
+        }
+        collect_annex_b_candidates_in_statement(statement, &nested_blocked, plan);
+    }
+}
+
+fn collect_annex_b_candidates_in_code(
+    body: &[Stmt],
+    blocked: &HashSet<Arc<str>>,
+    plan: &mut AnnexBDeclarationPlan,
+) {
+    for statement in body {
+        if !matches!(&statement.node, StmtNode::FunctionDecl(_)) {
+            collect_annex_b_candidates_in_statement(statement, blocked, plan);
+        }
+    }
+}
+
+fn collect_annex_b_candidates_in_case_block(
+    cases: &[SwitchCase],
+    blocked: &HashSet<Arc<str>>,
+    plan: &mut AnnexBDeclarationPlan,
+) {
+    let mut counts = HashMap::new();
+    let mut ordinary_function_counts = HashMap::new();
+    for statement in cases.iter().flat_map(|case| &case.body) {
+        let mut names = Vec::new();
+        match &statement.node {
+            StmtNode::VarDecl { kind, decls } if *kind != VarKind::Var => {
+                names.extend(decls.iter().map(|(name, _)| name.clone()));
+            }
+            StmtNode::Destructure { kind, pattern, .. } if *kind != VarKind::Var => {
+                Compiler::pattern_names(pattern, &mut names);
+            }
+            StmtNode::FunctionDecl(function) => {
+                if let Some(name) = &function.name {
+                    names.push(name.clone());
+                    if !function.is_async && !function.is_generator {
+                        *ordinary_function_counts.entry(name.clone()).or_insert(0) += 1;
+                    }
+                }
+            }
+            StmtNode::ExprStmt(Expr::Class(class)) if class.is_declaration => {
+                if let Some(name) = &class.name {
+                    names.push(name.clone());
+                }
+            }
+            _ => {}
+        }
+        for name in names {
+            *counts.entry(name).or_insert(0) += 1;
+        }
+    }
+
+    let mut nested_blocked = blocked.clone();
+    nested_blocked.extend(counts.keys().cloned());
+    for statement in cases.iter().flat_map(|case| &case.body) {
+        if let StmtNode::FunctionDecl(function) = &statement.node {
+            if !function.is_async && !function.is_generator {
+                if let Some(name) = &function.name {
+                    if !blocked.contains(name)
+                        && counts.get(name) == ordinary_function_counts.get(name)
+                    {
+                        plan.sites.insert(statement_key(statement), name.clone());
+                    }
+                }
+            }
+            continue;
+        }
+        collect_annex_b_candidates_in_statement(statement, &nested_blocked, plan);
+    }
+}
+
+fn collect_annex_b_candidates_in_statement(
+    statement: &Stmt,
+    blocked: &HashSet<Arc<str>>,
+    plan: &mut AnnexBDeclarationPlan,
+) {
+    match &statement.node {
+        StmtNode::Block(body) => collect_annex_b_candidates(body, blocked, plan),
+        StmtNode::If { then, else_, .. } => {
+            collect_annex_b_candidates_in_statement(then, blocked, plan);
+            if let Some(else_statement) = else_ {
+                collect_annex_b_candidates_in_statement(else_statement, blocked, plan);
+            }
+        }
+        StmtNode::While { body, .. }
+        | StmtNode::DoWhile { body, .. }
+        | StmtNode::With { body, .. }
+        | StmtNode::Labeled(_, body) => {
+            collect_annex_b_candidates_in_statement(body, blocked, plan);
+        }
+        StmtNode::For { init, body, .. } => {
+            let mut body_blocked = blocked.clone();
+            if let Some(init) = init {
+                body_blocked.extend(declaration_names(init));
+            }
+            collect_annex_b_candidates_in_statement(body, &body_blocked, plan);
+        }
+        StmtNode::ForIn { left, body, .. } | StmtNode::ForOf { left, body, .. } => {
+            let mut body_blocked = blocked.clone();
+            body_blocked.extend(declaration_names(left));
+            collect_annex_b_candidates_in_statement(body, &body_blocked, plan);
+        }
+        StmtNode::TryCatch {
+            try_body,
+            catch_param,
+            catch_body,
+            finally_body,
+        } => {
+            collect_annex_b_candidates_in_statement(try_body, blocked, plan);
+            if let Some(catch_body) = catch_body {
+                let mut catch_blocked = blocked.clone();
+                if let Some(pattern) = catch_param {
+                    if !matches!(pattern, Pattern::Ident(_)) {
+                        let mut names = Vec::new();
+                        Compiler::pattern_names(pattern, &mut names);
+                        catch_blocked.extend(names);
+                    }
+                }
+                collect_annex_b_candidates_in_statement(catch_body, &catch_blocked, plan);
+            }
+            if let Some(finally_body) = finally_body {
+                collect_annex_b_candidates_in_statement(finally_body, blocked, plan);
+            }
+        }
+        StmtNode::Switch { cases, .. } => {
+            collect_annex_b_candidates_in_case_block(cases, blocked, plan);
+        }
+        StmtNode::FunctionDecl(_) => {}
+        _ => {}
+    }
+}
+
 impl Compiler {
     fn private_name_binding_name(name: &Arc<str>) -> Arc<str> {
         Arc::from(format!("#private_name:{}", name).as_str())
@@ -219,7 +543,14 @@ impl Compiler {
             current_async_generator: false,
             derived_instance_initializers: None,
             top_level_declarative: false,
+            annex_b_plan: AnnexBDeclarationPlan::default(),
+            annex_b_plan_configured: false,
         }
+    }
+
+    pub(crate) fn set_annex_b_plan(&mut self, plan: AnnexBDeclarationPlan) {
+        self.annex_b_plan = plan;
+        self.annex_b_plan_configured = true;
     }
 
     fn intern(&mut self, name: &str) -> usize {
@@ -319,6 +650,13 @@ impl Compiler {
         &mut self,
         program: &Program,
     ) -> error::Result<(Chunk, Vec<Arc<crate::function::FunctionDef>>)> {
+        if !self.annex_b_plan_configured {
+            self.annex_b_plan = if program.source_type == SourceType::Script {
+                AnnexBDeclarationPlan::for_script(&program.body, program.is_strict)
+            } else {
+                AnnexBDeclarationPlan::default()
+            };
+        }
         // The top-level scope inherits the program's strictness (from a leading
         // "use strict" directive prologue).
         if let Some(top) = self.scopes.last_mut() {
@@ -351,11 +689,7 @@ impl Compiler {
         // Hoist `var` declarations as undefined at the top level.
         for stmt in &program.body {
             let mut var_names = Vec::new();
-            if program.is_strict {
-                collect_var_names_recursive_skip_functions(&stmt.node, &mut var_names);
-            } else {
-                collect_var_names_recursive(&stmt.node, &mut var_names);
-            }
+            collect_var_names_recursive_skip_functions(&stmt.node, &mut var_names);
             for name in &var_names {
                 // Skip names already hoisted by function declaration hoisting.
                 if fn_decl_names.contains(&**name) {
@@ -368,6 +702,11 @@ impl Compiler {
                 // when the binding doesn't exist yet).
                 self.chunk.emit(Op::HoistVar(name_idx), self.current_line);
             }
+        }
+        for name in self.annex_b_plan.names() {
+            self.declare(&name, VarKind::Var)?;
+            let name_idx = self.chunk.add_constant(Value::String(name));
+            self.chunk.emit(Op::HoistVar(name_idx), self.current_line);
         }
         // Hoist lexical (`let`/`const`) declarations into the TDZ at the top
         // level, so accessing them before the declaration throws ReferenceError.
@@ -723,10 +1062,13 @@ impl Compiler {
     ) -> Vec<(Arc<str>, VarKind)> {
         let mut out = Self::collect_lexical_names(body);
         if include_function_declarations {
+            let mut function_names = HashSet::new();
             for stmt in body {
                 if let StmtNode::FunctionDecl(f) = &stmt.node {
                     if let Some(name) = &f.name {
-                        out.push((name.clone(), VarKind::Let));
+                        if function_names.insert(name.clone()) {
+                            out.push((name.clone(), VarKind::Let));
+                        }
                     }
                 }
             }
@@ -791,14 +1133,19 @@ impl Compiler {
     pub fn collect_var_names(body: &[Stmt]) -> Vec<Arc<str>> {
         let mut out = Vec::new();
         for stmt in body {
-            collect_var_names_recursive(&stmt.node, &mut out);
+            collect_var_names_recursive_skip_functions(&stmt.node, &mut out);
+            if let StmtNode::FunctionDecl(function) = &stmt.node {
+                if let Some(name) = &function.name {
+                    out.push(name.clone());
+                }
+            }
         }
         out
     }
 
     pub fn collect_global_declaration_names(
         body: &[Stmt],
-        is_strict: bool,
+        _is_strict: bool,
     ) -> GlobalDeclarationNames {
         let lexical_names = Self::collect_lexical_names(body)
             .into_iter()
@@ -814,11 +1161,7 @@ impl Compiler {
         }
         let mut var_names = Vec::new();
         for stmt in body {
-            if is_strict {
-                collect_var_names_recursive_skip_functions(&stmt.node, &mut var_names);
-            } else {
-                collect_var_names_recursive(&stmt.node, &mut var_names);
-            }
+            collect_var_names_recursive_skip_functions(&stmt.node, &mut var_names);
         }
         for name in &function_names {
             if !var_names.iter().any(|existing| existing == name) {
@@ -937,16 +1280,6 @@ impl Compiler {
             StmtNode::Block(body) => {
                 self.push_scope_with_runtime(false, true);
                 self.chunk.emit(Op::PushScope, self.current_line);
-                let strict_block = self.is_strict();
-                if !strict_block {
-                    // Sloppy block-level function declarations keep RuJa's
-                    // existing Annex-B-style function-scope behavior.
-                    for s in body {
-                        if matches!(&s.node, StmtNode::FunctionDecl(_)) {
-                            self.compile_stmt(s)?;
-                        }
-                    }
-                }
                 // Hoist `var` declarations: declare them as undefined before the body runs.
                 for s in body {
                     if let StmtNode::VarDecl {
@@ -969,20 +1302,27 @@ impl Compiler {
                 // Hoist lexical (`let`/`const`) declarations into the TDZ at block
                 // entry, so accessing them before the declaration throws ReferenceError.
                 {
-                    let lex = Self::collect_block_lexical_names(body, strict_block);
+                    let lex = Self::collect_block_lexical_names(body, true);
                     self.emit_lexical_hoist(&lex)?;
                 }
-                if strict_block {
-                    // In strict mode, block-level function declarations are
-                    // lexical bindings scoped to the block, not Annex B vars.
-                    for s in body {
-                        if matches!(&s.node, StmtNode::FunctionDecl(_)) {
-                            self.compile_stmt(s)?;
-                        }
+                // BlockDeclarationInstantiation creates every block function
+                // in the block lexical environment before statement evaluation.
+                for s in body {
+                    if matches!(&s.node, StmtNode::FunctionDecl(_)) {
+                        self.compile_stmt(s)?;
                     }
                 }
                 for s in body {
                     if matches!(&s.node, StmtNode::FunctionDecl(_)) {
+                        if self.annex_b_plan.contains(s) {
+                            let StmtNode::FunctionDecl(function) = &s.node else {
+                                unreachable!();
+                            };
+                            let name = function.name.as_ref().expect("declaration has a name");
+                            let name_idx = self.chunk.add_constant(Value::String(name.clone()));
+                            self.chunk
+                                .emit(Op::AnnexBMirror(name_idx), self.current_line);
+                        }
                         continue;
                     }
                     self.compile_stmt(s)?;
@@ -1288,7 +1628,14 @@ impl Compiler {
                         *h = catch_start;
                     }
                     self.push_scope_with_runtime(false, true);
-                    self.chunk.emit(Op::PushScope, self.current_line);
+                    let simple_catch_name = match catch_param {
+                        Some(Pattern::Ident(name)) => {
+                            Some(self.chunk.add_constant(Value::String(name.clone())))
+                        }
+                        _ => None,
+                    };
+                    self.chunk
+                        .emit(Op::PushCatchScope(simple_catch_name), self.current_line);
                     if let Some(param) = catch_param {
                         match param {
                             crate::ast::Pattern::Ident(name) => {
@@ -1655,6 +2002,15 @@ impl Compiler {
                     body_starts[i] = Some(self.chunk.code.len());
                     for s in &case.body {
                         if matches!(&s.node, StmtNode::FunctionDecl(_)) {
+                            if self.annex_b_plan.contains(s) {
+                                let StmtNode::FunctionDecl(function) = &s.node else {
+                                    unreachable!();
+                                };
+                                let name = function.name.as_ref().expect("declaration has a name");
+                                let name_idx = self.chunk.add_constant(Value::String(name.clone()));
+                                self.chunk
+                                    .emit(Op::AnnexBMirror(name_idx), self.current_line);
+                            }
                             continue;
                         }
                         self.compile_stmt(s)?;
@@ -1894,6 +2250,10 @@ impl Compiler {
         let saved_names = std::mem::take(&mut self.name_map);
         let saved_switch_val = self.switch_val_depth;
         let saved_async_generator = self.current_async_generator;
+        let saved_annex_b_plan = std::mem::replace(
+            &mut self.annex_b_plan,
+            AnnexBDeclarationPlan::for_function(f),
+        );
         self.switch_val_depth = None;
         self.current_async_generator = f.is_async && f.is_generator;
         self.scopes.push(Scope {
@@ -2005,7 +2365,11 @@ impl Compiler {
             // Instantiate every body var/function name in the new body
             // environment, copying a same-named parameter's initialized value
             // before later function declarations replace only the body binding.
-            for name in function_body_var_names(body_stmts, f.is_strict) {
+            let mut body_var_names = function_body_var_names(body_stmts);
+            body_var_names.extend(self.annex_b_plan.names());
+            let mut seen = HashSet::new();
+            body_var_names.retain(|name| seen.insert(name.clone()));
+            for name in body_var_names {
                 let name_idx = self.chunk.add_constant(Value::String(name.clone()));
                 let copy_parameter = parameter_names.contains(&name);
                 if copy_parameter {
@@ -2024,11 +2388,7 @@ impl Compiler {
         if !has_parameter_expressions {
             for stmt in body_stmts {
                 let mut var_names = Vec::new();
-                if f.is_strict {
-                    collect_var_names_recursive_skip_functions(&stmt.node, &mut var_names);
-                } else {
-                    collect_var_names_recursive(&stmt.node, &mut var_names);
-                }
+                collect_var_names_recursive_skip_functions(&stmt.node, &mut var_names);
                 for name in &var_names {
                     // Function declaration installation creates its binding.
                     if body_stmts.iter().any(|s| {
@@ -2040,6 +2400,11 @@ impl Compiler {
                     let name_idx = self.chunk.add_constant(Value::String(name.clone()));
                     self.chunk.emit(Op::HoistVar(name_idx), self.current_line);
                 }
+            }
+            for name in self.annex_b_plan.names() {
+                self.declare_var(&name)?;
+                let name_idx = self.chunk.add_constant(Value::String(name));
+                self.chunk.emit(Op::HoistVar(name_idx), self.current_line);
             }
         }
         // Hoist function declarations: compile them first so they're available
@@ -2071,6 +2436,7 @@ impl Compiler {
         self.chunk = saved_chunk;
         self.switch_val_depth = saved_switch_val;
         self.current_async_generator = saved_async_generator;
+        self.annex_b_plan = saved_annex_b_plan;
         Ok((func_chunk, param_slots))
     }
 
@@ -7441,79 +7807,6 @@ impl Compiler {
     }
 }
 
-/// Recursively collect `var` and function-declaration names from a
-/// statement tree. `var` is function-scoped, so declarations inside
-/// blocks, loops, if/else, switch, and try/catch must all be hoisted.
-fn collect_var_names_recursive(node: &StmtNode, out: &mut Vec<Arc<str>>) {
-    match node {
-        StmtNode::VarDecl { kind, decls } if *kind == VarKind::Var => {
-            for (name, _) in decls {
-                out.push(name.clone());
-                // Skip duplicate names to avoid double-hoisting.
-            }
-        }
-        StmtNode::Destructure { kind, pattern, .. } if *kind == VarKind::Var => {
-            Compiler::pattern_names(pattern, out);
-        }
-        // Function declarations are also collected here so eval leak-back
-        // knows about them. They're hoisted separately by a dedicated pass
-        // that runs before var hoisting, and DeclareVar doesn't overwrite
-        // existing bindings (declare_var checks already_exists).
-        StmtNode::FunctionDecl(f) => {
-            if let Some(name) = &f.name {
-                out.push(name.clone());
-            }
-        }
-        StmtNode::Block(body) => {
-            for s in body {
-                collect_var_names_recursive(&s.node, out);
-            }
-        }
-        StmtNode::If { then, else_, .. } => {
-            collect_var_names_recursive(&then.node, out);
-            if let Some(e) = else_ {
-                collect_var_names_recursive(&e.node, out);
-            }
-        }
-        StmtNode::While { body, .. } => collect_var_names_recursive(&body.node, out),
-        StmtNode::DoWhile { body, .. } => collect_var_names_recursive(&body.node, out),
-        StmtNode::For { init, body, .. } => {
-            if let Some(init) = init {
-                collect_var_names_recursive(&init.node, out);
-            }
-            collect_var_names_recursive(&body.node, out);
-        }
-        StmtNode::ForIn { left, body, .. } | StmtNode::ForOf { left, body, .. } => {
-            collect_var_names_recursive(&left.node, out);
-            collect_var_names_recursive(&body.node, out);
-        }
-        StmtNode::With { body, .. } => collect_var_names_recursive(&body.node, out),
-        StmtNode::Switch { cases, .. } => {
-            for case in cases {
-                for s in &case.body {
-                    collect_var_names_recursive_skip_functions(&s.node, out);
-                }
-            }
-        }
-        StmtNode::TryCatch {
-            try_body,
-            catch_body,
-            finally_body,
-            ..
-        } => {
-            collect_var_names_recursive(&try_body.node, out);
-            if let Some(cb) = catch_body {
-                collect_var_names_recursive(&cb.node, out);
-            }
-            if let Some(fb) = finally_body {
-                collect_var_names_recursive(&fb.node, out);
-            }
-        }
-        StmtNode::Labeled(_, body) => collect_var_names_recursive(&body.node, out),
-        _ => {}
-    }
-}
-
 fn collect_var_names_recursive_skip_functions(node: &StmtNode, out: &mut Vec<Arc<str>>) {
     match node {
         StmtNode::VarDecl { kind, decls } if *kind == VarKind::Var => {
@@ -7573,26 +7866,36 @@ fn collect_var_names_recursive_skip_functions(node: &StmtNode, out: &mut Vec<Arc
                 collect_var_names_recursive_skip_functions(&fb.node, out);
             }
         }
-        StmtNode::Labeled(_, body) => collect_var_names_recursive_skip_functions(&body.node, out),
+        StmtNode::Labeled(_, body) => {
+            if let Some(name) = annex_b_labelled_function_name(node) {
+                out.push(name);
+            } else {
+                collect_var_names_recursive_skip_functions(&body.node, out);
+            }
+        }
         _ => {}
     }
 }
 
-fn function_body_var_names(body: &[Stmt], is_strict: bool) -> Vec<Arc<str>> {
+fn annex_b_labelled_function_name(node: &StmtNode) -> Option<Arc<str>> {
+    match node {
+        StmtNode::Labeled(_, body) => annex_b_labelled_function_name(&body.node),
+        StmtNode::FunctionDecl(function) if !function.is_async && !function.is_generator => {
+            function.name.clone()
+        }
+        _ => None,
+    }
+}
+
+fn function_body_var_names(body: &[Stmt]) -> Vec<Arc<str>> {
     let mut names = Vec::new();
     for stmt in body {
-        if is_strict {
-            collect_var_names_recursive_skip_functions(&stmt.node, &mut names);
-        } else {
-            collect_var_names_recursive(&stmt.node, &mut names);
-        }
+        collect_var_names_recursive_skip_functions(&stmt.node, &mut names);
     }
-    if is_strict {
-        for stmt in body {
-            if let StmtNode::FunctionDecl(function) = &stmt.node {
-                if let Some(name) = &function.name {
-                    names.push(name.clone());
-                }
+    for stmt in body {
+        if let StmtNode::FunctionDecl(function) = &stmt.node {
+            if let Some(name) = &function.name {
+                names.push(name.clone());
             }
         }
     }

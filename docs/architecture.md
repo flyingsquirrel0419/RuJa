@@ -34,6 +34,40 @@ source ─► Lexer ─► Parser ─► Compiler ─► Bytecode ─► VM
   Object, Array, String, Number, Boolean, Function, Math, JSON, console, RegExp,
   Map, Set, Symbol, Promise, Proxy, TypedArray, and the Error hierarchy.
 
+## Annex B declaration planning
+
+Sloppy Script and FunctionBody compilation performs a separate Annex B.3.2
+planning pass. The plan records each admitted ordinary FunctionDeclaration
+site and its outer variable name without adding nested block functions to the
+ordinary `VarDeclaredNames` collector. BlockDeclarationInstantiation always
+creates the lexical binding. `AnnexBMirror` copies that exact block binding to
+the variable environment only when the declaration statement is evaluated.
+
+Global and eval declaration instantiation filter the plan before bytecode is
+emitted. Function parameters, an existing `arguments` object, top-level and
+intermediate declarative bindings, destructuring catch parameters, restricted
+global properties, and non-extensible globals suppress the outer binding.
+Object Environment Records and a same-named simple catch parameter retain the
+web-legacy exceptions. Global mirrors construct an Environment Reference and
+use shared PutValue, so Realm-specific accessors and property descriptors are
+observed instead of mutating the environment map and global object separately.
+
+The current plan keys sites by parsed `Stmt` address. This is valid because a
+plan is built and consumed synchronously against the same owned AST; plans are
+crate-private and never survive cloning or reparsing. A future persistent or
+cached declaration plan must introduce stable AST node IDs before crossing
+that ownership boundary.
+
+```text
+[Decision Log]
+- 목적과 의도: Annex B.3.2의 lexical block binding과 조건부 outer var binding을 분리하고, 선언이 실제 평가된 시점에만 동일한 함수 객체를 복사한다.
+- 기존 구현 및 제약 조건: Sloppy block functions를 곧바로 function-scope var로 취급해 false branch, lexical shadowing, eval 환경 검사, switch 실행 위치를 표현할 수 없었다. RuJa의 Global Environment Record는 환경 map과 Realm global property를 함께 사용한다.
+- 검토한 주요 대안: 모든 block function을 var로 유지하기, AST를 재작성해 synthetic var/assignment를 삽입하기, 이름 단위 전역 플래그만 저장하기, 또는 site별 declaration plan과 전용 mirror opcode를 사용하기.
+- 선택한 방식: 실제 VarDeclaredNames와 별도인 source-order plan을 만들고, Block/CaseBlock lexical instantiation 후 admitted site에만 AnnexBMirror를 방출한다. Eval/Global instantiation이 plan을 환경별로 필터링하고 global mirror는 Reference/PutValue를 재사용한다.
+- 다른 대안 대신 이 방식을 선택한 이유: 이름 단위 상태는 같은 이름의 여러 실행 위치를 구분하지 못하고 AST 재작성은 source metadata와 기존 compiler passes를 흐린다. 전용 opcode는 synthetic assignment의 정확한 평가 시점을 보존하면서 값 쓰기는 공용 Reference 의미론에 맡긴다.
+- 장점, 단점 및 영향: false branch와 switch case timing, parameter/arguments/lexical/catch 충돌, duplicate final-function binding, accessor/non-writable/foreign-Realm global behavior가 한 모델로 정렬된다. 계획은 현재 동일 AST 수명에 묶여 있으며 persistent compilation에는 stable node ID가 필요하다. Bare if FunctionDeclaration의 Annex B.3.3 parser transform은 별도 후속 범위다.
+```
+
 ## Module requests and typed modules
 
 Module parsing stores every static import or re-export as a `ModuleRequest`

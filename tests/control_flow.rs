@@ -149,8 +149,33 @@ fn annex_b_duplicate_block_and_switch_functions_use_the_last_declaration() {
         Value::Number(2.0)
     );
     assert_eq!(
+        run("(function() { { function f() { return 1; } function f() { return 2; } } return f(); }());"),
+        Value::Number(2.0)
+    );
+    assert_eq!(
         run("var result; switch (1) { case 1: result = f(); function f() { return 1; } break; default: function f() { return 2; } } result;"),
         Value::Number(2.0)
+    );
+}
+
+#[test]
+fn annex_b_switch_mirrors_only_an_evaluated_function_declaration() {
+    assert_eq!(
+        run(r#"
+            (function(value) {
+              var before = typeof f;
+              switch (value) {
+                case 0: break; function f() { return 0; }
+                case 1: function f() { return 1; }
+              }
+              return before + "," + typeof f + (typeof f === "function" ? "," + f() : "");
+            }(0)) + ";" +
+            (function(value) {
+              switch (value) { case 1: function f() { return 1; } }
+              return typeof f + "," + f();
+            }(1));
+        "#),
+        Value::String(Arc::from("undefined,undefined;function,1"))
     );
 }
 
