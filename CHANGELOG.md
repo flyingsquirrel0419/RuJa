@@ -10,7 +10,13 @@
   are lexical. This closes the 37 dynamic-import and six function-statement
   strict variants left by dual Test262 execution, restoring the pinned
   supported subset to **12,765 pass / 0 fail / 7,674 skip / 20,439 total**.
-  FunctionBody lexical/var intersections are rejected during parsing.
+  FunctionBody lexical/var intersections are rejected during parsing. Ordinary
+  CI `30598482443` passes all 3 jobs and full matrix `30598482422` passes all
+  45 jobs. After replacing two load-sensitive Annex B timeouts with the clean
+  exact-corpus rerun, the 32 artifacts total **32,380 pass / 5,028 fail /
+  11,058 skip / 3 timeout**. The deterministic delta is **+54 pass / -54
+  fail** across six shards; 26/32 artifacts are byte-identical and corrected
+  content hash is `fec150f12df228289b84453363a62c41fbfe82dd9b15592b20c7f1c2c68ee8f0`.
 
 - Completed FunctionDeclarationInstantiation for functions with parameter
   expressions. Their body var/function names are instantiated in the separate

@@ -168,7 +168,7 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 66.7% of all matrix files; 86.4% of executed files (dual-variant baseline) | `test262-full` CI workflow job summary |
+| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 66.8% of all matrix files; 86.6% of executed files (dual-variant baseline) | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (12765 pass / 0 fail / 7674 skip / 20439 total on pinned `9e61c12`) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
@@ -178,15 +178,15 @@ RuJa actively targets. The full-suite number is published for
 transparency but is dominated by unsupported features. The CI-subset
 number is a narrow regression gate, not a conformance claim.
 
-Dual-variant confirmation is ordinary CI `30594697312` and full matrix
-`30594697340`, both on `e5abb7b`. The 32 result artifacts aggregate to
-**32,326 pass / 5,082 fail / 11,058 skip / 3 timeout / 0 error** over 48,469
-files, with 37,408 executed. Compared with the preceding single-execution
-baseline `30589502837`, 26/32 artifacts are byte-identical; the six changed
-shards expose a net 54 strict-only failures after the `var` destructuring fix.
-The largest `built-ins` shard completed in about 30 minutes, below its 60-minute
-job limit. Sorted result-content SHA-256 is
-`e7d63136e8cfbb994bd07632fc0d4b0c2e6a64170e9bdeb667e81e7dbfbafb1d`.
+Current dual-variant confirmation is ordinary CI `30598482443` and full matrix
+`30598482422`, both on `3b2dd8b`. After replacing two load-sensitive Annex B
+timeouts with a clean exact-corpus rerun, the 32 result artifacts aggregate to
+**32,380 pass / 5,028 fail / 11,058 skip / 3 timeout / 0 error** over 48,469
+files, with 37,408 executed. Compared with `30594697340`, the deterministic
+delta is 54 failures moved to pass across six shards and 26/32 artifacts are
+byte-identical. The largest `built-ins` shard completed in about 30 minutes,
+below its 60-minute job limit. Corrected sorted result-content SHA-256 is
+`fec150f12df228289b84453363a62c41fbfe82dd9b15592b20c7f1c2c68ee8f0`.
 
 ## Supported subset
 
