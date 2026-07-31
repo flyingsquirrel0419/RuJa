@@ -1994,7 +1994,7 @@ impl Vm {
         };
         if !is_strict {
             annex_b_plan.retain_names(|name| {
-                !crate::environment::has_annex_b_blocking_binding_before(
+                !crate::environment::has_eval_declaration_blocking_binding_before(
                     &self.heap,
                     ctx.caller_env,
                     var_env,
@@ -2028,14 +2028,7 @@ impl Vm {
                         name
                     )));
                 }
-                if var_env != self.global
-                    && function_names
-                        .iter()
-                        .any(|function_name| function_name == name)
-                {
-                    continue;
-                }
-                if crate::environment::has_lexical_declaration_between(
+                if crate::environment::has_eval_declaration_blocking_binding_before(
                     &self.heap,
                     ctx.caller_env,
                     var_env,

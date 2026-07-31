@@ -52,6 +52,16 @@ web-legacy exceptions. Global mirrors construct an Environment Reference and
 use shared PutValue, so Realm-specific accessors and property descriptors are
 observed instead of mutating the environment map and global object separately.
 
+The same environment walk implements Annex B.3.4 for ordinary eval `var` and
+function declarations. It ignores Object Environment Records and only the
+matching simple catch parameter; destructuring catch parameters and all other
+intervening declarative bindings remain conflicts. At the variable-environment
+boundary it checks only `let`, `const`, and import bindings. This boundary check
+is required because RuJa stores FunctionBody top-level lexical bindings in the
+same Environment Record as parameter and var bindings, while the specification
+models a separate lexical environment. All four function declaration forms use
+this walk, preventing function declarations from bypassing lexical conflicts.
+
 The current plan keys sites by parsed `Stmt` address. This is valid because a
 plan is built and consumed synchronously against the same owned AST; plans are
 crate-private and never survive cloning or reparsing. A future persistent or
@@ -81,6 +91,16 @@ updates also resolve a Reference rather than declaring a binding in the loop's
 compiler scope; PutValue's expression result is immediately popped because
 loop binding evaluation has no value result. Parenthesized expressions parse
 with `+In`, even when the surrounding initializer has the `~In` restriction.
+
+```text
+[Decision Log]
+- 목적과 의도: Annex B.3.4의 simple catch parameter 예외를 direct eval의 모든 var-scoped declaration에 적용하면서 destructuring catch와 lexical conflict는 유지한다.
+- 기존 구현 및 제약 조건: eval var conflict 검사는 simple catch도 차단했고 function declaration은 검사를 건너뛰었다. RuJa는 FunctionBody top-level lexical binding과 var binding을 같은 Environment Record에 저장한다.
+- 검토한 주요 대안: exact Test262 admission, catch evaluation 시 synthetic outer assignment, 환경 표현 전체 분리, 또는 기존 EvalDeclarationInstantiation walk를 binding-kind aware하게 확장하기.
+- 선택한 방식: Object Environment Record와 이름이 같은 simple catch만 무시하는 공용 eval declaration walk를 사용하고, stop environment에서는 lexical binding kind만 차단한다. source destructuring catch의 VarDeclaredNames 충돌은 parser early error로 검사한다.
+- 다른 대안 대신 이 방식을 선택한 이유: admission은 엔진 결함을 숨기고 synthetic assignment는 declaration instantiation과 initializer resolution을 섞는다. 환경 전체 분리는 이 단위보다 넓고, binding kind 검사는 현재 표현에서 명세 경계를 보존한다.
+- 장점, 단점 및 영향: var initializer와 네 function declaration form, with, global configurable binding, generator resume가 같은 규칙을 따른다. 현재 환경 압축 표현을 유지하므로 향후 Environment Record 분리 시 stop-boundary 특례를 제거해야 한다.
+```
 
 ```text
 [Decision Log]

@@ -227,9 +227,10 @@ pub fn has_lexical_declaration_between(
     false
 }
 
-/// Annex B eval admission scans declarative environments before the variable
-/// environment, ignoring Object Environment Records and simple catch records.
-pub fn has_annex_b_blocking_binding_before(
+/// EvalDeclarationInstantiation scans declarative environments before the
+/// variable environment. Object Environment Records do not declare lexicals,
+/// and Annex B.3.4 ignores a matching simple catch parameter.
+pub fn has_eval_declaration_blocking_binding_before(
     heap: &Heap,
     env: GcIdx,
     stop_env: GcIdx,
@@ -237,9 +238,7 @@ pub fn has_annex_b_blocking_binding_before(
 ) -> bool {
     let mut cur = Some(env);
     while let Some(env_idx) = cur {
-        if env_idx == stop_env {
-            return false;
-        }
+        let is_variable_environment = env_idx == stop_env;
         let (found, parent) = heap.with_obj(env_idx.0, |object| {
             let HeapObj::Environment(environment) = object else {
                 return (false, None);
@@ -249,13 +248,27 @@ pub fn has_annex_b_blocking_binding_before(
                 .annex_b_simple_catch_name
                 .as_deref()
                 .is_some_and(|catch_name| catch_name == name);
-            let found = !is_object_environment
-                && !is_ignored_simple_catch
-                && environment.vars.lock().contains_key(name);
+            let vars = environment.vars.lock();
+            // RuJa stores function-body lexicals in its function environment,
+            // so inspect lexical binding kinds at the stop environment even
+            // though the spec models that lexical environment separately.
+            let found = if is_variable_environment {
+                vars.get(name).is_some_and(|binding| {
+                    matches!(
+                        binding.kind,
+                        BindingKind::Let | BindingKind::Const | BindingKind::Import
+                    )
+                })
+            } else {
+                !is_object_environment && !is_ignored_simple_catch && vars.contains_key(name)
+            };
             (found, *environment.parent.lock())
         });
         if found {
             return true;
+        }
+        if is_variable_environment {
+            return false;
         }
         cur = parent;
     }

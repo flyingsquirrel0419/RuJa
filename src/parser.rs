@@ -8897,6 +8897,9 @@ mod tests {
             "try {} catch (x) { class x {} }",
             "function f() { try {} catch (e) { function e(){} } }",
             "function f() { try {} catch (e) { label: function e(){} } }",
+            "try {} catch ({x}) { var x; }",
+            "try {} catch ([x]) { if (false) var x; }",
+            "try {} catch ({x}) { for (var x; false;) {} }",
         ] {
             assert!(Parser::parse(src).is_err(), "{src}");
         }
@@ -8906,8 +8909,10 @@ mod tests {
     fn parse_catch_parameter_allows_non_conflicting_scopes() {
         for src in [
             "try {} catch (x) { var x; }",
+            "'use strict'; try {} catch (x) { var x; }",
             "try {} catch (x) { { let x; } }",
             "try {} catch (x) { function y(){} }",
+            "try {} catch (x) { (class x {}); }",
         ] {
             assert!(Parser::parse(src).is_ok(), "{src}");
         }
@@ -9005,7 +9010,7 @@ fn collect_catch_block_lexical_names(node: &StmtNode, lexical: &mut Vec<Arc<str>
                     }
                 }
             }
-            StmtNode::ExprStmt(Expr::Class(c)) => {
+            StmtNode::ExprStmt(Expr::Class(c)) if c.is_declaration => {
                 if let Some(name) = &c.name {
                     lexical.push(name.clone());
                 }
@@ -9019,6 +9024,19 @@ fn check_catch_parameter_early_errors(param: &Pattern, body: &StmtNode) -> error
     let mut param_names = Vec::new();
     collect_pattern_names(param, &mut param_names);
     check_duplicate_bound_names(&param_names)?;
+
+    if !matches!(param, Pattern::Ident(_)) {
+        let mut var_names = Vec::new();
+        Parser::collect_var_names_in_stmt(body, &mut var_names);
+        for name in &param_names {
+            if var_names.contains(name) {
+                return Err(error::Error::syntax(format!(
+                    "Identifier '{}' has already been declared",
+                    name
+                )));
+            }
+        }
+    }
 
     let mut lexical_names = Vec::new();
     collect_catch_block_lexical_names(body, &mut lexical_names);

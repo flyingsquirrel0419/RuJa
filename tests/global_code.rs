@@ -5,6 +5,22 @@ use ruja::Value;
 use std::sync::Arc;
 
 #[test]
+fn annex_b_direct_eval_catch_var_creates_a_configurable_global_binding() {
+    assert_eq!(
+        run(r#"
+            var caught;
+            try { throw "catch-value"; } catch (name) {
+              eval("var name = 'initialized';");
+              caught = name;
+            }
+            var descriptor = Object.getOwnPropertyDescriptor(globalThis, "name");
+            caught + "," + name + "," + descriptor.configurable;
+        "#),
+        Value::String(Arc::from("initialized,undefined,true"))
+    );
+}
+
+#[test]
 fn for_in_var_key_uses_the_global_binding_reference() {
     assert_eq!(
         run(r#"

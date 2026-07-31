@@ -4,6 +4,20 @@
 
 ### Changed
 
+- Implemented Annex B.3.4 direct-eval declarations across a matching simple
+  catch parameter. Sloppy eval `var` initializers now update the active catch
+  binding while installing the variable-environment binding, and ordinary,
+  generator, async, and async-generator function declarations use the same
+  admission scan. Destructuring catch parameters, intervening lexical bindings,
+  and function-body top-level lexicals still reject conflicting eval
+  declarations; Object Environment Records do not create false conflicts.
+  Catch early errors now reject destructuring-parameter collisions with nested
+  `var` declarations without misclassifying named class expressions. On pinned
+  Test262, the exact direct-eval file moves from **0/1** to **1/0**, all 309
+  direct-eval Annex B files pass, and full Annex B moves from **819/193/74** to
+  **820/192/74**. The supported statements/expressions subset remains **12,765
+  pass / 0 fail / 7,674 skip / 20,439 total**; no admission metadata changed.
+
 - Implemented Annex B.3.5 initializers for sloppy `for-in` heads containing one
   simple `var` binding. The initializer resolves and updates its binding exactly
   once before RHS enumeration, preserves anonymous function naming, and blocks

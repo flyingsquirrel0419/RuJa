@@ -642,6 +642,184 @@ fn annex_b_eval_mirror_uses_eval_declaration_instantiation_rules() {
 }
 
 #[test]
+fn annex_b_direct_eval_ignores_only_a_matching_simple_catch_parameter() {
+    assert_eq!(
+        run(r#"
+            (function() {
+              var during;
+              try { throw "caught"; } catch (name) {
+                eval("var name = 'initialized';");
+                during = name;
+              }
+              return during + "," + name;
+            }());
+        "#),
+        Value::String(Arc::from("initialized,undefined"))
+    );
+
+    assert_eq!(
+        run(r#"
+            (function() {
+              var caught;
+              try { throw "catch-value"; } catch (name) {
+                eval("function name() { return 'function-value'; }");
+                eval("function* name() {}");
+                eval("async function name() {}");
+                eval("async function* name() {}");
+                caught = name;
+              }
+              return caught + "," + typeof name;
+            }());
+        "#),
+        Value::String(Arc::from("catch-value,function"))
+    );
+
+    assert_eq!(
+        run(r#"
+            (function() {
+              try { throw { name: 1 }; } catch ({ name }) {
+                try { eval("var name;"); }
+                catch (error) { return error instanceof SyntaxError; }
+              }
+              return false;
+            }());
+        "#),
+        Value::Bool(true)
+    );
+
+    assert_eq!(
+        run(r#"
+            (function() {
+              try { throw 1; } catch (name) {
+                {
+                  let name;
+                  try { eval("var name;"); }
+                  catch (error) { return error instanceof SyntaxError; }
+                }
+              }
+              return false;
+            }());
+        "#),
+        Value::Bool(true)
+    );
+
+    assert_eq!(
+        run(r#"
+            (function() {
+              var caught;
+              try { throw "catch-value"; } catch (name) {
+                eval("'use strict'; var name = 'strict-value';");
+                caught = name;
+              }
+              return caught + "," + typeof name;
+            }());
+        "#),
+        Value::String(Arc::from("catch-value,undefined"))
+    );
+
+    assert_eq!(
+        run(r#"
+            function* probe() {
+              try { throw "catch-value"; } catch (name) {
+                yield 0;
+                eval("var name = 'resumed-value';");
+                return name;
+              }
+            }
+            var iterator = probe();
+            iterator.next();
+            var result = iterator.next();
+            result.value + "," + typeof name;
+        "#),
+        Value::String(Arc::from("resumed-value,undefined"))
+    );
+}
+
+#[test]
+fn direct_eval_var_declarations_still_reject_other_lexical_conflicts() {
+    assert_eq!(
+        run(r#"
+            (function() {
+              let name = 1;
+              try { eval("var name;"); }
+              catch (error) { return error instanceof SyntaxError; }
+              return false;
+            }());
+        "#),
+        Value::Bool(true)
+    );
+
+    for declaration in [
+        "function name() {}",
+        "function* name() {}",
+        "async function name() {}",
+        "async function* name() {}",
+    ] {
+        let destructuring_catch = format!(
+            r#"(function() {{
+              try {{ throw {{ name: 1 }}; }} catch ({{ name }}) {{
+                try {{ eval({declaration:?}); }}
+                catch (error) {{ return error instanceof SyntaxError; }}
+              }}
+              return false;
+            }}());"#
+        );
+        assert_eq!(
+            run(&destructuring_catch),
+            Value::Bool(true),
+            "{declaration}"
+        );
+
+        let nested_lexical = format!(
+            r#"(function() {{
+              try {{ throw 1; }} catch (name) {{
+                {{
+                  let name;
+                  try {{ eval({declaration:?}); }}
+                  catch (error) {{ return error instanceof SyntaxError; }}
+                }}
+              }}
+              return false;
+            }}());"#
+        );
+        assert_eq!(run(&nested_lexical), Value::Bool(true), "{declaration}");
+    }
+}
+
+#[test]
+fn direct_eval_ignores_object_environments_during_var_admission() {
+    assert_eq!(
+        run(r#"
+            (function() {
+              var observed;
+              var object = { name: "object-value" };
+              with (object) {
+                eval("var name = 'var-value';");
+                observed = name;
+              }
+              return observed + "," + object.name + "," + name;
+            }());
+        "#),
+        Value::String(Arc::from("var-value,var-value,undefined"))
+    );
+
+    assert_eq!(
+        run(r#"
+            (function() {
+              var observed;
+              var object = { name: "object-value" };
+              with (object) {
+                eval("function name() {}");
+                observed = object.name;
+              }
+              return observed + "," + typeof name;
+            }());
+        "#),
+        Value::String(Arc::from("object-value,function"))
+    );
+}
+
+#[test]
 fn annex_b_if_function_eval_uses_synthetic_block_admission() {
     assert_eq!(
         run(r#"

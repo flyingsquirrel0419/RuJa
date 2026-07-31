@@ -1,5 +1,34 @@
 # test262 conformance
 
+## Annex B catch var declarations
+
+Annex B.3.4 now permits direct-eval `var` and function declarations to cross a
+matching simple catch parameter. Initializers resolve the active catch binding,
+while declaration instantiation creates the variable-environment binding.
+Destructuring catch parameters and intervening lexical declarations remain
+conflicts. Object Environment Records are ignored by the declaration scan, and
+ordinary, generator, async, and async-generator declarations share the same
+check. No Test262 admission metadata changed.
+
+On pinned Test262 `9e61c12835c5e4a3bdba93850427e6742c4f64c4`,
+`annexB/language/eval-code/direct/var-env-lower-lex-catch-non-strict.js`
+moves from **0 pass / 1 fail** to **1 pass / 0 fail**. The complete 309-file
+direct-eval directory passes **309/0**. Full Annex B moves from
+**819/193/74** to **820/192/74**, exactly **+1 pass / -1 fail**. The supported
+statements and expressions subset remains **12,765 pass / 0 fail / 7,674 skip
+/ 20,439 total**. Local warnings-denied Clippy, all-target/all-feature Rust
+tests, doctest, wasm32 check, rustfmt, and Test262 tooling **163/163** pass.
+
+```text
+[Decision Log]
+- 목적과 의도: runner 예외 없이 Annex B.3.4의 catch parameter 및 direct-eval declaration semantics를 구현하고 정확한 conformance delta를 측정한다.
+- 기존 구현 및 제약 조건: simple catch를 지나는 eval var가 SyntaxError였고 function declaration은 반대로 모든 lexical conflict 검사를 우회했다. source destructuring catch의 nested var early error도 누락됐다.
+- 검토한 주요 대안: exact file admission, simple catch 전용 eval rewrite, 모든 Environment Record 재구성, 또는 declaration-instantiation 환경 walk와 parser early error를 각각 수정하기.
+- 선택한 방식: 공용 eval declaration conflict walk가 Object Environment Record와 matching simple catch만 무시하게 하고, destructuring catch source collision은 recursive VarDeclaredNames 검사로 거부한다.
+- 다른 대안 대신 이 방식을 선택한 이유: admission과 rewrite는 실제 선언 및 initializer binding을 검증하지 못한다. 환경 재구성은 넓은 위험을 만들며 현재 binding-kind 정보만으로 명세 차이를 정확히 표현할 수 있다.
+- 장점, 단점 및 영향: exact file과 direct-eval cohort가 전부 통과하고 Annex B는 정확히 +1/-1 이동하며 supported subset은 0 fail을 유지한다. full CI artifact 비교는 구현 커밋 후 별도 근거로 기록한다.
+```
+
 ## Annex B for-in initializers
 
 Annex B.3.5 now admits an initializer only in a non-strict `for-in` head with
