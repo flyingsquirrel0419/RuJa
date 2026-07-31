@@ -5851,7 +5851,7 @@ fn populate_test262_realm(vm: &mut Vm, realm_env: GcIdx) -> error::Result<Value>
         Value::Object(parse_int_idx),
     );
     let realm_function_proto_idx =
-        vm.new_native_function_in_env("Function.prototype", function_proto_noop, 0, realm_env)?;
+        vm.new_native_function_in_env("", function_proto_noop, 0, realm_env)?;
     let realm_function_proto = Value::Object(realm_function_proto_idx);
     vm.heap.with_obj(realm_function_proto_idx.0, |obj| {
         if let HeapObj::Function(f) = obj {
@@ -13397,8 +13397,7 @@ fn install_iterator_intrinsic_in_env(
 pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
     // Allocate Function.prototype first so that every function created during
     // the rest of bootstrap inherits call/apply/bind via its [[Prototype]].
-    let function_proto_idx =
-        vm.new_native_function("Function.prototype", function_proto_noop, 0)?;
+    let function_proto_idx = vm.new_native_function("", function_proto_noop, 0)?;
     vm.function_proto = Value::Object(function_proto_idx);
     setup(vm)?;
     vm.register_realm_object_prototype(vm.global, vm.object_proto.clone());

@@ -1708,27 +1708,6 @@ impl Vm {
             };
             match key_str {
                 Some("prototype") => function.prototype.lock().clone(),
-                // Bound functions install a real configurable own `name`.
-                // Once deleted, ordinary prototype lookup must proceed instead
-                // of reviving the internal diagnostic name stored in FunctionData.
-                Some("name")
-                    if matches!(&function.kind, crate::value::FunctionKind::Bound { .. }) =>
-                {
-                    None
-                }
-                Some("name") => Some(function.name.as_ref().map_or_else(
-                    || Value::String(Arc::from("")),
-                    |name| Value::String(name.clone()),
-                )),
-                Some("length") => match &function.kind {
-                    crate::value::FunctionKind::Native { length, .. } => {
-                        Some(Value::Number(*length as f64))
-                    }
-                    crate::value::FunctionKind::Interpreted { func } => {
-                        Some(Value::Number(func.length as f64))
-                    }
-                    _ => None,
-                },
                 _ => None,
             }
         });

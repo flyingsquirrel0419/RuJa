@@ -1,5 +1,38 @@
 # test262 conformance
 
+## Configurable Function metadata
+
+Function `name` and `length` are ordinary configurable own data properties.
+Deleting either property now leaves it absent instead of allowing property
+reads to reconstruct a value from `FunctionData`. This restores ordinary
+prototype traversal, including inherited getters with the original receiver,
+and permits a later `Object.defineProperty` to create a replacement property.
+The internal function name remains available for diagnostics and source
+rendering but is no longer an observable property fallback.
+
+`%Function.prototype%` is initialized with the specified empty own `name` in
+both the main Realm and Test262-created Realms. On pinned Test262
+`9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the three
+`built-ins/Function/length/S15.3.5.1_A2_T*.js` files and
+`built-ins/Function/prototype/name.js` move from **0 pass / 4 fail** to
+**4 pass / 0 fail**. The complete 509-file `built-ins/Function` directory moves
+from **415 pass / 45 fail / 49 skip** to **419 pass / 41 fail / 49 skip**,
+exactly **+4 pass / -4 fail**. The supported statements/expressions subset
+remains **12,765 pass / 0 fail / 7,674 skip / 20,439 total**. No Test262
+admission metadata changed. Local rustfmt, warnings-denied Clippy,
+all-target/all-feature Rust tests, vendor tests, wasm32 check, and Test262
+tooling **163/163** pass.
+
+```text
+[Decision Log]
+- 목적과 의도: configurable 함수 name/length 삭제가 영구적으로 관찰되고 이후 ordinary prototype lookup을 따르게 한다.
+- 기존 구현 및 제약 조건: 생성 시 올바른 own descriptor를 설치했지만 get fallback이 FunctionData의 name과 함수 종류별 length를 다시 노출했다. 내부 name은 진단과 source rendering에는 계속 필요하다.
+- 검토한 주요 대안: 삭제 시 내부 metadata도 지우기, tombstone을 별도 저장하기, 또는 observable fallback을 제거하고 실제 descriptor만 사용하기.
+- 선택한 방식: name/length의 virtual fallback을 제거하고 생성 시 설치된 ordinary own descriptor를 유일한 observable source로 사용한다. Function.prototype 생성 이름은 빈 문자열로 맞춘다.
+- 다른 대안 대신 이 방식을 선택한 이유: 내부 metadata 삭제는 진단 정보를 손상하고 tombstone은 ordinary object semantics를 중복 구현한다. 실제 descriptor는 delete, prototype traversal, accessor receiver, redefine를 기존 property machinery로 일관되게 처리한다.
+- 장점, 단점 및 영향: dynamic/interpreted/native 함수와 Realm이 같은 규칙을 사용하고 exact cohort가 +4/-4 이동한다. 향후 함수 생성 경로는 name/length descriptor 설치를 생략하면 안 되며 FunctionData 값만으로 observable property를 합성해서도 안 된다.
+```
+
 ## for-await early errors and AsyncIteratorClose
 
 `for await...of` now follows its Await grammar context instead of being

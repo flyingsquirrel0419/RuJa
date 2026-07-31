@@ -34,6 +34,27 @@ source ─► Lexer ─► Parser ─► Compiler ─► Bytecode ─► VM
   Object, Array, String, Number, Boolean, Function, Math, JSON, console, RegExp,
   Map, Set, Symbol, Promise, Proxy, TypedArray, and the Error hierarchy.
 
+## Function metadata properties
+
+Function objects keep internal metadata for invocation, diagnostics, and source
+rendering, but observable `name` and `length` values live only in ordinary own
+property descriptors installed when each function is created. Because those
+descriptors are configurable, deletion must not expose the internal values
+again. A subsequent read therefore follows the normal prototype chain and a
+subsequent definition creates a new own property through the shared property
+machinery. The only function-specific virtual property fallback is the
+constructor `prototype` slot.
+
+```text
+[Decision Log]
+- 목적과 의도: 함수 내부 실행 metadata와 ECMAScript ordinary property semantics의 경계를 고정한다.
+- 기존 구현 및 제약 조건: 모든 production 생성 경로가 name/length descriptor를 설치하지만 get fallback도 같은 값을 합성해 configurable 삭제를 무효화했다. 내부 name은 toString과 진단에서 필요하다.
+- 검토한 주요 대안: 삭제 시 내부 metadata 변경, deleted-key tombstone, 또는 descriptor-only observation.
+- 선택한 방식: name/length는 실제 own descriptor로만 관찰하고 FunctionData는 내부 용도로 유지한다. prototype slot만 기존 virtual fallback을 유지한다.
+- 다른 대안 대신 이 방식을 선택한 이유: descriptor-only 방식이 기존 delete, inheritance, accessor receiver, Proxy, defineProperty 규칙을 그대로 재사용하며 내부 실행 상태를 변형하지 않는다.
+- 장점, 단점 및 영향: 함수 종류와 Realm에 무관한 ordinary semantics를 얻는다. 새 함수 생성 경로는 반드시 표준 descriptor를 설치해야 하며 virtual metadata 추가 시 configurable 삭제 동작을 별도로 검토해야 한다.
+```
+
 ## Script and Module lexical goals
 
 Lexer construction fixes the source goal before tokenization. Script, direct

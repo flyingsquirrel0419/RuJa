@@ -80,6 +80,75 @@ fn function_ctor_defines_own_name_and_length_descriptors() {
 }
 
 #[test]
+fn configurable_function_metadata_stays_deleted() {
+    let src = r#"
+        let dynamic = Function("a", "b", "c", "return 1;");
+        let ordinary = function named(a, b) {};
+        let native = Function;
+        let before = [
+          dynamic.length, ordinary.length, native.length,
+          dynamic.name, ordinary.name, native.name,
+          Function.prototype.name
+        ].join("|");
+
+        delete dynamic.length;
+        delete ordinary.length;
+        delete native.length;
+        delete dynamic.name;
+        delete ordinary.name;
+        delete native.name;
+
+        [
+          before,
+          dynamic.hasOwnProperty("length"), dynamic.length,
+          ordinary.hasOwnProperty("length"), ordinary.length,
+          native.hasOwnProperty("length"), native.length,
+          dynamic.hasOwnProperty("name"), dynamic.name,
+          ordinary.hasOwnProperty("name"), ordinary.name,
+          native.hasOwnProperty("name"), native.name
+        ].join("|");
+    "#;
+    assert_eq!(
+        run(src),
+        Value::String(Arc::from(
+            "3|2|1|anonymous|named|Function||false|0|false|0|false|0|false||false||false|"
+        ))
+    );
+}
+
+#[test]
+fn deleted_function_metadata_uses_ordinary_prototype_lookup() {
+    let src = r#"
+        let calls = [];
+        let f = function named(a, b) {};
+        let customPrototype = {
+          get length() {
+            calls.push(this === f ? "length" : "bad-length");
+            return 17;
+          },
+          get name() {
+            calls.push(this === f ? "name" : "bad-name");
+            return "inherited";
+          }
+        };
+        Object.setPrototypeOf(f, customPrototype);
+        delete f.length;
+        delete f.name;
+        let inherited = [f.length, f.name].join(":");
+        let missing = Object.getOwnPropertyDescriptor(f, "length") === undefined;
+        Object.defineProperty(f, "length", {
+          value: 9,
+          configurable: true
+        });
+        [inherited, calls.join(","), missing, f.length].join("|");
+    "#;
+    assert_eq!(
+        run(src),
+        Value::String(Arc::from("17:inherited|length,name|true|9"))
+    );
+}
+
+#[test]
 fn function_ctor_registers_nested_function_expressions() {
     assert_eq!(
         run(r#"new Function('return (function() { return 1; })()')();"#),

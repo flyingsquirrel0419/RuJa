@@ -4,6 +4,17 @@
 
 ### Changed
 
+- Function `name` and `length` now remain deleted after their configurable own
+  properties are removed. Property reads no longer reconstruct those values
+  from internal function metadata, so inherited accessors and later
+  `defineProperty` calls follow ordinary object semantics. `%Function.prototype%`
+  now has the specified empty own `name` in both the main and Test262-created
+  Realms. On pinned Test262, the four exact metadata tests move from **0/4** to
+  **4/0** and full `built-ins/Function` moves from **415/45/49** to
+  **419/41/49**, exactly **+4 pass / -4 fail**. The supported
+  statements/expressions subset remains **12,765/0/7,674**; no admission
+  metadata changed.
+
 - Implemented `for await...of` context early errors and specification-ordered
   `AsyncIteratorClose`. Script code now requires an async function, Module code
   permits top-level use, nested ordinary functions and class static blocks
