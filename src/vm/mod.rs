@@ -713,7 +713,7 @@ pub struct CallFrame {
     /// Stack of finally-target-ips for nested active `try/finally`. A
     /// non-local transfer (return/break/continue/throw) that hits an active
     /// finally diverts to the finally target after recording its completion.
-    pub finally_stack: Vec<(usize, u32)>,
+    pub finally_stack: Vec<crate::value::FinallyGuardState>,
     /// True while executing non-strict eval code whose variable environment is
     /// the global environment. Global var/function bindings created from this
     /// frame use EvalDeclarationInstantiation's configurable=true argument.
@@ -856,7 +856,7 @@ pub(crate) struct GeneratorPrologueState {
     pub stack: Vec<Value>,
     pub locals: Vec<Value>,
     pub catch_stack: Vec<(usize, u32, GcIdx, usize)>,
-    pub finally_stack: Vec<(usize, u32)>,
+    pub finally_stack: Vec<crate::value::FinallyGuardState>,
     pub guard_seq: u32,
     pub finally_completions: Vec<crate::value::FinallyCompletion>,
 }
@@ -3037,13 +3037,13 @@ impl Vm {
 
                     let divert_to_finally = self.frames.last().is_some_and(|frame| {
                         match (frame.finally_stack.last(), frame.catch_stack.last()) {
-                            (Some(&(_, _)), None) => true,
-                            (Some(&(_, fseq)), Some(&(_, cseq, _, _))) => fseq > cseq,
+                            (Some(_), None) => true,
+                            (Some(guard), Some(&(_, cseq, _, _))) => guard.seq > cseq,
                             _ => false,
                         }
                     });
                     if divert_to_finally {
-                        let (target, seq) = self
+                        let guard = self
                             .frames
                             .last()
                             .and_then(|f| f.finally_stack.last().copied())
@@ -3052,10 +3052,8 @@ impl Vm {
                                     "finally stack empty during native error diversion",
                                 )
                             })?;
-                        let frame = self.current_frame_mut()?;
-                        frame.discard_active_finally_above(seq);
-                        frame.set_finally_completion(seq, 4, thrown)?;
-                        frame.ip = target;
+                        let stack_target = self.prepare_finally_diversion(guard, 4, thrown)?;
+                        self.truncate_stack_recycling_references(stack_target);
                         continue;
                     }
 

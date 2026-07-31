@@ -131,6 +131,48 @@ impl Vm {
         }
     }
 
+    pub(super) fn prepare_finally_diversion(
+        &mut self,
+        guard: crate::value::FinallyGuardState,
+        tag: u8,
+        value: Value,
+    ) -> error::Result<usize> {
+        let frame = self.current_frame_mut()?;
+        Self::discard_catches_inside_finally(frame, guard.seq);
+        frame.discard_active_finally_above(guard.seq);
+        frame.set_finally_completion(guard.seq, tag, value)?;
+        frame.env = guard.env;
+        frame.ip = guard.target;
+        Ok(frame.stack_base + guard.stack_depth)
+    }
+
+    fn compiler_temp_value(&self, env: GcIdx, name: &str) -> error::Result<Value> {
+        match crate::environment::get_checked(&self.heap, env, name) {
+            Ok(Some(value)) => Ok(value),
+            Ok(None) | Err(false) => Err(Error::internal(format!(
+                "compiler temporary binding missing: {name}"
+            ))),
+            Err(true) => Err(Error::internal(format!(
+                "compiler temporary binding is uninitialized: {name}"
+            ))),
+        }
+    }
+
+    fn control_transfer_destination(frame: &CallFrame, mut target: usize) -> usize {
+        loop {
+            match frame.chunk.code.get(target) {
+                Some(
+                    Op::PopScope
+                    | Op::PopWithEnv
+                    | Op::ExitCatchGuards(_)
+                    | Op::ExitFinallyBodies(_),
+                ) => target += 1,
+                Some(Op::Jump(destination)) => return *destination,
+                _ => return target,
+            }
+        }
+    }
+
     fn prepare_super_constructor_call(&self) -> error::Result<(GcIdx, Value, Value)> {
         let frame = self.current_frame()?;
         let current_env = frame.env;
@@ -197,14 +239,14 @@ impl Vm {
                 .and_then(|f| f.force_return.lock().take())
             {
                 let stack_base = self.current_frame()?.stack_base;
-                if let Some(frame) = self.frames.last_mut() {
-                    if let Some(&(target, fseq)) = frame.finally_stack.last() {
-                        Self::discard_catches_inside_finally(frame, fseq);
-                        frame.discard_active_finally_above(fseq);
-                        frame.set_finally_completion(fseq, 1, ret)?;
-                        frame.ip = target;
-                        continue;
-                    }
+                if let Some(guard) = self
+                    .frames
+                    .last()
+                    .and_then(|frame| frame.finally_stack.last().copied())
+                {
+                    let stack_target = self.prepare_finally_diversion(guard, 1, ret)?;
+                    self.truncate_stack_recycling_references(stack_target);
+                    continue;
                 }
                 self.truncate_stack_recycling_references(stack_base);
                 self.frames.pop();
@@ -1528,14 +1570,14 @@ impl Vm {
                     // record the completion (tag 1) and divert to the finally
                     // target, popping the finally entry so the finally body's
                     // own transfers aren't re-intercepted by this finally.
-                    if let Some(frame) = self.frames.last_mut() {
-                        if let Some(&(target, fseq)) = frame.finally_stack.last() {
-                            Self::discard_catches_inside_finally(frame, fseq);
-                            frame.discard_active_finally_above(fseq);
-                            frame.set_finally_completion(fseq, 1, v)?;
-                            frame.ip = target;
-                            continue;
-                        }
+                    if let Some(guard) = self
+                        .frames
+                        .last()
+                        .and_then(|frame| frame.finally_stack.last().copied())
+                    {
+                        let stack_target = self.prepare_finally_diversion(guard, 1, v)?;
+                        self.truncate_stack_recycling_references(stack_target);
+                        continue;
                     }
                     self.truncate_stack_recycling_references(stack_base);
                     self.frames.pop();
@@ -1985,20 +2027,18 @@ impl Vm {
                         // when finally/catch ips are interleaved.
                         let divert_to_finally =
                             match (frame.finally_stack.last(), frame.catch_stack.last()) {
-                                (Some(&(_, _)), None) => true,
-                                (Some(&(_, fseq)), Some(&(_, cseq, _, _))) => fseq > cseq,
+                                (Some(_), None) => true,
+                                (Some(guard), Some(&(_, cseq, _, _))) => guard.seq > cseq,
                                 _ => false,
                             };
                         if divert_to_finally {
-                            let (target, fseq) =
-                                frame.finally_stack.last().copied().ok_or_else(|| {
-                                    crate::error::Error::internal(
-                                        "finally stack empty during throw diversion",
-                                    )
-                                })?;
-                            frame.discard_active_finally_above(fseq);
-                            frame.set_finally_completion(fseq, 4, v)?;
-                            frame.ip = target;
+                            let guard = frame.finally_stack.last().copied().ok_or_else(|| {
+                                crate::error::Error::internal(
+                                    "finally stack empty during throw diversion",
+                                )
+                            })?;
+                            let stack_target = self.prepare_finally_diversion(guard, 4, v)?;
+                            self.truncate_stack_recycling_references(stack_target);
                             continue;
                         }
                         if let Some((handler, cseq, saved_env, saved_stack_depth)) =
@@ -2053,10 +2093,20 @@ impl Vm {
                 Op::PushFinally(target) => {
                     // Begin guarding try/catch with a finally: record the
                     // finally entry so non-local transfers divert to it.
+                    let stack_depth = {
+                        let frame = self.current_frame()?;
+                        self.stack.len().saturating_sub(frame.stack_base)
+                    };
                     let f = self.current_frame_mut()?;
                     let seq = f.guard_seq.load(Ordering::Relaxed) + 1;
                     f.guard_seq.store(seq, Ordering::Relaxed);
-                    f.finally_stack.push((target, seq));
+                    f.finally_stack.push(crate::value::FinallyGuardState {
+                        start: ip,
+                        target,
+                        seq,
+                        env: f.env,
+                        stack_depth,
+                    });
                     f.finally_completions
                         .lock()
                         .push(crate::value::FinallyCompletion {
@@ -2071,44 +2121,47 @@ impl Vm {
                     // guard. A pending completion from inside the region was
                     // already popped when the transfer diverted to finally.
                     let frame = self.current_frame_mut()?;
-                    if let Some((_, seq)) = frame.finally_stack.pop() {
+                    if let Some(guard) = frame.finally_stack.pop() {
                         let completion = frame.finally_completions.lock().pop();
-                        debug_assert!(completion.is_some_and(|completion| completion.seq == seq));
+                        debug_assert!(
+                            completion.is_some_and(|completion| completion.seq == guard.seq)
+                        );
                     }
                 }
                 Op::EnterFinally => {
                     let frame = self.current_frame_mut()?;
-                    if let Some((_, seq)) = frame.finally_stack.pop() {
+                    if let Some(guard) = frame.finally_stack.pop() {
                         let mut completions = frame.finally_completions.lock();
                         let completion = completions
                             .iter_mut()
-                            .rfind(|completion| completion.seq == seq)
+                            .rfind(|completion| completion.seq == guard.seq)
                             .ok_or_else(|| Error::internal("finally completion missing"))?;
                         completion.active = true;
                     }
                 }
                 Op::DivertBreak(finally_start) => {
                     let resume_ip = ip + 1;
-                    let f = self.current_frame_mut()?;
-                    if let Some(&(_, fseq)) = f.finally_stack.last() {
-                        Self::discard_catches_inside_finally(f, fseq);
-                        f.discard_active_finally_above(fseq);
-                        f.set_finally_completion(fseq, 2, Value::Number(resume_ip as f64))?;
+                    if let Some(guard) = self.current_frame()?.finally_stack.last().copied() {
+                        debug_assert_eq!(guard.target, finally_start);
+                        let stack_target = self.prepare_finally_diversion(
+                            guard,
+                            2,
+                            Value::Number(resume_ip as f64),
+                        )?;
+                        self.truncate_stack_recycling_references(stack_target);
                     }
-                    f.ip = finally_start;
                     continue;
                 }
                 Op::DivertContinue(finally_start, cont) => {
                     // A `continue` inside an active try/finally: record the
                     // completion as a continue with the loop's continue target,
                     // and divert to the finally body.
-                    let f = self.current_frame_mut()?;
-                    if let Some(&(_, fseq)) = f.finally_stack.last() {
-                        Self::discard_catches_inside_finally(f, fseq);
-                        f.discard_active_finally_above(fseq);
-                        f.set_finally_completion(fseq, 3, Value::Number(cont as f64))?;
+                    if let Some(guard) = self.current_frame()?.finally_stack.last().copied() {
+                        debug_assert_eq!(guard.target, finally_start);
+                        let stack_target =
+                            self.prepare_finally_diversion(guard, 3, Value::Number(cont as f64))?;
+                        self.truncate_stack_recycling_references(stack_target);
                     }
-                    f.ip = finally_start;
                     continue;
                 }
                 Op::CallThis(arg_count) => {
@@ -2206,14 +2259,15 @@ impl Vm {
                             // return
                             // If an outer finally still guards this scope,
                             // divert the return through it before unwinding.
-                            if let Some(frame) = self.frames.last_mut() {
-                                if let Some(&(outer, seq)) = frame.finally_stack.last() {
-                                    Self::discard_catches_inside_finally(frame, seq);
-                                    frame.discard_active_finally_above(seq);
-                                    frame.set_finally_completion(seq, 1, val.clone())?;
-                                    frame.ip = outer;
-                                    continue;
-                                }
+                            if let Some(guard) = self
+                                .frames
+                                .last()
+                                .and_then(|frame| frame.finally_stack.last().copied())
+                            {
+                                let stack_target =
+                                    self.prepare_finally_diversion(guard, 1, val.clone())?;
+                                self.truncate_stack_recycling_references(stack_target);
+                                continue;
                             }
                             // Re-run the return semantics now that no finally
                             // guards it.
@@ -2230,41 +2284,47 @@ impl Vm {
                         }
                         4 => {
                             // throw
-                            let catch_stack_target = {
+                            let diversion = {
                                 let frame = self.current_frame_mut()?;
                                 // If an outer finally still guards this scope,
                                 // divert the throw through it first.
                                 let divert_to_outer_finally =
                                     match (frame.finally_stack.last(), frame.catch_stack.last()) {
-                                        (Some(&(_, _)), None) => true,
-                                        (Some(&(_, fseq)), Some(&(_, cseq, _, _))) => fseq > cseq,
+                                        (Some(_), None) => true,
+                                        (Some(guard), Some(&(_, cseq, _, _))) => guard.seq > cseq,
                                         _ => false,
                                     };
                                 if divert_to_outer_finally {
-                                    let (outer, seq) =
+                                    let guard =
                                         frame.finally_stack.last().copied().ok_or_else(|| {
                                             crate::error::Error::internal(
                                                 "finally stack empty during throw diversion",
                                             )
                                         })?;
-                                    frame.discard_active_finally_above(seq);
-                                    frame.set_finally_completion(seq, 4, val.clone())?;
-                                    frame.ip = outer;
-                                    None
+                                    Some(Ok(guard))
                                 } else if let Some((handler, cseq, saved_env, saved_stack_depth)) =
                                     frame.catch_stack.pop()
                                 {
                                     frame.discard_active_finally_above(cseq);
                                     frame.env = saved_env;
                                     frame.ip = handler;
-                                    Some(frame.stack_base + saved_stack_depth)
+                                    Some(Err(frame.stack_base + saved_stack_depth))
                                 } else {
                                     return Err(Error::thrown(val, &self.heap));
                                 }
                             };
-                            if let Some(stack_target) = catch_stack_target {
-                                self.truncate_stack_recycling_references(stack_target);
-                                self.stack.push(val);
+                            if let Some(diversion) = diversion {
+                                match diversion {
+                                    Ok(guard) => {
+                                        let stack_target =
+                                            self.prepare_finally_diversion(guard, 4, val.clone())?;
+                                        self.truncate_stack_recycling_references(stack_target);
+                                    }
+                                    Err(stack_target) => {
+                                        self.truncate_stack_recycling_references(stack_target);
+                                        self.stack.push(val);
+                                    }
+                                }
                                 continue;
                             }
                             continue;
@@ -2273,21 +2333,31 @@ impl Vm {
                         // transfer by jumping to its saved target. These are
                         // recorded as the loop's break/continue ip.
                         2 | 3 => {
-                            let frame = self.current_frame_mut()?;
-                            // If an outer finally still guards this scope,
-                            // divert the break/continue through it first.
-                            if let Some(&(outer, seq)) = frame.finally_stack.last() {
-                                Self::discard_catches_inside_finally(frame, seq);
-                                frame.discard_active_finally_above(seq);
-                                frame.set_finally_completion(seq, tag, val.clone())?;
-                                frame.ip = outer;
-                                continue;
-                            }
                             let target = match val {
                                 Value::Number(n) => n as usize,
                                 _ => usize::MAX,
                             };
-                            frame.ip = target;
+                            // If an outer finally still guards this scope,
+                            // divert the break/continue through it first.
+                            if let Some(guard) = self
+                                .frames
+                                .last()
+                                .and_then(|frame| frame.finally_stack.last().copied())
+                            {
+                                let destination = Self::control_transfer_destination(
+                                    self.current_frame()?,
+                                    target,
+                                );
+                                if destination > guard.start && destination < guard.target {
+                                    self.current_frame_mut()?.ip = target;
+                                } else {
+                                    let stack_target =
+                                        self.prepare_finally_diversion(guard, tag, val.clone())?;
+                                    self.truncate_stack_recycling_references(stack_target);
+                                }
+                                continue;
+                            }
+                            self.current_frame_mut()?.ip = target;
                             continue;
                         }
                         _ => {}
@@ -2868,14 +2938,7 @@ impl Vm {
                     let continue_target = match (completion_tag, completion_val) {
                         (3, Value::Number(n)) => {
                             let frame = self.current_frame()?;
-                            let mut target = n as usize;
-                            loop {
-                                match frame.chunk.code.get(target) {
-                                    Some(Op::PopScope | Op::PopWithEnv) => target += 1,
-                                    Some(Op::Jump(next)) => break *next,
-                                    _ => break target,
-                                }
-                            }
+                            Self::control_transfer_destination(frame, n as usize)
                         }
                         _ => usize::MAX,
                     };
@@ -2910,6 +2973,102 @@ impl Vm {
                                 }
                             }
                         }
+                    }
+                }
+                Op::AsyncIteratorCloseStartIfAbrupt {
+                    iter,
+                    done,
+                    inner_continue,
+                } => {
+                    let (completion_tag, completion_val) = {
+                        let frame = self.current_frame()?;
+                        let completions = frame.finally_completions.lock();
+                        let completion = completions
+                            .last()
+                            .ok_or_else(|| Error::internal("active finally completion missing"))?;
+                        (completion.tag, completion.value.clone())
+                    };
+                    let continue_target = match (completion_tag, completion_val) {
+                        (3, Value::Number(n)) => {
+                            let frame = self.current_frame()?;
+                            Self::control_transfer_destination(frame, n as usize)
+                        }
+                        _ => usize::MAX,
+                    };
+                    let should_close =
+                        completion_tag != 0 && inner_continue != Some(continue_target);
+                    let mut close_result = None;
+                    if should_close {
+                        let (iter_name, done_name) = {
+                            let frame = self.current_frame()?;
+                            let iter_name = match frame.chunk.constants.get(iter) {
+                                Some(Value::String(value)) => value.to_string(),
+                                _ => {
+                                    return Err(Error::internal(
+                                        "async iterator temporary name is not a string",
+                                    ));
+                                }
+                            };
+                            let done_name = match frame.chunk.constants.get(done) {
+                                Some(Value::String(value)) => value.to_string(),
+                                _ => {
+                                    return Err(Error::internal(
+                                        "async iterator done temporary name is not a string",
+                                    ));
+                                }
+                            };
+                            (iter_name, done_name)
+                        };
+                        let env = self
+                            .frames
+                            .last()
+                            .map(|frame| frame.env)
+                            .unwrap_or(self.global);
+                        let done_value = self.compiler_temp_value(env, &done_name)?;
+                        let done = match done_value {
+                            Value::Bool(done) => done,
+                            _ => {
+                                return Err(Error::internal(
+                                    "async iterator done temporary is not boolean",
+                                ));
+                            }
+                        };
+                        if !done {
+                            let iterator = self.compiler_temp_value(env, &iter_name)?;
+                            close_result = self.async_iterator_close_start(&iterator)?;
+                        }
+                    }
+                    if let Some(result) = close_result {
+                        self.stack.push(result);
+                        self.stack.push(Value::Bool(true));
+                    } else {
+                        self.stack.push(Value::Undefined);
+                        self.stack.push(Value::Bool(false));
+                    }
+                }
+                Op::AsyncIteratorCloseFinish => {
+                    let result = self.stack.pop().unwrap_or(Value::Undefined);
+                    let original_throw = {
+                        let frame = self.current_frame()?;
+                        let completions = frame.finally_completions.lock();
+                        completions
+                            .last()
+                            .is_some_and(|completion| completion.tag == 4)
+                    };
+                    if !original_throw && !matches!(result, Value::Object(_)) {
+                        return Err(Error::type_err("Iterator return result is not an object"));
+                    }
+                }
+                Op::AsyncIteratorCloseHandleError => {
+                    let error = self.stack.pop().unwrap_or(Value::Undefined);
+                    let frame = self.current_frame_mut()?;
+                    let mut completions = frame.finally_completions.lock();
+                    let completion = completions
+                        .last_mut()
+                        .ok_or_else(|| Error::internal("active finally completion missing"))?;
+                    if completion.tag != 4 {
+                        completion.tag = 4;
+                        completion.value = error;
                     }
                 }
                 Op::IteratorClose {

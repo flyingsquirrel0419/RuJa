@@ -85,6 +85,7 @@ struct Scope {
 struct FinallyGuard {
     diverts: Vec<usize>,
     control_depth: usize,
+    scope_depth: usize,
 }
 
 struct CatchGuard {
@@ -820,7 +821,11 @@ impl Compiler {
     /// so `break`/`continue` don't leak `with` or block scopes past the loop.
     #[allow(dead_code)]
     fn emit_scope_unwind(&mut self, loop_depth: usize) {
-        for i in (loop_depth..self.scopes.len()).rev() {
+        self.emit_scope_unwind_range(loop_depth, self.scopes.len());
+    }
+
+    fn emit_scope_unwind_range(&mut self, target_depth: usize, current_depth: usize) {
+        for i in (target_depth..current_depth).rev() {
             if !self.scopes[i].has_runtime_env {
                 continue;
             }
@@ -1573,6 +1578,9 @@ impl Compiler {
                 self.chunk
                     .emit(Op::StoreEnv(done_name_idx), self.current_line);
                 self.chunk.emit(Op::Pop, self.current_line);
+                let value_name_idx = self.fresh_temp("#iterValue");
+                self.chunk
+                    .emit(Op::HoistVar(value_name_idx), self.current_line);
                 let loop_start = self.chunk.code.len();
                 self.begin_loop(loop_start);
                 self.chunk.emit(Op::LoadEnv(it_name_idx), self.current_line);
@@ -1591,13 +1599,23 @@ impl Compiler {
                 // JumpIfTrue pops `done`; when true (done==true), jump past the body.
                 let done_jump = self.chunk.code.len();
                 self.chunk.emit(Op::JumpIfTrue(0), self.current_line);
+                self.chunk
+                    .emit(Op::StoreEnv(value_name_idx), self.current_line);
+                self.chunk.emit(Op::Pop, self.current_line);
                 let finally_guard_ip = self.chunk.code.len();
                 self.chunk.emit(Op::PushFinally(0), self.current_line);
                 self.finally_stack.push(FinallyGuard {
                     diverts: Vec::new(),
                     control_depth: self.loop_stack.len(),
+                    scope_depth: self.scopes.len(),
                 });
                 // Bind the value into the loop variable, then run the body.
+                self.chunk
+                    .emit(Op::LoadEnv(value_name_idx), self.current_line);
+                self.chunk.emit(Op::Undefined, self.current_line);
+                self.chunk
+                    .emit(Op::StoreEnv(value_name_idx), self.current_line);
+                self.chunk.emit(Op::Pop, self.current_line);
                 if let Some((kind, names)) = &lexical_head {
                     let bindings = Self::lexical_bindings_from_names(*kind, names);
                     self.chunk.emit(Op::PushScope, self.current_line);
@@ -1621,15 +1639,23 @@ impl Compiler {
                 self.patch_diverts(finally_start);
                 self.chunk.emit(Op::EnterFinally, self.current_line);
                 self.finally_stack.pop();
-                self.chunk.emit(
-                    Op::IteratorCloseIfAbrupt {
-                        iter: it_name_idx,
-                        done: done_name_idx,
-                        inner_continue: Some(loop_start),
-                        ignore_close_errors: false,
-                    },
-                    self.current_line,
-                );
+                if *is_await {
+                    self.emit_async_iterator_close_if_abrupt(
+                        it_name_idx,
+                        done_name_idx,
+                        Some(loop_start),
+                    );
+                } else {
+                    self.chunk.emit(
+                        Op::IteratorCloseIfAbrupt {
+                            iter: it_name_idx,
+                            done: done_name_idx,
+                            inner_continue: Some(loop_start),
+                            ignore_close_errors: false,
+                        },
+                        self.current_line,
+                    );
+                }
                 self.chunk.emit(Op::PopFinallyRethrow, self.current_line);
                 let end = self.chunk.code.len();
                 self.chunk.patch_jump(done_jump, end);
@@ -1697,6 +1723,7 @@ impl Compiler {
                     self.finally_stack.push(FinallyGuard {
                         diverts: Vec::new(),
                         control_depth: self.loop_stack.len(),
+                        scope_depth: self.scopes.len(),
                     });
                 }
                 if has_catch {
@@ -1888,7 +1915,7 @@ impl Compiler {
                     let exited_finally_bodies = self.exited_finally_body_count(i);
                     let exited_catch_guards = self.exited_catch_guard_count(i);
                     let active_guard = self.active_finally_for_transfer(i);
-                    if let Some(guard_idx) = active_guard {
+                    let unwind_from = if let Some(guard_idx) = active_guard {
                         let outermost_guard_idx = self
                             .outermost_finally_for_transfer(i)
                             .expect("active finally has an outermost guard");
@@ -1899,15 +1926,15 @@ impl Compiler {
                         self.chunk.emit(Op::DivertBreak(0), self.current_line);
                         self.finally_stack[guard_idx].diverts.push(divert_ip);
                         self.emit_exit_catch_guards(surviving_catches);
-                        // DivertBreak resumes at the next instruction after all
-                        // enclosing finally bodies have run. Keep the current
-                        // environments alive until then so finally can observe
-                        // bindings from the guarded region.
+                        self.finally_stack[outermost_guard_idx].scope_depth
                     } else {
                         self.emit_exit_catch_guards(exited_catch_guards);
                         self.emit_exit_finally_bodies(exited_finally_bodies);
-                    }
-                    self.emit_scope_unwind(scope_depth);
+                        self.scopes.len()
+                    };
+                    // Runtime diversion restores the outermost guard's saved
+                    // environment. Only scopes outside that guard remain to unwind.
+                    self.emit_scope_unwind_range(scope_depth, unwind_from);
                     let (_, breaks, _, _, _, _) = &mut self.loop_stack[i];
                     let j = self.chunk.code.len();
                     self.chunk.emit(Op::Jump(0), self.current_line);
@@ -1947,6 +1974,7 @@ impl Compiler {
                         let outermost_guard_idx = self
                             .outermost_finally_for_transfer(i)
                             .expect("active finally has an outermost guard");
+                        let unwind_from = self.finally_stack[outermost_guard_idx].scope_depth;
                         let surviving_catches =
                             self.surviving_exited_catch_guard_count(i, outermost_guard_idx);
                         if cont != usize::MAX {
@@ -1956,8 +1984,8 @@ impl Compiler {
                                 .emit(Op::DivertContinue(0, divert_ip + 1), self.current_line);
                             self.finally_stack[guard_idx].diverts.push(divert_ip);
                             self.emit_exit_catch_guards(surviving_catches);
-                            // Resume here only after every enclosing finally.
-                            self.emit_scope_unwind(scope_depth);
+                            // Runtime restored the outermost finally's environment.
+                            self.emit_scope_unwind_range(scope_depth, unwind_from);
                             self.chunk.emit(Op::Jump(cont), self.current_line);
                         } else {
                             self.emit_exit_finally_bodies(exited_finally_bodies);
@@ -1966,7 +1994,7 @@ impl Compiler {
                                 .emit(Op::DivertContinue(0, divert_ip + 1), self.current_line);
                             self.finally_stack[guard_idx].diverts.push(divert_ip);
                             self.emit_exit_catch_guards(surviving_catches);
-                            self.emit_scope_unwind(scope_depth);
+                            self.emit_scope_unwind_range(scope_depth, unwind_from);
                             let j = self.chunk.code.len();
                             self.chunk.emit(Op::Jump(0), self.current_line);
                             self.loop_stack[i].2.push(j);
@@ -2287,6 +2315,49 @@ impl Compiler {
             }
         }
         Ok(())
+    }
+
+    fn emit_async_iterator_close_if_abrupt(
+        &mut self,
+        iter: usize,
+        done: usize,
+        inner_continue: Option<usize>,
+    ) {
+        let try_ip = self.chunk.code.len();
+        self.chunk.emit(Op::PushTry(0), self.current_line);
+        self.chunk.emit(
+            Op::AsyncIteratorCloseStartIfAbrupt {
+                iter,
+                done,
+                inner_continue,
+            },
+            self.current_line,
+        );
+        let no_await = self.chunk.code.len();
+        self.chunk.emit(Op::JumpIfFalse(0), self.current_line);
+        self.chunk.emit(Op::Await, self.current_line);
+        self.chunk
+            .emit(Op::AsyncIteratorCloseFinish, self.current_line);
+        self.chunk.emit(Op::PopTry, self.current_line);
+        let awaited_done = self.chunk.code.len();
+        self.chunk.emit(Op::Jump(0), self.current_line);
+
+        let no_await_target = self.chunk.code.len();
+        self.chunk.patch_jump(no_await, no_await_target);
+        self.chunk.emit(Op::Pop, self.current_line);
+        self.chunk.emit(Op::PopTry, self.current_line);
+        let no_await_done = self.chunk.code.len();
+        self.chunk.emit(Op::Jump(0), self.current_line);
+
+        let handler = self.chunk.code.len();
+        if let Op::PushTry(target) = &mut self.chunk.code[try_ip] {
+            *target = handler;
+        }
+        self.chunk
+            .emit(Op::AsyncIteratorCloseHandleError, self.current_line);
+        let end = self.chunk.code.len();
+        self.chunk.patch_jump(awaited_done, end);
+        self.chunk.patch_jump(no_await_done, end);
     }
 
     /// Compile `for (left in right)`: iterate enumerable own+inherited string keys.

@@ -3849,4 +3849,37 @@ extra unsupported dependencies.
 - 장점, 단점 및 영향: Current declaration/expression coverage is complete and symmetric; unrelated feature gates do not move. Each new subclass test requires explicit metadata review.
 ```
 
+### AsyncIteratorClose and guarded control transfers
+
+Async iteration lowers abrupt close into three bytecode phases around the
+ordinary Await opcode: start/get/call, awaited-result validation, and caught
+close-error precedence. This keeps async function, Module, and async-generator
+suspension on the existing continuation machinery. Async-from-sync iterators
+delegate close to their wrapper operation so the underlying iterator-result
+value is unwrapped before the wrapper result settles.
+
+Finally guards snapshot the environment and clean operand-stack depth at entry.
+All return, throw, break, and continue diversions restore that snapshot before
+running finally code. A for-of value is moved to a compiler temporary before
+the guard is installed and the temporary is cleared immediately after reload,
+preventing partial LHS references and retained last values from surviving an
+awaited close.
+
+Guarded bytecode ranges also define break/continue ownership. The runtime
+follows the compiler's linear cleanup trampoline through scope/catch cleanup to
+the first Jump. If that logical destination remains inside an outer guard, the
+completion resumes without entering that outer finally. Destinations outside
+the range continue propagating guard by guard. This distinction prevents both
+premature outer finally execution and skipped outer finally blocks.
+
+```text
+[Decision Log]
+- 목적과 의도: AsyncIteratorClose의 suspension과 finally control transfer를 operand, environment, GC 관점에서 손실 없이 표현한다.
+- 기존 구현 및 제약 조건: finally guard는 target/sequence만 저장했고 diversion은 stack/env를 복원하지 않았다. inner iterator-finally completion은 실제 break/continue 목표가 outer try 내부인지와 무관하게 모든 outer guard로 전파됐다.
+- 검토한 주요 대안: close 전용 Rust state machine, frame 전체 clone, compiler가 모든 transfer마다 outer-finally 개수를 인코딩, 또는 guard snapshot과 protected bytecode range를 사용하기.
+- 선택한 방식: 기존 Await bytecode와 completion stack을 재사용하고 guard에 start/target/env/stack depth를 저장한다. compiler cleanup trampoline의 logical destination으로 outer guard 포함 여부를 판정한다.
+- 다른 대안 대신 이 방식을 선택한 이유: 별도 state machine과 frame clone은 catch/finally 상태를 중복하고 GC surface를 늘린다. 개수 인코딩은 각 transfer opcode와 patching 계약을 넓힌다. bytecode range는 현재 compiler가 이미 보장하는 선형 cleanup 형식을 직접 사용한다.
+- 장점, 단점 및 영향: partial Reference가 await continuation에 남지 않고 saved env가 모든 root visitor에 포함된다. same-loop/outer-loop continue와 nested finally가 정확히 분리된다. cleanup opcode 형식이 trampoline 또는 다중 Jump로 바뀌면 destination resolver와 회귀 테스트도 함께 변경해야 한다.
+```
+
 **Next:** [Features](features.md) · [Known limitations](limitations.md) · [Back to README](../README.md)

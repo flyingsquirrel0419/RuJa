@@ -2768,6 +2768,34 @@ impl Vm {
         Ok(())
     }
 
+    pub(crate) fn async_iterator_close_start(
+        &mut self,
+        it: &Value,
+    ) -> error::Result<Option<Value>> {
+        if self.is_async_from_sync(it) {
+            let realm = self.current_realm_global_env();
+            return self
+                .async_from_sync_iterator_close_start_in_env(it, realm)
+                .map(Some);
+        }
+
+        let iterator = self.delegate_target_and_next(it).0;
+        let Some(iterator) = iterator else {
+            return Ok(None);
+        };
+        let return_method = self.get_property(&iterator, "return")?;
+        if return_method.is_nullish() {
+            self.mark_iterator_done(it);
+            return Ok(None);
+        }
+        if !crate::builtins::is_callable(&return_method, &self.heap) {
+            return Err(Error::type_err("Iterator return is not callable"));
+        }
+        let result = self.call_function(&return_method, &[], Some(iterator))?;
+        self.mark_iterator_done(it);
+        Ok(Some(result))
+    }
+
     pub(crate) fn mark_iterator_done(&self, it: &Value) {
         if let Value::Object(idx) = it {
             self.heap.with_obj(idx.0, |o| {

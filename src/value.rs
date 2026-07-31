@@ -1708,7 +1708,7 @@ pub struct AsyncFunctionContinuation {
     pub guard_seq: u32,
     pub this_val: Value,
     pub new_target: Value,
-    pub finally_stack: Vec<(usize, u32)>,
+    pub finally_stack: Vec<FinallyGuardState>,
     pub finally_completions: Vec<FinallyCompletion>,
     pub eval_global_bindings: bool,
     pub eval_deletable_bindings: bool,
@@ -1724,6 +1724,15 @@ pub struct FinallyCompletion {
     pub tag: u8,
     pub value: Value,
     pub active: bool,
+}
+
+#[derive(Clone, Copy)]
+pub struct FinallyGuardState {
+    pub start: usize,
+    pub target: usize,
+    pub seq: u32,
+    pub env: GcIdx,
+    pub stack_depth: usize,
 }
 
 pub struct GeneratorData {
@@ -1762,7 +1771,7 @@ pub struct LazyGeneratorData {
     pub catch_stack: Mutex<Vec<(usize, u32, GcIdx, usize)>>,
     /// Saved try/finally guard stack (so generator return/throw resumes can
     /// run active finally blocks after yielding inside protected regions).
-    pub finally_stack: Mutex<Vec<(usize, u32)>>,
+    pub finally_stack: Mutex<Vec<FinallyGuardState>>,
     /// Monotonic guard sequence restored with catch/finally stacks.
     pub guard_seq: AtomicU32,
     /// Guarded and active finally completions, preserved across suspension.

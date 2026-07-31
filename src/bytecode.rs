@@ -325,6 +325,18 @@ pub enum Op {
         inner_continue: Option<usize>,
         ignore_close_errors: bool,
     },
+    /// Begin AsyncIteratorClose for a pending abrupt completion. Pushes the
+    /// return result and a Boolean indicating whether it must be awaited.
+    AsyncIteratorCloseStartIfAbrupt {
+        iter: usize,
+        done: usize,
+        inner_continue: Option<usize>,
+    },
+    /// Validate and discard the awaited AsyncIteratorClose return result.
+    AsyncIteratorCloseFinish,
+    /// Apply a caught close error to the active completion. An original throw
+    /// completion takes precedence over the close error.
+    AsyncIteratorCloseHandleError,
     /// Close an iterator on normal completion when its done binding is not
     /// true. Used by array destructuring assignment, whose iterator must be
     /// closed even after a successful partial pattern.

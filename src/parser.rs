@@ -424,6 +424,11 @@ impl Parser {
             && (self.source_type != SourceType::Module || self.nested_function_context_depth > 0)
     }
 
+    fn for_await_allowed(&self) -> bool {
+        self.async_depth > 0
+            || (self.source_type == SourceType::Module && self.nested_function_context_depth == 0)
+    }
+
     fn with_generator_context<T>(
         &mut self,
         enabled: bool,
@@ -2383,6 +2388,11 @@ impl Parser {
         // `for await (x of asyncIterable)` — async iteration. Only the for-of
         // form is valid; `for await` requires an enclosing async function.
         let is_await = self.eat(&TokenKind::Await);
+        if is_await && !self.for_await_allowed() {
+            return Err(error::Error::syntax(
+                "'for await' is only valid in async functions and modules".to_string(),
+            ));
+        }
         self.expect(&TokenKind::LParen, "(")?;
         // init
         let init: Option<Box<Stmt>> = if self.check(&TokenKind::Semicolon) {
@@ -2398,6 +2408,11 @@ impl Parser {
             // Check for duplicate bound names in for-in/for-of declarations.
             self.check_for_dup_bound_names(&stmt.node)?;
             if self.check(&TokenKind::In) {
+                if is_await {
+                    return Err(error::Error::syntax(
+                        "'for await' is only valid with for...of".to_string(),
+                    ));
+                }
                 // Annex B.3.5 admits an initializer only for a single `var`
                 // BindingIdentifier in sloppy for-in code. Patterns and
                 // lexical declarations retain the ordinary early error.
@@ -2507,6 +2522,11 @@ impl Parser {
             let e = self.with_deferred_object_proto_duplicate_check(|p| p.parse_assign())?;
             self.no_in = false;
             if self.check(&TokenKind::In) {
+                if is_await {
+                    return Err(error::Error::syntax(
+                        "'for await' is only valid with for...of".to_string(),
+                    ));
+                }
                 // Validate that the LHS is a valid assignment target.
                 if !Self::is_for_in_of_assignment_target(&e)
                     && !self.is_legacy_call_assignment_target(&e)
@@ -2573,6 +2593,11 @@ impl Parser {
             }
             Some(Box::new(self.stmt(StmtNode::ExprStmt(e))))
         };
+        if is_await {
+            return Err(error::Error::syntax(
+                "'for await' is only valid with for...of".to_string(),
+            ));
+        }
         self.expect(&TokenKind::Semicolon, ";")?;
         let cond = if self.check(&TokenKind::Semicolon) {
             None
@@ -5739,8 +5764,16 @@ impl Parser {
                 Self::check_static_block_stmt(body, labels)?;
             }
             StmtNode::ForOf {
-                left, right, body, ..
+                left,
+                right,
+                body,
+                is_await,
             } => {
+                if *is_await {
+                    return Err(error::Error::syntax(
+                        "'for await' is not allowed in class static blocks".to_string(),
+                    ));
+                }
                 Self::check_static_block_stmt(left, labels)?;
                 Self::check_static_block_expr(right)?;
                 Self::check_static_block_stmt(body, labels)?;
@@ -8936,6 +8969,39 @@ mod tests {
         ] {
             assert!(Parser::parse(src).is_ok(), "{src}");
         }
+    }
+
+    #[test]
+    fn parse_for_await_requires_async_function_or_module_top_level() {
+        for source in [
+            "for await (let x of xs) {}",
+            "function f() { for await (let x of xs) {} }",
+            "function* f() { for await (let x of xs) {} }",
+            "class C { static { for await (let x of xs) {} } }",
+            "async function f() { for await (var x in {}) {} }",
+            "async function f() { for await (x in {}) {} }",
+            "async function f() { for await (;;) break; }",
+            "async function f() { for await (x; ; ) break; }",
+        ] {
+            assert!(Parser::parse(source).is_err(), "{source}");
+        }
+
+        for source in [
+            "async function f() { for await (let x of xs) {} }",
+            "async function f() { let x; for await (x of xs) {} }",
+            "async function* f() { for await (let x of xs) {} }",
+            "async () => { for await (let x of xs) {} };",
+        ] {
+            assert!(Parser::parse(source).is_ok(), "{source}");
+        }
+
+        assert!(Parser::parse_module("for await (let x of xs) {}").is_ok());
+        assert!(Parser::parse_module("function f() { for await (let x of xs) {} }").is_err());
+        assert!(Parser::parse_module("class C { static { for await (let x of xs) {} } }").is_err());
+        assert!(Parser::parse(
+            "async function f() { class C { static { for await (let x of xs) {} } } }"
+        )
+        .is_err());
     }
 
     #[test]

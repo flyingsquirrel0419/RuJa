@@ -4662,6 +4662,7 @@ impl Vm {
         for f in &self.frames {
             Self::push_value_roots(&mut roots, &f.callee);
             roots.push(f.env.0);
+            roots.extend(f.finally_stack.iter().map(|guard| guard.env.0));
             Self::push_value_roots(&mut roots, &f.this_val);
             if let Some(meta) = f.chunk.import_meta {
                 roots.push(meta.0);
@@ -4816,6 +4817,7 @@ impl Vm {
                                 }
                                 roots.push(frame.env.0);
                                 roots.extend(frame.catch_stack.iter().map(|(_, _, env, _)| env.0));
+                                roots.extend(frame.finally_stack.iter().map(|guard| guard.env.0));
                                 for value in frame.stack.iter().chain(frame.locals.iter()) {
                                     Self::push_value_roots(&mut roots, value);
                                 }

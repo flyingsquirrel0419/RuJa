@@ -1,5 +1,51 @@
 # test262 conformance
 
+## for-await early errors and AsyncIteratorClose
+
+`for await...of` now follows its Await grammar context instead of being
+accepted as an ordinary Script statement. Async functions, async generators,
+and top-level Module code admit it. Ordinary functions and generators, class
+static blocks, and all `for await` heads using `in` or the three-clause `for`
+grammar reject it. No Test262 admission metadata changed.
+
+Abrupt loop completion performs a real `AsyncIteratorClose`: it gets and calls
+`return`, awaits the returned value, and validates the awaited result. Getter,
+call, thenable, rejection, and primitive-result errors replace non-throw
+completions, while an original throw remains dominant. A missing/nullish
+`return` completes without an Await. Async-from-sync wrappers retain their
+value-unwrapping semantics, same-loop continue does not close, and a transfer
+to an outer loop does.
+
+The bytecode finally guard records its entry, target, environment, and clean
+operand-stack depth. Diversion truncates partial references before an awaited
+close and restores the guarded environment. Break/continue propagation resolves
+the compiler-emitted cleanup trampoline to its logical destination, so an
+outer finally runs only when the transfer leaves its protected bytecode region.
+Saved environments are GC roots in active frames, async continuations, and lazy
+generators.
+
+On pinned Test262 `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the five
+direct `AsyncIteratorClose` files pass **5/0**, the complete 1,234-file
+`language/statements/for-await-of` directory is **23 pass / 0 fail / 1,211
+skip**, and the 24 Module top-level syntax files pass **24/0**. These counts are
+byte-for-byte equivalent to the preceding CI binary because the admitted files
+do not exercise callable asynchronous close ordering. New Rust regressions own
+that behavior across getter/call/thenable errors, original-throw precedence,
+Module evaluation, async-generator return/throw, nested finally, partial LHS
+state, same/outer continue, next rejection, and forced GC. The supported
+statements/expressions subset remains **12,765 pass / 0 fail / 7,674 skip /
+20,439 total**.
+
+```text
+[Decision Log]
+- 목적과 의도: admission 예외 없이 for-await 문맥 early error와 실제 AsyncIteratorClose Await/완료 우선순위를 구현한다.
+- 기존 구현 및 제약 조건: parser는 Script와 비-of 형태를 허용했고, compiler는 async loop에서도 동기 IteratorClose를 사용했다. finally diversion은 부분 operand와 block environment를 남기며 outer guard가 transfer 목표와 무관하게 completion을 가로챘다.
+- 검토한 주요 대안: Test262 path admission, close Promise를 동기 drain, 별도 async-close continuation, 또는 기존 Await와 guard-scoped completion을 결합하기.
+- 선택한 방식: parser가 Await 문맥과 of 전용 grammar를 검사한다. compiler는 clean-stack guard 안에서 close start/Await/result validation/error precedence를 bytecode로 낮춘다. guard는 env/stack depth와 protected bytecode range를 저장한다.
+- 다른 대안 대신 이 방식을 선택한 이유: admission은 런타임 결함을 숨기고 동기 drain은 job order를 위반한다. 별도 continuation은 기존 Await snapshot과 상태를 중복한다. saved guard state와 logical transfer target만 기존 finally/catch semantics를 재사용하면서 partial LHS와 nested control flow를 함께 복구한다.
+- 장점, 단점 및 영향: native async, async-from-sync, Module, async generator가 한 경로를 공유하고 강제 GC 및 nested finally 회귀가 고정된다. cleanup trampoline 판정은 현재 compiler opcode 형식과 결합되므로 형식 변경 시 control_transfer_destination 테스트를 함께 갱신해야 한다.
+```
+
 ## Annex B call assignment targets
 
 Annex B.3.9 now admits ordinary CallExpression assignment targets only in

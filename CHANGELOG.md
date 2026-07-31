@@ -4,6 +4,20 @@
 
 ### Changed
 
+- Implemented `for await...of` context early errors and specification-ordered
+  `AsyncIteratorClose`. Script code now requires an async function, Module code
+  permits top-level use, nested ordinary functions and class static blocks
+  reject it, and every `for await` form other than `for...of` is rejected.
+  Abrupt loop exits call and await the iterator's `return`, preserve an original
+  throw over close errors, and let close errors replace break, continue, or
+  return completions. Async-from-sync close, Module evaluation, and async
+  generator requests share the same behavior. Finally guards now restore saved
+  stack/environment state and distinguish control transfers that stay inside an
+  outer guarded region from those that leave it. Pinned Test262 remains **5/0**
+  for the direct AsyncIteratorClose files, **23/0/1,211** for all 1,234
+  for-await files, **24/0** for Module for-await syntax, and **12,765/0/7,674**
+  for the supported statements/expressions subset; no admission changed.
+
 - Implemented Annex B.3.9 runtime errors for sloppy ordinary call assignment
   targets across assignment, arithmetic/bitwise compound assignment, update,
   and `for-in/of`. Strict and Module code, logical assignment, and optional

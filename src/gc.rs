@@ -511,6 +511,7 @@ fn trace_promise_handler(handler: &crate::value::PromiseHandler, worklist: &mut 
                 }
                 worklist.push(frame.env.0);
                 worklist.extend(frame.catch_stack.iter().map(|(_, _, env, _)| env.0));
+                worklist.extend(frame.finally_stack.iter().map(|guard| guard.env.0));
                 for value in frame.stack.iter().chain(frame.locals.iter()) {
                     push_value(value, worklist);
                 }
@@ -688,6 +689,9 @@ fn trace_obj_impl(obj: &HeapObj, worklist: &mut Vec<usize>) {
             worklist.push(g.env.lock().0);
             for (_, _, env, _) in g.catch_stack.lock().iter() {
                 worklist.push(env.0);
+            }
+            for guard in g.finally_stack.lock().iter() {
+                worklist.push(guard.env.0);
             }
             for v in g.stack.lock().iter() {
                 push_value(v, worklist);

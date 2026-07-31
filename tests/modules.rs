@@ -104,6 +104,61 @@ fn direct_eval_in_module_uses_module_this_and_bindings() {
 }
 
 #[test]
+fn module_top_level_for_await_waits_for_iterator_close() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    assert_eq!(
+        vm.run_module(
+            r#"
+            var log = [];
+            var iterable = {
+              [Symbol.asyncIterator]() {
+                return {
+                  next() { return Promise.resolve({ value: 1, done: false }); },
+                  return() {
+                    log.push("return");
+                    return Promise.resolve().then(function () {
+                      log.push("closed");
+                      return {};
+                    });
+                  }
+                };
+              }
+            };
+            for await (var value of iterable) break;
+            log.push("after");
+            log.join("|");
+            "#,
+        )
+        .expect("top-level for-await module should settle"),
+        Value::String(Arc::from("return|closed|after"))
+    );
+
+    assert_eq!(
+        vm.run_module(
+            r#"
+            var original = {};
+            var closeError = {};
+            var iterable = {
+              [Symbol.asyncIterator]() {
+                return {
+                  next() { return Promise.resolve({ value: 1, done: false }); },
+                  return() { return Promise.reject(closeError); }
+                };
+              }
+            };
+            try {
+              for await (var value of iterable) throw original;
+            } catch (error) {
+              error === original;
+            }
+            "#,
+        )
+        .expect("top-level for-await should preserve its original throw"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn duplicate_labels_are_early_errors() {
     assert!(Parser::parse_module("outer: outer: ;").is_err());
     assert!(Parser::parse("outer: outer: ;").is_err());
