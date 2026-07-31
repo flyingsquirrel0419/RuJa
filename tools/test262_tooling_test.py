@@ -485,6 +485,12 @@ class HarnessAssemblyTests(unittest.TestCase):
 
 
 class ExecutionVariantTests(unittest.TestCase):
+    @staticmethod
+    def make_harness(root):
+        harness = root / "harness"
+        harness.mkdir(exist_ok=True)
+        return harness
+
     def test_flags_select_the_required_test262_variants(self):
         cases = [
             ({}, (("sloppy", False), ("strict", True))),
@@ -523,7 +529,9 @@ class ExecutionVariantTests(unittest.TestCase):
 
     def test_runner_and_analyzer_execute_default_tests_twice(self):
         with tempfile.TemporaryDirectory() as temp_dir:
-            test = Path(temp_dir) / "default.js"
+            root = Path(temp_dir)
+            harness = self.make_harness(root)
+            test = root / "default.js"
             test.write_text("/*---\n---*/\nvar value = 1;\n")
             for tool in (test262_runner, test262_analyze):
                 sources = []
@@ -533,6 +541,7 @@ class ExecutionVariantTests(unittest.TestCase):
                     return "pass", ""
 
                 with (
+                    patch.object(tool, "HARNESS", harness),
                     patch.object(tool, "should_skip", return_value=False),
                     patch.object(tool, "execute_source", side_effect=execute),
                 ):
@@ -545,10 +554,13 @@ class ExecutionVariantTests(unittest.TestCase):
 
     def test_each_default_variant_receives_the_full_timeout(self):
         with tempfile.TemporaryDirectory() as temp_dir:
-            test = Path(temp_dir) / "default.js"
+            root = Path(temp_dir)
+            harness = self.make_harness(root)
+            test = root / "default.js"
             test.write_text("/*---\n---*/\n1;\n")
             for tool in (test262_runner, test262_analyze):
                 with (
+                    patch.object(tool, "HARNESS", harness),
                     patch.object(tool, "should_skip", return_value=False),
                     patch.object(tool, "test_timeout_seconds", return_value=37),
                     patch.object(
@@ -570,12 +582,15 @@ class ExecutionVariantTests(unittest.TestCase):
             ("module", False),
         ]
         with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            harness = self.make_harness(root)
             for flag, strict in cases:
-                test = Path(temp_dir) / f"{flag}.js"
+                test = root / f"{flag}.js"
                 test.write_text(f"/*---\nflags: [{flag}]\n---*/\nvar value = 1;\n")
                 for tool in (test262_runner, test262_analyze):
                     with (
                         self.subTest(tool=tool.__name__, flag=flag),
+                        patch.object(tool, "HARNESS", harness),
                         patch.object(tool, "should_skip", return_value=False),
                         patch.object(
                             tool, "execute_source", return_value=("pass", "")
@@ -590,10 +605,13 @@ class ExecutionVariantTests(unittest.TestCase):
 
     def test_module_raw_is_unmodified_and_runs_as_a_module_once(self):
         with tempfile.TemporaryDirectory() as temp_dir:
-            test = Path(temp_dir) / "module-raw.js"
+            root = Path(temp_dir)
+            harness = self.make_harness(root)
+            test = root / "module-raw.js"
             test.write_text("/*---\nflags: [module, raw]\n---*/\nexport {};\n")
             for tool in (test262_runner, test262_analyze):
                 with (
+                    patch.object(tool, "HARNESS", harness),
                     patch.object(tool, "should_skip", return_value=False),
                     patch.object(
                         tool, "execute_source", return_value=("pass", "")
@@ -7822,9 +7840,13 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
     def test_legacy_failure_analyzer_reuses_runner_timeout_policy(self):
         self.assertIs(analyze_failures.run_test_capture, test262_analyze.run_test)
         with tempfile.TemporaryDirectory() as temp_dir:
-            path = Path(temp_dir) / "slow.js"
+            root = Path(temp_dir)
+            harness = root / "harness"
+            harness.mkdir()
+            path = root / "slow.js"
             path.write_text("/*---\nflags: [noStrict]\n---*/\n1;\n")
             with (
+                patch.object(test262_analyze, "HARNESS", harness),
                 patch.object(test262_analyze, "should_skip", return_value=False),
                 patch.object(test262_analyze, "test_timeout_seconds", return_value=60),
                 patch.object(

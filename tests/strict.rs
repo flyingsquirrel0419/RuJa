@@ -50,6 +50,27 @@ fn strictness_inherits_into_nested_functions() {
     assert!(r.is_err(), "nested function should be strict");
 }
 
+#[test]
+fn strict_var_destructuring_initializes_hoisted_bindings() {
+    assert_eq!(
+        run(r#"
+            "use strict";
+            var {head} = {head: 1};
+            var total = 0;
+            for (var {left, right = 4} of [{left: 2}, {left: 3, right: 5}]) {
+                total += left + right;
+            }
+            var nested = (function() {
+                "use strict";
+                for (var [value] of [[7]]) {}
+                return value;
+            })();
+            [head, left, right, total, nested].join(":");
+        "#),
+        Value::String("1:3:5:14:7".into())
+    );
+}
+
 // ---- duplicate parameter rejection ----
 
 #[test]

@@ -1271,6 +1271,21 @@ fn for_of_destructure() {
 }
 
 #[test]
+fn sloppy_var_destructuring_stays_in_the_function_variable_environment() {
+    assert_eq!(
+        run(r#"
+            function read() {
+                var {direct} = {direct: 2};
+                for (var {loop} of [{loop: 3}]) {}
+                return direct + loop;
+            }
+            read() + ":" + typeof direct + ":" + typeof loop;
+        "#),
+        Value::String("5:undefined:undefined".into())
+    );
+}
+
+#[test]
 fn for_of_assignment_destructure() {
     assert_eq!(
         run("var x; var c=0; for ([x] of [[0]]) { c += x + 1; } x + ':' + c;"),

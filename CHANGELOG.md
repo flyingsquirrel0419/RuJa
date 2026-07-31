@@ -12,8 +12,19 @@
   with variant-labeled analyzer diagnostics. The analyzer now retains
   timeout/error files and
   the legacy failure report delegates to the canonical analyzer path. This
-  exposed 89 previously hidden strict failures: pinned supported-subset truth is
-  now **12,676 pass / 89 fail / 7,674 skip / 20,439 total (99.3% of run)**.
+  exposed 89 previously hidden strict failures. The accompanying `var`
+  destructuring fix closes 46; pinned supported-subset truth is now **12,722
+  pass / 43 fail / 7,674 skip / 20,439 total (99.7% of run)**.
+  Tooling regressions inject an isolated temporary harness, avoiding dependence
+  on a developer-specific default Test262 path.
+
+- Fixed strict `var` destructuring declarations and `for-of` heads to assign
+  extracted values through normal binding Reference resolution instead of
+  attempting lexical initialization in the current environment. This closes the
+  strict-only binding failure exposed in three admitted Intl.Collator tests and
+  the related language cohort. Both strict and sloppy hoist collectors now
+  include destructuring names, preserving function scope without global leaks.
+  A `with` regression freezes that value extraction precedes binding resolution.
 
 - Admitted the final four implemented class built-in subclass tests for
   `SharedArrayBuffer` and `WeakRef` through one exact path-to-feature map shared

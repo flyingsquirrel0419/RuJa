@@ -722,6 +722,28 @@ fn with_var_initializer_resolves_binding_before_rhs() {
 }
 
 #[test]
+fn with_var_destructuring_resolves_binding_after_value_extraction() {
+    let src = r#"
+        var x = "outer";
+        var obj = { x: "inner" };
+        var source = {
+            get value() {
+                delete obj.x;
+                return "assigned";
+            }
+        };
+        with (obj) {
+            var { value: x } = source;
+        }
+        obj.hasOwnProperty("x") + ":" + obj.x + ":" + x;
+    "#;
+    assert_eq!(
+        run(src),
+        Value::String(Arc::from("false:undefined:assigned"))
+    );
+}
+
+#[test]
 fn with_outer_var_unchanged_after_block() {
     let src = r#"
         let p = { name: "inner" };

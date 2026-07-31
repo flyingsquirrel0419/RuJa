@@ -2053,13 +2053,18 @@ impl Compiler {
             Pattern::Ident(name) => {
                 self.load_path(temp_idx, path);
                 let name_idx = self.chunk.add_constant(Value::String(name.clone()));
-                // Try to initialize an already-hoisted (TDZ) binding; if none exists
-                // (e.g. a per-iteration loop binding in for-of), declare it fresh.
                 match kind {
                     VarKind::Const => self
                         .chunk
                         .emit(Op::InitEnvConst(name_idx), self.current_line),
-                    _ => self.chunk.emit(Op::InitEnv(name_idx), self.current_line),
+                    VarKind::Let => self.chunk.emit(Op::InitEnv(name_idx), self.current_line),
+                    VarKind::Var => {
+                        // Var declarations initialize their hoisted variable
+                        // binding, including from strict loop heads.
+                        self.chunk.emit(Op::LoadRef(name_idx), self.current_line);
+                        self.chunk.emit(Op::PutValue, self.current_line);
+                        self.chunk.emit(Op::Pop, self.current_line);
+                    }
                 }
             }
             Pattern::Array(elems) => {
@@ -7392,6 +7397,9 @@ fn collect_var_names_recursive(node: &StmtNode, out: &mut Vec<Arc<str>>) {
                 out.push(name.clone());
                 // Skip duplicate names to avoid double-hoisting.
             }
+        }
+        StmtNode::Destructure { kind, pattern, .. } if *kind == VarKind::Var => {
+            Compiler::pattern_names(pattern, out);
         }
         // Function declarations are also collected here so eval leak-back
         // knows about them. They're hoisted separately by a dedicated pass

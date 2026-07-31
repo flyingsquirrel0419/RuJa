@@ -107,6 +107,17 @@ Analyzer diagnostics identify the failing variant. Mixed results use
   조립에서는 strict directive가 harness 앞에 위치하므로 harness도 strict로
   파싱된다. harness를 별도 Realm 단계로 평가하는 개선은 후속 과제다.
 
+The first dual-variant CI run exposed that `var` destructuring used lexical
+initialization opcodes. Strict scripts therefore read `undefined` from hoisted
+bindings after ordinary declarations and `for-of` heads. The compiler now
+assigns destructured `var` values through the existing binding Reference;
+`let` and `const` retain lexical initialization. Focused regressions cover
+strict global and function scopes, object and array patterns, defaults, and
+post-loop visibility.
+The sloppy var-name collector also includes pattern names so the shared
+Reference assignment path cannot create accidental globals from function-local
+destructuring.
+
 RuJa does **not** claim full ES conformance. Instead, it targets a
 deliberately scoped subset of ES5.1 + selected ES2015+ features (see
 [Supported subset](#supported-subset) below). Tests requiring unsupported
@@ -124,11 +135,11 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | Pre-dual-variant baseline: 66.8% of all matrix files; 86.6% of executed files. Refresh pending from this change's full CI. | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 99.3% (12676 pass / 89 fail / 7674 skip / 20439 total on pinned `9e61c12`) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 99.7% (12722 pass / 43 fail / 7674 skip / 20439 total on pinned `9e61c12`) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
-supported-subset rate (99.3%).** It reflects the portion of the spec
+supported-subset rate (99.7%).** It reflects the portion of the spec
 RuJa actively targets. The full-suite number is published for
 transparency but is dominated by unsupported features. The CI-subset
 number is a narrow regression gate, not a conformance claim.
