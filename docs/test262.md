@@ -33,6 +33,17 @@ all-target/all-feature Rust tests including **396 library tests** and benchmark
 smoke cases, vendored RegExp tests/Clippy/no_std, wasm32, generated Intl data,
 and Test262 tooling **165/165** pass.
 
+Implementation commit `e227e55` passes ordinary CI `30655563922` (**3/3**)
+and full matrix `30655563999` (**45/45**). Against preceding full run
+`30648114517`, **30/32** Test262 result artifacts are byte-identical.
+The built-ins result changes by **+39 pass / -39 fail**. The Annex B result
+also changes by **+2 pass / -2 fail** because the logical UTF-16 RegExp
+fallback closes `extended-pattern-char.js` and `legacy-octal-escape.js`; no
+other shard changes. Aggregate is **33,066 pass / 4,342 fail / 11,058 skip /
+3 timeout / 0 error** over 48,469 files and 37,408 completed pass/fail
+executions. Filename-sorted result content hashes to
+`3b1011c1a27818967d22907e96052f36b66beec5083d60272e3e707d01c0fa08`.
+
 ```text
 [Decision Log]
 - 목적과 의도: admission 변경 없이 실행 가능한 Function.prototype.toString Test262 전체를 exact source semantics로 통과한다.
@@ -66,8 +77,8 @@ from **0 pass / 2 fail** to **2 pass / 0 fail**. The six-file
 `built-ins/Function/internals/Construct` directory moves from **2 pass / 2 fail
 / 2 skip** to **4 pass / 0 fail / 2 skip**, and the complete 509-file
 `built-ins/Function` directory moves from **419 pass / 41 fail / 49 skip** to
-**421 pass / 39 fail / 49 skip**, exactly **+2 pass / -2 fail**. The remaining
-At that baseline, the remaining 39 Function failures formed the
+**421 pass / 39 fail / 49 skip**, exactly **+2 pass / -2 fail**. At that
+baseline, the remaining 39 Function failures formed the
 `Function.prototype.toString` cluster now closed by the section above.
 The supported statements/expressions subset remains **12,765 pass / 0 fail /
 7,674 skip / 20,439 total**. No Test262 admission metadata changed. Local
