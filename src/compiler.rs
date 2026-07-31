@@ -1844,6 +1844,7 @@ impl Compiler {
                 let (func_chunk, param_slots) = self.compile_function(f)?;
                 let func_idx = self.funcs.len();
                 let fdef = crate::function::FunctionDef {
+                    source: f.source.as_deref().cloned(),
                     name: f.name.clone(),
                     params: f.params.clone(),
                     param_slots,
@@ -3441,6 +3442,7 @@ impl Compiler {
             }]
         };
         Expr::Arrow(FunctionExpr {
+            source: None,
             name: Some(Arc::from("")),
             params: if setter {
                 vec![receiver_name, value_name]
@@ -3463,6 +3465,7 @@ impl Compiler {
     fn decorator_has_function(name: DecoratorName<'_>) -> Expr {
         let receiver_name: Arc<str> = Arc::from("receiver");
         Expr::Arrow(FunctionExpr {
+            source: None,
             name: Some(Arc::from("")),
             params: vec![receiver_name.clone()],
             param_defaults: vec![None],
@@ -3492,6 +3495,7 @@ impl Compiler {
     ) -> Expr {
         let initializer: Arc<str> = Arc::from("initializer");
         Expr::Arrow(FunctionExpr {
+            source: None,
             name: Some(Arc::from("addInitializer")),
             params: vec![initializer.clone()],
             param_defaults: vec![None],
@@ -3666,6 +3670,7 @@ impl Compiler {
         let value: Arc<str> = Arc::from("value");
         let context: Arc<str> = Arc::from("context");
         Expr::Arrow(FunctionExpr {
+            source: None,
             name: None,
             params: vec![
                 decorator.clone(),
@@ -4024,6 +4029,7 @@ impl Compiler {
             Some(Self::public_method_function_name(&method.name, method.kind))
         };
         let m_fn = FunctionExpr {
+            source: method.source.clone(),
             name: method_function_name.clone(),
             params: method.params.clone(),
             param_defaults: method.param_defaults.clone(),
@@ -4040,6 +4046,7 @@ impl Compiler {
         let (m_chunk, m_slots) = self.compile_function(&m_fn)?;
         let m_idx = self.funcs.len();
         let mdef = crate::function::FunctionDef {
+            source: method.source.as_deref().cloned(),
             name: method_function_name,
             params: method.params.clone(),
             param_slots: m_slots,
@@ -4238,6 +4245,7 @@ impl Compiler {
     ) -> [ClassMethod; 2] {
         let computed_name = computed_key_temp.map(|name| Box::new(Expr::Ident(name.clone())));
         let getter = ClassMethod {
+            source: None,
             decorators: Vec::new(),
             name: accessor.name.clone(),
             computed_name: computed_name.clone(),
@@ -4261,6 +4269,7 @@ impl Compiler {
         };
         let setter_param: Arc<str> = Arc::from("value");
         let setter = ClassMethod {
+            source: None,
             decorators: Vec::new(),
             name: accessor.name.clone(),
             computed_name,
@@ -4287,6 +4296,7 @@ impl Compiler {
 
     fn class_method_function_expression(method: &ClassMethod) -> Expr {
         Expr::Function(FunctionExpr {
+            source: method.source.clone(),
             name: if method.computed_name.is_some() {
                 None
             } else if method.is_private {
@@ -4455,6 +4465,7 @@ impl Compiler {
         });
         Box::new(Expr::Call {
             callee: Box::new(Expr::Arrow(FunctionExpr {
+                source: None,
                 name: None,
                 params: vec![value_name],
                 param_defaults: vec![None],
@@ -4495,6 +4506,7 @@ impl Compiler {
             optional_chain: false,
         };
         let runner = Expr::Arrow(FunctionExpr {
+            source: None,
             name: None,
             params: vec![queue.clone(), target.clone()],
             param_defaults: vec![None, None],
@@ -4644,6 +4656,7 @@ impl Compiler {
             return Ok(());
         }
         let m_fn = Expr::Function(FunctionExpr {
+            source: method.source.clone(),
             name: Some(Self::private_method_function_name(
                 &method.name,
                 method.kind,
@@ -4689,6 +4702,7 @@ impl Compiler {
 
     fn compile_class_static_block(&mut self, block: &[Stmt]) -> error::Result<()> {
         let sb_fn = FunctionExpr {
+            source: None,
             name: None,
             params: Vec::new(),
             param_defaults: Vec::new(),
@@ -4705,6 +4719,7 @@ impl Compiler {
         let (sb_chunk, sb_slots) = self.compile_function(&sb_fn)?;
         let sb_idx = self.funcs.len();
         let sbdef = crate::function::FunctionDef {
+            source: None,
             name: None,
             params: Vec::new(),
             param_slots: sb_slots,
@@ -6266,6 +6281,7 @@ impl Compiler {
                 let (func_chunk, param_slots) = compiled?;
                 let func_idx = self.funcs.len();
                 let fdef = crate::function::FunctionDef {
+                    source: f.source.as_deref().cloned(),
                     name: f.name.clone(),
                     params: f.params.clone(),
                     param_slots,
@@ -6675,6 +6691,7 @@ impl Compiler {
                     .collect();
                 let mut derived_initializers = None;
                 let ctor_fn = FunctionExpr {
+                    source: cls.source.clone(),
                     name: display_name.clone(),
                     params: cls
                         .methods
@@ -6935,6 +6952,7 @@ impl Compiler {
                 let (func_chunk, param_slots) = compiled_ctor?;
                 let func_idx = self.funcs.len();
                 let fdef = crate::function::FunctionDef {
+                    source: cls.source.as_deref().cloned(),
                     name: display_name.clone(),
                     params: ctor_fn.params.clone(),
                     param_slots,
@@ -7033,6 +7051,7 @@ impl Compiler {
                 for (method_idx, binding_name) in &private_callable_bindings {
                     let method = &cls.methods[*method_idx];
                     let m_fn = FunctionExpr {
+                        source: method.source.clone(),
                         name: Some(Self::private_method_function_name(
                             &method.name,
                             method.kind,
@@ -7052,6 +7071,7 @@ impl Compiler {
                     let (m_chunk, m_slots) = self.compile_function(&m_fn)?;
                     let m_idx = self.funcs.len();
                     let mdef = crate::function::FunctionDef {
+                        source: method.source.as_deref().cloned(),
                         name: Some(Self::private_method_function_name(
                             &method.name,
                             method.kind,

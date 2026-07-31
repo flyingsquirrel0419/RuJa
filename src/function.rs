@@ -5,6 +5,9 @@ use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct FunctionDef {
+    /// Exact source text returned by Function.prototype.toString for parsed
+    /// ECMAScript functions. Built-ins and bound functions leave this absent.
+    pub source: Option<Arc<str>>,
     pub name: Option<Arc<str>>,
     pub params: Vec<Arc<str>>,
     /// Raw argument local slot for each formal parameter. Duplicate

@@ -1,5 +1,48 @@
 # test262 conformance
 
+## Function source text
+
+RuJa now retains exact parsed source for ordinary and generator functions,
+arrows, object/class methods and accessors, and complete class productions.
+Dynamic Function source uses the specified `anonymous` wrapper. Built-ins use
+their `[[InitialName]]` in NativeFunction syntax; bound, source-unavailable
+synthetic, and callable exotic objects use its nameless form. Non-callable
+receivers throw `TypeError`.
+
+Token byte ranges preserve comments, whitespace, Unicode escape spelling, and
+LF/CR/CRLF. Host source slices are canonicalized at the scalar-to-internal
+UTF-16 boundary, while eval and dynamic source already in RuJa's internal
+representation are copied unchanged. The Test262 runner and analyzer decode
+source bytes directly and normalize only a copy used for metadata parsing, so
+the executed source retains its original line endings.
+Template token values independently normalize CR and CRLF to LF for TV/TRV;
+the exact function source slice remains byte-faithful.
+
+Pinned Test262 `9e61c12835c5e4a3bdba93850427e6742c4f64c4`
+`built-ins/Function/prototype/toString` moves from **6 pass / 39 fail / 35
+skip** to **45 pass / 0 fail / 35 skip** over 80 files. No Test262 admission
+metadata changed. The two native-source files also exercise a pre-existing
+legacy surrogate-range RegExp backend failure; valid patterns now fall back to
+the bounded logical UTF-16 backend when the scalar/code-unit backend cannot
+compile them.
+The complete 509-file `built-ins/Function` directory is now **460 pass / 0
+fail / 49 skip**, exactly **+39 pass / -39 fail** from the preceding baseline.
+The supported statements/expressions subset remains **12,765 pass / 0 fail /
+7,674 skip / 20,439 total**. Local rustfmt, warnings-denied Clippy,
+all-target/all-feature Rust tests including **396 library tests** and benchmark
+smoke cases, vendored RegExp tests/Clippy/no_std, wasm32, generated Intl data,
+and Test262 tooling **165/165** pass.
+
+```text
+[Decision Log]
+- 목적과 의도: admission 변경 없이 실행 가능한 Function.prototype.toString Test262 전체를 exact source semantics로 통과한다.
+- 기존 구현 및 제약 조건: 39개 실행 실패는 source 손실이 주원인이었고 CR/CRLF는 Python runner가 LF로 바꿨다. native matcher의 legacy surrogate range는 Rust backend lowering에서 invalid range가 됐다.
+- 검토한 주요 대안: 실패 파일 admission 제외, 모든 함수에 NativeFunction 문자열 반환, AST pretty-printer, 또는 parser source span 보존과 기존 logical UTF-16 RegExp fallback 사용.
+- 선택한 방식: production별 exact source를 FunctionDef까지 전달하고 runner 입력 byte fidelity를 복구한다. ECMAScript validator를 통과했지만 scalar/code-unit backend가 거부한 RegExp는 logical UTF-16 backend로 재시도한다.
+- 다른 대안 대신 이 방식을 선택한 이유: admission과 blanket NativeFunction은 실제 기능을 숨기며 pretty-printer는 source spelling을 복원하지 못한다. logical backend는 이미 UTF-16 semantics와 resource accounting을 제공한다.
+- 장점, 단점 및 영향: focused cohort가 45/0이 되고 line-ending 및 surrogate provenance가 Rust/tooling 회귀로 고정된다. async/private/proxy 관련 35 skip은 각 기능 admission의 별도 범위이며 이번 변경으로 넓히지 않는다.
+```
+
 ## Derived constructor postcondition Realms
 
 After a derived constructor body completes, ECMAScript removes its execution
@@ -24,7 +67,8 @@ from **0 pass / 2 fail** to **2 pass / 0 fail**. The six-file
 / 2 skip** to **4 pass / 0 fail / 2 skip**, and the complete 509-file
 `built-ins/Function` directory moves from **419 pass / 41 fail / 49 skip** to
 **421 pass / 39 fail / 49 skip**, exactly **+2 pass / -2 fail**. The remaining
-39 Function failures are the separate `Function.prototype.toString` cluster.
+At that baseline, the remaining 39 Function failures formed the
+`Function.prototype.toString` cluster now closed by the section above.
 The supported statements/expressions subset remains **12,765 pass / 0 fail /
 7,674 skip / 20,439 total**. No Test262 admission metadata changed. Local
 rustfmt, warnings-denied Clippy, all-target/all-feature Rust tests, vendor

@@ -432,6 +432,26 @@ class ModuleStagingTests(unittest.TestCase):
 
 
 class HarnessAssemblyTests(unittest.TestCase):
+    def test_async_completion_harness_preserves_line_endings(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            harness = root / "harness"
+            harness.mkdir()
+            (harness / "sta.js").write_text("/* STA HARNESS */")
+            (harness / "assert.js").write_text("/* ASSERT HARNESS */")
+            done = "/* DONE\r\nHARNESS */"
+            (harness / "doneprintHandle.js").write_bytes(done.encode("utf-8"))
+            test = root / "test.js"
+            test.write_text("/*---\nflags: [async]\n---*/\n$DONE();\n")
+
+            for tool in (test262_runner, test262_analyze):
+                with (
+                    self.subTest(tool=tool.__name__),
+                    patch.object(tool, "HARNESS", harness),
+                ):
+                    source, _ = tool.build_source(test)
+                self.assertIn(done, source)
+
     def test_sync_tests_receive_the_host_print_binding_in_both_tools(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -551,6 +571,17 @@ class ExecutionVariantTests(unittest.TestCase):
                 self.assertEqual(len(sources), 2)
                 self.assertFalse(sources[0].startswith(STRICT_PREFIX))
                 self.assertTrue(sources[1].startswith(STRICT_PREFIX))
+
+    def test_runner_and_analyzer_preserve_source_line_endings(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            test = Path(temp_dir) / "raw.js"
+            expected = "/*---\r\nflags: [raw]\r\n---*/\r\nfunction\rf() {}\r"
+            test.write_bytes(expected.encode("utf-8"))
+            for tool in (test262_runner, test262_analyze):
+                with self.subTest(tool=tool.__name__):
+                    source, meta = tool.build_source(test)
+                    self.assertEqual(meta.get("flags"), ["raw"])
+                    self.assertEqual(source, expected)
 
     def test_each_default_variant_receives_the_full_timeout(self):
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -471,6 +471,19 @@ fn dynamic_function_constructor(
     // "use strict" is reflected in the parsed function (is_strict).
     let is_strict = params_fn.is_strict;
     let f = FunctionExpr {
+        source: Some(Box::new(Arc::from(
+            match (is_async, is_generator) {
+                (true, true) => {
+                    format!("async function* anonymous({params_src}\n) {{\n{body_src}\n}}")
+                }
+                (true, false) => {
+                    format!("async function anonymous({params_src}\n) {{\n{body_src}\n}}")
+                }
+                (false, true) => format!("function* anonymous({params_src}\n) {{\n{body_src}\n}}"),
+                (false, false) => format!("function anonymous({params_src}\n) {{\n{body_src}\n}}"),
+            }
+            .as_str(),
+        ))),
         name: Some(Arc::from("anonymous")),
         params,
         param_defaults,
@@ -533,6 +546,7 @@ fn dynamic_function_constructor(
     let function_checkpoint = vm.functions.len();
     let chunk = vm.append_compiled_functions(chunk, compiled_functions);
     let fdef = std::sync::Arc::new(crate::function::FunctionDef {
+        source: f.source.as_deref().cloned(),
         name: Some(Arc::from("anonymous")),
         params: f.params.clone(),
         param_slots,

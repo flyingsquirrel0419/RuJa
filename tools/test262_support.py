@@ -47,7 +47,7 @@ def append_async_harness(parts, harness, flags):
         return
     done = harness / "doneprintHandle.js"
     if done.exists():
-        parts.append(done.read_text())
+        parts.append(done.read_bytes().decode("utf-8"))
 
 
 def combined_output(stdout, stderr):

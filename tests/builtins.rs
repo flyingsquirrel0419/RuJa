@@ -23779,3 +23779,76 @@ fn to_primitive_both_object_throws() {
     let err = run_err("1 + {valueOf: function() {return {}}, toString: function() {return {}}};");
     assert!(err.contains("TypeError"), "got: {}", err);
 }
+
+#[test]
+fn function_to_string_preserves_parsed_source_boundaries() {
+    assert_eq!(
+        run(r#"
+            function /* a */ declared (x) { return x; }
+            var arrow = ( /* b */ x ) => /* c */ x + 1;
+            var object = { get /* d */ value () { return 1; } };
+            class /* e */ Example { static /* f */ method () {} }
+            [
+              Function.prototype.toString.call(declared),
+              Function.prototype.toString.call(arrow),
+              Function.prototype.toString.call(
+                Object.getOwnPropertyDescriptor(object, "value").get
+              ),
+              Function.prototype.toString.call(Example),
+              Function.prototype.toString.call(Example.method)
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "function /* a */ declared (x) { return x; }|( /* b */ x ) => /* c */ x + 1|get /* d */ value () { return 1; }|class /* e */ Example { static /* f */ method () {} }|method () {}"
+        ))
+    );
+}
+
+#[test]
+fn function_to_string_preserves_host_and_internal_utf16_source() {
+    let host_source = "function f() { return '\u{F0000}'; }\nFunction.prototype.toString.call(f);";
+    assert_eq!(
+        run(host_source),
+        Value::String(Arc::from(ruja::value::utf16_from_scalar_str(
+            "function f() { return '\u{F0000}'; }"
+        )))
+    );
+
+    assert_eq!(
+        run(r#"
+            var lone = String.fromCharCode(0xD800);
+            var dynamic = Function("return '" + lone + "'");
+            Function.prototype.toString.call(dynamic) ===
+              "function anonymous(\n) {\nreturn '" + lone + "'\n}";
+        "#),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn template_values_normalize_cr_and_crlf_without_changing_function_source() {
+    assert_eq!(
+        run("var value = \x60a\r\nb\rc\x60; value === 'a\\nb\\nc';"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run("var raw; (function(parts) { raw = parts.raw[0]; })\x60\\\r\n\\\r\x60; raw.length === 4 && raw.charCodeAt(0) === 92 && raw.charCodeAt(1) === 10 && raw.charCodeAt(2) === 92 && raw.charCodeAt(3) === 10;"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn function_to_string_rejects_non_callable_receivers() {
+    assert!(
+        run_err("Function.prototype.toString.call({});").contains("TypeError"),
+        "non-callable receiver must throw"
+    );
+    assert_eq!(
+        run("Function.prototype.toString.call(RegExp.prototype[Symbol.match]);"),
+        Value::String(Arc::from("function [Symbol.match]() { [native code] }"))
+    );
+    assert_eq!(
+        run("Function.prototype.toString.call(function () {}.bind(null));"),
+        Value::String(Arc::from("function () { [native code] }"))
+    );
+}

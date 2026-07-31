@@ -287,12 +287,21 @@ fn compile_regex_for_mode(
     flags: &str,
     mode: RegExpCompileMode,
 ) -> Result<CompiledRegex, RegexCompileError> {
+    let logical_on_backend_syntax = |result| match result {
+        Ok(compiled) => Ok(compiled),
+        Err(RegexCompileError::Syntax(_)) => compile_logical_utf16_regex(source, flags),
+        Err(resource @ RegexCompileError::Resource(_)) => Err(resource),
+    };
     match mode {
         RegExpCompileMode::ScalarPreferred if flags.contains('u') || flags.contains('v') => {
             compile_regex(source, flags).or_else(|_| compile_logical_utf16_regex(source, flags))
         }
-        RegExpCompileMode::ScalarPreferred => compile_regex(source, flags),
-        RegExpCompileMode::Utf16CodeUnits => compile_regex_for_code_units(source, flags),
+        RegExpCompileMode::ScalarPreferred => {
+            logical_on_backend_syntax(compile_regex(source, flags))
+        }
+        RegExpCompileMode::Utf16CodeUnits => {
+            logical_on_backend_syntax(compile_regex_for_code_units(source, flags))
+        }
         RegExpCompileMode::LogicalUtf16Required => compile_logical_utf16_regex(source, flags),
     }
 }
@@ -1641,6 +1650,10 @@ mod compiled_regex_tests {
                 "v",
                 "😀"
             ),
+            Ok(CompiledRegex::LogicalUtf16(_))
+        ));
+        assert!(matches!(
+            compile_regex_for_mode(r"[\uDC00-\uDC0B]", "", RegExpCompileMode::Utf16CodeUnits),
             Ok(CompiledRegex::LogicalUtf16(_))
         ));
     }

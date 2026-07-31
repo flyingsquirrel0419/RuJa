@@ -55,6 +55,45 @@ constructor `prototype` slot.
 - 장점, 단점 및 영향: 함수 종류와 Realm에 무관한 ordinary semantics를 얻는다. 새 함수 생성 경로는 반드시 표준 descriptor를 설치해야 하며 virtual metadata 추가 시 configurable 삭제 동작을 별도로 검토해야 한다.
 ```
 
+## Function source text
+
+Lexer tokens carry half-open byte ranges into the original source unit. The
+parser uses those ranges before AST lowering to retain the exact syntactic text
+for function declarations and expressions, arrows, methods, accessors, and
+classes. Object and class methods exclude surrounding separators and a class
+method's `static` prefix; a class constructor function retains the complete
+`class ... }` production. Compiler-generated helpers have no source text and
+therefore use NativeFunction syntax.
+
+Parsed host source slices pass through the scalar-to-internal UTF-16 boundary,
+while direct eval and other already-canonical internal source slices are copied
+unchanged. This distinction prevents host scalars in RuJa's private surrogate
+sentinel range from aliasing lone UTF-16 code units. Dynamic Function
+constructors synthesize their specified `anonymous` source from the original
+internal parameter and body strings with literal LF boundaries rather than
+exposing the parser-only `_f` wrapper.
+
+`Function.prototype.toString` returns retained source for interpreted
+ECMAScript functions. Built-ins include their `[[InitialName]]` in a valid
+NativeFunction production; bound, source-unavailable synthetic, and callable
+Proxy objects use its nameless form. Non-callable receivers throw `TypeError`.
+Test262 source files and harnesses are decoded from bytes so CR and CRLF are
+not changed by Python universal newline handling.
+
+Source preservation does not alter template value semantics. Template cooked
+and raw values normalize CR and CRLF to LF as required by TV/TRV, while the
+function source slice retains the original source line terminators.
+
+```text
+[Decision Log]
+- 목적과 의도: ECMAScript 함수의 정확한 source text를 보존하면서 internal UTF-16, class lowering, dynamic Function, callable exotic 경계를 유지한다.
+- 기존 구현 및 제약 조건: parser와 compiler가 comments/whitespace/escape spelling을 버렸고 interpreted 함수는 합성 `...` 본문을 반환했다. host source와 eval source는 sentinel-range scalar 처리 방식이 다르며 compiler는 class와 method를 별도 FunctionDef로 낮춘다.
+- 검토한 주요 대안: AST에서 source를 재출력, 런타임에 파일 전체와 line/column 보관, 모든 함수에 합성 NativeFunction 반환, 또는 token byte span에서 production별 source slice 보존.
+- 선택한 방식: token에 byte span을 기록하고 parser가 production 경계에서 provenance-aware Arc<str> 조각을 만든 뒤 FunctionExpr/ClassMethod/ClassExpr와 FunctionDef로 전달한다. source가 없는 합성/native/callable exotic 함수만 NativeFunction 문법을 사용한다.
+- 다른 대안 대신 이 방식을 선택한 이유: AST 재출력은 comments, whitespace, escapes, line endings를 복원할 수 없고 파일 전체 보관은 함수 수명 동안 불필요한 source를 유지한다. 전부 NativeFunction으로 처리하면 명세가 요구하는 exact source를 회피한다.
+- 장점, 단점 및 영향: ordinary/generator/arrow/method/accessor/class/dynamic 함수와 CR/LF/CRLF 및 Unicode escape spelling이 정확히 보존된다. 각 함수 source 조각은 독립 Arc allocation이므로 중첩 source의 최악 메모리 중복은 향후 shared source-unit range 구조로 줄일 수 있다.
+```
+
 ## Script and Module lexical goals
 
 Lexer construction fixes the source goal before tokenization. Script, direct
@@ -488,7 +527,7 @@ failure exercises the real helper and proves that it returns a catchable
 - 검토한 주요 대안: Keep four mostly separate constructors, broaden generic native preallocation, parse only one combined wrapper, or centralize conversion, parsing, Realm fallback, publication, and allocation in the existing dynamic body.
 - 선택한 방식: Use deferred native construction, three grammar checks with newline boundaries, immutable constructor-Realm registries, post-lookup table publication, and rooted one- or two-cell allocation with suffix rollback.
 - 다른 대안 대신 이 방식을 선택한 이유: Generic preallocation observes `NewTarget.prototype` too early, a combined-only parse does not model separate parameter/body grammar, and per-kind copies would drift on ordering and GC cleanup. One kind-parameterized path keeps the shared abstract operation explicit.
-- 장점, 단점 및 영향: Call/construct order, all four Realm fallbacks, Bound/Proxy new targets, parser early errors, forced GC, and exact-cap failures now share tested invariants. String compilation remains synchronous and is governed by the local-trust host policy rather than opcode fuel; source-text preservation is a separate limitation.
+- 장점, 단점 및 영향: Call/construct order, all four Realm fallbacks, Bound/Proxy new targets, parser early errors, forced GC, and exact-cap failures now share tested invariants. String compilation remains synchronous and is governed by the local-trust host policy rather than opcode fuel; generated source is retained by the Function source-text pipeline above.
 ```
 
 RegExp construction also uses `InternalDeferredPrototype`, bringing the

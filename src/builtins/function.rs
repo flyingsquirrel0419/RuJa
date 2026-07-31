@@ -6,38 +6,43 @@ use super::*;
 
 /// `Function.prototype.call(thisArg, ...args)`: invoke `this` (a function)
 /// with an explicit `this` binding and a list of arguments.
-/// `Function.prototype.toString`: return a spec-ish string representation.
-/// For native functions: `function name() { [native code] }`. For interpreted
-/// functions, the source is not retained, so we emit `function name() { ... }`.
+/// `Function.prototype.toString`: preserve parsed ECMAScript source and use
+/// NativeFunction syntax for built-in, bound, and callable exotic objects.
 pub(crate) fn function_to_string(
     vm: &mut Vm,
     _args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    let f = match this {
-        Some(v) => v,
-        None => return Ok(Value::String(Arc::from("function () { [native code] }"))),
-    };
+    let f = this.unwrap_or(Value::Undefined);
+    if !is_callable(&f, &vm.heap) {
+        return Err(error::Error::type_err(
+            "Function.prototype.toString requires a callable",
+        ));
+    }
     if let Value::Object(idx) = &f {
-        let (name, is_native) = vm.heap.with_obj(idx.0, |o| {
+        let (source, native_name) = vm.heap.with_obj(idx.0, |o| {
             if let HeapObj::Function(fun) = o {
-                let n = fun.name.as_ref().map(|s| s.to_string()).unwrap_or_default();
-                let native = matches!(
-                    fun.kind,
-                    crate::value::FunctionKind::Native { .. }
-                        | crate::value::FunctionKind::Bound { .. }
-                );
-                (n, native)
+                match &fun.kind {
+                    crate::value::FunctionKind::Interpreted { func } => (func.source.clone(), None),
+                    crate::value::FunctionKind::Native { .. } => (None, fun.name.clone()),
+                    crate::value::FunctionKind::Bound { .. } => (None, None),
+                }
             } else {
-                (String::new(), true)
+                (None, None)
             }
         });
-        let body = if is_native { "[native code]" } else { "..." };
-        return Ok(Value::String(Arc::from(
-            format!("function {}() {{ {} }}", name, body).as_str(),
-        )));
+        if let Some(source) = source {
+            return Ok(Value::String(source));
+        }
+        let source = match native_name.as_deref() {
+            Some(name) if !name.is_empty() => {
+                format!("function {name}() {{ [native code] }}")
+            }
+            _ => "function () { [native code] }".to_string(),
+        };
+        return Ok(Value::String(Arc::from(source)));
     }
-    Ok(Value::String(Arc::from("function () { [native code] }")))
+    unreachable!("callable values are objects")
 }
 
 pub(crate) fn function_call(

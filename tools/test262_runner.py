@@ -1701,7 +1701,8 @@ CLASS_SUBCLASS_BUILTINS_FEATURES = {
 
 def parse_meta(src):
     """Parse the /*--- ... ---*/ metadata block, handling multi-line lists."""
-    m = re.search(r'/\*---\n(.*?)\n---\*/', src, re.DOTALL)
+    metadata_source = src.replace('\r\n', '\n').replace('\r', '\n')
+    m = re.search(r'/\*---\n(.*?)\n---\*/', metadata_source, re.DOTALL)
     if not m:
         return {}
     meta = {}
@@ -3925,6 +3926,10 @@ def should_skip(meta, path=None):
 # Harness files always loaded (the minimum test262 requires).
 BASE_HARNESS = ['sta.js', 'assert.js']
 
+def read_source(path):
+    """Decode UTF-8 without Python's universal-newline source mutation."""
+    return Path(path).read_bytes().decode('utf-8')
+
 def assemble_source(src, meta, strict=None):
     """Combine one parsed test with its harness for one execution variant."""
     flags = meta.get('flags', [])
@@ -3940,24 +3945,24 @@ def assemble_source(src, meta, strict=None):
     for inc in BASE_HARNESS:
         p = HARNESS / inc
         if p.exists():
-            parts.append(p.read_text())
+            parts.append(read_source(p))
     append_async_harness(parts, HARNESS, flags)
     # Per-test includes (propertyHelper.js, compareArray.js, etc.).
     for inc in meta.get('includes', []):
         p = HARNESS / inc
         if p.exists():
-            parts.append(p.read_text())
+            parts.append(read_source(p))
     parts.append(src)
     return "\n".join(parts)
 
 def build_source(path, strict=None):
     """Build the full source: harness files + the test."""
-    src = Path(path).read_text()
+    src = read_source(path)
     meta = parse_meta(src)
     return assemble_source(src, meta, strict=strict), meta
 
 def run_test(path):
-    src = Path(path).read_text()
+    src = read_source(path)
     meta = parse_meta(src)
     if should_skip(meta, path):
         return 'skip'

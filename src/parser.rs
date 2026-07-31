@@ -11,6 +11,8 @@ struct ParsedExportSpecifier {
 
 pub struct Parser {
     tokens: Vec<Token>,
+    source: Option<Arc<str>>,
+    source_is_internal: bool,
     pos: usize,
     last_arrow_params: Option<Vec<Arc<str>>>,
     /// Parameter defaults collected by the most recent `parse_params` / arrow parse.
@@ -118,6 +120,8 @@ impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
         Parser {
             tokens,
+            source: None,
+            source_is_internal: false,
             pos: 0,
             last_arrow_params: None,
             cur_param_defaults: Vec::new(),
@@ -151,19 +155,40 @@ impl Parser {
         }
     }
 
+    fn with_source(tokens: Vec<Token>, source: &str, source_is_internal: bool) -> Self {
+        let mut parser = Self::new(tokens);
+        parser.source = Some(Arc::from(source));
+        parser.source_is_internal = source_is_internal;
+        parser
+    }
+
+    fn source_slice(&self, start_token: usize, end_token: usize) -> Option<Box<Arc<str>>> {
+        let source = self.source.as_ref()?;
+        let start = self.tokens.get(start_token)?.start;
+        let end = self.tokens.get(end_token.checked_sub(1)?)?.end;
+        let source = source.get(start..end)?;
+        if self.source_is_internal {
+            Some(Box::new(Arc::from(source)))
+        } else {
+            Some(Box::new(Arc::from(crate::value::utf16_from_scalar_str(
+                source,
+            ))))
+        }
+    }
+
     /// Parse well-formed host Unicode Script source. Already-canonical
     /// JavaScript strings must use an internal-source parser entry point.
     pub fn parse(src: &str) -> error::Result<Program> {
         let mut lx = crate::lexer::Lexer::new(src);
         let tokens = lx.tokens();
-        let mut p = Parser::new(tokens);
+        let mut p = Parser::with_source(tokens, src, false);
         p.parse_program()
     }
 
     pub(crate) fn parse_internal(src: &str) -> error::Result<Program> {
         let mut lx = crate::lexer::Lexer::new_internal(src);
         let tokens = lx.tokens();
-        let mut p = Parser::new(tokens);
+        let mut p = Parser::with_source(tokens, src, true);
         p.parse_program()
     }
 
@@ -171,7 +196,7 @@ impl Parser {
     pub fn parse_module(src: &str) -> error::Result<Program> {
         let mut lx = crate::lexer::Lexer::new_module(src);
         let tokens = lx.tokens();
-        let mut p = Parser::new(tokens);
+        let mut p = Parser::with_source(tokens, src, false);
         p.source_type = SourceType::Module;
         p.is_strict_context = true;
         p.parse_program()
@@ -183,7 +208,7 @@ impl Parser {
     pub fn parse_strict_inherited(src: &str, inherited: bool) -> error::Result<Program> {
         let mut lx = crate::lexer::Lexer::new(src);
         let tokens = lx.tokens();
-        let mut p = Parser::new(tokens);
+        let mut p = Parser::with_source(tokens, src, false);
         if inherited {
             p.is_strict_context = true;
         }
@@ -200,7 +225,7 @@ impl Parser {
     ) -> error::Result<Program> {
         let mut lx = crate::lexer::Lexer::new_internal(src);
         let tokens = lx.tokens();
-        let mut p = Parser::new(tokens);
+        let mut p = Parser::with_source(tokens, src, true);
         if inherited_strict {
             p.is_strict_context = true;
         }
@@ -1742,6 +1767,7 @@ impl Parser {
 
     fn parse_function_decl_with_async(&mut self, is_async: bool) -> error::Result<Stmt> {
         let line = self.stmt_start_line;
+        let source_start = self.pos.saturating_sub(usize::from(is_async));
         self.advance(); // function
         let is_generator = self.eat(&TokenKind::Star);
         let name = match self.advance() {
@@ -1821,9 +1847,11 @@ impl Parser {
         // Re-scan not needed; params already parsed before body. Strictness from
         // the directive applies to the body; we set it for any nested parse.
         self.is_strict_context = saved;
+        let source = self.source_slice(source_start, self.pos);
         Ok(Stmt {
             line,
             node: StmtNode::FunctionDecl(FunctionExpr {
+                source,
                 name,
                 params,
                 param_defaults,
@@ -3786,6 +3814,7 @@ impl Parser {
         if matches!(self.peek_at_tok(1).kind, TokenKind::Arrow)
             && self.binding_identifier_name().is_some()
         {
+            let source_start = self.pos;
             if self.peek_at_tok(1).preceded_by_newline {
                 return Err(error::Error::syntax(
                     "Line terminator not allowed before =>".to_string(),
@@ -3795,7 +3824,7 @@ impl Parser {
             self.arrow_defaults = Vec::new();
             self.arrow_rest = None;
             self.advance(); // =>
-            return self.parse_arrow_body(vec![name]);
+            return self.parse_arrow_body(vec![name], source_start);
         }
         match self.peek().clone() {
             TokenKind::Await => {
@@ -3828,6 +3857,7 @@ impl Parser {
                 ))
             }
             TokenKind::Async => {
+                let source_start = self.pos;
                 // `async function ...` expression; `async () =>` arrow; otherwise
                 // `async` is treated as a plain identifier.
                 if matches!(self.peek_at_tok(1).kind, TokenKind::Function)
@@ -3857,7 +3887,7 @@ impl Parser {
                     {
                         let params = self.last_arrow_params.take().unwrap();
                         self.expect(&TokenKind::Arrow, "=>")?;
-                        return self.parse_arrow_body_with_async(params, true);
+                        return self.parse_arrow_body_with_async(params, true, source_start);
                     }
                     // Not an arrow; rewind and treat async as identifier.
                     self.pos -= 2;
@@ -3874,7 +3904,7 @@ impl Parser {
                         p.parse_binding_identifier("Expected async arrow parameter")
                     })?;
                     self.advance(); // =>
-                    return self.parse_arrow_body_with_async(vec![name], true);
+                    return self.parse_arrow_body_with_async(vec![name], true, source_start);
                 }
                 // fall through to identifier
                 self.advance();
@@ -4055,6 +4085,7 @@ impl Parser {
                 Ok(Expr::Ident(Arc::from("set")))
             }
             TokenKind::LParen => {
+                let source_start = self.pos;
                 // Could be arrow: (a, b) => ...
                 self.advance();
                 if self.current_parenthesized_group_is_arrow_head()
@@ -4063,7 +4094,7 @@ impl Parser {
                 {
                     let params = self.last_arrow_params.take().unwrap();
                     self.expect(&TokenKind::Arrow, "=>")?;
-                    return self.parse_arrow_body(params);
+                    return self.parse_arrow_body(params, source_start);
                 }
                 // Parentheses restore the +In grammar parameter even when
                 // the surrounding for-head initializer is parsed with ~In.
@@ -4328,6 +4359,7 @@ impl Parser {
                 }
                 continue;
             }
+            let method_source_start = self.pos;
             // Async method: `async foo() {}` / `async *foo() {}` / async
             // generator. Detect `async` followed by a property-name start.
             let is_async_method = matches!(self.peek(), TokenKind::Ident(s) if s == "async")
@@ -4468,6 +4500,7 @@ impl Parser {
                 props.push(Property {
                     key,
                     value: Expr::Function(FunctionExpr {
+                        source: self.source_slice(method_source_start, self.pos),
                         name: accessor_name,
                         params,
                         param_defaults,
@@ -4522,6 +4555,7 @@ impl Parser {
                 props.push(Property {
                     key,
                     value: Expr::Function(FunctionExpr {
+                        source: self.source_slice(method_source_start, self.pos),
                         name: method_name,
                         params,
                         param_defaults,
@@ -4649,6 +4683,7 @@ impl Parser {
     }
 
     fn parse_function_expr_with_async(&mut self, is_async: bool) -> error::Result<Expr> {
+        let source_start = self.pos.saturating_sub(usize::from(is_async));
         self.advance(); // function
         let is_generator = self.eat(&TokenKind::Star);
         // FunctionExpression names use the function's own Yield/Await grammar
@@ -4732,7 +4767,9 @@ impl Parser {
             }
         }
         let has_name_binding = name.is_some();
+        let source = self.source_slice(source_start, self.pos);
         Ok(Expr::Function(FunctionExpr {
+            source,
             name,
             params,
             param_defaults,
@@ -5072,14 +5109,19 @@ impl Parser {
         Ok(())
     }
 
-    fn parse_arrow_body(&mut self, params: Vec<Arc<str>>) -> error::Result<Expr> {
-        self.parse_arrow_body_with_async(params, false)
+    fn parse_arrow_body(
+        &mut self,
+        params: Vec<Arc<str>>,
+        source_start: usize,
+    ) -> error::Result<Expr> {
+        self.parse_arrow_body_with_async(params, false, source_start)
     }
 
     fn parse_arrow_body_with_async(
         &mut self,
         params: Vec<Arc<str>>,
         is_async: bool,
+        source_start: usize,
     ) -> error::Result<Expr> {
         let param_defaults = std::mem::take(&mut self.arrow_defaults);
         let rest_param = self.arrow_rest.take();
@@ -5112,7 +5154,9 @@ impl Parser {
                 body = combined;
             }
             let is_strict = self.is_strict_context || body_contains_use_strict;
+            let source = self.source_slice(source_start, self.pos);
             Ok(Expr::Arrow(FunctionExpr {
+                source,
                 name: None,
                 params,
                 param_defaults,
@@ -5136,7 +5180,9 @@ impl Parser {
             let e = self.with_function_body_context(false, is_async, |p| p.parse_assign())?;
             let mut body = Self::arrow_destructuring_prelude(dstr_decls);
             body.push(self.stmt(StmtNode::Return(Some(e))));
+            let source = self.source_slice(source_start, self.pos);
             Ok(Expr::Arrow(FunctionExpr {
+                source,
                 name: None,
                 params,
                 param_defaults,
@@ -6705,6 +6751,7 @@ impl Parser {
         is_declaration: bool,
         decorators: Vec<Expr>,
     ) -> error::Result<ClassExpr> {
+        let class_source_start = self.pos;
         self.advance(); // 'class'
         let name = match self.peek().clone() {
             TokenKind::Ident(s) => {
@@ -6811,6 +6858,7 @@ impl Parser {
                     self.advance();
                     true
                 };
+            let method_source_start = self.pos;
             let is_auto_accessor = matches!(
                 self.peek(),
                 TokenKind::Ident(name) if name == "accessor"
@@ -6949,6 +6997,7 @@ impl Parser {
                 }
                 let idx = methods.len();
                 methods.push(ClassMethod {
+                    source: self.source_slice(method_source_start, self.pos),
                     decorators: element_decorators,
                     name: Arc::from(name.as_str()),
                     computed_name: None,
@@ -7006,6 +7055,7 @@ impl Parser {
                 }
                 let idx = methods.len();
                 methods.push(ClassMethod {
+                    source: self.source_slice(method_source_start, self.pos),
                     decorators: element_decorators,
                     name: Arc::from(name.as_str()),
                     computed_name: None,
@@ -7057,6 +7107,7 @@ impl Parser {
                     }
                     let idx = methods.len();
                     methods.push(ClassMethod {
+                        source: self.source_slice(method_source_start, self.pos),
                         decorators: element_decorators,
                         name: Arc::from(name.as_str()),
                         computed_name: None,
@@ -7286,6 +7337,7 @@ impl Parser {
             }
             let idx = methods.len();
             methods.push(ClassMethod {
+                source: self.source_slice(method_source_start, self.pos),
                 decorators: element_decorators,
                 name: method_name,
                 computed_name,
@@ -7311,6 +7363,7 @@ impl Parser {
         self.expect(&TokenKind::RBrace, "}")?;
         self.is_strict_context = saved_strict_context;
         Ok(ClassExpr {
+            source: self.source_slice(class_source_start, self.pos),
             decorators,
             name,
             inferred_name: None,

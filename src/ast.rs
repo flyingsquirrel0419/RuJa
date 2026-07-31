@@ -3,6 +3,8 @@ use std::sync::Arc;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClassExpr {
+    /// Exact source text from `class` through the closing brace.
+    pub source: Option<Box<Arc<str>>>,
     /// Decorator expressions in source order.
     pub decorators: Vec<Expr>,
     pub name: Option<Arc<str>>,
@@ -34,6 +36,8 @@ pub enum ClassElement {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClassMethod {
+    /// Exact method source, excluding a class element's `static` prefix.
+    pub source: Option<Box<Arc<str>>>,
     /// Decorator expressions in source order.
     pub decorators: Vec<Expr>,
     pub name: Arc<str>,
@@ -242,6 +246,8 @@ pub enum PropertyKey {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunctionExpr {
+    /// Exact syntactic source text when this function came from parsed source.
+    pub source: Option<Box<Arc<str>>>,
     pub name: Option<Arc<str>>,
     pub params: Vec<Arc<str>>,
     /// Optional default expression for each parameter (None = no default).

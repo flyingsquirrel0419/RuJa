@@ -197,10 +197,9 @@ guarantees are required.
   There is no embedder callback equivalent to a restrictive
   `HostEnsureCanCompileStrings`. Parameter-only, body-only, and combined
   parsing also run synchronously outside opcode fuel. Generated source text is
-  not retained, so the four constructor-specific
-  `Function.prototype.toString` source-preservation tests still fail. Hosts
-  that need a hard wall around attacker-controlled compilation must isolate
-  the VM in a separately killable process.
+  retained with the specified `anonymous` wrapper and internal UTF-16 content.
+  Hosts that need a hard wall around attacker-controlled compilation must
+  isolate the VM in a separately killable process.
 - RegExp construction, `IsRegExp`, Realm fallback, the String-symbol methods,
   character-class escapes, active-ignoreCase `\w`/`\W` lowering, and `d`-flag
   match indices are implemented and audited, but full RegExp conformance is

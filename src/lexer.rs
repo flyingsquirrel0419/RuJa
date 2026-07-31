@@ -1500,10 +1500,13 @@ impl<'a> Lexer<'a> {
         if self.template_state != 3 {
             if let Some(kind) = self.skip_ws_and_comments() {
                 let mut tok = Token::new(kind, self.line, self.col);
+                tok.start = self.pos;
+                tok.end = self.pos;
                 tok.preceded_by_newline = self.saw_newline;
                 return tok;
             }
         }
+        let start = self.pos;
         let line = self.line;
         let col = self.col;
         let preceded_by_newline = self.saw_newline;
@@ -1519,7 +1522,10 @@ impl<'a> Lexer<'a> {
             1 => {
                 self.template_state = 2;
                 self.template_expr_depth = 0;
-                return Token::new(TokenKind::TemplateExprStart, line, col);
+                let mut token = Token::new(TokenKind::TemplateExprStart, line, col);
+                token.start = start;
+                token.end = self.pos;
+                return token;
             }
             2 => {
                 // Inside an interpolation; a top-level `}` closes it, but
@@ -1528,11 +1534,17 @@ impl<'a> Lexer<'a> {
                 if self.peek() == Some(b'}') && self.template_expr_depth == 0 {
                     self.advance();
                     self.template_state = 3;
-                    return Token::new(TokenKind::TemplateExprEnd, line, col);
+                    let mut token = Token::new(TokenKind::TemplateExprEnd, line, col);
+                    token.start = start;
+                    token.end = self.pos;
+                    return token;
                 }
             }
             3 => {
-                return self.read_template_segment(line, col, preceded_by_newline);
+                let mut token = self.read_template_segment(line, col, preceded_by_newline);
+                token.start = start;
+                token.end = self.pos;
+                return token;
             }
             _ => {}
         }
@@ -1555,7 +1567,10 @@ impl<'a> Lexer<'a> {
                     self.template_stack
                         .push((self.template_state, self.template_expr_depth));
                 }
-                return self.read_template_start(line, col, preceded_by_newline);
+                let mut token = self.read_template_start(line, col, preceded_by_newline);
+                token.start = start;
+                token.end = self.pos;
+                return token;
             }
             Some(b'@') => {
                 self.advance();
@@ -1698,6 +1713,8 @@ impl<'a> Lexer<'a> {
             }
         }
         let mut tok = Token::new(kind, line, col);
+        tok.start = start;
+        tok.end = self.pos;
         tok.preceded_by_newline = preceded_by_newline;
         tok.had_escape = self.last_ident_had_escape;
         tok.string_had_escape = self.last_string_had_escape;
@@ -1825,19 +1842,15 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    /// Consume a LineTerminatorSequence and return its source bytes as a UTF-8
-    /// string. Updates line/column tracking like `advance`.
+    /// Consume a LineTerminatorSequence and return its Template TRV form.
+    /// CR and CRLF normalize to LF; LS and PS remain unchanged.
     fn read_line_terminator_sequence(&mut self) -> String {
         let mut buf = Vec::new();
         match self.peek() {
             Some(b'\r') => {
-                if self.peek_at(1) == Some(b'\n') {
-                    // CRLF: one advance() consumes both bytes.
-                    self.advance();
-                    buf.extend_from_slice(b"\r\n");
-                } else {
-                    buf.push(self.advance().unwrap());
-                }
+                // advance() consumes a following LF as the same sequence.
+                self.advance();
+                buf.push(b'\n');
             }
             Some(b'\n') => {
                 buf.push(self.advance().unwrap());
@@ -2120,6 +2133,10 @@ impl<'a> Lexer<'a> {
             }
             if c == b'\\' {
                 self.read_template_escape(&mut raw, &mut cooked, &mut valid);
+            } else if self.is_line_terminator_start() {
+                let terminator = self.read_line_terminator_sequence();
+                cooked.push_str(&terminator);
+                raw.push_str(&terminator);
             } else {
                 self.advance();
                 if c < 0x80 {

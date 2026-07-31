@@ -142,11 +142,15 @@ pub enum TokenKind {
     ResourceError(String),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct Token {
     pub kind: TokenKind,
     pub line: usize,
     pub col: usize,
+    /// Byte range in the original UTF-8 source. Parser-owned source slices use
+    /// this to preserve function text without retaining lexer state.
+    pub start: usize,
+    pub end: usize,
     /// True when a newline appeared immediately before this token.
     pub preceded_by_newline: bool,
     /// True when the identifier contained a Unicode escape sequence.
@@ -167,12 +171,27 @@ impl Token {
             kind,
             line,
             col,
+            start: 0,
+            end: 0,
             preceded_by_newline: false,
             had_escape: false,
             string_had_escape: false,
             string_had_legacy_escape: false,
             string_not_well_formed: false,
         }
+    }
+}
+
+impl PartialEq for Token {
+    fn eq(&self, other: &Self) -> bool {
+        self.kind == other.kind
+            && self.line == other.line
+            && self.col == other.col
+            && self.preceded_by_newline == other.preceded_by_newline
+            && self.had_escape == other.had_escape
+            && self.string_had_escape == other.string_had_escape
+            && self.string_had_legacy_escape == other.string_had_legacy_escape
+            && self.string_not_well_formed == other.string_not_well_formed
     }
 }
 
