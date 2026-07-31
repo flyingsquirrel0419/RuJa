@@ -1490,43 +1490,72 @@ impl Parser {
         // Labeled statement: `ident:` followed by any statement. Detect by
         // peeking two tokens so a leading identifier isn't misread as an
         // expression statement.
-        if let Some(label) = self.peek_label_identifier() {
-            if matches!(self.peek_at_tok(1).kind, TokenKind::Colon) {
-                self.advance(); // label identifier
-                self.advance(); // ':'
-                                // Peek the body's first token to determine if it's a loop.
-                let is_loop = matches!(
-                    self.peek(),
-                    TokenKind::While | TokenKind::Do | TokenKind::For
-                );
-                // ES spec: lexical declarations cannot be the body of a
-                // labelled statement. `let` is contextual here: if it does
-                // not hit the `let [` ExpressionStatement lookahead
-                // restriction, parse it as an expression statement under ASI.
-                if matches!(self.peek(), TokenKind::Const | TokenKind::Class) {
-                    return Err(error::Error::syntax(
-                        "Lexical declaration cannot be the body of a labelled statement"
-                            .to_string(),
-                    ));
+        if self.peek_label_identifier().is_some()
+            && matches!(self.peek_at_tok(1).kind, TokenKind::Colon)
+        {
+            // Parse consecutive labels iteratively. Besides bounding hostile
+            // input without host recursion, this lets every label in
+            // `outer: inner: for (...)` target the same iteration statement.
+            let mut labels = Vec::new();
+            while let Some(label) = self.peek_label_identifier() {
+                if !matches!(self.peek_at_tok(1).kind, TokenKind::Colon) {
+                    break;
                 }
-                if self.label_body_starts_with_disallowed_function_decl() {
-                    return Err(error::Error::syntax(
-                        "Function declaration cannot be the body of this labelled statement"
-                            .to_string(),
-                    ));
+                if self.stmt_depth + labels.len() >= Self::MAX_STMT_DEPTH {
+                    return Err(error::Error::syntax(format!(
+                        "Maximum statement nesting depth ({}) exceeded",
+                        Self::MAX_STMT_DEPTH
+                    )));
                 }
-                if self.label_stack.iter().any(|(name, _)| name == &label) {
+                if self.label_stack.iter().any(|(name, _)| name == &label)
+                    || labels
+                        .iter()
+                        .any(|(name, _): &(Arc<str>, u32)| name == &label)
+                {
                     return Err(error::Error::syntax(format!(
                         "Label '{}' has already been declared",
                         label
                     )));
                 }
-                self.label_stack.push((label.clone(), is_loop));
-                let body =
-                    self.with_lexical_declaration_context(false, |p| p.parse_stmt_inner())?;
-                self.label_stack.pop();
-                return Ok(self.stmt(StmtNode::Labeled(label, Box::new(body))));
+                let line = self.current_line();
+                self.advance();
+                self.advance();
+                labels.push((label, line));
             }
+
+            // Lexical declarations cannot be the ultimate labelled item.
+            // `let` stays contextual and is parsed under the disabled lexical
+            // declaration context below.
+            if matches!(self.peek(), TokenKind::Const | TokenKind::Class) {
+                return Err(error::Error::syntax(
+                    "Lexical declaration cannot be the body of a labelled statement".to_string(),
+                ));
+            }
+            if self.label_body_starts_with_disallowed_function_decl() {
+                return Err(error::Error::syntax(
+                    "Function declaration cannot be the body of this labelled statement"
+                        .to_string(),
+                ));
+            }
+
+            let is_loop = matches!(
+                self.peek(),
+                TokenKind::While | TokenKind::Do | TokenKind::For
+            );
+            let label_stack_len = self.label_stack.len();
+            self.label_stack
+                .extend(labels.iter().map(|(label, _)| (label.clone(), is_loop)));
+            let body_result =
+                self.with_lexical_declaration_context(false, |parser| parser.parse_stmt());
+            self.label_stack.truncate(label_stack_len);
+            let mut body = body_result?;
+            for (label, line) in labels.into_iter().rev() {
+                body = Stmt {
+                    line,
+                    node: StmtNode::Labeled(label, Box::new(body)),
+                };
+            }
+            return Ok(body);
         }
         match self.peek().clone() {
             TokenKind::LBrace => self.parse_block(),
@@ -1707,6 +1736,7 @@ impl Parser {
     }
 
     fn parse_function_decl_with_async(&mut self, is_async: bool) -> error::Result<Stmt> {
+        let line = self.stmt_start_line;
         self.advance(); // function
         let is_generator = self.eat(&TokenKind::Star);
         let name = match self.advance() {
@@ -1785,20 +1815,23 @@ impl Parser {
         // Re-scan not needed; params already parsed before body. Strictness from
         // the directive applies to the body; we set it for any nested parse.
         self.is_strict_context = saved;
-        Ok(self.stmt(StmtNode::FunctionDecl(FunctionExpr {
-            name,
-            params,
-            param_defaults,
-            rest_param,
-            body,
-            is_arrow: false,
-            is_async,
-            is_generator,
-            param_decls: Vec::new(),
-            is_strict,
-            is_method: false,
-            has_name_binding: false,
-        })))
+        Ok(Stmt {
+            line,
+            node: StmtNode::FunctionDecl(FunctionExpr {
+                name,
+                params,
+                param_defaults,
+                rest_param,
+                body,
+                is_arrow: false,
+                is_async,
+                is_generator,
+                param_decls: Vec::new(),
+                is_strict,
+                is_method: false,
+                has_name_binding: false,
+            }),
+        })
     }
 
     fn parse_params(&mut self) -> error::Result<Vec<Arc<str>>> {
@@ -2046,17 +2079,47 @@ impl Parser {
     }
 
     fn parse_if(&mut self) -> error::Result<Stmt> {
+        let line = self.stmt_start_line;
         self.advance();
         self.expect(&TokenKind::LParen, "(")?;
         let cond = self.parse_expr()?;
         self.expect(&TokenKind::RParen, ")")?;
-        let then = Box::new(self.parse_single_stmt()?);
+        let then = Box::new(self.parse_if_clause()?);
         let else_ = if self.eat(&TokenKind::Else) {
-            Some(Box::new(self.parse_single_stmt()?))
+            Some(Box::new(self.parse_if_clause()?))
         } else {
             None
         };
-        Ok(self.stmt(StmtNode::If { cond, then, else_ }))
+        Ok(Stmt {
+            line,
+            node: StmtNode::If { cond, then, else_ },
+        })
+    }
+
+    /// Annex B.3.3 treats an ordinary FunctionDeclaration in either sloppy
+    /// `if` clause as the sole item of a synthetic BlockStatement. Building
+    /// that AST shape here reuses normal BlockDeclarationInstantiation and the
+    /// site-specific Annex B.3.2 outer-variable plan without parser-only
+    /// runtime exceptions.
+    fn parse_if_clause(&mut self) -> error::Result<Stmt> {
+        if !self.is_strict_context && matches!(self.peek(), TokenKind::Function) {
+            let declaration =
+                self.with_lexical_declaration_context(false, |parser| parser.parse_stmt())?;
+            if matches!(
+                &declaration.node,
+                StmtNode::FunctionDecl(function)
+                    if !function.is_async && !function.is_generator
+            ) {
+                return Ok(Stmt {
+                    line: declaration.line,
+                    node: StmtNode::Block(vec![declaration]),
+                });
+            }
+            return Err(error::Error::syntax(
+                "Function declaration cannot be used as a single statement body".to_string(),
+            ));
+        }
+        self.parse_single_stmt()
     }
 
     /// Parse a single statement in a position where class declarations
@@ -8066,6 +8129,76 @@ mod tests {
             assert!(Parser::parse_module(src).is_err(), "{src}");
             assert!(Parser::parse(src).is_ok(), "{src}");
         }
+    }
+
+    #[test]
+    fn parse_annex_b_if_function_declarations_as_synthetic_blocks() {
+        for src in [
+            "if (true) function f() {}",
+            "if (true) function f() {} else ;",
+            "if (true) ; else function f() {}",
+            "if (true) function f() {} else function g() {}",
+            "if (true) if (false) function f() {} else function g() {}",
+            "outer: inner: if (true) function f() {}",
+            "if (true) function yield() {} else function await() {}",
+        ] {
+            assert!(Parser::parse(src).is_ok(), "{src}");
+        }
+
+        for src in [
+            "\"use strict\"; if (true) function f() {}",
+            "if (true) function* f() {}",
+            "if (true) async function f() {}",
+            "if (true) label: function f() {}",
+            "while (false) function f() {}",
+            "for (;;) function f() {}",
+            "with ({}) function f() {}",
+            "function* g() { if (true) function yield() {} }",
+            "async function g() { if (true) function await() {} }",
+        ] {
+            assert!(Parser::parse(src).is_err(), "{src}");
+        }
+
+        assert!(Parser::parse_module("if (true) function f() {}").is_err());
+
+        let program =
+            Parser::parse("if (true) if (false) function f() {} else function g() {}").unwrap();
+        let StmtNode::If {
+            then: outer_then,
+            else_: outer_else,
+            ..
+        } = &program.body[0].node
+        else {
+            panic!("expected outer if");
+        };
+        assert!(outer_else.is_none(), "else must bind to the nearest if");
+        let StmtNode::If {
+            then: inner_then,
+            else_: Some(inner_else),
+            ..
+        } = &outer_then.node
+        else {
+            panic!("expected inner if with else");
+        };
+        assert!(matches!(&inner_then.node, StmtNode::Block(_)));
+        assert!(matches!(&inner_else.node, StmtNode::Block(_)));
+
+        let program = Parser::parse("\nif (true)\nfunction f() {\n;\n}").unwrap();
+        let StmtNode::If { then, .. } = &program.body[0].node else {
+            panic!("expected if");
+        };
+        let StmtNode::Block(declarations) = &then.node else {
+            panic!("expected synthetic block");
+        };
+        assert_eq!(then.line, 3);
+        assert_eq!(declarations[0].line, 3);
+
+        let mut deep_labels = String::new();
+        for index in 0..=Parser::MAX_STMT_DEPTH {
+            deep_labels.push_str(&format!("label{index}:"));
+        }
+        deep_labels.push(';');
+        assert!(Parser::parse(&deep_labels).is_err());
     }
 
     #[test]

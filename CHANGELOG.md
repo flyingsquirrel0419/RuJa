@@ -4,6 +4,19 @@
 
 ### Changed
 
+- Implemented Annex B.3.3 sloppy `if`-clause function declarations by lowering
+  each ordinary declaration to the sole item of a synthetic block. Strict,
+  Module, generator, async, labelled, and other single-statement positions keep
+  their early errors, while the existing Annex B.3.2 declaration plan supplies
+  the required lexical binding and conditional outer mirror. Consecutive labels
+  are now parsed iteratively with a nesting bound, all labels around an
+  iteration share one target, and break/continue distinguish iteration, switch,
+  and non-loop label frames without leaking pending labels through nested
+  function compilation. On pinned Test262, the exact 480-file B.3.3 cohort
+  moves from **0/480** to **480/0** and full Annex B from **338/674/74** to
+  **818/194/74**. The supported statements/expressions subset remains
+  **12,765 pass / 0 fail / 7,674 skip / 20,439 total**.
+
 - Implemented Annex B.3.2 block-level function outer-variable semantics for
   Script, FunctionBody, direct eval, indirect eval, and created Realms. Block
   and CaseBlock functions now remain lexical while an independently admitted

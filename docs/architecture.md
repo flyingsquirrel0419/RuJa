@@ -58,6 +58,20 @@ crate-private and never survive cloning or reparsing. A future persistent or
 cached declaration plan must introduce stable AST node IDs before crossing
 that ownership boundary.
 
+Annex B.3.3 is represented directly as its specification rewrite: a sloppy
+ordinary FunctionDeclaration used as an `if` clause becomes the sole statement
+of a synthetic BlockStatement. The parser does not admit generator, async,
+strict, Module, labelled, loop, or `with` variants. Reusing the ordinary block
+AST means block declaration instantiation and the B.3.2 site plan remain the
+single runtime model instead of adding an `if`-specific declaration path.
+
+Label chains are parsed iteratively up to the statement-depth limit, then
+rebuilt with their source lines. The compiler flattens labels whose ultimate
+item is an iteration into one control frame carrying every alias. Explicit
+`Iteration`, `Switch`, and `Label` frame kinds keep unlabelled `break` and
+`continue` resolution distinct, and pending labels are isolated while nested
+function bodies compile.
+
 ```text
 [Decision Log]
 - 목적과 의도: Annex B.3.2의 lexical block binding과 조건부 outer var binding을 분리하고, 선언이 실제 평가된 시점에만 동일한 함수 객체를 복사한다.
@@ -65,7 +79,17 @@ that ownership boundary.
 - 검토한 주요 대안: 모든 block function을 var로 유지하기, AST를 재작성해 synthetic var/assignment를 삽입하기, 이름 단위 전역 플래그만 저장하기, 또는 site별 declaration plan과 전용 mirror opcode를 사용하기.
 - 선택한 방식: 실제 VarDeclaredNames와 별도인 source-order plan을 만들고, Block/CaseBlock lexical instantiation 후 admitted site에만 AnnexBMirror를 방출한다. Eval/Global instantiation이 plan을 환경별로 필터링하고 global mirror는 Reference/PutValue를 재사용한다.
 - 다른 대안 대신 이 방식을 선택한 이유: 이름 단위 상태는 같은 이름의 여러 실행 위치를 구분하지 못하고 AST 재작성은 source metadata와 기존 compiler passes를 흐린다. 전용 opcode는 synthetic assignment의 정확한 평가 시점을 보존하면서 값 쓰기는 공용 Reference 의미론에 맡긴다.
-- 장점, 단점 및 영향: false branch와 switch case timing, parameter/arguments/lexical/catch 충돌, duplicate final-function binding, accessor/non-writable/foreign-Realm global behavior가 한 모델로 정렬된다. 계획은 현재 동일 AST 수명에 묶여 있으며 persistent compilation에는 stable node ID가 필요하다. Bare if FunctionDeclaration의 Annex B.3.3 parser transform은 별도 후속 범위다.
+- 장점, 단점 및 영향: false branch와 switch case timing, parameter/arguments/lexical/catch 충돌, duplicate final-function binding, accessor/non-writable/foreign-Realm global behavior가 한 모델로 정렬된다. B.3.3도 synthetic Block으로 같은 모델을 재사용한다. 계획은 현재 동일 AST 수명에 묶여 있으며 persistent compilation에는 stable node ID가 필요하다.
+```
+
+```text
+[Decision Log]
+- 목적과 의도: Annex B.3.3의 sloppy bare-if FunctionDeclaration을 명세 rewrite와 같은 block semantics로 구현하고, 중첩 label 제어 대상을 정확히 보존한다.
+- 기존 구현 및 제약 조건: single-statement parser는 모든 FunctionDeclaration을 거부했고, compiler는 label 하나와 switch 여부 bool만 저장해 label chain 및 non-loop label 안의 unlabelled control을 구분하지 못했다.
+- 검토한 주요 대안: if compiler에 전용 function-hoist 특례를 추가하기, parser admission만 넓히기, 또는 synthetic Block AST와 명시적 control-frame kind를 사용하기.
+- 선택한 방식: sloppy ordinary if-clause function만 synthetic Block으로 낮추고 기존 B.3.2 plan을 재사용한다. label chain은 iterative parse 후 loop frame alias로 합치며 frame kind로 break/continue 대상을 선택한다.
+- 다른 대안 대신 이 방식을 선택한 이유: runtime 특례는 BlockDeclarationInstantiation와 outer mirror 규칙을 중복시키고 parser admission만으로는 lexical binding을 만들지 못한다. 명시적 frame kind는 label/switch/iteration의 서로 다른 제어 규칙을 자료형으로 고정한다.
+- 장점, 단점 및 영향: B.3.3의 네 production과 dangling-else ownership이 한 AST 규칙으로 정렬되고 hostile label nesting은 Rust stack을 소모하지 않는다. synthetic block은 source에 없지만 declaration line metadata를 보존한다.
 ```
 
 ## Module requests and typed modules

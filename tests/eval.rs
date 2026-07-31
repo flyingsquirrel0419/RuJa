@@ -628,6 +628,19 @@ fn annex_b_eval_mirror_uses_eval_declaration_instantiation_rules() {
 }
 
 #[test]
+fn annex_b_if_function_eval_uses_synthetic_block_admission() {
+    assert_eq!(
+        run(r#"
+            (function(f) {
+              eval('var before = f; if (true) function f() { return 4; } var after = f;');
+              return before + "," + after();
+            }(3));
+        "#),
+        Value::String(Arc::from("3,4"))
+    );
+}
+
+#[test]
 fn eval_class_declaration_completion_is_empty() {
     assert_eq!(run(r#"eval("class C {}")"#), Value::Undefined);
     assert_eq!(run(r#"eval("1; class C {}")"#), Value::Number(1.0));

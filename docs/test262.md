@@ -1,5 +1,29 @@
 # test262 conformance
 
+## Annex B if-clause functions
+
+Annex B.3.3 now rewrites a sloppy ordinary FunctionDeclaration in either arm
+of an `if` statement to a synthetic block containing that declaration. No
+Test262 admission changed. Strict, Module, generator, async, labelled, loop,
+and `with` single-statement forms retain their required syntax errors.
+
+On pinned Test262 `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the exact
+480 files below Annex B function/global/eval code whose basenames match
+`/(^|-)if-(decl|stmt)/` move from **0 pass / 480 fail** to **480 pass / 0
+fail**. Full Annex B moves from **338/674/74** to **818/194/74**, exactly
+**+480 pass / -480 fail**. The supported statements and expressions subset
+remains **12,765 pass / 0 fail / 7,674 skip / 20,439 total**.
+
+```text
+[Decision Log]
+- 목적과 의도: admission 변경 없이 Annex B.3.3의 네 if-clause production과 실제 declaration instantiation을 구현한다.
+- 기존 구현 및 제약 조건: parser가 bare FunctionDeclaration을 모든 single-statement 위치에서 거부했으며 B.3.2 lexical/outer mirror 구현은 이미 block AST를 기준으로 검증돼 있었다.
+- 검토한 주요 대안: 480개 파일을 path admission으로 예외 처리하기, if bytecode에 전용 hoist를 추가하기, 또는 명세처럼 FunctionDeclaration을 synthetic Block으로 rewrite하기.
+- 선택한 방식: non-strict ordinary function인 경우에만 parser가 source line을 보존한 Block AST를 만들고 기존 block instantiation 및 B.3.2 plan을 그대로 사용한다.
+- 다른 대안 대신 이 방식을 선택한 이유: admission 예외는 엔진 결함을 숨기고 전용 bytecode는 lexical binding과 conditional outer update를 중복 구현한다. synthetic Block은 명세와 기존 runtime 모델을 동시에 따른다.
+- 장점, 단점 및 영향: exact cohort가 480/0이고 full Annex B가 정확히 +480/-480 이동하며 supported subset은 0 fail을 유지한다. 남은 194개 Annex B 실패는 별도 semantic unit으로 유지된다.
+```
+
 ## Annex B block-function outer mirrors
 
 Annex B.3.2 block and switch functions now use a lexical block binding plus a

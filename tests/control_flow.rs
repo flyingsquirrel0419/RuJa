@@ -180,6 +180,108 @@ fn annex_b_switch_mirrors_only_an_evaluated_function_declaration() {
 }
 
 #[test]
+fn annex_b_if_functions_use_synthetic_block_semantics() {
+    assert_eq!(
+        run(r#"
+            (function(value) {
+              var before = typeof f;
+              if (value) function f() { var lexical = f; f = 123; return lexical; }
+              return before + "," + typeof f +
+                (typeof f === "function" ? "," + f()() : "");
+            }(false)) + ";" +
+            (function(value) {
+              if (value) function f() { return 1; }
+              else function f() { return 2; }
+              return f();
+            }(false));
+        "#),
+        Value::String(Arc::from("undefined,undefined;2"))
+    );
+
+    assert_eq!(
+        run(r#"
+            (function() {
+              if (true) function f() { var lexical = f; f = 123; return lexical; }
+              return f() === f;
+            }());
+        "#),
+        Value::Bool(true)
+    );
+
+    assert_eq!(
+        run(r#"
+            (function() {
+              let f = 7;
+              if (true) function f() { return 8; }
+              return f;
+            }());
+        "#),
+        Value::Number(7.0)
+    );
+}
+
+#[test]
+fn nested_labels_share_their_iteration_target() {
+    assert_eq!(
+        run(r#"
+            var visited = 0;
+            outer: inner: for (var i = 0; i < 3; i++) {
+              if (i < 2) continue outer;
+              visited++;
+            }
+            visited;
+        "#),
+        Value::Number(1.0)
+    );
+}
+
+#[test]
+fn unlabelled_control_skips_non_loop_label_frames() {
+    assert_eq!(
+        run(r#"
+            var iterations = 0, tail = 0;
+            while (iterations++ < 2) {
+              marker: { break; }
+              tail++;
+            }
+            iterations + "," + tail;
+        "#),
+        Value::String(Arc::from("1,0"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var tail = 0;
+            for (var i = 0; i < 3; i++) {
+              marker: { continue; }
+              tail++;
+            }
+            i + "," + tail;
+        "#),
+        Value::String(Arc::from("3,0"))
+    );
+}
+
+#[test]
+fn labelled_loop_keeps_labels_across_nested_function_compilation() {
+    assert_eq!(
+        run(r#"
+            var count = 0;
+            outer: for (
+              var factory = function() { while (false) {} }, i = 0;
+              i < 3;
+              i++
+            ) {
+              count++;
+              continue outer;
+            }
+            count;
+        "#),
+        Value::Number(3.0)
+    );
+}
+
+#[test]
 fn continue_out_of_switch_preserves_completion_value() {
     assert_eq!(
         run("eval('5; do { switch (\"a\") { case \"a\": { 6; continue; } } } while (false)');"),

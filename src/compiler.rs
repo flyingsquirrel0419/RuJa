@@ -23,8 +23,8 @@ pub struct Compiler {
     /// (continue_target, pending break jumps, pending continue jumps, label)
     /// (continue_target, pending break jumps, pending continue jumps, label)
     loop_stack: Vec<LoopFrame>,
-    /// A label waiting to be attached to the next begin_loop call.
-    pending_label: Option<Arc<str>>,
+    /// Labels waiting to be attached to the next begin_loop call.
+    pending_labels: Vec<Arc<str>>,
     /// Active finally guard ip stack (the `PushFinally` instruction's position).
     /// Each entry is the ip of the `PushFinally` op whose target has been (or
     /// will be) patched to the finally body's start ip. Used to detect whether
@@ -153,9 +153,23 @@ impl Default for Compiler {
 }
 
 /// A loop-stack frame: (continue target, pending break jumps,
-/// pending continue jumps, optional label, is switch, scope depth at entry).
-type LoopFrame = (usize, Vec<usize>, Vec<usize>, Option<Arc<str>>, bool, usize);
+/// pending continue jumps, labels, control kind, scope depth at entry).
+type LoopFrame = (
+    usize,
+    Vec<usize>,
+    Vec<usize>,
+    Vec<Arc<str>>,
+    ControlFrameKind,
+    usize,
+);
 pub type GlobalDeclarationNames = (Vec<Arc<str>>, Vec<Arc<str>>, Vec<Arc<str>>);
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum ControlFrameKind {
+    Iteration,
+    Switch,
+    Label,
+}
 
 #[derive(Clone, Default)]
 pub(crate) struct AnnexBDeclarationPlan {
@@ -534,7 +548,7 @@ impl Compiler {
             names: Vec::new(),
             name_map: HashMap::new(),
             loop_stack: Vec::new(),
-            pending_label: None,
+            pending_labels: Vec::new(),
             finally_stack: Vec::new(),
             switch_val_depth: None,
             switch_ctx_stack: Vec::new(),
@@ -808,15 +822,15 @@ impl Compiler {
 
     /// Begin a loop: `continue_target` is where `continue` jumps (loop start/cond).
     fn begin_loop(&mut self, continue_target: usize) {
-        // Attach a pending label (set by a wrapping Labeled statement) so
-        // `break label` / `continue label` can target this loop.
-        let label = self.pending_label.take();
+        // Attach every pending label from a wrapping label chain so each can
+        // target the same iteration statement.
+        let labels = std::mem::take(&mut self.pending_labels);
         self.loop_stack.push((
             continue_target,
             Vec::new(),
             Vec::new(),
-            label,
-            false,
+            labels,
+            ControlFrameKind::Iteration,
             self.scopes.len(),
         ));
     }
@@ -829,8 +843,8 @@ impl Compiler {
             continue_target,
             Vec::new(),
             Vec::new(),
-            Some(label),
-            false,
+            vec![label],
+            ControlFrameKind::Iteration,
             self.scopes.len(),
         ));
     }
@@ -1779,15 +1793,13 @@ impl Compiler {
                 let target = if let Some(l) = label {
                     self.loop_stack
                         .iter()
-                        .rposition(|(_, _, _, lbl, _, _): &LoopFrame| {
-                            lbl.as_ref().is_some_and(|x| x == l)
+                        .rposition(|(_, _, _, labels, _, _): &LoopFrame| {
+                            labels.iter().any(|label| label == l)
                         })
                 } else {
-                    if self.loop_stack.is_empty() {
-                        None
-                    } else {
-                        Some(self.loop_stack.len() - 1)
-                    }
+                    self.loop_stack
+                        .iter()
+                        .rposition(|(_, _, _, _, kind, _)| *kind != ControlFrameKind::Label)
                 };
                 if let Some(i) = target {
                     let scope_depth = self.loop_stack[i].5;
@@ -1813,21 +1825,20 @@ impl Compiler {
                 let target = if let Some(l) = label {
                     self.loop_stack
                         .iter()
-                        .rposition(|(_, _, _, lbl, _, _): &LoopFrame| {
-                            lbl.as_ref().is_some_and(|x| x == l)
+                        .rposition(|(_, _, _, labels, _, _): &LoopFrame| {
+                            labels.iter().any(|label| label == l)
                         })
                 } else {
                     if self.loop_stack.is_empty() {
                         None
                     } else {
-                        // Find innermost non-switch loop (switch uses
-                        // begin_loop for break support, but continue must
-                        // target the enclosing real loop).
+                        // Continue targets only iteration statements, never a
+                        // switch or a non-loop labelled control frame.
                         self.loop_stack
                             .iter()
                             .enumerate()
                             .rev()
-                            .find(|(_, (_, _, _, _, is_switch, _))| !is_switch)
+                            .find(|(_, (_, _, _, _, kind, _))| *kind == ControlFrameKind::Iteration)
                             .map(|(i, _)| i)
                     }
                 };
@@ -1872,18 +1883,24 @@ impl Compiler {
                 // loop stack so `break label` / `continue label` can target it.
                 // For non-loop bodies, only `break label` is meaningful; we push
                 // a synthetic loop frame whose continue target is unreachable.
+                let mut labels = vec![label.clone()];
+                let mut target = body.as_ref();
+                while let StmtNode::Labeled(next_label, next_body) = &target.node {
+                    labels.push(next_label.clone());
+                    target = next_body;
+                }
                 if matches!(
-                    &body.node,
+                    &target.node,
                     StmtNode::While { .. }
                         | StmtNode::DoWhile { .. }
                         | StmtNode::For { .. }
                         | StmtNode::ForIn { .. }
                         | StmtNode::ForOf { .. }
                 ) {
-                    // Hand the label to the inner loop's begin_loop by stashing
-                    // it on a pending-label field that begin_loop consumes.
-                    self.pending_label = Some(label.clone());
-                    self.compile_stmt(body)?;
+                    // Hand the complete chain to the loop's single control
+                    // frame. All labels share break and continue targets.
+                    self.pending_labels = labels;
+                    self.compile_stmt(target)?;
                 } else {
                     // Non-loop labeled statement: push a frame that only honors
                     // `break label`. continue is invalid here; mark as MAX.
@@ -1891,8 +1908,8 @@ impl Compiler {
                         usize::MAX,
                         Vec::new(),
                         Vec::new(),
-                        Some(label.clone()),
-                        false,
+                        vec![label.clone()],
+                        ControlFrameKind::Label,
                         self.scopes.len(),
                     ));
                     let result = self.compile_stmt(body);
@@ -1964,15 +1981,16 @@ impl Compiler {
                 self.chunk
                     .emit(Op::DeclareEnv(sw_val_idx), self.current_line);
                 // Switch uses a loop frame for break support, but marks
-                // is_switch=true so continue targets the enclosing loop.
+                // A switch frame accepts break, while continue skips it for
+                // the enclosing loop.
                 let saved_sw_val = self.switch_val_depth;
                 let switch_loop_idx = self.loop_stack.len();
                 self.loop_stack.push((
                     usize::MAX,
                     Vec::new(),
                     Vec::new(),
-                    None,
-                    true,
+                    Vec::new(),
+                    ControlFrameKind::Switch,
                     self.scopes.len(),
                 ));
                 self.switch_ctx_stack
@@ -2250,6 +2268,7 @@ impl Compiler {
         let saved_names = std::mem::take(&mut self.name_map);
         let saved_switch_val = self.switch_val_depth;
         let saved_async_generator = self.current_async_generator;
+        let saved_pending_labels = std::mem::take(&mut self.pending_labels);
         let saved_annex_b_plan = std::mem::replace(
             &mut self.annex_b_plan,
             AnnexBDeclarationPlan::for_function(f),
@@ -2436,6 +2455,7 @@ impl Compiler {
         self.chunk = saved_chunk;
         self.switch_val_depth = saved_switch_val;
         self.current_async_generator = saved_async_generator;
+        self.pending_labels = saved_pending_labels;
         self.annex_b_plan = saved_annex_b_plan;
         Ok((func_chunk, param_slots))
     }
