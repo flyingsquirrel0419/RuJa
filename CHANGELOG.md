@@ -16,7 +16,12 @@
   **14/0**, five core negative guards remain **5/0**, and full Annex B moves
   from **820/192/74** to **833/179/74**, exactly **+13 pass / -13 fail**. The
   supported statements/expressions subset remains **12,765 pass / 0 fail /
-  7,674 skip / 20,439 total**; no admission metadata changed.
+  7,674 skip / 20,439 total**; no admission metadata changed. Ordinary CI
+  `30624216090` passes 3/3 and full matrix `30624215959` passes 45/45. Against
+  `30619831846`, 31/32 result artifacts are byte-identical and only Annex B
+  changes by **+13/-13**. Aggregate is **33,012 pass / 4,396 fail / 11,058 skip
+  / 3 timeout / 0 error**; filename-sorted content hash is
+  `afbfc79705afc42c18701784fe23eb65aed8c50488a24553ff3caf71fe272156`.
 
 - Implemented Annex B.3.4 direct-eval declarations across a matching simple
   catch parameter. Sloppy eval `var` initializers now update the active catch

@@ -21,6 +21,14 @@ statements and expressions subset remains **12,765 pass / 0 fail / 7,674 skip
 tests including 394 library tests, doctest, wasm32, rustfmt, and Test262 tooling
 **163/163** pass.
 
+Implementation commit `12fdaa4` passes ordinary CI `30624216090` (**3/3**)
+and full matrix `30624215959` (**45/45**). Against preceding full run
+`30619831846`, **31/32** result artifacts are byte-identical and only Annex B
+changes by **+13 pass / -13 fail**. Aggregate is **33,012 pass / 4,396 fail /
+11,058 skip / 3 timeout / 0 error** over 48,469 files and 37,408 executed files.
+Filename-sorted result content hashes to
+`afbfc79705afc42c18701784fe23eb65aed8c50488a24553ff3caf71fe272156`.
+
 ```text
 [Decision Log]
 - 목적과 의도: runner 예외 없이 Annex B.1.1의 Script HTML-like comment grammar와 Module exclusion을 구현하고 exact delta를 측정한다.
@@ -28,7 +36,7 @@ tests including 394 library tests, doctest, wasm32, rustfmt, and Test262 tooling
 - 검토한 주요 대안: 14개 path admission, source 전처리, 기존 newline flag 재사용, 또는 source-goal별 lexer mode와 독립 close-admission state.
 - 선택한 방식: Script/eval/dynamic Function에서만 marker scanner를 활성화하고 initial/inter-token line terminator state로 close marker를 제한한다. Module은 같은 bytes를 operator tokens로 유지한다.
 - 다른 대안 대신 이 방식을 선택한 이유: admission은 엔진 결함을 숨기고 전처리는 literal payload를 훼손한다. 기존 flag는 string/template 내부 줄바꿈까지 포함한다. 별도 state만 lexical input-element 경계를 보존한다.
-- 장점, 단점 및 영향: exact cohort가 14/0이고 Annex B가 정확히 +13/-13 이동하며 core negatives와 supported subset은 무회귀다. full CI artifact 비교는 구현 커밋 후 별도 근거로 기록한다.
+- 장점, 단점 및 영향: exact cohort가 14/0이고 Annex B가 정확히 +13/-13 이동하며 core negatives와 supported subset은 무회귀다. full CI도 31/32 artifact identity와 Annex B 단일 delta를 확인한다.
 ```
 
 ## Annex B catch var declarations
