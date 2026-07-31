@@ -212,6 +212,17 @@ byte-identical. The largest `built-ins` shard completed in about 30 minutes,
 below its 60-minute job limit. Corrected sorted result-content SHA-256 is
 `fec150f12df228289b84453363a62c41fbfe82dd9b15592b20c7f1c2c68ee8f0`.
 
+The Annex B duplicate-function follow-up is ordinary CI `30602031029` and full
+matrix `30602031022`, both on `eb3f14f`; all **3/3** ordinary jobs and **45/45**
+full jobs pass. The new Annex B artifact completes without its preceding two
+load-sensitive timeouts at **203 pass / 809 fail / 74 skip**. Keeping the
+unrelated three built-ins timeouts, the corrected 32-artifact aggregate is
+**32,382 pass / 5,026 fail / 11,058 skip / 3 timeout / 0 error** over 48,469
+files, with 37,408 executed. The deterministic delta is exactly **+2 pass / -2
+fail** and the other **31/32** artifacts are byte-identical. The SHA-256 of all
+32 result contents concatenated in result-filename order is
+`23f351811e03b9c36e8b51b9a9025a776967ab9ae18c46cd699f2a0758d00e8d`.
+
 ## Supported subset
 
 RuJa targets conformance within a declared feature subset rather than
