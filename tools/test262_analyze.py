@@ -199,7 +199,10 @@ try:
         LANGUAGE_EARLY_ERROR_FILES,
         LANGUAGE_EARLY_ERROR_MODULE_FILES,
     )
-    from test262_reference_primitive_admission import REFERENCE_PRIMITIVE_FILES
+    from test262_reference_primitive_admission import (
+        REFERENCE_PRIMITIVE_FEATURES,
+        REFERENCE_PRIMITIVE_FILES,
+    )
     from test262_support import (
         STRICT_PREFIX,
         append_async_harness,
@@ -427,7 +430,10 @@ except ModuleNotFoundError:
         LANGUAGE_EARLY_ERROR_FILES,
         LANGUAGE_EARLY_ERROR_MODULE_FILES,
     )
-    from tools.test262_reference_primitive_admission import REFERENCE_PRIMITIVE_FILES
+    from tools.test262_reference_primitive_admission import (
+        REFERENCE_PRIMITIVE_FEATURES,
+        REFERENCE_PRIMITIVE_FILES,
+    )
     from tools.test262_support import (
         STRICT_PREFIX,
         append_async_harness,
@@ -3198,9 +3204,15 @@ def reference_primitive_path(path):
         return False
     try:
         rel = Path(path).resolve().relative_to(Path(TEST262).resolve() / "test")
-    except ValueError:
+    except (OSError, TypeError, ValueError):
         return False
     return rel.as_posix() in REFERENCE_PRIMITIVE_FILES
+
+def reference_primitive_features(path):
+    if not reference_primitive_path(path):
+        return frozenset()
+    rel = Path(path).resolve().relative_to(Path(TEST262).resolve() / "test")
+    return REFERENCE_PRIMITIVE_FEATURES[rel.as_posix()]
 
 def object_constructor_path(path):
     if path is None:
@@ -3694,7 +3706,7 @@ def should_skip(meta, path=None):
     if path is not None and language_early_error_path(path):
         feats.difference_update(language_early_error_features(path))
     if path is not None and reference_primitive_path(path):
-        feats.difference_update({"cross-realm", "Symbol", "Proxy"})
+        feats.difference_update(reference_primitive_features(path))
     if path is not None and object_constructor_path(path):
         feats.difference_update(object_constructor_features(path))
     if path is not None and object_from_entries_path(path):

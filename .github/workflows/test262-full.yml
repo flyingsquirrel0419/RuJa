@@ -78,6 +78,12 @@ jobs:
           TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
           test262_tooling_test.ModuleCoreAdmissionTests.test_function_tostring_admission_is_exact_live_disjoint_and_shared
           -v
+      - name: Verify exact primitive Reference admission
+        working-directory: tools
+        run: >-
+          TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
+          test262_tooling_test.ModuleCoreAdmissionTests.test_reference_primitive_manifest_is_exact_and_shared
+          -v
       - name: Verify exact Map constructor admission
         working-directory: tools
         run: >-
@@ -580,6 +586,17 @@ jobs:
           cat function_tostring_result.txt
           grep -q '^RATE=100.0 PASS=80 FAIL=0 SKIP=0 TOTAL=80 RAN=80$' \
             function_tostring_result.txt
+      - name: Require primitive Reference boundary to pass
+        if: matrix.dir == 'language/types'
+        run: |
+          TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
+            language/types/reference \
+            language/statements/with \
+            language/expressions/compound-assignment \
+            > primitive_reference_result.txt 2>&1
+          cat primitive_reference_result.txt
+          grep -q '^RATE=100.0 PASS=664 FAIL=0 SKIP=0 TOTAL=664 RAN=664$' \
+            primitive_reference_result.txt
       - name: Publish /${{ matrix.dir }} pass rate
         if: always()
         run: |

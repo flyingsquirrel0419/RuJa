@@ -1,5 +1,36 @@
 # test262 conformance
 
+## Complete primitive Reference admission
+
+The exact primitive-base Reference manifest now includes all four pinned
+`GetValue` and `PutValue` files. The final sibling verifies that ordinary
+Number, String, Boolean, and Symbol property reads box through the current
+execution Realm's intrinsic prototypes. This behavior was already implemented
+and covered by the admitted cross-Realm `GetValue` case; this unit closes the
+remaining policy gap without changing runtime code.
+
+Runner and analyzer share the frozen path set. Tooling validates each file's
+live metadata against pinned Test262, rejects future siblings and outside
+paths from this waiver, keeps the broad `Symbol` and `Proxy` gates intact, and
+removes only each listed path's exact metadata features. Full CI checks the
+live metadata and requires the complete focused result. On pinned Test262
+`9e61c12835c5e4a3bdba93850427e6742c4f64c4`,
+`language/types/reference` moves from **28 pass / 0 fail / 1 skip** to
+**29 pass / 0 fail / 0 skip**. The combined `language/types/reference`,
+`language/statements/with`, and
+`language/expressions/compound-assignment` boundary moves from **663/0/1** to
+**664/0/0**.
+
+```text
+[Decision Log]
+- 목적과 의도: 구현 완료된 primitive-base GetValue의 마지막 Symbol 형제를 정확히 편입해 Reference/with/compound 마일스톤의 잔여 skip을 제거한다.
+- 기존 구현 및 제약 조건: 기존 manifest는 cross-Realm GetValue와 두 PutValue 파일만 포함했다. broad Symbol gate는 엔진 전체의 미지원 Symbol 조합을 계속 보호해야 한다.
+- 검토한 주요 대안: Symbol gate 전역 해제, language/types/reference prefix admission, 현행 skip 유지, 또는 정확한 한 파일 추가.
+- 선택한 방식: 기존 exact manifest에 get-value-prop-base-primitive.js를 추가하고 네 경로의 pinned metadata와 runner/analyzer parity, future sibling 거부를 도구 테스트로 고정한다.
+- 다른 대안 대신 이 방식을 선택한 이유: 전역 또는 prefix admission은 검증하지 않은 미래 파일과 unrelated Symbol 기능을 열지만 exact admission은 이미 증명된 Reference 의미론만 노출한다.
+- 장점, 단점 및 영향: Reference/with/compound 경계가 664/0/0으로 닫힌다. 런타임과 sandbox 자원 의미론은 변하지 않으며, 새 upstream sibling은 이 manifest의 feature waiver를 자동 상속하지 않는다.
+```
+
 ## Complete Function toString admission
 
 The exact `built-ins/Function/prototype/toString` boundary is now fully
@@ -1040,13 +1071,15 @@ executed**. Artifacts are retained at
 
 ## Primitive Reference Realm admission
 
-`tools/test262_reference_primitive_admission.txt` freezes the three
+At implementation commit `5f78f18`,
+`tools/test262_reference_primitive_admission.txt` froze three
 `language/types/reference` tests for primitive-base property `GetValue` and
 `PutValue`, including their cross-Realm forms. The VM records each Realm's
 global object and intrinsic primitive prototypes as GC roots. Property reads,
 boxing, and writes select the current execution or native callee Realm;
 primitive writes run ordinary `[[Set]]` with the original primitive receiver,
-so inherited setters and Proxy `set` traps remain observable.
+so inherited setters and Proxy `set` traps remain observable. The current
+four-file admission is recorded at the top of this document.
 
 Child test262 Realms now expose realm-bound Object constructors and independent
 BigInt and Symbol constructors/prototypes. BigInt and Symbol mutations no longer

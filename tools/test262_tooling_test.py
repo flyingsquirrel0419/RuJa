@@ -248,7 +248,10 @@ from test262_language_early_error_admission import (
     LANGUAGE_EARLY_ERROR_FILES,
     LANGUAGE_EARLY_ERROR_MODULE_FILES,
 )
-from test262_reference_primitive_admission import REFERENCE_PRIMITIVE_FILES
+from test262_reference_primitive_admission import (
+    REFERENCE_PRIMITIVE_FEATURES,
+    REFERENCE_PRIMITIVE_FILES,
+)
 from test262_dynamic_import_admission import DYNAMIC_IMPORT_FILES
 from test262_static_import_attributes_admission import (
     STATIC_IMPORT_ATTRIBUTES_FILES,
@@ -1996,26 +1999,99 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                     tool.TEST262 = original_root
 
     def test_reference_primitive_manifest_is_exact_and_shared(self):
-        self.assertEqual(len(REFERENCE_PRIMITIVE_FILES), 3)
-        admitted = "language/types/reference/put-value-prop-base-primitive-realm.js"
+        expected = {
+            "language/types/reference/get-value-prop-base-primitive.js": {"Symbol"},
+            "language/types/reference/get-value-prop-base-primitive-realm.js": {
+                "cross-realm",
+                "Symbol",
+            },
+            "language/types/reference/put-value-prop-base-primitive.js": {
+                "Symbol",
+                "Proxy",
+            },
+            "language/types/reference/put-value-prop-base-primitive-realm.js": {
+                "cross-realm",
+                "Symbol",
+                "Proxy",
+            },
+        }
+        self.assertEqual(REFERENCE_PRIMITIVE_FILES, frozenset(expected))
+        self.assertEqual(REFERENCE_PRIMITIVE_FEATURES, expected)
         outside = "built-ins/Array/isArray/proxy.js"
-        self.assertIn(admitted, REFERENCE_PRIMITIVE_FILES)
+        future = "language/types/reference/get-value-prop-base-primitive-future.js"
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        try:
+            test_root_available = test_root.is_dir()
+        except OSError:
+            test_root_available = False
+        if test_root_available:
+            for relative, features in expected.items():
+                path = test_root / relative
+                self.assertTrue(path.is_file(), relative)
+                metadata = test262_runner.parse_meta(path.read_text())
+                self.assertEqual(
+                    frozenset(metadata.get("features", [])), features, relative
+                )
+
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            admitted_path = root / "test" / admitted
             outside_path = root / "test" / outside
+            future_path = root / "test" / future
             for tool in (test262_runner, test262_analyze):
                 original_root = tool.TEST262
                 tool.TEST262 = str(root)
                 try:
-                    self.assertFalse(tool.should_skip(
-                        {"features": ["cross-realm", "Symbol", "Proxy"]},
-                        admitted_path,
-                    ))
+                    self.assertIs(
+                        tool.REFERENCE_PRIMITIVE_FILES,
+                        REFERENCE_PRIMITIVE_FILES,
+                    )
+                    self.assertIs(
+                        tool.REFERENCE_PRIMITIVE_FEATURES,
+                        REFERENCE_PRIMITIVE_FEATURES,
+                    )
+                    for relative, features in expected.items():
+                        admitted_path = root / "test" / relative
+                        self.assertTrue(
+                            tool.reference_primitive_path(admitted_path), relative
+                        )
+                        self.assertEqual(
+                            tool.reference_primitive_features(admitted_path),
+                            features,
+                            relative,
+                        )
+                        self.assertFalse(
+                            tool.should_skip(
+                                {"features": sorted(features)}, admitted_path
+                            ),
+                            relative,
+                        )
+                        self.assertTrue(
+                            tool.should_skip(
+                                {
+                                    "features": sorted(
+                                        features | {"decorators"}
+                                    )
+                                },
+                                admitted_path,
+                            ),
+                            relative,
+                        )
                     self.assertTrue(tool.should_skip(
                         {"features": ["Proxy"]}, outside_path
                     ))
-                    self.assertTrue(tool.reference_primitive_path(admitted_path))
+                    self.assertFalse(tool.reference_primitive_path(future_path))
+                    self.assertEqual(
+                        tool.reference_primitive_features(future_path), frozenset()
+                    )
+                    self.assertTrue(
+                        tool.should_skip({"features": ["Symbol"]}, future_path)
+                    )
+                    for invalid in (None, object()):
+                        self.assertFalse(tool.reference_primitive_path(invalid))
+                        self.assertEqual(
+                            tool.reference_primitive_features(invalid), frozenset()
+                        )
                 finally:
                     tool.TEST262 = original_root
 

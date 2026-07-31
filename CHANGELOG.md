@@ -4,6 +4,17 @@
 
 ### Changed
 
+- Completed primitive-base Reference Test262 admission. The existing exact
+  manifest now includes the final `GetValue` sibling that exercises Number,
+  String, Boolean, and Symbol primitive boxing. Runner and analyzer retain the
+  broad `Symbol` and `Proxy` gates outside these four frozen paths, while
+  cross-Realm metadata is removed only for the two listed Realm cases. Tooling
+  and full CI verify the exact path set, pinned live metadata, shared policy,
+  future-sibling rejection, and the complete focused result. On pinned Test262,
+  `language/types/reference` moves from **28/0/1** to **29/0/0**, and the
+  combined Reference/with/compound-assignment boundary moves from
+  **663/0/1** to **664/0/0**.
+
 - Completed the exact `Function.prototype.toString` Test262 boundary. A frozen
   35-file path-to-feature manifest admits already conforming async, generator,
   private-method, Proxy, Reflect, and intrinsic traversal cases without
