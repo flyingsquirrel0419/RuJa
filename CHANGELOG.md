@@ -13,7 +13,11 @@
   **4/0** and full `built-ins/Function` moves from **415/45/49** to
   **419/41/49**, exactly **+4 pass / -4 fail**. The supported
   statements/expressions subset remains **12,765/0/7,674**; no admission
-  metadata changed.
+  metadata changed. Implementation commit `e93cfd1` passes ordinary CI
+  `30643371448` (**3/3**) and full matrix `30643371359` (**45/45**). Against
+  `30638309791`, **31/32** result artifacts are byte-identical and only
+  built-ins changes by **+4/-4**. Aggregate is **33,023 pass / 4,385 fail /
+  11,058 skip / 3 timeout / 0 error**.
 
 - Implemented `for await...of` context early errors and specification-ordered
   `AsyncIteratorClose`. Script code now requires an async function, Module code

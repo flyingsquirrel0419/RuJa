@@ -23,6 +23,14 @@ admission metadata changed. Local rustfmt, warnings-denied Clippy,
 all-target/all-feature Rust tests, vendor tests, wasm32 check, and Test262
 tooling **163/163** pass.
 
+Implementation commit `e93cfd1` passes ordinary CI `30643371448` (**3/3**)
+and full matrix `30643371359` (**45/45**). Against preceding full run
+`30638309791`, **31/32** Test262 result artifacts are byte-identical and only
+the built-ins result changes by **+4 pass / -4 fail**. Aggregate is **33,023
+pass / 4,385 fail / 11,058 skip / 3 timeout / 0 error** over 48,469 files and
+37,408 completed pass/fail executions. Filename-sorted result content hashes to
+`e3ec3ed7e83a1c9afe88248dc65b713a2aa9a5e417e480af01c7bd022cb43566`.
+
 ```text
 [Decision Log]
 - 목적과 의도: configurable 함수 name/length 삭제가 영구적으로 관찰되고 이후 ordinary prototype lookup을 따르게 한다.
