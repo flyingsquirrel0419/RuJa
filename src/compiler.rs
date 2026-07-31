@@ -29,7 +29,11 @@ pub struct Compiler {
     /// Each entry is the ip of the `PushFinally` op whose target has been (or
     /// will be) patched to the finally body's start ip. Used to detect whether
     /// a break/continue is inside an active try/finally so it can divert.
-    finally_stack: Vec<Vec<usize>>,
+    finally_stack: Vec<FinallyGuard>,
+    /// Control-stack depth at entry to each currently compiled finally body.
+    finally_body_control_depths: Vec<usize>,
+    /// Control-stack depth for each try body with a live catch guard.
+    catch_control_depths: Vec<CatchGuard>,
     /// When inside a switch body, the env index of `#sw_val` so that
     /// expression statements store their value instead of popping it.
     switch_val_depth: Option<usize>,
@@ -76,6 +80,16 @@ struct Scope {
     /// Whether strict-mode rules apply in this scope (inherited from the
     /// enclosing strict context or set by a `"use strict"` directive).
     is_strict: bool,
+}
+
+struct FinallyGuard {
+    diverts: Vec<usize>,
+    control_depth: usize,
+}
+
+struct CatchGuard {
+    control_depth: usize,
+    finally_depth: usize,
 }
 
 /// A step in the access path used while compiling destructuring patterns.
@@ -550,6 +564,8 @@ impl Compiler {
             loop_stack: Vec::new(),
             pending_labels: Vec::new(),
             finally_stack: Vec::new(),
+            finally_body_control_depths: Vec::new(),
+            catch_control_depths: Vec::new(),
             switch_val_depth: None,
             switch_ctx_stack: Vec::new(),
             current_line: 0,
@@ -863,27 +879,76 @@ impl Compiler {
 
     /// Resolve the innermost active finally body start ip, if any.
     /// Returns None if no try/finally is active.
-    fn finally_active(&self) -> bool {
-        !self.finally_stack.is_empty()
+    fn active_finally_for_transfer(&self, target_control_idx: usize) -> Option<usize> {
+        self.finally_stack
+            .iter()
+            .rposition(|guard| target_control_idx < guard.control_depth)
+    }
+
+    fn outermost_finally_for_transfer(&self, target_control_idx: usize) -> Option<usize> {
+        self.finally_stack
+            .iter()
+            .position(|guard| target_control_idx < guard.control_depth)
+    }
+
+    fn exited_finally_body_count(&self, target_control_idx: usize) -> usize {
+        self.finally_body_control_depths
+            .iter()
+            .filter(|&&depth| target_control_idx < depth)
+            .count()
+    }
+
+    fn emit_exit_finally_bodies(&mut self, count: usize) {
+        if count > 0 {
+            self.chunk
+                .emit(Op::ExitFinallyBodies(count), self.current_line);
+        }
+    }
+
+    fn exited_catch_guard_count(&self, target_control_idx: usize) -> usize {
+        self.catch_control_depths
+            .iter()
+            .filter(|guard| target_control_idx < guard.control_depth)
+            .count()
+    }
+
+    fn surviving_exited_catch_guard_count(
+        &self,
+        target_control_idx: usize,
+        finally_guard_idx: usize,
+    ) -> usize {
+        self.catch_control_depths
+            .iter()
+            .filter(|guard| {
+                target_control_idx < guard.control_depth && guard.finally_depth <= finally_guard_idx
+            })
+            .count()
+    }
+
+    fn emit_exit_catch_guards(&mut self, count: usize) {
+        if count > 0 {
+            self.chunk
+                .emit(Op::ExitCatchGuards(count), self.current_line);
+        }
     }
 
     #[allow(dead_code)]
     fn record_divert(&mut self, divert_ip: usize) {
         if let Some(frame) = self.finally_stack.last_mut() {
-            frame.push(divert_ip);
+            frame.diverts.push(divert_ip);
         }
     }
 
     fn patch_diverts(&mut self, finally_start: usize) {
         if let Some(diverts) = self.finally_stack.last_mut() {
-            for &ip in diverts.iter() {
+            for &ip in &diverts.diverts {
                 match &mut self.chunk.code[ip] {
                     Op::DivertBreak(t) => *t = finally_start,
                     Op::DivertContinue(t, _) => *t = finally_start,
                     _ => {}
                 }
             }
-            diverts.clear();
+            diverts.diverts.clear();
         }
     }
 
@@ -1032,7 +1097,7 @@ impl Compiler {
                 self.chunk.emit(Op::DeclareEnv(temp_idx), self.current_line);
                 self.compile_pattern(pattern, temp_idx, &[], *kind)?;
             }
-            _ => self.compile_for_var(left)?,
+            _ => self.compile_for_var(left, true)?,
         }
         Ok(())
     }
@@ -1528,7 +1593,10 @@ impl Compiler {
                 self.chunk.emit(Op::JumpIfTrue(0), self.current_line);
                 let finally_guard_ip = self.chunk.code.len();
                 self.chunk.emit(Op::PushFinally(0), self.current_line);
-                self.finally_stack.push(Vec::new());
+                self.finally_stack.push(FinallyGuard {
+                    diverts: Vec::new(),
+                    control_depth: self.loop_stack.len(),
+                });
                 // Bind the value into the loop variable, then run the body.
                 if let Some((kind, names)) = &lexical_head {
                     let bindings = Self::lexical_bindings_from_names(*kind, names);
@@ -1540,7 +1608,7 @@ impl Compiler {
                     self.chunk.emit(Op::PopScope, self.current_line);
                     self.pop_scope();
                 } else {
-                    self.compile_for_var(left)?;
+                    self.compile_for_var(left, true)?;
                     self.compile_stmt(body)?;
                 }
                 self.chunk.emit(Op::Pop, self.current_line); // discard body's expr result
@@ -1551,7 +1619,7 @@ impl Compiler {
                     *target = finally_start;
                 }
                 self.patch_diverts(finally_start);
-                self.chunk.emit(Op::PopFinally, self.current_line);
+                self.chunk.emit(Op::EnterFinally, self.current_line);
                 self.finally_stack.pop();
                 self.chunk.emit(
                     Op::IteratorCloseIfAbrupt {
@@ -1626,9 +1694,21 @@ impl Compiler {
                     usize::MAX
                 };
                 if has_finally {
-                    self.finally_stack.push(Vec::new());
+                    self.finally_stack.push(FinallyGuard {
+                        diverts: Vec::new(),
+                        control_depth: self.loop_stack.len(),
+                    });
+                }
+                if has_catch {
+                    self.catch_control_depths.push(CatchGuard {
+                        control_depth: self.loop_stack.len(),
+                        finally_depth: self.finally_stack.len(),
+                    });
                 }
                 self.compile_stmt(try_body)?;
+                if has_catch {
+                    self.catch_control_depths.pop();
+                }
                 if has_catch {
                     self.chunk.emit(Op::PopTry, self.current_line);
                 }
@@ -1703,8 +1783,9 @@ impl Compiler {
                     // inside the finally (return/throw/break/continue) use
                     // direct jumps instead of DivertContinue/DivertBreak
                     // (which would loop back into this same finally).
-                    self.chunk.emit(Op::PopFinally, self.current_line);
+                    self.chunk.emit(Op::EnterFinally, self.current_line);
                     self.finally_stack.pop();
+                    self.finally_body_control_depths.push(self.loop_stack.len());
                     let saved_sv_depth = self.switch_val_depth;
                     let saved_finally_completion = saved_sv_depth.map(|comp_idx| {
                         let temp_name = format!("#finallycomp{}", self.chunk.code.len());
@@ -1718,6 +1799,7 @@ impl Compiler {
                         (comp_idx, temp_idx)
                     });
                     self.compile_stmt(fin)?;
+                    self.finally_body_control_depths.pop();
                     if let Some((comp_idx, temp_idx)) = saved_finally_completion {
                         self.chunk.emit(Op::LoadEnv(temp_idx), self.current_line);
                         self.chunk
@@ -1803,15 +1885,27 @@ impl Compiler {
                 };
                 if let Some(i) = target {
                     let scope_depth = self.loop_stack[i].5;
-                    let active = self.finally_active();
-                    if active {
+                    let exited_finally_bodies = self.exited_finally_body_count(i);
+                    let exited_catch_guards = self.exited_catch_guard_count(i);
+                    let active_guard = self.active_finally_for_transfer(i);
+                    if let Some(guard_idx) = active_guard {
+                        let outermost_guard_idx = self
+                            .outermost_finally_for_transfer(i)
+                            .expect("active finally has an outermost guard");
+                        let surviving_catches =
+                            self.surviving_exited_catch_guard_count(i, outermost_guard_idx);
+                        self.emit_exit_finally_bodies(exited_finally_bodies);
                         let divert_ip = self.chunk.code.len();
                         self.chunk.emit(Op::DivertBreak(0), self.current_line);
-                        self.finally_stack.last_mut().unwrap().push(divert_ip);
+                        self.finally_stack[guard_idx].diverts.push(divert_ip);
+                        self.emit_exit_catch_guards(surviving_catches);
                         // DivertBreak resumes at the next instruction after all
                         // enclosing finally bodies have run. Keep the current
                         // environments alive until then so finally can observe
                         // bindings from the guarded region.
+                    } else {
+                        self.emit_exit_catch_guards(exited_catch_guards);
+                        self.emit_exit_finally_bodies(exited_finally_bodies);
                     }
                     self.emit_scope_unwind(scope_depth);
                     let (_, breaks, _, _, _, _) = &mut self.loop_stack[i];
@@ -1845,32 +1939,47 @@ impl Compiler {
                 if let Some(i) = target {
                     self.propagate_switch_completion_on_continue(i);
                     let scope_depth = self.loop_stack[i].5;
-                    let active = self.finally_active();
+                    let exited_finally_bodies = self.exited_finally_body_count(i);
+                    let exited_catch_guards = self.exited_catch_guard_count(i);
+                    let active_guard = self.active_finally_for_transfer(i);
                     let cont = self.loop_stack[i].0;
-                    if active {
+                    if let Some(guard_idx) = active_guard {
+                        let outermost_guard_idx = self
+                            .outermost_finally_for_transfer(i)
+                            .expect("active finally has an outermost guard");
+                        let surviving_catches =
+                            self.surviving_exited_catch_guard_count(i, outermost_guard_idx);
                         if cont != usize::MAX {
+                            self.emit_exit_finally_bodies(exited_finally_bodies);
                             let divert_ip = self.chunk.code.len();
                             self.chunk
                                 .emit(Op::DivertContinue(0, divert_ip + 1), self.current_line);
-                            self.finally_stack.last_mut().unwrap().push(divert_ip);
+                            self.finally_stack[guard_idx].diverts.push(divert_ip);
+                            self.emit_exit_catch_guards(surviving_catches);
                             // Resume here only after every enclosing finally.
                             self.emit_scope_unwind(scope_depth);
                             self.chunk.emit(Op::Jump(cont), self.current_line);
                         } else {
+                            self.emit_exit_finally_bodies(exited_finally_bodies);
                             let divert_ip = self.chunk.code.len();
                             self.chunk
                                 .emit(Op::DivertContinue(0, divert_ip + 1), self.current_line);
-                            self.finally_stack.last_mut().unwrap().push(divert_ip);
+                            self.finally_stack[guard_idx].diverts.push(divert_ip);
+                            self.emit_exit_catch_guards(surviving_catches);
                             self.emit_scope_unwind(scope_depth);
                             let j = self.chunk.code.len();
                             self.chunk.emit(Op::Jump(0), self.current_line);
                             self.loop_stack[i].2.push(j);
                         }
                     } else if cont != usize::MAX {
+                        self.emit_exit_catch_guards(exited_catch_guards);
+                        self.emit_exit_finally_bodies(exited_finally_bodies);
                         self.emit_scope_unwind(scope_depth);
                         self.chunk.emit(Op::Jump(cont), self.current_line);
                     } else {
                         // Target unknown yet (C-style for); record and patch later.
+                        self.emit_exit_catch_guards(exited_catch_guards);
+                        self.emit_exit_finally_bodies(exited_finally_bodies);
                         self.emit_scope_unwind(scope_depth);
                         let j = self.chunk.code.len();
                         self.chunk.emit(Op::Jump(0), self.current_line);
@@ -2070,7 +2179,7 @@ impl Compiler {
     /// Bind the value on top of the stack into the loop variable of a `for`/`for-in`/`for-of`.
     /// `left` is the statement produced by `parse_var_decl_no_semi` (a `VarDecl` with one name)
     /// or an expression (implicit assignment to an existing binding).
-    fn compile_for_var(&mut self, left: &Stmt) -> error::Result<()> {
+    fn compile_for_var(&mut self, left: &Stmt, abandon_finally: bool) -> error::Result<()> {
         match &left.node {
             StmtNode::VarDecl { kind, decls } => {
                 if let Some((name, _)) = decls.first() {
@@ -2155,6 +2264,9 @@ impl Compiler {
                             self.chunk.emit(Op::PutValue, self.current_line);
                             self.chunk.emit(Op::Pop, self.current_line);
                         }
+                        Expr::Call { .. } => {
+                            self.compile_legacy_loop_call_assignment_error(expr, abandon_finally)?;
+                        }
                         Expr::Array(_) | Expr::Object(_) => {
                             let temp_idx = self.intern("#for-assign");
                             self.chunk.emit(Op::DeclareEnv(temp_idx), self.current_line);
@@ -2227,7 +2339,7 @@ impl Compiler {
             self.chunk.emit(Op::PopScope, self.current_line);
             self.pop_scope();
         } else {
-            self.compile_for_var(left)?;
+            self.compile_for_var(left, false)?;
             self.compile_stmt(body)?;
         }
         self.chunk.emit(Op::Pop, self.current_line);
@@ -2292,6 +2404,12 @@ impl Compiler {
         let saved_names = std::mem::take(&mut self.name_map);
         let saved_switch_val = self.switch_val_depth;
         let saved_async_generator = self.current_async_generator;
+        let saved_loop_stack = std::mem::take(&mut self.loop_stack);
+        let saved_finally_stack = std::mem::take(&mut self.finally_stack);
+        let saved_finally_body_control_depths =
+            std::mem::take(&mut self.finally_body_control_depths);
+        let saved_catch_control_depths = std::mem::take(&mut self.catch_control_depths);
+        let saved_switch_ctx_stack = std::mem::take(&mut self.switch_ctx_stack);
         let saved_pending_labels = std::mem::take(&mut self.pending_labels);
         let saved_annex_b_plan = std::mem::replace(
             &mut self.annex_b_plan,
@@ -2479,6 +2597,11 @@ impl Compiler {
         self.chunk = saved_chunk;
         self.switch_val_depth = saved_switch_val;
         self.current_async_generator = saved_async_generator;
+        self.loop_stack = saved_loop_stack;
+        self.finally_stack = saved_finally_stack;
+        self.finally_body_control_depths = saved_finally_body_control_depths;
+        self.catch_control_depths = saved_catch_control_depths;
+        self.switch_ctx_stack = saved_switch_ctx_stack;
         self.pending_labels = saved_pending_labels;
         self.annex_b_plan = saved_annex_b_plan;
         Ok((func_chunk, param_slots))
@@ -2598,7 +2721,7 @@ impl Compiler {
                 if let Op::PushFinally(ref mut target) = self.chunk.code[finally_guard_ip] {
                     *target = finally_start;
                 }
-                self.chunk.emit(Op::PopFinally, self.current_line);
+                self.chunk.emit(Op::EnterFinally, self.current_line);
                 self.chunk.emit(
                     Op::IteratorCloseIfAbrupt {
                         iter: iter_idx,
@@ -2877,7 +3000,7 @@ impl Compiler {
                 if let Op::PushFinally(ref mut target) = self.chunk.code[finally_guard_ip] {
                     *target = finally_start;
                 }
-                self.chunk.emit(Op::PopFinally, self.current_line);
+                self.chunk.emit(Op::EnterFinally, self.current_line);
                 self.chunk.emit(
                     Op::IteratorCloseIfAbrupt {
                         iter: iter_idx,
@@ -5093,6 +5216,9 @@ impl Compiler {
                     UpdateOp::Dec => Op::Dec,
                 };
                 match target.as_ref() {
+                    Expr::Call { .. } => {
+                        self.compile_legacy_call_assignment_error(target, false)?;
+                    }
                     Expr::Member {
                         object,
                         property,
@@ -7467,6 +7593,9 @@ impl Compiler {
 
     fn compile_assign_target_store(&mut self, target: &Expr, value: &Expr) -> error::Result<()> {
         match target {
+            Expr::Call { .. } => {
+                self.compile_legacy_call_assignment_error(target, false)?;
+            }
             // Private field assignment: obj.#name = value
             Expr::PrivateGet { object, name, .. } => {
                 self.compile_expr(object)?;
@@ -7548,6 +7677,58 @@ impl Compiler {
         Ok(())
     }
 
+    fn compile_legacy_call_assignment_error(
+        &mut self,
+        target: &Expr,
+        discard_pending_value: bool,
+    ) -> error::Result<()> {
+        self.compile_expr(target)?;
+        self.chunk.emit(Op::Pop, self.current_line);
+        if discard_pending_value {
+            self.chunk.emit(Op::Pop, self.current_line);
+        }
+        let message = self.chunk.add_constant(Value::String(Arc::from(
+            "Invalid left-hand side in assignment",
+        )));
+        self.chunk
+            .emit(Op::ThrowReference(message), self.current_line);
+        Ok(())
+    }
+
+    fn compile_legacy_loop_call_assignment_error(
+        &mut self,
+        target: &Expr,
+        abandon_finally: bool,
+    ) -> error::Result<()> {
+        // B.3.9 replaces even an abrupt call evaluation with ReferenceError in
+        // for-in/of, before IteratorClose. Catch only language exceptions;
+        // uncatchable host limits still abort normally.
+        let try_ip = self.chunk.code.len();
+        self.chunk.emit(Op::PushTry(0), self.current_line);
+        self.compile_expr(target)?;
+        self.chunk.emit(Op::Pop, self.current_line);
+        self.chunk.emit(Op::PopTry, self.current_line);
+        let evaluated = self.chunk.code.len();
+        self.chunk.emit(Op::Jump(0), self.current_line);
+        let catch_ip = self.chunk.code.len();
+        if let Op::PushTry(handler) = &mut self.chunk.code[try_ip] {
+            *handler = catch_ip;
+        }
+        self.chunk.emit(Op::Pop, self.current_line);
+        let throw_ip = self.chunk.code.len();
+        self.chunk.patch_jump(evaluated, throw_ip);
+        self.chunk.emit(Op::Pop, self.current_line);
+        if abandon_finally {
+            self.chunk.emit(Op::PopFinally, self.current_line);
+        }
+        let message = self.chunk.add_constant(Value::String(Arc::from(
+            "Invalid left-hand side in assignment",
+        )));
+        self.chunk
+            .emit(Op::ThrowReference(message), self.current_line);
+        Ok(())
+    }
+
     fn store_identifier_target_value(&mut self, name: &Arc<str>) {
         let name_idx = self.chunk.add_constant(Value::String(name.clone()));
         self.chunk.emit(Op::LoadRef(name_idx), self.current_line);
@@ -7565,6 +7746,9 @@ impl Compiler {
     ) -> error::Result<()> {
         let bin = self.assign_bin_op(op);
         match target {
+            Expr::Call { .. } => {
+                self.compile_legacy_call_assignment_error(target, false)?;
+            }
             Expr::PrivateGet { object, name, .. } => {
                 self.compile_expr(object)?;
                 let name_idx = self.chunk.add_constant(Value::String(name.clone()));

@@ -1,5 +1,42 @@
 # test262 conformance
 
+## Annex B call assignment targets
+
+Annex B.3.9 now admits ordinary CallExpression assignment targets only in
+sloppy Script-derived code. Simple and arithmetic/bitwise compound assignment,
+prefix/postfix update, and `for-in/of` heads evaluate the call and then throw
+`ReferenceError`; logical assignment, optional chains, strict code, and Module
+code remain early errors. In `for-in/of`, the web-compat `ReferenceError`
+replaces an abrupt call evaluation and occurs before iterator closing, as
+required by `ForIn/OfBodyEvaluation`. No Test262 admission metadata changed.
+
+The runtime now stores one pending completion per finally guard rather than one
+per frame. Guard entry, nested finally bodies, catches, direct break/continue,
+generator yield, async await, and GC tracing preserve or replace the correct
+record. Compiler control-depth tracking removes only catch/finally regions
+actually exited and isolates nested function compilation from enclosing
+control stacks.
+
+On pinned Test262 `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, all seven
+files under `annexB/language/expressions/assignmenttargettype` move from **0
+pass / 7 fail** to **7 pass / 0 fail**. The 324-file core
+`language/expressions/assignmenttargettype` cohort remains **316 pass / 0 fail
+/ 8 skip**. Full Annex B moves from **833/179/74** to **840/172/74**, exactly
+**+7 pass / -7 fail**. The supported statements/expressions subset remains
+**12,765 pass / 0 fail / 7,674 skip / 20,439 total**. Local warnings-denied
+Clippy, all-target/all-feature Rust tests, rustfmt, and Test262 tooling
+**163/163** pass.
+
+```text
+[Decision Log]
+- 목적과 의도: runner 예외 없이 Annex B.3.9의 sloppy call assignment-target 평가 순서와 strict/Module early error를 구현한다.
+- 기존 구현 및 제약 조건: parser는 모든 call target을 거부했다. VM은 frame당 finally completion 하나만 저장해 nested finally가 기존 throw/return을 덮거나 되살릴 수 있었고, direct control transfer가 catch guard를 남길 수 있었다.
+- 검토한 주요 대안: exact path admission, call AST를 Reference로 일반화, 모든 call target에 단순 ThrowReference 추가, 또는 parser의 Annex B gate와 context별 compiler/runtime completion 처리를 결합하기.
+- 선택한 방식: parser는 sloppy ordinary call과 비논리 assignment/update/loop 위치만 허용한다. 일반 표현식은 call abrupt를 보존하고, for-in/of는 내부 catch로 call abrupt를 대체한 뒤 iterator guard를 제거하고 ReferenceError를 던진다. finally completion은 guard별 stack record로 저장한다.
+- 다른 대안 대신 이 방식을 선택한 이유: admission은 엔진 결함을 숨기고 call을 일반 Reference로 만들면 PutValue가 잘못 허용된다. 단순 ThrowReference는 for-in/of의 abrupt-replacement 및 no-close 순서를 위반한다. guard별 record만 nested finally와 suspension을 손실 없이 표현한다.
+- 장점, 단점 및 영향: exact cohort가 7/0이고 Annex B가 정확히 +7/-7 이동한다. core negatives는 무회귀이며 nested finally, catch unwind, generator/async suspension, GC root 회귀가 Rust tests로 고정됐다. 일반 for-await AsyncIteratorClose와 for-await 문맥 early error는 별도 공용 작업으로 남는다.
+```
+
 ## Annex B HTML-like comments
 
 Annex B.1.1 HTML-like comments now use the Script lexical goal without changing

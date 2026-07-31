@@ -1709,14 +1709,21 @@ pub struct AsyncFunctionContinuation {
     pub this_val: Value,
     pub new_target: Value,
     pub finally_stack: Vec<(usize, u32)>,
-    pub finally_completion_tag: u8,
-    pub finally_completion_val: Value,
+    pub finally_completions: Vec<FinallyCompletion>,
     pub eval_global_bindings: bool,
     pub eval_deletable_bindings: bool,
     pub in_parameter_initializers: bool,
     pub direct_eval_new_target_allowed: bool,
     pub is_derived_ctor: bool,
     pub module_evaluation: bool,
+}
+
+#[derive(Clone)]
+pub struct FinallyCompletion {
+    pub seq: u32,
+    pub tag: u8,
+    pub value: Value,
+    pub active: bool,
 }
 
 pub struct GeneratorData {
@@ -1758,9 +1765,8 @@ pub struct LazyGeneratorData {
     pub finally_stack: Mutex<Vec<(usize, u32)>>,
     /// Monotonic guard sequence restored with catch/finally stacks.
     pub guard_seq: AtomicU32,
-    /// Pending completion saved when a generator yields from inside a finally.
-    pub finally_completion_tag: AtomicU8,
-    pub finally_completion_val: Mutex<Value>,
+    /// Guarded and active finally completions, preserved across suspension.
+    pub finally_completions: Mutex<Vec<FinallyCompletion>>,
     /// True once the body has begun executing.
     pub started: AtomicBool,
     /// True once the body has run to completion (return / fall-off end).

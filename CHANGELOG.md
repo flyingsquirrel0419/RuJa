@@ -4,6 +4,19 @@
 
 ### Changed
 
+- Implemented Annex B.3.9 runtime errors for sloppy ordinary call assignment
+  targets across assignment, arithmetic/bitwise compound assignment, update,
+  and `for-in/of`. Strict and Module code, logical assignment, and optional
+  chains retain early errors. General expression forms preserve a call's own
+  abrupt completion; loop heads replace it with `ReferenceError` before
+  iterator close. Finally state is now guard-scoped and survives nested
+  finally/catch control flow, generator/async suspension, and GC. Direct
+  break/continue unwind only exited catch/finally regions, and nested function
+  compilation uses independent control stacks. Pinned Test262 moves the exact
+  cohort from **0/7** to **7/0** and full Annex B from **833/179/74** to
+  **840/172/74**; the core 324-file assignment-target cohort remains
+  **316/0/8**, and the supported subset remains **12,765/0/7,674**.
+
 - Implemented Annex B.1.1 HTML-like comments for Script, eval, and dynamic
   Function source while preserving the Module lexical grammar. `<!--` consumes
   the rest of its line in Script-derived goals; `-->` does so only at the

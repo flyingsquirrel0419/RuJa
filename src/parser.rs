@@ -1741,6 +1741,7 @@ impl Parser {
         let is_generator = self.eat(&TokenKind::Star);
         let name = match self.advance() {
             TokenKind::Ident(s) => Some(Arc::from(s.as_str())),
+            TokenKind::Async => Some(Arc::from("async")),
             TokenKind::Await if self.await_as_identifier_allowed() => Some(Arc::from("await")),
             TokenKind::Yield if self.yield_as_identifier_allowed() => Some(Arc::from("yield")),
             other => {
@@ -2507,7 +2508,9 @@ impl Parser {
             self.no_in = false;
             if self.check(&TokenKind::In) {
                 // Validate that the LHS is a valid assignment target.
-                if !Self::is_for_in_of_assignment_target(&e) {
+                if !Self::is_for_in_of_assignment_target(&e)
+                    && !self.is_legacy_call_assignment_target(&e)
+                {
                     return Err(error::Error::syntax(
                         "Invalid left-hand side in for-in".to_string(),
                     ));
@@ -2530,7 +2533,9 @@ impl Parser {
             }
             if self.is_raw_of() {
                 // Validate that the LHS is a valid assignment target.
-                if !Self::is_for_in_of_assignment_target(&e) {
+                if !Self::is_for_in_of_assignment_target(&e)
+                    && !self.is_legacy_call_assignment_target(&e)
+                {
                     return Err(error::Error::syntax(
                         "Invalid left-hand side in for-of".to_string(),
                     ));
@@ -2912,9 +2917,15 @@ impl Parser {
                 "Invalid left-hand side in assignment".to_string(),
             ));
         }
-        // Validate that the left side is a valid assignment target.
-        // Invalid: literals, binary ops, unary ops, function calls, etc.
-        if left_is_parenthesized_pattern || !Self::is_assignment_target(&left) {
+        // Annex B keeps ordinary calls parseable as sloppy assignment targets
+        // so evaluation can run the call before throwing ReferenceError.
+        let legacy_call_target = !matches!(
+            op,
+            AssignOp::AndAssign | AssignOp::OrAssign | AssignOp::NullishAssign
+        ) && self.is_legacy_call_assignment_target(&left);
+        if left_is_parenthesized_pattern
+            || (!Self::is_assignment_target(&left) && !legacy_call_target)
+        {
             return Err(error::Error::syntax(
                 "Invalid left-hand side in assignment".to_string(),
             ));
@@ -3003,6 +3014,18 @@ impl Parser {
             } => !*optional && !*optional_chain,
             _ => false,
         }
+    }
+
+    fn is_legacy_call_assignment_target(&self, target: &Expr) -> bool {
+        !self.is_strict_context
+            && matches!(
+                target,
+                Expr::Call {
+                    optional: false,
+                    optional_chain: false,
+                    ..
+                }
+            )
     }
 
     fn reject_strict_eval_arguments_assignment_target(target: &Expr) -> error::Result<()> {
@@ -3472,9 +3495,10 @@ impl Parser {
             };
             self.advance();
             let e = self.parse_unary()?;
-            // Validate: only identifiers and member expressions are valid
-            // update targets. Call expressions, literals, etc. are not.
-            if !Self::is_simple_assignment_target(&e) {
+            // Annex B admits sloppy ordinary calls here; strict code and
+            // optional chains remain early errors.
+            if !Self::is_simple_assignment_target(&e) && !self.is_legacy_call_assignment_target(&e)
+            {
                 return Err(error::Error::syntax(
                     "Invalid left-hand side expression in prefix update operation".to_string(),
                 ));
@@ -3530,9 +3554,10 @@ impl Parser {
         let mut e = self.parse_call()?;
         // postfix ++/--
         if matches!(self.peek(), TokenKind::Inc | TokenKind::Dec) {
-            // Validate: only identifiers and member expressions are valid
-            // update targets. Call expressions, literals, etc. are not.
-            if !Self::is_simple_assignment_target(&e) {
+            // Annex B admits sloppy ordinary calls here; strict code and
+            // optional chains remain early errors.
+            if !Self::is_simple_assignment_target(&e) && !self.is_legacy_call_assignment_target(&e)
+            {
                 return Err(error::Error::syntax(
                     "Invalid left-hand side expression in postfix operation".to_string(),
                 ));
@@ -8233,6 +8258,67 @@ mod tests {
             assert!(Parser::parse(src).is_err(), "{src}");
         }
         assert!(Parser::parse_module("for (var x = 0 in {}) {}").is_err());
+    }
+
+    #[test]
+    fn parse_annex_b_call_assignment_targets_only_in_sloppy_legacy_positions() {
+        for source in [
+            "f() = 1;",
+            "(f()) += 1;",
+            "f() -= 1;",
+            "f() *= 1;",
+            "f() /= 1;",
+            "f() %= 1;",
+            "f() **= 1;",
+            "f() <<= 1;",
+            "f() >>= 1;",
+            "f() >>>= 1;",
+            "f() &= 1;",
+            "f() ^= 1;",
+            "f() |= 1;",
+            "f()++;",
+            "++f();",
+            "(f())--;",
+            "for (f() in {}) {}",
+            "for (f() of []) {}",
+            "for ((f()) in {}) {}",
+            "for ((f()) of []) {}",
+            "function async() {} async() = 1;",
+            "new f()() = 1;",
+            "(f?.())() = 1;",
+        ] {
+            assert!(Parser::parse(source).is_ok(), "{source}");
+        }
+
+        for source in [
+            "'use strict'; f() = 1;",
+            "function f() {} f() &&= 1;",
+            "function f() {} f() ||= 1;",
+            "function f() {} f() ??= 1;",
+            "f?.() = 1;",
+            "(f?.()) += 1;",
+            "f?.()++;",
+            "for (f?.() of []) {}",
+            "f?.()() = 1;",
+            "new f() = 1;",
+            "f`` = 1;",
+        ] {
+            assert!(Parser::parse(source).is_err(), "{source}");
+        }
+        for source in [
+            "f() = 1;",
+            "f() += 1;",
+            "f()++;",
+            "++f();",
+            "for (f() in {}) {}",
+            "for (f() of []) {}",
+        ] {
+            assert!(
+                Parser::parse(&format!("'use strict'; {source}")).is_err(),
+                "strict script: {source}"
+            );
+            assert!(Parser::parse_module(source).is_err(), "module: {source}");
+        }
     }
 
     #[test]

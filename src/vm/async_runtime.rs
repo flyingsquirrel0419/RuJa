@@ -345,8 +345,7 @@ impl Vm {
             this_val: frame.this_val,
             new_target: frame.new_target,
             finally_stack: frame.finally_stack,
-            finally_completion_tag: frame.finally_completion_tag.load(Ordering::Relaxed),
-            finally_completion_val: frame.finally_completion_val.into_inner(),
+            finally_completions: frame.finally_completions.into_inner(),
             eval_global_bindings: frame.eval_global_bindings,
             eval_deletable_bindings: frame.eval_deletable_bindings,
             in_parameter_initializers: frame.in_parameter_initializers,
@@ -478,8 +477,7 @@ impl Vm {
             this_val,
             new_target,
             finally_stack,
-            finally_completion_tag,
-            finally_completion_val,
+            finally_completions,
             eval_global_bindings,
             eval_deletable_bindings,
             in_parameter_initializers,
@@ -501,10 +499,7 @@ impl Vm {
         frame.guard_seq.store(guard_seq, Ordering::Relaxed);
         frame.new_target = new_target;
         frame.finally_stack = finally_stack;
-        frame
-            .finally_completion_tag
-            .store(finally_completion_tag, Ordering::Relaxed);
-        *frame.finally_completion_val.lock() = finally_completion_val;
+        *frame.finally_completions.lock() = finally_completions;
         frame.eval_global_bindings = eval_global_bindings;
         frame.eval_deletable_bindings = eval_deletable_bindings;
         frame.in_parameter_initializers = in_parameter_initializers;
@@ -1948,10 +1943,7 @@ impl Vm {
                                 catch_stack: Mutex::new(prologue.catch_stack),
                                 finally_stack: Mutex::new(prologue.finally_stack),
                                 guard_seq: AtomicU32::new(prologue.guard_seq),
-                                finally_completion_tag: AtomicU8::new(
-                                    prologue.finally_completion_tag,
-                                ),
-                                finally_completion_val: Mutex::new(prologue.finally_completion_val),
+                                finally_completions: Mutex::new(prologue.finally_completions),
                                 started: AtomicBool::new(false),
                                 done: AtomicBool::new(false),
                                 delegating: AtomicBool::new(false),

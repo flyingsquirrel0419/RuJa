@@ -247,10 +247,16 @@ pub enum Op {
     EnterCatch,
     PushFinally(usize),
     PopFinally,
+    /// Enter a finally body while retaining its pending completion.
+    EnterFinally,
     /// After a `finally` body runs, re-raise the pending non-local completion
     /// (return/break/continue/throw) that diverted into the finally, if any.
     /// A normal completion (tag 0) falls through.
     PopFinallyRethrow,
+    /// Remove active finally completions replaced by a direct break/continue.
+    ExitFinallyBodies(usize),
+    /// Remove catch guards exited by a direct break/continue.
+    ExitCatchGuards(usize),
     /// Divert a `break` through an active finally: set tag=2, val=next ip
     /// (the break jump that runs after the finally body), jump to finally.
     DivertBreak(usize),

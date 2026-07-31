@@ -200,8 +200,8 @@ impl Vm {
                 if let Some(frame) = self.frames.last_mut() {
                     if let Some(&(target, fseq)) = frame.finally_stack.last() {
                         Self::discard_catches_inside_finally(frame, fseq);
-                        frame.finally_completion_tag.store(1, Ordering::Relaxed);
-                        *frame.finally_completion_val.lock() = ret;
+                        frame.discard_active_finally_above(fseq);
+                        frame.set_finally_completion(fseq, 1, ret)?;
                         frame.ip = target;
                         continue;
                     }
@@ -1531,8 +1531,8 @@ impl Vm {
                     if let Some(frame) = self.frames.last_mut() {
                         if let Some(&(target, fseq)) = frame.finally_stack.last() {
                             Self::discard_catches_inside_finally(frame, fseq);
-                            frame.finally_completion_tag.store(1, Ordering::Relaxed);
-                            *frame.finally_completion_val.lock() = v;
+                            frame.discard_active_finally_above(fseq);
+                            frame.set_finally_completion(fseq, 1, v)?;
                             frame.ip = target;
                             continue;
                         }
@@ -1990,30 +1990,21 @@ impl Vm {
                                 _ => false,
                             };
                         if divert_to_finally {
-                            let target =
-                                frame
-                                    .finally_stack
-                                    .last()
-                                    .map(|(ip, _)| *ip)
-                                    .ok_or_else(|| {
-                                        crate::error::Error::internal(
-                                            "finally stack empty during throw diversion",
-                                        )
-                                    })?;
-                            frame.finally_completion_tag.store(4, Ordering::Relaxed);
-                            *frame.finally_completion_val.lock() = v;
+                            let (target, fseq) =
+                                frame.finally_stack.last().copied().ok_or_else(|| {
+                                    crate::error::Error::internal(
+                                        "finally stack empty during throw diversion",
+                                    )
+                                })?;
+                            frame.discard_active_finally_above(fseq);
+                            frame.set_finally_completion(fseq, 4, v)?;
                             frame.ip = target;
                             continue;
                         }
-                        if let Some((handler, _, saved_env, saved_stack_depth)) =
+                        if let Some((handler, cseq, saved_env, saved_stack_depth)) =
                             frame.catch_stack.pop()
                         {
-                            // A throw from inside a running finally replaces
-                            // the completion that originally entered that
-                            // finally. If an outer catch handles this new
-                            // throw, no stale pending completion may remain.
-                            frame.finally_completion_tag.store(0, Ordering::Relaxed);
-                            *frame.finally_completion_val.lock() = Value::Undefined;
+                            frame.discard_active_finally_above(cseq);
                             // Restore env to try-entry point, unwinding any
                             // scopes/with-envs opened in the try body.
                             frame.env = saved_env;
@@ -2066,21 +2057,44 @@ impl Vm {
                     let seq = f.guard_seq.load(Ordering::Relaxed) + 1;
                     f.guard_seq.store(seq, Ordering::Relaxed);
                     f.finally_stack.push((target, seq));
+                    f.finally_completions
+                        .lock()
+                        .push(crate::value::FinallyCompletion {
+                            seq,
+                            tag: 0,
+                            value: Value::Undefined,
+                            active: false,
+                        });
                 }
                 Op::PopFinally => {
                     // The guarded region completed normally; drop the finally
                     // guard. A pending completion from inside the region was
                     // already popped when the transfer diverted to finally.
-                    self.current_frame_mut()?.finally_stack.pop();
+                    let frame = self.current_frame_mut()?;
+                    if let Some((_, seq)) = frame.finally_stack.pop() {
+                        let completion = frame.finally_completions.lock().pop();
+                        debug_assert!(completion.is_some_and(|completion| completion.seq == seq));
+                    }
+                }
+                Op::EnterFinally => {
+                    let frame = self.current_frame_mut()?;
+                    if let Some((_, seq)) = frame.finally_stack.pop() {
+                        let mut completions = frame.finally_completions.lock();
+                        let completion = completions
+                            .iter_mut()
+                            .rfind(|completion| completion.seq == seq)
+                            .ok_or_else(|| Error::internal("finally completion missing"))?;
+                        completion.active = true;
+                    }
                 }
                 Op::DivertBreak(finally_start) => {
                     let resume_ip = ip + 1;
                     let f = self.current_frame_mut()?;
                     if let Some(&(_, fseq)) = f.finally_stack.last() {
                         Self::discard_catches_inside_finally(f, fseq);
+                        f.discard_active_finally_above(fseq);
+                        f.set_finally_completion(fseq, 2, Value::Number(resume_ip as f64))?;
                     }
-                    f.finally_completion_tag.store(2, Ordering::Relaxed);
-                    *f.finally_completion_val.lock() = Value::Number(resume_ip as f64);
                     f.ip = finally_start;
                     continue;
                 }
@@ -2091,9 +2105,9 @@ impl Vm {
                     let f = self.current_frame_mut()?;
                     if let Some(&(_, fseq)) = f.finally_stack.last() {
                         Self::discard_catches_inside_finally(f, fseq);
+                        f.discard_active_finally_above(fseq);
+                        f.set_finally_completion(fseq, 3, Value::Number(cont as f64))?;
                     }
-                    f.finally_completion_tag.store(3, Ordering::Relaxed);
-                    *f.finally_completion_val.lock() = Value::Number(cont as f64);
                     f.ip = finally_start;
                     continue;
                 }
@@ -2177,18 +2191,15 @@ impl Vm {
                     // The finally body has run. Re-raise the pending
                     // completion (return/break/continue/throw) that diverted
                     // here, if any. A normal completion (tag 0) falls through.
-                    let (tag, val) = {
-                        let f = self.current_frame()?;
-                        (
-                            f.finally_completion_tag.load(Ordering::Relaxed),
-                            f.finally_completion_val.lock().clone(),
-                        )
-                    };
-                    {
-                        let f = self.current_frame_mut()?;
-                        f.finally_completion_tag.store(0, Ordering::Relaxed);
-                        *f.finally_completion_val.lock() = Value::Undefined;
-                    }
+                    let completion = self
+                        .current_frame_mut()?
+                        .finally_completions
+                        .lock()
+                        .pop()
+                        .ok_or_else(|| Error::internal("active finally completion missing"))?;
+                    debug_assert!(completion.active);
+                    let tag = completion.tag;
+                    let val = completion.value;
                     match tag {
                         0 => {} // normal: continue
                         1 => {
@@ -2196,9 +2207,10 @@ impl Vm {
                             // If an outer finally still guards this scope,
                             // divert the return through it before unwinding.
                             if let Some(frame) = self.frames.last_mut() {
-                                if let Some(&(outer, _)) = frame.finally_stack.last() {
-                                    frame.finally_completion_tag.store(1, Ordering::Relaxed);
-                                    *frame.finally_completion_val.lock() = val.clone();
+                                if let Some(&(outer, seq)) = frame.finally_stack.last() {
+                                    Self::discard_catches_inside_finally(frame, seq);
+                                    frame.discard_active_finally_above(seq);
+                                    frame.set_finally_completion(seq, 1, val.clone())?;
                                     frame.ip = outer;
                                     continue;
                                 }
@@ -2229,23 +2241,20 @@ impl Vm {
                                         _ => false,
                                     };
                                 if divert_to_outer_finally {
-                                    let outer =
-                                        frame.finally_stack.last().map(|(ip, _)| *ip).ok_or_else(
-                                            || {
-                                                crate::error::Error::internal(
-                                                    "finally stack empty during throw diversion",
-                                                )
-                                            },
-                                        )?;
-                                    frame.finally_completion_tag.store(4, Ordering::Relaxed);
-                                    *frame.finally_completion_val.lock() = val.clone();
+                                    let (outer, seq) =
+                                        frame.finally_stack.last().copied().ok_or_else(|| {
+                                            crate::error::Error::internal(
+                                                "finally stack empty during throw diversion",
+                                            )
+                                        })?;
+                                    frame.discard_active_finally_above(seq);
+                                    frame.set_finally_completion(seq, 4, val.clone())?;
                                     frame.ip = outer;
                                     None
-                                } else if let Some((handler, _, saved_env, saved_stack_depth)) =
+                                } else if let Some((handler, cseq, saved_env, saved_stack_depth)) =
                                     frame.catch_stack.pop()
                                 {
-                                    frame.finally_completion_tag.store(0, Ordering::Relaxed);
-                                    *frame.finally_completion_val.lock() = Value::Undefined;
+                                    frame.discard_active_finally_above(cseq);
                                     frame.env = saved_env;
                                     frame.ip = handler;
                                     Some(frame.stack_base + saved_stack_depth)
@@ -2267,9 +2276,10 @@ impl Vm {
                             let frame = self.current_frame_mut()?;
                             // If an outer finally still guards this scope,
                             // divert the break/continue through it first.
-                            if let Some(&(outer, _)) = frame.finally_stack.last() {
-                                frame.finally_completion_tag.store(tag, Ordering::Relaxed);
-                                *frame.finally_completion_val.lock() = val.clone();
+                            if let Some(&(outer, seq)) = frame.finally_stack.last() {
+                                Self::discard_catches_inside_finally(frame, seq);
+                                frame.discard_active_finally_above(seq);
+                                frame.set_finally_completion(seq, tag, val.clone())?;
                                 frame.ip = outer;
                                 continue;
                             }
@@ -2281,6 +2291,26 @@ impl Vm {
                             continue;
                         }
                         _ => {}
+                    }
+                }
+                Op::ExitFinallyBodies(count) => {
+                    let frame = self.current_frame_mut()?;
+                    let mut completions = frame.finally_completions.lock();
+                    for _ in 0..count {
+                        let index = completions
+                            .iter()
+                            .rposition(|completion| completion.active)
+                            .ok_or_else(|| Error::internal("active finally completion missing"))?;
+                        completions.remove(index);
+                    }
+                }
+                Op::ExitCatchGuards(count) => {
+                    let frame = self.current_frame_mut()?;
+                    for _ in 0..count {
+                        frame
+                            .catch_stack
+                            .pop()
+                            .ok_or_else(|| Error::internal("catch guard missing during exit"))?;
                     }
                 }
                 Op::EnterCatch => {
@@ -2829,10 +2859,11 @@ impl Vm {
                 } => {
                     let (completion_tag, completion_val) = {
                         let frame = self.current_frame()?;
-                        (
-                            frame.finally_completion_tag.load(Ordering::Relaxed),
-                            frame.finally_completion_val.lock().clone(),
-                        )
+                        let completions = frame.finally_completions.lock();
+                        let completion = completions
+                            .last()
+                            .ok_or_else(|| Error::internal("active finally completion missing"))?;
+                        (completion.tag, completion.value.clone())
                     };
                     let continue_target = match (completion_tag, completion_val) {
                         (3, Value::Number(n)) => {

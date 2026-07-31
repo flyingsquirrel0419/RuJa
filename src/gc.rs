@@ -506,7 +506,9 @@ fn trace_promise_handler(handler: &crate::value::PromiseHandler, worklist: &mut 
                 push_value(&frame.callee, worklist);
                 push_value(&frame.this_val, worklist);
                 push_value(&frame.new_target, worklist);
-                push_value(&frame.finally_completion_val, worklist);
+                for completion in &frame.finally_completions {
+                    push_value(&completion.value, worklist);
+                }
                 worklist.push(frame.env.0);
                 worklist.extend(frame.catch_stack.iter().map(|(_, _, env, _)| env.0));
                 for value in frame.stack.iter().chain(frame.locals.iter()) {
@@ -693,7 +695,9 @@ fn trace_obj_impl(obj: &HeapObj, worklist: &mut Vec<usize>) {
             for v in g.locals.lock().iter() {
                 push_value(v, worklist);
             }
-            push_value(&g.finally_completion_val.lock(), worklist);
+            for completion in g.finally_completions.lock().iter() {
+                push_value(&completion.value, worklist);
+            }
             push_value(&g.resume_value.lock(), worklist);
             for v in g.args.lock().iter() {
                 push_value(v, worklist);

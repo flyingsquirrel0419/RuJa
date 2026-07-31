@@ -708,10 +708,8 @@ pub struct CallFrame {
     /// in this frame injects a return completion at the suspended `yield`
     /// point, so any active `finally` blocks run before the generator closes.
     pub force_return: Mutex<Option<Value>>,
-    /// Pending completion to re-raise after a `finally` block runs.
-    /// Tag: 0 normal, 1 return, 2 break, 3 continue, 4 throw.
-    pub finally_completion_tag: AtomicU8,
-    pub finally_completion_val: Mutex<Value>,
+    /// One completion per guarded or currently executing finally body.
+    pub finally_completions: Mutex<Vec<crate::value::FinallyCompletion>>,
     /// Stack of finally-target-ips for nested active `try/finally`. A
     /// non-local transfer (return/break/continue/throw) that hits an active
     /// finally diverts to the finally target after recording its completion.
@@ -782,14 +780,34 @@ impl CallFrame {
             async_await_value: None,
             force_throw: Mutex::new(None),
             force_return: Mutex::new(None),
-            finally_completion_tag: AtomicU8::new(0),
-            finally_completion_val: Mutex::new(Value::Undefined),
+            finally_completions: Mutex::new(Vec::new()),
             finally_stack: Vec::new(),
             eval_global_bindings: false,
             eval_deletable_bindings: false,
             in_parameter_initializers: false,
             direct_eval_new_target_allowed: false,
             is_derived_ctor: false,
+        }
+    }
+
+    fn set_finally_completion(&self, seq: u32, tag: u8, value: Value) -> error::Result<()> {
+        let mut completions = self.finally_completions.lock();
+        let completion = completions
+            .iter_mut()
+            .rfind(|completion| completion.seq == seq)
+            .ok_or_else(|| error::Error::internal("finally completion missing"))?;
+        completion.tag = tag;
+        completion.value = value;
+        Ok(())
+    }
+
+    fn discard_active_finally_above(&self, seq: u32) {
+        let mut completions = self.finally_completions.lock();
+        while completions
+            .last()
+            .is_some_and(|completion| completion.active && completion.seq > seq)
+        {
+            completions.pop();
         }
     }
 }
@@ -840,8 +858,7 @@ pub(crate) struct GeneratorPrologueState {
     pub catch_stack: Vec<(usize, u32, GcIdx, usize)>,
     pub finally_stack: Vec<(usize, u32)>,
     pub guard_seq: u32,
-    pub finally_completion_tag: u8,
-    pub finally_completion_val: Value,
+    pub finally_completions: Vec<crate::value::FinallyCompletion>,
 }
 
 pub enum Microtask {
@@ -2221,8 +2238,7 @@ impl Vm {
             .ok_or_else(|| Error::internal("generator prologue frame missing"))?;
         let saved_stack = self.stack.split_off(stack_base);
         let guard_seq = frame.guard_seq.load(Ordering::Relaxed);
-        let finally_completion_tag = frame.finally_completion_tag.load(Ordering::Relaxed);
-        let finally_completion_val = frame.finally_completion_val.lock().clone();
+        let finally_completions = frame.finally_completions.lock().clone();
         Ok(GeneratorPrologueState {
             env: frame.env,
             ip: frame.ip,
@@ -2231,8 +2247,7 @@ impl Vm {
             catch_stack: frame.catch_stack,
             finally_stack: frame.finally_stack,
             guard_seq,
-            finally_completion_tag,
-            finally_completion_val,
+            finally_completions,
         })
     }
 
@@ -2471,8 +2486,7 @@ impl Vm {
             mut catch_stack,
             mut finally_stack,
             guard_seq,
-            finally_completion_tag,
-            finally_completion_val,
+            finally_completions,
             started,
             done,
             delegating,
@@ -2490,8 +2504,7 @@ impl Vm {
                     g.catch_stack.lock().clone(),
                     g.finally_stack.lock().clone(),
                     g.guard_seq.load(Ordering::Relaxed),
-                    g.finally_completion_tag.load(Ordering::Relaxed),
-                    g.finally_completion_val.lock().clone(),
+                    g.finally_completions.lock().clone(),
                     g.started.load(Ordering::Relaxed),
                     g.done.load(Ordering::Relaxed),
                     g.delegating.load(Ordering::Relaxed),
@@ -2582,10 +2595,7 @@ impl Vm {
             frame.catch_stack = catch_stack;
             frame.finally_stack = finally_stack;
             frame.guard_seq.store(guard_seq, Ordering::Relaxed);
-            frame
-                .finally_completion_tag
-                .store(finally_completion_tag, Ordering::Relaxed);
-            *frame.finally_completion_val.lock() = finally_completion_val;
+            *frame.finally_completions.lock() = finally_completions;
         }
         // Swap in a dedicated operand stack for the generator run, preserving
         // the caller's stack untouched. This keeps generator execution fully
@@ -2662,6 +2672,11 @@ impl Vm {
                     g.started.store(true, Ordering::Relaxed);
                     g.delegating.store(false, Ordering::Relaxed);
                     g.async_delegate_await_kind.store(0, Ordering::Relaxed);
+                    g.stack.lock().clear();
+                    g.locals.lock().clear();
+                    g.catch_stack.lock().clear();
+                    g.finally_stack.lock().clear();
+                    g.finally_completions.lock().clear();
                 }
             });
             self.recycle_reference_values(gen_stack);
@@ -2699,11 +2714,7 @@ impl Vm {
                     *g.finally_stack.lock() = frame.finally_stack;
                     g.guard_seq
                         .store(frame.guard_seq.load(Ordering::Relaxed), Ordering::Relaxed);
-                    g.finally_completion_tag.store(
-                        frame.finally_completion_tag.load(Ordering::Relaxed),
-                        Ordering::Relaxed,
-                    );
-                    *g.finally_completion_val.lock() = frame.finally_completion_val.lock().clone();
+                    *g.finally_completions.lock() = frame.finally_completions.lock().clone();
                     g.started.store(true, Ordering::Relaxed);
                     g.delegating.store(
                         frame.gen_delegating.load(Ordering::Relaxed),
@@ -2726,6 +2737,11 @@ impl Vm {
                     g.started.store(true, Ordering::Relaxed);
                     g.delegating.store(false, Ordering::Relaxed);
                     g.async_delegate_await_kind.store(0, Ordering::Relaxed);
+                    g.stack.lock().clear();
+                    g.locals.lock().clear();
+                    g.catch_stack.lock().clear();
+                    g.finally_stack.lock().clear();
+                    g.finally_completions.lock().clear();
                 }
             });
             self.recycle_reference_values(gen_stack);
@@ -3027,18 +3043,18 @@ impl Vm {
                         }
                     });
                     if divert_to_finally {
-                        let target = self
+                        let (target, seq) = self
                             .frames
                             .last()
-                            .and_then(|f| f.finally_stack.last().map(|(ip, _)| *ip))
+                            .and_then(|f| f.finally_stack.last().copied())
                             .ok_or_else(|| {
                                 crate::error::Error::internal(
                                     "finally stack empty during native error diversion",
                                 )
                             })?;
                         let frame = self.current_frame_mut()?;
-                        frame.finally_completion_tag.store(4, Ordering::Relaxed);
-                        *frame.finally_completion_val.lock() = thrown;
+                        frame.discard_active_finally_above(seq);
+                        frame.set_finally_completion(seq, 4, thrown)?;
                         frame.ip = target;
                         continue;
                     }
@@ -3052,16 +3068,12 @@ impl Vm {
                     if let Some(handler) = handler {
                         // Pop the handler so we don't loop, push the thrown value
                         // for the catch binding, and jump to the handler ip.
-                        let (_, _, saved_env, saved_stack_depth) =
+                        let (_, cseq, saved_env, saved_stack_depth) =
                             self.current_frame_mut()?.catch_stack.pop().unwrap();
-                        {
-                            let frame = self.current_frame_mut()?;
-                            frame.finally_completion_tag.store(0, Ordering::Relaxed);
-                            *frame.finally_completion_val.lock() = Value::Undefined;
-                        }
                         // Unwind scopes opened in the try body.
                         let stack_target = {
                             let frame = self.current_frame_mut()?;
+                            frame.discard_active_finally_above(cseq);
                             frame.env = saved_env;
                             frame.stack_base + saved_stack_depth
                         };

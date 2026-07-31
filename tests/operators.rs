@@ -2895,3 +2895,415 @@ fn annex_b_html_comments_respect_literal_and_template_boundaries() {
         assert!(run_err(source).contains("SyntaxError"), "{source:?}");
     }
 }
+
+#[test]
+fn annex_b_call_assignment_targets_throw_after_only_the_call() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            function f() {
+              log.push("f");
+              return { valueOf() { log.push("valueOf"); return 1; } };
+            }
+            function g() { log.push("g"); return 1; }
+            function capture(action) {
+              log.length = 0;
+              try { action(); return "no-error:" + log.join(","); }
+              catch (error) {
+                return (error instanceof ReferenceError) + ":" + log.join(",");
+              }
+            }
+            [
+              capture(function() { f() = g(); }),
+              capture(function() { (f()) += g(); }),
+              capture(function() { f()++; }),
+              capture(function() { ++f(); }),
+              capture(function() { for (f() in { key: 1 }) {} }),
+              capture(function() { for (f() of [1]) {} }),
+              capture(function() { function async() {} async() = g(); })
+            ].join("|");
+        "#),
+        Value::String(Arc::from("true:f|true:f|true:f|true:f|true:f|true:f|true:"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var called = false;
+            var closed = false;
+            function f() { called = true; return 0; }
+            var iterable = {
+              [Symbol.iterator]: function() {
+                return {
+                  next: function() { return { value: 1, done: false }; },
+                  return: function() { closed = true; return { done: true }; }
+                };
+              }
+            };
+            try { for (f() of iterable) {} } catch (error) {}
+            called + ":" + closed;
+        "#),
+        Value::String(Arc::from("true:false"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var called = false;
+            function f() { called = true; }
+            for (f() of []) {}
+            called;
+        "#),
+        Value::Bool(false)
+    );
+
+    assert!(run_err("function f() {} f() &&= 1;").contains("SyntaxError"));
+    assert!(run_err("'use strict'; function f() {} f() = 1;").contains("SyntaxError"));
+}
+
+#[test]
+fn annex_b_call_assignment_preserves_abrupt_completion_precedence() {
+    assert_eq!(
+        run(r#"
+            var sentinel = {};
+            function f() { throw sentinel; }
+            try { f() = 1; } catch (error) { error === sentinel; }
+        "#),
+        Value::Bool(true)
+    );
+
+    assert_eq!(
+        run(r#"
+            var original = [];
+            var closed = false;
+            var sentinel = {};
+            function f() { throw sentinel; }
+            var iterable = {
+              [Symbol.iterator]() {
+                return {
+                  next() { return { value: 1, done: false }; },
+                  return() { closed = true; throw new TypeError("close"); }
+                };
+              }
+            };
+            try { for (f() of iterable) {} } catch (error) {
+              original.push(error instanceof ReferenceError);
+            }
+            try { for (f() in { x: 1 }) {} } catch (error) {
+              original.push(error instanceof ReferenceError);
+            }
+            original.join(",") + ":" + closed;
+        "#),
+        Value::String(Arc::from("true,true:false"))
+    );
+}
+
+#[test]
+fn annex_b_call_assignment_respects_eval_async_and_optional_boundaries() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            function sloppy() {
+              var result = false;
+              eval("function f(){ log.push('call'); } try { f() = log.push('rhs'); } catch (e) { result = e instanceof ReferenceError; }");
+              return result;
+            }
+            function strict() {
+              "use strict";
+              try { eval("function f(){} f() = 1;"); return false; }
+              catch (error) { return error instanceof SyntaxError; }
+            }
+            sloppy() + ":" + strict() + ":" + log.join(",");
+        "#),
+        Value::String(Arc::from("true:true:call"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var log = [];
+            async function f() { log.push("async-call"); }
+            try { f() = log.push("rhs"); } catch (error) {
+              log.push(error instanceof ReferenceError);
+            }
+            function outer() {
+              log.push("outer");
+              return function inner() { log.push("inner"); };
+            }
+            try { (outer?.())() = 1; } catch (error) {
+              log.push(error instanceof ReferenceError);
+            }
+            log.join(",");
+        "#),
+        Value::String(Arc::from("async-call,true,outer,inner,true"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var closed = false;
+            var sentinel = {};
+            var iterable = {
+              [Symbol.asyncIterator]() {
+                return {
+                  next() { return Promise.resolve({ value: 1, done: false }); },
+                  return() { closed = true; return Promise.resolve({}); }
+                };
+              }
+            };
+            async function check() {
+              function f() { throw sentinel; }
+              try { for await (f() of iterable) {} }
+              catch (error) { return (error instanceof ReferenceError) + ":" + closed; }
+            }
+            await check();
+        "#),
+        Value::String(Arc::from("true:false"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var result;
+            try {
+              try {
+                outer: while (true) {
+                  try {
+                    try {
+                      try { break outer; } catch (_) {}
+                    } finally {}
+                  } catch (_) {}
+                }
+                throw "after";
+              } catch (error) { result = error; }
+            } catch (_) { result = "escaped"; }
+            result;
+        "#),
+        Value::String(Arc::from("after"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var result;
+            try {
+              result = (function () {
+                outer: while (true) {
+                  try {
+                    try {
+                      try { break outer; } finally {}
+                    } catch (_) { return "middle"; }
+                  } finally { throw "outer"; }
+                }
+              })();
+            } catch (error) { result = error; }
+            result;
+        "#),
+        Value::String(Arc::from("outer"))
+    );
+
+    assert_eq!(
+        run(r#"
+            function check() {
+              outer: while (true) {
+                try {
+                  try {
+                    try { break outer; } finally {}
+                  } catch (_) {}
+                } finally {}
+              }
+              return "ok";
+            }
+            check();
+        "#),
+        Value::String(Arc::from("ok"))
+    );
+}
+
+#[test]
+fn finally_abrupt_completion_replaces_pending_call_target_error() {
+    assert_eq!(
+        run(r#"
+            var iterations = 0;
+            function f() {}
+            outer: while (iterations < 2) {
+              try {
+                iterations++;
+                for (f() of [1]) {}
+              } finally {
+                continue outer;
+              }
+            }
+            var marker = 0;
+            try { marker = 1; } finally { marker = 2; }
+            marker;
+        "#),
+        Value::Number(2.0)
+    );
+
+    assert_eq!(
+        run(r#"
+            var sentinel = {};
+            var caught = false;
+            try {
+              try { throw sentinel; }
+              finally {
+                label: {
+                  try {} finally { break label; }
+                }
+              }
+            } catch (error) { caught = error === sentinel; }
+            caught;
+        "#),
+        Value::Bool(true)
+    );
+
+    assert_eq!(
+        run(r#"
+            var sentinel = {};
+            var caught;
+            var marker = false;
+            try {
+              try { throw sentinel; }
+              finally {
+                label: {
+                  try { throw "inner"; } finally { break label; }
+                }
+                marker = true;
+              }
+            } catch (error) { caught = error; }
+            (caught === sentinel) + ":" + marker;
+        "#),
+        Value::String(Arc::from("true:true"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var log = [];
+            try {
+              while (true) { log.push("body"); break; }
+              log.push("after");
+            } finally { log.push("finally"); }
+            log.join(",");
+        "#),
+        Value::String(Arc::from("body,after,finally"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var log = [];
+            outer: while (true) {
+              try {
+                try { throw "original"; }
+                finally { break outer; }
+              } finally { log.push("outer-finally"); }
+            }
+            log.join(",");
+        "#),
+        Value::String(Arc::from("outer-finally"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var caught;
+            try {
+              try { throw "original"; }
+              finally { throw "replacement"; }
+            } catch (error) { caught = error; }
+            var marker = 0;
+            try { marker = 1; } finally { marker = 2; }
+            caught + ":" + marker;
+        "#),
+        Value::String(Arc::from("replacement:2"))
+    );
+}
+
+#[test]
+fn nested_finally_completions_survive_generator_and_async_suspension() {
+    assert_eq!(
+        run(r#"
+            var sentinel = {};
+            function* generate() {
+              try {
+                try { throw sentinel; }
+                finally { yield "pause"; }
+              } catch (error) { yield error === sentinel; }
+            }
+            var iterator = generate();
+            iterator.next().value + ":" + iterator.next().value;
+        "#),
+        Value::String(Arc::from("pause:true"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var sentinel = {};
+            async function check() {
+              try {
+                try { throw sentinel; }
+                finally { await 0; }
+              } catch (error) { return error === sentinel; }
+            }
+            await check();
+        "#),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn finally_control_exit_discards_stale_catches_and_roots_pending_values() {
+    assert_eq!(
+        run(r#"
+            var result = "none";
+            try {
+              outer: while (true) {
+                try {} finally {
+                  try { break outer; }
+                  catch (_) { result = "stale"; }
+                }
+              }
+              throw "after";
+            } catch (error) { result = error; }
+            result;
+        "#),
+        Value::String(Arc::from("after"))
+    );
+
+    assert_eq!(
+        run(r#"
+            function make() {
+              try { return { marker: 1 }; }
+              finally {
+                for (var i = 0; i < 100000; i++) ({ i: i });
+              }
+            }
+            make().marker;
+        "#),
+        Value::Number(1.0)
+    );
+
+    assert_eq!(
+        run(r#"
+            var result;
+            try {
+              result = (function nested() { return 7; })();
+            } finally {}
+            result;
+        "#),
+        Value::Number(7.0)
+    );
+
+    assert_eq!(
+        run(r#"
+            var caught = false;
+            var escaped = false;
+            try {
+              outer: while (true) {
+                try {
+                  try { break outer; }
+                  finally { throw "replacement"; }
+                } catch (error) {
+                  caught = error === "replacement";
+                  break outer;
+                }
+              }
+            } catch (_) { escaped = true; }
+            caught + ":" + escaped;
+        "#),
+        Value::String(Arc::from("true:false"))
+    );
+}

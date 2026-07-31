@@ -4669,6 +4669,9 @@ impl Vm {
             for l in &f.locals {
                 Self::push_value_roots(&mut roots, l);
             }
+            for completion in f.finally_completions.lock().iter() {
+                Self::push_value_roots(&mut roots, &completion.value);
+            }
             // Per-frame generator run-state can hold live heap values
             // (resume value sent via next(obj), and the yielded value before
             // it is moved into the LazyGenerator). Root them so a GC during
@@ -4808,7 +4811,9 @@ impl Vm {
                                 Self::push_value_roots(&mut roots, &frame.callee);
                                 Self::push_value_roots(&mut roots, &frame.this_val);
                                 Self::push_value_roots(&mut roots, &frame.new_target);
-                                Self::push_value_roots(&mut roots, &frame.finally_completion_val);
+                                for completion in &frame.finally_completions {
+                                    Self::push_value_roots(&mut roots, &completion.value);
+                                }
                                 roots.push(frame.env.0);
                                 roots.extend(frame.catch_stack.iter().map(|(_, _, env, _)| env.0));
                                 for value in frame.stack.iter().chain(frame.locals.iter()) {
