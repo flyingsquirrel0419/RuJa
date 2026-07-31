@@ -17,6 +17,12 @@
   direct-eval Annex B files pass, and full Annex B moves from **819/193/74** to
   **820/192/74**. The supported statements/expressions subset remains **12,765
   pass / 0 fail / 7,674 skip / 20,439 total**; no admission metadata changed.
+  Ordinary CI `30619831879` passes 3/3 and full matrix `30619831846` passes
+  45/45. Against `30615320744`, 31/32 result artifacts are byte-identical; the
+  clean Annex B result changes exactly **+1 pass / -1 fail**. Aggregate is
+  **32,999 pass / 4,409 fail / 11,058 skip / 3 timeout / 0 error**, with
+  filename-sorted content hash
+  `85c4b611b5bd310546f4c7870dee2555d62b2bb7957d8049d29c6d1117c0ab26`.
 
 - Implemented Annex B.3.5 initializers for sloppy `for-in` heads containing one
   simple `var` binding. The initializer resolves and updates its binding exactly

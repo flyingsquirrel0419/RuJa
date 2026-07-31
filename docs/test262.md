@@ -19,6 +19,16 @@ statements and expressions subset remains **12,765 pass / 0 fail / 7,674 skip
 / 20,439 total**. Local warnings-denied Clippy, all-target/all-feature Rust
 tests, doctest, wasm32 check, rustfmt, and Test262 tooling **163/163** pass.
 
+Implementation commit `e9e936e` passes ordinary CI `30619831879` (**3/3**)
+and full matrix `30619831846` (**45/45**). Against preceding full run
+`30615320744`, **31/32** result artifacts are byte-identical. Its raw Annex B
+artifact contained two load-sensitive timeouts; the current clean artifact is
+**820/192/74/0/0**, so the corrected semantic delta is exactly **+1 pass / -1
+fail** from **819/193/74/0/0**. Current aggregate is **32,999 pass / 4,409 fail
+/ 11,058 skip / 3 timeout / 0 error** over 48,469 files and 37,408 executed
+files. Filename-sorted result content hashes to
+`85c4b611b5bd310546f4c7870dee2555d62b2bb7957d8049d29c6d1117c0ab26`.
+
 ```text
 [Decision Log]
 - 목적과 의도: runner 예외 없이 Annex B.3.4의 catch parameter 및 direct-eval declaration semantics를 구현하고 정확한 conformance delta를 측정한다.
@@ -26,7 +36,7 @@ tests, doctest, wasm32 check, rustfmt, and Test262 tooling **163/163** pass.
 - 검토한 주요 대안: exact file admission, simple catch 전용 eval rewrite, 모든 Environment Record 재구성, 또는 declaration-instantiation 환경 walk와 parser early error를 각각 수정하기.
 - 선택한 방식: 공용 eval declaration conflict walk가 Object Environment Record와 matching simple catch만 무시하게 하고, destructuring catch source collision은 recursive VarDeclaredNames 검사로 거부한다.
 - 다른 대안 대신 이 방식을 선택한 이유: admission과 rewrite는 실제 선언 및 initializer binding을 검증하지 못한다. 환경 재구성은 넓은 위험을 만들며 현재 binding-kind 정보만으로 명세 차이를 정확히 표현할 수 있다.
-- 장점, 단점 및 영향: exact file과 direct-eval cohort가 전부 통과하고 Annex B는 정확히 +1/-1 이동하며 supported subset은 0 fail을 유지한다. full CI artifact 비교는 구현 커밋 후 별도 근거로 기록한다.
+- 장점, 단점 및 영향: exact file과 direct-eval cohort가 전부 통과하고 Annex B는 정확히 +1/-1 이동하며 supported subset은 0 fail을 유지한다. full CI도 31/32 artifact identity와 Annex B 단일 delta를 확인한다.
 ```
 
 ## Annex B for-in initializers
