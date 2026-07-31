@@ -25,6 +25,9 @@
   the related language cohort. Both strict and sloppy hoist collectors now
   include destructuring names, preserving function scope without global leaks.
   A `with` regression freezes that value extraction precedes binding resolution.
+  Ordinary CI `30594697312` and full matrix `30594697340` pass. The final 32
+  artifacts report **32,326 pass / 5,082 fail / 11,058 skip / 3 timeout**;
+  26/32 are byte-identical to the preceding single-execution baseline.
 
 - Admitted the final four implemented class built-in subclass tests for
   `SharedArrayBuffer` and `WeakRef` through one exact path-to-feature map shared
