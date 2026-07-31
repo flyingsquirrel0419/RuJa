@@ -4,6 +4,16 @@
 
 ### Changed
 
+- Implemented the Annex B host exception for duplicate lexical names in sloppy
+  Blocks and CaseBlocks. Duplicate names are accepted only when every binding
+  is an ordinary `FunctionDeclaration`; strict code and generator, async,
+  class, lexical, or `var` mixtures remain early errors. CaseBlock
+  `VarDeclaredNames` now include `for` declaration heads recursively, and
+  duplicate switch functions install the source-order final function in the
+  shared CaseBlock binding. The two exact pinned Test262 files pass **2/2**;
+  Annex B moves to **203 pass / 809 fail / 74 skip**, exactly **+2 pass / -2
+  fail**, while the supported subset remains **12,765 / 0 / 7,674**.
+
 - Corrected declaration static semantics by classifying top-level function
   declarations from their source grammar: Script and FunctionBody declarations
   are var-scoped regardless of strictness, while Module and Block declarations

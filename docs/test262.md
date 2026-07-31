@@ -134,6 +134,30 @@ rejected before compilation. Destructuring parameter carriers use the engine's
 non-source `#` namespace so legal user bindings such as `__arg0` cannot collide
 with compiler-generated names.
 
+RuJa opts into Annex B web-legacy block functions. A sloppy Block or CaseBlock
+therefore permits duplicate lexical names only when every declaration for that
+name is an ordinary `FunctionDeclaration`. Strict code and any generator,
+async, class, lexical, or `var` mixture still reject. CaseBlock var-name
+collection descends through control flow and includes `for` declaration heads;
+the whole switch shares one lexical scope and its final same-named ordinary
+function supplies the block binding.
+
+[Decision Log]
+- 목적과 의도: Annex B host가 요구하는 sloppy Block/CaseBlock 중복 함수
+  early error 예외를 열되 다른 lexical 충돌을 완화하지 않는다.
+- 기존 구현 및 제약 조건: parser는 모든 lexical 중복을 거부했고 function
+  종류를 보존하지 않았다. switch compiler는 동일 binding을 두 번 만들었다.
+- 검토한 주요 대안: 모든 sloppy lexical 중복 허용, 함수를 var로 재분류,
+  ordinary function 종류를 보존하는 host-gated 예외를 검토했다.
+- 선택한 방식: lexical 이름과 ordinary function 발생 횟수를 함께 수집하고,
+  sloppy Block/CaseBlock에서 두 수가 같은 중복만 허용한다. switch binding은
+  한 번 만들고 source-order 마지막 함수 객체를 설치한다.
+- 다른 대안 대신 이 방식을 선택한 이유: Annex B 함수도 block lexical이며,
+  broad 완화나 var 재분류는 strict·generator·async·class 의미론을 훼손한다.
+- 장점, 단점 및 영향: 고정 Test262 두 early-error 파일을 직접 닫고 recursive
+  `for (var ...)` 충돌도 검출한다. Annex B outer variable mirror의 조건·평가
+  시점은 Function/Global/Eval instantiation을 함께 다루는 다음 단위다.
+
 [Decision Log]
 - 목적과 의도: Script, FunctionBody, Module, Block의 선언 정적 의미와
   parameter/body 환경 분리를 ECMAScript와 일치시킨다.

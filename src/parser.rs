@@ -755,7 +755,11 @@ impl Parser {
         } else {
             StatementListScope::Script
         };
-        check_statement_list_declaration_early_errors(&body, statement_list_scope)?;
+        check_statement_list_declaration_early_errors(
+            &body,
+            statement_list_scope,
+            self.is_strict_context,
+        )?;
         Self::check_module_early_errors(&body, &import_entries, &export_entries)?;
         Self::normalize_import_reexports(&import_entries, &mut export_entries);
         Self::validate_private_names_statement_list(&body, inherited_private_names)?;
@@ -1245,11 +1249,13 @@ impl Parser {
         export_entries: &[ExportEntry],
     ) -> error::Result<()> {
         let mut lexical = Vec::new();
+        let mut ordinary_functions = Vec::new();
         let mut vars = Vec::new();
         for stmt in body {
             collect_decl_names(
                 &stmt.node,
                 &mut lexical,
+                &mut ordinary_functions,
                 &mut vars,
                 StatementListScope::Module,
             );
@@ -1682,7 +1688,11 @@ impl Parser {
             Ok(())
         })?;
         self.expect(&TokenKind::RBrace, "}")?;
-        check_statement_list_declaration_early_errors(&body, StatementListScope::Block)?;
+        check_statement_list_declaration_early_errors(
+            &body,
+            StatementListScope::Block,
+            self.is_strict_context,
+        )?;
         Ok(self.stmt(StmtNode::Block(body)))
     }
 
@@ -1935,7 +1945,11 @@ impl Parser {
                 Ok(())
             })?;
             p.expect(&TokenKind::RBrace, "}")?;
-            check_statement_list_declaration_early_errors(&body, StatementListScope::FunctionBody)?;
+            check_statement_list_declaration_early_errors(
+                &body,
+                StatementListScope::FunctionBody,
+                p.is_strict_context,
+            )?;
             Ok(body)
         });
         self.function_depth -= 1;
@@ -1982,7 +1996,11 @@ impl Parser {
                 Ok(())
             })?;
             p.expect(&TokenKind::RBrace, "}")?;
-            check_statement_list_declaration_early_errors(&body, StatementListScope::FunctionBody)?;
+            check_statement_list_declaration_early_errors(
+                &body,
+                StatementListScope::FunctionBody,
+                p.is_strict_context,
+            )?;
             Ok(body)
         });
         self.function_depth -= 1;
@@ -2258,10 +2276,17 @@ impl Parser {
             }
             StmtNode::While { body, .. }
             | StmtNode::DoWhile { body, .. }
-            | StmtNode::For { body, .. }
-            | StmtNode::ForIn { body, .. }
-            | StmtNode::ForOf { body, .. }
             | StmtNode::Labeled(_, body) => {
+                Self::collect_var_names_in_stmt(&body.node, out);
+            }
+            StmtNode::For { init, body, .. } => {
+                if let Some(init) = init {
+                    Self::collect_var_names_in_stmt(&init.node, out);
+                }
+                Self::collect_var_names_in_stmt(&body.node, out);
+            }
+            StmtNode::ForIn { left, body, .. } | StmtNode::ForOf { left, body, .. } => {
+                Self::collect_var_names_in_stmt(&left.node, out);
                 Self::collect_var_names_in_stmt(&body.node, out);
             }
             StmtNode::Switch { cases, .. } => {
@@ -2707,31 +2732,26 @@ impl Parser {
         })?;
         self.expect(&TokenKind::RBrace, "}")?;
         self.switch_depth -= 1;
-        // Static semantic early errors: detect duplicate lexical names
-        // and lexical/var name clashes within a single switch CaseBlock.
-        // (ES2025: LexicallyDeclaredNames of CaseBlock must not contain
-        // duplicates, and must not intersect with VarDeclaredNames.)
+        // A CaseBlock is one lexical scope across every case clause.
         let mut lexical_names: Vec<Arc<str>> = Vec::new();
+        let mut ordinary_functions: Vec<Arc<str>> = Vec::new();
         let mut var_names: Vec<Arc<str>> = Vec::new();
         for case in &cases {
             for stmt in &case.body {
-                collect_switch_decl_names(&stmt.node, &mut lexical_names, &mut var_names);
+                collect_switch_decl_names(
+                    &stmt.node,
+                    &mut lexical_names,
+                    &mut ordinary_functions,
+                    &mut var_names,
+                );
             }
         }
-        for n in &lexical_names {
-            if lexical_names.iter().filter(|x| *x == n).count() > 1 {
-                return Err(error::Error::syntax(format!(
-                    "Identifier '{}' has already been declared",
-                    n
-                )));
-            }
-            if var_names.contains(n) {
-                return Err(error::Error::syntax(format!(
-                    "Identifier '{}' has already been declared",
-                    n
-                )));
-            }
-        }
+        check_declaration_name_conflicts(
+            &lexical_names,
+            &ordinary_functions,
+            &var_names,
+            !self.is_strict_context,
+        )?;
         Ok(self.stmt(StmtNode::Switch { disc, cases }))
     }
 
@@ -7372,6 +7392,7 @@ enum StatementListScope {
 fn collect_decl_names(
     node: &StmtNode,
     lexical: &mut Vec<Arc<str>>,
+    ordinary_functions: &mut Vec<Arc<str>>,
     var: &mut Vec<Arc<str>>,
     scope: StatementListScope,
 ) {
@@ -7399,6 +7420,9 @@ fn collect_decl_names(
                     StatementListScope::Block | StatementListScope::Module
                 ) {
                     lexical.push(name.clone());
+                    if !f.is_async && !f.is_generator {
+                        ordinary_functions.push(name.clone());
+                    }
                 } else {
                     var.push(name.clone());
                 }
@@ -7418,6 +7442,7 @@ fn collect_decl_names(
 fn collect_switch_decl_names(
     node: &StmtNode,
     lexical: &mut Vec<Arc<str>>,
+    ordinary_functions: &mut Vec<Arc<str>>,
     var: &mut Vec<Arc<str>>,
 ) {
     match node {
@@ -7440,6 +7465,9 @@ fn collect_switch_decl_names(
         StmtNode::FunctionDecl(f) => {
             if let Some(name) = &f.name {
                 lexical.push(name.clone());
+                if !f.is_async && !f.is_generator {
+                    ordinary_functions.push(name.clone());
+                }
             }
         }
         StmtNode::ExprStmt(Expr::Class(c)) => {
@@ -7449,21 +7477,29 @@ fn collect_switch_decl_names(
                 }
             }
         }
-        _ => {}
+        _ => Parser::collect_var_names_in_stmt(node, var),
     }
 }
 
-fn check_statement_list_declaration_early_errors(
-    body: &[Stmt],
-    scope: StatementListScope,
+fn check_declaration_name_conflicts(
+    lexical_names: &[Arc<str>],
+    ordinary_functions: &[Arc<str>],
+    var_names: &[Arc<str>],
+    allow_annex_b_function_duplicates: bool,
 ) -> error::Result<()> {
-    let mut lexical_names = Vec::new();
-    let mut var_names = Vec::new();
-    for stmt in body {
-        collect_decl_names(&stmt.node, &mut lexical_names, &mut var_names, scope);
-    }
-    for name in &lexical_names {
-        if lexical_names.iter().filter(|n| *n == name).count() > 1 || var_names.contains(name) {
+    for name in lexical_names {
+        let declaration_count = lexical_names
+            .iter()
+            .filter(|candidate| *candidate == name)
+            .count();
+        let ordinary_function_count = ordinary_functions
+            .iter()
+            .filter(|candidate| *candidate == name)
+            .count();
+        let duplicate_is_allowed = allow_annex_b_function_duplicates
+            && declaration_count > 1
+            && declaration_count == ordinary_function_count;
+        if declaration_count > 1 && !duplicate_is_allowed || var_names.contains(name) {
             return Err(error::Error::syntax(format!(
                 "Identifier '{}' has already been declared",
                 name
@@ -7471,6 +7507,31 @@ fn check_statement_list_declaration_early_errors(
         }
     }
     Ok(())
+}
+
+fn check_statement_list_declaration_early_errors(
+    body: &[Stmt],
+    scope: StatementListScope,
+    is_strict: bool,
+) -> error::Result<()> {
+    let mut lexical_names = Vec::new();
+    let mut ordinary_functions = Vec::new();
+    let mut var_names = Vec::new();
+    for stmt in body {
+        collect_decl_names(
+            &stmt.node,
+            &mut lexical_names,
+            &mut ordinary_functions,
+            &mut var_names,
+            scope,
+        );
+    }
+    check_declaration_name_conflicts(
+        &lexical_names,
+        &ordinary_functions,
+        &var_names,
+        matches!(scope, StatementListScope::Block) && !is_strict,
+    )
 }
 
 #[cfg(test)]
@@ -7934,6 +7995,18 @@ mod tests {
             "{ var f; function f() {} }",
             "{ function f() {} { var f; } }",
             "{ { var f; } let f; }",
+            "\"use strict\"; { function f() {} function f() {} }",
+            "{ function f() {} function* f() {} }",
+            "{ function* f() {} function* f() {} }",
+            "{ function f() {} async function f() {} }",
+            "{ async function f() {} async function f() {} }",
+            "switch (0) { case 0: function f() {} default: function* f() {} }",
+            "switch (0) { case 0: function f() {} default: async function f() {} }",
+            "switch (0) { case 0: function f() {} default: class f {} }",
+            "switch (0) { case 0: function f() {} default: if (0) var f; }",
+            "{ function f() {} for (var f = 0; false;) {} }",
+            "{ function f() {} for (var f in {}) {} }",
+            "switch (0) { case 0: function f() {} default: for (var f of []) {} }",
             "class A {} var A;",
             "class C { st\\u0061tic m() {} }",
         ] {
@@ -7941,6 +8014,16 @@ mod tests {
         }
 
         assert!(Parser::parse("{ class A {} { class A {} } }").is_ok());
+        assert!(Parser::parse("{ function f() {} function f() {} }").is_ok());
+        assert!(
+            Parser::parse("switch (0) { case 0: function f() {} default: function f() {} }")
+                .is_ok()
+        );
+        assert!(Parser::parse(
+            "\"use strict\"; switch (0) { case 0: function f() {} default: function f() {} }"
+        )
+        .is_err());
+        assert!(Parser::parse("{ { function f() {} } { function f() {} } }").is_ok());
         assert!(Parser::parse("function f() {} var f;").is_ok());
         assert!(Parser::parse("\"use strict\"; function f() {} var f;").is_ok());
         assert!(Parser::parse("\"use strict\"; var g; function g() {}").is_ok());
@@ -7953,6 +8036,7 @@ mod tests {
         assert!(Parser::parse_module("function f() {} var f;").is_err());
         assert!(Parser::parse_module("var g; function g() {}").is_err());
         assert!(Parser::parse_module("function f() {} function f() {}").is_err());
+        assert!(Parser::parse_module("{ function f() {} function f() {} }").is_err());
         assert!(Parser::parse("class C { st\\u0061tic() {} }").is_ok());
     }
 

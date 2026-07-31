@@ -143,6 +143,18 @@ fn switch_function_declarations_do_not_leak() {
 }
 
 #[test]
+fn annex_b_duplicate_block_and_switch_functions_use_the_last_declaration() {
+    assert_eq!(
+        run("(function() { var result; { result = f(); function f() { return 1; } function f() { return 2; } } return result; }());"),
+        Value::Number(2.0)
+    );
+    assert_eq!(
+        run("var result; switch (1) { case 1: result = f(); function f() { return 1; } break; default: function f() { return 2; } } result;"),
+        Value::Number(2.0)
+    );
+}
+
+#[test]
 fn continue_out_of_switch_preserves_completion_value() {
     assert_eq!(
         run("eval('5; do { switch (\"a\") { case \"a\": { 6; continue; } } } while (false)');"),

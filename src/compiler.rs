@@ -736,6 +736,7 @@ impl Compiler {
 
     fn collect_switch_lexical_names(cases: &[SwitchCase]) -> Vec<(Arc<str>, VarKind)> {
         let mut out = Vec::new();
+        let mut function_names = std::collections::HashSet::new();
         for case in cases {
             for stmt in &case.body {
                 match &stmt.node {
@@ -755,7 +756,9 @@ impl Compiler {
                     }
                     StmtNode::FunctionDecl(f) => {
                         if let Some(name) = &f.name {
-                            out.push((name.clone(), VarKind::Let));
+                            if function_names.insert(name.clone()) {
+                                out.push((name.clone(), VarKind::Let));
+                            }
                         }
                     }
                     StmtNode::ExprStmt(Expr::Class(c)) if c.is_declaration => {
@@ -1577,13 +1580,30 @@ impl Compiler {
                     let lex = Self::collect_switch_lexical_names(cases);
                     self.emit_lexical_hoist(&lex)?;
                 }
-                // Hoist function declarations from all case bodies after the
-                // switch lexical names exist, so they stay scoped to the
-                // CaseBlock instead of leaking into the outer variable env.
-                for case in cases.iter() {
-                    for s in &case.body {
-                        if matches!(&s.node, StmtNode::FunctionDecl(_)) {
-                            self.compile_stmt(s)?;
+                // Annex B allows duplicate ordinary functions in a sloppy
+                // CaseBlock. BlockDeclarationInstantiation processes them in
+                // source order, so only the final function object is observable.
+                let mut last_function_declarations = std::collections::HashMap::new();
+                for (case_index, case) in cases.iter().enumerate() {
+                    for (statement_index, statement) in case.body.iter().enumerate() {
+                        if let StmtNode::FunctionDecl(function) = &statement.node {
+                            if let Some(name) = &function.name {
+                                last_function_declarations
+                                    .insert(name.clone(), (case_index, statement_index));
+                            }
+                        }
+                    }
+                }
+                for (case_index, case) in cases.iter().enumerate() {
+                    for (statement_index, statement) in case.body.iter().enumerate() {
+                        if let StmtNode::FunctionDecl(function) = &statement.node {
+                            let is_last = function.name.as_ref().is_some_and(|name| {
+                                last_function_declarations.get(name)
+                                    == Some(&(case_index, statement_index))
+                            });
+                            if is_last {
+                                self.compile_stmt(statement)?;
+                            }
                         }
                     }
                 }
