@@ -21,6 +21,15 @@ live metadata and requires the complete focused result. On pinned Test262
 `language/expressions/compound-assignment` boundary moves from **663/0/1** to
 **664/0/0**.
 
+Implementation commit `8870346` passes ordinary CI `30670755996` (**3/3**)
+and full matrix `30670755993` (**45/45**), including the new live-metadata and
+focused-result gates. Against baseline `30666470497`, **31/32** result
+artifacts are byte-identical; only language/types changes from **112/0/1** to
+**113/0/0**. Aggregate is **33,102 pass / 4,342 fail / 11,022 skip / 3 timeout
+/ 0 error** over 48,469 files and 37,444 completed pass/fail executions. A
+basename-NUL/content ordered SHA-256 of the 32 result files is
+`29c6d1925c7b420d829aa9a67eae71a16d7c78d168cd449635acff4c744ca39f`.
+
 ```text
 [Decision Log]
 - 목적과 의도: 구현 완료된 primitive-base GetValue의 마지막 Symbol 형제를 정확히 편입해 Reference/with/compound 마일스톤의 잔여 skip을 제거한다.

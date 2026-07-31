@@ -13,7 +13,11 @@
   future-sibling rejection, and the complete focused result. On pinned Test262,
   `language/types/reference` moves from **28/0/1** to **29/0/0**, and the
   combined Reference/with/compound-assignment boundary moves from
-  **663/0/1** to **664/0/0**.
+  **663/0/1** to **664/0/0**. Commit `8870346` passes ordinary CI
+  `30670755996` (**3/3**) and full matrix `30670755993` (**45/45**). Against
+  `30666470497`, **31/32** artifacts are identical; only language/types moves
+  by **+1 pass / -1 skip**. Aggregate is **33,102 pass / 4,342 fail / 11,022
+  skip / 3 timeout / 0 error**.
 
 - Completed the exact `Function.prototype.toString` Test262 boundary. A frozen
   35-file path-to-feature manifest admits already conforming async, generator,
