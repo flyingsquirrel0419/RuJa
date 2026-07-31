@@ -15,7 +15,12 @@
   foreign-Realm global identity. Pinned Test262 moves the exact 296-file
   block/switch cohort from **161/135** to **296/0** and full Annex B from
   **203/809/74** to **338/674/74**, while the supported subset remains
-  **12,765 pass / 0 fail / 7,674 skip / 20,439 total**.
+  **12,765 pass / 0 fail / 7,674 skip / 20,439 total**. Ordinary CI
+  `30606086847` passes 3/3 and full matrix `30606086846` passes 45/45.
+  Against `30602031022`, 31/32 result artifacts are byte-identical and only
+  Annex B changes by **+135 pass / -135 fail**. Aggregate is **32,517 pass /
+  4,891 fail / 11,058 skip / 3 timeout / 0 error**; filename-sorted result
+  content hash is `4b23c22b5bd00fdc1989c9ff1233ba3fde8fa425301b09941de94b732f500883`.
 
 - Implemented the Annex B host exception for duplicate lexical names in sloppy
   Blocks and CaseBlocks. Duplicate names are accepted only when every binding

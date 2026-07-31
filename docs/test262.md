@@ -18,6 +18,14 @@ to **296 pass / 0 fail**. Complete Annex B moves from **203 pass / 809 fail /
 expressions subset remains **12,765 pass / 0 fail / 7,674 skip / 20,439
 total**, proving no admission change or supported-language regression.
 
+Implementation commit `186b8c9` passes ordinary CI `30606086847` (**3/3**)
+and full matrix `30606086846` (**45/45**). Compared with duplicate-function
+baseline `30602031022`, **31/32** Test262 result artifacts are byte-identical;
+Annex B is the only changed result. The aggregate is **32,517 pass / 4,891
+fail / 11,058 skip / 3 timeout / 0 error** over 48,469 files and 37,408
+executed files. Filename-sorted result content hashes to
+`4b23c22b5bd00fdc1989c9ff1233ba3fde8fa425301b09941de94b732f500883`.
+
 ```text
 [Decision Log]
 - 목적과 의도: Test262 admission을 넓히지 않고 Annex B.3.2의 실제 Function, Global, Eval semantics로 135개 실패를 제거한다.
