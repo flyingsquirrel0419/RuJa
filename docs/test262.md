@@ -14,6 +14,14 @@ fail**. Full Annex B moves from **338/674/74** to **818/194/74**, exactly
 **+480 pass / -480 fail**. The supported statements and expressions subset
 remains **12,765 pass / 0 fail / 7,674 skip / 20,439 total**.
 
+Implementation commit `8535375` passes ordinary CI `30610833014` (**3/3**)
+and full matrix `30610833027` (**45/45**). Compared with B.3.2 baseline
+`30606086846`, **31/32** Test262 result artifacts are byte-identical and Annex
+B is the only changed result. The aggregate is **32,997 pass / 4,411 fail /
+11,058 skip / 3 timeout / 0 error** over 48,469 files and 37,408 executed
+files. Filename-sorted result content hashes to
+`0e8c0315babb6e80150923cc8643717b3d07801b22996243aca3e4fa10972ea0`.
+
 ```text
 [Decision Log]
 - 목적과 의도: admission 변경 없이 Annex B.3.3의 네 if-clause production과 실제 declaration instantiation을 구현한다.

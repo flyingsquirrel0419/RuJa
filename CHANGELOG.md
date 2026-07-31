@@ -15,7 +15,12 @@
   function compilation. On pinned Test262, the exact 480-file B.3.3 cohort
   moves from **0/480** to **480/0** and full Annex B from **338/674/74** to
   **818/194/74**. The supported statements/expressions subset remains
-  **12,765 pass / 0 fail / 7,674 skip / 20,439 total**.
+  **12,765 pass / 0 fail / 7,674 skip / 20,439 total**. Ordinary CI
+  `30610833014` passes 3/3 and full matrix `30610833027` passes 45/45. Against
+  `30606086846`, 31/32 result artifacts are byte-identical and only Annex B
+  changes by **+480 pass / -480 fail**. Aggregate is **32,997 pass / 4,411
+  fail / 11,058 skip / 3 timeout / 0 error**; filename-sorted result content
+  hash is `0e8c0315babb6e80150923cc8643717b3d07801b22996243aca3e4fa10972ea0`.
 
 - Implemented Annex B.3.2 block-level function outer-variable semantics for
   Script, FunctionBody, direct eval, indirect eval, and created Realms. Block
