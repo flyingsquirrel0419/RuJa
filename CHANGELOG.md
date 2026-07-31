@@ -17,6 +17,10 @@
   for the direct AsyncIteratorClose files, **23/0/1,211** for all 1,234
   for-await files, **24/0** for Module for-await syntax, and **12,765/0/7,674**
   for the supported statements/expressions subset; no admission changed.
+  Implementation commit `b33df0d` passes ordinary CI `30638309771` (**3/3**)
+  and full matrix `30638309791` (**45/45**). All 32 Test262 result artifacts
+  are byte-identical to `30631392782`; aggregate remains **33,019 pass / 4,389
+  fail / 11,058 skip / 3 timeout / 0 error**.
 
 - Implemented Annex B.3.9 runtime errors for sloppy ordinary call assignment
   targets across assignment, arithmetic/bitwise compound assignment, update,

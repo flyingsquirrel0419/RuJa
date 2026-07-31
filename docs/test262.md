@@ -36,6 +36,14 @@ state, same/outer continue, next rejection, and forced GC. The supported
 statements/expressions subset remains **12,765 pass / 0 fail / 7,674 skip /
 20,439 total**.
 
+Implementation commit `b33df0d` passes ordinary CI `30638309771` (**3/3**)
+and full matrix `30638309791` (**45/45**). Against preceding full run
+`30631392782`, all **32/32** Test262 result artifacts are byte-identical.
+Aggregate remains **33,019 pass / 4,389 fail / 11,058 skip / 3 timeout / 0
+error** over 48,469 files and 37,408 completed pass/fail executions. The
+documented filename-sorted content hash therefore remains
+`5dfbb2cc10a220e0443a647dfa15ee03607f0e26f17e80696f46d7fd397cc1f4`.
+
 ```text
 [Decision Log]
 - 목적과 의도: admission 예외 없이 for-await 문맥 early error와 실제 AsyncIteratorClose Await/완료 우선순위를 구현한다.
