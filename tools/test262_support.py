@@ -10,6 +10,34 @@ from pathlib import Path
 ASYNC_COMPLETE = "Test262:AsyncTestComplete"
 ASYNC_FAILURE = "Test262:AsyncTestFailure:"
 ASYNC_PRINT_SHIM = "function print(message) { console.log(message); }"
+STRICT_PREFIX = '"use strict";'
+
+
+def execution_variants(meta):
+    """Return the file-level Test262 execution variants in required order."""
+    flags = meta.get("flags", [])
+    if "module" in flags:
+        return (("module", False),)
+    if "raw" in flags:
+        return (("raw", False),)
+    if "noStrict" in flags:
+        return (("sloppy", False),)
+    if "onlyStrict" in flags:
+        return (("strict", True),)
+    return (("sloppy", False), ("strict", True))
+
+
+def combine_variant_results(results):
+    """Collapse independently executed variants into one file-level result."""
+    precedence = {"pass": 0, "fail": 1, "timeout": 2, "error": 3}
+    status = max(results, key=lambda result: precedence[result[1]])[1]
+    diagnostics = []
+    for label, variant_status, diagnostic in results:
+        if variant_status == "pass":
+            continue
+        detail = diagnostic or variant_status
+        diagnostics.append(f"[{label}] {detail}")
+    return status, "\n".join(diagnostics)
 
 
 def append_async_harness(parts, harness, flags):

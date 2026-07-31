@@ -1,49 +1,14 @@
 #!/usr/bin/env python3
 """Analyze test262 failures: dump failing test paths grouped by directory."""
-import os, re, subprocess, sys, json
-from pathlib import Path
+import json
+import sys
 from collections import defaultdict
+from pathlib import Path
 
-# Reuse runner functions
+# Reuse the analyzer's canonical execution path so variants, modules, and async
+# completion are classified identically in both reports.
 sys.path.insert(0, str(Path(__file__).parent))
-from test262_runner import (
-    RUJA,
-    TEST262,
-    build_source,
-    should_skip,
-    test_timeout_seconds,
-)
-
-def run_test_capture(path):
-    full, meta = build_source(path)
-    if should_skip(meta, path):
-        return 'skip', ''
-    try:
-        import tempfile
-        with tempfile.NamedTemporaryFile('w', suffix='.js', delete=False) as tf:
-            tf.write(full)
-            tmpname = tf.name
-        try:
-            r = subprocess.run(
-                [RUJA, tmpname],
-                capture_output=True,
-                text=True,
-                timeout=test_timeout_seconds(path),
-            )
-        finally:
-            os.unlink(tmpname)
-        out = (r.stderr + r.stdout).strip()
-        neg = meta.get('negative')
-        if neg:
-            want = neg.get('type', '')
-            if want and want in out:
-                return 'pass', out
-            return 'fail', out
-        return ('pass' if (r.returncode == 0 and not out) else 'fail'), out
-    except subprocess.TimeoutExpired:
-        return 'timeout', ''
-    except Exception as e:
-        return 'error', str(e)
+from test262_analyze import TEST262, run_test as run_test_capture
 
 def main():
     dirs = sys.argv[1:] if len(sys.argv) > 1 else ['language/statements', 'language/expressions']
@@ -62,7 +27,7 @@ def main():
             result, out = run_test_capture(f)
             if result in ('fail', 'timeout', 'error'):
                 rel = str(f.relative_to(Path(TEST262) / 'test'))
-                failures.append((rel, result, out[:500]))
+                failures.append((rel, result, out[:2000]))
 
     by_dir = defaultdict(list)
     for rel, result, out in failures:

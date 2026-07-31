@@ -4,6 +4,17 @@
 
 ### Changed
 
+- Corrected Test262 execution semantics so files without a strictness flag run
+  once in non-strict mode and once in strict mode, while `onlyStrict`,
+  `noStrict`, `module`, and `raw` retain their required single execution.
+  Variants run in independent RuJa processes with independent timeout,
+  negative, and async classification, then collapse into one file-level result
+  with variant-labeled analyzer diagnostics. The analyzer now retains
+  timeout/error files and
+  the legacy failure report delegates to the canonical analyzer path. This
+  exposed 89 previously hidden strict failures: pinned supported-subset truth is
+  now **12,676 pass / 89 fail / 7,674 skip / 20,439 total (99.3% of run)**.
+
 - Admitted the final four implemented class built-in subclass tests for
   `SharedArrayBuffer` and `WeakRef` through one exact path-to-feature map shared
   by the Test262 runner and analyzer. The map covers declaration and expression

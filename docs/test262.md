@@ -80,6 +80,33 @@ tests inject a host `print` shim and test262's `doneprintHandle.js`, then requir
 exactly one `Test262:AsyncTestComplete` marker while preserving failure,
 missing-marker, process-error, and timeout outcomes.
 
+Files without `onlyStrict`, `noStrict`, `module`, or `raw` are executed in two
+fresh RuJa processes: non-strict first and strict second. `onlyStrict` runs only
+the strict variant, `noStrict` only the non-strict variant, modules once using
+module semantics, and `raw` files once without source or harness modification.
+Each variant receives the full file timeout and must independently satisfy
+normal, negative, or async completion rules. Reports still count Test262 files,
+not child processes: a file passes only when every required variant passes.
+Analyzer diagnostics identify the failing variant. Mixed results use
+`error > timeout > fail > pass` so infrastructure failures are not hidden.
+
+[Decision Log]
+- 목적과 의도: Test262의 strict-mode execution contract를 지켜, non-strict
+  결과만으로 지원 여부를 과대평가하지 않는다.
+- 기존 구현 및 제약 조건: 기본 파일을 한 번만 실행했고 `onlyStrict`에만
+  directive를 붙였다. CI와 공개 수치는 파일 단위 `RATE=` 형식에 의존한다.
+- 검토한 주요 대안: variant를 별도 테스트로 세어 총수를 늘리는 방식,
+  strict 전용 진단 실행만 추가하는 방식, 파일 단위 이중 실행을 검토했다.
+- 선택한 방식: 기본 파일의 두 variant를 독립 프로세스로 실행하고 결과를
+  하나의 파일 결과로 병합한다. runner와 analyzer는 공유 variant 및 집계
+  규칙을 사용한다.
+- 다른 대안 대신 이 방식을 선택한 이유: Test262가 요구하는 fresh execution을
+  지키면서 기존 CI의 파일 수 계약과 추세 비교 가능성을 보존한다.
+- 장점, 단점 및 영향: 숨겨진 strict 결함이 실제 실패로 드러나며 진단 출처가
+  명확해진다. 기본 파일의 프로세스 비용은 최대 두 배이고, 현재 단일 소스
+  조립에서는 strict directive가 harness 앞에 위치하므로 harness도 strict로
+  파싱된다. harness를 별도 Realm 단계로 평가하는 개선은 후속 과제다.
+
 RuJa does **not** claim full ES conformance. Instead, it targets a
 deliberately scoped subset of ES5.1 + selected ES2015+ features (see
 [Supported subset](#supported-subset) below). Tests requiring unsupported
@@ -96,12 +123,12 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 66.8% of all matrix files; 86.6% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (12765 pass / 0 fail / 7674 skip / 20439 total on the current pinned checkout) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | Pre-dual-variant baseline: 66.8% of all matrix files; 86.6% of executed files. Refresh pending from this change's full CI. | `test262-full` CI workflow job summary |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 99.3% (12676 pass / 89 fail / 7674 skip / 20439 total on pinned `9e61c12`) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
-supported-subset rate (100.0%).** It reflects the portion of the spec
+supported-subset rate (99.3%).** It reflects the portion of the spec
 RuJa actively targets. The full-suite number is published for
 transparency but is dominated by unsupported features. The CI-subset
 number is a narrow regression gate, not a conformance claim.

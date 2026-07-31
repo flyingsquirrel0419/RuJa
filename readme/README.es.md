@@ -38,8 +38,8 @@ ES5.1 + clases, async/await, generadores, Promesas, desestructuración,
 getters/setters, plantillas etiquetadas, Symbols, Map/Set, WeakMap/WeakSet,
 Reflect, Proxy, Uint8Array, BigInt, Date, expresiones regulares y más.
 Consulta [limitaciones](../docs/limitations.md) para la lista completa de
-**Tasa de aprobación del subconjunto soportado: 86.9%** (`language/statements`
-+ `language/expressions`, pruebas de funciones no soportadas excluidas).
+**Tasa de aprobación del subconjunto soportado: 99.3%** (12.676 aprobadas /
+89 fallidas; 7.674 pruebas de funciones no soportadas excluidas).
 Véase [conformidad test262](../docs/test262.md) para la diferencia con la suite completa.
 características soportadas y no soportadas intencionalmente.
 

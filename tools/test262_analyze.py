@@ -197,7 +197,13 @@ try:
         LANGUAGE_EARLY_ERROR_MODULE_FILES,
     )
     from test262_reference_primitive_admission import REFERENCE_PRIMITIVE_FILES
-    from test262_support import append_async_harness, execute_source
+    from test262_support import (
+        STRICT_PREFIX,
+        append_async_harness,
+        combine_variant_results,
+        execute_source,
+        execution_variants,
+    )
     from test262_dynamic_import_admission import DYNAMIC_IMPORT_FILES
     from test262_static_import_attributes_admission import (
         STATIC_IMPORT_ATTRIBUTES_FILES,
@@ -416,7 +422,13 @@ except ModuleNotFoundError:
         LANGUAGE_EARLY_ERROR_MODULE_FILES,
     )
     from tools.test262_reference_primitive_admission import REFERENCE_PRIMITIVE_FILES
-    from tools.test262_support import append_async_harness, execute_source
+    from tools.test262_support import (
+        STRICT_PREFIX,
+        append_async_harness,
+        combine_variant_results,
+        execute_source,
+        execution_variants,
+    )
     from tools.test262_dynamic_import_admission import DYNAMIC_IMPORT_FILES
     from tools.test262_static_import_attributes_admission import (
         STATIC_IMPORT_ATTRIBUTES_FILES,
@@ -3912,17 +3924,17 @@ def should_skip(meta, path=None):
 
 BASE_HARNESS = ['sta.js', 'assert.js']
 
-def build_source(path):
-    src = Path(path).read_text()
-    meta = parse_meta(src)
+def assemble_source(src, meta, strict=None):
+    """Combine one parsed test with its harness for one execution variant."""
     flags = meta.get('flags', [])
     if 'raw' in flags:
-        return src, meta
+        return src
     parts = []
-    # onlyStrict must be a directive prologue before any harness code, matching
-    # test262_runner.py. Otherwise strict-mode negative tests are misbucketed.
-    if 'onlyStrict' in flags:
-        parts.append("'use strict';")
+    if strict is None:
+        strict = 'onlyStrict' in flags
+    # The directive must precede harness code so it governs the complete script.
+    if strict:
+        parts.append(STRICT_PREFIX)
     for inc in BASE_HARNESS:
         p = HARNESS / inc
         if p.exists():
@@ -3933,20 +3945,31 @@ def build_source(path):
         if p.exists():
             parts.append(p.read_text())
     parts.append(src)
-    return "\n".join(parts), meta
+    return "\n".join(parts)
+
+def build_source(path, strict=None):
+    src = Path(path).read_text()
+    meta = parse_meta(src)
+    return assemble_source(src, meta, strict=strict), meta
 
 def run_test(path):
     """Return (status, err). For negative tests a thrown error of the
     expected type counts as pass. RuJa reports errors via stderr/stdout and
     may exit 0 or nonzero, so we judge by error text, not exit code."""
-    full, meta = build_source(path)
+    src = Path(path).read_text()
+    meta = parse_meta(src)
     if should_skip(meta, path):
         return 'skip', ''
     timeout = test_timeout_seconds(path)
     source_path = path if "module" in meta.get("flags", []) or dynamic_import_path(path) else None
-    return execute_source(
-        full, meta, RUJA, timeout=timeout, source_path=source_path
-    )
+    results = []
+    for label, strict in execution_variants(meta):
+        full = assemble_source(src, meta, strict=strict)
+        status, diagnostic = execute_source(
+            full, meta, RUJA, timeout=timeout, source_path=source_path
+        )
+        results.append((label, status, diagnostic))
+    return combine_variant_results(results)
 
 def discover_test_files(base):
     """Return one requested test file or every JavaScript file below a directory."""
@@ -3980,7 +4003,7 @@ def main():
             if '_FIXTURE' in f.name:
                 continue
             status, err = run_test(f)
-            if status == 'fail':
+            if status in ('fail', 'timeout', 'error'):
                 b = bucket(err)
                 fails[b].append((str(f.relative_to(Path(TEST262) / 'test')), err))
                 counts[b] += 1
@@ -3994,7 +4017,8 @@ def main():
         print(f"\n--- {b} ({len(items)}) ---")
         for p, e in items[:3]:
             print(f"  {p}")
-            print(f"      {e[:200]}")
+            for line in e.splitlines() or [""]:
+                print(f"      {line[:200]}")
 
     out = '/tmp/ruja_test262_fails.json'
     with open(out, 'w') as f:

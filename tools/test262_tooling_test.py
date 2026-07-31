@@ -3,11 +3,12 @@
 
 import io
 import subprocess
+import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import mock_open, patch
 
 import test262_analyze
 import test262_runner
@@ -277,7 +278,14 @@ from test262_module_admission import (
     MODULE_TLA_RUNTIME_FILES,
     MODULE_TLA_SYNTAX_FILES,
 )
-from test262_support import ASYNC_COMPLETE, ASYNC_PRINT_SHIM, execute_source
+from test262_support import (
+    ASYNC_COMPLETE,
+    ASYNC_PRINT_SHIM,
+    STRICT_PREFIX,
+    combine_variant_results,
+    execute_source,
+    execution_variants,
+)
 
 
 class AsyncResultTests(unittest.TestCase):
@@ -465,7 +473,7 @@ class HarnessAssemblyTests(unittest.TestCase):
                 finally:
                     tool.HARNESS = original
                 self.assertIn("async", meta["flags"])
-                self.assertTrue(source.startswith("'use strict';"))
+                self.assertTrue(source.startswith(STRICT_PREFIX))
                 positions = [
                     source.index("/* STA HARNESS */"),
                     source.index("/* ASSERT HARNESS */"),
@@ -474,6 +482,183 @@ class HarnessAssemblyTests(unittest.TestCase):
                     source.index("$DONE();"),
                 ]
                 self.assertEqual(positions, sorted(positions))
+
+
+class ExecutionVariantTests(unittest.TestCase):
+    def test_flags_select_the_required_test262_variants(self):
+        cases = [
+            ({}, (("sloppy", False), ("strict", True))),
+            ({"flags": ["onlyStrict"]}, (("strict", True),)),
+            ({"flags": ["noStrict"]}, (("sloppy", False),)),
+            ({"flags": ["raw"]}, (("raw", False),)),
+            ({"flags": ["module"]}, (("module", False),)),
+        ]
+        for meta, expected in cases:
+            with self.subTest(meta=meta):
+                self.assertEqual(execution_variants(meta), expected)
+
+    def test_variant_results_preserve_file_count_and_label_failures(self):
+        self.assertEqual(
+            combine_variant_results(
+                [("sloppy", "pass", ""), ("strict", "fail", "SyntaxError")]
+            ),
+            ("fail", "[strict] SyntaxError"),
+        )
+        status, diagnostic = combine_variant_results(
+            [("sloppy", "error", "spawn failed"), ("strict", "timeout", "")]
+        )
+        self.assertEqual(status, "error")
+        self.assertEqual(diagnostic, "[sloppy] spawn failed\n[strict] timeout")
+
+    def test_all_file_status_precedence_combinations(self):
+        precedence = {"pass": 0, "fail": 1, "timeout": 2, "error": 3}
+        for left in precedence:
+            for right in precedence:
+                with self.subTest(left=left, right=right):
+                    status, _ = combine_variant_results(
+                        [("sloppy", left, left), ("strict", right, right)]
+                    )
+                    expected = max((left, right), key=precedence.get)
+                    self.assertEqual(status, expected)
+
+    def test_runner_and_analyzer_execute_default_tests_twice(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            test = Path(temp_dir) / "default.js"
+            test.write_text("/*---\n---*/\nvar value = 1;\n")
+            for tool in (test262_runner, test262_analyze):
+                sources = []
+
+                def execute(source, *args, **kwargs):
+                    sources.append(source)
+                    return "pass", ""
+
+                with (
+                    patch.object(tool, "should_skip", return_value=False),
+                    patch.object(tool, "execute_source", side_effect=execute),
+                ):
+                    result = tool.run_test(test)
+                expected = "pass" if tool is test262_runner else ("pass", "")
+                self.assertEqual(result, expected)
+                self.assertEqual(len(sources), 2)
+                self.assertFalse(sources[0].startswith(STRICT_PREFIX))
+                self.assertTrue(sources[1].startswith(STRICT_PREFIX))
+
+    def test_each_default_variant_receives_the_full_timeout(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            test = Path(temp_dir) / "default.js"
+            test.write_text("/*---\n---*/\n1;\n")
+            for tool in (test262_runner, test262_analyze):
+                with (
+                    patch.object(tool, "should_skip", return_value=False),
+                    patch.object(tool, "test_timeout_seconds", return_value=37),
+                    patch.object(
+                        tool, "execute_source", return_value=("pass", "")
+                    ) as execute,
+                ):
+                    tool.run_test(test)
+                self.assertEqual(execute.call_count, 2)
+                self.assertEqual(
+                    [call.kwargs["timeout"] for call in execute.call_args_list],
+                    [37, 37],
+                )
+
+    def test_single_variant_flags_execute_once(self):
+        cases = [
+            ("onlyStrict", True),
+            ("noStrict", False),
+            ("raw", False),
+            ("module", False),
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            for flag, strict in cases:
+                test = Path(temp_dir) / f"{flag}.js"
+                test.write_text(f"/*---\nflags: [{flag}]\n---*/\nvar value = 1;\n")
+                for tool in (test262_runner, test262_analyze):
+                    with (
+                        self.subTest(tool=tool.__name__, flag=flag),
+                        patch.object(tool, "should_skip", return_value=False),
+                        patch.object(
+                            tool, "execute_source", return_value=("pass", "")
+                        ) as execute,
+                    ):
+                        tool.run_test(test)
+                    self.assertEqual(execute.call_count, 1)
+                    source = execute.call_args.args[0]
+                    self.assertEqual(source.startswith(STRICT_PREFIX), strict)
+                    if flag == "raw":
+                        self.assertEqual(source, test.read_text())
+
+    def test_module_raw_is_unmodified_and_runs_as_a_module_once(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            test = Path(temp_dir) / "module-raw.js"
+            test.write_text("/*---\nflags: [module, raw]\n---*/\nexport {};\n")
+            for tool in (test262_runner, test262_analyze):
+                with (
+                    patch.object(tool, "should_skip", return_value=False),
+                    patch.object(
+                        tool, "execute_source", return_value=("pass", "")
+                    ) as execute,
+                ):
+                    tool.run_test(test)
+                self.assertEqual(execute.call_count, 1)
+                self.assertEqual(execute.call_args.args[0], test.read_text())
+                self.assertEqual(execute.call_args.kwargs["source_path"], test)
+
+    def test_runner_main_counts_a_dual_execution_as_one_file(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            test_dir = root / "test/language/example"
+            test_dir.mkdir(parents=True)
+            test = test_dir / "default.js"
+            test.write_text("/*---\n---*/\n1;\n")
+            output = io.StringIO()
+            with (
+                patch.object(test262_runner, "TEST262", str(root)),
+                patch.object(test262_runner, "run_test", return_value="pass"),
+                patch.object(sys, "argv", ["test262_runner.py", "language/example"]),
+                redirect_stdout(output),
+            ):
+                test262_runner.main()
+            self.assertIn("PASS=1 FAIL=0 SKIP=0 TOTAL=1 RAN=1", output.getvalue())
+
+    def test_analyzer_main_retains_timeout_and_error_files(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            test_dir = root / "test/language/example"
+            test_dir.mkdir(parents=True)
+            timeout_test = test_dir / "timeout.js"
+            error_test = test_dir / "error.js"
+            timeout_test.write_text("/*---\n---*/\n1;\n")
+            error_test.write_text("/*---\n---*/\n1;\n")
+            dumped = {}
+
+            def capture_dump(value, *args, **kwargs):
+                dumped.update(value)
+
+            with (
+                patch.object(test262_analyze, "TEST262", str(root)),
+                patch.object(
+                    test262_analyze,
+                    "run_test",
+                    side_effect=[
+                        ("timeout", "[strict] timeout"),
+                        ("error", "[sloppy] spawn failed"),
+                    ],
+                ),
+                patch.object(
+                    sys, "argv", ["test262_analyze.py", "language/example"]
+                ),
+                patch("builtins.open", mock_open()),
+                patch.object(test262_analyze.json, "dump", side_effect=capture_dump),
+                redirect_stdout(io.StringIO()),
+            ):
+                test262_analyze.main()
+            retained = [item for values in dumped.values() for item in values]
+            self.assertEqual(len(retained), 2)
+            self.assertEqual(
+                {Path(path).name for path, _ in retained},
+                {"timeout.js", "error.js"},
+            )
 
 
 class AsyncAdmissionTests(unittest.TestCase):
@@ -7635,22 +7820,20 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
                     tool.TEST262 = original_root
 
     def test_legacy_failure_analyzer_reuses_runner_timeout_policy(self):
-        path = Path("/tmp/test262/test/built-ins/RegExp/slow.js")
-        completed = subprocess.CompletedProcess(
-            [str(test262_runner.RUJA), "temporary.js"],
-            0,
-            stdout="",
-            stderr="",
-        )
-        with (
-            patch.object(analyze_failures, "build_source", return_value=("1;", {})),
-            patch.object(analyze_failures, "should_skip", return_value=False),
-            patch.object(analyze_failures, "test_timeout_seconds", return_value=60),
-            patch.object(analyze_failures.subprocess, "run", return_value=completed) as run,
-        ):
-            status, output = analyze_failures.run_test_capture(path)
+        self.assertIs(analyze_failures.run_test_capture, test262_analyze.run_test)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "slow.js"
+            path.write_text("/*---\nflags: [noStrict]\n---*/\n1;\n")
+            with (
+                patch.object(test262_analyze, "should_skip", return_value=False),
+                patch.object(test262_analyze, "test_timeout_seconds", return_value=60),
+                patch.object(
+                    test262_analyze, "execute_source", return_value=("pass", "")
+                ) as execute,
+            ):
+                status, output = analyze_failures.run_test_capture(path)
         self.assertEqual((status, output), ("pass", ""))
-        self.assertEqual(run.call_args.kwargs["timeout"], 60)
+        self.assertEqual(execute.call_args.kwargs["timeout"], 60)
 
     def test_private_brand_realm_admission_is_exact(self):
         with tempfile.TemporaryDirectory() as temp_dir:

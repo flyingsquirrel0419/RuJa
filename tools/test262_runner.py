@@ -201,7 +201,13 @@ try:
         LANGUAGE_EARLY_ERROR_MODULE_FILES,
     )
     from test262_reference_primitive_admission import REFERENCE_PRIMITIVE_FILES
-    from test262_support import append_async_harness, execute_source
+    from test262_support import (
+        STRICT_PREFIX,
+        append_async_harness,
+        combine_variant_results,
+        execute_source,
+        execution_variants,
+    )
     from test262_dynamic_import_admission import DYNAMIC_IMPORT_FILES
     from test262_static_import_attributes_admission import (
         STATIC_IMPORT_ATTRIBUTES_FILES,
@@ -420,7 +426,13 @@ except ModuleNotFoundError:
         LANGUAGE_EARLY_ERROR_MODULE_FILES,
     )
     from tools.test262_reference_primitive_admission import REFERENCE_PRIMITIVE_FILES
-    from tools.test262_support import append_async_harness, execute_source
+    from tools.test262_support import (
+        STRICT_PREFIX,
+        append_async_harness,
+        combine_variant_results,
+        execute_source,
+        execution_variants,
+    )
     from tools.test262_dynamic_import_admission import DYNAMIC_IMPORT_FILES
     from tools.test262_static_import_attributes_admission import (
         STATIC_IMPORT_ATTRIBUTES_FILES,
@@ -3913,18 +3925,17 @@ def should_skip(meta, path=None):
 # Harness files always loaded (the minimum test262 requires).
 BASE_HARNESS = ['sta.js', 'assert.js']
 
-def build_source(path):
-    """Build the full source: harness files + the test."""
-    src = Path(path).read_text()
-    meta = parse_meta(src)
+def assemble_source(src, meta, strict=None):
+    """Combine one parsed test with its harness for one execution variant."""
     flags = meta.get('flags', [])
     if 'raw' in flags:
-        return src, meta
+        return src
     parts = []
-    # onlyStrict: prepend 'use strict' at the very start so the parser
-    # recognizes it as a directive prologue (before any harness code).
-    if 'onlyStrict' in flags:
-        parts.append("'use strict';")
+    if strict is None:
+        strict = 'onlyStrict' in flags
+    # The directive must precede harness code so it governs the complete script.
+    if strict:
+        parts.append(STRICT_PREFIX)
     # Base harness (sta.js defines Test262Error; assert.js needs it).
     for inc in BASE_HARNESS:
         p = HARNESS / inc
@@ -3937,17 +3948,29 @@ def build_source(path):
         if p.exists():
             parts.append(p.read_text())
     parts.append(src)
-    return "\n".join(parts), meta
+    return "\n".join(parts)
+
+def build_source(path, strict=None):
+    """Build the full source: harness files + the test."""
+    src = Path(path).read_text()
+    meta = parse_meta(src)
+    return assemble_source(src, meta, strict=strict), meta
 
 def run_test(path):
-    full, meta = build_source(path)
+    src = Path(path).read_text()
+    meta = parse_meta(src)
     if should_skip(meta, path):
         return 'skip'
     timeout = test_timeout_seconds(path)
     source_path = path if "module" in meta.get("flags", []) or dynamic_import_path(path) else None
-    status, _ = execute_source(
-        full, meta, RUJA, timeout=timeout, source_path=source_path
-    )
+    results = []
+    for label, strict in execution_variants(meta):
+        full = assemble_source(src, meta, strict=strict)
+        variant_status, diagnostic = execute_source(
+            full, meta, RUJA, timeout=timeout, source_path=source_path
+        )
+        results.append((label, variant_status, diagnostic))
+    status, _ = combine_variant_results(results)
     return status
 
 def discover_test_files(base):
