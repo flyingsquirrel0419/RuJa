@@ -1,5 +1,43 @@
 # test262 conformance
 
+## Legacy RegExp compile
+
+Every Realm installs a fresh non-constructable `RegExp.prototype.compile`
+function with the specified name, length, and property descriptor. RegExp
+allocation records the creating Realm and enables legacy behavior only when
+`NewTarget` is that Realm's immutable intrinsic `%RegExp%`; literals and
+internal `RegExpCreate` paths are direct instances. A borrowed compile method
+therefore rejects cross-Realm and proper-subclass receivers before observing
+the pattern or flags.
+
+After the brand checks, a RegExp pattern is snapshotted from its internal
+source and flags without reading observable properties. Other patterns and
+flags follow ordinary `ToString` order. The existing `RegExpInitialize` path
+validates before changing matcher slots, then performs strict `lastIndex = 0`.
+Consequently invalid syntax leaves the receiver untouched, while an immutable
+`lastIndex` reports `TypeError` after committing the new source, flags, and
+matcher as required by the proposal.
+
+On pinned Test262 `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the 23
+compile files plus two dependent `@@split` files and the flags-order file move
+from **1 pass / 21 fail / 4 skip** to **26/0/0**. The four-file exact admission
+owns three Symbol abrupt tests and one duplicate named-group syntax test. The
+complete `annexB/built-ins/RegExp` subtree moves from contention-normalized
+**9 pass / 39 fail / 14 skip** to **34 pass / 18 fail / 10 skip**, with 0
+timeout/error. Complete Annex B moves from **938/90/58** to **963/69/54**.
+The remaining 18 failures are the separate legacy constructor static-accessor/
+state unit.
+
+```text
+[Decision Log]
+- 목적과 의도: Stage 3 legacy-regexp proposal의 compile brand, Realm, reinitialization semantics를 기존 RegExp runtime에 통합한다.
+- 기존 구현 및 제약 조건: compile method와 instance Realm/direct-constructor 표지가 없었다. regexp_initialize는 validation, slot commit, strict lastIndex 순서를 이미 소유하고 created Realm마다 immutable RegExp intrinsic registry가 존재한다.
+- 검토한 주요 대안: matcher slot만 검사하는 Annex B 최소 구현, prototype-chain으로 subclass 판별, raw Realm 숫자 저장, legacy static state까지 한 번에 구현, 또는 traced Realm/direct-instance slots와 기존 initializer 재사용.
+- 선택한 방식: RegExpAlloc이 traced creating Realm과 LegacyFeaturesEnabled Boolean을 private slots에 저장한다. Realm-local compile이 receiver metadata를 먼저 검증하고 pattern slots를 snapshot한 뒤 regexp_initialize를 호출한다.
+- 다른 대안 대신 이 방식을 선택한 이유: matcher-only 구현은 proposal의 subclass/cross-Realm 제한을 깨고 prototype은 mutable하다. raw ID는 Realm 수명을 보존하지 못하며 initializer 복제는 abrupt/partial-commit 순서를 drift시킨다. static accessors는 successful exec, invalidation, optimized global match까지 건드리는 별도 단위다.
+- 장점, 단점 및 영향: compile, @@split recompilation, flags ordering이 한 경로에서 닫히고 foreign TypeError Realm과 RegExp private slot만 남은 Realm의 GC 생존/회수를 직접 검증한다. 모든 RegExp instance의 private map에 두 entry가 추가된다. Legacy constructor statics 24개와 invalid control escapes는 후속 단위로 남는다.
+```
+
 ## Annex B String legacy methods
 
 RuJa installs the 13 `CreateHTML` String methods in the main Realm and every

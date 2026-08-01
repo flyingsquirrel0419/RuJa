@@ -32,6 +32,10 @@ from test262_annex_b_string_admission import (
     ANNEX_B_STRING_FEATURES,
     ANNEX_B_STRING_FILES,
 )
+from test262_regexp_compile_admission import (
+    REGEXP_COMPILE_FEATURES,
+    REGEXP_COMPILE_FILES,
+)
 from test262_generator_function_admission import (
     GENERATOR_FUNCTION_FEATURES,
     GENERATOR_FUNCTION_FILES,
@@ -2142,6 +2146,71 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                     self.assertFalse(tool.annex_b_string_path(invalid))
                     self.assertEqual(
                         tool.annex_b_string_features(invalid), frozenset()
+                    )
+            finally:
+                tool.TEST262 = original_root
+
+    def test_regexp_compile_manifest_is_exact_live_disjoint_and_shared(self):
+        manifest = Path(__file__).with_name(
+            "test262_regexp_compile_admission.txt"
+        )
+        entries = tuple(
+            line
+            for raw_line in manifest.read_text().splitlines()
+            if (line := raw_line.strip()) and not line.startswith("#")
+        )
+        self.assertEqual(len(entries), 4)
+        self.assertEqual(entries, tuple(sorted(entries)))
+        self.assertEqual(REGEXP_COMPILE_FILES, frozenset(entries))
+        self.assertEqual(frozenset(REGEXP_COMPILE_FEATURES), REGEXP_COMPILE_FILES)
+
+        for other_manifest in Path(__file__).parent.glob("test262_*_admission.txt"):
+            if other_manifest == manifest:
+                continue
+            other_entries = {
+                line
+                for raw_line in other_manifest.read_text().splitlines()
+                if (line := raw_line.strip()) and not line.startswith("#")
+            }
+            self.assertTrue(
+                REGEXP_COMPILE_FILES.isdisjoint(other_entries),
+                other_manifest.name,
+            )
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        try:
+            test_root_available = test_root.is_dir()
+        except OSError:
+            test_root_available = False
+        for tool in (test262_runner, test262_analyze):
+            original_root = tool.TEST262
+            try:
+                tool.TEST262 = str(test_root.parent)
+                for relative, features in REGEXP_COMPILE_FEATURES.items():
+                    path = test_root / relative
+                    self.assertTrue(tool.regexp_compile_path(path), relative)
+                    self.assertEqual(tool.regexp_compile_features(path), features)
+                    self.assertFalse(
+                        tool.should_skip({"features": sorted(features)}, path),
+                        relative,
+                    )
+                    if test_root_available:
+                        metadata = tool.parse_meta(path.read_text())
+                        self.assertEqual(
+                            frozenset(metadata.get("features", [])),
+                            features,
+                            relative,
+                        )
+                future = test_root / (
+                    "annexB/built-ins/RegExp/prototype/compile/future.js"
+                )
+                self.assertFalse(tool.regexp_compile_path(future))
+                self.assertEqual(tool.regexp_compile_features(future), frozenset())
+                self.assertTrue(tool.should_skip({"features": ["Symbol"]}, future))
+                for invalid in (None, object()):
+                    self.assertFalse(tool.regexp_compile_path(invalid))
+                    self.assertEqual(
+                        tool.regexp_compile_features(invalid), frozenset()
                     )
             finally:
                 tool.TEST262 = original_root

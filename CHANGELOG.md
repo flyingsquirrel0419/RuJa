@@ -4,6 +4,19 @@
 
 ### Changed
 
+- Implemented the Stage 3 legacy `RegExp.prototype.compile` boundary in every
+  Realm. RegExp instances now retain their creating Realm and whether they were
+  allocated directly by that Realm's intrinsic constructor. `compile` rejects
+  foreign-Realm and subclass receivers before argument coercion, snapshots
+  RegExp pattern slots without observable property reads, and reuses
+  `RegExpInitialize` so invalid input is atomic while a non-writable
+  `lastIndex` fails after the new matcher is committed. Four exact feature
+  admissions open Symbol and duplicate-name abrupt tests. The compile and
+  dependent split/flags scope moves from **1 pass / 21 fail / 4 skip** to
+  **26/0/0**; the complete Annex B RegExp subtree moves from normalized
+  **9/39/14** to **34/18/10**, and complete Annex B moves from
+  **938/90/58** to **963/69/54**, with no timeout/error.
+
 - Completed the Annex B String legacy-method cluster. All 13 CreateHTML
   methods now perform receiver coercion before optional attribute coercion,
   escape only attribute quotation marks, and exist as non-constructable

@@ -1,0 +1,4 @@
+annexB/built-ins/RegExp/prototype/compile/duplicate-named-capturing-groups-syntax.js
+annexB/built-ins/RegExp/prototype/compile/flags-to-string-err.js
+annexB/built-ins/RegExp/prototype/compile/pattern-to-string-err.js
+annexB/built-ins/RegExp/prototype/compile/this-not-object.js

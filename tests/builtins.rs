@@ -19688,6 +19688,104 @@ fn regex_literal_test() {
 }
 
 #[test]
+fn regexp_compile_reinitializes_only_direct_same_realm_instances() {
+    assert_eq!(
+        run(r#"
+            var descriptor = Object.getOwnPropertyDescriptor(
+              RegExp.prototype, 'compile'
+            );
+            var order = [];
+            var receiver = /initial/g;
+            receiver.lastIndex = 17;
+            var result = receiver.compile(
+              { toString() { order.push('pattern'); return 'next'; } },
+              { toString() { order.push('flags'); return 'im'; } }
+            );
+
+            var sourceGets = 0;
+            var flagsGets = 0;
+            var pattern = /copy/uy;
+            Object.defineProperty(pattern, 'source', {
+              get() { sourceGets += 1; throw new Error('unreachable'); }
+            });
+            Object.defineProperty(pattern, 'flags', {
+              get() { flagsGets += 1; throw new Error('unreachable'); }
+            });
+            receiver.compile(pattern);
+
+            var same = /self/gi;
+            same.lastIndex = 9;
+            same.compile(same);
+
+            var invalid = /old/g;
+            invalid.lastIndex = 23;
+            var invalidError;
+            try { invalid.compile('?'); } catch (error) { invalidError = error; }
+
+            var committed = /before/;
+            committed.lastIndex = 45;
+            Object.defineProperty(committed, 'lastIndex', { writable: false });
+            var commitError;
+            try { committed.compile(/updated/gi); }
+            catch (error) { commitError = error; }
+
+            var touched = false;
+            var brandError;
+            try {
+              RegExp.prototype.compile.call({}, {
+                toString() { touched = true; return 'x'; }
+              });
+            } catch (error) { brandError = error; }
+
+            class Derived extends RegExp {}
+            var derivedError;
+            try { new Derived('').compile('x'); }
+            catch (error) { derivedError = error; }
+
+            var other = $262.createRealm().global;
+            var foreign = other.eval('/foreign/g');
+            var localForeignError;
+            var remoteForeignError;
+            try { RegExp.prototype.compile.call(foreign, 'x'); }
+            catch (error) { localForeignError = error; }
+            try { other.RegExp.prototype.compile.call(/local/, 'x'); }
+            catch (error) { remoteForeignError = error; }
+            var foreignResult = foreign.compile('remote', 'i');
+
+            var constructError;
+            try { Reflect.construct(RegExp.prototype.compile, []); }
+            catch (error) { constructError = error; }
+
+            [
+              descriptor.writable && !descriptor.enumerable &&
+                descriptor.configurable,
+              RegExp.prototype.compile.name === 'compile' &&
+                RegExp.prototype.compile.length === 2,
+              constructError instanceof TypeError,
+              result === receiver && order.join('|') === 'pattern|flags',
+              receiver.source === 'copy' && receiver.flags === 'uy' &&
+                receiver.lastIndex === 0 && sourceGets === 0 && flagsGets === 0,
+              same.source === 'self' && same.flags === 'gi' &&
+                same.lastIndex === 0,
+              invalidError instanceof SyntaxError && invalid.source === 'old' &&
+                invalid.flags === 'g' && invalid.lastIndex === 23,
+              commitError instanceof TypeError && committed.source === 'updated' &&
+                committed.flags === 'gi' && committed.lastIndex === 45,
+              brandError instanceof TypeError && !touched,
+              derivedError instanceof TypeError,
+              localForeignError instanceof TypeError &&
+                !(localForeignError instanceof other.TypeError),
+              remoteForeignError instanceof other.TypeError &&
+                !(remoteForeignError instanceof TypeError),
+              foreignResult === foreign && foreign.source === 'remote' &&
+                foreign.flags === 'i'
+            ].every(Boolean);
+        "#),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn regexp_embedded_empty_classes_follow_ecmascript_semantics() {
     assert_eq!(
         run(r#"

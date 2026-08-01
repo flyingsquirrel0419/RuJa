@@ -483,6 +483,25 @@ operations.
 - 장점, 단점 및 영향: bootstrap rollback과 GC rooting은 기존 Realm transaction을 재사용하고 모든 Realm이 같은 legacy surface를 갖는다. 추가 native functions만큼 Realm 초기 allocation이 증가하며 IsHTMLDDA behavior는 이 구조가 아닌 host-exotic unit에 남는다.
 ```
 
+RegExp instances carry two proposal-owned hidden fields in addition to their
+matcher data: a traced creating Realm and a `LegacyFeaturesEnabled` Boolean.
+The Boolean is true only for literals, internal RegExp creation, and direct
+construction by the creating Realm's immutable intrinsic `%RegExp%`; proper
+subclasses retain ordinary RegExp behavior but cannot use legacy `compile`.
+Realm-local compile functions validate both fields before argument coercion,
+snapshot RegExp pattern slots, and delegate all validation and mutation to the
+existing `RegExpInitialize` implementation.
+
+```text
+[Decision Log]
+- 목적과 의도: Deprecated compile을 mutable prototype heuristics 없이 direct-instance와 method Realm에 정확히 제한한다.
+- 기존 구현 및 제약 조건: [[RegExpMatcher]] alone cannot distinguish direct construction, subclass construction, or foreign Realm. Realm registries are pruned after RealmRecord-owned roots disappear, so instance-owned Realm references must participate in GC tracing.
+- 검토한 주요 대안: prototype identity, constructor property reads, VM-global object-to-Realm side table, untraced GcIdx, or object private slots.
+- 선택한 방식: regexp_alloc stores Value::Object(Realm environment) and a Boolean in traced private slots; compile compares the active native Realm and reuses regexp_initialize.
+- 다른 대안 대신 이 방식을 선택한 이유: prototype and constructor are observable and mutable, side tables complicate reclamation, and raw indexes can be reused after GC. Private slots already trace Values on every ordinary object.
+- 장점, 단점 및 영향: forced GC, created Realms, borrowed methods, subclasses, and immutable lastIndex share one path. Two hidden map entries increase per-RegExp storage. Constructor static legacy state deliberately remains a later Function-private-slot unit.
+```
+
 Date also uses `InternalDeferredPrototype`, but it has a distinct call branch.
 Calls return a current date String without coercing supplied arguments or
 branding an object `this`. Construction copies a Date input or converts the

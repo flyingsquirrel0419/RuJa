@@ -5555,6 +5555,7 @@ fn make_regexp_constructor_in_env(vm: &mut Vm, env: GcIdx) -> error::Result<(GcI
             ("test", regexp_test, 1),
             ("exec", regexp_exec, 1),
             ("toString", regexp_to_string, 0),
+            ("compile", regexp_compile, 2),
         ],
         env,
         None,

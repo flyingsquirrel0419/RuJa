@@ -7876,6 +7876,83 @@ fn regexp_constructor_uses_immutable_foreign_realm_intrinsics() {
 }
 
 #[test]
+fn regexp_compile_roots_receiver_and_realm_across_observable_gc() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    let baseline_realms = vm.realm_globals.len();
+    vm.run(
+        r#"
+        globalThis.realmRootedRegExp = (function () {
+          var foreignGlobal = $262.createRealm().global;
+          var foreign = foreignGlobal.eval('/realm-root/');
+          Object.setPrototypeOf(foreign, null);
+          return foreign;
+        })();
+        "#,
+    )
+    .expect("foreign RegExp fixture should initialize");
+    let regexp_realm = vm
+        .realm_globals
+        .keys()
+        .copied()
+        .find(|realm| *realm != vm.global.0)
+        .expect("foreign RegExp should retain one secondary Realm");
+    vm.gc();
+    assert!(vm.heap.is_live(regexp_realm));
+    assert_eq!(vm.realm_globals.len(), baseline_realms + 1);
+    vm.run("delete globalThis.realmRootedRegExp;")
+        .expect("foreign RegExp root should be removable");
+    vm.gc();
+    assert!(!vm.heap.is_live(regexp_realm));
+    assert_eq!(vm.realm_globals.len(), baseline_realms);
+
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("GC hook should register");
+    let baseline_pins = vm.gc_pins.len();
+
+    assert_eq!(
+        vm.run(
+            r#"
+            var receiver = /before/g;
+            var order = [];
+            var result = receiver.compile(
+              { toString: function () {
+                  order.push('pattern');
+                  forceGc();
+                  return 'after';
+              } },
+              { toString: function () {
+                  order.push('flags');
+                  forceGc();
+                  return 'im';
+              } }
+            );
+            var other = $262.createRealm().global;
+            var foreign = other.eval('/foreign/');
+            forceGc();
+            var foreignResult = foreign.compile('kept', 'y');
+            var wrongRealm;
+            try { RegExp.prototype.compile.call(foreign, 'wrong'); }
+            catch (error) { wrongRealm = error; }
+            result === receiver && receiver.source === 'after' &&
+              receiver.flags === 'im' && order.join('|') === 'pattern|flags' &&
+              foreignResult === foreign && foreign.source === 'kept' &&
+              foreign.flags === 'y' && wrongRealm instanceof TypeError;
+            "#,
+        )
+        .expect("compile should survive coercion and Realm GC boundaries"),
+        Value::Bool(true)
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+}
+
+#[test]
 fn regexp_symbol_split_roots_every_observable_intermediate() {
     let mut vm = Vm::new().expect("VM should initialize");
     vm.register_fn(

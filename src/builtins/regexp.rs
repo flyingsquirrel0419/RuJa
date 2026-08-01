@@ -21,6 +21,8 @@ const REGEXP_DOT_ALL_SLOT: &str = "[[RegExpDotAll]]";
 const REGEXP_UNICODE_SLOT: &str = "[[RegExpUnicode]]";
 const REGEXP_UNICODE_SETS_SLOT: &str = "[[RegExpUnicodeSets]]";
 const REGEXP_STICKY_SLOT: &str = "[[RegExpSticky]]";
+const REGEXP_REALM_SLOT: &str = "[[RegExpRealm]]";
+const REGEXP_LEGACY_FEATURES_ENABLED_SLOT: &str = "[[LegacyFeaturesEnabled]]";
 
 fn regexp_internal_slot_key(name: &str) -> crate::value::PrivateSlotKey {
     crate::value::PrivateSlotKey::Internal(Arc::from(name))
@@ -38,6 +40,65 @@ fn has_regexp_matcher_slot(vm: &Vm, value: &Value) -> bool {
             .lock()
             .contains_key(&regexp_internal_slot_key(REGEXP_MATCHER_SLOT))
     })
+}
+
+fn regexp_legacy_metadata(vm: &Vm, value: &Value) -> Option<(GcIdx, bool)> {
+    let Value::Object(idx) = value else {
+        return None;
+    };
+    vm.heap.with_obj(idx.0, |object| {
+        let HeapObj::Object(data) = object else {
+            return None;
+        };
+        let fields = data.private_fields.lock();
+        if !fields.contains_key(&regexp_internal_slot_key(REGEXP_MATCHER_SLOT)) {
+            return None;
+        }
+        let realm = match fields.get(&regexp_internal_slot_key(REGEXP_REALM_SLOT)) {
+            Some(crate::value::PrivateSlot::Value(Value::Object(realm))) => *realm,
+            _ => return None,
+        };
+        let enabled = match fields.get(&regexp_internal_slot_key(
+            REGEXP_LEGACY_FEATURES_ENABLED_SLOT,
+        )) {
+            Some(crate::value::PrivateSlot::Value(Value::Bool(enabled))) => *enabled,
+            _ => return None,
+        };
+        Some((realm, enabled))
+    })
+}
+
+pub(crate) fn regexp_compile(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let receiver = this.ok_or_else(|| Error::type_err("not a direct RegExp instance"))?;
+    let Some((receiver_realm, legacy_features_enabled)) = regexp_legacy_metadata(vm, &receiver)
+    else {
+        return Err(Error::type_err("not a direct RegExp instance"));
+    };
+    if receiver_realm != vm.current_realm_global_env() || !legacy_features_enabled {
+        return Err(Error::type_err("not a direct RegExp instance"));
+    }
+
+    let pattern = args.first().cloned().unwrap_or(Value::Undefined);
+    let flags = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let (pattern, flags) = if has_regexp_matcher_slot(vm, &pattern) {
+        if !flags.is_undefined() {
+            return Err(Error::type_err(
+                "flags must be undefined when compiling from a RegExp",
+            ));
+        }
+        (
+            Value::String(read_regexp_source_arc(vm, &Some(pattern.clone()))?),
+            Value::String(read_regexp_flags_arc(vm, &Some(pattern))?),
+        )
+    } else {
+        (pattern, flags)
+    };
+
+    regexp_initialize(vm, receiver, pattern, flags)
 }
 
 fn regexp_prototype_from_constructor(vm: &mut Vm, new_target: &Value) -> error::Result<Value> {
@@ -66,6 +127,11 @@ pub(crate) fn regexp_constructor(
         .or_else(|| vm.current_native_callee())
         .cloned()
         .ok_or_else(|| Error::type_err("RegExp constructor has no active function"))?;
+    let allocation_realm = vm.current_realm_global_env();
+    let legacy_features_enabled = same_value(
+        &new_target,
+        &vm.regexp_constructor_for_env(allocation_realm),
+    );
 
     if !constructing && pattern_is_regexp && supplied_flags.is_undefined() {
         let pattern_constructor = vm.get_property(&pattern, "constructor")?;
@@ -110,7 +176,7 @@ pub(crate) fn regexp_constructor(
         };
 
         let prototype = regexp_prototype_from_constructor(vm, &new_target)?;
-        let object = regexp_alloc(vm, prototype)?;
+        let object = regexp_alloc(vm, prototype, allocation_realm, legacy_features_enabled)?;
         regexp_initialize(vm, object, pattern_source, flags)
     })();
     vm.unpin_many(pin_count);
@@ -161,7 +227,8 @@ pub(crate) fn regexp_create_intrinsic_with_flags(
     let flags = flags_override
         .map(|flags| Value::String(Arc::from(flags)))
         .unwrap_or(Value::Undefined);
-    let object = regexp_alloc(vm, vm.current_realm_regexp_prototype())?;
+    let realm = vm.current_realm_global_env();
+    let object = regexp_alloc(vm, vm.current_realm_regexp_prototype(), realm, true)?;
     regexp_initialize(vm, object, pattern.clone(), flags)
 }
 
@@ -171,7 +238,8 @@ fn create_regexp_object(
     flags: String,
     proto: Value,
 ) -> error::Result<Value> {
-    let object = regexp_alloc(vm, proto)?;
+    let realm = vm.current_interpreted_realm_global_env();
+    let object = regexp_alloc(vm, proto, realm, true)?;
     regexp_initialize(
         vm,
         object,
@@ -180,17 +248,34 @@ fn create_regexp_object(
     )
 }
 
-fn regexp_alloc(vm: &mut Vm, proto: Value) -> error::Result<Value> {
+fn regexp_alloc(
+    vm: &mut Vm,
+    proto: Value,
+    realm: GcIdx,
+    legacy_features_enabled: bool,
+) -> error::Result<Value> {
     let mut props = IndexMap::new();
     props.insert(
         PropertyKey::from("lastIndex"),
         regexp_last_index_prop(Value::Number(0.0)),
     );
-    let private_fields = std::collections::HashMap::from([(
+    let mut private_fields = std::collections::HashMap::new();
+    private_fields
+        .try_reserve(3)
+        .map_err(|_| Error::range("RegExp internal slot storage is too large"))?;
+    private_fields.insert(
         regexp_internal_slot_key(REGEXP_MATCHER_SLOT),
         crate::value::PrivateSlot::Value(Value::Bool(true)),
-    )]);
-    let pin_count = regexp_try_pin_value(vm, &proto)?;
+    );
+    private_fields.insert(
+        regexp_internal_slot_key(REGEXP_REALM_SLOT),
+        crate::value::PrivateSlot::Value(Value::Object(realm)),
+    );
+    private_fields.insert(
+        regexp_internal_slot_key(REGEXP_LEGACY_FEATURES_ENABLED_SLOT),
+        crate::value::PrivateSlot::Value(Value::Bool(legacy_features_enabled)),
+    );
+    let pin_count = regexp_try_pin_values(vm, &[proto.clone(), Value::Object(realm)])?;
     let result = vm
         .alloc(HeapObj::Object(crate::value::ObjectData {
             props: Mutex::new(props),
