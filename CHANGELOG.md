@@ -13,7 +13,12 @@
   move from **2,961 pass / 0 fail / 1 skip** to **2,962/0/0**. Full CI now
   preflights the exact admission against pinned Test262. Supported statements/
   expressions move from **12,765/0/7,674** to **12,766/0/7,673** over 20,439
-  files, exactly **+1 pass / -1 skip**.
+  files, exactly **+1 pass / -1 skip**. Implementation commit `b5a391f` and
+  inaccessible-metadata-root regression `a048b18` pass ordinary CI
+  `30680109952` (**3/3**) and full matrix `30680109971` (**45/45**). Against
+  `30676958637`, **31/32** result artifacts are byte-identical; only
+  language/expressions moves **+1 pass / -1 skip**. Aggregate is **33,103 pass /
+  4,342 fail / 11,021 skip** over 48,469 files.
 
 - Moved compiler-generated destructuring, iterator, Reference, and switch
   completion state from synthetic Environment bindings into dense `CallFrame`

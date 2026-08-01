@@ -19,6 +19,15 @@ The supported statements/expressions subset moves from **12,765/0/7,674** to
 **12,766 pass / 0 fail / 7,673 skip** over 20,439 files, exactly **+1 pass /
 -1 skip**.
 
+Implementation commit `b5a391f` and the inaccessible-metadata-root regression
+`a048b18` pass ordinary CI `30680109952` (**3/3**) and full matrix
+`30680109971` (**45/45**). Compared with `30676958637`, **31/32** result
+artifacts are byte-identical. Only language/expressions changes, from
+**7,865/0/3,237** to **7,866/0/3,236**. Aggregate is **33,103 pass / 4,342
+fail / 11,021 skip / 3 timeout / 0 error** over 48,469 files. The ordered
+result hash is
+`fa099659980197bf14ef3efbb7f7cfe5519c4942aaf98759ed5f34c2a35cb2bd`.
+
 ```text
 [Decision Log]
 - 목적과 의도: 이미 구현된 익명 default-export class의 이름 추론과 static initializer 순서를 supported Test262 경계에 정확히 편입한다.
