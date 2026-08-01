@@ -15,6 +15,11 @@
   missing/object exports or target failures with a caller-Realm `TypeError`.
   Its internal microtask and top-level-await continuation do not invoke an
   observable `.then`. Pinned ShadowRealm is **64 pass / 0 fail / 0 skip**.
+  Commit `9409531` passes ordinary CI `30690961696` (**3/3**) and full matrix
+  `30690961694` (**44/44**). Against `30687712195`, the contention-normalized
+  result set is byte-identical for **31/32** artifacts; only `built-ins` moves
+  **+4 pass / -4 skip**. Aggregate is **33,170 pass / 4,285 fail / 11,011
+  skip**, with 3 timeout and 0 error over 48,469 files.
 
 - Added the non-module ShadowRealm runtime: Realm-local constructors and
   prototypes, isolated `evaluate`, primitive transfer, and non-constructable

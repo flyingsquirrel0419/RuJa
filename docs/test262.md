@@ -37,6 +37,21 @@ timeout / 0 error** over 48,469 files, with 37,451 pass/fail executions.
 Filename-sorted result content hashes to
 `7bd7ee319599e2f9b24ffead37760fc788ea2e21cfa0eae5a0547bb020216329`.
 
+The RealmRecord and `importValue` implementation is commit `9409531`.
+Ordinary CI `30690961696` passes **3/3** and full matrix `30690961694` passes
+**44/44**. Compared with `30687712195`, raw CI artifacts are identical for
+**30/32** files: `built-ins` has the intended **+4 pass / -4 skip**, while the
+first Annex B run classified two otherwise passing files as contention
+timeouts. Two isolated CI reruns reduced that variance to one timeout; a pinned
+local file-by-file run and official runner both report the previous exact
+**842/170/74 with 0 timeout**, and its output is byte-identical to the prior
+artifact. With that non-semantic timeout normalized, **31/32** artifacts are
+byte-identical and only `built-ins` changes from **16,816/4,115/2,734** to
+**16,820/4,115/2,730**. Aggregate is **33,170 pass / 4,285 fail / 11,011 skip /
+3 timeout / 0 error** over 48,469 files and 37,455 pass/fail executions.
+Filename-sorted normalized result content hashes to
+`950d43ff57ccf8b654c84cf6112c9f0ef994d59c8fafdd5a5b096251f20cc780`.
+
 ```text
 [Decision Log]
 - 목적과 의도: 객체 identity나 예외 객체를 유출하지 않는 실제 ShadowRealm callable membrane을 도입한다.
