@@ -1270,6 +1270,41 @@ pub struct EnvironmentData {
     /// `with` statement object environment record: when `Some(obj)`, name
     /// lookups fall back to `obj`'s properties before reaching the parent.
     pub with_object: Mutex<Option<Value>>,
+    /// Present only on a Realm's global environment. The record owns intrinsic
+    /// liveness and the Realm-local module cache; child lexical environments
+    /// reach it through their parent chain.
+    pub(crate) realm_record: Mutex<Option<RealmRecord>>,
+}
+
+pub(crate) struct RealmRecord {
+    /// Immutable intrinsic identities stay alive even if user code deletes
+    /// every observable property that originally exposed them.
+    pub(crate) intrinsic_roots: Mutex<Vec<Value>>,
+    pub(crate) module_records: ModuleCache,
+    pub(crate) template_cache:
+        Mutex<std::collections::HashMap<(usize, usize), RealmTemplateCacheEntry>>,
+    /// Host referrer captured when a ShadowRealm is constructed from file-backed
+    /// Script or Module code. `importValue` resolves relative specifiers here.
+    pub(crate) module_referrer: Mutex<Option<Arc<std::path::PathBuf>>>,
+}
+
+pub(crate) struct RealmTemplateCacheEntry {
+    pub(crate) chunk: std::sync::Weak<crate::bytecode::Chunk>,
+    pub(crate) value: Value,
+}
+
+pub(crate) type ModuleCache =
+    Arc<Mutex<std::collections::HashMap<std::path::PathBuf, crate::module::ModuleRecord>>>;
+
+impl Default for RealmRecord {
+    fn default() -> Self {
+        Self {
+            intrinsic_roots: Mutex::new(Vec::new()),
+            module_records: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            template_cache: Mutex::new(std::collections::HashMap::new()),
+            module_referrer: Mutex::new(None),
+        }
+    }
 }
 
 pub struct Binding {
@@ -1660,6 +1695,11 @@ pub enum PromiseContinuation {
         target: std::path::PathBuf,
         capability: PromiseReactionCapability,
         realm: GcIdx,
+    },
+    ShadowRealmImportValue {
+        export_name: Arc<str>,
+        capability: PromiseReactionCapability,
+        caller_realm: GcIdx,
     },
     AsyncGenerator {
         generator: GcIdx,

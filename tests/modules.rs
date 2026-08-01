@@ -19,6 +19,85 @@ fn module_fixture_dir(name: &str) -> PathBuf {
 }
 
 #[test]
+fn shadow_realm_import_value_uses_its_module_realm_and_caller_promise_boundary() {
+    let dir = module_fixture_dir("shadow-realm-import-value");
+    fs::write(
+        dir.join("values.js"),
+        r#"
+        globalThis.moduleEvaluationCount = (globalThis.moduleEvaluationCount || 0) + 1;
+        export const primitive = 41;
+        export const evaluationCount = globalThis.moduleEvaluationCount;
+        export function increment(value) { return value + 1; }
+        export const object = {};
+        "#,
+    )
+    .expect("value module should be written");
+    fs::write(
+        dir.join("syntax-error.js"),
+        "This is not valid module syntax.",
+    )
+    .expect("syntax-error module should be written");
+    fs::write(dir.join("throws.js"), "throw new Error('target reason');")
+        .expect("throwing module should be written");
+    fs::write(
+        dir.join("await.js"),
+        "await Promise.resolve(); export const delayed = 42;",
+    )
+    .expect("top-level-await module should be written");
+    fs::write(
+        dir.join("entry.js"),
+        r#"
+        const realm = new ShadowRealm();
+        const secondRealm = new ShadowRealm();
+        const callerTypeErrorPrototype = TypeError.prototype;
+        globalThis.importValueResults = [];
+        realm.importValue('./values.js', 'primitive').then(value => {
+          importValueResults.push(value === 41);
+        });
+        realm.importValue('./values.js', 'increment').then(increment => {
+          importValueResults.push(increment(41) === 42);
+        });
+        realm.importValue('./values.js', 'evaluationCount').then(count => {
+          importValueResults.push(count === 1);
+        });
+        secondRealm.importValue('./values.js', 'evaluationCount').then(count => {
+          importValueResults.push(count === 1);
+        });
+        realm.importValue('./values.js', 'missing').then(
+          () => importValueResults.push(false),
+          error => importValueResults.push(Object.getPrototypeOf(error) === callerTypeErrorPrototype)
+        );
+        realm.importValue('./values.js', 'object').then(
+          () => importValueResults.push(false),
+          error => importValueResults.push(Object.getPrototypeOf(error) === callerTypeErrorPrototype)
+        );
+        realm.importValue('./syntax-error.js', 'value').then(
+          () => importValueResults.push(false),
+          error => importValueResults.push(Object.getPrototypeOf(error) === callerTypeErrorPrototype)
+        );
+        realm.importValue('./throws.js', 'value').then(
+          () => importValueResults.push(false),
+          error => importValueResults.push(Object.getPrototypeOf(error) === callerTypeErrorPrototype)
+        );
+        realm.importValue('./await.js', 'delayed').then(value => {
+          importValueResults.push(value === 42);
+        });
+        "#,
+    )
+    .expect("entry module should be written");
+
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.run_module_file(dir.join("entry.js"))
+        .expect("ShadowRealm importValue jobs should settle");
+    assert_eq!(
+        vm.run("importValueResults.join('|')")
+            .expect("importValue results should be readable"),
+        Value::String(Arc::from("true|true|true|true|true|true|true|true|true"))
+    );
+    fs::remove_dir_all(dir).expect("module fixtures should be removed");
+}
+
+#[test]
 fn module_source_goal_is_strict_and_has_undefined_top_level_this() {
     let program = Parser::parse_module("this;").expect("module should parse");
     assert!(program.is_strict);

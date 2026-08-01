@@ -50,11 +50,15 @@ built-ins/ShadowRealm/prototype/evaluate/wrapped-functions-new-wrapping-on-each-
 built-ins/ShadowRealm/prototype/evaluate/wrapped-functions-share-no-properties-extended.js
 built-ins/ShadowRealm/prototype/evaluate/wrapped-functions-share-no-properties.js
 built-ins/ShadowRealm/prototype/importValue/descriptor.js
+built-ins/ShadowRealm/prototype/importValue/import-value.js
 built-ins/ShadowRealm/prototype/importValue/length.js
 built-ins/ShadowRealm/prototype/importValue/name.js
 built-ins/ShadowRealm/prototype/importValue/not-constructor.js
 built-ins/ShadowRealm/prototype/importValue/proto.js
 built-ins/ShadowRealm/prototype/importValue/specifier-tostring.js
 built-ins/ShadowRealm/prototype/importValue/throws-if-exportname-not-string.js
+built-ins/ShadowRealm/prototype/importValue/throws-if-import-value-does-not-exist.js
+built-ins/ShadowRealm/prototype/importValue/throws-typeerror-import-syntax-error.js
+built-ins/ShadowRealm/prototype/importValue/throws-typeerror-import-throws.js
 built-ins/ShadowRealm/prototype/importValue/validates-realm-object.js
 built-ins/ShadowRealm/prototype/proto.js

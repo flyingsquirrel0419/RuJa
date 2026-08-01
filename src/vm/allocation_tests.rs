@@ -1359,6 +1359,44 @@ fn realm_creation_live_delta() -> usize {
     delta
 }
 
+#[test]
+fn unreachable_shadow_realm_releases_its_record_and_registry_indexes() {
+    let mut vm = Vm::new().expect("VM setup");
+    let baseline_realms = vm.realm_globals.len();
+    vm.run(
+        r#"
+        globalThis.realmUnderTest = new ShadowRealm();
+        realmUnderTest.evaluate("globalThis.marker = 41");
+        "#,
+    )
+    .expect("ShadowRealm setup");
+    assert_eq!(vm.realm_globals.len(), baseline_realms + 1);
+    let realm_env = vm
+        .realm_globals
+        .keys()
+        .copied()
+        .find(|realm| *realm != vm.global.0)
+        .expect("secondary Realm registry entry");
+    assert!(vm.heap.is_live(realm_env));
+
+    vm.run("delete globalThis.realmUnderTest;")
+        .expect("drop ShadowRealm reference");
+    vm.gc();
+    assert_eq!(vm.realm_globals.len(), baseline_realms);
+    assert!(!vm.heap.is_live(realm_env));
+
+    assert_eq!(
+        vm.run(
+            r#"
+            globalThis.replacementRealm = new ShadowRealm();
+            replacementRealm.evaluate("marker = 42; marker") === 42;
+            "#,
+        )
+        .expect("replacement ShadowRealm must use fresh registry indexes"),
+        Value::Bool(true)
+    );
+}
+
 fn assert_main_realm_range_error(vm: &Vm, error: &crate::error::Error) {
     let Value::Object(error_object) = error
         .thrown_value

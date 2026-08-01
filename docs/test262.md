@@ -1,6 +1,6 @@
 # test262 conformance
 
-## Non-module ShadowRealm boundary
+## ShadowRealm boundary
 
 RuJa now installs `ShadowRealm` in the main Realm and every created Realm.
 `evaluate` parses as Script code independently of caller strictness, executes
@@ -14,13 +14,19 @@ Each evaluation owns a fresh lexical environment; strict `var` is local to
 that evaluation, while sloppy `var` and function declarations publish through
 the isolated global environment with global binding descriptor semantics.
 
+`importValue` captures the constructing file-backed Script or Module as its
+host referrer, resolves and evaluates the requested graph in the target Realm,
+and returns a Promise from the method Realm. Primitive exports cross directly;
+callables receive fresh wrappers; missing or object exports and catchable
+target failures reject with a new caller-Realm `TypeError`. Dedicated internal
+jobs connect pending top-level-await evaluation without observing a mutable
+Promise `.then` property. Each ShadowRealm owns a separate module cache.
+
 On pinned Test262 `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the
-complete directory moves from **0 pass / 54 fail / 10 skip** to **60 pass / 0
-fail / 4 skip** over 64 test entries. The exact 60-file non-module manifest
-owns constructor, descriptor, `evaluate`, WrappedFunction, and synchronous
-`importValue` validation/shape coverage. The four async Module tests remain
-closed until `importValue` receives a Realm-owned module cache and loader.
-Full CI hard-gates **60/0/4**.
+complete directory moves from **0 pass / 54 fail / 10 skip** to **64 pass / 0
+fail / 0 skip** over 64 test entries. The exact manifest owns constructor,
+descriptor, `evaluate`, WrappedFunction, synchronous validation, and all four
+async Module tests. Full CI hard-gates **64/0/0**.
 
 Implementation commit `c8e4882` passes ordinary CI `30687712196` (**3/3**)
 and full matrix `30687712195` (**45/45**). Compared with `30683219888`,
@@ -38,7 +44,17 @@ Filename-sorted result content hashes to
 - 검토한 주요 대안: Proxy/BoundFunction 조합, native callback의 hidden target, 별도 VM, 또는 전용 FunctionKind::Wrapped와 공용 secondary Realm transaction.
 - 선택한 방식: FunctionKind::Wrapped가 target을 GC trace하고 caller Realm Function.prototype을 소유한다. 호출 시 GetFunctionRealm 방식으로 target Realm을 찾고 양방향 GetWrappedValue를 적용한다. evaluate는 parse와 target 실행을 분리하며 microtask queue를 강제로 drain하지 않는다.
 - 다른 대안 대신 이 방식을 선택한 이유: Proxy/Bound/native 흉내는 constructability, Realm 조회, toString, identity, exception replacement를 일반 호출 모델 밖으로 밀어낸다. 별도 VM은 Symbol registry와 기존 Realm/module 인프라를 분리한다.
-- 장점, 단점 및 영향: 중첩/borrowed/cross-Realm wrapper와 GC 생존이 한 호출 경로를 공유한다. 현재 realm_* registry는 생성된 Realm을 VM 수명 동안 root로 유지하며, importValue의 module cache ownership은 다음 구조 단위로 남는다.
+- 장점, 단점 및 영향: 중첩/borrowed/cross-Realm wrapper와 GC 생존이 한 호출 경로를 공유한다. RealmRecord가 intrinsic/module/template 수명을 global Environment에 묶으므로 도달 불가능한 ShadowRealm도 회수된다. importValue는 file-backed referrer만 지원하며 bare host specifier는 계속 host limitation이다.
+```
+
+```text
+[Decision Log]
+- 목적과 의도: ShadowRealm module 실행을 실제 Realm 수명 및 callable membrane과 통합하고 도달 불가능한 Realm을 회수한다.
+- 기존 구현 및 제약 조건: VM-wide module/template/intrinsic registry가 성공 Realm을 영구 root로 유지했고 module cache가 Realm identity를 구분하지 않았다. importValue는 validation 뒤 항상 rejected Promise를 반환했다.
+- 검토한 주요 대안: 별도 VM, VM-wide cache에 Realm key 추가, 별도 Arc RealmRecord, 사용자-visible Promise.then 연결, 또는 global Environment 직접 소유.
+- 선택한 방식: global Environment가 RealmRecord를 직접 소유하고 intrinsic roots, module cache, template cache, referrer를 trace한다. ShadowRealm은 fresh module cache를 받고 importValue 전용 microtask/continuation이 target evaluation과 caller settlement를 연결한다.
+- 다른 대안 대신 이 방식을 선택한 이유: 별도 VM은 shared engine state를 분리하고 VM-wide keying은 Realm 자체를 계속 root로 만든다. 별도 Arc owner는 GC reachability와 Rust ownership이 갈라진다. 내부 continuation은 mutable then lookup과 target error leakage를 피한다.
+- 장점, 단점 및 영향: module/template identity와 GC ownership이 Realm 단위로 일치하고 TLA도 caller Promise로 안전하게 전달된다. `$262.createRealm`은 Test262 host의 기존 dynamic-import identity를 위해 caller cache를 공유하지만 ShadowRealm은 명세 격리를 위해 분리한다. file-backed referrer 없는 importValue는 caller-Realm TypeError로 reject한다.
 ```
 
 ## Map and Set prototype tags
@@ -693,7 +709,8 @@ and runtime regressions additionally cover named, star, and namespace
 re-exports carrying attributes. Broad
 `module`, `import-attributes`, `json-modules`, and `import-text` gates remain
 closed outside the exact manifest. Source-phase imports, deferred imports,
-bare host specifiers, and Realm-owned module caches remain separate work.
+and bare host specifiers remain separate work. Realm-owned module caches are
+completed by the ShadowRealm/RealmRecord unit at the start of this document.
 
 ```sh
 TEST262=/root/test262 RUJA=target/release/ruja \

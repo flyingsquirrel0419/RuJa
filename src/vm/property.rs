@@ -4829,6 +4829,16 @@ impl Vm {
                                 Self::push_value_roots(&mut roots, &capability.reject);
                                 roots.push(realm.0);
                             }
+                            crate::value::PromiseContinuation::ShadowRealmImportValue {
+                                capability,
+                                caller_realm,
+                                ..
+                            } => {
+                                Self::push_value_roots(&mut roots, &capability.promise);
+                                Self::push_value_roots(&mut roots, &capability.resolve);
+                                Self::push_value_roots(&mut roots, &capability.reject);
+                                roots.push(caller_realm.0);
+                            }
                             crate::value::PromiseContinuation::AsyncGenerator {
                                 generator, ..
                             } => roots.push(generator.0),
@@ -4963,161 +4973,11 @@ impl Vm {
         for v in &self.global_constants {
             Self::push_value_roots(&mut roots, v);
         }
-        for v in self.realm_globals.values() {
-            Self::push_value_roots(&mut roots, v);
-        }
-        for v in self.realm_object_prototypes.values() {
-            Self::push_value_roots(&mut roots, v);
-        }
-        for v in self.realm_array_constructors.values() {
-            Self::push_value_roots(&mut roots, v);
-        }
-        for v in self.realm_array_prototypes.values() {
-            Self::push_value_roots(&mut roots, v);
-        }
-        for v in self.realm_array_values_functions.values() {
-            Self::push_value_roots(&mut roots, v);
-        }
-        for v in self.realm_promise_constructors.values() {
-            Self::push_value_roots(&mut roots, v);
-        }
-        for v in self.realm_promise_prototypes.values() {
-            Self::push_value_roots(&mut roots, v);
-        }
-        for v in self.realm_map_prototypes.values() {
-            Self::push_value_roots(&mut roots, v);
-        }
-        for v in self.realm_set_prototypes.values() {
-            Self::push_value_roots(&mut roots, v);
-        }
-        for v in self.realm_weakmap_prototypes.values() {
-            Self::push_value_roots(&mut roots, v);
-        }
-        for v in self.realm_weakset_prototypes.values() {
-            Self::push_value_roots(&mut roots, v);
-        }
-        for v in self.realm_weakref_prototypes.values() {
-            Self::push_value_roots(&mut roots, v);
-        }
-        for v in self.realm_finalization_registry_prototypes.values() {
-            Self::push_value_roots(&mut roots, v);
-        }
-        for v in self.realm_generator_prototypes.values() {
-            Self::push_value_roots(&mut roots, v);
-        }
-        for v in self.realm_generator_function_constructors.values() {
-            Self::push_value_roots(&mut roots, v);
-        }
-        for v in self.realm_generator_function_prototypes.values() {
-            Self::push_value_roots(&mut roots, v);
-        }
-        for v in self.realm_async_iterator_prototypes.values() {
-            Self::push_value_roots(&mut roots, v);
-        }
-        for v in self.realm_async_generator_prototypes.values() {
-            Self::push_value_roots(&mut roots, v);
-        }
-        for v in self.realm_async_generator_function_constructors.values() {
-            Self::push_value_roots(&mut roots, v);
-        }
-        for v in self.realm_async_generator_function_prototypes.values() {
-            Self::push_value_roots(&mut roots, v);
-        }
-        for v in self.realm_primitive_prototypes.values() {
-            Self::push_value_roots(&mut roots, v);
-        }
-        for v in self.realm_date_prototypes.values() {
-            Self::push_value_roots(&mut roots, v);
-        }
-        for v in self.realm_eval_functions.values() {
-            Self::push_value_roots(&mut roots, v);
-        }
-        for v in self.realm_throw_type_errors.values() {
-            Self::push_value_roots(&mut roots, v);
-        }
-        for v in self.realm_function_prototypes.values() {
-            Self::push_value_roots(&mut roots, v);
-        }
-        for v in self.realm_shadow_realm_prototypes.values() {
-            Self::push_value_roots(&mut roots, v);
-        }
-        for v in self.realm_async_function_prototypes.values() {
-            Self::push_value_roots(&mut roots, v);
-        }
-        for v in self.realm_iterator_constructors.values() {
-            Self::push_value_roots(&mut roots, v);
-        }
-        for v in self.realm_iterator_prototypes.values() {
-            Self::push_value_roots(&mut roots, v);
-        }
-        for v in self.realm_array_iterator_prototypes.values() {
-            Self::push_value_roots(&mut roots, v);
-        }
-        for v in self.realm_map_iterator_prototypes.values() {
-            Self::push_value_roots(&mut roots, v);
-        }
-        for v in self.realm_set_iterator_prototypes.values() {
-            Self::push_value_roots(&mut roots, v);
-        }
-        for v in self.realm_wrap_for_valid_iterator_prototypes.values() {
-            Self::push_value_roots(&mut roots, v);
-        }
-        for v in self.realm_string_iterator_prototypes.values() {
-            Self::push_value_roots(&mut roots, v);
-        }
-        for v in self.realm_iterator_helper_prototypes.values() {
-            Self::push_value_roots(&mut roots, v);
-        }
-        for v in self.realm_error_prototypes.values() {
-            Self::push_value_roots(&mut roots, v);
-        }
-        for v in self.realm_heap_limit_errors.values() {
-            Self::push_value_roots(&mut roots, v);
-        }
-        for v in self.realm_regexp_constructors.values() {
-            Self::push_value_roots(&mut roots, v);
-        }
-        for v in self.realm_regexp_prototypes.values() {
-            Self::push_value_roots(&mut roots, v);
-        }
-        for v in self.realm_intl_locale_constructors.values() {
-            Self::push_value_roots(&mut roots, v);
-        }
-        for v in self.realm_intl_locale_prototypes.values() {
-            Self::push_value_roots(&mut roots, v);
-        }
-        for v in self.realm_intl_collator_constructors.values() {
-            Self::push_value_roots(&mut roots, v);
-        }
-        for v in self.realm_intl_collator_prototypes.values() {
-            Self::push_value_roots(&mut roots, v);
-        }
-        for v in self.realm_regexp_string_iterator_prototypes.values() {
-            Self::push_value_roots(&mut roots, v);
-        }
-        for v in self.realm_array_buffer_prototypes.values() {
-            Self::push_value_roots(&mut roots, v);
-        }
-        for v in self.realm_typed_array_constructors.values() {
-            Self::push_value_roots(&mut roots, v);
-        }
-        for module in self.module_records.values() {
-            roots.push(module.env.0);
-            if let Some(meta) = module.import_meta() {
-                roots.push(meta.0);
-            }
-            if let Some(promise) = module.evaluation_promise() {
-                roots.push(promise.0);
-            }
-            if let Some(error) = module.error() {
-                if let Some(value) = &error.thrown_value {
-                    Self::push_value_roots(&mut roots, value);
-                }
-            }
-            if let Some(value) = module.completion_value() {
-                Self::push_value_roots(&mut roots, &value);
-            }
-            if let Some(value) = module.synthetic_default() {
+        // Published RealmRecords own intrinsic and module liveness through
+        // their global Environment. Only a Realm still being bootstrapped
+        // needs its temporary VM lookup-index values rooted directly.
+        for realm in &self.provisional_realms {
+            for value in self.realm_registry_values(GcIdx(*realm)) {
                 Self::push_value_roots(&mut roots, &value);
             }
         }
@@ -5182,6 +5042,7 @@ impl Vm {
     pub fn gc(&mut self) {
         let roots = self.collect_roots();
         self.heap.collect(&roots);
+        self.prune_dead_realm_registry_entries();
         self.ic_clear();
         self.schedule_finalization_cleanup_jobs();
     }
@@ -5509,6 +5370,95 @@ impl Vm {
         settlement.map(|_| ())
     }
 
+    fn reject_shadowrealm_import_value(
+        &mut self,
+        reject: &Value,
+        caller_realm: GcIdx,
+    ) -> error::Result<Value> {
+        let error = Error::type_err("ShadowRealm importValue failed");
+        let reason = self.make_error_value_in_realm(&error, caller_realm)?;
+        let reason_pin = self.pin(&reason);
+        let result = self.call_function(
+            reject,
+            std::slice::from_ref(&reason),
+            Some(Value::Undefined),
+        );
+        self.unpin_many(reason_pin);
+        result
+    }
+
+    fn finish_shadowrealm_import_value(
+        &mut self,
+        namespace: Value,
+        export_name: &str,
+        capability: &crate::value::PromiseReactionCapability,
+        caller_realm: GcIdx,
+    ) -> error::Result<Value> {
+        let pins = self.pin_many(&[
+            namespace.clone(),
+            capability.promise.clone(),
+            capability.resolve.clone(),
+            capability.reject.clone(),
+        ]);
+        let imported = (|| {
+            if !self.has_own_property(&namespace, export_name) {
+                return Err(Error::type_err(
+                    "ShadowRealm importValue export does not exist",
+                ));
+            }
+            let value = self.get_property(&namespace, export_name)?;
+            let value_pin = self.pin(&value);
+            let wrapped = self.shadowrealm_wrap_value(caller_realm, value);
+            self.unpin_many(value_pin);
+            wrapped
+        })();
+        let settlement = match imported {
+            Ok(value) => {
+                let value_pin = self.pin(&value);
+                let result = self.call_function(
+                    &capability.resolve,
+                    std::slice::from_ref(&value),
+                    Some(Value::Undefined),
+                );
+                self.unpin_many(value_pin);
+                result
+            }
+            Err(error) if Vm::preserve_shadowrealm_host_error(&error) => Err(error),
+            Err(_) => self.reject_shadowrealm_import_value(&capability.reject, caller_realm),
+        };
+        self.unpin_many(pins);
+        settlement
+    }
+
+    fn run_shadowrealm_import_value_reaction(
+        &mut self,
+        inner_promise: GcIdx,
+        export_name: &str,
+        capability: crate::value::PromiseReactionCapability,
+        caller_realm: GcIdx,
+    ) -> error::Result<()> {
+        let (state, result) = self.heap.with_obj(inner_promise.0, |object| {
+            if let HeapObj::Promise(data) = object {
+                (*data.state.lock(), data.result.lock().clone())
+            } else {
+                (PromiseStatus::Rejected, Value::Undefined)
+            }
+        });
+        let pins = self.pin_many(&[
+            capability.promise.clone(),
+            capability.resolve.clone(),
+            capability.reject.clone(),
+            result.clone(),
+        ]);
+        let settlement = if state == PromiseStatus::Rejected {
+            self.reject_shadowrealm_import_value(&capability.reject, caller_realm)
+        } else {
+            self.finish_shadowrealm_import_value(result, export_name, &capability, caller_realm)
+        };
+        self.unpin_many(pins);
+        settlement.map(|_| ())
+    }
+
     fn run_microtask(&mut self, task: Microtask) -> error::Result<()> {
         match task {
             Microtask::Then {
@@ -5549,6 +5499,16 @@ impl Vm {
                     capability,
                     realm,
                 }) => self.run_dynamic_import_reaction(promise, &target, capability, realm),
+                Some(crate::value::PromiseContinuation::ShadowRealmImportValue {
+                    export_name,
+                    capability,
+                    caller_realm,
+                }) => self.run_shadowrealm_import_value_reaction(
+                    promise,
+                    &export_name,
+                    capability,
+                    caller_realm,
+                ),
                 None => self.run_then(promise, on_fulfilled, on_rejected, derived, realm),
             },
             Microtask::Thenable {

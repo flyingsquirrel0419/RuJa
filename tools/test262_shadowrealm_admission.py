@@ -10,6 +10,15 @@ SHADOWREALM_FILES = frozenset(
     if (line := raw_line.strip()) and not line.startswith("#")
 )
 
+SHADOWREALM_MODULE_FILES = frozenset(
+    {
+        "built-ins/ShadowRealm/prototype/importValue/import-value.js",
+        "built-ins/ShadowRealm/prototype/importValue/throws-if-import-value-does-not-exist.js",
+        "built-ins/ShadowRealm/prototype/importValue/throws-typeerror-import-syntax-error.js",
+        "built-ins/ShadowRealm/prototype/importValue/throws-typeerror-import-throws.js",
+    }
+)
+
 _EXTRA_FEATURES = {
     "built-ins/ShadowRealm/constructor.js": {"Reflect.construct"},
     "built-ins/ShadowRealm/prototype/Symbol.toStringTag.js": {"Symbol.toStringTag"},
@@ -43,3 +52,5 @@ SHADOWREALM_FEATURES = {
 
 if not frozenset(_EXTRA_FEATURES) <= SHADOWREALM_FILES:
     raise RuntimeError("ShadowRealm admission extras are outside the manifest")
+if not SHADOWREALM_MODULE_FILES <= SHADOWREALM_FILES:
+    raise RuntimeError("ShadowRealm Module admission is outside the manifest")

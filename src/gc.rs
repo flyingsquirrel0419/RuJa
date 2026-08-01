@@ -171,6 +171,38 @@ fn trace_private_slot(slot: &crate::value::PrivateSlot, worklist: &mut Vec<usize
     }
 }
 
+fn trace_realm_record(record: &crate::value::RealmRecord, worklist: &mut Vec<usize>) {
+    for value in record.intrinsic_roots.lock().iter() {
+        push_value(value, worklist);
+    }
+    for module in record.module_records.lock().values() {
+        worklist.push(module.env.0);
+        if let Some(meta) = module.import_meta() {
+            worklist.push(meta.0);
+        }
+        if let Some(namespace) = module.namespace() {
+            worklist.push(namespace.0);
+        }
+        if let Some(promise) = module.evaluation_promise() {
+            worklist.push(promise.0);
+        }
+        if let Some(error) = module.error() {
+            if let Some(value) = &error.thrown_value {
+                push_value(value, worklist);
+            }
+        }
+        if let Some(value) = module.completion_value() {
+            push_value(&value, worklist);
+        }
+        if let Some(value) = module.synthetic_default() {
+            push_value(&value, worklist);
+        }
+    }
+    for entry in record.template_cache.lock().values() {
+        push_value(&entry.value, worklist);
+    }
+}
+
 fn trace_cell(cells: &[GcCell], index: usize, cursorize_vectors: bool) -> CellTrace {
     let Some(cell) = cells.get(index) else {
         return CellTrace {
@@ -461,6 +493,16 @@ fn trace_promise_handler(handler: &crate::value::PromiseHandler, worklist: &mut 
                 push_value(&capability.reject, worklist);
                 worklist.push(realm.0);
             }
+            crate::value::PromiseContinuation::ShadowRealmImportValue {
+                capability,
+                caller_realm,
+                ..
+            } => {
+                push_value(&capability.promise, worklist);
+                push_value(&capability.resolve, worklist);
+                push_value(&capability.reject, worklist);
+                worklist.push(caller_realm.0);
+            }
             crate::value::PromiseContinuation::AsyncGenerator { generator, .. } => {
                 worklist.push(generator.0)
             }
@@ -546,6 +588,9 @@ fn trace_obj_impl(obj: &HeapObj, worklist: &mut Vec<usize>) {
         if let Some(p) = *e.parent.lock() {
             worklist.push(p.0);
         }
+        if let Some(record) = e.realm_record.lock().as_ref() {
+            trace_realm_record(record, worklist);
+        }
         return;
     }
     if let HeapObj::ModuleNamespace(namespace) = obj {
@@ -610,6 +655,9 @@ fn trace_obj_impl(obj: &HeapObj, worklist: &mut Vec<usize>) {
             }
             if let Some(p) = *e.parent.lock() {
                 worklist.push(p.0);
+            }
+            if let Some(record) = e.realm_record.lock().as_ref() {
+                trace_realm_record(record, worklist);
             }
         }
         HeapObj::Map(m) => {
@@ -1162,6 +1210,13 @@ impl Heap {
 
     pub fn max_objects(&self) -> usize {
         self.max_objects.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn is_live(&self, index: usize) -> bool {
+        self.cells
+            .lock()
+            .get(index)
+            .is_some_and(|cell| cell.obj.lock().is_some())
     }
 
     pub fn get_private_element(

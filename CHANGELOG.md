@@ -4,6 +4,18 @@
 
 ### Changed
 
+- Moved intrinsic roots, module records, tagged-template identities, and the
+  host module referrer into a `RealmRecord` owned by each global Environment.
+  Published Realms are traced through that owner instead of VM-wide registry
+  roots, so unreachable ShadowRealms and their lookup indexes can be reclaimed.
+  ShadowRealms receive isolated module caches; `$262.createRealm` shares its
+  host cache to preserve existing dynamic-import identity policy.
+  `ShadowRealm.prototype.importValue` now evaluates relative modules in the
+  target Realm, transfers primitives and fresh callable wrappers, and rejects
+  missing/object exports or target failures with a caller-Realm `TypeError`.
+  Its internal microtask and top-level-await continuation do not invoke an
+  observable `.then`. Pinned ShadowRealm is **64 pass / 0 fail / 0 skip**.
+
 - Added the non-module ShadowRealm runtime: Realm-local constructors and
   prototypes, isolated `evaluate`, primitive transfer, and non-constructable
   `FunctionKind::Wrapped` membranes for callable arguments and results.
@@ -13,8 +25,8 @@
   global `var`/function declarations publish with global binding descriptor
   rules. Secondary Realms now expose the same scalar globals and JSON namespace
   required by the main Realm. Pinned Test262 moves from **0 pass /
-  54 fail / 10 skip** to **60 pass / 0 fail / 4 skip**; the remaining four are
-  the Realm-owned module-loading portion of `importValue`.
+  54 fail / 10 skip** to **60 pass / 0 fail / 4 skip**. The Realm-owned
+  `importValue` entry above subsequently closes those remaining four.
 
 - `Map.prototype` and `Set.prototype` now expose their specified own
   `Symbol.toStringTag` data properties in every Realm. The properties are

@@ -257,7 +257,11 @@ containing its decoded specifier and UTF-16-sorted Import Attributes. Equal
 requests are deduplicated only after attributes are included; the loader then
 maps a relative source path plus its selected JavaScript/JSON/text type to one
 canonical ModuleRecord key. Static and dynamic imports therefore share
-evaluation state, namespace identity, and JSON default-object identity.
+evaluation state, namespace identity, and JSON default-object identity within
+one Realm. The cache is selected through its global Environment's
+`RealmRecord`. Test262 host-created Realms explicitly share the caller cache;
+ShadowRealms always receive a fresh cache and retain the file-backed
+construction referrer used by `importValue`.
 
 JSON and text files become synthetic one-default-export ModuleRecords. The VM
 parses or materializes their default value once while the graph resolves and
@@ -273,7 +277,32 @@ replace that operation through the global `JSON.parse` property.
 - 검토한 주요 대안: `with {}`를 파싱만 하고 무시하기, static loader를 dynamic loader와 별도로 복제하기, JSON source를 JavaScript object literal로 변환하기, synthetic module에서 전역 `JSON.parse`를 호출하기, 또는 parsed Value를 graph loading 중 임시 Rust local로 보존하기.
 - 선택한 방식: Decoded attributes를 UTF-16 key order로 ModuleRequest에 저장하고 request equality에 포함한다. Host가 지원하는 유일한 key `type`을 graph loading 전에 검증하고 physical path와 module type으로 cache key를 만든다. JSON/text default value를 resolution에서 한 번 만들고 synthetic ModuleRecord에 보존하며 graph-local payload/environment는 publication까지 pin한다. 평가 시에는 저장된 value로 default binding만 초기화한다. Static/dynamic paths는 같은 resolver와 ModuleRecord cache를 사용한다.
 - 다른 대안 대신 이 방식을 선택한 이유: Attribute 무시는 host semantics와 cache identity를 깨뜨리고, loader 복제는 static/dynamic namespace identity를 갈라놓는다. Object literal 변환은 `__proto__`와 JSON grammar가 달라지며, 전역 `JSON.parse` 호출은 사용자 mutation을 관찰한다. Graph loading 중 heap Value를 보관하면 아직 VM root registry에 publish되지 않은 값의 GC ownership이 불명확하다.
-- 장점, 단점 및 영향: 모든 import/re-export form이 같은 request를 전달하고 invalid JSON 및 named JSON imports가 linking 전에 실패하며 static/dynamic JSON objects가 동일하다. Escaped lone surrogates를 포함한 JSON strings를 보존하고 JavaScript/JSON/text views는 충돌하지 않으며 self-text import도 cycle 없이 동작한다. 현재 host는 relative files와 `type: "json"`/`"text"`만 지원한다. Bare specifiers, source-phase/deferred imports, Realm별 module graph/cache, arbitrary host attribute policies는 후속 범위다.
+- 장점, 단점 및 영향: 모든 import/re-export form이 같은 request를 전달하고 invalid JSON 및 named JSON imports가 linking 전에 실패하며 static/dynamic JSON objects가 동일하다. Escaped lone surrogates를 포함한 JSON strings를 보존하고 JavaScript/JSON/text views는 충돌하지 않으며 self-text import도 cycle 없이 동작한다. RealmRecord가 graph/cache identity와 수명을 Realm에 묶는다. 현재 host는 relative files와 `type: "json"`/`"text"`만 지원한다. Bare specifiers, source-phase/deferred imports, arbitrary host attribute policies는 후속 범위다.
+```
+
+## Realm ownership
+
+Every global Environment directly owns one `RealmRecord`. The record traces
+immutable intrinsic identities, cached ModuleRecord edges, tagged-template
+objects, and an optional module referrer. Child Environments reach the owner
+through their global root. VM maps remain lookup indexes: while a Realm is
+being populated they are provisional roots, then the published Environment is
+the sole owner. Safe-point collection removes indexes whose Environment is no
+longer live.
+
+Tagged-template cache entries pair a bytecode address with a `Weak<Chunk>`.
+Pointer equality is accepted only while that exact Chunk remains live, avoiding
+address-reuse collisions without making compiled code immortal. Template and
+raw arrays use the active Realm's Array prototype.
+
+```text
+[Decision Log]
+- 목적과 의도: Realm intrinsic, module, template identity의 수명을 실제 global Environment reachability와 일치시킨다.
+- 기존 구현 및 제약 조건: 여러 VM registry와 단일 module/template cache가 generated Realm을 강하게 root했고 raw Chunk pointer key는 allocator address reuse를 구분하지 못했다.
+- 검토한 주요 대안: registry retain을 계속 사용하며 수동 sweep, Arc<RealmRecord>, `(Realm, path)` VM-wide cache, 또는 Environment 직접 소유.
+- 선택한 방식: Environment가 RealmRecord를 직접 소유하고 GC가 record edges를 trace한다. bootstrap 동안만 registry 값을 provisional root로 유지하고 publish 후 dead index를 safe point에서 prune한다. template key는 Weak<Chunk> identity를 검증한다.
+- 다른 대안 대신 이 방식을 선택한 이유: reachability owner를 Environment와 분리하면 Rust strong ownership이 GC 판단을 무효화한다. VM-wide composite key도 key Realm을 root로 만들거나 별도 weak protocol을 요구한다. 직접 소유는 기존 environment graph를 그대로 사용한다.
+- 장점, 단점 및 영향: unreachable ShadowRealm과 module graph가 회수되고 같은 source의 namespace/template identity는 Realm별로 분리된다. 새 Realm registry를 추가할 때 publish roots와 rollback/prune 목록을 함께 유지해야 하며, host가 cache sharing을 원하면 Realm 생성 시 명시적으로 같은 ModuleCache를 전달해야 한다.
 ```
 
 ## Garbage collection
@@ -4051,7 +4080,7 @@ rules rather than inherited setters or ordinary `[[Set]]`.
 - 검토한 주요 대안: native function hidden slot, Proxy/BoundFunction 재사용, 별도 VM, 전용 wrapped function kind.
 - 선택한 방식: target Value를 직접 trace하는 FunctionKind::Wrapped와 Wrapped execution context를 추가하고 secondary Realm transaction을 ShadowRealm constructor가 공유한다.
 - 다른 대안 대신 이 방식을 선택한 이유: 전용 kind만 constructability=false, caller Function.prototype, target Realm traversal, boundary error replacement를 dispatch와 GC가 함께 소유한다.
-- 장점, 단점 및 영향: nested/cross-Realm membranes가 fresh identity를 유지하고 target property를 노출하지 않는다. RealmRecord와 Realm별 module cache가 아직 없어 importValue module 실행과 성공한 Realm 회수는 후속 구조 변경이 필요하다.
+- 장점, 단점 및 영향: nested/cross-Realm membranes가 fresh identity를 유지하고 target property를 노출하지 않는다. 후속 Realm ownership 단위가 RealmRecord, Realm별 module cache, importValue module 실행, unreachable Realm 회수를 완성했다.
 ```
 
 ### Realm-local collection prototype tags

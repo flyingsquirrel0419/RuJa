@@ -627,7 +627,9 @@ pub struct Vm {
     /// constructor. Same-type copy methods must not consult mutable globals.
     pub(crate) realm_typed_array_constructors:
         HashMap<(usize, crate::value::TypedArrayKind), Value>,
-    pub(crate) module_records: HashMap<std::path::PathBuf, crate::module::ModuleRecord>,
+    /// Realms under construction still use the VM lookup indexes as temporary
+    /// roots until their heap-owned RealmRecord is published.
+    pub(crate) provisional_realms: HashSet<usize>,
     pub(crate) functions: Vec<Arc<crate::function::FunctionDef>>,
     /// Optional execution fuel: when set, each dispatched opcode decrements
     /// this; reaching zero throws a "fuel exhausted" RangeError. `None` means
@@ -637,9 +639,6 @@ pub struct Vm {
     pub(crate) fuel: Option<i64>,
     /// Maximum number of live heap objects. `0` means unlimited.
     pub(crate) max_heap_objects: usize,
-    /// Tagged-template object cache keyed by (chunk ptr, ip). Per spec the
-    /// same template-literal site returns the same frozen template object.
-    pub(crate) template_cache: std::collections::HashMap<(usize, usize), Value>,
     pub(crate) agent_cluster: Arc<AgentCluster>,
     pub(crate) agent_broadcast_rx: Option<std::sync::mpsc::Receiver<AgentBroadcast>>,
     pub(crate) agent_can_block: bool,
@@ -1359,16 +1358,16 @@ impl Vm {
             realm_regexp_string_iterator_prototypes: HashMap::new(),
             realm_array_buffer_prototypes: HashMap::new(),
             realm_typed_array_constructors: HashMap::new(),
-            module_records: HashMap::new(),
+            provisional_realms: HashSet::from([global.0]),
             functions: Vec::new(),
             fuel: None,
             max_heap_objects: 0,
-            template_cache: std::collections::HashMap::new(),
             agent_cluster: Arc::new(AgentCluster::default()),
             agent_broadcast_rx: None,
             agent_can_block: false,
             external_jobs: Arc::new(Mutex::new(ExternalJobState::default())),
         };
+        vm.attach_realm_record(global, None, None);
         vm.symbol_descriptions.insert(
             vm.well_known_symbols.iterator,
             Some(Arc::from("Symbol.iterator")),
@@ -1428,6 +1427,7 @@ impl Vm {
             Some(Arc::from("Symbol.asyncDispose")),
         );
         crate::builtins::setup_full(&mut vm)?;
+        vm.publish_realm_record(vm.global);
         Ok(vm)
     }
 
@@ -1568,6 +1568,7 @@ impl Vm {
         if microtask_result.is_ok() && self.heap.live_count() > 0 {
             let roots = self.collect_roots();
             if self.heap.maybe_collect(&roots) {
+                self.prune_dead_realm_registry_entries();
                 self.ic_clear();
             }
             self.schedule_finalization_cleanup_jobs();
@@ -1628,6 +1629,7 @@ impl Vm {
         if microtask_result.is_ok() && self.heap.live_count() > 0 {
             let roots = self.collect_roots();
             if self.heap.maybe_collect(&roots) {
+                self.prune_dead_realm_registry_entries();
                 self.ic_clear();
             }
             self.schedule_finalization_cleanup_jobs();
@@ -2252,6 +2254,7 @@ impl Vm {
             let pinned_result = self.pin_many(&result_roots);
             let roots = self.collect_roots();
             if self.heap.maybe_collect(&roots) {
+                self.prune_dead_realm_registry_entries();
                 self.ic_clear();
             }
             self.schedule_finalization_cleanup_jobs();
@@ -3008,6 +3011,7 @@ impl Vm {
     pub(crate) fn remove_realm_registry_entries(&mut self, realm: GcIdx) {
         let realm = realm.0;
         debug_assert_ne!(realm, self.global.0, "main Realm must never be rolled back");
+        self.provisional_realms.remove(&realm);
         self.realm_globals.remove(&realm);
         if let Some(Value::Object(prototype)) = self.realm_object_prototypes.remove(&realm) {
             let removed = self.realm_object_prototype_ids.remove(&prototype);
@@ -3062,6 +3066,146 @@ impl Vm {
         self.realm_array_buffer_prototypes.remove(&realm);
         self.realm_typed_array_constructors
             .retain(|(owner, _), _| *owner != realm);
+    }
+
+    pub(crate) fn attach_realm_record(
+        &mut self,
+        realm: GcIdx,
+        module_referrer: Option<Arc<std::path::PathBuf>>,
+        module_cache: Option<crate::value::ModuleCache>,
+    ) {
+        let mut record = crate::value::RealmRecord::default();
+        if let Some(module_cache) = module_cache {
+            record.module_records = module_cache;
+        }
+        *record.module_referrer.lock() = module_referrer;
+        self.heap.with_obj(realm.0, |object| {
+            let HeapObj::Environment(environment) = object else {
+                panic!("RealmRecord owner must be an Environment");
+            };
+            let previous = environment.realm_record.lock().replace(record);
+            debug_assert!(previous.is_none(), "RealmRecord must be attached once");
+        });
+        self.provisional_realms.insert(realm.0);
+    }
+
+    pub(crate) fn with_realm_record<R>(
+        &self,
+        env: GcIdx,
+        use_record: impl FnOnce(&crate::value::RealmRecord) -> R,
+    ) -> R {
+        let realm = crate::environment::global_env_root(&self.heap, env);
+        self.heap.with_obj(realm.0, |object| {
+            let HeapObj::Environment(environment) = object else {
+                panic!("Realm root must be an Environment");
+            };
+            let record = environment.realm_record.lock();
+            use_record(
+                record
+                    .as_ref()
+                    .expect("Realm global environment must own a RealmRecord"),
+            )
+        })
+    }
+
+    pub(crate) fn module_cache_for_env(&self, env: GcIdx) -> crate::value::ModuleCache {
+        self.with_realm_record(env, |record| record.module_records.clone())
+    }
+
+    fn realm_registry_values(&self, realm: GcIdx) -> Vec<Value> {
+        let realm = realm.0;
+        let mut roots = Vec::new();
+        macro_rules! push_realm_value {
+            ($field:ident) => {
+                if let Some(value) = self.$field.get(&realm) {
+                    roots.push(value.clone());
+                }
+            };
+        }
+        push_realm_value!(realm_globals);
+        push_realm_value!(realm_object_prototypes);
+        push_realm_value!(realm_array_constructors);
+        push_realm_value!(realm_array_prototypes);
+        push_realm_value!(realm_array_values_functions);
+        push_realm_value!(realm_promise_constructors);
+        push_realm_value!(realm_promise_prototypes);
+        push_realm_value!(realm_map_prototypes);
+        push_realm_value!(realm_set_prototypes);
+        push_realm_value!(realm_weakmap_prototypes);
+        push_realm_value!(realm_weakset_prototypes);
+        push_realm_value!(realm_weakref_prototypes);
+        push_realm_value!(realm_finalization_registry_prototypes);
+        push_realm_value!(realm_generator_prototypes);
+        push_realm_value!(realm_generator_function_constructors);
+        push_realm_value!(realm_generator_function_prototypes);
+        push_realm_value!(realm_async_iterator_prototypes);
+        push_realm_value!(realm_async_generator_prototypes);
+        push_realm_value!(realm_async_generator_function_constructors);
+        push_realm_value!(realm_async_generator_function_prototypes);
+        push_realm_value!(realm_date_prototypes);
+        push_realm_value!(realm_eval_functions);
+        push_realm_value!(realm_throw_type_errors);
+        push_realm_value!(realm_function_prototypes);
+        push_realm_value!(realm_shadow_realm_prototypes);
+        push_realm_value!(realm_async_function_prototypes);
+        push_realm_value!(realm_iterator_constructors);
+        push_realm_value!(realm_iterator_prototypes);
+        push_realm_value!(realm_array_iterator_prototypes);
+        push_realm_value!(realm_map_iterator_prototypes);
+        push_realm_value!(realm_set_iterator_prototypes);
+        push_realm_value!(realm_wrap_for_valid_iterator_prototypes);
+        push_realm_value!(realm_string_iterator_prototypes);
+        push_realm_value!(realm_iterator_helper_prototypes);
+        push_realm_value!(realm_heap_limit_errors);
+        push_realm_value!(realm_regexp_constructors);
+        push_realm_value!(realm_regexp_prototypes);
+        push_realm_value!(realm_intl_locale_constructors);
+        push_realm_value!(realm_intl_locale_prototypes);
+        push_realm_value!(realm_intl_collator_constructors);
+        push_realm_value!(realm_intl_collator_prototypes);
+        push_realm_value!(realm_regexp_string_iterator_prototypes);
+        push_realm_value!(realm_array_buffer_prototypes);
+        roots.extend(
+            self.realm_primitive_prototypes
+                .iter()
+                .filter(|((owner, _), _)| *owner == realm)
+                .map(|(_, value)| value.clone()),
+        );
+        roots.extend(
+            self.realm_error_prototypes
+                .iter()
+                .filter(|((owner, _), _)| *owner == realm)
+                .map(|(_, value)| value.clone()),
+        );
+        roots.extend(
+            self.realm_typed_array_constructors
+                .iter()
+                .filter(|((owner, _), _)| *owner == realm)
+                .map(|(_, value)| value.clone()),
+        );
+        roots
+    }
+
+    pub(crate) fn publish_realm_record(&mut self, realm: GcIdx) {
+        let roots = self.realm_registry_values(realm);
+        self.with_realm_record(realm, |record| {
+            *record.intrinsic_roots.lock() = roots;
+        });
+        let removed = self.provisional_realms.remove(&realm.0);
+        debug_assert!(removed, "published Realm must be provisional");
+    }
+
+    pub(crate) fn prune_dead_realm_registry_entries(&mut self) {
+        let dead: Vec<GcIdx> = self
+            .realm_globals
+            .keys()
+            .copied()
+            .filter(|realm| *realm != self.global.0 && !self.heap.is_live(*realm))
+            .map(GcIdx)
+            .collect();
+        for realm in dead {
+            self.remove_realm_registry_entries(realm);
+        }
     }
 
     pub(crate) fn register_realm_object_prototype(&mut self, realm: GcIdx, prototype: Value) {
@@ -4502,10 +4646,9 @@ impl Vm {
     }
 
     /// Build a frozen tagged-template object and its frozen `raw` array per
-    /// GetTemplateObject. Both objects are ordinary objects with
-    /// Array.prototype and class_name "Array" so `Array.isArray` recognizes
-    /// them. The template object is cached by (chunk ptr, ip) so each source
-    /// site returns the same instance.
+    /// GetTemplateObject. Both objects are ordinary objects with the active
+    /// Realm's Array.prototype and class_name "Array" so `Array.isArray`
+    /// recognizes them.
     pub(crate) fn make_template_object(
         &mut self,
         quasi_ids: &[usize],
@@ -4535,10 +4678,11 @@ impl Vm {
             })
             .collect();
 
-        let raw_obj = self.new_frozen_arraylike(raw_strings)?;
+        let array_prototype = self.array_prototype_for_env(self.current_realm_global_env());
+        let raw_obj = self.new_frozen_arraylike(raw_strings, array_prototype.clone())?;
         let mut tmpl = crate::value::ObjectData {
             props: parking_lot::Mutex::new(indexmap::IndexMap::new()),
-            proto: parking_lot::Mutex::new(Some(self.array_proto.clone())),
+            proto: parking_lot::Mutex::new(Some(array_prototype)),
             extensible: std::sync::atomic::AtomicBool::new(false),
             class_name: Some(std::sync::Arc::from("Array")),
             private_fields: parking_lot::Mutex::new(std::collections::HashMap::new()),
@@ -4573,10 +4717,14 @@ impl Vm {
         Ok(Value::Object(GcIdx(idx)))
     }
 
-    fn new_frozen_arraylike(&mut self, items: Vec<Value>) -> error::Result<Value> {
+    fn new_frozen_arraylike(
+        &mut self,
+        items: Vec<Value>,
+        array_prototype: Value,
+    ) -> error::Result<Value> {
         let mut obj = crate::value::ObjectData {
             props: parking_lot::Mutex::new(indexmap::IndexMap::new()),
-            proto: parking_lot::Mutex::new(Some(self.array_proto.clone())),
+            proto: parking_lot::Mutex::new(Some(array_prototype)),
             extensible: std::sync::atomic::AtomicBool::new(false),
             class_name: Some(std::sync::Arc::from("Array")),
             private_fields: parking_lot::Mutex::new(std::collections::HashMap::new()),

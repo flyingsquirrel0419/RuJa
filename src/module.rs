@@ -75,6 +75,10 @@ impl ModuleRecord {
         self.runtime.lock().import_meta
     }
 
+    pub(crate) fn namespace(&self) -> Option<GcIdx> {
+        self.runtime.lock().namespace
+    }
+
     pub(crate) fn synthetic_default(&self) -> Option<Value> {
         self.synthetic
             .as_ref()
@@ -166,7 +170,7 @@ fn load_graph(
     if graph.contains_key(&path) {
         return Ok(());
     }
-    if let Some(cached) = vm.module_records.get(&path).cloned() {
+    if let Some(cached) = vm.module_record_for_realm(realm, &path) {
         let dependencies = cached.dependencies.clone();
         let cache_key = path.clone();
         graph.insert(path, cached);
@@ -195,7 +199,10 @@ fn load_resolved_module(
     if graph.contains_key(&request.cache_key) {
         return Ok(());
     }
-    if vm.module_records.contains_key(&request.cache_key) {
+    if vm
+        .module_record_for_realm(realm, &request.cache_key)
+        .is_some()
+    {
         return load_graph(vm, request.cache_key, graph, realm);
     }
     if request.module_type == ModuleType::JavaScript {
@@ -1066,6 +1073,22 @@ fn evaluate_module(
 }
 
 impl Vm {
+    pub(crate) fn module_record_for_realm(
+        &self,
+        realm: GcIdx,
+        path: &Path,
+    ) -> Option<ModuleRecord> {
+        self.with_realm_record(realm, |record| {
+            record.module_records.lock().get(path).cloned()
+        })
+    }
+
+    fn cache_module_record(&self, realm: GcIdx, path: PathBuf, record: ModuleRecord) {
+        self.with_realm_record(realm, |realm_record| {
+            realm_record.module_records.lock().insert(path, record);
+        });
+    }
+
     pub(crate) fn allocate_import_meta(&mut self) -> error::Result<GcIdx> {
         Ok(GcIdx(self.heap.allocate(HeapObj::Object(
             crate::value::ObjectData {
@@ -1080,10 +1103,9 @@ impl Vm {
     }
 
     pub(crate) fn import_meta_object(&mut self, path: &Path) -> error::Result<Value> {
+        let realm = self.current_realm_global_env();
         let record = self
-            .module_records
-            .get(path)
-            .cloned()
+            .module_record_for_realm(realm, path)
             .ok_or_else(|| Error::syntax("import.meta module record is unavailable"))?;
         if let Some(meta) = record.import_meta() {
             return Ok(Value::Object(meta));
@@ -1093,16 +1115,21 @@ impl Vm {
         Ok(Value::Object(meta))
     }
 
-    pub(crate) fn set_module_completion(&mut self, path: &Path, value: Value) {
-        if let Some(record) = self.module_records.get(path) {
+    pub(crate) fn set_module_completion(&mut self, realm: GcIdx, path: &Path, value: Value) {
+        if let Some(record) = self.module_record_for_realm(realm, path) {
             record.runtime.lock().completion_value = Some(value);
         }
     }
 
     /// A host abort belongs only to the continuation that observed it; other
     /// pending module jobs may be unrelated and must remain resumable.
-    pub(crate) fn mark_module_evaluation_aborted(&mut self, path: &Path, error: Arc<Error>) {
-        if let Some(record) = self.module_records.get(path) {
+    pub(crate) fn mark_module_evaluation_aborted(
+        &mut self,
+        realm: GcIdx,
+        path: &Path,
+        error: Arc<Error>,
+    ) {
+        if let Some(record) = self.module_record_for_realm(realm, path) {
             let mut runtime = record.runtime.lock();
             runtime.status = ModuleStatus::Errored;
             runtime.error = Some(error);
@@ -1122,7 +1149,7 @@ impl Vm {
             load_graph(self, target.to_path_buf(), &mut graph, realm)?;
             let namespace = get_module_namespace(self, target, &mut graph)?;
             for (path, record) in graph {
-                self.module_records.insert(path, record);
+                self.cache_module_record(realm, path, record);
             }
             Ok(Value::Object(namespace))
         })();
@@ -1151,25 +1178,23 @@ impl Vm {
         let resolved = resolve_module_request(referrer, &request)?;
         let target = resolved.cache_key.clone();
         if resolved.module_type != ModuleType::JavaScript {
-            if !self.module_records.contains_key(&target) {
+            if self.module_record_for_realm(realm, &target).is_none() {
                 let pin_base = self.gc_pins.len();
                 let mut graph = HashMap::new();
                 if let Err(error) = load_resolved_module(self, resolved, &mut graph, realm) {
                     self.gc_pins.truncate(pin_base);
                     return Err(error);
                 }
-                self.run_loaded_module_graph(&target, graph, false, pin_base)?;
+                self.run_loaded_module_graph(&target, graph, false, pin_base, realm)?;
             } else {
                 let status = self
-                    .module_records
-                    .get(&target)
+                    .module_record_for_realm(realm, &target)
                     .expect("typed module record exists")
                     .status();
                 if status == ModuleStatus::Evaluating {
                     let evaluation_promise = self
-                        .module_records
-                        .get(&target)
-                        .and_then(ModuleRecord::evaluation_promise)
+                        .module_record_for_realm(realm, &target)
+                        .and_then(|record| record.evaluation_promise())
                         .ok_or_else(|| {
                             Error::internal("Evaluating module has no evaluation Promise")
                         })?;
@@ -1185,14 +1210,14 @@ impl Vm {
                         self.gc_pins.truncate(pin_base);
                         return Err(error);
                     }
-                    self.run_loaded_module_graph(&target, graph, false, pin_base)?;
+                    self.run_loaded_module_graph(&target, graph, false, pin_base, realm)?;
                 }
             }
             return self
                 .finish_dynamic_import(&target, realm)
                 .map(DynamicImportResult::Ready);
         }
-        if let Some(record) = self.module_records.get(&target) {
+        if let Some(record) = self.module_record_for_realm(realm, &target) {
             if record.status() == ModuleStatus::Evaluating {
                 let evaluation_promise = record.evaluation_promise().ok_or_else(|| {
                     Error::internal("Evaluating module has no evaluation Promise")
@@ -1230,7 +1255,7 @@ impl Vm {
         })();
         if result.is_ok() {
             for (path, record) in graph {
-                self.module_records.insert(path, record);
+                self.cache_module_record(self.global, path, record);
             }
         }
         self.gc_pins.truncate(pin_base);
@@ -1261,7 +1286,7 @@ impl Vm {
             self.gc_pins.truncate(pin_base);
             return Err(error);
         }
-        self.run_loaded_module_graph(&root, graph, drain_microtasks, pin_base)
+        self.run_loaded_module_graph(&root, graph, drain_microtasks, pin_base, realm)
     }
 
     fn run_loaded_module_graph(
@@ -1270,6 +1295,7 @@ impl Vm {
         mut graph: HashMap<PathBuf, ModuleRecord>,
         drain_microtasks: bool,
         pin_base: usize,
+        realm: GcIdx,
     ) -> error::Result<Value> {
         assign_scc_ids(&mut graph);
         if let Err(error) = link_imports_with_vm(self, &mut graph) {
@@ -1281,7 +1307,7 @@ impl Vm {
                 // Publish the canonical runtime before evaluation so nested
                 // dynamic imports share status, Promise, and namespace state.
                 for (path, record) in &graph {
-                    self.module_records.insert(path.clone(), record.clone());
+                    self.cache_module_record(realm, path.clone(), record.clone());
                 }
                 (evaluate_module(self, root, &mut graph), true)
             }
@@ -1289,7 +1315,7 @@ impl Vm {
         };
         if cache_graph {
             for (path, record) in &graph {
-                self.module_records.insert(path.clone(), record.clone());
+                self.cache_module_record(realm, path.clone(), record.clone());
             }
         }
         self.gc_pins.truncate(pin_base);

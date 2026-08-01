@@ -368,11 +368,11 @@ guarantees are required.
   Both forms support `type: "json"` and `type: "text"` for relative files,
   share typed cache identities, and reject other keys and types. Bare-specifier
   resolution, `import.source`, and `import.defer` are not implemented yet.
-  Dynamic-import jobs and generated errors retain the
-  initiating Realm. A newly loaded graph and its JSON object/Array defaults use
-  that request Realm, but the canonical module cache remains VM-wide, so later
-  imports from another Realm reuse the first-loaded graph and namespace rather
-  than creating an independently Realm-owned graph.
+  Dynamic-import jobs and generated errors retain the initiating Realm. Module
+  graphs, namespace identity, and JSON object/Array defaults belong to the
+  active RealmRecord. The non-standard Test262 `$262.createRealm` host hook is
+  an explicit exception: it shares the caller cache so a cross-Realm import of
+  the same in-flight graph observes the same ModuleRecord and rejection value.
 - test262 conformance is scoped, not full: RuJa targets a deliberately
   scoped subset of ES5.1 + selected ES2015+ features (see
   [test262.md](test262.md#supported-subset) for the exact list). The full
@@ -469,13 +469,12 @@ guarantees are required.
   Module chunks, including in-flight top-level-await graphs, cached rejection
   objects, namespace identity, and JSON/text import attributes. Bare host
   specifiers and the source/defer proposals remain gated.
-- `ShadowRealm` constructor, `evaluate`, primitive transfer, and wrapped
-  callable membranes are implemented. `importValue` performs receiver,
-  specifier, and export-name validation and returns a caller-Realm Promise, but
-  actual target-Realm module loading is not implemented yet. Its four pinned
-  async Module tests remain skipped. Successful secondary Realms also remain
-  rooted by VM-wide intrinsic registries for the VM lifetime; RealmRecord-owned
-  registries are required before unreachable ShadowRealms can be reclaimed.
+- `ShadowRealm` constructor, `evaluate`, primitive/callable membranes, and
+  `importValue` are implemented. Module loading requires a file-backed host
+  referrer; bare host specifiers and host-defined resolution remain unsupported.
+  Each ShadowRealm owns its module/template caches and unreachable Realm
+  records are reclaimed, while `$262.createRealm` intentionally shares the
+  caller module cache as Test262 host policy.
 - Some strict-mode edge cases are not fully enforced: `this` defaults to
   `undefined` in all modes by design (strict mode does not rebind it to the
   global object), and a top-level strict `eval` `var` still routes through the

@@ -3125,15 +3125,43 @@ impl Vm {
                     }
                 }
                 Op::GetTemplateObject(quasi_ids, raw_ids) => {
-                    let frame = self.current_frame()?;
-                    let chunk_ptr = Arc::as_ptr(&frame.chunk) as usize;
-                    let key = (chunk_ptr, frame.ip.saturating_sub(1));
-                    if let Some(v) = self.template_cache.get(&key) {
-                        self.stack.push(v.clone());
+                    let (chunk, realm, ip) = {
+                        let frame = self.current_frame()?;
+                        (
+                            frame.chunk.clone(),
+                            crate::environment::global_env_root(&self.heap, frame.env),
+                            frame.ip.saturating_sub(1),
+                        )
+                    };
+                    let key = (Arc::as_ptr(&chunk) as usize, ip);
+                    let cached = self.with_realm_record(realm, |record| {
+                        let mut cache = record.template_cache.lock();
+                        let value = cache.get(&key).and_then(|entry| {
+                            entry
+                                .chunk
+                                .upgrade()
+                                .filter(|owner| Arc::ptr_eq(owner, &chunk))
+                                .map(|_| entry.value.clone())
+                        });
+                        if value.is_none() {
+                            cache.remove(&key);
+                        }
+                        value
+                    });
+                    if let Some(value) = cached {
+                        self.stack.push(value);
                     } else {
                         let obj =
                             self.make_template_object(quasi_ids.as_slice(), raw_ids.as_slice())?;
-                        self.template_cache.insert(key, obj.clone());
+                        self.with_realm_record(realm, |record| {
+                            record.template_cache.lock().insert(
+                                key,
+                                crate::value::RealmTemplateCacheEntry {
+                                    chunk: Arc::downgrade(&chunk),
+                                    value: obj.clone(),
+                                },
+                            );
+                        });
                         self.stack.push(obj);
                     }
                 }

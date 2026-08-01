@@ -6943,8 +6943,15 @@ fn shadow_realm_constructor(
     let prototype = native_constructor_prototype_with_default(vm, "ShadowRealm", fallback)?;
     let instance = new_object_with_prototype(vm, prototype)?;
     let instance_pin = vm.pin(&instance);
+    let module_referrer = vm
+        .frames
+        .iter()
+        .rev()
+        .find_map(|frame| frame.chunk.source_path.clone());
     make_realm_transaction(
         vm,
+        module_referrer,
+        None,
         |_| {},
         |vm, realm_env, _| {
             let Value::Object(index) = &instance else {
@@ -7003,26 +7010,135 @@ fn shadow_realm_import_value(
     this: Option<Value>,
 ) -> error::Result<Value> {
     let receiver = this.unwrap_or(Value::Undefined);
-    let _eval_realm = shadow_realm_environment(vm, &receiver)?;
-    let _specifier = vm.to_string(args.first().unwrap_or(&Value::Undefined))?;
-    if !matches!(args.get(1), Some(Value::String(_))) {
+    let eval_realm = shadow_realm_environment(vm, &receiver)?;
+    let specifier = vm
+        .to_string(args.first().unwrap_or(&Value::Undefined))?
+        .to_string();
+    let Some(Value::String(export_name)) = args.get(1) else {
         return Err(Error::type_err(
             "ShadowRealm importValue export name must be a String",
         ));
-    }
+    };
 
-    // Module loading is a separate Realm-owned cache unit. Preserve the
-    // required Promise return contract while that loader is being migrated.
     let caller_realm = crate::environment::global_env_root(
         &vm.heap,
         vm.native_callee_closure().unwrap_or(vm.global),
     );
-    let constructor = vm.promise_constructor_for_env(caller_realm);
-    let capability = new_promise_capability_in_env(vm, constructor, caller_realm)?;
-    let error = Error::type_err("ShadowRealm importValue is not implemented");
-    let reason = vm.make_error_value_in_realm(&error, caller_realm)?;
-    vm.call_function(&capability.reject, &[reason], Some(Value::Undefined))?;
-    Ok(capability.promise)
+    let referrer = vm.with_realm_record(eval_realm, |record| record.module_referrer.lock().clone());
+
+    // RealmImportValue first gives HostImportModuleDynamically an eval-Realm
+    // capability. A separate internal reaction later crosses only the selected
+    // export into the caller-Realm capability.
+    let inner_constructor = vm.promise_constructor_for_env(eval_realm);
+    let inner = new_promise_capability_in_env(vm, inner_constructor, eval_realm)?;
+    let inner_promise = match inner.promise.clone() {
+        Value::Object(promise) => promise,
+        _ => {
+            return Err(Error::internal(
+                "Promise capability did not create an object",
+            ))
+        }
+    };
+    let inner_pins = vm.pin_many(&[
+        Value::Object(inner_promise),
+        inner.resolve.clone(),
+        inner.reject.clone(),
+    ]);
+    let host_load = if let Some(referrer) = referrer {
+        vm.microtask_queue
+            .push_back(crate::vm::Microtask::DynamicImport {
+                promise: inner_promise,
+                resolve: inner.resolve.clone(),
+                reject: inner.reject.clone(),
+                realm: eval_realm,
+                referrer,
+                specifier: specifier.into(),
+                import_type: None,
+            });
+        Ok(())
+    } else {
+        (|| -> error::Result<()> {
+            let error = Error::type_err("ShadowRealm importValue requires a source-file referrer");
+            let reason = vm.make_error_value_in_realm(&error, eval_realm)?;
+            let reason_pin = vm.pin(&reason);
+            let result = vm
+                .call_function(
+                    &inner.reject,
+                    std::slice::from_ref(&reason),
+                    Some(Value::Undefined),
+                )
+                .map(|_| ());
+            vm.unpin_many(reason_pin);
+            result
+        })()
+    };
+    if let Err(error) = host_load {
+        vm.unpin_many(inner_pins);
+        return Err(error);
+    }
+
+    let outer_constructor = vm.promise_constructor_for_env(caller_realm);
+    let outer = match new_promise_capability_in_env(vm, outer_constructor, caller_realm) {
+        Ok(capability) => capability,
+        Err(error) => {
+            vm.unpin_many(inner_pins);
+            return Err(error);
+        }
+    };
+    let outer_promise = match outer.promise.clone() {
+        Value::Object(promise) => promise,
+        _ => {
+            vm.unpin_many(inner_pins);
+            return Err(Error::internal(
+                "Promise capability did not create an object",
+            ));
+        }
+    };
+    let outer_pins = vm.pin_many(&[
+        Value::Object(outer_promise),
+        outer.resolve.clone(),
+        outer.reject.clone(),
+    ]);
+    let continuation = Some(crate::value::PromiseContinuation::ShadowRealmImportValue {
+        export_name: export_name.clone(),
+        capability: crate::value::PromiseReactionCapability {
+            promise: Value::Object(outer_promise),
+            resolve: outer.resolve,
+            reject: outer.reject,
+        },
+        caller_realm,
+    });
+    let state = vm.heap.with_obj(inner_promise.0, |object| {
+        if let HeapObj::Promise(data) = object {
+            *data.state.lock()
+        } else {
+            crate::value::PromiseStatus::Rejected
+        }
+    });
+    if state == crate::value::PromiseStatus::Pending {
+        vm.heap.with_obj(inner_promise.0, |object| {
+            if let HeapObj::Promise(data) = object {
+                data.handlers.lock().push(crate::value::PromiseHandler {
+                    on_fulfilled: Value::Undefined,
+                    on_rejected: Value::Undefined,
+                    derived: None,
+                    continuation,
+                });
+            }
+        });
+    } else {
+        vm.microtask_queue.push_back(crate::vm::Microtask::Then {
+            promise: inner_promise,
+            on_fulfilled: Value::Undefined,
+            on_rejected: Value::Undefined,
+            derived: None,
+            continuation,
+            realm: None,
+        });
+    }
+    vm.unpin_many(outer_pins);
+    vm.unpin_many(inner_pins);
+    Ok(Value::Object(outer_promise))
 }
 
 fn install_shadow_realm_intrinsic_in_env(
@@ -7103,8 +7219,11 @@ fn install_shadow_realm_intrinsic_in_env(
 }
 
 fn make_test262_realm(vm: &mut Vm) -> error::Result<Value> {
+    let module_cache = vm.module_cache_for_env(vm.native_callee_closure().unwrap_or(vm.global));
     make_realm_transaction(
         vm,
+        None,
+        Some(module_cache),
         |_| {},
         |vm, _, global| {
             let realm = vm.new_object()?;
@@ -7120,11 +7239,14 @@ fn make_test262_realm(vm: &mut Vm) -> error::Result<Value> {
 
 fn make_realm_transaction<T>(
     vm: &mut Vm,
+    module_referrer: Option<Arc<std::path::PathBuf>>,
+    module_cache: Option<crate::value::ModuleCache>,
     before_population: impl FnOnce(&mut Vm),
     finish: impl FnOnce(&mut Vm, GcIdx, Value) -> error::Result<T>,
 ) -> error::Result<T> {
     let pin_base = vm.gc_pins.len();
     let realm_env = crate::environment::new_env(&vm.heap, None, true)?;
+    vm.attach_realm_record(realm_env, module_referrer, module_cache);
     // Realm installers use fallible, stack-disciplined temporary pins. The
     // transaction owns their entire suffix so an early return cannot retain a
     // partially initialized Realm. Pin the environment itself until published
@@ -7133,6 +7255,7 @@ fn make_realm_transaction<T>(
     before_population(vm);
     let result = (|| {
         let global = populate_secondary_realm(vm, realm_env)?;
+        vm.publish_realm_record(realm_env);
         finish(vm, realm_env, global)
     })();
     if result.is_ok() {
@@ -7152,8 +7275,11 @@ fn make_realm_transaction<T>(
 #[cfg(test)]
 pub(crate) fn make_test262_realm_after_environment_gc(vm: &mut Vm) -> error::Result<Value> {
     // At this point the explicit pin is the environment's only GC root.
+    let module_cache = vm.module_cache_for_env(vm.global);
     make_realm_transaction(
         vm,
+        None,
+        Some(module_cache),
         |vm| vm.gc(),
         |vm, _, global| {
             let realm = vm.new_object()?;

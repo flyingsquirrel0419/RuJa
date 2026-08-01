@@ -915,6 +915,40 @@ fn tagged_template_reference_roots_temporary_base_during_interpolation() {
 }
 
 #[test]
+fn tagged_template_cache_is_realm_owned_gc_rooted_and_realm_local() {
+    let mut vm = ruja::Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        function templateTag(strings) { return strings; }
+        globalThis.getTemplate = function() { return templateTag`cached`; };
+        globalThis.templateWeak = new WeakRef(getTemplate());
+        "#,
+    )
+    .expect("template cache setup should succeed");
+    vm.gc();
+    assert_eq!(
+        vm.run(
+            r#"
+            var cached = templateWeak.deref() === getTemplate();
+            var other = $262.createRealm().global;
+            var foreign = other.eval(`
+              globalThis.getForeignTemplate = function() {
+                return (strings => strings)\`foreign\`;
+              };
+              var value = getForeignTemplate();
+              Object.getPrototypeOf(value) === Array.prototype &&
+                Object.getPrototypeOf(value.raw) === Array.prototype &&
+                value === getForeignTemplate();
+            `);
+            cached && foreign;
+            "#,
+        )
+        .expect("Realm-local template cache should survive collection"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn parenthesized_optional_chain_tagged_templates_preserve_references() {
     assert_eq!(
         run(r#"

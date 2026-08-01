@@ -199,7 +199,7 @@ try:
         FUNCTION_TOSTRING_FEATURES, FUNCTION_TOSTRING_FILES,
     )
     from test262_shadowrealm_admission import (
-        SHADOWREALM_FEATURES, SHADOWREALM_FILES,
+        SHADOWREALM_FEATURES, SHADOWREALM_FILES, SHADOWREALM_MODULE_FILES,
     )
     from test262_language_early_error_admission import (
         LANGUAGE_EARLY_ERROR_FEATURES,
@@ -434,7 +434,7 @@ except ModuleNotFoundError:
         FUNCTION_TOSTRING_FEATURES, FUNCTION_TOSTRING_FILES,
     )
     from tools.test262_shadowrealm_admission import (
-        SHADOWREALM_FEATURES, SHADOWREALM_FILES,
+        SHADOWREALM_FEATURES, SHADOWREALM_FILES, SHADOWREALM_MODULE_FILES,
     )
     from tools.test262_language_early_error_admission import (
         LANGUAGE_EARLY_ERROR_FEATURES,
@@ -3202,6 +3202,15 @@ def shadowrealm_features(path):
     rel = Path(path).resolve().relative_to(Path(TEST262).resolve() / "test")
     return SHADOWREALM_FEATURES[rel.as_posix()]
 
+def shadowrealm_module_path(path):
+    if path is None:
+        return False
+    try:
+        rel = Path(path).resolve().relative_to(Path(TEST262).resolve() / "test")
+    except (OSError, TypeError, ValueError):
+        return False
+    return rel.as_posix() in SHADOWREALM_MODULE_FILES
+
 def language_early_error_path(path):
     if path is None:
         return False
@@ -3969,6 +3978,7 @@ def should_skip(meta, path=None):
         or dynamic_import_path(path)
         or static_import_attributes_path(path)
         or import_meta_path(path)
+        or shadowrealm_module_path(path)
     )
     module_admitted = path is not None and (
         module_core_path(path)
@@ -3977,6 +3987,7 @@ def should_skip(meta, path=None):
         or import_meta_path(path)
         or extensibility_module_path(path)
         or language_early_error_module_path(path)
+        or shadowrealm_module_path(path)
     )
     if ('module' in flags and not module_admitted) or (
         'async' in flags and not (RUN_ASYNC_TESTS or async_admitted)

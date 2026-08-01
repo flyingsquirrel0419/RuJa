@@ -84,7 +84,7 @@ jobs:
           TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
           test262_tooling_test.ModuleCoreAdmissionTests.test_function_tostring_admission_is_exact_live_disjoint_and_shared
           -v
-      - name: Verify exact non-module ShadowRealm admission
+      - name: Verify exact ShadowRealm admission
         working-directory: tools
         run: >-
           TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
@@ -609,13 +609,13 @@ jobs:
           cat collection_tag_result.txt
           grep -q '^RATE=100.0 PASS=3 FAIL=0 SKIP=0 TOTAL=3 RAN=3$' \
             collection_tag_result.txt
-      - name: Require non-module ShadowRealm boundary to pass
+      - name: Require ShadowRealm boundary to pass
         if: matrix.dir == 'built-ins'
         run: |
           TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
             built-ins/ShadowRealm > shadowrealm_result.txt 2>&1
           cat shadowrealm_result.txt
-          grep -q '^RATE=100.0 PASS=60 FAIL=0 SKIP=4 TOTAL=64 RAN=60$' \
+          grep -q '^RATE=100.0 PASS=64 FAIL=0 SKIP=0 TOTAL=64 RAN=64$' \
             shadowrealm_result.txt
       - name: Require primitive Reference boundary to pass
         if: matrix.dir == 'language/types'

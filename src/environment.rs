@@ -20,6 +20,7 @@ pub fn new_env(
         is_function_scope,
         annex_b_simple_catch_name: None,
         with_object: Mutex::new(None),
+        realm_record: Mutex::new(None),
     });
     Ok(GcIdx(heap.allocate(env)?))
 }
@@ -35,6 +36,7 @@ pub fn new_catch_env(
         is_function_scope: false,
         annex_b_simple_catch_name: simple_catch_name,
         with_object: Mutex::new(None),
+        realm_record: Mutex::new(None),
     });
     Ok(GcIdx(heap.allocate(env)?))
 }
@@ -193,6 +195,7 @@ pub fn new_with_env(
         is_function_scope: false,
         annex_b_simple_catch_name: None,
         with_object: Mutex::new(Some(object)),
+        realm_record: Mutex::new(None),
     });
     Ok(GcIdx(heap.allocate(env)?))
 }

@@ -528,7 +528,7 @@ impl Vm {
             match run_result {
                 Ok(value) if module_evaluation => {
                     if let Some(path) = module_path.as_deref() {
-                        self.set_module_completion(path, value);
+                        self.set_module_completion(env, path, value);
                     }
                     self.resolve_promise_capability_value(&capability, Value::Undefined)
                 }
@@ -536,7 +536,7 @@ impl Vm {
                 Err(error) if !error.catchable() => {
                     if module_evaluation {
                         if let Some(path) = module_path.as_deref() {
-                            self.mark_module_evaluation_aborted(path, error.clone());
+                            self.mark_module_evaluation_aborted(env, path, error.clone());
                         }
                     }
                     if self.frames.len() > target_depth {
@@ -560,7 +560,7 @@ impl Vm {
             if let Err(error) = &settled {
                 if module_evaluation && !error.catchable() {
                     if let Some(path) = module_path.as_deref() {
-                        self.mark_module_evaluation_aborted(path, error.clone());
+                        self.mark_module_evaluation_aborted(env, path, error.clone());
                     }
                 }
                 self.frames.truncate(target_depth);
@@ -804,6 +804,7 @@ impl Vm {
         #[cfg(test)]
         if self.force_gc_before_allocation {
             self.heap.collect(&self.collect_roots());
+            self.prune_dead_realm_registry_entries();
             self.ic_clear();
             self.schedule_finalization_cleanup_jobs();
         }
@@ -811,6 +812,7 @@ impl Vm {
         let max = self.max_heap_objects;
         if max > 0 && self.heap.live_count() >= max {
             self.heap.collect(&self.collect_roots());
+            self.prune_dead_realm_registry_entries();
             self.ic_clear();
             self.schedule_finalization_cleanup_jobs();
         }

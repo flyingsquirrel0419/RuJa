@@ -246,6 +246,7 @@ from test262_function_tostring_admission import (
 from test262_shadowrealm_admission import (
     SHADOWREALM_FEATURES,
     SHADOWREALM_FILES,
+    SHADOWREALM_MODULE_FILES,
 )
 from test262_language_early_error_admission import (
     LANGUAGE_EARLY_ERROR_FEATURES,
@@ -4912,9 +4913,11 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
             for raw_line in manifest.read_text().splitlines()
             if (line := raw_line.strip()) and not line.startswith("#")
         )
-        self.assertEqual(len(entries), 60)
+        self.assertEqual(len(entries), 64)
         self.assertEqual(SHADOWREALM_FILES, frozenset(entries))
         self.assertEqual(frozenset(SHADOWREALM_FEATURES), SHADOWREALM_FILES)
+        self.assertEqual(len(SHADOWREALM_MODULE_FILES), 4)
+        self.assertTrue(SHADOWREALM_MODULE_FILES <= SHADOWREALM_FILES)
 
         test_root = Path(test262_runner.TEST262) / "test"
         try:
@@ -4933,6 +4936,10 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                         tool.should_skip({"features": sorted(features)}, path),
                         relative,
                     )
+                    self.assertEqual(
+                        tool.shadowrealm_module_path(path),
+                        relative in SHADOWREALM_MODULE_FILES,
+                    )
                     self.assertTrue(
                         tool.should_skip(
                             {"features": sorted(features | {"decorators"})},
@@ -4950,12 +4957,14 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                 future = test_root / "built-ins/ShadowRealm/future-sibling.js"
                 self.assertFalse(tool.shadowrealm_path(future))
                 self.assertEqual(tool.shadowrealm_features(future), frozenset())
+                self.assertFalse(tool.shadowrealm_module_path(future))
                 self.assertTrue(
                     tool.should_skip({"features": ["ShadowRealm"]}, future)
                 )
                 for invalid in (None, object()):
                     self.assertFalse(tool.shadowrealm_path(invalid))
                     self.assertEqual(tool.shadowrealm_features(invalid), frozenset())
+                    self.assertFalse(tool.shadowrealm_module_path(invalid))
             finally:
                 tool.TEST262 = original_root
 
