@@ -4,6 +4,20 @@
 
 ### Changed
 
+- Moved compiler-generated destructuring, iterator, Reference, and switch
+  completion state from synthetic Environment bindings into dense `CallFrame`
+  slots. Nested defaults, host reentry, class/with environment changes, and
+  generator or async suspension now preserve independent outer state without
+  leaking hidden global bindings or retained values. Completed generators also
+  release their activation environment, arguments, receiver, resume value, and
+  saved control state, lexical closure, and vector capacity; return/throw
+  payloads stay pinned through result and error materialization. Direct
+  regressions cover normal and abrupt iterator
+  close, identifier/member/private/super targets, switch completion, reentry,
+  suspension, and GC. The pinned assignment-destructuring/with/for-in/for-of
+  boundary remains **1,233 pass / 0 fail / 190 skip**, and supported statements/
+  expressions remains **12,765/0/7,674**; no Test262 admission policy changed.
+
 - Completed primitive-base Reference Test262 admission. The existing exact
   manifest now includes the final `GetValue` sibling that exercises Number,
   String, Boolean, and Symbol primitive boxing. Runner and analyzer retain the

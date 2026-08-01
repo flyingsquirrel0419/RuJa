@@ -419,6 +419,8 @@ pub struct Vm {
     #[cfg(test)]
     pub(crate) gc_pin_reservation_failure_countdown: Option<usize>,
     #[cfg(test)]
+    pub(crate) force_gc_before_allocation: bool,
+    #[cfg(test)]
     pub(crate) fail_has_instance_continuation_reservation: bool,
     #[cfg(test)]
     pub(crate) fail_next_get_prototype_scratch_reservation: bool,
@@ -662,6 +664,9 @@ pub struct CallFrame {
     pub ip: usize,
     pub stack_base: usize,
     pub locals: Vec<Value>,
+    /// Opaque compiler values live with execution state, never in lexical or
+    /// object Environment Records where eval/with/reentry could observe them.
+    pub compiler_temps: Vec<Value>,
     pub callee: Value,
     pub env: GcIdx,
     /// Catch handler, guard sequence, saved environment, and operand-stack
@@ -754,11 +759,13 @@ impl CallFrame {
         env: GcIdx,
         this_val: Value,
     ) -> Self {
+        let compiler_temp_count = chunk.compiler_temp_count();
         CallFrame {
             chunk,
             ip,
             stack_base,
             locals,
+            compiler_temps: vec![Value::Undefined; compiler_temp_count],
             callee: Value::Undefined,
             env,
             new_target: Value::Undefined,
@@ -855,6 +862,7 @@ pub(crate) struct GeneratorPrologueState {
     pub ip: usize,
     pub stack: Vec<Value>,
     pub locals: Vec<Value>,
+    pub compiler_temps: Vec<Value>,
     pub catch_stack: Vec<(usize, u32, GcIdx, usize)>,
     pub finally_stack: Vec<crate::value::FinallyGuardState>,
     pub guard_seq: u32,
@@ -1179,6 +1187,8 @@ impl Vm {
             regexp_matcher_cache_hit_count: 0,
             #[cfg(test)]
             gc_pin_reservation_failure_countdown: None,
+            #[cfg(test)]
+            force_gc_before_allocation: false,
             #[cfg(test)]
             fail_has_instance_continuation_reservation: false,
             #[cfg(test)]
@@ -2244,6 +2254,7 @@ impl Vm {
             ip: frame.ip,
             stack: saved_stack,
             locals: frame.locals,
+            compiler_temps: frame.compiler_temps,
             catch_stack: frame.catch_stack,
             finally_stack: frame.finally_stack,
             guard_seq,
@@ -2469,6 +2480,39 @@ impl Vm {
     /// Resume (or start) a lazy generator, running until the next `yield` or
     /// until the body completes. The third result flag means `value` is an
     /// iterator result object forwarded unchanged by `yield*`.
+    fn clear_completed_generator_execution_state(
+        generator: &crate::value::LazyGeneratorData,
+        terminal_env: GcIdx,
+    ) {
+        *generator.closure.lock() = terminal_env;
+        *generator.env.lock() = terminal_env;
+        *generator.args.lock() = Vec::new();
+        *generator.this_val.lock() = Value::Undefined;
+        *generator.stack.lock() = Vec::new();
+        *generator.locals.lock() = Vec::new();
+        *generator.compiler_temps.lock() = Vec::new();
+        *generator.catch_stack.lock() = Vec::new();
+        *generator.finally_stack.lock() = Vec::new();
+        *generator.finally_completions.lock() = Vec::new();
+        *generator.resume_value.lock() = Value::Undefined;
+    }
+
+    pub(crate) fn release_completed_generator_execution_state(&self, generator: GcIdx) {
+        let active_env = self.heap.with_obj(generator.0, |object| {
+            if let HeapObj::LazyGenerator(generator) = object {
+                *generator.env.lock()
+            } else {
+                self.global
+            }
+        });
+        let terminal_env = crate::environment::global_env_root(&self.heap, active_env);
+        self.heap.with_obj(generator.0, |object| {
+            if let HeapObj::LazyGenerator(generator) = object {
+                Self::clear_completed_generator_execution_state(generator, terminal_env);
+            }
+        });
+    }
+
     pub fn resume_generator(
         &mut self,
         g_idx: GcIdx,
@@ -2482,6 +2526,7 @@ impl Vm {
             args,
             mut ip,
             mut locals,
+            mut compiler_temps,
             mut stack,
             mut catch_stack,
             mut finally_stack,
@@ -2500,6 +2545,7 @@ impl Vm {
                     g.args.lock().clone(),
                     g.ip.load(Ordering::Relaxed),
                     g.locals.lock().clone(),
+                    g.compiler_temps.lock().clone(),
                     std::mem::take(&mut *g.stack.lock()),
                     g.catch_stack.lock().clone(),
                     g.finally_stack.lock().clone(),
@@ -2534,6 +2580,7 @@ impl Vm {
                         g.started.store(true, Ordering::Relaxed);
                     }
                 });
+                self.release_completed_generator_execution_state(g_idx);
                 return Ok((v.clone(), true, false, false));
             }
         }
@@ -2553,6 +2600,7 @@ impl Vm {
         if !started {
             if locals.is_empty() {
                 locals = vec![Value::Undefined; fdef.num_locals.max(256)];
+                compiler_temps = vec![Value::Undefined; fdef.chunk.compiler_temp_count()];
                 for (i, a) in args.iter().enumerate().take(fdef.params.len()) {
                     let slot = fdef.param_slots.get(i).copied().unwrap_or(i);
                     if slot < locals.len() {
@@ -2586,6 +2634,10 @@ impl Vm {
             env,
             this_val.clone(),
         ));
+        self.frames
+            .last_mut()
+            .expect("generator frame was just pushed")
+            .compiler_temps = compiler_temps;
         if let Some(frame) = self.frames.last_mut() {
             frame.in_parameter_initializers = fdef.has_parameter_expressions;
         }
@@ -2672,13 +2724,9 @@ impl Vm {
                     g.started.store(true, Ordering::Relaxed);
                     g.delegating.store(false, Ordering::Relaxed);
                     g.async_delegate_await_kind.store(0, Ordering::Relaxed);
-                    g.stack.lock().clear();
-                    g.locals.lock().clear();
-                    g.catch_stack.lock().clear();
-                    g.finally_stack.lock().clear();
-                    g.finally_completions.lock().clear();
                 }
             });
+            self.release_completed_generator_execution_state(g_idx);
             self.recycle_reference_values(gen_stack);
             return Err(e.clone());
         }
@@ -2709,6 +2757,7 @@ impl Vm {
                     g.ip.store(frame.ip, Ordering::Relaxed);
                     *g.env.lock() = frame.env;
                     *g.locals.lock() = frame.locals;
+                    *g.compiler_temps.lock() = frame.compiler_temps;
                     *g.stack.lock() = saved_stack;
                     *g.catch_stack.lock() = frame.catch_stack;
                     *g.finally_stack.lock() = frame.finally_stack;
@@ -2737,13 +2786,9 @@ impl Vm {
                     g.started.store(true, Ordering::Relaxed);
                     g.delegating.store(false, Ordering::Relaxed);
                     g.async_delegate_await_kind.store(0, Ordering::Relaxed);
-                    g.stack.lock().clear();
-                    g.locals.lock().clear();
-                    g.catch_stack.lock().clear();
-                    g.finally_stack.lock().clear();
-                    g.finally_completions.lock().clear();
                 }
             });
+            self.release_completed_generator_execution_state(g_idx);
             self.recycle_reference_values(gen_stack);
             let ret = result.unwrap_or(Value::Undefined);
             Ok((ret, true, false, false))

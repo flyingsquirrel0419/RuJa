@@ -1914,3 +1914,30 @@ fn generator_throw_on_done_rethrows() {
         "throw on a finished generator should re-throw"
     );
 }
+
+#[test]
+fn unstarted_async_generator_abrupt_requests_close_without_running_body() {
+    assert_eq!(
+        run(r#"
+            var marker = {}, returnRan = 0, throwRan = 0;
+            var returned = (async function*() { returnRan += 1; yield 1; })();
+            var returnRejected = await returned.return(Promise.reject(marker)).then(
+                function() { return false; },
+                function(reason) { return reason === marker; }
+            );
+            var returnNext = await returned.next();
+
+            var thrown = (async function*() { throwRan += 1; yield 1; })();
+            var throwRejected = await thrown.throw(marker).then(
+                function() { return false; },
+                function(reason) { return reason === marker; }
+            );
+            var throwNext = await thrown.next();
+            [
+                returnRejected, returnRan, returnNext.done,
+                throwRejected, throwRan, throwNext.done
+            ].join(":");
+        "#),
+        Value::String(Arc::from("true:0:true:true:0:true"))
+    );
+}

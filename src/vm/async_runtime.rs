@@ -338,6 +338,7 @@ impl Vm {
             ip: frame.ip,
             stack,
             locals: frame.locals,
+            compiler_temps: frame.compiler_temps,
             callee: frame.callee,
             env: frame.env,
             catch_stack: frame.catch_stack,
@@ -470,6 +471,7 @@ impl Vm {
             ip,
             stack,
             locals,
+            compiler_temps,
             callee,
             env,
             catch_stack,
@@ -494,6 +496,7 @@ impl Vm {
         ]);
         let caller_stack = std::mem::replace(&mut self.stack, stack);
         let mut frame = CallFrame::new(chunk, ip, 0, locals, env, this_val);
+        frame.compiler_temps = compiler_temps;
         frame.callee = callee;
         frame.catch_stack = catch_stack;
         frame.guard_seq.store(guard_seq, Ordering::Relaxed);
@@ -798,6 +801,12 @@ impl Vm {
         &mut self,
         obj: HeapObj,
     ) -> Result<GcIdx, crate::gc::HeapLimitExceeded> {
+        #[cfg(test)]
+        if self.force_gc_before_allocation {
+            self.heap.collect(&self.collect_roots());
+            self.ic_clear();
+            self.schedule_finalization_cleanup_jobs();
+        }
         // If a heap limit is set, try collecting first to free up space.
         let max = self.max_heap_objects;
         if max > 0 && self.heap.live_count() >= max {
@@ -1939,13 +1948,14 @@ impl Vm {
                         let g_idx = self.heap.allocate(HeapObj::LazyGenerator(
                             crate::value::LazyGeneratorData {
                                 fdef: func.clone(),
-                                closure: call_env,
+                                closure: Mutex::new(closure),
                                 env: Mutex::new(prologue.env),
                                 this_val: Mutex::new(this_val.clone()),
                                 args: Mutex::new(args.to_vec()),
                                 ip: AtomicUsize::new(prologue.ip),
                                 stack: Mutex::new(prologue.stack),
                                 locals: Mutex::new(prologue.locals),
+                                compiler_temps: Mutex::new(prologue.compiler_temps),
                                 catch_stack: Mutex::new(prologue.catch_stack),
                                 finally_stack: Mutex::new(prologue.finally_stack),
                                 guard_seq: AtomicU32::new(prologue.guard_seq),
@@ -3090,24 +3100,29 @@ impl Vm {
             };
             let (mut value, mut done, forwarded_result, _awaiting) =
                 self.resume_generator(g_idx, ResumeKind::Next(resume))?;
-            if forwarded_result {
-                done = self.get_property(&value, "done")?.is_truthy();
-                value = if done {
-                    Value::Undefined
-                } else {
-                    self.get_property(&value, "value")?
-                };
-            }
-            if done {
-                if let Value::Object(idx) = it {
-                    self.heap.with_obj(idx.0, |o| {
-                        if let HeapObj::Iterator(it) = o {
-                            it.done.store(true, Ordering::Relaxed);
-                        }
-                    });
+            let pin = self.pin(&value);
+            let result = (|| {
+                if forwarded_result {
+                    done = self.get_property(&value, "done")?.is_truthy();
+                    value = if done {
+                        Value::Undefined
+                    } else {
+                        self.get_property(&value, "value")?
+                    };
                 }
-            }
-            return Ok((value, done));
+                if done {
+                    if let Value::Object(idx) = it {
+                        self.heap.with_obj(idx.0, |o| {
+                            if let HeapObj::Iterator(it) = o {
+                                it.done.store(true, Ordering::Relaxed);
+                            }
+                        });
+                    }
+                }
+                Ok((value, done))
+            })();
+            self.unpin(pin);
+            return result;
         }
         if is_for_in {
             let idx = match it {

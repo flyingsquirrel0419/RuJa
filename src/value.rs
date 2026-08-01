@@ -1702,6 +1702,7 @@ pub struct AsyncFunctionContinuation {
     pub ip: usize,
     pub stack: Vec<Value>,
     pub locals: Vec<Value>,
+    pub compiler_temps: Vec<Value>,
     pub callee: Value,
     pub env: GcIdx,
     pub catch_stack: Vec<(usize, u32, GcIdx, usize)>,
@@ -1752,7 +1753,7 @@ pub struct LazyGeneratorData {
     /// The compiled function definition (holds the bytecode chunk).
     pub fdef: Arc<crate::function::FunctionDef>,
     /// Closure environment captured at creation time.
-    pub closure: GcIdx,
+    pub closure: Mutex<GcIdx>,
     /// Current environment (advanced by PushScope/PopScope); saved/restored
     /// across yields so block scopes resume correctly.
     pub env: Mutex<GcIdx>,
@@ -1767,6 +1768,8 @@ pub struct LazyGeneratorData {
     pub stack: Mutex<Vec<Value>>,
     /// Local variables slot table.
     pub locals: Mutex<Vec<Value>>,
+    /// Frame-owned compiler temporaries preserved across suspension.
+    pub compiler_temps: Mutex<Vec<Value>>,
     /// Saved try/catch handler stack (so catches resume across yields).
     pub catch_stack: Mutex<Vec<(usize, u32, GcIdx, usize)>>,
     /// Saved try/finally guard stack (so generator return/throw resumes can

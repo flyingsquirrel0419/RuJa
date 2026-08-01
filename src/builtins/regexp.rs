@@ -2870,7 +2870,7 @@ fn validate_async_generator_receiver(
 fn async_generator_realm(vm: &Vm, generator: GcIdx) -> GcIdx {
     let closure = vm.heap.with_obj(generator.0, |object| {
         if let HeapObj::LazyGenerator(data) = object {
-            Some(data.closure)
+            Some(*data.closure.lock())
         } else {
             None
         }
@@ -2956,6 +2956,7 @@ fn abort_async_generator_host_error(vm: &mut Vm, generator: GcIdx) {
             false
         }
     });
+    vm.release_completed_generator_execution_state(generator);
     if schedule_drain {
         vm.microtask_queue
             .push_back(crate::vm::Microtask::AsyncGeneratorDrain { generator });
@@ -3105,6 +3106,7 @@ fn process_async_generator_queue_inner(vm: &mut Vm, generator: GcIdx) -> error::
                             data.done.store(true, Ordering::Release);
                         }
                     });
+                    vm.release_completed_generator_execution_state(generator);
                     finish_async_generator_request(vm, generator, reason, true, true)?;
                     continue;
                 }
@@ -3136,59 +3138,70 @@ fn handle_async_generator_resume(
     let (value, done, forwarded_result, awaiting) = match resumed {
         Ok(result) => result,
         Err(error) => {
-            let reason = generator_error_reason(vm, generator, &error)?;
-            finish_async_generator_request(vm, generator, reason, true, true)?;
-            return Ok(false);
+            let mut roots = vec![Value::Object(generator)];
+            roots.extend(error.thrown_value.iter().cloned());
+            let pins = vm.pin_many(&roots);
+            let result = (|| {
+                let reason = generator_error_reason(vm, generator, &error)?;
+                finish_async_generator_request(vm, generator, reason, true, true)?;
+                Ok(false)
+            })();
+            vm.unpin_many(pins);
+            return result;
         }
     };
-
-    if awaiting {
-        let delegate_await = vm.heap.with_obj(generator.0, |object| {
-            matches!(object, HeapObj::LazyGenerator(data) if data.async_delegate_await_kind.load(Ordering::Acquire) != 0)
-        });
-        begin_async_generator_await(
-            vm,
-            generator,
-            value,
-            if delegate_await {
-                crate::value::AsyncGeneratorAwaitKind::ResumeDelegate
-            } else {
-                crate::value::AsyncGeneratorAwaitKind::Resume
-            },
-        )?;
-        return Ok(true);
-    }
-
-    if forwarded_result {
-        set_async_generator_suspended_yield(vm, generator, true);
-        settle_async_generator_request(vm, generator, value, false)?;
-        return Ok(false);
-    }
-
-    if done {
-        if matches!(
-            source,
-            Some(crate::value::AsyncGeneratorAwaitKind::ResumeReturnDelegated)
-        ) {
+    let pins = vm.pin_many(&[Value::Object(generator), value.clone()]);
+    let result = (|| {
+        if awaiting {
+            let delegate_await = vm.heap.with_obj(generator.0, |object| {
+                matches!(object, HeapObj::LazyGenerator(data) if data.async_delegate_await_kind.load(Ordering::Acquire) != 0)
+            });
             begin_async_generator_await(
                 vm,
                 generator,
                 value,
-                crate::value::AsyncGeneratorAwaitKind::ResolveReturn,
+                if delegate_await {
+                    crate::value::AsyncGeneratorAwaitKind::ResumeDelegate
+                } else {
+                    crate::value::AsyncGeneratorAwaitKind::Resume
+                },
             )?;
             return Ok(true);
         }
-        finish_async_generator_request(vm, generator, value, true, false)?;
-        return Ok(false);
-    }
 
-    begin_async_generator_await(
-        vm,
-        generator,
-        value,
-        crate::value::AsyncGeneratorAwaitKind::ResolveYield,
-    )?;
-    Ok(true)
+        if forwarded_result {
+            set_async_generator_suspended_yield(vm, generator, true);
+            settle_async_generator_request(vm, generator, value, false)?;
+            return Ok(false);
+        }
+
+        if done {
+            if matches!(
+                source,
+                Some(crate::value::AsyncGeneratorAwaitKind::ResumeReturnDelegated)
+            ) {
+                begin_async_generator_await(
+                    vm,
+                    generator,
+                    value,
+                    crate::value::AsyncGeneratorAwaitKind::ResolveReturn,
+                )?;
+                return Ok(true);
+            }
+            finish_async_generator_request(vm, generator, value, true, false)?;
+            return Ok(false);
+        }
+
+        begin_async_generator_await(
+            vm,
+            generator,
+            value,
+            crate::value::AsyncGeneratorAwaitKind::ResolveYield,
+        )?;
+        Ok(true)
+    })();
+    vm.unpin_many(pins);
+    result
 }
 
 fn begin_async_generator_await(
@@ -3254,12 +3267,17 @@ fn finish_async_generator_request(
     done: bool,
     rejected: bool,
 ) -> error::Result<()> {
-    let settled_value = if rejected {
-        value
-    } else {
-        gen_result_in_env(vm, value, done, false, async_generator_realm(vm, generator))?
-    };
-    settle_async_generator_request(vm, generator, settled_value, rejected)
+    let pins = vm.pin_many(&[Value::Object(generator), value.clone()]);
+    let result = (|| {
+        let settled_value = if rejected {
+            value
+        } else {
+            gen_result_in_env(vm, value, done, false, async_generator_realm(vm, generator))?
+        };
+        settle_async_generator_request(vm, generator, settled_value, rejected)
+    })();
+    vm.unpin_many(pins);
+    result
 }
 
 fn settle_async_generator_request(
@@ -3382,6 +3400,20 @@ fn run_async_generator_reaction_pinned(
     if state == crate::value::PromiseStatus::Rejected
         && matches!(kind, crate::value::AsyncGeneratorAwaitKind::ResolveReturn)
     {
+        vm.heap.with_obj(generator.0, |object| {
+            if let HeapObj::LazyGenerator(generator) = object {
+                generator.started.store(true, Ordering::Release);
+                generator.done.store(true, Ordering::Release);
+                generator.delegating.store(false, Ordering::Release);
+                generator
+                    .async_suspended_yield
+                    .store(false, Ordering::Release);
+                generator
+                    .async_delegate_await_kind
+                    .store(0, Ordering::Release);
+            }
+        });
+        vm.release_completed_generator_execution_state(generator);
         finish_async_generator_request(vm, generator, result, true, true)?;
         return process_async_generator_queue(vm, generator);
     }
@@ -3431,26 +3463,56 @@ fn complete_generator_resume(
     loop {
         let (value, done, forwarded_result, _awaiting) = match resumed {
             Ok(result) => result,
-            Err(error) => return wrap_generator_error(vm, error, is_async_gen),
+            Err(error) => {
+                let roots: Vec<Value> = error.thrown_value.iter().cloned().collect();
+                let pins = vm.pin_many(&roots);
+                let result = wrap_generator_error(vm, error, is_async_gen);
+                vm.unpin_many(pins);
+                return result;
+            }
         };
         if forwarded_result {
-            return wrap_generator_result(vm, value, is_async_gen);
+            let pin = vm.pin(&value);
+            let result = wrap_generator_result(vm, value, is_async_gen);
+            vm.unpin(pin);
+            return result;
         }
         if !is_async_gen {
-            return gen_result(vm, value, done, false);
+            let pin = vm.pin(&value);
+            let result = gen_result(vm, value, done, false);
+            vm.unpin(pin);
+            return result;
         }
 
-        match vm.await_value(value) {
-            Ok(value) => return gen_result(vm, value, done, true),
+        let pin = vm.pin(&value);
+        let awaited = vm.await_value(value);
+        vm.unpin(pin);
+        match awaited {
+            Ok(value) => {
+                let pin = vm.pin(&value);
+                let result = gen_result(vm, value, done, true);
+                vm.unpin(pin);
+                return result;
+            }
             Err(error) if !error.catchable() => return Err(error),
             Err(error) if !done => {
+                let roots: Vec<Value> = error.thrown_value.iter().cloned().collect();
+                let pins = vm.pin_many(&roots);
                 let reason = vm.promise_rejection_reason_in_realm(
                     &error,
                     async_generator_realm(vm, generator),
-                )?;
+                );
+                vm.unpin_many(pins);
+                let reason = reason?;
                 resumed = vm.resume_generator(generator, crate::vm::ResumeKind::Throw(reason));
             }
-            Err(error) => return wrap_generator_error(vm, error, true),
+            Err(error) => {
+                let roots: Vec<Value> = error.thrown_value.iter().cloned().collect();
+                let pins = vm.pin_many(&roots);
+                let result = wrap_generator_error(vm, error, true);
+                vm.unpin_many(pins);
+                return result;
+            }
         }
     }
 }

@@ -34,6 +34,36 @@ source ─► Lexer ─► Parser ─► Compiler ─► Bytecode ─► VM
   Object, Array, String, Number, Boolean, Function, Math, JSON, console, RegExp,
   Map, Set, Symbol, Promise, Proxy, TypedArray, and the Error hierarchy.
 
+## Compiler temporary storage
+
+Compiler-generated carriers for destructuring sources, iterator state,
+pre-evaluated assignment References, and switch completion values are dense
+slots owned by `CallFrame`. `Chunk` maps only marked constant operands to these
+slots; ordinary identifier operands continue to use Environment Records.
+`DeclareEnv`, `LoadEnv`, `StoreEnv`, and `StoreEnvName` route marked operands
+to frame storage, while iterator-close bytecodes read the same slots directly.
+
+Frame ownership prevents nested defaults, host reentry, direct or indirect
+eval, `with`, and temporary class environments from aliasing an outer
+compiler value. It also prevents synthetic names and their last values from
+accumulating in the global environment. Generator and async continuations save
+and trace the slot vector across suspension. Completion drops it; completed
+generators also release their activation environment, arguments, receiver,
+resume value, saved control state, lexical closure, and native vector capacity.
+Only the already-rooted Realm global remains as an inert terminal environment.
+Return and throw payloads are pinned across result, Promise, and catch
+materialization after that state is released.
+
+```text
+[Decision Log]
+- 목적과 의도: 중첩 실행과 환경 전환에서도 compiler temporary의 identity와 수명을 실행 frame에 한정한다.
+- 기존 구현 및 제약 조건: 고정 Environment binding 이름은 nested destructuring이 outer source, iterator, Reference를 덮어썼다. 실행 깊이 기반 고유 이름은 재진입 충돌을 줄여도 global binding과 마지막 값을 계속 보존하며 class/with 환경 변경에 의존한다.
+- 검토한 주요 대안: 실행 깊이 namespace, scope 종료 시 environment binding 삭제, 전용 temporary environment, 또는 Chunk metadata와 CallFrame dense slot.
+- 선택한 방식: fresh temporary constant를 Chunk의 dense slot에 표시하고 관련 opcode가 CallFrame storage를 사용한다. suspension record와 GC root walk가 같은 값을 보존하고 terminal generator 경로가 저장 실행 상태를 비운다.
+- 다른 대안 대신 이 방식을 선택한 이유: 이름 namespace와 삭제 방식은 mutable environment 위치 및 예외 unwind를 추적해야 하고 사용자 Environment Record에 synthetic state를 남긴다. frame slot은 call/reentry/suspension이라는 실제 수명 경계와 일치한다.
+- 장점, 단점 및 영향: nested destructuring, IteratorClose, pre-evaluated Reference, switch completion이 서로 격리되고 global binding/value 누수가 사라진다. 새 compiler temporary를 추가할 때는 반드시 Chunk marker를 사용하고 해당 operand를 소비하는 opcode가 frame-slot routing을 지원해야 한다.
+```
+
 ## Function metadata properties
 
 Function objects keep internal metadata for invocation, diagnostics, and source

@@ -371,6 +371,216 @@ fn reference_box_cache_handles_sequential_and_reentrant_records() {
 }
 
 #[test]
+fn compiler_temporaries_do_not_escape_call_frames() {
+    static CAPTURED_TEMPORARY: std::sync::Mutex<Option<GcIdx>> = std::sync::Mutex::new(None);
+
+    fn make_temporary_array(
+        vm: &mut Vm,
+        _: &[Value],
+        _: Option<Value>,
+    ) -> crate::error::Result<Value> {
+        let array = vm.alloc(HeapObj::Array(ArrayData::new(
+            Vec::new(),
+            Some(vm.array_proto.clone()),
+        )))?;
+        *CAPTURED_TEMPORARY
+            .lock()
+            .expect("temporary capture lock should not be poisoned") = Some(array);
+        Ok(Value::Object(array))
+    }
+
+    fn cap_temporary_heap(
+        vm: &mut Vm,
+        _: &[Value],
+        _: Option<Value>,
+    ) -> crate::error::Result<Value> {
+        cap_heap_at_current_live_count(vm)
+    }
+
+    fn force_gc_before_allocations(
+        vm: &mut Vm,
+        _: &[Value],
+        _: Option<Value>,
+    ) -> crate::error::Result<Value> {
+        vm.force_gc_before_allocation = true;
+        Ok(Value::Undefined)
+    }
+
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn("makeTemporaryArray", make_temporary_array, 0)
+        .expect("temporary allocation hook should register");
+    vm.register_fn("capTemporaryHeap", cap_temporary_heap, 0)
+        .expect("heap cap hook should register");
+    vm.register_fn("forceGcBeforeAllocations", force_gc_before_allocations, 0)
+        .expect("forced allocation GC hook should register");
+    vm.register_fn(
+        "reenterTemps",
+        |vm, _, _| {
+            vm.run("var nested = 0; [nested] = [2];")?;
+            Ok(Value::Number(1.0))
+        },
+        0,
+    )
+    .expect("reentry hook should register");
+    let source = r#"
+        var outer = 0, inner = 0, tail = 0;
+        [outer = ([inner] = [2], reenterTemps()), tail] = [undefined, 3];
+    "#;
+    vm.run(source)
+        .expect("initial destructuring run should pass");
+    let bindings_after_first = crate::environment::own_bindings(&vm.heap, vm.global).len();
+
+    for _ in 0..32 {
+        vm.run(source)
+            .expect("repeated destructuring run should pass");
+    }
+
+    assert_eq!(
+        crate::environment::own_bindings(&vm.heap, vm.global).len(),
+        bindings_after_first,
+        "sequential compilation must not retain compiler bindings"
+    );
+    assert!(
+        crate::environment::own_bindings(&vm.heap, vm.global)
+            .iter()
+            .all(|(name, _)| !name.starts_with("#destr:") && !name.starts_with("#arr-")),
+        "compiler temporaries must not be observable global bindings"
+    );
+
+    vm.run("function discardTemporary() { [] = [makeTemporaryArray()]; } discardTemporary();")
+        .expect("temporary-only destructuring should pass");
+    let temporary = CAPTURED_TEMPORARY
+        .lock()
+        .expect("temporary capture lock should not be poisoned")
+        .expect("temporary allocation hook should run");
+    let roots = vm.collect_roots();
+    vm.heap.collect(&roots);
+    assert!(
+        !vm.heap
+            .with_obj(temporary.0, |object| matches!(object, HeapObj::Array(_))),
+        "completed frame must release values held only by compiler temporaries"
+    );
+
+    vm.run(
+        "function* discardBeforeStart([] = [makeTemporaryArray()]) {} \
+         var discardedGenerator = discardBeforeStart(); discardedGenerator.return();",
+    )
+    .expect("return on an unstarted generator should complete");
+    let temporary = CAPTURED_TEMPORARY
+        .lock()
+        .expect("temporary capture lock should not be poisoned")
+        .expect("generator parameter initializer should allocate");
+    let roots = vm.collect_roots();
+    vm.heap.collect(&roots);
+    assert!(
+        !vm.heap
+            .with_obj(temporary.0, |object| matches!(object, HeapObj::Array(_))),
+        "unstarted generator return must release saved compiler temporaries"
+    );
+
+    vm.run(
+        "function* discardInvocation(value) {} \
+         discardedGenerator = discardInvocation.call(makeTemporaryArray(), \
+         makeTemporaryArray()); discardedGenerator.next();",
+    )
+    .expect("completed generator should release its invocation state");
+    let temporary = CAPTURED_TEMPORARY
+        .lock()
+        .expect("temporary capture lock should not be poisoned")
+        .expect("generator argument should allocate");
+    let roots = vm.collect_roots();
+    vm.heap.collect(&roots);
+    assert!(
+        !vm.heap
+            .with_obj(temporary.0, |object| matches!(object, HeapObj::Array(_))),
+        "completed generator must release arguments and its activation environment"
+    );
+
+    vm.run(
+        "discardedGenerator = (function() { \
+             var captured = makeTemporaryArray(); \
+             return function*() { if (false) return captured; }; \
+         })()(); discardedGenerator.next();",
+    )
+    .expect("nested generator should complete");
+    let temporary = CAPTURED_TEMPORARY
+        .lock()
+        .expect("temporary capture lock should not be poisoned")
+        .expect("nested closure should allocate");
+    let generator = crate::environment::get(&vm.heap, vm.global, "discardedGenerator")
+        .expect("completed generator should remain globally reachable");
+    let Value::Object(generator) = generator else {
+        panic!("completed generator should be an object");
+    };
+    vm.heap.with_obj(generator.0, |object| {
+        let HeapObj::LazyGenerator(generator) = object else {
+            panic!("completed generator should retain lazy-generator state");
+        };
+        assert_eq!(*generator.closure.lock(), vm.global);
+        assert_eq!(*generator.env.lock(), vm.global);
+        assert_eq!(generator.args.lock().capacity(), 0);
+        assert_eq!(generator.stack.lock().capacity(), 0);
+        assert_eq!(generator.locals.lock().capacity(), 0);
+        assert_eq!(generator.compiler_temps.lock().capacity(), 0);
+        assert_eq!(generator.catch_stack.lock().capacity(), 0);
+        assert_eq!(generator.finally_stack.lock().capacity(), 0);
+        assert_eq!(generator.finally_completions.lock().capacity(), 0);
+    });
+    let roots = vm.collect_roots();
+    vm.heap.collect(&roots);
+    assert!(
+        !vm.heap
+            .with_obj(temporary.0, |object| matches!(object, HeapObj::Array(_))),
+        "completed generator must not retain its nested lexical closure"
+    );
+
+    for source in [
+        "discardedGenerator = (async function*([] = [makeTemporaryArray()]) {})(); \
+         await discardedGenerator.throw({}).then(undefined, function() {});",
+        "discardedGenerator = (async function*([] = [makeTemporaryArray()]) {})(); \
+         await discardedGenerator.return(Promise.reject({})).then(undefined, function() {});",
+    ] {
+        vm.run(source)
+            .expect("terminal async-generator request should settle");
+        let temporary = CAPTURED_TEMPORARY
+            .lock()
+            .expect("temporary capture lock should not be poisoned")
+            .expect("async generator parameter initializer should allocate");
+        let roots = vm.collect_roots();
+        vm.heap.collect(&roots);
+        assert!(
+            !vm.heap
+                .with_obj(temporary.0, |object| matches!(object, HeapObj::Array(_))),
+            "terminal async-generator request must release saved execution state"
+        );
+    }
+
+    assert_eq!(
+        vm.run(
+            "var returned = (function*() { \
+                 var value = makeTemporaryArray(); capTemporaryHeap(); return value; \
+             })().next().value; Array.isArray(returned);"
+        )
+        .expect("generator result construction should survive cap-triggered GC"),
+        Value::Bool(true)
+    );
+    vm.set_max_heap_objects(None);
+
+    let async_yield_result = vm.run(
+        "var yieldSurvived = false; async function consumeYield() { \
+             var yielded = await (async function*() { \
+                 forceGcBeforeAllocations(); yield makeTemporaryArray(); \
+             })().next(); yieldSurvived = Array.isArray(yielded.value); \
+         } await consumeYield(); yieldSurvived;",
+    );
+    vm.force_gc_before_allocation = false;
+    assert_eq!(
+        async_yield_result.expect("async yield should survive GC before every allocation"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn reference_box_cache_recycles_terminal_errors_and_stack_unwind() {
     let mut vm = Vm::new().expect("failed to initialize VM");
     vm.run(

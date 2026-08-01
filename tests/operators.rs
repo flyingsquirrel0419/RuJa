@@ -3,7 +3,7 @@
 
 mod common;
 use common::{run, run_err};
-use ruja::Value;
+use ruja::{Value, Vm};
 use std::sync::Arc;
 
 // --- && short-circuit ---
@@ -1643,6 +1643,320 @@ fn destructuring_member_assignment_uses_property_reference_for_set() {
             sloppy.a + ":" + primitive.a + ":" + o.x + ":" + strict;
             "#),
         Value::String(Arc::from("2:4:1:TypeError"))
+    );
+}
+
+#[test]
+fn nested_destructuring_preserves_outer_temporary_state() {
+    assert_eq!(
+        run(r#"
+            var b = 0;
+            let { a = ([b] = [2], 1), c } = { a: undefined, c: 3 };
+            [a, b, c].join(":");
+        "#),
+        Value::String(Arc::from("1:2:3"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var nested = 0, key = "slot";
+            let {
+                [key]: value = ([nested] = [2], 1),
+                tail
+            } = { slot: undefined, tail: 3 };
+            let {
+                p: { q: { deep = 4, sibling } = { deep: undefined, sibling: 5 } }
+            } = { p: { q: undefined } };
+            [value, nested, tail, deep, sibling].join(":");
+        "#),
+        Value::String(Arc::from("1:2:3:4:5"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var a = 0, b = 0, c = 0;
+            [a = ([b] = [2], 1), c] = [undefined, 3];
+            [a, b, c].join(":");
+        "#),
+        Value::String(Arc::from("1:2:3"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var a = 0, b = 0, c = 0;
+            ({ a: a = ([b] = [2], 1), c: c } = { a: undefined, c: 3 });
+            [a, b, c].join(":");
+        "#),
+        Value::String(Arc::from("1:2:3"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var a, b, c, d, e, f, g, h, i, j, k, l;
+            [[a, b], c] = [[1, 2], 3];
+            [{ x: d, y: e }, f] = [{ x: 4, y: 5 }, 6];
+            ({ p: [g, h], q: i } = { p: [7, 8], q: 9 });
+            ({ p: { x: j, y: k }, q: l } = { p: { x: 10, y: 11 }, q: 12 });
+            [a, b, c, d, e, f, g, h, i, j, k, l].join(":");
+        "#),
+        Value::String(Arc::from("1:2:3:4:5:6:7:8:9:10:11:12"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var value, innerRest, outerRest, arrayRest, tail;
+            var outerKey = "outer", innerKey = "inner";
+            ({
+                [outerKey]: { [innerKey]: value, ...innerRest },
+                ...outerRest
+            } = { outer: { inner: 1, kept: 2 }, sibling: 3 });
+            [[...arrayRest], tail] = [[4, 5], 6];
+            [
+                value, innerRest.kept, outerRest.sibling,
+                arrayRest.join(""), tail
+            ].join(":");
+        "#),
+        Value::String(Arc::from("1:2:3:45:6"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var log = "";
+            for (var outer in { x: 0, y: 0 }) {
+                log += outer;
+                for (var inner in { p: 0, q: 0 }) log += inner;
+                log += outer;
+            }
+            log;
+        "#),
+        Value::String(Arc::from("xpqxypqy"))
+    );
+}
+
+#[test]
+fn nested_destructuring_preserves_pre_evaluated_references() {
+    assert_eq!(
+        run(r#"
+            var outer = { value: 0 };
+            var inner = { value: 0 };
+            [outer.value = ([inner.value] = [2], 1)] = [undefined];
+            [outer.value, inner.value].join(":");
+        "#),
+        Value::String(Arc::from("1:2"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var scope = { outer: 0, inner: 0 };
+            var outer = 9, inner = 9;
+            with (scope) {
+                [outer = ([inner] = [2], 1)] = [undefined];
+            }
+            [scope.outer, scope.inner, outer, inner].join(":");
+        "#),
+        Value::String(Arc::from("1:2:9:9"))
+    );
+
+    assert_eq!(
+        run(r#"
+            class C {
+                #outer = 0;
+                #inner = 0;
+                run() {
+                    [this.#outer = ([this.#inner] = [2], 1)] = [undefined];
+                    return [this.#outer, this.#inner].join(":");
+                }
+            }
+            new C().run();
+        "#),
+        Value::String(Arc::from("1:2"))
+    );
+
+    assert_eq!(
+        run(r#"
+            class C {
+                #outer = 0;
+                #inner = 0;
+                run(other) {
+                    var error;
+                    try {
+                        [this.#outer = ([other.#inner] = [2], 1)] = [undefined];
+                    } catch (caught) {
+                        error = caught;
+                    }
+                    return [error instanceof TypeError, this.#outer].join(":");
+                }
+            }
+            new C().run({});
+        "#),
+        Value::String(Arc::from("true:0"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var log = [];
+            var base = {
+                set outer(value) { log.push("outer:" + value); },
+                set inner(value) { log.push("inner:" + value); }
+            };
+            var object = {
+                run() {
+                    [super.outer = ([super.inner] = [2], 1)] = [undefined];
+                }
+            };
+            Object.setPrototypeOf(object, base);
+            object.run();
+            log.join("|");
+        "#),
+        Value::String(Arc::from("inner:2|outer:1"))
+    );
+}
+
+#[test]
+fn nested_destructuring_closes_the_outer_iterator() {
+    assert_eq!(
+        run(r#"
+            var closed = 0, outer = 0, inner = 0;
+            var iterable = {
+                [Symbol.iterator]: function() {
+                    var first = true;
+                    return {
+                        next: function() {
+                            if (first) {
+                                first = false;
+                                return { value: undefined, done: false };
+                            }
+                            return { value: 9, done: false };
+                        },
+                        return: function() {
+                            closed += 1;
+                            return { done: true };
+                        }
+                    };
+                }
+            };
+            [outer = ([inner] = [2], 1)] = iterable;
+            [outer, inner, closed].join(":");
+        "#),
+        Value::String(Arc::from("1:2:1"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var marker = {}, caught, innerClosed = 0, outerClosed = 0, later = 0;
+            function iterable(value, close) {
+                return {
+                    [Symbol.iterator]: function() {
+                        var first = true;
+                        return {
+                            next: function() {
+                                if (first) {
+                                    first = false;
+                                    return { value: value, done: false };
+                                }
+                                return { value: 9, done: false };
+                            },
+                            return: function() {
+                                close();
+                                return { done: true };
+                            }
+                        };
+                    }
+                };
+            }
+            var inner = iterable(undefined, function() { innerClosed += 1; });
+            var outer = iterable(undefined, function() { outerClosed += 1; });
+            try {
+                [
+                    outerValue = (
+                        [innerValue = (function() { throw marker; })()] = inner,
+                        1
+                    ),
+                    later
+                ] = outer;
+            } catch (error) {
+                caught = error;
+            }
+            [caught === marker, innerClosed, outerClosed, later].join(":");
+        "#),
+        Value::String(Arc::from("true:1:1:0"))
+    );
+}
+
+#[test]
+fn nested_host_run_uses_frame_owned_temporaries() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "reenterDestructure",
+        |vm, _, _| {
+            vm.run("var inner = 0; [inner] = [2]; inner;")?;
+            Ok(Value::Number(1.0))
+        },
+        0,
+    )
+    .expect("reentry hook should register");
+
+    assert_eq!(
+        vm.run(
+            r#"
+            var outer = 0, tail = 0;
+            [outer = reenterDestructure(), tail] = [undefined, 3];
+            [outer, tail, inner].join(":");
+        "#
+        )
+        .expect("reentrant compilation must preserve outer temporaries"),
+        Value::String(Arc::from("1:3:2"))
+    );
+
+    assert_eq!(
+        vm.run(
+            r#"
+            var classOuter = 0, classTail = 0;
+            [
+                classOuter = (class { static value = reenterDestructure(); }, 1),
+                classTail
+            ] = [undefined, 3];
+            [classOuter, classTail, inner].join(":");
+        "#
+        )
+        .expect("class environment changes must not expose outer temporaries"),
+        Value::String(Arc::from("1:3:2"))
+    );
+}
+
+#[test]
+fn suspended_execution_preserves_frame_owned_temporaries() {
+    assert_eq!(
+        run(r#"
+            function* destructure() {
+                var outer = 0, inner = 0, tail = 0;
+                [
+                    outer = (yield "pause", [inner] = [2], 1),
+                    tail
+                ] = [undefined, 3];
+                return [outer, inner, tail].join(":");
+            }
+            var iterator = destructure();
+            var first = iterator.next();
+            var second = iterator.next();
+            [first.value, first.done, second.value, second.done].join("|");
+        "#),
+        Value::String(Arc::from("pause|false|1:2:3|true"))
+    );
+
+    assert_eq!(
+        run(r#"
+            async function destructure() {
+                var outer = 0, inner = 0, tail = 0;
+                [
+                    outer = (await Promise.resolve(0), [inner] = [2], 1),
+                    tail
+                ] = [undefined, 3];
+                return [outer, inner, tail].join(":");
+            }
+            await destructure();
+        "#),
+        Value::String(Arc::from("1:2:3"))
     );
 }
 

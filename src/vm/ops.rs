@@ -146,16 +146,31 @@ impl Vm {
         Ok(frame.stack_base + guard.stack_depth)
     }
 
-    fn compiler_temp_value(&self, env: GcIdx, name: &str) -> error::Result<Value> {
-        match crate::environment::get_checked(&self.heap, env, name) {
-            Ok(Some(value)) => Ok(value),
-            Ok(None) | Err(false) => Err(Error::internal(format!(
-                "compiler temporary binding missing: {name}"
-            ))),
-            Err(true) => Err(Error::internal(format!(
-                "compiler temporary binding is uninitialized: {name}"
-            ))),
+    fn compiler_temp_value(&self, constant: usize) -> error::Result<Value> {
+        let frame = self.current_frame()?;
+        let slot = frame
+            .chunk
+            .compiler_temp_slot(constant)
+            .ok_or_else(|| Error::internal("compiler temporary slot missing"))?;
+        frame
+            .compiler_temps
+            .get(slot)
+            .cloned()
+            .ok_or_else(|| Error::internal("compiler temporary value missing"))
+    }
+
+    fn compiler_or_environment_value(&self, constant: usize) -> Option<Value> {
+        let frame = self.frames.last()?;
+        if let Some(slot) = frame.chunk.compiler_temp_slot(constant) {
+            return frame.compiler_temps.get(slot).cloned();
         }
+        let name = match frame.chunk.constants.get(constant) {
+            Some(Value::String(name)) => name,
+            _ => return None,
+        };
+        crate::environment::get_checked(&self.heap, frame.env, name)
+            .ok()
+            .flatten()
     }
 
     fn control_transfer_destination(frame: &CallFrame, mut target: usize) -> usize {
@@ -408,6 +423,16 @@ impl Vm {
                     self.stack.push(Value::Undefined);
                 }
                 Op::DeclareEnv(name_idx) => {
+                    let temp_slot = self.current_frame()?.chunk.compiler_temp_slot(name_idx);
+                    let value = self.stack.pop().unwrap_or(Value::Undefined);
+                    if let Some(slot) = temp_slot {
+                        let frame = self.current_frame_mut()?;
+                        let target = frame.compiler_temps.get_mut(slot).ok_or_else(|| {
+                            Error::internal("compiler temporary declaration slot missing")
+                        })?;
+                        *target = value;
+                        continue;
+                    }
                     let name = {
                         let frame = self.current_frame()?;
                         let v = frame
@@ -421,7 +446,6 @@ impl Vm {
                             _ => String::new(),
                         }
                     };
-                    let value = self.stack.pop().unwrap_or(Value::Undefined);
                     let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
                     crate::environment::declare(
                         &self.heap,
@@ -432,6 +456,14 @@ impl Vm {
                     );
                 }
                 Op::HoistVar(name_idx) => {
+                    if self
+                        .current_frame()?
+                        .chunk
+                        .compiler_temp_slot(name_idx)
+                        .is_some()
+                    {
+                        continue;
+                    }
                     let name = {
                         let frame = self.current_frame()?;
                         let v = frame
@@ -914,6 +946,18 @@ impl Vm {
                     }
                 }
                 Op::LoadEnv(name_idx) => {
+                    if let Some(slot) = self.current_frame()?.chunk.compiler_temp_slot(name_idx) {
+                        let value = self
+                            .current_frame()?
+                            .compiler_temps
+                            .get(slot)
+                            .cloned()
+                            .ok_or_else(|| {
+                                Error::internal("compiler temporary load slot missing")
+                            })?;
+                        self.stack.push(value);
+                        continue;
+                    }
                     let name = {
                         let frame = self.current_frame()?;
                         let v = frame
@@ -965,6 +1009,17 @@ impl Vm {
                     }
                 }
                 Op::StoreEnv(name_idx) => {
+                    let temp_slot = self.current_frame()?.chunk.compiler_temp_slot(name_idx);
+                    if let Some(slot) = temp_slot {
+                        let value = self.stack.pop().unwrap_or(Value::Undefined);
+                        let frame = self.current_frame_mut()?;
+                        let target = frame.compiler_temps.get_mut(slot).ok_or_else(|| {
+                            Error::internal("compiler temporary store slot missing")
+                        })?;
+                        *target = value;
+                        self.stack.push(Value::Undefined);
+                        continue;
+                    }
                     let name = {
                         let frame = self.current_frame()?;
                         let v = frame
@@ -1037,6 +1092,15 @@ impl Vm {
                 }
                 Op::StoreEnvName(name_idx) => {
                     let value = self.stack.pop().unwrap_or(Value::Undefined);
+                    if let Some(slot) = self.current_frame()?.chunk.compiler_temp_slot(name_idx) {
+                        let frame = self.current_frame_mut()?;
+                        let target = frame.compiler_temps.get_mut(slot).ok_or_else(|| {
+                            Error::internal("compiler temporary named-store slot missing")
+                        })?;
+                        *target = value;
+                        self.stack.push(Value::Undefined);
+                        continue;
+                    }
                     let name = {
                         let frame = self.current_frame()?;
                         let v = frame
@@ -2945,28 +3009,11 @@ impl Vm {
                     let stays_in_loop = inner_continue == Some(continue_target);
                     let should_close = completion_tag != 0 && !stays_in_loop;
                     if should_close {
-                        let (iter_name, done_name) = {
-                            let frame = self.current_frame()?;
-                            let iter_name = match frame.chunk.constants.get(iter) {
-                                Some(Value::String(s)) => s.to_string(),
-                                _ => String::new(),
-                            };
-                            let done_name = match frame.chunk.constants.get(done) {
-                                Some(Value::String(s)) => s.to_string(),
-                                _ => String::new(),
-                            };
-                            (iter_name, done_name)
-                        };
-                        let env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
-                        let done_value =
-                            crate::environment::get_checked(&self.heap, env, &done_name)
-                                .ok()
-                                .flatten()
-                                .unwrap_or(Value::Bool(true));
+                        let done_value = self
+                            .compiler_or_environment_value(done)
+                            .unwrap_or(Value::Bool(true));
                         if !matches!(done_value, Value::Bool(true)) {
-                            if let Ok(Some(iterator)) =
-                                crate::environment::get_checked(&self.heap, env, &iter_name)
-                            {
+                            if let Some(iterator) = self.compiler_or_environment_value(iter) {
                                 let result = self.iterator_close(&iterator);
                                 if !ignore_close_errors && completion_tag != 4 {
                                     result?;
@@ -2999,32 +3046,7 @@ impl Vm {
                         completion_tag != 0 && inner_continue != Some(continue_target);
                     let mut close_result = None;
                     if should_close {
-                        let (iter_name, done_name) = {
-                            let frame = self.current_frame()?;
-                            let iter_name = match frame.chunk.constants.get(iter) {
-                                Some(Value::String(value)) => value.to_string(),
-                                _ => {
-                                    return Err(Error::internal(
-                                        "async iterator temporary name is not a string",
-                                    ));
-                                }
-                            };
-                            let done_name = match frame.chunk.constants.get(done) {
-                                Some(Value::String(value)) => value.to_string(),
-                                _ => {
-                                    return Err(Error::internal(
-                                        "async iterator done temporary name is not a string",
-                                    ));
-                                }
-                            };
-                            (iter_name, done_name)
-                        };
-                        let env = self
-                            .frames
-                            .last()
-                            .map(|frame| frame.env)
-                            .unwrap_or(self.global);
-                        let done_value = self.compiler_temp_value(env, &done_name)?;
+                        let done_value = self.compiler_temp_value(done)?;
                         let done = match done_value {
                             Value::Bool(done) => done,
                             _ => {
@@ -3034,7 +3056,7 @@ impl Vm {
                             }
                         };
                         if !done {
-                            let iterator = self.compiler_temp_value(env, &iter_name)?;
+                            let iterator = self.compiler_temp_value(iter)?;
                             close_result = self.async_iterator_close_start(&iterator)?;
                         }
                     }
@@ -3076,27 +3098,11 @@ impl Vm {
                     done,
                     ignore_close_errors,
                 } => {
-                    let (iter_name, done_name) = {
-                        let frame = self.current_frame()?;
-                        let iter_name = match frame.chunk.constants.get(iter) {
-                            Some(Value::String(s)) => s.to_string(),
-                            _ => String::new(),
-                        };
-                        let done_name = match frame.chunk.constants.get(done) {
-                            Some(Value::String(s)) => s.to_string(),
-                            _ => String::new(),
-                        };
-                        (iter_name, done_name)
-                    };
-                    let env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
-                    let done_value = crate::environment::get_checked(&self.heap, env, &done_name)
-                        .ok()
-                        .flatten()
+                    let done_value = self
+                        .compiler_or_environment_value(done)
                         .unwrap_or(Value::Bool(true));
                     if !matches!(done_value, Value::Bool(true)) {
-                        if let Ok(Some(iterator)) =
-                            crate::environment::get_checked(&self.heap, env, &iter_name)
-                        {
+                        if let Some(iterator) = self.compiler_or_environment_value(iter) {
                             let result = self.iterator_close(&iterator);
                             if !ignore_close_errors {
                                 result?;

@@ -13,6 +13,10 @@ use std::sync::Arc;
 pub struct Chunk {
     pub code: Vec<Op>,
     pub constants: Vec<Value>,
+    /// Dense frame-local slots for compiler-generated temporaries. Entries
+    /// parallel `constants`; user-visible environment names have no slot.
+    compiler_temp_slots: Vec<Option<usize>>,
+    compiler_temp_count: usize,
     /// Per-iteration `for (let ...)` loop variable name lists, referenced by
     /// `Op::CloneLetNames(idx)`. Each entry is the set of names declared in the
     /// loop's `let`/`const` init that must be rebound per iteration.
@@ -36,6 +40,8 @@ impl Chunk {
         Chunk {
             code: Vec::new(),
             constants: Vec::new(),
+            compiler_temp_slots: Vec::new(),
+            compiler_temp_count: 0,
             let_names: Vec::new(),
             lines: Vec::new(),
             is_strict: false,
@@ -81,7 +87,23 @@ impl Chunk {
 
     pub fn add_constant(&mut self, v: Value) -> usize {
         self.constants.push(v);
+        self.compiler_temp_slots.push(None);
         self.constants.len() - 1
+    }
+
+    pub fn add_compiler_temp(&mut self, name: Arc<str>) -> usize {
+        let constant = self.add_constant(Value::String(name));
+        self.compiler_temp_slots[constant] = Some(self.compiler_temp_count);
+        self.compiler_temp_count += 1;
+        constant
+    }
+
+    pub fn compiler_temp_slot(&self, constant: usize) -> Option<usize> {
+        self.compiler_temp_slots.get(constant).copied().flatten()
+    }
+
+    pub fn compiler_temp_count(&self) -> usize {
+        self.compiler_temp_count
     }
 
     /// Patch a jump target after the destination is known.

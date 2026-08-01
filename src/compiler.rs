@@ -61,6 +61,8 @@ pub struct Compiler {
     /// unit. Actual var declarations remain tracked separately.
     annex_b_plan: AnnexBDeclarationPlan,
     annex_b_plan_configured: bool,
+    /// Compiler-local serial for frame-owned opaque runtime temporaries.
+    temp_serial: u64,
 }
 
 #[allow(dead_code)]
@@ -576,6 +578,7 @@ impl Compiler {
             top_level_declarative: false,
             annex_b_plan: AnnexBDeclarationPlan::default(),
             annex_b_plan_configured: false,
+            temp_serial: 0,
         }
     }
 
@@ -594,13 +597,13 @@ impl Compiler {
     }
 
     fn fresh_temp(&mut self, prefix: &str) -> usize {
-        let name = format!(
-            "{}:{}:{}",
-            prefix,
-            self.chunk.code.len(),
-            self.chunk.constants.len()
-        );
-        self.intern(&name)
+        let serial = self.temp_serial;
+        self.temp_serial = self
+            .temp_serial
+            .checked_add(1)
+            .expect("compiler temporary serial exhausted");
+        let name = Arc::from(format!("{}:{}", prefix, serial));
+        self.chunk.add_compiler_temp(name)
     }
 
     fn emit_call_eval(&mut self, arg_count: usize) {
@@ -657,8 +660,7 @@ impl Compiler {
                 break;
             }
             if let Some(saved) = saved_idx {
-                self.chunk.emit(Op::LoadRef(sw_val_idx), self.current_line);
-                self.chunk.emit(Op::GetValue, self.current_line);
+                self.chunk.emit(Op::LoadEnv(sw_val_idx), self.current_line);
                 self.chunk.emit(Op::StoreEnvName(saved), self.current_line);
                 self.chunk.emit(Op::Pop, self.current_line);
             }
@@ -1098,7 +1100,7 @@ impl Compiler {
                 }
             }
             StmtNode::Destructure { kind, pattern, .. } => {
-                let temp_idx = self.intern("#destr");
+                let temp_idx = self.fresh_temp("#destr");
                 self.chunk.emit(Op::DeclareEnv(temp_idx), self.current_line);
                 self.compile_pattern(pattern, temp_idx, &[], *kind)?;
             }
@@ -1892,7 +1894,7 @@ impl Compiler {
                 if let Some(e) = init {
                     self.compile_expr(e)?;
                 }
-                let temp_idx = self.intern("#destr");
+                let temp_idx = self.fresh_temp("#destr");
                 self.chunk.emit(Op::DeclareEnv(temp_idx), self.current_line);
                 self.compile_pattern(pattern, temp_idx, &[], *kind)?;
             }
@@ -2238,7 +2240,7 @@ impl Compiler {
             }
             StmtNode::Destructure { kind, pattern, .. } => {
                 // for-of/for-in with a destructuring pattern: the value is on the stack.
-                let temp_idx = self.intern("#destr");
+                let temp_idx = self.fresh_temp("#destr");
                 self.chunk.emit(Op::DeclareEnv(temp_idx), self.current_line);
                 self.compile_pattern(pattern, temp_idx, &[], *kind)?;
             }
@@ -2297,7 +2299,7 @@ impl Compiler {
                             self.compile_legacy_loop_call_assignment_error(expr, abandon_finally)?;
                         }
                         Expr::Array(_) | Expr::Object(_) => {
-                            let temp_idx = self.intern("#for-assign");
+                            let temp_idx = self.fresh_temp("#for-assign");
                             self.chunk.emit(Op::DeclareEnv(temp_idx), self.current_line);
                             self.compile_assign_value_to_target_with_mode(
                                 expr,
@@ -2392,7 +2394,7 @@ impl Compiler {
         }
         // GetForInKeys pops the object and pushes an iterator over its string keys.
         self.chunk.emit(Op::GetForInKeys, self.current_line);
-        let it_name_idx = self.intern("#iter");
+        let it_name_idx = self.fresh_temp("#iter");
         self.chunk
             .emit(Op::DeclareEnv(it_name_idx), self.current_line);
         let loop_start = self.chunk.code.len();
@@ -2931,7 +2933,7 @@ impl Compiler {
                 self.emit_binding_default_function_name(inner, default);
                 let after = self.chunk.code.len();
                 self.chunk.patch_jump(skip, after);
-                let t2 = self.intern("#d2");
+                let t2 = self.fresh_temp("#d2");
                 self.chunk.emit(Op::DeclareEnv(t2), self.current_line);
                 self.compile_pattern(inner, t2, &[], kind)?;
             }
@@ -2964,7 +2966,7 @@ impl Compiler {
                 self.emit_binding_default_function_name(inner, default);
                 let after = self.chunk.code.len();
                 self.chunk.patch_jump(skip, after);
-                let t2 = self.intern("#d2");
+                let t2 = self.fresh_temp("#d2");
                 self.chunk.emit(Op::DeclareEnv(t2), self.current_line);
                 self.compile_pattern(inner, t2, &[], kind)?;
             }
@@ -3003,9 +3005,9 @@ impl Compiler {
             Expr::Array(elems) => {
                 self.load_path(temp_idx, path);
                 self.chunk.emit(Op::GetIterator, self.current_line);
-                let iter_idx = self.intern("#arr-assign-iter");
+                let iter_idx = self.fresh_temp("#arr-assign-iter");
                 self.chunk.emit(Op::DeclareEnv(iter_idx), self.current_line);
-                let done_idx = self.intern("#arr-assign-done");
+                let done_idx = self.fresh_temp("#arr-assign-done");
                 self.chunk.emit(Op::False, self.current_line);
                 self.chunk.emit(Op::DeclareEnv(done_idx), self.current_line);
                 let finally_guard_ip = self.chunk.code.len();
@@ -3027,7 +3029,7 @@ impl Compiler {
                             self.chunk.emit(Op::DeclareEnv(done_idx), self.current_line);
                             self.chunk.emit(Op::LoadEnv(iter_idx), self.current_line);
                             self.chunk.emit(Op::IteratorCollectRest, self.current_line);
-                            let rest_idx = self.intern("#arr-assign-rest");
+                            let rest_idx = self.fresh_temp("#arr-assign-rest");
                             self.chunk.emit(Op::DeclareEnv(rest_idx), self.current_line);
                             self.chunk.emit(Op::True, self.current_line);
                             self.chunk.emit(Op::DeclareEnv(done_idx), self.current_line);
@@ -3046,7 +3048,7 @@ impl Compiler {
                             self.chunk.emit(Op::LoadEnv(iter_idx), self.current_line);
                             self.chunk.emit(Op::IteratorNext, self.current_line);
                             self.chunk.emit(Op::DeclareEnv(done_idx), self.current_line);
-                            let elem_idx = self.intern("#arr-assign-elem");
+                            let elem_idx = self.fresh_temp("#arr-assign-elem");
                             self.chunk.emit(Op::DeclareEnv(elem_idx), self.current_line);
                             self.compile_assign_value_to_target_with_mode(
                                 el,
@@ -3106,7 +3108,7 @@ impl Compiler {
                             let target_temp =
                                 self.compile_assign_target_temp(Self::assignment_target(&p.value))?;
                             self.load_path(temp_idx, &new_path);
-                            let t2 = self.intern("#d2");
+                            let t2 = self.fresh_temp("#d2");
                             self.chunk.emit(Op::DeclareEnv(t2), self.current_line);
                             self.compile_assign_value_to_target_with_mode(
                                 &p.value,
@@ -3127,7 +3129,7 @@ impl Compiler {
                             self.load_path(temp_idx, path);
                             self.chunk.emit(Op::Const(key), self.current_line);
                             self.chunk.emit(Op::GetElem, self.current_line);
-                            let t2 = self.intern("#d2");
+                            let t2 = self.fresh_temp("#d2");
                             self.chunk.emit(Op::DeclareEnv(t2), self.current_line);
                             self.compile_assign_value_to_target_with_mode(
                                 &p.value,
@@ -3148,7 +3150,7 @@ impl Compiler {
                             self.load_path(temp_idx, path);
                             self.chunk.emit(Op::LoadEnv(source_key), self.current_line);
                             self.chunk.emit(Op::GetElem, self.current_line);
-                            let t2 = self.intern("#d2");
+                            let t2 = self.fresh_temp("#d2");
                             self.chunk.emit(Op::DeclareEnv(t2), self.current_line);
                             self.compile_assign_value_to_target_with_mode(
                                 &p.value,
@@ -3175,7 +3177,7 @@ impl Compiler {
                             }
                             self.chunk
                                 .emit(Op::ObjRest(bound_keys.len()), self.current_line);
-                            let rest_idx = self.intern("#drest");
+                            let rest_idx = self.fresh_temp("#drest");
                             self.chunk.emit(Op::DeclareEnv(rest_idx), self.current_line);
                             self.compile_assign_value_to_target_with_mode(
                                 rest_target,
@@ -3198,7 +3200,7 @@ impl Compiler {
                 self.compile_expr(default)?;
                 let after = self.chunk.code.len();
                 self.chunk.patch_jump(skip, after);
-                let t2 = self.intern("#d2");
+                let t2 = self.fresh_temp("#d2");
                 self.chunk.emit(Op::DeclareEnv(t2), self.current_line);
                 self.compile_assign_pattern_with_mode(left, t2, &[], close_mode)?;
             }
@@ -3270,7 +3272,7 @@ impl Compiler {
                 }
                 let after = self.chunk.code.len();
                 self.chunk.patch_jump(skip, after);
-                let t2 = self.intern("#arr-assign-value");
+                let t2 = self.fresh_temp("#arr-assign-value");
                 self.chunk.emit(Op::DeclareEnv(t2), self.current_line);
                 self.compile_assign_value_to_target_with_mode(left, t2, target_temp, close_mode)?;
             }
@@ -3333,7 +3335,7 @@ impl Compiler {
         };
         if matches!(object.as_ref(), Expr::Super) {
             self.compile_super_property_reference(property, *computed)?;
-            let ref_idx = self.intern("#dtarget_super_ref");
+            let ref_idx = self.fresh_temp("#dtarget_super_ref");
             self.chunk.emit(Op::DeclareEnv(ref_idx), self.current_line);
             return Ok(Some(AssignTargetRef::Super(ref_idx)));
         }
@@ -3352,7 +3354,7 @@ impl Compiler {
             self.chunk.emit(Op::Const(key_idx), self.current_line);
         }
         self.chunk.emit(Op::MakeRawPropertyRef, self.current_line);
-        let ref_idx = self.intern("#dtarget_member_ref");
+        let ref_idx = self.fresh_temp("#dtarget_member_ref");
         self.chunk.emit(Op::DeclareEnv(ref_idx), self.current_line);
         Ok(Some(AssignTargetRef::Member(ref_idx)))
     }
@@ -3365,7 +3367,7 @@ impl Compiler {
             Expr::Ident(name) => {
                 let name_idx = self.chunk.add_constant(Value::String(name.clone()));
                 self.chunk.emit(Op::LoadRef(name_idx), self.current_line);
-                let ref_idx = self.intern("#dtarget_ref");
+                let ref_idx = self.fresh_temp("#dtarget_ref");
                 self.chunk.emit(Op::DeclareEnv(ref_idx), self.current_line);
                 Ok(Some(AssignTargetRef::Ident(ref_idx)))
             }
@@ -3375,7 +3377,7 @@ impl Compiler {
                 let name_idx = self.chunk.add_constant(Value::String(name.clone()));
                 self.chunk
                     .emit(Op::MakePrivateRef(name_idx), self.current_line);
-                let ref_idx = self.intern("#dtarget_private_ref");
+                let ref_idx = self.fresh_temp("#dtarget_private_ref");
                 self.chunk.emit(Op::DeclareEnv(ref_idx), self.current_line);
                 Ok(Some(AssignTargetRef::Private(ref_idx)))
             }
@@ -4758,7 +4760,7 @@ impl Compiler {
         let from_c = self.chunk.add_constant(Value::Number(from as f64));
         self.chunk.emit(Op::Const(from_c), self.current_line);
         self.chunk.emit(Op::CallMethod(1), self.current_line);
-        let t2 = self.intern("#d2");
+        let t2 = self.fresh_temp("#d2");
         self.chunk.emit(Op::DeclareEnv(t2), self.current_line);
         self.compile_assign_pattern(inner, t2, &[])?;
         Ok(())
@@ -4781,7 +4783,7 @@ impl Compiler {
         let from_c = self.chunk.add_constant(Value::Number(from as f64));
         self.chunk.emit(Op::Const(from_c), self.current_line);
         self.chunk.emit(Op::CallMethod(1), self.current_line); // value.slice(from)
-        let t2 = self.intern("#d2");
+        let t2 = self.fresh_temp("#d2");
         self.chunk.emit(Op::DeclareEnv(t2), self.current_line);
         self.compile_pattern(inner, t2, &[], kind)?;
         Ok(())
@@ -7701,7 +7703,7 @@ impl Compiler {
             Expr::Array(_) | Expr::Object(_) => {
                 self.compile_expr(value)?;
                 self.chunk.emit(Op::Dup, self.current_line);
-                let temp_idx = self.intern("#destr");
+                let temp_idx = self.fresh_temp("#destr");
                 self.chunk.emit(Op::DeclareEnv(temp_idx), self.current_line);
                 self.compile_assign_pattern(target, temp_idx, &[])?;
             }
@@ -8226,6 +8228,20 @@ fn function_body_var_names(body: &[Stmt]) -> Vec<Arc<str>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn compiler_temporaries_receive_distinct_frame_slots() {
+        let mut first = Compiler::new();
+        let first_a = first.fresh_temp("#test");
+        let first_b = first.fresh_temp("#test");
+        let mut second = Compiler::new();
+        let second_a = second.fresh_temp("#test");
+
+        assert_eq!(first.chunk.compiler_temp_slot(first_a), Some(0));
+        assert_eq!(first.chunk.compiler_temp_slot(first_b), Some(1));
+        assert_eq!(first.chunk.compiler_temp_count(), 2);
+        assert_eq!(second.chunk.compiler_temp_slot(second_a), Some(0));
+    }
 
     #[test]
     fn computed_read_modify_write_routes_key_coercion_through_property_reference() {

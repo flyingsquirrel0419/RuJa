@@ -1,5 +1,35 @@
 # test262 conformance
 
+## Frame-owned compiler temporaries
+
+Nested destructuring now allocates distinct compiler temporaries for source
+values, iterator state, computed rest keys, defaults, and pre-evaluated
+identifier/member/private/super References. Marked temporaries live in dense
+`CallFrame` slots rather than Environment Records, including across generator
+and async suspension. Host reentry and class/with environment changes cannot
+overwrite an outer operation, and completed frames or generators do not retain
+synthetic global bindings or their final object graphs.
+
+Regressions cover nested declaration and assignment patterns, sibling values,
+computed and array rest, nested for-in, Reference evaluation order and brand
+errors, normal and abrupt IteratorClose, host `Vm::run` reentry inside a class
+static initializer, generator/async suspension, switch completion, and GC after
+ordinary and generator completion. On pinned Test262
+`9e61c12835c5e4a3bdba93850427e6742c4f64c4`, assignment destructuring, `with`,
+`for-in`, and `for-of` remain **1,233 pass / 0 fail / 190 skip** over 1,423
+files. The supported statements/expressions subset remains **12,765 pass / 0
+fail / 7,674 skip** over 20,439 files. No runner admission policy changes.
+
+```text
+[Decision Log]
+- 목적과 의도: destructuring과 loop lowering의 live compiler state를 중첩 평가와 재진입으로부터 격리하고 종료 시 완전히 해제한다.
+- 기존 구현 및 제약 조건: 같은 `#destr`, `#d2`, iterator, target Reference binding을 재사용해 inner default가 outer state를 덮어썼다. Environment binding은 global evalScript 반복 후에도 남아 object graph를 root했다.
+- 검토한 주요 대안: 이름에 execution depth 추가, binding cleanup 목록 추적, 전용 Environment Record, 또는 frame-local dense slots.
+- 선택한 방식: 각 live temporary에 고유 Chunk marker/slot을 주고 VM opcode, suspension state, GC tracing을 frame storage로 연결한다.
+- 다른 대안 대신 이 방식을 선택한 이유: 환경 기반 대안은 class/with 전환과 abrupt unwind마다 정확한 선언 환경을 추적해야 한다. frame slot은 observable binding을 만들지 않고 재진입마다 자연스럽게 분리된다.
+- 장점, 단점 및 영향: 기존 Test262 admission 수치는 그대로 유지하면서 직접 회귀에서 source sibling, IteratorClose, Reference identity, suspension, cleanup을 증명한다. 새 temporary operand는 frame-slot opcode coverage가 필요하다.
+```
+
 ## Complete primitive Reference admission
 
 The exact primitive-base Reference manifest now includes all four pinned

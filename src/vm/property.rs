@@ -4649,6 +4649,9 @@ impl Vm {
             for l in &f.locals {
                 Self::push_value_roots(&mut roots, l);
             }
+            for value in &f.compiler_temps {
+                Self::push_value_roots(&mut roots, value);
+            }
             for completion in f.finally_completions.lock().iter() {
                 Self::push_value_roots(&mut roots, &completion.value);
             }
@@ -4797,7 +4800,12 @@ impl Vm {
                                 roots.push(frame.env.0);
                                 roots.extend(frame.catch_stack.iter().map(|(_, _, env, _)| env.0));
                                 roots.extend(frame.finally_stack.iter().map(|guard| guard.env.0));
-                                for value in frame.stack.iter().chain(frame.locals.iter()) {
+                                for value in frame
+                                    .stack
+                                    .iter()
+                                    .chain(frame.locals.iter())
+                                    .chain(frame.compiler_temps.iter())
+                                {
                                     Self::push_value_roots(&mut roots, value);
                                 }
                             }
