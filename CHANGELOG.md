@@ -16,7 +16,9 @@
   capture Strings lazily. The unmetered same-exec-Realm Unicode-global
   `@@match` fast path is limited to the infallible linear backend, reconstructs
   captures for its last match, and commits before its outer result Array
-  allocation. Exact accessor tests move from
+  allocation. Native source formatting omits legacy accessor names that cannot
+  form a NativeFunction `IdentifierName`, while preserving their exact `.name`
+  properties. Exact accessor tests move from
   **0/24** to **24/0/0**; the complete Annex B RegExp subtree moves from
   **34 pass / 18 fail / 10 skip** to **58/0/4**.
 

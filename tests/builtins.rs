@@ -24515,4 +24515,14 @@ fn function_to_string_rejects_non_callable_receivers() {
         run("Function.prototype.toString.call(function () {}.bind(null));"),
         Value::String(Arc::from("function () { [native code] }"))
     );
+    assert_eq!(
+        run("Function.prototype.toString.call(Object.getOwnPropertyDescriptor(RegExp, 'lastMatch').get);"),
+        Value::String(Arc::from(
+            "function get lastMatch() { [native code] }"
+        ))
+    );
+    assert_eq!(
+        run("Function.prototype.toString.call(Object.getOwnPropertyDescriptor(RegExp, '$&').get);"),
+        Value::String(Arc::from("function () { [native code] }"))
+    );
 }

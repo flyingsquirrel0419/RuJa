@@ -514,7 +514,10 @@ that sentinel to `TypeError`, so it can never escape as a JavaScript value.
 Accessor functions carry only a numeric slot selector and resolve their owning
 constructor through the active native function Realm rather than the mutable
 global binding. Assigning `input` does not replace the backing match input, so
-other lazy accessors retain the preceding successful match.
+other lazy accessors retain the preceding successful match. Their exact `.name`
+properties include symbolic aliases such as `get $&`; Function source rendering
+uses the nameless NativeFunction form for aliases that are not valid
+`IdentifierName` productions.
 
 `RegExpBuiltInExec` commits legacy input/range state only after all result Array,
 groups, indices, and property materialization succeeds.

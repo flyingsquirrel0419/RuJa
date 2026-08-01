@@ -1,6 +1,32 @@
 use super::call_arguments::{create_list_from_array_like, MAX_MATERIALIZED_CALL_ARGUMENTS};
 use super::*;
 
+fn native_function_source(name: Option<&str>) -> String {
+    let Some(name) = name.filter(|name| !name.is_empty()) else {
+        return "function () { [native code] }".to_string();
+    };
+    let (accessor, property_name) = if let Some(name) = name.strip_prefix("get ") {
+        (Some("get"), name)
+    } else if let Some(name) = name.strip_prefix("set ") {
+        (Some("set"), name)
+    } else {
+        (None, name)
+    };
+    let mut chars = property_name.chars();
+    let identifier_name = chars.next().is_some_and(crate::lexer::is_id_start)
+        && chars.all(crate::lexer::is_id_continue);
+    let computed_name = property_name.starts_with('[') && property_name.ends_with(']');
+    if !identifier_name && !computed_name {
+        return "function () { [native code] }".to_string();
+    }
+    match accessor {
+        Some(accessor) => {
+            format!("function {accessor} {property_name}() {{ [native code] }}")
+        }
+        None => format!("function {property_name}() {{ [native code] }}"),
+    }
+}
+
 // Function.prototype: call / apply / bind
 // =========================================================================
 
@@ -35,12 +61,7 @@ pub(crate) fn function_to_string(
         if let Some(source) = source {
             return Ok(Value::String(source));
         }
-        let source = match native_name.as_deref() {
-            Some(name) if !name.is_empty() => {
-                format!("function {name}() {{ [native code] }}")
-            }
-            _ => "function () { [native code] }".to_string(),
-        };
+        let source = native_function_source(native_name.as_deref());
         return Ok(Value::String(Arc::from(source)));
     }
     unreachable!("callable values are objects")

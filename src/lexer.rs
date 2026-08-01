@@ -35,7 +35,7 @@ fn decode_utf8_at(bytes: &[u8]) -> (char, usize) {
     }
 }
 
-fn is_id_continue(c: char) -> bool {
+pub(crate) fn is_id_continue(c: char) -> bool {
     // ES IdentifierPart: ID_Continue plus `$`, ZWNJ, and ZWJ.
     c == '\u{200C}'
         || c == '\u{200D}'
@@ -45,7 +45,7 @@ fn is_id_continue(c: char) -> bool {
         || is_other_id_continue(c)
 }
 
-fn is_id_start(c: char) -> bool {
+pub(crate) fn is_id_start(c: char) -> bool {
     // ES IdentifierStart: ID_Start plus `$` and `_`.
     c == '$' || c == '_' || unicode_ident::is_xid_start(c) || is_other_id_start(c)
 }
