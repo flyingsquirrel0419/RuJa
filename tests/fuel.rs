@@ -29,6 +29,51 @@ fn fuel_unbounded_by_default() {
 }
 
 #[test]
+fn annex_b_escape_native_scans_consume_fuel_before_materialization() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        globalThis.escapeCalls = 0;
+        globalThis.escapeInput = {
+          toString() {
+            escapeCalls += 1;
+            return "é".repeat(512);
+          }
+        };
+        globalThis.unescapeInput = "%41".repeat(512);
+        "#,
+    )
+    .expect("legacy escape fuel fixtures should initialize");
+
+    vm.set_fuel(Some(50));
+    let escape_error = vm
+        .run("escape(escapeInput);")
+        .expect_err("escape must meter its native UTF-16 scan");
+    assert_eq!(escape_error.kind, ruja::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+    vm.set_fuel(None);
+    assert_eq!(
+        vm.run("escapeCalls;")
+            .expect("ToString side effect should remain observable"),
+        Value::Number(1.0)
+    );
+
+    vm.set_fuel(Some(50));
+    let unescape_error = vm
+        .run("unescape(unescapeInput);")
+        .expect_err("unescape must meter its native UTF-16 scan");
+    assert_eq!(unescape_error.kind, ruja::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+
+    vm.set_fuel(Some(10_000));
+    assert_eq!(
+        vm.run("unescape(unescapeInput).length;")
+            .expect("refilled fuel should allow the same operation"),
+        Value::Number(512.0)
+    );
+}
+
+#[test]
 fn array_sort_native_index_scans_consume_fuel() {
     for method in ["sort", "toSorted"] {
         let mut vm = Vm::new().expect("failed to initialize VM");

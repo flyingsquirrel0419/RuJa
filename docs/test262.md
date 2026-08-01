@@ -1,5 +1,40 @@
 # test262 conformance
 
+## Annex B global escape functions
+
+Every Realm now installs fresh non-constructable `escape` and `unescape`
+functions with the specified name, length, descriptors, and Realm-local
+`%Function.prototype%`. Argument `ToString` runs exactly once before the native
+scan. `escape` encodes UTF-16 code units with uppercase hexadecimal digits and
+the Annex B passthrough set; `unescape` recognizes lowercase `%uXXXX` before
+`%XX`, preserves malformed input incrementally, and never rescans generated
+output. Lone surrogates therefore round-trip as individual code units.
+
+Before scanning, the implementation consumes fuel using the input UTF-8 byte
+length, an O(1)-available conservative upper bound for its UTF-16 unit count.
+Checked output lengths and fallible intermediate reservations
+turn capacity failures into `RangeError`; this does not claim a fully fallible
+host allocator for the final `Arc<str>` publication.
+
+Pinned Test262 `9e61c12835c5e4a3bdba93850427e6742c4f64c4`
+uses an exact four-file admission: the `not-a-constructor.js` and
+`to-string-err-symbol.js` files for each function. Future files and unrelated
+features remain skipped until independently audited. The complete focused
+scope moves from **0 pass / 31 fail / 4 skip** to **35/0/0**. Complete Annex B
+moves from raw **992/50/44** to **1027/19/40**, with no timeout/error; the 19
+remaining failures are the separate legacy Date cluster and the 40 skips retain
+unsupported host-exotic coverage.
+
+```text
+[Decision Log]
+- 목적과 의도: Annex B global escape/unescape를 UTF-16, Realm, coercion, sandbox resource 규칙까지 포함해 완성한다.
+- 기존 구현 및 제약 조건: 두 global function이 없어서 31 tests가 실패했고, Symbol 및 non-constructor metadata 네 tests는 broad feature skip에 남아 있었다. Rust String은 lone surrogate를 직접 표현할 수 없고 native linear work는 fuel과 fallible capacity 경계를 지켜야 한다.
+- 검토한 주요 대안: URI builtins 재사용, Unicode scalar 순회, broad feature admission, output 생성 중 fuel 차감, 또는 UTF-16 code-unit 전용 구현과 exact four-file admission.
+- 선택한 방식: ToString 후 O(1) UTF-8 byte-length upper bound fuel을 먼저 차감하고 입력을 UTF-16 units로 변환한다. escape는 exact passthrough와 uppercase encoding을 적용하고 unescape는 one-pass decoder로 malformed units를 보존한다. 각 Realm bootstrap에서 별도 native function을 만들고 pinned 네 경로의 실제 metadata feature만 제거한다.
+- 다른 대안 대신 이 방식을 선택한 이유: URI 알고리즘은 surrogate와 허용 문자 의미가 다르고 scalar 순회는 Annex B code-unit semantics를 깨뜨린다. 부분 output 후 fuel 실패는 불필요한 메모리를 만들며 broad admission은 검증하지 않은 미래 tests를 연다.
+- 장점, 단점 및 영향: focused 35 tests가 모두 실행·통과하고 complete Annex B에서 31 fail과 4 skip이 제거된다. 입력 길이에 선형인 temporary UTF-16 buffer가 필요하며 최종 Arc publication은 Rust allocator의 infallible allocation 경계를 그대로 가진다.
+```
+
 ## Annex B RegExp residual grammar
 
 Non-Unicode invalid `\c` sequences compile as a literal reverse solidus atom

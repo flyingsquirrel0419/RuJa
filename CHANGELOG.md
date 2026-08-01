@@ -4,6 +4,16 @@
 
 ### Changed
 
+- Implemented Annex B global `escape` and `unescape` in every Realm. Both
+  functions coerce their argument exactly once, operate on UTF-16 code units,
+  preserve lone surrogates, expose the specified metadata, and reject
+  construction. Native scans consume a conservative sandbox fuel bound before result
+  materialization, and intermediate buffers use checked lengths and fallible
+  reservations. A frozen four-file admission opens only the now-supported
+  Symbol and non-constructor tests. The focused pinned scope moves from **0
+  pass / 31 fail / 4 skip** to **35/0/0**; complete Annex B moves from raw
+  **992/50/44** to **1027/19/40**, with no timeout/error.
+
 - Completed the residual Annex B RegExp boundary. Non-Unicode invalid `\c`
   escapes now preserve the reverse solidus and `c` as separate atoms, while
   character-class `\c0`-`\c9` and `\c_` use their Annex B control values.

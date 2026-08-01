@@ -483,6 +483,26 @@ operations.
 - 장점, 단점 및 영향: bootstrap rollback과 GC rooting은 기존 Realm transaction을 재사용하고 모든 Realm이 같은 legacy surface를 갖는다. 추가 native functions만큼 Realm 초기 allocation이 증가하며 IsHTMLDDA behavior는 이 구조가 아닌 host-exotic unit에 남는다.
 ```
 
+Annex B global `escape` and `unescape` are Realm-local non-constructable native
+functions. Their shared front end performs `ToString` once, meters an O(1)
+UTF-8 byte-length upper bound before any input scan, and creates a fallibly
+reserved code-unit buffer. `escape`
+then computes a checked exact ASCII output size before encoding. `unescape`
+decodes into UTF-16 units in one forward pass and uses the engine's surrogate-
+preserving String conversion. Main and created Realm bootstrap paths register
+fresh function objects so prototypes and abrupt native errors use the expected
+Realm.
+
+```text
+[Decision Log]
+- 목적과 의도: Legacy escape functions의 code-unit semantics와 sandbox resource accounting을 모든 Realm에서 같은 구조로 보장한다.
+- 기존 구현 및 제약 조건: URI functions는 이미 있었지만 escape/unescape는 없었다. URI percent encoding은 Annex B passthrough, surrogate, malformed escape 의미와 호환되지 않으며 Rust UTF-8 String만 순회하면 lone surrogate를 잃는다.
+- 검토한 주요 대안: URI helper 재사용, Unicode scalar iteration, byte-string special case, output loop에서 점진적 fuel 차감, 또는 shared UTF-16 front end와 두 전용 linear algorithms.
+- 선택한 방식: shared front end에서 one-time coercion 후 O(1) UTF-8 byte-length upper bound fuel을 선차감하고 fallible UTF-16 unit conversion을 수행한다. escape는 checked exact capacity를 계산하고 unescape는 `%uXXXX` 우선 one-pass decode 후 surrogate-preserving conversion을 사용한다.
+- 다른 대안 대신 이 방식을 선택한 이유: 전용 code-unit path만 Annex B와 lone-surrogate behavior를 동시에 보존한다. 선차감은 fuel failure에서 partial output allocation을 막고 shared front end는 두 functions의 coercion/resource order drift를 줄인다.
+- 장점, 단점 및 영향: 시간과 temporary memory가 입력 길이에 선형이고 malformed input, generated percent text, cross-Realm errors가 deterministic하다. Intermediate allocation failures는 RangeError지만 final Arc allocation까지 fallible하다고 보장하지는 않는다.
+```
+
 RegExp instances carry two proposal-owned hidden fields in addition to their
 matcher data: a traced creating Realm and a `LegacyFeaturesEnabled` Boolean.
 The Boolean is true only for literals, internal RegExp creation, and direct

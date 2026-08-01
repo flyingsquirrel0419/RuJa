@@ -4087,6 +4087,90 @@ fn global_uri_functions_follow_percent_encoding_rules() {
 }
 
 #[test]
+fn annex_b_global_escape_functions_are_utf16_exact_and_realm_local() {
+    assert_eq!(
+        run(r#"
+            var high = String.fromCharCode(0xD800);
+            var low = String.fromCharCode(0xDC00);
+            var pair = String.fromCharCode(0xD834, 0xDF06);
+            var odd = unescape("%%0000");
+            [
+              escape("AZaz09@*_+-./"),
+              escape(" !~\xFF\u0100"),
+              escape(pair),
+              escape(high),
+              escape(low),
+              unescape("%41%7a%u0100"),
+              unescape("%uD834%uDF06") === pair,
+              unescape("%uD800").length,
+              unescape("%uD800").charCodeAt(0).toString(16),
+              unescape("%uDC00").charCodeAt(0).toString(16),
+              unescape("%2520"),
+              [odd.charCodeAt(0), odd.charCodeAt(1), odd.charCodeAt(2), odd.charCodeAt(3)].join(","),
+              unescape("%U0041|%u12G4|%A")
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "AZaz09@*_+-./|%20%21%7E%FF%u0100|%uD834%uDF06|%uD800|%uDC00|AzĀ|true|1|d800|dc00|%20|37,0,48,48|%U0041|%u12G4|%A"
+        ))
+    );
+
+    assert_eq!(
+        run(r#"
+            var log = [];
+            var first = escape({
+              [Symbol.toPrimitive](hint) { log.push("p:" + hint); return "@"; },
+              toString() { log.push("unreachable"); return "x"; }
+            });
+            var second = unescape({
+              toString() { log.push("t"); return {}; },
+              valueOf() { log.push("v"); return "%2F"; }
+            });
+            var marker = {};
+            var identity = false;
+            try { escape({ toString() { throw marker; } }); } catch (error) {
+              identity = error === marker;
+            }
+            [first, second, log.join(","), identity, escape(), unescape(1n)].join("|");
+        "#),
+        Value::String(Arc::from("@|/|p:string,t,v|true|undefined|1"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var escapeDescriptor = Object.getOwnPropertyDescriptor(globalThis, "escape");
+            var unescapeDescriptor = Object.getOwnPropertyDescriptor(other, "unescape");
+            var localConstructError = false;
+            var foreignConstructError = false;
+            var foreignSymbolError = false;
+            try { new escape(""); } catch (error) {
+              localConstructError = error instanceof TypeError;
+            }
+            try { new other.unescape(""); } catch (error) {
+              foreignConstructError = error instanceof TypeError && !(error instanceof other.TypeError);
+            }
+            try { other.escape(Symbol()); } catch (error) {
+              foreignSymbolError = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            [
+              escape.name, escape.length,
+              escapeDescriptor.writable, escapeDescriptor.enumerable, escapeDescriptor.configurable,
+              unescapeDescriptor.writable, unescapeDescriptor.enumerable, unescapeDescriptor.configurable,
+              Object.getPrototypeOf(other.escape) === other.Function.prototype,
+              Object.getPrototypeOf(other.unescape) === other.Function.prototype,
+              other.escape !== escape,
+              other.escape("é"), other.unescape("%E9"),
+              localConstructError, foreignConstructError, foreignSymbolError
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "escape|1|true|false|true|true|false|true|true|true|true|%E9|é|true|true|true"
+        ))
+    );
+}
+
+#[test]
 fn source_and_json_unicode_scalars_do_not_alias_surrogate_sentinels() {
     assert_eq!(
         run(concat!(

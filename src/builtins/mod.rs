@@ -29,8 +29,8 @@ pub(crate) use function::*;
 pub(crate) use global::{
     async_function_constructor, async_generator_function_constructor, bigint_as_int_n,
     bigint_as_uint_n, bigint_to_string, bigint_value_of, function_constructor,
-    generator_function_constructor, global_bigint, global_eval, global_is_finite, global_is_nan,
-    global_parse_float, global_parse_int,
+    generator_function_constructor, global_bigint, global_escape, global_eval, global_is_finite,
+    global_is_nan, global_parse_float, global_parse_int, global_unescape,
 };
 pub(crate) use json::{
     build_json, build_json_in_env, build_reflect, build_reflect_in_env, date_constructor,
@@ -6348,6 +6348,8 @@ fn populate_secondary_realm(vm: &mut Vm, realm_env: GcIdx) -> error::Result<Valu
     );
     let mut uri_functions = Vec::new();
     for (name, function) in [
+        ("escape", global_escape as NativeFn),
+        ("unescape", global_unescape as NativeFn),
         ("decodeURI", global_decode_uri as NativeFn),
         (
             "decodeURIComponent",
@@ -14501,6 +14503,8 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
         .insert(vm.global.0, eval_value.clone());
     define_global(vm, "eval", eval_value);
     for (name, func) in [
+        ("escape", global_escape as NativeFn),
+        ("unescape", global_unescape as NativeFn),
         ("decodeURI", global_decode_uri as NativeFn),
         (
             "decodeURIComponent",

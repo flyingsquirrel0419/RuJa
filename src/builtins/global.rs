@@ -5,6 +5,127 @@ const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
 // =========================================================================
 // Global functions
 // =========================================================================
+
+fn legacy_escape_storage_error() -> Arc<Error> {
+    Error::range("legacy escape result is too large")
+}
+
+fn legacy_escape_units(vm: &mut Vm, value: &Value) -> error::Result<Vec<u16>> {
+    let input = vm.to_string(value)?;
+    // UTF-8 bytes are an O(1)-available upper bound for UTF-16 units, so fuel
+    // is checked before either conversion or a separate length scan can run.
+    vm.consume_fuel_units(input.len().min(i64::MAX as usize) as i64)?;
+    crate::value::try_utf16_from_str(&input).map_err(|_| legacy_escape_storage_error())
+}
+
+fn legacy_escape_passthrough(unit: u16) -> bool {
+    matches!(
+        unit,
+        0x30..=0x39
+            | 0x41..=0x5a
+            | 0x61..=0x7a
+            | 0x40
+            | 0x2a
+            | 0x5f
+            | 0x2b
+            | 0x2d
+            | 0x2e
+            | 0x2f
+    )
+}
+
+fn legacy_hex_digit(value: u16) -> char {
+    match value {
+        0..=9 => char::from(b'0' + value as u8),
+        10..=15 => char::from(b'A' + (value as u8 - 10)),
+        _ => unreachable!(),
+    }
+}
+
+fn legacy_hex_value(units: &[u16], start: usize, length: usize) -> Option<u16> {
+    let mut value = 0u16;
+    for unit in units.get(start..start.checked_add(length)?)? {
+        let digit = match unit {
+            0x30..=0x39 => unit - 0x30,
+            0x41..=0x46 => unit - 0x41 + 10,
+            0x61..=0x66 => unit - 0x61 + 10,
+            _ => return None,
+        };
+        value = value * 16 + digit;
+    }
+    Some(value)
+}
+
+pub(crate) fn global_escape(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    let units = legacy_escape_units(vm, args.first().unwrap_or(&Value::Undefined))?;
+    let output_len = units.iter().try_fold(0usize, |length, unit| {
+        length.checked_add(if legacy_escape_passthrough(*unit) {
+            1
+        } else if *unit < 0x100 {
+            3
+        } else {
+            6
+        })
+    });
+    let mut output = String::new();
+    output
+        .try_reserve_exact(output_len.ok_or_else(legacy_escape_storage_error)?)
+        .map_err(|_| legacy_escape_storage_error())?;
+
+    for unit in units {
+        if legacy_escape_passthrough(unit) {
+            output.push(char::from_u32(u32::from(unit)).expect("ASCII escape passthrough"));
+            continue;
+        }
+        output.push('%');
+        if unit >= 0x100 {
+            output.push('u');
+            output.push(legacy_hex_digit((unit >> 12) & 0xf));
+            output.push(legacy_hex_digit((unit >> 8) & 0xf));
+        }
+        output.push(legacy_hex_digit((unit >> 4) & 0xf));
+        output.push(legacy_hex_digit(unit & 0xf));
+    }
+    Ok(Value::String(Arc::from(output)))
+}
+
+pub(crate) fn global_unescape(
+    vm: &mut Vm,
+    args: &[Value],
+    _: Option<Value>,
+) -> error::Result<Value> {
+    let units = legacy_escape_units(vm, args.first().unwrap_or(&Value::Undefined))?;
+    let mut output = Vec::new();
+    output
+        .try_reserve_exact(units.len())
+        .map_err(|_| legacy_escape_storage_error())?;
+
+    let mut index = 0usize;
+    while index < units.len() {
+        let decoded = if units[index] == u16::from(b'%') {
+            if units.get(index + 1) == Some(&u16::from(b'u')) {
+                legacy_hex_value(&units, index + 2, 4).map(|value| (value, 6))
+            } else {
+                None
+            }
+            .or_else(|| legacy_hex_value(&units, index + 1, 2).map(|value| (value, 3)))
+        } else {
+            None
+        };
+        if let Some((value, consumed)) = decoded {
+            output.push(value);
+            index += consumed;
+        } else {
+            output.push(units[index]);
+            index += 1;
+        }
+    }
+
+    let output =
+        crate::value::try_utf16_to_string(&output).map_err(|_| legacy_escape_storage_error())?;
+    Ok(Value::String(Arc::from(output)))
+}
+
 pub(crate) fn global_parse_int(
     vm: &mut Vm,
     args: &[Value],
