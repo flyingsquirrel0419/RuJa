@@ -12,6 +12,11 @@
   opens the two generator-based control tests and two already-supported
   non-Unicode malformed named-group tests. The complete pinned
   `annexB/built-ins/RegExp` subtree is now **62/0/0**, from **58/0/4**.
+  Commit `51516e1` passes ordinary CI `30705669529` (**3/3**) and full
+  Test262 CI `30705669498` (**45/45**). The ordinary artifact is byte-identical;
+  31/32 full result artifacts are byte-identical and only Annex B changes.
+  Normalized aggregate is **33319 pass / 4166 fail / 10981 skip / 3 timeout /
+  0 error** over 48469 files.
 
 - Implemented the Stage 3 legacy RegExp constructor static state in every
   Realm. `%RegExp%` now exposes the 19 configurable accessors from `input`/`$_`

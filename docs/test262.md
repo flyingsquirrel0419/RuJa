@@ -20,6 +20,18 @@ the two already-executable non-Unicode malformed named-group tests. The exact
 boundary is **4/0/0**, and complete `annexB/built-ins/RegExp` moves from
 **58 pass / 0 fail / 4 skip** to **62/0/0**, with no timeout/error.
 
+Commit `51516e1` passes ordinary CI `30705669529` (**3/3**) and full Test262
+CI `30705669498` (**45/45**). The ordinary supported-subset artifact is
+byte-identical to `30703293505`. Against full baseline `30703293498`, 31/32
+result artifacts are byte-identical and only Annex B changes from
+**987/51/48** to raw **992/50/44**. Running both archived binaries under the
+new exact policy isolates the two invalid-control files as the only runtime
+changes (`fail -> pass`); the two newly admitted named-group files pass on both
+binaries. The normalized semantic delta against the old policy is therefore
+**+4 pass / -4 skip**. Aggregate is **33319 pass / 4166 fail / 10981 skip / 3
+timeout / 0 error** over 48469 files; raw CI is **33320/4165/10981** because one
+unrelated existing Annex B failure passed in this run.
+
 ```text
 [Decision Log]
 - 목적과 의도: Annex B RegExp의 마지막 네 skip을 실제 문법/실행 지원과 exact policy evidence로 닫는다.
