@@ -380,7 +380,7 @@ guarantees are required.
   exact variable-length TypedArray `preventExtensions` shards. The latest
   verified full result is 68.3% of all matrix files and 88.4% of pass-or-fail
   executed files
-  (**33,103 pass / 4,342 fail / 11,021 skip / 3 timeout / 0 error**); within
+  (**33,106 pass / 4,339 fail / 11,021 skip / 3 timeout / 0 error**); within
   the supported subset, tests currently run at 100%.
   Full ES conformance is not claimed. See
   [test262.md](test262.md) for current numbers and the failure breakdown.

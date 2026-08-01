@@ -15,6 +15,14 @@ three-file cluster moves from **0 pass / 3 fail** to **3/0**. The combined
 skip** to **498 pass / 0 fail / 89 skip** over 587 files. Full CI hard-gates
 the exact cluster.
 
+Implementation commit `67645f4` passes ordinary CI `30683219889` (**3/3**)
+and full matrix `30683219888` (**45/45**). Compared with `30680109971`,
+**31/32** result artifacts are byte-identical. Only built-ins changes, from
+**16,753 pass / 4,172 fail / 2,740 skip** to **16,756/4,169/2,740**.
+Aggregate is **33,106 pass / 4,339 fail / 11,021 skip / 3 timeout / 0 error**
+over 48,469 files. The ordered result hash is
+`0b27d26ed526f0642ed9c464e79bed73959c6a03fc3c9509846ea565a706a2e6`.
+
 The preceding audit used the pinned Test262 revision and the current release
 binary to force-run all 4,235 files still hidden by broad feature policy under
 `language/{expressions,statements}/class`; all passed in both strict and sloppy
