@@ -20,6 +20,13 @@ ordinary and generator completion. On pinned Test262
 files. The supported statements/expressions subset remains **12,765 pass / 0
 fail / 7,674 skip** over 20,439 files. No runner admission policy changes.
 
+Implementation commit `153ad4b` passes ordinary CI `30676958635` (**3/3**)
+and full matrix `30676958637` (**45/45**). All 32 Test262 result artifacts are
+byte-identical to `30670755993`; aggregate remains **33,102 pass / 4,342 fail /
+11,022 skip / 3 timeout / 0 error** over 48,469 files and 37,444 completed
+pass/fail executions. The unchanged ordered result hash is
+`29c6d1925c7b420d829aa9a67eae71a16d7c78d168cd449635acff4c744ca39f`.
+
 ```text
 [Decision Log]
 - 목적과 의도: destructuring과 loop lowering의 live compiler state를 중첩 평가와 재진입으로부터 격리하고 종료 시 완전히 해제한다.

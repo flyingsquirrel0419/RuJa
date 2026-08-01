@@ -17,6 +17,10 @@
   suspension, and GC. The pinned assignment-destructuring/with/for-in/for-of
   boundary remains **1,233 pass / 0 fail / 190 skip**, and supported statements/
   expressions remains **12,765/0/7,674**; no Test262 admission policy changed.
+  Commit `153ad4b` passes ordinary CI `30676958635` (**3/3**) and full matrix
+  `30676958637` (**45/45**). All 32 Test262 result artifacts are byte-identical
+  to `30670755993`; aggregate remains **33,102/4,342/11,022**, with 3 timeout
+  and 0 error.
 
 - Completed primitive-base Reference Test262 admission. The existing exact
   manifest now includes the final `GetValue` sibling that exercises Number,
