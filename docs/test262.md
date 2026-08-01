@@ -1,5 +1,39 @@
 # test262 conformance
 
+## Map and Set prototype tags
+
+`Map.prototype` and `Set.prototype` now own the specified
+`Symbol.toStringTag` properties in the main Realm and every created Realm.
+Each descriptor has the value `"Map"` or `"Set"`, is non-writable and
+non-enumerable, and remains configurable. Deleting the tag makes
+`Object.prototype.toString` fall back to `"[object Object]"`; redefining it
+with a String value changes the observed tag.
+
+On pinned Test262 `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the exact
+three-file cluster moves from **0 pass / 3 fail** to **3/0**. The combined
+`built-ins/Map` and `built-ins/Set` scope moves from **495 pass / 3 fail / 89
+skip** to **498 pass / 0 fail / 89 skip** over 587 files. Full CI hard-gates
+the exact cluster.
+
+The preceding audit used the pinned Test262 revision and the current release
+binary to force-run all 4,235 files still hidden by broad feature policy under
+`language/{expressions,statements}/class`; all passed in both strict and sloppy
+variants selected by their metadata. The separately selected
+constructor/subclass exotic cohort is **248/248**, its built-in subclass
+boundary is **72/72**, and the self-contained class Module early-error cohort
+is **47/47**. Within these audited cohorts, no residual class runtime failure
+remains; further class admission still requires exact support-policy ownership.
+
+```text
+[Decision Log]
+- 목적과 의도: Map/Set prototype의 표준 well-known-symbol descriptor를 모든 Realm에서 동일하게 설치하고 최신 실제 failure cluster를 닫는다.
+- 기존 구현 및 제약 조건: WeakMap/WeakSet과 collection iterator prototype은 이미 @@toStringTag를 설치했지만 Map/Set 설치 경로만 누락했다. Object.prototype.toString은 String tag가 없으면 Map/Set을 Object로 분류한다.
+- 검토한 주요 대안: Object.prototype.toString에서 Map/Set brand를 하드코딩, 인스턴스마다 tag 설치, main Realm만 보정, 또는 공통 intrinsic 설치 경로에서 prototype descriptor 생성.
+- 선택한 방식: Map/Set constructor와 prototype을 만드는 Realm별 bootstrap에서 non-writable, non-enumerable, configurable own descriptor를 설치한다.
+- 다른 대안 대신 이 방식을 선택한 이유: brand 하드코딩은 삭제 후 Object fallback을 깨고, 인스턴스 property는 spec shape와 상속을 위반하며, main-only 수정은 created Realm을 누락한다.
+- 장점, 단점 및 영향: 세 exact failure와 전체 Map/Set 실행 경계가 green이 되고 delete/redefine semantics가 자연스럽게 property model을 따른다. Temporal과 ShadowRealm은 독립된 대형 미구현 표면으로 남는다.
+```
+
 ## Complete class-elements boundary
 
 The last skipped class-elements file is a Module test for an anonymous

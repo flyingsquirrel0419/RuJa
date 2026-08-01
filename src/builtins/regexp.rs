@@ -3757,9 +3757,15 @@ pub(crate) fn install_map_intrinsic_in_env(
     let result = (|| -> error::Result<()> {
         let map_size_getter = vm.new_native_function_in_env("get size", map_size, 0, realm)?;
         vm.heap.with_obj(map_proto.0, |object| {
+            let mut tag = data_prop(Value::String(Arc::from("Map")));
+            tag.writable = false;
             object.props().lock().insert(
                 PropertyKey::from("size"),
                 accessor_get_prop(Value::Object(map_size_getter)),
+            );
+            object.props().lock().insert(
+                PropertyKey::symbol(vm.well_known_symbols.to_string_tag),
+                tag,
             );
         });
         let map_species_getter =
@@ -3839,9 +3845,15 @@ pub(crate) fn install_set_intrinsic_in_env(
     let result = (|| -> error::Result<()> {
         let size_getter = vm.new_native_function_in_env("get size", set_size, 0, realm)?;
         vm.heap.with_obj(set_proto.0, |object| {
+            let mut tag = data_prop(Value::String(Arc::from("Set")));
+            tag.writable = false;
             object.props().lock().insert(
                 PropertyKey::from("size"),
                 accessor_get_prop(Value::Object(size_getter)),
+            );
+            object.props().lock().insert(
+                PropertyKey::symbol(vm.well_known_symbols.to_string_tag),
+                tag,
             );
         });
         let species_getter =

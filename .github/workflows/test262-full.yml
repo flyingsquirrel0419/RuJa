@@ -592,6 +592,17 @@ jobs:
           cat function_tostring_result.txt
           grep -q '^RATE=100.0 PASS=80 FAIL=0 SKIP=0 TOTAL=80 RAN=80$' \
             function_tostring_result.txt
+      - name: Require Map and Set prototype tags to pass
+        if: matrix.dir == 'built-ins'
+        run: |
+          TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
+            built-ins/Map/prototype/Symbol.toStringTag.js \
+            built-ins/Set/prototype/Symbol.toStringTag.js \
+            built-ins/Set/prototype/Symbol.toStringTag/property-descriptor.js \
+            > collection_tag_result.txt 2>&1
+          cat collection_tag_result.txt
+          grep -q '^RATE=100.0 PASS=3 FAIL=0 SKIP=0 TOTAL=3 RAN=3$' \
+            collection_tag_result.txt
       - name: Require primitive Reference boundary to pass
         if: matrix.dir == 'language/types'
         run: |

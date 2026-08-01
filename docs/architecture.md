@@ -4019,4 +4019,23 @@ constructor.
 - 장점, 단점 및 영향: constructor, static field, exported side effect가 모두 `"default"`를 관찰한다. 장기적으로 export synthetic binding과 inferred display-name 표현을 분리할 때도 이 ordering 계약은 유지해야 한다.
 ```
 
+### Realm-local collection prototype tags
+
+Map and Set prototypes receive their `Symbol.toStringTag` descriptors during
+the same Realm-local intrinsic bootstrap that creates their constructor,
+prototype methods, size accessor, iterator alias, and species accessor. The
+tag is therefore an ordinary inherited property rather than an internal brand
+shortcut. Its configurable descriptor supports specification-visible deletion
+and redefinition, while newly created Realms receive independent properties.
+
+```text
+[Decision Log]
+- 목적과 의도: Collection prototype tag를 ordinary property semantics와 Realm intrinsic ownership에 맞춘다.
+- 기존 구현 및 제약 조건: Object.prototype.toString은 observable @@toStringTag lookup 뒤에 limited built-in fallback만 사용한다. Map/Set은 내부 brand fallback 대상이 아니므로 prototype property가 필수다.
+- 검토한 주요 대안: toString brand table 확장, instance property, shared cross-Realm prototype mutation, 또는 Realm bootstrap descriptor.
+- 선택한 방식: install_map_intrinsic_in_env와 install_set_intrinsic_in_env가 각 prototype에 표준 descriptor를 직접 설치한다.
+- 다른 대안 대신 이 방식을 선택한 이유: 내부 fallback은 property 삭제를 무시하고 instance/shared mutation은 descriptor 위치와 Realm 격리를 위반한다.
+- 장점, 단점 및 영향: main/created Realm, descriptor reflection, assignment rejection, deletion fallback, redefinition이 한 ordinary-property 경로를 공유한다.
+```
+
 **Next:** [Features](features.md) · [Known limitations](limitations.md) · [Back to README](../README.md)

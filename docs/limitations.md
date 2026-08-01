@@ -378,9 +378,9 @@ guarantees are required.
   [test262.md](test262.md#supported-subset) for the exact list). The full
   suite is run in CI, excluding `intl402` and all staging tests except the two
   exact variable-length TypedArray `preventExtensions` shards. The latest
-  verified full result is 66.8% of all matrix files and 86.6% of pass-or-fail
+  verified full result is 68.3% of all matrix files and 88.4% of pass-or-fail
   executed files
-  (**32,376 pass / 5,028 fail / 11,062 skip / 3 timeout / 0 error**); within
+  (**33,103 pass / 4,342 fail / 11,021 skip / 3 timeout / 0 error**); within
   the supported subset, tests currently run at 100%.
   Full ES conformance is not claimed. See
   [test262.md](test262.md) for current numbers and the failure breakdown.
@@ -465,8 +465,6 @@ guarantees are required.
   invoking collection; tracing while the same thread retains such a guard
   would self-deadlock. Ordinary VM paths do not expose these Rust guards to
   JavaScript.
-- `yield*` throw/return propagation into a delegated generator is not yet
-  forwarded (direct `g.throw`/`g.return` work)
 - Dynamic `import()` supports relative imports from file-backed Script and
   Module chunks, including in-flight top-level-await graphs, cached rejection
   objects, namespace identity, and JSON/text import attributes. Bare host
@@ -575,8 +573,6 @@ guarantees are required.
 - Private methods are stored per-instance as private fields (each instance
   gets its own closure copy); behavior is spec-correct, but this is more
   memory-heavy than a shared per-class method table would be
-- Static class field declarations (`static x = 1`) are not yet supported;
-  static initialization blocks (`static { }`) are
 - BigInt: arbitrary precision via shared immutable `Arc<num_bigint::BigInt>`
   runtime values; fixed-width
   `asIntN`/`asUintN`, prototype conversion methods, and DataView 64-bit

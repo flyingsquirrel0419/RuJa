@@ -4,6 +4,14 @@
 
 ### Changed
 
+- `Map.prototype` and `Set.prototype` now expose their specified own
+  `Symbol.toStringTag` data properties in every Realm. The properties are
+  non-writable, non-enumerable, configurable, and continue to drive
+  `Object.prototype.toString`; deletion falls back to `"Object"` and a later
+  redefinition is observed. The three previously failing pinned Test262 files
+  now pass, and the complete Map/Set scope is **498 pass / 0 fail / 89 skip**
+  over 587 files. Full CI hard-gates the exact three-file boundary.
+
 - Completed the pinned Test262 class-elements boundary. The anonymous
   default-export class already receives the inferred name `"default"` before
   public static field initialization; a module-graph regression now fixes that

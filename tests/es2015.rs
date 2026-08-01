@@ -1943,6 +1943,63 @@ fn map_basic() {
 }
 
 #[test]
+fn map_and_set_prototypes_expose_realm_local_to_string_tags() {
+    assert_eq!(
+        run(r#"
+            function inspect(prototype, instance, expected) {
+              var descriptor = Object.getOwnPropertyDescriptor(
+                prototype,
+                Symbol.toStringTag
+              );
+              return descriptor.value === expected &&
+                descriptor.writable === false &&
+                descriptor.enumerable === false &&
+                descriptor.configurable === true &&
+                Object.prototype.toString.call(instance) ===
+                  "[object " + expected + "]";
+            }
+            var other = $262.createRealm().global;
+            var mainMap = inspect(Map.prototype, new Map(), "Map");
+            var mainSet = inspect(Set.prototype, new Set(), "Set");
+            var foreignMap = inspect(
+              other.Map.prototype,
+              new other.Map(),
+              "Map"
+            );
+            var foreignSet = inspect(
+              other.Set.prototype,
+              new other.Set(),
+              "Set"
+            );
+            var mapWriteRejected = !Reflect.set(
+              Map.prototype,
+              Symbol.toStringTag,
+              "Changed"
+            );
+            var deleted = delete Map.prototype[Symbol.toStringTag];
+            var deletedFallback =
+              Object.prototype.toString.call(new Map()) === "[object Object]";
+            Object.defineProperty(Map.prototype, Symbol.toStringTag, {
+              value: "Custom"
+            });
+            var redefined =
+              Object.prototype.toString.call(new Map()) === "[object Custom]";
+            [
+              mainMap,
+              mainSet,
+              foreignMap,
+              foreignSet,
+              mapWriteRejected,
+              deleted,
+              deletedFallback,
+              redefined
+            ].join("|");
+        "#),
+        Value::String(Arc::from("true|true|true|true|true|true|true|true"))
+    );
+}
+
+#[test]
 fn map_constructor_observes_direct_iterator_close_and_realm_boundaries() {
     assert_eq!(
         run(r#"
