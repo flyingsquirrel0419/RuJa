@@ -1223,7 +1223,11 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
             "features": ["class-static-fields-public"],
         }
         test_root = Path(test262_runner.TEST262) / "test"
-        if test_root.is_dir():
+        try:
+            test_root_available = test_root.is_dir()
+        except OSError:
+            test_root_available = False
+        if test_root_available:
             path = test_root / admitted
             self.assertTrue(path.is_file())
             live_meta = test262_runner.parse_meta(path.read_text())
@@ -1261,6 +1265,10 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                     )
                 finally:
                     tool.TEST262 = original_root
+
+    def test_module_class_elements_live_metadata_tolerates_unavailable_root(self):
+        with patch("pathlib.Path.is_dir", side_effect=PermissionError):
+            self.test_module_class_elements_manifest_is_exact_and_shared()
 
     def test_module_static_semantics_manifest_is_exact_and_shared(self):
         self.assertEqual(len(MODULE_STATIC_SEMANTICS_FILES), 125)
