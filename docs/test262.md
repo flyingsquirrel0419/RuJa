@@ -1,5 +1,35 @@
 # test262 conformance
 
+## Annex B RegExp residual grammar
+
+Non-Unicode invalid `\c` sequences compile as a literal reverse solidus atom
+followed by a separate `c` atom. The same fallback inside a character class
+contributes both characters, so `[\c-f]` contains the reverse solidus plus the
+`c` through `f` range. Character classes retain the Annex B extensions where
+digits and underscore are valid control tails; their code-unit value is the
+tail modulo 32. Unicode and Unicode Sets modes continue to reject those forms.
+
+The lexer validators and backend normalizer use one shared control-tail
+predicate. This prevents source admission, quantifier boundaries, class-range
+ordering, and execution from assigning different meanings to the same escape.
+The source slot is unchanged; only the private backend pattern is lowered.
+
+Pinned Test262 `9e61c12835c5e4a3bdba93850427e6742c4f64c4`
+uses a frozen four-file admission for the two generator-based control tests and
+the two already-executable non-Unicode malformed named-group tests. The exact
+boundary is **4/0/0**, and complete `annexB/built-ins/RegExp` moves from
+**58 pass / 0 fail / 4 skip** to **62/0/0**, with no timeout/error.
+
+```text
+[Decision Log]
+- 목적과 의도: Annex B RegExp의 마지막 네 skip을 실제 문법/실행 지원과 exact policy evidence로 닫는다.
+- 기존 구현 및 제약 조건: lexer는 incomplete class `\c`와 digit/underscore control tail을 이해했지만 backend normalizer는 ASCII letter만 control tail로 인정하고 invalid escape의 reverse solidus를 제거했다. 두 malformed named-group 파일은 runtime에서 이미 통과하지만 broad feature skip에 남아 있었다.
+- 검토한 주요 대안: Test262 두 실패만 특수 처리, backend parser에 원문 위임, lexer/backend별 predicate 유지, broad generators/regexp-named-groups admission, 또는 shared predicate와 exact four-file admission.
+- 선택한 방식: control-tail 값을 crate-private helper로 계산해 validation과 normalization이 공유한다. Invalid non-Unicode `\c`는 backend에 escaped reverse solidus와 literal `c`로 낮추고, 네 pinned 경로의 실제 metadata feature만 runner/analyzer에서 제거한다.
+- 다른 대안 대신 이 방식을 선택한 이유: 파일별 특수 처리는 literal/constructor/fancy backend 등가 경로를 놓치고 backend 문법은 ECMAScript Annex B와 다르다. 중복 predicate가 이번 결함의 원인이었으며 broad admission은 미래 테스트를 검증 없이 연다.
+- 장점, 단점 및 영향: literal, constructor, class/range, ignore-case, source preservation, fancy lookahead, digit/underscore control values, u/v rejection을 직접 검증한다. 추가 runtime 상태나 allocation은 없고 exact manifest는 pinned Test262 변경 시 명시적 재감사를 요구한다.
+```
+
 ## Legacy RegExp constructor statics
 
 Every Realm's immutable `%RegExp%` constructor owns the proposal's 14 legacy
@@ -38,8 +68,8 @@ On pinned Test262 `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the exact
 **24/0/0**. The complete `annexB/built-ins/RegExp` subtree moves from
 **34 pass / 18 fail / 10 skip** to **58/0/4**, with no timeout/error. This adds
 24 Annex B passes: 18 former failures and six exact cross-Realm admissions.
-The four residual skips are separate invalid control-escape and named-group
-grammar work. Isolated complete Annex B moves from **963/69/54** to
+Those four residual skips are closed by the unit above. At this historical
+boundary, isolated complete Annex B moved from **963/69/54** to
 **987/51/48**, with no timeout/error.
 
 Implementation commits `91674cd` and `3c71f0b` pass ordinary CI

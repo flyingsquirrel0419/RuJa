@@ -2238,6 +2238,16 @@ pub(crate) fn validate_regex_pattern_for_constructor(
     Ok(())
 }
 
+pub(crate) fn regex_control_escape_value(
+    tail: char,
+    in_class: bool,
+    unicode_mode: bool,
+) -> Option<u8> {
+    (tail.is_ascii_alphabetic()
+        || (in_class && !unicode_mode && (tail.is_ascii_digit() || tail == '_')))
+        .then_some((tail as u8) % 32)
+}
+
 pub(crate) fn validate_regex_literal(pattern: &str, flags: &str) -> Result<(), String> {
     validate_regex_flags(flags)?;
     validate_regex_pattern_for_constructor(pattern, flags)
@@ -2354,7 +2364,9 @@ fn validate_regex_unicode_mode_syntax(pattern: &str, flags: &str) -> Result<(), 
                     continue;
                 }
                 'c' => {
-                    if !chars.get(i + 2).is_some_and(|ch| ch.is_ascii_alphabetic()) {
+                    if !chars.get(i + 2).is_some_and(|ch| {
+                        regex_control_escape_value(*ch, class_depth > 0, true).is_some()
+                    }) {
                         return Err("invalid regular expression escape".to_string());
                     }
                     i += 3;
@@ -2678,9 +2690,9 @@ fn validate_regex_legacy_class_ranges(chars: &[char]) -> Result<(), String> {
         while i < chars.len() && chars[i] != ']' {
             if chars[i] == '\\' {
                 if chars.get(i + 1) == Some(&'c')
-                    && !chars.get(i + 2).is_some_and(|ch| {
-                        ch.is_ascii_alphabetic() || ch.is_ascii_digit() || *ch == '_'
-                    })
+                    && !chars
+                        .get(i + 2)
+                        .is_some_and(|ch| regex_control_escape_value(*ch, true, false).is_some())
                 {
                     // Annex B treats an incomplete control escape as separate `\` and `c` atoms.
                     items.push(RegexLegacyClassItem::Character('\\' as u32));
@@ -2763,7 +2775,7 @@ fn regex_legacy_class_escape_at(
         }
         'c' => {
             let next = chars.get(idx + 2).copied();
-            let value = (next?.to_ascii_uppercase() as u32) % 32;
+            let value = u32::from(regex_control_escape_value(next?, true, false)?);
             character(value, idx + 3)
         }
         '0'..='7' => {
@@ -2845,7 +2857,8 @@ fn regex_class_atom_at(chars: &[char], idx: usize) -> Option<RegexClassAtom> {
                 'c' => {
                     let value = chars
                         .get(idx + 2)
-                        .map(|ch| (ch.to_ascii_uppercase() as u32) % 32);
+                        .and_then(|ch| regex_control_escape_value(*ch, true, true))
+                        .map(u32::from);
                     ((idx + 3).min(chars.len()), value)
                 }
                 'b' => (idx + 2, Some(0x08)),
@@ -3057,8 +3070,7 @@ fn regex_escape_end_for_quantifier(
         'u' if regex_hex_value(chars, start + 2, 4).is_some() => start + 6,
         'x' if regex_hex_value(chars, start + 2, 2).is_some() => start + 4,
         'c' if chars.get(start + 2).is_some_and(|ch| {
-            ch.is_ascii_alphabetic()
-                || (in_class && !unicode_mode && (ch.is_ascii_digit() || *ch == '_'))
+            regex_control_escape_value(*ch, in_class, unicode_mode).is_some()
         }) =>
         {
             start + 3

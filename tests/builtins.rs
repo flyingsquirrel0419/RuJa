@@ -20972,6 +20972,60 @@ fn regexp_named_group_backend_lowering_preserves_names_and_backreferences() {
 }
 
 #[test]
+fn regexp_annex_b_control_escapes_preserve_legacy_atoms() {
+    assert_eq!(
+        run(r#"
+            var invalid = new RegExp("\\cЖ");
+            var incomplete = new RegExp("\\c");
+            var outsideDigit = new RegExp("\\c0");
+            var outsideUnderscore = new RegExp("\\c_");
+            var invalidClass = new RegExp("[\\c!]");
+            var invalidRange = new RegExp("[\\c-f]");
+            var classDigit = new RegExp("[\\c0]");
+            var classUnderscore = new RegExp("[\\c_]");
+            [
+              invalid.test("\\cЖ"),
+              invalid.test("cЖ"),
+              /\cЖ/.test("\\cЖ"),
+              /(?=\cЖ)\cЖ/.test("\\cЖ"),
+              incomplete.test("\\c"),
+              outsideDigit.test("\\c0"),
+              outsideDigit.test(String.fromCharCode(0x10)),
+              outsideUnderscore.test("\\c_"),
+              outsideUnderscore.test(String.fromCharCode(0x1f)),
+              invalidClass.test("\\"),
+              invalidClass.test("c"),
+              invalidClass.test("!"),
+              invalidRange.test("\\"),
+              invalidRange.test("d"),
+              invalidRange.test("g"),
+              classDigit.test(String.fromCharCode(0x10)),
+              classDigit.test("0"),
+              classUnderscore.test(String.fromCharCode(0x1f)),
+              classUnderscore.test("_"),
+              /\cA/.test(String.fromCharCode(1)),
+              new RegExp("\\c!", "i").test("\\C!"),
+              invalid.source === "\\cЖ",
+              invalidClass.source === "[\\c!]"
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "true|false|true|true|true|true|false|true|false|true|true|true|true|true|false|true|false|true|false|true|true|true|true"
+        ))
+    );
+
+    for source in [
+        r#"new RegExp("\\c0", "u");"#,
+        r#"new RegExp("[\\c0]", "u");"#,
+        r#"new RegExp("[\\c_]", "u");"#,
+        r#"new RegExp("\\c", "u");"#,
+        r#"new RegExp("[\\c0]", "v");"#,
+    ] {
+        assert!(run_err(source).contains("SyntaxError"), "{source}");
+    }
+}
+
+#[test]
 fn regexp_duplicate_named_groups_select_the_participating_capture() {
     assert_eq!(
         run(r#"

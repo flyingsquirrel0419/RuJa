@@ -4,6 +4,15 @@
 
 ### Changed
 
+- Completed the residual Annex B RegExp boundary. Non-Unicode invalid `\c`
+  escapes now preserve the reverse solidus and `c` as separate atoms, while
+  character-class `\c0`-`\c9` and `\c_` use their Annex B control values.
+  Lexer validation, quantifier scanning, class-range validation, and backend
+  normalization share one control-tail predicate. A frozen four-file admission
+  opens the two generator-based control tests and two already-supported
+  non-Unicode malformed named-group tests. The complete pinned
+  `annexB/built-ins/RegExp` subtree is now **62/0/0**, from **58/0/4**.
+
 - Implemented the Stage 3 legacy RegExp constructor static state in every
   Realm. `%RegExp%` now exposes the 19 configurable accessors from `input`/`$_`
   through `$1`-`$9`, with exact receiver checks and setter coercion order.

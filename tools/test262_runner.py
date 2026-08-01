@@ -29,6 +29,7 @@ try:
     from test262_regexp_legacy_accessors_admission import (
         REGEXP_LEGACY_ACCESSOR_FEATURES, REGEXP_LEGACY_ACCESSOR_FILES,
     )
+    from test262_regexp_annex_b_admission import REGEXP_ANNEX_B_FEATURES
     from test262_generator_function_admission import (
         GENERATOR_FUNCTION_FEATURES, GENERATOR_FUNCTION_FILES,
     )
@@ -273,6 +274,7 @@ except ModuleNotFoundError:
     from tools.test262_regexp_legacy_accessors_admission import (
         REGEXP_LEGACY_ACCESSOR_FEATURES, REGEXP_LEGACY_ACCESSOR_FILES,
     )
+    from tools.test262_regexp_annex_b_admission import REGEXP_ANNEX_B_FEATURES
     from tools.test262_generator_function_admission import (
         GENERATOR_FUNCTION_FEATURES, GENERATOR_FUNCTION_FILES,
     )
@@ -3568,6 +3570,20 @@ def regexp_named_groups_features(path):
         return frozenset()
     return REGEXP_NAMED_GROUPS_FEATURES.get(rel.as_posix(), frozenset())
 
+def regexp_annex_b_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except (OSError, TypeError, ValueError):
+        return False
+    return rel.as_posix() in REGEXP_ANNEX_B_FEATURES
+
+def regexp_annex_b_features(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except (OSError, TypeError, ValueError):
+        return frozenset()
+    return REGEXP_ANNEX_B_FEATURES.get(rel.as_posix(), frozenset())
+
 def regexp_duplicate_named_groups_features(path):
     try:
         rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
@@ -3846,6 +3862,7 @@ def should_skip(meta, path=None):
     if path is not None:
         feats.difference_update(regexp_match_indices_features(path))
         feats.difference_update(regexp_named_groups_features(path))
+        feats.difference_update(regexp_annex_b_features(path))
         feats.difference_update(regexp_duplicate_named_groups_features(path))
         feats.difference_update(regexp_unicode_sets_features(path))
         feats.difference_update(regexp_uv_flags_features(path))

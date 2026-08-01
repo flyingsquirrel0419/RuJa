@@ -156,6 +156,12 @@ jobs:
           TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
           test262_tooling_test.RegExpNamedGroupsAdmissionTests
           -v
+      - name: Verify exact residual Annex B RegExp admission
+        working-directory: tools
+        run: >-
+          TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
+          test262_tooling_test.ModuleCoreAdmissionTests.test_regexp_annex_b_manifest_is_exact_live_disjoint_and_shared
+          -v
       - name: Build directory matrix
         id: dirs
         run: |
@@ -669,7 +675,7 @@ jobs:
           TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
             annexB/built-ins/RegExp > regexp_annex_b_result.txt 2>&1
           cat regexp_annex_b_result.txt
-          grep -q '^RATE=100.0 PASS=58 FAIL=0 SKIP=4 TOTAL=62 RAN=58$' \
+          grep -q '^RATE=100.0 PASS=62 FAIL=0 SKIP=0 TOTAL=62 RAN=62$' \
             regexp_annex_b_result.txt
       - name: Require primitive Reference boundary to pass
         if: matrix.dir == 'language/types'

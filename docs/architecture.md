@@ -914,6 +914,13 @@ surrogate escape pair, reject character-set range endpoints, and distinguish a
 single range `-` from the `v` subtraction operator. The Unicode syntax pass
 owns nested `v` class depth and restricted brackets.
 
+Annex B control escapes use one crate-private tail classifier across legacy
+class validation, quantifier scanning, and backend normalization. ASCII letters
+are valid in every mode; only non-Unicode character classes additionally admit
+digits and underscore. An invalid non-Unicode `\c` is lowered privately to a
+literal reverse solidus plus `c`, preserving the public source while avoiding
+backend-specific identity-escape behavior.
+
 ```text
 RegExp source + flags
   -> flags and named-group validation
@@ -932,6 +939,16 @@ RegExp source + flags
 - 선택한 방식: Use a small quantifier state machine, syntax-aware escape boundaries, a UTF-16 legacy class tokenizer, scalar Unicode endpoints with surrogate-pair composition, and explicit nested-v/subtraction checks before compilation.
 - 다른 대안 대신 이 방식을 선택한 이유: Backend acceptance is observably wrong even for unexecuted literals, path-specific patches hide equivalent constructors, and a replacement parser is too broad for this unit. Mode-specific validators map directly to the relevant grammar invariants and can be differential-tested against Node.
 - 장점, 단점 및 영향: Twelve failures become passes with no matrix movement outside built-ins; malformed quantifiers and ranges fail consistently for literals and constructors, and 1,219 class differentials show no regression. At this historical boundary, full v set algebra, Annex B backend lowering, empty-class execution, large-count policy, and hybrid nullable matching remained separate; the next section records the empty-class closure.
+```
+
+```text
+[Decision Log]
+- 목적과 의도: Annex B control escape의 grammar admission과 backend execution을 같은 규칙으로 유지한다.
+- 기존 구현 및 제약 조건: legacy class validator와 quantifier scanner는 digit/underscore tail과 incomplete `\c` fallback을 알았지만 backend normalizer는 ASCII letter만 처리해 reverse solidus를 잃었다.
+- 검토한 주요 대안: backend 원문 위임, 각 scanner의 독립 predicate 보정, invalid `\c`만 사후 재작성, 또는 shared value helper를 통한 선행 lowering.
+- 선택한 방식: mode/class context를 받는 helper가 control code를 반환하며 모든 source scanners와 normalizer가 이를 사용한다. Invalid non-Unicode forms는 backend parser 전 단계에서 두 literal atom으로 변환한다.
+- 다른 대안 대신 이 방식을 선택한 이유: maintained backends의 identity/control escape 문법은 ECMAScript와 다르고, 독립 predicate는 이미 drift했다. 선행 lowering은 linear scan과 기존 source preservation을 유지한다.
+- 장점, 단점 및 영향: literal/constructor와 linear/fancy backend가 같은 의미를 얻고 추가 allocation이나 asymptotic cost가 없다. Exact four-file policy gate가 complete Annex B RegExp 62/0/0을 고정한다.
 ```
 
 ### RegExp host-independent quantifier bounds

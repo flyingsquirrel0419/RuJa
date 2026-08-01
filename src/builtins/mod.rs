@@ -3377,11 +3377,23 @@ fn normalize_regex_for_backend(
             } else if in_class && ch == 'b' {
                 out.pop();
                 out.push_str(r"\x08");
-            } else if ch == 'c' && chars.peek().is_some_and(|next| next.is_ascii_alphabetic()) {
-                let control = chars.next().unwrap() as u8 % 32;
+            } else if ch == 'c' {
+                let control = chars.peek().copied().and_then(|next| {
+                    crate::lexer::regex_control_escape_value(next, in_class, unicode_mode)
+                });
                 out.pop();
-                out.push_str("\\x");
-                out.push_str(&format!("{control:02x}"));
+                if let Some(control) = control {
+                    chars.next();
+                    out.push_str("\\x");
+                    out.push_str(&format!("{control:02x}"));
+                } else if !unicode_mode {
+                    // Annex B parses an otherwise incomplete `\c` as a
+                    // literal reverse solidus followed by a separate `c` atom.
+                    push_regex_literal_for_backend(&mut out, '\\');
+                    out.push('c');
+                } else {
+                    out.push_str("\\c");
+                }
             } else if (ch == 'x' && !has_exact_hex_escape(&chars, 2))
                 || (ch == 'u' && !unicode_mode)
             {
@@ -3414,7 +3426,7 @@ fn normalize_regex_for_backend(
                     out.push(ch);
                     out.push_str(&hex);
                 }
-            } else if !unicode_mode && !regex_backend_escape_passthrough(ch, chars.peek()) {
+            } else if !unicode_mode && !regex_backend_escape_passthrough(ch) {
                 out.pop();
                 if !in_class
                     && !unicode_mode
@@ -4033,7 +4045,7 @@ fn push_legacy_decimal_escape_for_backend(out: &mut String, digits: &str) {
     out.push_str(&digits[used..]);
 }
 
-fn regex_backend_escape_passthrough(ch: char, next: Option<&char>) -> bool {
+fn regex_backend_escape_passthrough(ch: char) -> bool {
     matches!(
         ch,
         '0' | 'b'
@@ -4051,7 +4063,7 @@ fn regex_backend_escape_passthrough(ch: char, next: Option<&char>) -> bool {
             | 'w'
             | 'W'
             | 'x'
-    ) || (ch == 'c' && next.is_some_and(|next| next.is_ascii_alphabetic()))
+    )
 }
 
 fn has_exact_hex_escape<I>(chars: &std::iter::Peekable<I>, len: usize) -> bool

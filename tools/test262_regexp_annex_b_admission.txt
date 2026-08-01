@@ -1,0 +1,6 @@
+# Frozen residual Annex B RegExp files whose complete metadata dependencies are
+# covered by the invalid-control and non-Unicode named-group implementation.
+annexB/built-ins/RegExp/RegExp-control-escape-russian-letter.js
+annexB/built-ins/RegExp/RegExp-invalid-control-escape-character-class.js
+annexB/built-ins/RegExp/named-groups/non-unicode-malformed-lookbehind.js
+annexB/built-ins/RegExp/named-groups/non-unicode-malformed.js
