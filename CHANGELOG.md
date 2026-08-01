@@ -7,12 +7,17 @@
 - Implemented Annex B global `escape` and `unescape` in every Realm. Both
   functions coerce their argument exactly once, operate on UTF-16 code units,
   preserve lone surrogates, expose the specified metadata, and reject
-  construction. Native scans consume a conservative sandbox fuel bound before result
-  materialization, and intermediate buffers use checked lengths and fallible
-  reservations. A frozen four-file admission opens only the now-supported
+  construction. Native scans consume a conservative sandbox fuel bound before
+  result materialization, and intermediate buffers use checked lengths and
+  fallible reservations. A frozen four-file admission opens only the supported
   Symbol and non-constructor tests. The focused pinned scope moves from **0
   pass / 31 fail / 4 skip** to **35/0/0**; complete Annex B moves from raw
-  **992/50/44** to **1027/19/40**, with no timeout/error.
+  **992/50/44** to **1027/19/40**, with no timeout/error. Commit `d8d9fc1`
+  passes ordinary CI `30711317106` (**3/3**) and full Test262 rerun
+  `30712728403` (**45/45**). The ordinary artifact is byte-identical; 31/32
+  full result artifacts are byte-identical and only Annex B changes. Aggregate
+  is **33355 pass / 4134 fail / 10977 skip / 3 timeout / 0 error** over 48469
+  files.
 
 - Completed the residual Annex B RegExp boundary. Non-Unicode invalid `\c`
   escapes now preserve the reverse solidus and `c` as separate atoms, while

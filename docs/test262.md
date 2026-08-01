@@ -25,6 +25,15 @@ moves from raw **992/50/44** to **1027/19/40**, with no timeout/error; the 19
 remaining failures are the separate legacy Date cluster and the 40 skips retain
 unsupported host-exotic coverage.
 
+Implementation commit `d8d9fc1` passes ordinary CI `30711317106` (**3/3**)
+and clean full Test262 rerun `30712728403` (**45/45**). The first full run
+`30711317089` had one unrelated Annex B RegExp contention timeout; the rerun is
+clean. The ordinary supported-subset artifact is byte-identical to
+`30705669529`. Against full baseline `30705669498`, 31/32 result artifacts are
+byte-identical and only Annex B changes by **+35 pass / -31 fail / -4 skip**.
+Aggregate is **33355 pass / 4134 fail / 10977 skip / 3 timeout / 0 error** over
+48469 files.
+
 ```text
 [Decision Log]
 - 목적과 의도: Annex B global escape/unescape를 UTF-16, Realm, coercion, sandbox resource 규칙까지 포함해 완성한다.
