@@ -26,6 +26,9 @@ try:
     from test262_regexp_compile_admission import (
         REGEXP_COMPILE_FEATURES, REGEXP_COMPILE_FILES,
     )
+    from test262_regexp_legacy_accessors_admission import (
+        REGEXP_LEGACY_ACCESSOR_FEATURES, REGEXP_LEGACY_ACCESSOR_FILES,
+    )
     from test262_generator_function_admission import (
         GENERATOR_FUNCTION_FEATURES, GENERATOR_FUNCTION_FILES,
     )
@@ -266,6 +269,9 @@ except ModuleNotFoundError:
     )
     from tools.test262_regexp_compile_admission import (
         REGEXP_COMPILE_FEATURES, REGEXP_COMPILE_FILES,
+    )
+    from tools.test262_regexp_legacy_accessors_admission import (
+        REGEXP_LEGACY_ACCESSOR_FEATURES, REGEXP_LEGACY_ACCESSOR_FILES,
     )
     from tools.test262_generator_function_admission import (
         GENERATOR_FUNCTION_FEATURES, GENERATOR_FUNCTION_FILES,
@@ -2666,6 +2672,21 @@ def regexp_compile_features(path):
     rel = Path(path).resolve().relative_to(Path(TEST262).resolve() / "test")
     return REGEXP_COMPILE_FEATURES[rel.as_posix()]
 
+def regexp_legacy_accessor_path(path):
+    if path is None:
+        return False
+    try:
+        rel = Path(path).resolve().relative_to(Path(TEST262).resolve() / "test")
+    except (OSError, TypeError, ValueError):
+        return False
+    return rel.as_posix() in REGEXP_LEGACY_ACCESSOR_FILES
+
+def regexp_legacy_accessor_features(path):
+    if not regexp_legacy_accessor_path(path):
+        return frozenset()
+    rel = Path(path).resolve().relative_to(Path(TEST262).resolve() / "test")
+    return REGEXP_LEGACY_ACCESSOR_FEATURES[rel.as_posix()]
+
 def proxy_get_path(path):
     if path is None:
         return False
@@ -3718,6 +3739,8 @@ def should_skip(meta, path=None):
         feats.difference_update(annex_b_string_features(path))
     if path is not None and regexp_compile_path(path):
         feats.difference_update(regexp_compile_features(path))
+    if path is not None and regexp_legacy_accessor_path(path):
+        feats.difference_update(regexp_legacy_accessor_features(path))
     if path is not None and proxy_get_path(path):
         feats.difference_update(proxy_get_features(path))
     if path is not None and proxy_has_path(path):

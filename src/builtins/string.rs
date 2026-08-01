@@ -922,20 +922,17 @@ pub(crate) fn str_match(vm: &mut Vm, args: &[Value], this: Option<Value>) -> err
     let s = str_val(vm, &Some(receiver))?;
     let regexp = regexp_create_intrinsic(vm, &search_value)?;
     let matcher = vm.get_property_by_key(&regexp, &match_key)?;
-    if !matcher.is_nullish() {
-        let is_callable = matches!(&matcher, Value::Object(idx) if {
-            vm.heap.with_obj(idx.0, |o| o.is_function())
-        });
-        if !is_callable {
-            return Err(Error::type_err("Symbol.match method is not callable"));
-        }
-        return vm.call_function(
-            &matcher,
-            &[Value::String(Arc::from(s.as_str()))],
-            Some(regexp),
-        );
+    let is_callable = matches!(&matcher, Value::Object(idx) if {
+        vm.heap.with_obj(idx.0, |o| o.is_function())
+    });
+    if !is_callable {
+        return Err(Error::type_err("Symbol.match method is not callable"));
     }
-    regexp_match_internal(vm, regexp, &s)
+    vm.call_function(
+        &matcher,
+        &[Value::String(Arc::from(s.as_str()))],
+        Some(regexp),
+    )
 }
 
 pub(crate) fn str_match_all(
@@ -1004,28 +1001,125 @@ pub(crate) fn str_match_all(
     )
 }
 
-pub(super) fn regexp_match_internal(vm: &mut Vm, regexp: Value, s: &str) -> error::Result<Value> {
+fn regexp_fast_capture_ranges(
+    input: &str,
+    mut byte_ranges: Vec<Option<(usize, usize)>>,
+    mut endpoints: Vec<usize>,
+    mut utf16_offsets: Vec<usize>,
+) -> Vec<Option<(usize, usize)>> {
+    if input.is_ascii() {
+        return byte_ranges;
+    }
+
+    for (start, end) in byte_ranges.iter().flatten() {
+        endpoints.push(*start);
+        endpoints.push(*end);
+    }
+    endpoints.sort_unstable();
+    endpoints.dedup();
+
+    // Convert all boundaries in one scan; capture count is attacker-controlled.
+    let mut previous_byte = 0usize;
+    let mut previous_utf16 = 0usize;
+    for endpoint in &endpoints {
+        debug_assert!(input.is_char_boundary(*endpoint));
+        previous_utf16 += crate::value::utf16_len(&input[previous_byte..*endpoint]);
+        utf16_offsets.push(previous_utf16);
+        previous_byte = *endpoint;
+    }
+    for (start, end) in byte_ranges.iter_mut().flatten() {
+        let start_index = endpoints
+            .binary_search(start)
+            .expect("capture start must have a UTF-16 offset");
+        let end_index = endpoints
+            .binary_search(end)
+            .expect("capture end must have a UTF-16 offset");
+        *start = utf16_offsets[start_index];
+        *end = utf16_offsets[end_index];
+    }
+    byte_ranges
+}
+
+pub(super) fn regexp_match_internal(
+    vm: &mut Vm,
+    regexp: Value,
+    s: Arc<str>,
+) -> error::Result<Option<Value>> {
     let regexp = Some(regexp);
     let source = read_regexp_source_arc(vm, &regexp)?;
     let flags_str = read_regexp_flags_arc(vm, &regexp)?;
-    let re = compile_regex_for_input_cached(vm, source.clone(), &flags_str, s)
+    let re = compile_regex_for_input_cached(vm, source.clone(), &flags_str, &s)
         .map_err(regexp_compile_error)?;
-    meter_logical_regex_input(vm, &re, s)?;
+    if !matches!(&re, CompiledRegex::Rust(_) | CompiledRegex::BoundedRust(_)) {
+        return Ok(None);
+    }
+    meter_logical_regex_input(vm, &re, &s)?;
     let capture_names = regex_capture_names(&source, &flags_str).map_err(Error::syntax)?;
     let global = flags_str.contains('g');
     if global {
-        let matches = re.find_iter_metered(s, || vm.consume_fuel())?;
+        let capture_count = regex_capture_count(&source);
+        let range_count = capture_count
+            .checked_add(1)
+            .ok_or_else(|| Error::range("RegExp capture boundary set is too large"))?;
+        let mut legacy_capture_ranges = Vec::new();
+        legacy_capture_ranges
+            .try_reserve_exact(range_count)
+            .map_err(|_| Error::range("RegExp capture boundary set is too large"))?;
+        let endpoint_capacity = if s.is_ascii() {
+            0
+        } else {
+            range_count
+                .checked_mul(2)
+                .ok_or_else(|| Error::range("RegExp capture boundary set is too large"))?
+        };
+        let mut endpoints = Vec::new();
+        endpoints
+            .try_reserve_exact(endpoint_capacity)
+            .map_err(|_| Error::range("RegExp capture boundary set is too large"))?;
+        let mut utf16_offsets = Vec::new();
+        utf16_offsets
+            .try_reserve_exact(endpoint_capacity)
+            .map_err(|_| Error::range("RegExp capture boundary set is too large"))?;
+
+        let matches = re.find_iter_metered(&s, || vm.consume_fuel())?;
+        if let Some(last_match) = matches.last().copied() {
+            if capture_count == 0 {
+                legacy_capture_ranges.push(Some((last_match.start(), last_match.end())));
+            } else {
+                let captures = re
+                    .captures_exact_at(&s, last_match.start())?
+                    .ok_or_else(|| Error::internal("RegExp capture backend lost its last match"))?;
+                debug_assert_eq!(
+                    captures.get(0).map(CompiledMatch::end),
+                    Some(last_match.end())
+                );
+                legacy_capture_ranges.extend(
+                    captures
+                        .iter()
+                        .map(|capture| capture.map(|matched| (matched.start(), matched.end()))),
+                );
+            }
+        }
+        let legacy_capture_ranges =
+            regexp_fast_capture_ranges(&s, legacy_capture_ranges, endpoints, utf16_offsets);
         let items = matches
             .into_iter()
             .map(|matched| Value::String(Arc::from(matched.as_str())))
             .collect::<Vec<_>>();
         if items.is_empty() {
-            Ok(Value::Null)
+            Ok(Some(Value::Null))
         } else {
-            make_value_array(vm, items)
+            regexp_commit_legacy_match_state(
+                vm,
+                regexp.as_ref().unwrap(),
+                s.clone(),
+                &legacy_capture_ranges,
+            );
+            let result = make_value_array_in_current_realm(vm, items)?;
+            Ok(Some(result))
         }
     } else {
-        match re.captures(s)? {
+        match re.captures(&s)? {
             Some(caps) => {
                 let items: Vec<Value> = caps
                     .iter()
@@ -1042,13 +1136,13 @@ pub(super) fn regexp_match_internal(vm: &mut Vm, regexp: Value, s: &str) -> erro
                 let groups_pin = vm.pin(&groups);
                 let completion = (|| {
                     let result = make_value_array(vm, items)?;
-                    add_regexp_exec_result_props(vm, &result, match_start, s, groups, None)?;
+                    add_regexp_exec_result_props(vm, &result, match_start, &s, groups, None)?;
                     Ok(result)
                 })();
                 vm.unpin_many(groups_pin);
-                completion
+                completion.map(Some)
             }
-            None => Ok(Value::Null),
+            None => Ok(Some(Value::Null)),
         }
     }
 }

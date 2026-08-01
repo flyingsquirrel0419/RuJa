@@ -19786,6 +19786,307 @@ fn regexp_compile_reinitializes_only_direct_same_realm_instances() {
 }
 
 #[test]
+fn regexp_legacy_static_accessors_are_exact_and_reentrant() {
+    assert_eq!(
+        run(r#"
+            var names = [
+              'input', '$_', 'lastMatch', '$&', 'lastParen', '$+',
+              'leftContext', '$`', 'rightContext', "$'",
+              '$1', '$2', '$3', '$4', '$5', '$6', '$7', '$8', '$9'
+            ];
+            var writableNames = ['input', '$_'];
+            var descriptors = names.every(function (name) {
+              var descriptor = Object.getOwnPropertyDescriptor(RegExp, name);
+              if (!descriptor || descriptor.enumerable ||
+                  !descriptor.configurable || typeof descriptor.get !== 'function' ||
+                  descriptor.get.name !== 'get ' + name ||
+                  descriptor.get.length !== 0) {
+                return false;
+              }
+              var constructError;
+              try { Reflect.construct(descriptor.get, []); }
+              catch (error) { constructError = error; }
+              if (!(constructError instanceof TypeError)) return false;
+              if (writableNames.indexOf(name) >= 0) {
+                if (typeof descriptor.set !== 'function' ||
+                    descriptor.set.name !== 'set ' + name ||
+                    descriptor.set.length !== 1) {
+                  return false;
+                }
+                constructError = undefined;
+                try { Reflect.construct(descriptor.set, []); }
+                catch (error) { constructError = error; }
+                return constructError instanceof TypeError;
+              }
+              return descriptor.set === undefined;
+            });
+            var initiallyEmpty = names.every(function (name) {
+              return RegExp[name] === '';
+            });
+
+            var coercions = 0;
+            RegExp.input = {
+              toString: function () {
+                coercions += 1;
+                /nested/.exec('before nested after');
+                return 'outer';
+              }
+            };
+            var reentrant = coercions === 1 && RegExp.input === 'outer' &&
+              RegExp.$_ === 'outer' && RegExp.lastMatch === 'nested' &&
+              RegExp.leftContext === 'before ' && RegExp.rightContext === ' after';
+
+            var marker = {};
+            var abrupt;
+            try { RegExp.$_ = { toString: function () { throw marker; } }; }
+            catch (error) { abrupt = error; }
+            var abruptAtomic = abrupt === marker && RegExp.input === 'outer' &&
+              RegExp.lastMatch === 'nested';
+
+            var touched = false;
+            var receiverError;
+            var inputSetter = Object.getOwnPropertyDescriptor(RegExp, 'input').set;
+            try {
+              inputSetter.call({}, {
+                toString: function () { touched = true; return 'wrong'; }
+              });
+            } catch (error) { receiverError = error; }
+            var receiverFirst = receiverError instanceof TypeError && !touched;
+
+            RegExp.$_ = 'alias';
+            var aliases = RegExp.input === 'alias' && RegExp.$_ === 'alias';
+            var setterReturn = inputSetter.call(RegExp) === undefined &&
+              RegExp.input === 'undefined';
+            var savedInputGetter = Object.getOwnPropertyDescriptor(RegExp, 'input').get;
+            var deleted = delete RegExp.input;
+            /kept/.exec('xkepty');
+            var deletion = deleted && RegExp.input === undefined &&
+              savedInputGetter.call(RegExp) === 'xkepty' && RegExp.$_ === 'xkepty';
+
+            class Derived extends RegExp {}
+            var subclassError;
+            try { Derived.lastMatch; } catch (error) { subclassError = error; }
+            var other = $262.createRealm().global;
+            var foreignError;
+            try {
+              Reflect.get(other.RegExp, 'lastMatch', RegExp);
+            } catch (error) { foreignError = error; }
+
+            [
+              descriptors, initiallyEmpty, reentrant, abruptAtomic,
+              receiverFirst, aliases, setterReturn, deletion,
+              subclassError instanceof TypeError,
+              foreignError instanceof other.TypeError &&
+                !(foreignError instanceof TypeError)
+            ].every(Boolean);
+        "#),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn regexp_legacy_static_state_tracks_exec_realms_and_invalidation() {
+    assert_eq!(
+        run(r#"
+            var stateNames = [
+              'input', 'lastMatch', 'lastParen', 'leftContext', 'rightContext',
+              '$1', '$2', '$3', '$4', '$5', '$6', '$7', '$8', '$9',
+              '$_', '$&', '$+', '$`', "$'"
+            ];
+            /(a)(b)?(c)(d)(e)(f)(g)(h)(i)(j)?/.exec('😀acdefghiZ');
+            var captures = [
+              RegExp.input === '😀acdefghiZ', RegExp.lastMatch === 'acdefghi',
+              RegExp.lastParen === '', RegExp.leftContext === '😀',
+              RegExp.rightContext === 'Z', RegExp.$1 === 'a', RegExp.$2 === '',
+              RegExp.$3 === 'c', RegExp.$4 === 'd', RegExp.$5 === 'e',
+              RegExp.$6 === 'f', RegExp.$7 === 'g', RegExp.$8 === 'h',
+              RegExp.$9 === 'i', RegExp['$&'] === 'acdefghi',
+              RegExp['$+'] === '', RegExp['$`'] === '😀',
+              RegExp["$'"] === 'Z'
+            ].every(Boolean);
+
+            /(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)/.exec('abcdefghij');
+            var lastParenBeyondNine = RegExp.lastParen === 'j' &&
+              RegExp['$+'] === 'j' && RegExp.$9 === 'i';
+
+            var snapshot = stateNames.map(function (name) { return RegExp[name]; }).join('|');
+            /missing/.exec('unchanged');
+            var noMatch = snapshot === stateNames.map(function (name) {
+              return RegExp[name];
+            }).join('|');
+
+            var custom = /custom/;
+            custom.exec = function () { return { 0: 'fake', index: 0, length: 1 }; };
+            custom[Symbol.match]('custom');
+            custom.exec = function () { return null; };
+            custom[Symbol.search]('custom');
+            var customMarker = {};
+            custom.exec = function () { throw customMarker; };
+            var customError;
+            try { custom.test('custom'); } catch (error) { customError = error; }
+            var customExec = customError === customMarker &&
+              snapshot === stateNames.map(function (name) {
+              return RegExp[name];
+            }).join('|');
+
+            var blocked = /x/g;
+            Object.defineProperty(blocked, 'lastIndex', { writable: false });
+            var blockedError;
+            try { blocked.exec('x'); } catch (error) { blockedError = error; }
+            var blockedAtomic = blockedError instanceof TypeError &&
+              snapshot === stateNames.map(function (name) {
+                return RegExp[name];
+              }).join('|');
+
+            class Derived extends RegExp {}
+            new Derived('x').exec('x');
+            var invalidated = stateNames.every(function (name) {
+              try { RegExp[name]; return false; }
+              catch (error) { return error instanceof TypeError; }
+            });
+            RegExp.input = 'restored-input';
+            var inputRestored = RegExp.input === 'restored-input' &&
+              RegExp.$_ === 'restored-input';
+            var othersStillInvalid;
+            try { RegExp['$&']; othersStillInvalid = false; }
+            catch (error) {
+              othersStillInvalid = error instanceof TypeError;
+            }
+            /local/.exec('local');
+            var restored = RegExp.input === 'local' && RegExp.lastMatch === 'local';
+
+            var other = $262.createRealm().global;
+            other.eval('/foreign/.exec("foreign");');
+            var foreignOwn = other.RegExp.input === 'foreign' &&
+              other.RegExp.lastMatch === 'foreign';
+            var localBeforeBorrow = RegExp.input + '|' + RegExp.lastMatch;
+            var foreignBeforeBorrow = other.RegExp.input + '|' + other.RegExp.lastMatch;
+            var foreign = other.eval('/foreign-own/');
+            RegExp.prototype.exec.call(foreign, 'foreign-own');
+            var borrowed = localBeforeBorrow === RegExp.input + '|' + RegExp.lastMatch &&
+              foreignBeforeBorrow === other.RegExp.input + '|' + other.RegExp.lastMatch;
+            foreign.exec('foreign-own');
+            var foreignAfter = other.RegExp.input === 'foreign-own' &&
+              other.RegExp.lastMatch === 'foreign-own' &&
+              localBeforeBorrow === RegExp.input + '|' + RegExp.lastMatch;
+
+            /local-seed/.exec('local-seed');
+            other.eval('/foreign-seed/.exec("foreign-seed");');
+            var foreignG = other.eval('/./g');
+            var localMethodGResult = RegExp.prototype[Symbol.match].call(foreignG, 'ab');
+            var borrowedLocalG = RegExp.input === 'local-seed' &&
+              RegExp.lastMatch === 'local-seed' && other.RegExp.input === 'ab' &&
+              other.RegExp.lastMatch === 'b' &&
+              Object.getPrototypeOf(localMethodGResult) === Array.prototype;
+            var localG = /./g;
+            var foreignMethodGResult = other.RegExp.prototype[Symbol.match].call(localG, 'cd');
+            var borrowedForeignG = RegExp.input === 'cd' && RegExp.lastMatch === 'd' &&
+              other.RegExp.input === 'ab' && other.RegExp.lastMatch === 'b' &&
+              other.Object.getPrototypeOf(foreignMethodGResult) === other.Array.prototype;
+            var foreignGu = other.eval('/./gu');
+            var localMethodGuResult = RegExp.prototype[Symbol.match].call(foreignGu, 'αβ');
+            var borrowedLocalGu = RegExp.input === 'cd' && RegExp.lastMatch === 'd' &&
+              other.RegExp.input === 'αβ' && other.RegExp.lastMatch === 'β' &&
+              Object.getPrototypeOf(localMethodGuResult) === Array.prototype;
+            var localGu = /./gu;
+            var foreignMethodGuResult =
+              other.RegExp.prototype[Symbol.match].call(localGu, 'γδ');
+            var borrowedForeignGu = RegExp.input === 'γδ' &&
+              RegExp.lastMatch === 'δ' && other.RegExp.input === 'αβ' &&
+              other.RegExp.lastMatch === 'β' &&
+              other.Object.getPrototypeOf(foreignMethodGuResult) === other.Array.prototype;
+            var borrowedProtocols = borrowedLocalG && borrowedForeignG &&
+              borrowedLocalGu && borrowedForeignGu;
+
+            /t/.test('atb');
+            var testState = RegExp.input === 'atb' && RegExp.lastMatch === 't';
+            /s/[Symbol.search]('asb');
+            var searchState = RegExp.input === 'asb' && RegExp.lastMatch === 's';
+            var iterator = /m/g[Symbol.matchAll]('amb');
+            iterator.next();
+            var matchAllState = RegExp.input === 'amb' && RegExp.lastMatch === 'm';
+            /,/[Symbol.split]('a,b');
+            var splitState = RegExp.input === 'a,b' && RegExp.lastMatch === ',';
+            var protocols = testState && searchState && matchAllState && splitState;
+
+            var intrinsicRegExp = RegExp;
+            globalThis.RegExp = function ReplacementRegExp() {};
+            /binding/.exec('binding');
+            var immutableIntrinsic = intrinsicRegExp.input === 'binding' &&
+              intrinsicRegExp.lastMatch === 'binding';
+            globalThis.RegExp = intrinsicRegExp;
+
+            var fastGlobalResult = /(.)(.)?/gu[Symbol.match]('abx');
+            var fastGlobal = RegExp.input === 'abx' && RegExp.lastMatch === 'x' &&
+              RegExp.leftContext === 'ab' && RegExp.rightContext === '' &&
+              RegExp.$1 === 'x' && RegExp.$2 === '' &&
+              Object.getPrototypeOf(fastGlobalResult) === Array.prototype;
+            /./gu[Symbol.match]('😀β');
+            var fastGlobalUtf16 = RegExp.input === '😀β' &&
+              RegExp.lastMatch === 'β' && RegExp.leftContext === '😀' &&
+              RegExp.rightContext === '';
+            var foreignOwnFast = other.eval(`
+              var result = /./gu[Symbol.match]('ef');
+              Object.getPrototypeOf(result) === Array.prototype &&
+                RegExp.input === 'ef' && RegExp.lastMatch === 'f';
+            `);
+
+            var savedSymbolMatch = RegExp.prototype[Symbol.match];
+            RegExp.prototype[Symbol.match] = undefined;
+            var missingSymbolMatchError;
+            try { 'x'.match('x'); }
+            catch (error) { missingSymbolMatchError = error; }
+            RegExp.prototype[Symbol.match] = savedSymbolMatch;
+            var missingSymbolMatch = missingSymbolMatchError instanceof TypeError;
+
+            var callbackMarker = {};
+            var callbackError;
+            try {
+              /q/g[Symbol.replace]('aqb', function () { throw callbackMarker; });
+            } catch (error) { callbackError = error; }
+            var callbackTiming = callbackError === callbackMarker &&
+              RegExp.input === 'aqb' && RegExp.lastMatch === 'q' &&
+              RegExp.leftContext === 'a' && RegExp.rightContext === 'b';
+
+            [
+              captures, lastParenBeyondNine, noMatch, customExec,
+              blockedAtomic, invalidated,
+              inputRestored, othersStillInvalid, restored, foreignOwn,
+              borrowed, foreignAfter, borrowedProtocols, protocols, immutableIntrinsic,
+              fastGlobal, fastGlobalUtf16, foreignOwnFast,
+              missingSymbolMatch, callbackTiming
+            ].every(Boolean);
+        "#),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn regexp_legacy_state_keeps_completed_match_before_backend_abort() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.run(
+        r#"
+        globalThis.backtrackInput = 'a' + 'x'.repeat(80);
+        globalThis.backtrackPattern = /a|(?=(x+x+)+y)x/gu;
+        /seed/.exec('seed');
+        "#,
+    )
+    .expect("backend-abort fixture should initialize");
+
+    let error = vm
+        .run("backtrackPattern[Symbol.match](backtrackInput);")
+        .expect_err("the later backtracking candidate should exhaust its work limit");
+    assert_eq!(error.kind, ruja::ErrorKind::Fuel);
+    assert_eq!(
+        vm.run(
+            "RegExp.input === backtrackInput && RegExp.lastMatch === 'a' && RegExp.leftContext === '' && RegExp.rightContext === 'x'.repeat(80);",
+        )
+        .expect("the completed first match should remain observable"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn regexp_embedded_empty_classes_follow_ecmascript_semantics() {
     assert_eq!(
         run(r#"

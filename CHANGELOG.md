@@ -4,6 +4,22 @@
 
 ### Changed
 
+- Implemented the Stage 3 legacy RegExp constructor static state in every
+  Realm. `%RegExp%` now exposes the 19 configurable accessors from `input`/`$_`
+  through `$1`-`$9`, with exact receiver checks and setter coercion order.
+  Successful same-Realm direct matches update input, match, context, and
+  capture state after result materialization; proper-subclass matches
+  invalidate each slot, while directly borrowing the built-in `exec` across
+  Realms changes neither Realm. Borrowed protocols update state only when the
+  selected built-in `exec` and receiver belong to the same Realm. Match commits
+  retain input and UTF-16 ranges; accessors materialize and cache context and
+  capture Strings lazily. The unmetered same-exec-Realm Unicode-global
+  `@@match` fast path is limited to the infallible linear backend, reconstructs
+  captures for its last match, and commits before its outer result Array
+  allocation. Exact accessor tests move from
+  **0/24** to **24/0/0**; the complete Annex B RegExp subtree moves from
+  **34 pass / 18 fail / 10 skip** to **58/0/4**.
+
 - Implemented the Stage 3 legacy `RegExp.prototype.compile` boundary in every
   Realm. RegExp instances now retain their creating Realm and whether they were
   allocated directly by that Realm's intrinsic constructor. `compile` rejects

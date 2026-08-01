@@ -2,7 +2,7 @@
 //!  - a tight loop is bounded by the fuel budget
 //!  - fuel exhaustion is NOT catchable by a JS try/catch (a host-level abort)
 
-use ruja::Vm;
+use ruja::{Value, Vm};
 
 #[test]
 fn fuel_bounds_infinite_loop() {
@@ -109,15 +109,25 @@ fn regexp_symbol_split_native_loops_consume_fuel() {
 #[test]
 fn regexp_symbol_match_global_collection_consumes_fuel_incrementally() {
     let mut vm = Vm::new().expect("failed to initialize VM");
-    vm.run("globalThis.longInput = 'a'.repeat(10000); globalThis.global = /./gu;")
+    vm.run(
+        "globalThis.longInput = 'a'.repeat(10000); globalThis.global = /./gu; RegExp.input = 'before';",
+    )
         .expect("RegExp match fuel fixture should initialize");
-    vm.set_fuel(Some(50));
+    vm.set_fuel(Some(100_000));
 
     let error = vm
         .run("longInput.match(global);")
         .expect_err("global match collection must consume fuel per result");
     assert_eq!(error.kind, ruja::ErrorKind::Fuel);
     assert_eq!(vm.fuel_remaining(), Some(0));
+    vm.set_fuel(None);
+    assert_eq!(
+        vm.run(
+            "RegExp.input === longInput && RegExp.lastMatch === 'a' && RegExp.leftContext.length > 0 && RegExp.rightContext.length < longInput.length - 1;",
+        )
+            .expect("completed built-in exec calls must publish legacy state"),
+        Value::Bool(true)
+    );
 }
 
 #[test]

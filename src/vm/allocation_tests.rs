@@ -7953,6 +7953,83 @@ fn regexp_compile_roots_receiver_and_realm_across_observable_gc() {
 }
 
 #[test]
+fn regexp_legacy_static_state_survives_observable_gc_and_reentrancy() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("GC hook should register");
+    let baseline_pins = vm.gc_pins.len();
+
+    assert_eq!(
+        vm.run(
+            r#"
+            var inputSetter = Object.getOwnPropertyDescriptor(RegExp, 'input').set;
+            inputSetter.call(RegExp, {
+              toString: function () {
+                forceGc();
+                /inner/.exec('left inner right');
+                forceGc();
+                return 'outer';
+              }
+            });
+            forceGc();
+            var local = RegExp.input === 'outer' && RegExp.lastMatch === 'inner' &&
+              RegExp.leftContext === 'left ' && RegExp.rightContext === ' right';
+
+            var other = $262.createRealm().global;
+            var foreignSetter = Object.getOwnPropertyDescriptor(
+              other.RegExp, 'input'
+            ).set;
+            foreignSetter.call(other.RegExp, {
+              toString: function () { forceGc(); return 'foreign-outer'; }
+            });
+            forceGc();
+            var foreignSetterState = other.RegExp.input === 'foreign-outer' &&
+              other.RegExp.lastMatch === '';
+            other.eval('/foreign/.exec("left foreign right");');
+            forceGc();
+            var foreignMatchState = other.RegExp.input === 'left foreign right' &&
+              other.RegExp.lastMatch === 'foreign' &&
+              other.RegExp.leftContext === 'left ' &&
+              other.RegExp.rightContext === ' right';
+            var isolated = RegExp.input === 'outer' && RegExp.lastMatch === 'inner';
+            local && foreignSetterState && foreignMatchState && isolated;
+            "#,
+        )
+        .expect("legacy RegExp state should survive observable GC"),
+        Value::Bool(true)
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+}
+
+#[test]
+fn regexp_fast_global_match_commits_state_before_outer_array_allocation() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.run("RegExp.input = 'before';")
+        .expect("legacy-state sentinel should initialize");
+    vm.fail_own_key_consumer_reservation = Some((OwnKeyConsumerReservationSite::ArrayPresence, 0));
+
+    let error = vm
+        .run("/(.)/gu[Symbol.match]('ab');")
+        .expect_err("outer match Array allocation should fail");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.fail_own_key_consumer_reservation, None);
+    assert_eq!(
+        vm.run("RegExp.input === 'ab' && RegExp.lastMatch === 'b' && RegExp.$1 === 'b';",)
+            .expect("the final completed match must publish state before Array allocation"),
+        Value::Bool(true)
+    );
+    vm.run("/(.)/gu[Symbol.match]('ab');")
+        .expect("match should retry after the injected allocation failure");
+}
+
+#[test]
 fn regexp_symbol_split_roots_every_observable_intermediate() {
     let mut vm = Vm::new().expect("VM should initialize");
     vm.register_fn(
@@ -9509,6 +9586,8 @@ fn regexp_exec_materialization_reservations_are_atomic_ordered_and_retryable() {
         r#"
         var materializationRegexp = /(?:(?<x>a)|(?<y>a)(?<x>b))(?:(?<z>c)|(?<z>d))/dg;
         var materializationPlainRegexp = /(?<x>a)/d;
+        class MaterializationDerivedRegExp extends RegExp {}
+        var materializationSubclassRegexp = new MaterializationDerivedRegExp('a', 'd');
         var materializationInput = "abc";
         var materializationForeignRealm = $262.createRealm().global;
         var materializationForeignRegexp = materializationForeignRealm.RegExp("(?<x>a)", "d");
@@ -9547,6 +9626,30 @@ fn regexp_exec_materialization_reservations_are_atomic_ordered_and_retryable() {
     .expect_err("reservation must fail after sufficient Fuel");
     assert_eq!(error.kind, crate::error::ErrorKind::Range);
     assert_eq!(vm.fail_regexp_materialization_reservation, None);
+
+    vm.run("RegExp.input = 'subclass-sentinel';")
+        .expect("subclass legacy-state sentinel should initialize");
+    vm.fail_regexp_materialization_reservation = Some((
+        RegExpMaterializationReservationSite::ExecResultProperties,
+        0,
+    ));
+    let error = vm
+        .run("materializationSubclassRegexp.exec('a');")
+        .expect_err("failed subclass materialization must not invalidate legacy state");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(
+        vm.run("RegExp.input;")
+            .expect("failed subclass materialization must preserve legacy state"),
+        Value::String("subclass-sentinel".into())
+    );
+    drop(error);
+    vm.run("materializationSubclassRegexp.exec('a');")
+        .expect("successful subclass retry should complete before invalidation");
+    let error = vm
+        .run("RegExp.input;")
+        .expect_err("successful subclass match must invalidate legacy state");
+    assert_eq!(error.kind, crate::error::ErrorKind::Type);
+    drop(error);
 
     let failures = [
         (RegExpMaterializationReservationSite::CaptureRanges, 0, true),
@@ -9635,7 +9738,7 @@ fn regexp_exec_materialization_reservations_are_atomic_ordered_and_retryable() {
     ];
 
     for (site, countdown, last_index_was_published) in failures {
-        vm.run("materializationRegexp.lastIndex = 0;")
+        vm.run("materializationRegexp.lastIndex = 0; RegExp.input = 'legacy-sentinel';")
             .expect("lastIndex should reset before injected failure");
         vm.fail_regexp_materialization_reservation = Some((site, countdown));
         let error = vm
@@ -9652,6 +9755,12 @@ fn regexp_exec_materialization_reservations_are_atomic_ordered_and_retryable() {
             vm.run("materializationRegexp.lastIndex;")
                 .expect("lastIndex should remain readable"),
             Value::Number(if last_index_was_published { 3.0 } else { 0.0 }),
+            "{site:?} countdown {countdown}"
+        );
+        assert_eq!(
+            vm.run("RegExp.input;")
+                .expect("failed materialization must preserve legacy state"),
+            Value::String("legacy-sentinel".into()),
             "{site:?} countdown {countdown}"
         );
         drop(error);

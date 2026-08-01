@@ -499,7 +499,45 @@ existing `RegExpInitialize` implementation.
 - 검토한 주요 대안: prototype identity, constructor property reads, VM-global object-to-Realm side table, untraced GcIdx, or object private slots.
 - 선택한 방식: regexp_alloc stores Value::Object(Realm environment) and a Boolean in traced private slots; compile compares the active native Realm and reuses regexp_initialize.
 - 다른 대안 대신 이 방식을 선택한 이유: prototype and constructor are observable and mutable, side tables complicate reclamation, and raw indexes can be reused after GC. Private slots already trace Values on every ordinary object.
-- 장점, 단점 및 영향: forced GC, created Realms, borrowed methods, subclasses, and immutable lastIndex share one path. Two hidden map entries increase per-RegExp storage. Constructor static legacy state deliberately remains a later Function-private-slot unit.
+- 장점, 단점 및 영향: forced GC, created Realms, borrowed methods, subclasses, and immutable lastIndex share one path. Two hidden map entries increase per-RegExp storage. Constructor static legacy state is the separate Function-private-slot unit documented immediately below.
+```
+
+Each Realm's immutable `%RegExp%` function owns 14 preallocated private state
+slots for the legacy constructor accessors plus a backing input and fixed
+UTF-16 capture ranges. Initial slots contain the empty String. A commit updates
+the input/ranges and marks derived Strings lazy; each native getter materializes
+and caches only its requested match, context, or capture. This keeps repeated
+global matching linear unless JavaScript actually requests output whose total
+size is itself quadratic. Invalidation replaces each public state slot
+independently with an internal `undefined` sentinel; native getters translate
+that sentinel to `TypeError`, so it can never escape as a JavaScript value.
+Accessor functions carry only a numeric slot selector and resolve their owning
+constructor through the active native function Realm rather than the mutable
+global binding. Assigning `input` does not replace the backing match input, so
+other lazy accessors retain the preceding successful match.
+
+`RegExpBuiltInExec` commits legacy input/range state only after all result Array,
+groups, indices, and property materialization succeeds.
+The Unicode-global `@@match` fast path remains active only for unmetered calls
+whose selected intrinsic `exec` belongs to the active native Realm and whose
+compiled backend is the infallible linear matcher. It reserves UTF-16 boundary
+workspace before matching, uses the last fast match directly for capture zero,
+reruns anchored capture extraction only when the pattern declares captures,
+converts all boundaries in one scan, then commits before allocating the
+protocol's outer result Array. Metered, cross-Realm, and error-capable backend
+calls use the generic per-exec path, preserving partial completion and Realm
+behavior. Proper-subclass matches invalidate the active Realm state. A directly
+borrowed built-in `exec` whose receiver Realm differs from its function Realm,
+or a custom exec, performs no update.
+
+```text
+[Decision Log]
+- 목적과 의도: deprecated RegExp constructor statics를 Realm, subclass, abrupt-completion 규칙까지 proposal과 일치시키면서 global Unicode match 성능 경로를 보존한다.
+- 기존 구현 및 제약 조건: RegExp instances already carry traced Realm/direct-instance metadata, but %RegExp% had no legacy state. Exec publishes lastIndex before several fallible result allocations, and Unicode-global @@match bypasses the ordinary exec materializer.
+- 검토한 주요 대안: mutable global RegExp properties, VM-global state map, one validity bit, eager pre-materialization update, fast-path removal, or immutable constructor private slots with slot-local sentinels and capture-aware fast commit.
+- 선택한 방식: every intrinsic constructor preinstalls 14 public-state slots, a backing input, fixed UTF-16 ranges, and 19 accessors. Undefined is an internal per-slot invalid marker; Boolean markers request lazy derived-String materialization. Ordinary exec commits after its result is complete. Unmetered same-exec-Realm linear-backend @@match commits its completed final match before outer Array allocation; metered, cross-Realm, and error-capable backend calls use generic dispatch.
+- 다른 대안 대신 이 방식을 선택한 이유: global bindings and constructor properties are mutable, a VM map weakens ownership/reclamation, one validity bit breaks input-only recovery, and early commit leaks failed materialization. Removing the fast path would regress common Unicode global matches.
+- 장점, 단점 및 영향: aliases share exact state, setter reentrancy preserves nested matches, failed/no-match built-in exec is atomic, and Realms remain isolated. Borrowed protocols update state only for a selected built-in exec whose receiver belongs to the same Realm; their result Array belongs to the method Realm. Successful direct matches retain input/context Strings on their Realm constructor; capture-bearing optimized global match performs one extra anchored capture extraction for the final match, while fuel-enabled execution intentionally pays generic per-match materialization cost for exact interruption state.
 ```
 
 Date also uses `InternalDeferredPrototype`, but it has a distinct call branch.

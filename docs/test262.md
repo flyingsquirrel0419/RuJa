@@ -1,5 +1,57 @@
 # test262 conformance
 
+## Legacy RegExp constructor statics
+
+Every Realm's immutable `%RegExp%` constructor owns the proposal's 14 legacy
+state slots and exposes 19 configurable, non-enumerable accessors: `input`/`$_`,
+the long and symbolic aliases for the last match/paren/contexts, and `$1`-
+`$9`. Each accessor is a distinct non-constructable native function with the
+specified name and length. Getter and setter receivers must be that accessor's
+own intrinsic constructor; mutable global bindings, subclasses, and borrowed
+cross-Realm receivers cannot redirect state.
+
+Initial slots contain `""`. A successful built-in match from a direct
+same-Realm RegExp updates the input, UTF-16 match contexts, last declared
+capture, and first nine captures. Missing captures become `""`. Proper
+subclass matches invalidate every slot independently, after which a getter
+throws `TypeError`; assigning `input` or `$_` restores only the input slot.
+A directly borrowed built-in `exec` whose receiver belongs to another Realm
+changes neither Realm. Borrowed protocols update state only when their selected
+built-in `exec` and receiver belong to the same Realm; custom or mismatched exec
+paths do not update either Realm. No-match, matcher error, and failed
+built-in-exec result materialization preserve prior state. The commit retains
+input plus UTF-16 ranges after result materialization, and accessors lazily
+materialize/cache only requested Strings. Later replace callbacks therefore
+observe the match even when they throw without forcing every global match to
+copy both full contexts.
+
+The Unicode-global `@@match` fast path is limited to unmetered calls whose
+selected intrinsic `exec` belongs to the active native Realm and whose compiled
+backend is infallible and linear. It reserves conversion workspace before
+matching, converts the last match's byte boundaries to UTF-16 in one scan, and
+commits before the outer protocol Array allocation. Metered, cross-Realm, and
+error-capable backend calls use generic per-exec dispatch so partial completion
+and Realm ownership remain observable.
+
+On pinned Test262 `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the exact
+24-file legacy-accessor boundary moves from forced **0 pass / 24 fail** to
+**24/0/0**. The complete `annexB/built-ins/RegExp` subtree moves from
+**34 pass / 18 fail / 10 skip** to **58/0/4**, with no timeout/error. This adds
+24 Annex B passes: 18 former failures and six exact cross-Realm admissions.
+The four residual skips are separate invalid control-escape and named-group
+grammar work. Isolated complete Annex B moves from **963/69/54** to
+**987/51/48**, with no timeout/error.
+
+```text
+[Decision Log]
+- 목적과 의도: legacy RegExp static accessors의 descriptor surface뿐 아니라 successful-match state, invalidation, Realm ownership을 실제 실행 경로에 통합한다.
+- 기존 구현 및 제약 조건: pinned 24 files only cover descriptors and receiver brands; they do not cover state updates. RegExpBuiltInExec has fallible post-match materialization, and Unicode-global @@match uses a direct find iterator.
+- 검토한 주요 대안: accessor surface만 구현, mutable global constructor state, one shared validity flag, match 발견 직후 update, optimized @@match 비활성화, 또는 intrinsic private slots와 final commit hook.
+- 선택한 방식: exact manifest admits only 24 audited files. Direct regressions cover state values and symbolic aliases, setter reentrancy, materialization failpoints, protocol dispatch, bidirectional borrowed /g and /gu calls, fuel, Realms, subclasses, and GC. Runtime preinstalls 14 public-state slots plus backing input/ranges and commits ordinary exec after complete materialization; unmetered same-exec-Realm linear fast @@match reconstructs only its final captures and commits before outer Array allocation.
+- 다른 대안 대신 이 방식을 선택한 이유: Test262 surface만 맞추면 proposal behavior가 비어 있고 global bindings are mutable. Shared validity cannot restore input alone, early update violates abrupt completion, and disabling the fast path causes an avoidable performance regression.
+- 장점, 단점 및 영향: exact 24/0/0 and complete subtree 58/0/4 become CI invariants. Every successful direct match retains Realm-local legacy Strings; only capture-bearing optimized global matches pay one final anchored capture pass. Remaining four files stay closed until their grammar support is real.
+```
+
 ## Legacy RegExp compile
 
 Every Realm installs a fresh non-constructable `RegExp.prototype.compile`
@@ -25,8 +77,8 @@ owns three Symbol abrupt tests and one duplicate named-group syntax test. The
 complete `annexB/built-ins/RegExp` subtree moves from contention-normalized
 **9 pass / 39 fail / 14 skip** to **34 pass / 18 fail / 10 skip**, with 0
 timeout/error. Complete Annex B moves from **938/90/58** to **963/69/54**.
-The remaining 18 failures are the separate legacy constructor static-accessor/
-state unit.
+The 18 legacy constructor static-accessor failures recorded by this baseline
+are closed by the unit above.
 
 Implementation commit `12f47b4` passes ordinary CI `30696563521` (3/3) and
 full Test262 CI `30696563526` (45/45). The ordinary supported-subset artifact

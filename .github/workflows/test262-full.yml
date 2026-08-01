@@ -102,6 +102,12 @@ jobs:
           TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
           test262_tooling_test.ModuleCoreAdmissionTests.test_regexp_compile_manifest_is_exact_live_disjoint_and_shared
           -v
+      - name: Verify exact legacy RegExp accessor admission
+        working-directory: tools
+        run: >-
+          TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
+          test262_tooling_test.ModuleCoreAdmissionTests.test_regexp_legacy_accessor_manifest_is_exact_live_disjoint_and_shared
+          -v
       - name: Verify exact primitive Reference admission
         working-directory: tools
         run: >-
@@ -648,6 +654,23 @@ jobs:
           cat regexp_compile_result.txt
           grep -q '^RATE=100.0 PASS=26 FAIL=0 SKIP=0 TOTAL=26 RAN=26$' \
             regexp_compile_result.txt
+      - name: Require legacy RegExp accessor boundary to pass
+        if: matrix.dir == 'annexB'
+        run: |
+          TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
+            annexB/built-ins/RegExp/legacy-accessors \
+            > regexp_legacy_accessors_result.txt 2>&1
+          cat regexp_legacy_accessors_result.txt
+          grep -q '^RATE=100.0 PASS=24 FAIL=0 SKIP=0 TOTAL=24 RAN=24$' \
+            regexp_legacy_accessors_result.txt
+      - name: Require complete Annex B RegExp policy scope
+        if: matrix.dir == 'annexB'
+        run: |
+          TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
+            annexB/built-ins/RegExp > regexp_annex_b_result.txt 2>&1
+          cat regexp_annex_b_result.txt
+          grep -q '^RATE=100.0 PASS=58 FAIL=0 SKIP=4 TOTAL=62 RAN=58$' \
+            regexp_annex_b_result.txt
       - name: Require primitive Reference boundary to pass
         if: matrix.dir == 'language/types'
         run: |

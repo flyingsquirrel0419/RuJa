@@ -1,6 +1,7 @@
 use super::call_arguments::MAX_MATERIALIZED_CALL_ARGUMENTS;
 use super::*;
 use std::fmt::Write as _;
+use std::sync::LazyLock;
 
 // RegExp
 // =========================================================================
@@ -23,6 +24,80 @@ const REGEXP_UNICODE_SETS_SLOT: &str = "[[RegExpUnicodeSets]]";
 const REGEXP_STICKY_SLOT: &str = "[[RegExpSticky]]";
 const REGEXP_REALM_SLOT: &str = "[[RegExpRealm]]";
 const REGEXP_LEGACY_FEATURES_ENABLED_SLOT: &str = "[[LegacyFeaturesEnabled]]";
+const REGEXP_LEGACY_ACCESSOR_SLOT: &str = "[[LegacyRegExpAccessorSlot]]";
+const REGEXP_LEGACY_BACKING_INPUT_SLOT: &str = "[[RegExpLegacyBackingInput]]";
+
+const REGEXP_LEGACY_INPUT_INDEX: usize = 0;
+const REGEXP_LEGACY_LAST_MATCH_INDEX: usize = 1;
+const REGEXP_LEGACY_LAST_PAREN_INDEX: usize = 2;
+const REGEXP_LEGACY_LEFT_CONTEXT_INDEX: usize = 3;
+const REGEXP_LEGACY_RIGHT_CONTEXT_INDEX: usize = 4;
+const REGEXP_LEGACY_FIRST_PAREN_INDEX: usize = 5;
+const REGEXP_LEGACY_STATE_LEN: usize = 14;
+const REGEXP_LEGACY_RANGE_LEN: usize = 11;
+
+static REGEXP_LEGACY_STATE_KEYS: LazyLock<[crate::value::PrivateSlotKey; REGEXP_LEGACY_STATE_LEN]> =
+    LazyLock::new(|| {
+        [
+            "[[RegExpInput]]",
+            "[[RegExpLastMatch]]",
+            "[[RegExpLastParen]]",
+            "[[RegExpLeftContext]]",
+            "[[RegExpRightContext]]",
+            "[[RegExpParen1]]",
+            "[[RegExpParen2]]",
+            "[[RegExpParen3]]",
+            "[[RegExpParen4]]",
+            "[[RegExpParen5]]",
+            "[[RegExpParen6]]",
+            "[[RegExpParen7]]",
+            "[[RegExpParen8]]",
+            "[[RegExpParen9]]",
+        ]
+        .map(regexp_internal_slot_key)
+    });
+
+static REGEXP_LEGACY_ACCESSOR_SLOT_KEY: LazyLock<crate::value::PrivateSlotKey> =
+    LazyLock::new(|| regexp_internal_slot_key(REGEXP_LEGACY_ACCESSOR_SLOT));
+static REGEXP_LEGACY_BACKING_INPUT_SLOT_KEY: LazyLock<crate::value::PrivateSlotKey> =
+    LazyLock::new(|| regexp_internal_slot_key(REGEXP_LEGACY_BACKING_INPUT_SLOT));
+
+static REGEXP_LEGACY_RANGE_START_KEYS: LazyLock<
+    [crate::value::PrivateSlotKey; REGEXP_LEGACY_RANGE_LEN],
+> = LazyLock::new(|| {
+    std::array::from_fn(|index| {
+        regexp_internal_slot_key(&format!("[[RegExpLegacyRange{index}Start]]"))
+    })
+});
+static REGEXP_LEGACY_RANGE_END_KEYS: LazyLock<
+    [crate::value::PrivateSlotKey; REGEXP_LEGACY_RANGE_LEN],
+> = LazyLock::new(|| {
+    std::array::from_fn(|index| {
+        regexp_internal_slot_key(&format!("[[RegExpLegacyRange{index}End]]"))
+    })
+});
+
+const REGEXP_LEGACY_ACCESSORS: [(&str, usize, bool); 19] = [
+    ("input", REGEXP_LEGACY_INPUT_INDEX, true),
+    ("$_", REGEXP_LEGACY_INPUT_INDEX, true),
+    ("lastMatch", REGEXP_LEGACY_LAST_MATCH_INDEX, false),
+    ("$&", REGEXP_LEGACY_LAST_MATCH_INDEX, false),
+    ("lastParen", REGEXP_LEGACY_LAST_PAREN_INDEX, false),
+    ("$+", REGEXP_LEGACY_LAST_PAREN_INDEX, false),
+    ("leftContext", REGEXP_LEGACY_LEFT_CONTEXT_INDEX, false),
+    ("$`", REGEXP_LEGACY_LEFT_CONTEXT_INDEX, false),
+    ("rightContext", REGEXP_LEGACY_RIGHT_CONTEXT_INDEX, false),
+    ("$'", REGEXP_LEGACY_RIGHT_CONTEXT_INDEX, false),
+    ("$1", REGEXP_LEGACY_FIRST_PAREN_INDEX, false),
+    ("$2", REGEXP_LEGACY_FIRST_PAREN_INDEX + 1, false),
+    ("$3", REGEXP_LEGACY_FIRST_PAREN_INDEX + 2, false),
+    ("$4", REGEXP_LEGACY_FIRST_PAREN_INDEX + 3, false),
+    ("$5", REGEXP_LEGACY_FIRST_PAREN_INDEX + 4, false),
+    ("$6", REGEXP_LEGACY_FIRST_PAREN_INDEX + 5, false),
+    ("$7", REGEXP_LEGACY_FIRST_PAREN_INDEX + 6, false),
+    ("$8", REGEXP_LEGACY_FIRST_PAREN_INDEX + 7, false),
+    ("$9", REGEXP_LEGACY_FIRST_PAREN_INDEX + 8, false),
+];
 
 fn regexp_internal_slot_key(name: &str) -> crate::value::PrivateSlotKey {
     crate::value::PrivateSlotKey::Internal(Arc::from(name))
@@ -66,6 +141,337 @@ fn regexp_legacy_metadata(vm: &Vm, value: &Value) -> Option<(GcIdx, bool)> {
         };
         Some((realm, enabled))
     })
+}
+
+fn configure_regexp_legacy_accessor(vm: &Vm, accessor: GcIdx, slot_index: usize) {
+    vm.heap.with_obj(accessor.0, |object| {
+        if let HeapObj::Function(function) = object {
+            function.private_fields.lock().insert(
+                REGEXP_LEGACY_ACCESSOR_SLOT_KEY.clone(),
+                crate::value::PrivateSlot::Value(Value::Number(slot_index as f64)),
+            );
+        }
+    });
+}
+
+fn regexp_legacy_accessor_index(vm: &Vm) -> Option<usize> {
+    let Value::Object(accessor) = vm.current_native_callee()?.clone() else {
+        return None;
+    };
+    vm.heap.with_obj(accessor.0, |object| {
+        let HeapObj::Function(function) = object else {
+            return None;
+        };
+        match function
+            .private_fields
+            .lock()
+            .get(&*REGEXP_LEGACY_ACCESSOR_SLOT_KEY)
+        {
+            Some(crate::value::PrivateSlot::Value(Value::Number(index)))
+                if index.is_finite()
+                    && index.fract() == 0.0
+                    && *index >= 0.0
+                    && *index < REGEXP_LEGACY_STATE_LEN as f64 =>
+            {
+                Some(*index as usize)
+            }
+            _ => None,
+        }
+    })
+}
+
+fn exact_regexp_constructor_for_realm(vm: &Vm, realm: GcIdx) -> Option<Value> {
+    vm.realm_regexp_constructors.get(&realm.0).cloned()
+}
+
+pub(crate) fn regexp_legacy_static_get(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let realm = vm.current_realm_global_env();
+    let constructor = exact_regexp_constructor_for_realm(vm, realm)
+        .ok_or_else(|| Error::internal("RegExp constructor Realm state is unavailable"))?;
+    if !same_value(&this.unwrap_or(Value::Undefined), &constructor) {
+        return Err(Error::type_err("invalid RegExp legacy accessor receiver"));
+    }
+    let slot_index = regexp_legacy_accessor_index(vm)
+        .ok_or_else(|| Error::internal("RegExp legacy accessor slot is unavailable"))?;
+    let Value::Object(constructor) = constructor else {
+        return Err(Error::internal("RegExp intrinsic is not an object"));
+    };
+    vm.heap.with_obj(constructor.0, |object| {
+        let HeapObj::Function(function) = object else {
+            return Err(Error::internal("RegExp intrinsic is not a function"));
+        };
+        let mut fields = function.private_fields.lock();
+        let state = fields.get(&REGEXP_LEGACY_STATE_KEYS[slot_index]).cloned();
+        match state {
+            Some(crate::value::PrivateSlot::Value(value @ Value::String(_))) => Ok(value),
+            Some(crate::value::PrivateSlot::Value(Value::Bool(true))) => {
+                let Some(crate::value::PrivateSlot::Value(Value::String(input))) =
+                    fields.get(&*REGEXP_LEGACY_BACKING_INPUT_SLOT_KEY)
+                else {
+                    return Err(Error::internal("RegExp legacy input state is unavailable"));
+                };
+                let input = input.clone();
+                let range_index = match slot_index {
+                    REGEXP_LEGACY_LAST_MATCH_INDEX
+                    | REGEXP_LEGACY_LEFT_CONTEXT_INDEX
+                    | REGEXP_LEGACY_RIGHT_CONTEXT_INDEX => 0,
+                    REGEXP_LEGACY_LAST_PAREN_INDEX => REGEXP_LEGACY_RANGE_LEN - 1,
+                    index if index >= REGEXP_LEGACY_FIRST_PAREN_INDEX => {
+                        index - REGEXP_LEGACY_FIRST_PAREN_INDEX + 1
+                    }
+                    _ => return Err(Error::internal("invalid RegExp legacy lazy slot")),
+                };
+                let range_value = |key: &crate::value::PrivateSlotKey| match fields.get(key) {
+                    Some(crate::value::PrivateSlot::Value(Value::Number(value)))
+                        if value.is_finite() && value.fract() == 0.0 && *value >= 0.0 =>
+                    {
+                        Some(*value as usize)
+                    }
+                    _ => None,
+                };
+                let Some(mut start) = range_value(&REGEXP_LEGACY_RANGE_START_KEYS[range_index])
+                else {
+                    return Err(Error::internal("RegExp legacy range start is unavailable"));
+                };
+                let Some(mut end) = range_value(&REGEXP_LEGACY_RANGE_END_KEYS[range_index]) else {
+                    return Err(Error::internal("RegExp legacy range end is unavailable"));
+                };
+                if slot_index == REGEXP_LEGACY_LEFT_CONTEXT_INDEX {
+                    end = start;
+                    start = 0;
+                } else if slot_index == REGEXP_LEGACY_RIGHT_CONTEXT_INDEX {
+                    start = end;
+                    end = crate::value::utf16_len(&input);
+                }
+                let value = Value::String(Arc::from(
+                    crate::value::utf16_slice(&input, start, end).as_str(),
+                ));
+                fields.insert(
+                    REGEXP_LEGACY_STATE_KEYS[slot_index].clone(),
+                    crate::value::PrivateSlot::Value(value.clone()),
+                );
+                Ok(value)
+            }
+            _ => Err(Error::type_err("RegExp legacy state is unavailable")),
+        }
+    })
+}
+
+pub(crate) fn regexp_legacy_static_set(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let realm = vm.current_realm_global_env();
+    let constructor = exact_regexp_constructor_for_realm(vm, realm)
+        .ok_or_else(|| Error::internal("RegExp constructor Realm state is unavailable"))?;
+    if !same_value(&this.unwrap_or(Value::Undefined), &constructor) {
+        return Err(Error::type_err("invalid RegExp legacy accessor receiver"));
+    }
+    let slot_index = regexp_legacy_accessor_index(vm)
+        .ok_or_else(|| Error::internal("RegExp legacy accessor slot is unavailable"))?;
+    debug_assert_eq!(slot_index, REGEXP_LEGACY_INPUT_INDEX);
+    let value = vm.to_string(args.first().unwrap_or(&Value::Undefined))?;
+    let Value::Object(constructor) = constructor else {
+        return Err(Error::internal("RegExp intrinsic is not an object"));
+    };
+    vm.heap.with_obj(constructor.0, |object| {
+        let HeapObj::Function(function) = object else {
+            return Err(Error::internal("RegExp intrinsic is not a function"));
+        };
+        let mut fields = function.private_fields.lock();
+        let Some(slot) = fields.get_mut(&REGEXP_LEGACY_STATE_KEYS[slot_index]) else {
+            return Err(Error::internal("RegExp legacy input slot is unavailable"));
+        };
+        *slot = crate::value::PrivateSlot::Value(Value::String(value));
+        Ok(Value::Undefined)
+    })
+}
+
+pub(crate) fn install_regexp_legacy_static_properties(
+    vm: &mut Vm,
+    constructor: GcIdx,
+    realm: GcIdx,
+) -> error::Result<()> {
+    let constructor_value = Value::Object(constructor);
+    vm.try_reserve_value_roots(std::slice::from_ref(&constructor_value))?;
+    let constructor_pin = vm.pin(&constructor_value);
+    let result = (|| {
+        vm.heap.with_obj(constructor.0, |object| {
+            let HeapObj::Function(function) = object else {
+                return Err(Error::internal("RegExp intrinsic is not a function"));
+            };
+            function
+                .props
+                .lock()
+                .try_reserve(REGEXP_LEGACY_ACCESSORS.len())
+                .map_err(|_| Error::range("RegExp constructor property storage is too large"))?;
+            let mut fields = function.private_fields.lock();
+            fields
+                .try_reserve(REGEXP_LEGACY_STATE_LEN + REGEXP_LEGACY_RANGE_LEN * 2 + 1)
+                .map_err(|_| Error::range("RegExp legacy state storage is too large"))?;
+            let empty = Value::String(Arc::from(""));
+            for key in REGEXP_LEGACY_STATE_KEYS.iter() {
+                fields.insert(key.clone(), crate::value::PrivateSlot::Value(empty.clone()));
+            }
+            fields.insert(
+                REGEXP_LEGACY_BACKING_INPUT_SLOT_KEY.clone(),
+                crate::value::PrivateSlot::Value(empty.clone()),
+            );
+            for key in REGEXP_LEGACY_RANGE_START_KEYS
+                .iter()
+                .chain(REGEXP_LEGACY_RANGE_END_KEYS.iter())
+            {
+                fields.insert(
+                    key.clone(),
+                    crate::value::PrivateSlot::Value(Value::Number(0.0)),
+                );
+            }
+            Ok(())
+        })?;
+
+        for (property, slot_index, has_setter) in REGEXP_LEGACY_ACCESSORS {
+            let getter = vm.new_native_function_in_env(
+                &format!("get {property}"),
+                regexp_legacy_static_get,
+                0,
+                realm,
+            )?;
+            configure_regexp_legacy_accessor(vm, getter, slot_index);
+            vm.heap.with_obj(constructor.0, |object| {
+                if let HeapObj::Function(function) = object {
+                    function.props.lock().insert(
+                        PropertyKey::from(property),
+                        accessor_get_prop(Value::Object(getter)),
+                    );
+                }
+            });
+            if has_setter {
+                let setter = vm.new_native_function_in_env(
+                    &format!("set {property}"),
+                    regexp_legacy_static_set,
+                    1,
+                    realm,
+                )?;
+                configure_regexp_legacy_accessor(vm, setter, slot_index);
+                vm.heap.with_obj(constructor.0, |object| {
+                    if let HeapObj::Function(function) = object {
+                        function.props.lock().insert(
+                            PropertyKey::from(property),
+                            accessor_prop(Value::Object(getter), Value::Object(setter)),
+                        );
+                    }
+                });
+            }
+        }
+        Ok(())
+    })();
+    vm.unpin_many(constructor_pin);
+    result
+}
+
+pub(super) fn regexp_commit_legacy_match_state(
+    vm: &mut Vm,
+    receiver: &Value,
+    input: Arc<str>,
+    capture_ranges: &[Option<(usize, usize)>],
+) {
+    let Some((receiver_realm, legacy_features_enabled)) = regexp_legacy_metadata(vm, receiver)
+    else {
+        return;
+    };
+    let current_realm = vm.current_realm_global_env();
+    if receiver_realm != current_realm {
+        return;
+    }
+    let Some(Value::Object(constructor)) = exact_regexp_constructor_for_realm(vm, current_realm)
+    else {
+        debug_assert!(false, "published Realm must retain its RegExp constructor");
+        return;
+    };
+    if !legacy_features_enabled {
+        vm.heap.with_obj(constructor.0, |object| {
+            if let HeapObj::Function(function) = object {
+                let mut fields = function.private_fields.lock();
+                if REGEXP_LEGACY_STATE_KEYS
+                    .iter()
+                    .all(|key| fields.contains_key(key))
+                {
+                    for key in REGEXP_LEGACY_STATE_KEYS.iter() {
+                        *fields.get_mut(key).unwrap() =
+                            crate::value::PrivateSlot::Value(Value::Undefined);
+                    }
+                }
+            }
+        });
+        return;
+    }
+
+    let Some((_match_start, _match_end)) = capture_ranges.first().copied().flatten() else {
+        debug_assert!(false, "successful RegExp match must retain capture zero");
+        return;
+    };
+    let empty: Arc<str> = Arc::from("");
+    let mut values: [Value; REGEXP_LEGACY_STATE_LEN] =
+        std::array::from_fn(|_| Value::String(empty.clone()));
+    values[REGEXP_LEGACY_INPUT_INDEX] = Value::String(input.clone());
+    values[REGEXP_LEGACY_LAST_MATCH_INDEX] = Value::Bool(true);
+    values[REGEXP_LEGACY_LAST_PAREN_INDEX] =
+        if capture_ranges.len() > 1 && capture_ranges.last().is_some_and(|range| range.is_some()) {
+            Value::Bool(true)
+        } else {
+            Value::String(empty.clone())
+        };
+    values[REGEXP_LEGACY_LEFT_CONTEXT_INDEX] = Value::Bool(true);
+    values[REGEXP_LEGACY_RIGHT_CONTEXT_INDEX] = Value::Bool(true);
+    for index in 0..9 {
+        values[REGEXP_LEGACY_FIRST_PAREN_INDEX + index] = if capture_ranges
+            .get(index + 1)
+            .is_some_and(|range| range.is_some())
+        {
+            Value::Bool(true)
+        } else {
+            Value::String(empty.clone())
+        };
+    }
+
+    vm.heap.with_obj(constructor.0, |object| {
+        if let HeapObj::Function(function) = object {
+            let mut fields = function.private_fields.lock();
+            if REGEXP_LEGACY_STATE_KEYS
+                .iter()
+                .all(|key| fields.contains_key(key))
+            {
+                for (key, value) in REGEXP_LEGACY_STATE_KEYS.iter().zip(values) {
+                    *fields.get_mut(key).unwrap() = crate::value::PrivateSlot::Value(value);
+                }
+                *fields
+                    .get_mut(&*REGEXP_LEGACY_BACKING_INPUT_SLOT_KEY)
+                    .unwrap() = crate::value::PrivateSlot::Value(Value::String(input));
+                for range_index in 0..REGEXP_LEGACY_RANGE_LEN {
+                    let source_index = if range_index + 1 == REGEXP_LEGACY_RANGE_LEN {
+                        capture_ranges.len().saturating_sub(1)
+                    } else {
+                        range_index
+                    };
+                    if let Some((start, end)) = capture_ranges.get(source_index).copied().flatten()
+                    {
+                        *fields
+                            .get_mut(&REGEXP_LEGACY_RANGE_START_KEYS[range_index])
+                            .unwrap() =
+                            crate::value::PrivateSlot::Value(Value::Number(start as f64));
+                        *fields
+                            .get_mut(&REGEXP_LEGACY_RANGE_END_KEYS[range_index])
+                            .unwrap() = crate::value::PrivateSlot::Value(Value::Number(end as f64));
+                    }
+                }
+            }
+        }
+    });
 }
 
 pub(crate) fn regexp_compile(
@@ -454,13 +860,15 @@ pub(crate) fn regexp_symbol_match(
     let full_unicode = flags.contains('u') || flags.contains('v');
     if full_unicode
         && !flags.contains('y')
+        && vm.fuel_remaining().is_none()
         && has_unmodified_intrinsic_regexp_exec(vm, &rx)
         && flags.as_ref() == read_regexp_flags(vm, &Some(rx.clone()))?
     {
         set_regexp_last_index(vm, &rx, 0.0)?;
-        let result = super::string::regexp_match_internal(vm, rx.clone(), &s)?;
-        set_regexp_last_index(vm, &rx, 0.0)?;
-        return Ok(result);
+        if let Some(result) = super::string::regexp_match_internal(vm, rx.clone(), s.clone())? {
+            set_regexp_last_index(vm, &rx, 0.0)?;
+            return Ok(result);
+        }
     }
 
     set_regexp_last_index(vm, &rx, 0.0)?;
@@ -472,7 +880,7 @@ pub(crate) fn regexp_symbol_match(
             if matches.is_empty() {
                 return Ok(Value::Null);
             }
-            return make_value_array(vm, matches);
+            return make_value_array_in_current_realm(vm, matches);
         }
         let result_pin = regexp_try_pin_value(vm, &result)?;
         let matched: error::Result<Arc<str>> = (|| {
@@ -529,17 +937,20 @@ fn has_unmodified_intrinsic_regexp_exec(vm: &Vm, rx: &Value) -> bool {
     let Some(Value::Object(exec_idx)) = exec else {
         return false;
     };
-    vm.heap.with_obj(exec_idx.0, |object| {
-        matches!(
-            object,
-            HeapObj::Function(function)
-                if matches!(
-                    &function.kind,
-                    FunctionKind::Native { func, .. }
-                        if std::ptr::fn_addr_eq(*func, regexp_exec as NativeFn)
-                )
-        )
-    })
+    let native = vm.heap.with_obj(exec_idx.0, |object| {
+        let HeapObj::Function(function) = object else {
+            return None;
+        };
+        let FunctionKind::Native { func, .. } = &function.kind else {
+            return None;
+        };
+        Some((*func, function.closure))
+    });
+    let Some((func, closure)) = native else {
+        return false;
+    };
+    std::ptr::fn_addr_eq(func, regexp_exec as NativeFn)
+        && crate::environment::global_env_root(&vm.heap, closure) == vm.current_realm_global_env()
 }
 
 pub(crate) fn regexp_symbol_match_all(
@@ -1888,9 +2299,7 @@ pub(crate) fn regexp_exec(
     this: Option<Value>,
 ) -> error::Result<Value> {
     let source = read_regexp_source_arc(vm, &this)?;
-    let input = vm
-        .to_string(args.first().unwrap_or(&Value::Undefined))?
-        .to_string();
+    let input = vm.to_string(args.first().unwrap_or(&Value::Undefined))?;
     let flags = read_regexp_flags_arc(vm, &this)?;
     let global = flags.contains('g');
     let sticky = flags.contains('y');
@@ -2023,6 +2432,14 @@ pub(crate) fn regexp_exec(
                         groups,
                         indices,
                     )?;
+                    if let Some(receiver) = &this_value {
+                        regexp_commit_legacy_match_state(
+                            vm,
+                            receiver,
+                            input.clone(),
+                            &capture_ranges,
+                        );
+                    }
                     Ok(result)
                 })();
                 vm.unpin_many(groups_pin);
