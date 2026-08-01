@@ -4,6 +4,18 @@
 
 ### Changed
 
+- Completed the Annex B String legacy-method cluster. All 13 CreateHTML
+  methods now perform receiver coercion before optional attribute coercion,
+  escape only attribute quotation marks, and exist as non-constructable
+  Realm-local native functions. `substr` now applies `ToIntegerOrInfinity`
+  and treats an explicit `undefined` length as unbounded. `trimLeft` and
+  `trimRight` are descriptor-correct references to the original `trimStart`
+  and `trimEnd` function objects in every Realm. Exact admission opens 16
+  previously skipped non-constructor/Symbol abrupt tests while retaining six
+  real IsHTMLDDA skips. The focused scope moves from **9 pass / 80 fail / 22
+  skip** to **105/0/6**, and complete Annex B moves from **842/170/74** to
+  **938/90/58**.
+
 - Moved intrinsic roots, module records, tagged-template identities, and the
   host module referrer into a `RealmRecord` owned by each global Environment.
   Published Realms are traced through that owner instead of VM-wide registry

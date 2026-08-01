@@ -5714,6 +5714,69 @@ const ARRAY_PROTOTYPE_METHODS: &[(&str, NativeFn, usize)] = &[
     ("toLocaleString", array_to_locale_string, 0),
 ];
 
+const ANNEX_B_STRING_HTML_METHODS: &[(&str, NativeFn, usize)] = &[
+    ("anchor", str_anchor, 1),
+    ("big", str_big, 0),
+    ("blink", str_blink, 0),
+    ("bold", str_bold, 0),
+    ("fixed", str_fixed, 0),
+    ("fontcolor", str_fontcolor, 1),
+    ("fontsize", str_fontsize, 1),
+    ("italics", str_italics, 0),
+    ("link", str_link, 1),
+    ("small", str_small, 0),
+    ("strike", str_strike, 0),
+    ("sub", str_sub, 0),
+    ("sup", str_sup, 0),
+];
+
+fn install_annex_b_string_methods_in_env(
+    vm: &mut Vm,
+    realm: GcIdx,
+    prototype: GcIdx,
+) -> error::Result<()> {
+    vm.try_reserve_gc_pins(1)?;
+    let prototype_value = Value::Object(prototype);
+    let prototype_pin = vm.pin(&prototype_value);
+    let result = (|| {
+        for &(name, function, length) in ANNEX_B_STRING_HTML_METHODS {
+            let method = vm.new_native_function_in_env(name, function, length, realm)?;
+            vm.heap.with_obj(prototype.0, |object| {
+                object
+                    .props()
+                    .lock()
+                    .insert(PropertyKey::from(name), data_prop(Value::Object(method)));
+            });
+        }
+
+        let (trim_start, trim_end) = vm.heap.with_obj(prototype.0, |object| {
+            let properties = object.props();
+            let properties = properties.lock();
+            (
+                properties
+                    .get(&PropertyKey::from("trimStart"))
+                    .map(|descriptor| descriptor.value.clone()),
+                properties
+                    .get(&PropertyKey::from("trimEnd"))
+                    .map(|descriptor| descriptor.value.clone()),
+            )
+        });
+        let trim_start = trim_start
+            .ok_or_else(|| Error::internal("missing String.prototype.trimStart intrinsic"))?;
+        let trim_end = trim_end
+            .ok_or_else(|| Error::internal("missing String.prototype.trimEnd intrinsic"))?;
+        vm.heap.with_obj(prototype.0, |object| {
+            let properties = object.props();
+            let mut properties = properties.lock();
+            properties.insert(PropertyKey::from("trimLeft"), data_prop(trim_start));
+            properties.insert(PropertyKey::from("trimRight"), data_prop(trim_end));
+        });
+        Ok(())
+    })();
+    vm.unpin_many(prototype_pin);
+    result
+}
+
 fn install_array_intrinsic_in_env(
     vm: &mut Vm,
     env: GcIdx,
@@ -6519,9 +6582,13 @@ fn populate_secondary_realm(vm: &mut Vm, realm_env: GcIdx) -> error::Result<Valu
             ("valueOf", string_value_of, 0),
             ("toString", string_proto_to_string, 0),
             ("localeCompare", str_locale_compare, 1),
+            ("substr", str_substr, 2),
+            ("trimStart", str_trim_start, 0),
+            ("trimEnd", str_trim_end, 0),
         ],
         realm_env,
     )?;
+    install_annex_b_string_methods_in_env(vm, realm_env, str_proto)?;
     let realm_string_proto = Value::Object(str_proto);
     vm.set_primitive(&realm_string_proto, Value::String(Arc::from("")));
     vm.heap.with_obj(str_proto.0, |obj| {
@@ -14289,6 +14356,7 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
             ("toString", string_proto_to_string, 0),
         ],
     )?;
+    install_annex_b_string_methods_in_env(vm, vm.global, str_proto)?;
     vm.string_proto = Value::Object(str_proto);
     vm.set_primitive(&vm.string_proto.clone(), Value::String(Arc::from("")));
     vm.heap.with_obj(str_proto.0, |obj| {

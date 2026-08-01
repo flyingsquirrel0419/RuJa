@@ -90,6 +90,12 @@ jobs:
           TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
           test262_tooling_test.ModuleCoreAdmissionTests.test_shadowrealm_admission_is_exact_live_and_shared
           -v
+      - name: Verify exact Annex B String admission
+        working-directory: tools
+        run: >-
+          TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
+          test262_tooling_test.ModuleCoreAdmissionTests.test_annex_b_string_manifest_is_exact_live_disjoint_and_shared
+          -v
       - name: Verify exact primitive Reference admission
         working-directory: tools
         run: >-
@@ -617,6 +623,14 @@ jobs:
           cat shadowrealm_result.txt
           grep -q '^RATE=100.0 PASS=64 FAIL=0 SKIP=0 TOTAL=64 RAN=64$' \
             shadowrealm_result.txt
+      - name: Require Annex B String legacy methods to pass
+        if: matrix.dir == 'annexB'
+        run: |
+          TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
+            annexB/built-ins/String/prototype > annex_b_string_result.txt 2>&1
+          cat annex_b_string_result.txt
+          grep -q '^RATE=100.0 PASS=105 FAIL=0 SKIP=6 TOTAL=111 RAN=105$' \
+            annex_b_string_result.txt
       - name: Require primitive Reference boundary to pass
         if: matrix.dir == 'language/types'
         run: |

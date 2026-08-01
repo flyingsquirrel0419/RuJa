@@ -1,5 +1,34 @@
 # test262 conformance
 
+## Annex B String legacy methods
+
+RuJa installs the 13 `CreateHTML` String methods in the main Realm and every
+created Realm. The shared algorithm coerces the receiver first, then the
+optional attribute value, replaces only U+0022 in that attribute with
+`&quot;`, and preserves the receiver content unchanged. Each public method is
+a separate non-constructable native function with its specified name, length,
+and descriptor. `trimLeft`/`trimRight` are data-property aliases to the exact
+`trimStart`/`trimEnd` function objects. `substr` uses UTF-16 indices and
+`ToIntegerOrInfinity`, including explicit-`undefined` length and negative
+fractional start behavior.
+
+On pinned Test262 `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the
+complete `annexB/built-ins/String/prototype` scope moves from **9 pass / 80
+fail / 22 skip** to **105 pass / 0 fail / 6 skip** over 111 files. The exact
+16-file admission covers 14 non-constructor checks and two Symbol abrupt
+conversion checks. Six IsHTMLDDA files remain closed. Complete Annex B moves
+from **842/170/74** to **938/90/58**, with 0 timeout/error.
+
+```text
+[Decision Log]
+- 목적과 의도: Annex B String legacy methods를 ordinary native builtin, Realm identity, UTF-16 String semantics와 통합한다.
+- 기존 구현 및 제약 조건: substr은 fractional start를 truncation 전에 index로 cast하고 explicit undefined length를 NaN/empty로 처리했다. HTML methods와 trim aliases는 없었고 secondary Realm String prototype은 최소 method 집합만 가졌다.
+- 검토한 주요 대안: Test262 path별 특례, 각 HTML method에 중복 문자열 조립, trim alias용 새 native functions, main Realm 전용 설치, 또는 shared CreateHTML과 Realm-aware installer.
+- 선택한 방식: 공용 CreateHTML이 receiver/attribute coercion과 quote escaping을 소유하고 13개 thin native wrappers가 tag/attribute를 고정한다. installer는 모든 Realm에 wrappers를 만들고 기존 trimStart/trimEnd identity를 alias한다. substr은 공용 ToIntegerOrInfinity helper를 사용한다.
+- 다른 대안 대신 이 방식을 선택한 이유: path 특례는 runtime을 고치지 않고 method별 복제는 coercion/error 순서가 drift한다. 새 alias functions는 명세 identity/name을 깨며 main-only 설치는 created Realm intrinsic을 불완전하게 만든다.
+- 장점, 단점 및 영향: 80 failures와 16 policy skips가 한 bounded unit에서 닫히고 callable metadata, abrupt identity, quote-only escaping, UTF-16 slicing, Realm-local Function.prototype이 같은 경로를 사용한다. IsHTMLDDA host exotic 6개는 독립된 실제 미지원 범위로 유지된다.
+```
+
 ## ShadowRealm boundary
 
 RuJa now installs `ShadowRealm` in the main Realm and every created Realm.

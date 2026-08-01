@@ -20,6 +20,9 @@ try:
     )
     from test262_class_public_field_admission import CLASS_PUBLIC_FIELD_FILES
     from test262_date_to_primitive_admission import DATE_TO_PRIMITIVE_FILES
+    from test262_annex_b_string_admission import (
+        ANNEX_B_STRING_FEATURES, ANNEX_B_STRING_FILES,
+    )
     from test262_generator_function_admission import (
         GENERATOR_FUNCTION_FEATURES, GENERATOR_FUNCTION_FILES,
     )
@@ -255,6 +258,9 @@ except ModuleNotFoundError:
     )
     from tools.test262_class_public_field_admission import CLASS_PUBLIC_FIELD_FILES
     from tools.test262_date_to_primitive_admission import DATE_TO_PRIMITIVE_FILES
+    from tools.test262_annex_b_string_admission import (
+        ANNEX_B_STRING_FEATURES, ANNEX_B_STRING_FILES,
+    )
     from tools.test262_generator_function_admission import (
         GENERATOR_FUNCTION_FEATURES, GENERATOR_FUNCTION_FILES,
     )
@@ -2624,6 +2630,21 @@ def date_to_primitive_path(path):
         return False
     return rel.as_posix() in DATE_TO_PRIMITIVE_FILES
 
+def annex_b_string_path(path):
+    if path is None:
+        return False
+    try:
+        rel = Path(path).resolve().relative_to(Path(TEST262).resolve() / "test")
+    except (OSError, TypeError, ValueError):
+        return False
+    return rel.as_posix() in ANNEX_B_STRING_FILES
+
+def annex_b_string_features(path):
+    if not annex_b_string_path(path):
+        return frozenset()
+    rel = Path(path).resolve().relative_to(Path(TEST262).resolve() / "test")
+    return ANNEX_B_STRING_FEATURES[rel.as_posix()]
+
 def proxy_get_path(path):
     if path is None:
         return False
@@ -3672,6 +3693,8 @@ def should_skip(meta, path=None):
         })
     if path is not None and date_to_primitive_path(path):
         feats.discard("Symbol")
+    if path is not None and annex_b_string_path(path):
+        feats.difference_update(annex_b_string_features(path))
     if path is not None and proxy_get_path(path):
         feats.difference_update(proxy_get_features(path))
     if path is not None and proxy_has_path(path):

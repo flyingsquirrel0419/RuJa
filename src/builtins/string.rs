@@ -1387,12 +1387,12 @@ pub(crate) fn str_substr(vm: &mut Vm, args: &[Value], this: Option<Value>) -> er
     let s = str_val(vm, &this)?;
     let len = crate::value::utf16_len(&s) as f64;
     let mut start = match args.first() {
-        Some(v) => vm.to_number(v)?,
+        Some(v) => to_integer_or_zero(vm, v)?,
         None => 0.0,
     };
     let length = match args.get(1) {
-        Some(v) => vm.to_number(v)?,
-        None => f64::INFINITY,
+        Some(Value::Undefined) | None => f64::INFINITY,
+        Some(v) => to_integer_or_zero(vm, v)?,
     };
     // Negative start counts from the end (legacy behavior).
     if start < 0.0 {
@@ -1410,6 +1410,109 @@ pub(crate) fn str_substr(vm: &mut Vm, args: &[Value], this: Option<Value>) -> er
     let end = end as usize;
     let result = crate::value::utf16_slice(&s, start, end);
     Ok(Value::String(Arc::from(result.as_str())))
+}
+
+fn create_html(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+    tag: &str,
+    attribute: Option<&str>,
+) -> error::Result<Value> {
+    let receiver = this.unwrap_or(Value::Undefined);
+    if matches!(receiver, Value::Undefined | Value::Null) {
+        return Err(Error::type_err(
+            "String.prototype method called on null or undefined",
+        ));
+    }
+    let string = vm.to_string(&receiver)?;
+    let attribute_value = match attribute {
+        Some(_) => Some(
+            vm.to_string(args.first().unwrap_or(&Value::Undefined))?
+                .replace('"', "&quot;"),
+        ),
+        None => None,
+    };
+    let mut result = String::new();
+    result.push('<');
+    result.push_str(tag);
+    if let (Some(attribute), Some(value)) = (attribute, attribute_value) {
+        result.push(' ');
+        result.push_str(attribute);
+        result.push_str("=\"");
+        result.push_str(&value);
+        result.push('"');
+    }
+    result.push('>');
+    result.push_str(&string);
+    result.push_str("</");
+    result.push_str(tag);
+    result.push('>');
+    Ok(Value::String(Arc::from(result)))
+}
+
+pub(crate) fn str_anchor(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    create_html(vm, args, this, "a", Some("name"))
+}
+
+pub(crate) fn str_big(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    create_html(vm, args, this, "big", None)
+}
+
+pub(crate) fn str_blink(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    create_html(vm, args, this, "blink", None)
+}
+
+pub(crate) fn str_bold(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    create_html(vm, args, this, "b", None)
+}
+
+pub(crate) fn str_fixed(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    create_html(vm, args, this, "tt", None)
+}
+
+pub(crate) fn str_fontcolor(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    create_html(vm, args, this, "font", Some("color"))
+}
+
+pub(crate) fn str_fontsize(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    create_html(vm, args, this, "font", Some("size"))
+}
+
+pub(crate) fn str_italics(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    create_html(vm, args, this, "i", None)
+}
+
+pub(crate) fn str_link(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    create_html(vm, args, this, "a", Some("href"))
+}
+
+pub(crate) fn str_small(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    create_html(vm, args, this, "small", None)
+}
+
+pub(crate) fn str_strike(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    create_html(vm, args, this, "strike", None)
+}
+
+pub(crate) fn str_sub(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    create_html(vm, args, this, "sub", None)
+}
+
+pub(crate) fn str_sup(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    create_html(vm, args, this, "sup", None)
 }
 
 fn to_uint16_code_unit(n: f64) -> u16 {

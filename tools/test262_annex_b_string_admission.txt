@@ -1,0 +1,16 @@
+annexB/built-ins/String/prototype/anchor/not-a-constructor.js
+annexB/built-ins/String/prototype/big/not-a-constructor.js
+annexB/built-ins/String/prototype/blink/not-a-constructor.js
+annexB/built-ins/String/prototype/bold/not-a-constructor.js
+annexB/built-ins/String/prototype/fixed/not-a-constructor.js
+annexB/built-ins/String/prototype/fontcolor/not-a-constructor.js
+annexB/built-ins/String/prototype/fontsize/not-a-constructor.js
+annexB/built-ins/String/prototype/italics/not-a-constructor.js
+annexB/built-ins/String/prototype/link/not-a-constructor.js
+annexB/built-ins/String/prototype/small/not-a-constructor.js
+annexB/built-ins/String/prototype/strike/not-a-constructor.js
+annexB/built-ins/String/prototype/sub/not-a-constructor.js
+annexB/built-ins/String/prototype/substr/length-to-int-err.js
+annexB/built-ins/String/prototype/substr/not-a-constructor.js
+annexB/built-ins/String/prototype/substr/start-to-int-err.js
+annexB/built-ins/String/prototype/sup/not-a-constructor.js

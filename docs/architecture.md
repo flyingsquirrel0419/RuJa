@@ -463,6 +463,26 @@ after allocation.
 - 장점, 단점 및 영향: Observable order, foreign-Realm fallback, Bound/Proxy forwarding, direct calls, and cap failures share one tested path. The helper is deliberately limited to primitive wrappers; Date uses the separate body-controlled path below.
 ```
 
+Annex B String HTML methods share one `CreateHTML` implementation. Thin native
+wrappers fix each tag and optional attribute while preserving individual
+function metadata. Receiver coercion precedes attribute coercion; only U+0022
+inside the attribute is replaced, so content and other markup characters keep
+their JavaScript String code units. Realm bootstrap installs fresh wrapper
+functions and aliases `trimLeft`/`trimRight` to the already-created
+`trimStart`/`trimEnd` identities. `substr` remains a separate native method but
+uses the same `ToIntegerOrInfinity` conversion boundary as modern String index
+operations.
+
+```text
+[Decision Log]
+- 목적과 의도: Legacy String methods를 metadata, Realm, abrupt completion, UTF-16 규칙을 보존하는 하나의 builtin 구조로 설치한다.
+- 기존 구현 및 제약 조건: main Realm에는 일부 modern String methods와 잘못된 substr이 있었고 created Realm에는 legacy method와 trim target 자체가 없었다. trim aliases는 같은 function identity여야 한다.
+- 검토한 주요 대안: method별 완전 복제, generic function이 active name을 관찰, alias function 재생성, main-only support, 또는 fixed wrappers와 shared algorithm/installer.
+- 선택한 방식: 13개 NativeFn wrapper가 compile-time tag/attribute를 전달하고 Realm-aware installer가 prototype을 pin한 채 functions와 exact aliases를 게시한다.
+- 다른 대안 대신 이 방식을 선택한 이유: active function name은 configurable observable property라 semantics key로 쓸 수 없고 복제는 coercion order를 분산시킨다. alias 재생성은 identity를 위반하며 main-only support는 Realm intrinsic graph를 깨뜨린다.
+- 장점, 단점 및 영향: bootstrap rollback과 GC rooting은 기존 Realm transaction을 재사용하고 모든 Realm이 같은 legacy surface를 갖는다. 추가 native functions만큼 Realm 초기 allocation이 증가하며 IsHTMLDDA behavior는 이 구조가 아닌 host-exotic unit에 남는다.
+```
+
 Date also uses `InternalDeferredPrototype`, but it has a distinct call branch.
 Calls return a current date String without coercing supplied arguments or
 branding an object `this`. Construction copies a Date input or converts the

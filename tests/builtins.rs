@@ -14719,6 +14719,66 @@ fn string_pad_at_replaceall_substring() {
 }
 
 #[test]
+fn annex_b_string_legacy_methods_are_realm_local_and_follow_create_html() {
+    assert_eq!(
+        run(r#"
+            var order = [];
+            var receiver = {
+              toString() { order.push('this'); return '"<'; }
+            };
+            var attribute = {
+              toString() { order.push('attribute'); return '"<'; }
+            };
+            var abrupt = {};
+            var skippedAttribute = true;
+            var abruptPreserved = false;
+            try {
+              String.prototype.anchor.call(
+                { toString() { throw abrupt; } },
+                { toString() { skippedAttribute = false; } }
+              );
+            } catch (error) {
+              abruptPreserved = error === abrupt;
+            }
+            var anchor = String.prototype.anchor.call(receiver, attribute);
+            var boxed = new String('ignored');
+            boxed[Symbol.toPrimitive] = function(hint) {
+              order.push(hint);
+              return 'boxed';
+            };
+            var trimLeft = Object.getOwnPropertyDescriptor(
+              String.prototype, 'trimLeft'
+            );
+            var foreign = $262.createRealm().global;
+            [
+              anchor === '<a name="&quot;<">"<</a>',
+              boxed.bold() === '<b>boxed</b>',
+              order.join('|') === 'this|attribute|string',
+              abruptPreserved && skippedAttribute,
+              'x'.bold() === '<b>x</b>',
+              'x'.fontcolor('"') === '<font color="&quot;">x</font>',
+              String.prototype.trimLeft === String.prototype.trimStart,
+              String.prototype.trimRight === String.prototype.trimEnd,
+              trimLeft.writable && !trimLeft.enumerable && trimLeft.configurable,
+              'abc'.substr(-1.1) === 'c',
+              'abc'.substr(0, undefined) === 'abc',
+              (() => { try { 'x'.substr(Symbol(), 1); } catch (e) {
+                return e instanceof TypeError;
+              } })(),
+              foreign.eval("'x'.sup() === '<sup>x</sup>'"),
+              foreign.eval(
+                "String.prototype.trimLeft === String.prototype.trimStart"
+              ),
+              foreign.eval(
+                "Object.getPrototypeOf(String.prototype.anchor) === Function.prototype"
+              )
+            ].every(Boolean);
+        "#),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn string_replace_all_test262_regressions() {
     assert_eq!(
         run(r#"'aba'.replaceAll('b', "$$-$&-$`-$'");"#),
