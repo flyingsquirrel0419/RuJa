@@ -4186,6 +4186,81 @@ impl Vm {
         self.create_global_var_binding_with_configurable(name, false)
     }
 
+    pub(crate) fn create_realm_eval_var_binding(
+        &mut self,
+        variable_env: GcIdx,
+        name: &str,
+    ) -> error::Result<()> {
+        crate::environment::ensure_var_with_deletable(&self.heap, variable_env, name, true);
+        let global = self.realm_global_for_env(variable_env);
+        let key = PropertyKey::from(name);
+        if crate::builtins::own_property_descriptor_for_key_or_throw(self, &global, &key)?.is_none()
+        {
+            self.define_own_property_or_throw(
+                &global,
+                key,
+                PropertyDescriptor::data(Value::Undefined),
+            )?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn set_realm_eval_var_binding(
+        &mut self,
+        variable_env: GcIdx,
+        name: &str,
+        value: Value,
+    ) -> error::Result<()> {
+        crate::environment::declare_var_with_deletable(
+            &self.heap,
+            variable_env,
+            name,
+            value.clone(),
+            true,
+        );
+        let global = self.realm_global_for_env(variable_env);
+        self.set_property(&global, name, value)
+    }
+
+    pub(crate) fn create_realm_eval_function_binding(
+        &mut self,
+        variable_env: GcIdx,
+        name: &str,
+        value: Value,
+    ) -> error::Result<()> {
+        let global = self.realm_global_for_env(variable_env);
+        if !self.can_declare_global_function(&global, name) {
+            return Err(Error::type_err(format!(
+                "Cannot declare global function '{}'",
+                name
+            )));
+        }
+        let Value::Object(idx) = global else {
+            return Ok(());
+        };
+        let pkey = PropertyKey::from(name);
+        let configurable = self
+            .global_property_descriptor(&Value::Object(idx), name)
+            .is_none_or(|desc| desc.configurable);
+        self.heap.with_obj(idx.0, |obj| {
+            obj.props().lock().insert(
+                pkey,
+                PropertyDescriptor {
+                    value: value.clone(),
+                    writable: true,
+                    enumerable: true,
+                    configurable,
+                    get: None,
+                    set: None,
+                    is_accessor: false,
+                },
+            );
+        });
+        self.ic_invalidate(idx.0, name);
+        crate::environment::declare_var_with_deletable(&self.heap, variable_env, name, value, true);
+        Ok(())
+    }
+
     pub(crate) fn create_global_var_binding_with_configurable(
         &mut self,
         name: &str,
@@ -4615,6 +4690,9 @@ impl Vm {
                 ExecutionContextKind::Interpreted { callee } => {
                     Self::push_value_roots(&mut roots, callee);
                 }
+                ExecutionContextKind::Wrapped { callee } => {
+                    Self::push_value_roots(&mut roots, callee);
+                }
                 ExecutionContextKind::Native {
                     callee,
                     new_target,
@@ -4641,6 +4719,9 @@ impl Vm {
         for f in &self.frames {
             Self::push_value_roots(&mut roots, &f.callee);
             roots.push(f.env.0);
+            if let Some(variable_env) = f.eval_variable_env {
+                roots.push(variable_env.0);
+            }
             roots.extend(f.finally_stack.iter().map(|guard| guard.env.0));
             Self::push_value_roots(&mut roots, &f.this_val);
             if let Some(meta) = f.chunk.import_meta {
@@ -4955,6 +5036,9 @@ impl Vm {
             Self::push_value_roots(&mut roots, v);
         }
         for v in self.realm_function_prototypes.values() {
+            Self::push_value_roots(&mut roots, v);
+        }
+        for v in self.realm_shadow_realm_prototypes.values() {
             Self::push_value_roots(&mut roots, v);
         }
         for v in self.realm_async_function_prototypes.values() {

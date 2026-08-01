@@ -592,6 +592,8 @@ fn trace_obj_impl(obj: &HeapObj, worklist: &mut Vec<usize>) {
                 for a in bound_args {
                     push_value(a, worklist);
                 }
+            } else if let crate::value::FunctionKind::Wrapped { target } = &f.kind {
+                push_value(target, worklist);
             }
         }
         HeapObj::IntlCollator(collator) => {

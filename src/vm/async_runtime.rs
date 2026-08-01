@@ -2,7 +2,7 @@
 //! from vm/mod.rs for readability.
 
 use super::*;
-use crate::error::{self, Error};
+use crate::error::{self, Error, ErrorKind};
 use crate::value::{
     AsyncFunctionContinuation, GcIdx, PromiseReactionCapability, PromiseStatus, Value,
 };
@@ -990,7 +990,9 @@ impl Vm {
     pub(crate) fn native_callee_closure(&self) -> Option<GcIdx> {
         match &self.execution_contexts.last()?.kind {
             ExecutionContextKind::Native { .. } => Some(self.execution_contexts.last()?.realm_env),
-            ExecutionContextKind::Job | ExecutionContextKind::Interpreted { .. } => None,
+            ExecutionContextKind::Job
+            | ExecutionContextKind::Interpreted { .. }
+            | ExecutionContextKind::Wrapped { .. } => None,
         }
     }
 
@@ -1024,6 +1026,11 @@ impl Vm {
                     closure: function.closure,
                     constructable: construct_mode.is_some(),
                 },
+                FunctionKind::Wrapped { .. } => ConstructorTraversalStep::Function {
+                    function: *index,
+                    closure: function.closure,
+                    constructable: false,
+                },
             },
             HeapObj::Proxy(proxy) => ConstructorTraversalStep::Proxy {
                 target: proxy.target.clone(),
@@ -1052,9 +1059,9 @@ impl Vm {
                     this_val: this_val.clone(),
                     bound_len: bound_args.len(),
                 },
-                FunctionKind::Interpreted { .. } | FunctionKind::Native { .. } => {
-                    CallTraversalStep::Function { function: *index }
-                }
+                FunctionKind::Interpreted { .. }
+                | FunctionKind::Native { .. }
+                | FunctionKind::Wrapped { .. } => CallTraversalStep::Function { function: *index },
             },
             HeapObj::Proxy(proxy) => CallTraversalStep::Proxy {
                 target: proxy.target.clone(),
@@ -1089,6 +1096,177 @@ impl Vm {
                     return Err(Error::type_err("constructor has no Realm"));
                 }
             }
+        }
+    }
+
+    pub(crate) fn function_realm(&mut self, function: &Value) -> error::Result<GcIdx> {
+        let mut current = function.clone();
+        loop {
+            match self.call_traversal_step(&current) {
+                CallTraversalStep::Bound { target, .. } => {
+                    self.consume_fuel()?;
+                    current = Value::Object(target);
+                }
+                CallTraversalStep::Proxy {
+                    target, revoked, ..
+                } => {
+                    if revoked {
+                        return Err(Error::type_err("Cannot get Realm of a revoked Proxy"));
+                    }
+                    self.consume_fuel()?;
+                    current = target;
+                }
+                CallTraversalStep::Function { function } => {
+                    let closure = self.heap.with_obj(function.0, |object| match object {
+                        HeapObj::Function(data) => Some(data.closure),
+                        _ => None,
+                    });
+                    return closure
+                        .map(|env| crate::environment::global_env_root(&self.heap, env))
+                        .ok_or_else(|| Error::type_err("function has no Realm"));
+                }
+                CallTraversalStep::Other => {
+                    return Err(Error::type_err("function has no Realm"));
+                }
+            }
+        }
+    }
+
+    pub(crate) fn new_shadowrealm_wrapped_function(
+        &mut self,
+        caller_realm: GcIdx,
+        target: Value,
+    ) -> error::Result<Value> {
+        if !crate::builtins::is_callable(&target, &self.heap) {
+            return Err(Error::type_err("ShadowRealm value is not callable"));
+        }
+        let caller_realm = crate::environment::global_env_root(&self.heap, caller_realm);
+        let target_pin = self.pin(&target);
+        let result = (|| {
+            let length_key = PropertyKey::from("length");
+            let has_length = crate::builtins::own_property_descriptor_for_key_or_throw(
+                self,
+                &target,
+                &length_key,
+            )?
+            .is_some();
+            let length = if has_length {
+                match self.get_property_by_key(&target, &length_key)? {
+                    Value::Number(number) if number == f64::INFINITY => f64::INFINITY,
+                    Value::Number(number) if number.is_finite() => number.trunc().max(0.0),
+                    _ => 0.0,
+                }
+            } else {
+                0.0
+            };
+            let name = match self.get_property_by_key(&target, &PropertyKey::from("name"))? {
+                Value::String(name) => name,
+                _ => Arc::from(""),
+            };
+            let function_proto = self
+                .realm_function_prototypes
+                .get(&caller_realm.0)
+                .cloned()
+                .ok_or_else(|| Error::internal("missing caller Realm Function prototype"))?;
+            let mut props = IndexMap::new();
+            let mut length_desc = crate::value::PropertyDescriptor::data(Value::Number(length));
+            length_desc.writable = false;
+            length_desc.enumerable = false;
+            length_desc.configurable = true;
+            props.insert(length_key, length_desc);
+            let mut name_desc = crate::value::PropertyDescriptor::data(Value::String(name.clone()));
+            name_desc.writable = false;
+            name_desc.enumerable = false;
+            name_desc.configurable = true;
+            props.insert(PropertyKey::from("name"), name_desc);
+            let data = crate::value::FunctionData {
+                name: Some(name),
+                kind: FunctionKind::Wrapped {
+                    target: target.clone(),
+                },
+                closure: caller_realm,
+                lexical_new_target: Value::Undefined,
+                home_object: Mutex::new(None),
+                is_class_ctor: std::sync::atomic::AtomicBool::new(false),
+                prototype: Mutex::new(None),
+                proto: Mutex::new(Some(function_proto)),
+                props: Mutex::new(props),
+                extensible: std::sync::atomic::AtomicBool::new(true),
+                private_fields: Mutex::new(std::collections::HashMap::new()),
+            };
+            self.alloc(HeapObj::Function(data)).map(Value::Object)
+        })();
+        self.unpin_many(target_pin);
+        result
+    }
+
+    pub(crate) fn shadowrealm_wrap_value(
+        &mut self,
+        destination_realm: GcIdx,
+        value: Value,
+    ) -> error::Result<Value> {
+        match value {
+            Value::Object(_) if crate::builtins::is_callable(&value, &self.heap) => {
+                self.new_shadowrealm_wrapped_function(destination_realm, value)
+            }
+            Value::Object(_) | Value::PrivateName(_) | Value::Reference(_) => {
+                Err(Error::type_err("ShadowRealm boundary rejected an object"))
+            }
+            primitive => Ok(primitive),
+        }
+    }
+
+    fn call_shadowrealm_wrapped_function(
+        &mut self,
+        target: &Value,
+        caller_realm: GcIdx,
+        args: &[Value],
+        this_argument: Value,
+    ) -> error::Result<Value> {
+        let target_realm = self.function_realm(target)?;
+        let mut wrapped_args = Vec::new();
+        if wrapped_args.try_reserve_exact(args.len()).is_err() {
+            return Err(Error::range("argument list too large"));
+        }
+        let mut argument_pins = 0;
+        for argument in args {
+            match self.shadowrealm_wrap_value(target_realm, argument.clone()) {
+                Ok(value) => {
+                    argument_pins += self.pin(&value);
+                    wrapped_args.push(value);
+                }
+                Err(error) => {
+                    self.unpin_many(argument_pins);
+                    return Err(error);
+                }
+            }
+        }
+        let wrapped_this = match self.shadowrealm_wrap_value(target_realm, this_argument) {
+            Ok(value) => value,
+            Err(error) => {
+                self.unpin_many(argument_pins);
+                return Err(error);
+            }
+        };
+        let this_pin = self.pin(&wrapped_this);
+        let result = self.call_function(target, &wrapped_args, Some(wrapped_this));
+        self.unpin_many(argument_pins);
+        self.unpin_many(this_pin);
+        let result = result?;
+        self.shadowrealm_wrap_value(caller_realm, result)
+    }
+
+    pub(crate) fn preserve_shadowrealm_host_error(error: &Error) -> bool {
+        !error.catchable()
+            || (error.thrown_value.is_none()
+                && matches!(error.kind, ErrorKind::Range | ErrorKind::Internal))
+    }
+
+    fn shadowrealm_boundary_type_error(&mut self, realm: GcIdx) -> Arc<Error> {
+        let error = Error::type_err("ShadowRealm boundary call failed");
+        match self.make_error_value_in_realm(&error, realm) {
+            Ok(value) => Error::thrown(value, &self.heap),
+            Err(error) => error,
         }
     }
 
@@ -1244,6 +1422,13 @@ impl Vm {
                 .cloned()
                 .unwrap_or(fallback));
         }
+        if intrinsic == "ShadowRealm" {
+            return Ok(self
+                .realm_shadow_realm_prototypes
+                .get(&realm.0)
+                .cloned()
+                .unwrap_or(fallback));
+        }
         if intrinsic == "AsyncFunction" {
             return Ok(self
                 .realm_async_function_prototypes
@@ -1287,6 +1472,7 @@ impl Vm {
                 }
                 FunctionKind::Native { construct_mode, .. } => construct_mode.is_some(),
                 FunctionKind::Bound { constructable, .. } => *constructable,
+                FunctionKind::Wrapped { .. } => false,
             },
             HeapObj::Proxy(proxy) => proxy.constructable,
             _ => false,
@@ -1618,12 +1804,44 @@ impl Vm {
                     crate::value::FunctionKind::Bound { .. } => {
                         unreachable!("Bound call escaped iterative traversal")
                     }
+                    crate::value::FunctionKind::Wrapped { target } => Some(FuncCallInfo::Wrapped {
+                        target: target.clone(),
+                        closure: f.closure,
+                    }),
                 }
             } else {
                 None
             }
         });
         match kind_info {
+            Some(FuncCallInfo::Wrapped { target, closure }) => {
+                if self.active_native_call_depth >= MAX_NATIVE_CALL_DEPTH {
+                    return Err(Error::range("Maximum call stack size exceeded"));
+                }
+                let caller_realm = crate::environment::global_env_root(&self.heap, closure);
+                let context = ExecutionContext {
+                    realm_env: caller_realm,
+                    kind: ExecutionContextKind::Wrapped {
+                        callee: Value::Object(idx),
+                    },
+                };
+                self.active_native_call_depth += 1;
+                let result = self.with_execution_context(context, |vm| {
+                    vm.call_shadowrealm_wrapped_function(
+                        &target,
+                        caller_realm,
+                        args,
+                        this.unwrap_or(Value::Undefined),
+                    )
+                });
+                self.active_native_call_depth -= 1;
+                match result {
+                    Err(error) if !Self::preserve_shadowrealm_host_error(&error) => {
+                        Err(self.shadowrealm_boundary_type_error(caller_realm))
+                    }
+                    result => result,
+                }
+            }
             Some(FuncCallInfo::Native { func: f, closure }) => {
                 if transparent_call
                     && std::ptr::fn_addr_eq(

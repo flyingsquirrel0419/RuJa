@@ -1,5 +1,37 @@
 # test262 conformance
 
+## Non-module ShadowRealm boundary
+
+RuJa now installs `ShadowRealm` in the main Realm and every created Realm.
+`evaluate` parses as Script code independently of caller strictness, executes
+against an isolated Realm global, transfers primitive values directly, and
+creates a fresh non-constructable wrapped function for every callable value.
+Wrapped calls recursively wrap callable arguments and results into the
+destination Realm; ordinary objects and every catchable target abrupt
+completion are replaced by a new `TypeError` from the wrapper's caller Realm.
+Only the initial source parse can expose a caller-Realm `SyntaxError`.
+Each evaluation owns a fresh lexical environment; strict `var` is local to
+that evaluation, while sloppy `var` and function declarations publish through
+the isolated global environment with global binding descriptor semantics.
+
+On pinned Test262 `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the
+complete directory moves from **0 pass / 54 fail / 10 skip** to **60 pass / 0
+fail / 4 skip** over 64 test entries. The exact 60-file non-module manifest
+owns constructor, descriptor, `evaluate`, WrappedFunction, and synchronous
+`importValue` validation/shape coverage. The four async Module tests remain
+closed until `importValue` receives a Realm-owned module cache and loader.
+Full CI hard-gates **60/0/4**.
+
+```text
+[Decision Log]
+- 목적과 의도: 객체 identity나 예외 객체를 유출하지 않는 실제 ShadowRealm callable membrane을 도입한다.
+- 기존 구현 및 제약 조건: 함수는 closure environment로 Realm을 소유하고 secondary Realm bootstrap과 transaction rollback이 이미 있었지만, callable boundary 종류와 parse/runtime 오류 분리가 없었다. secondary global에는 일부 scalar 함수와 JSON도 누락됐다.
+- 검토한 주요 대안: Proxy/BoundFunction 조합, native callback의 hidden target, 별도 VM, 또는 전용 FunctionKind::Wrapped와 공용 secondary Realm transaction.
+- 선택한 방식: FunctionKind::Wrapped가 target을 GC trace하고 caller Realm Function.prototype을 소유한다. 호출 시 GetFunctionRealm 방식으로 target Realm을 찾고 양방향 GetWrappedValue를 적용한다. evaluate는 parse와 target 실행을 분리하며 microtask queue를 강제로 drain하지 않는다.
+- 다른 대안 대신 이 방식을 선택한 이유: Proxy/Bound/native 흉내는 constructability, Realm 조회, toString, identity, exception replacement를 일반 호출 모델 밖으로 밀어낸다. 별도 VM은 Symbol registry와 기존 Realm/module 인프라를 분리한다.
+- 장점, 단점 및 영향: 중첩/borrowed/cross-Realm wrapper와 GC 생존이 한 호출 경로를 공유한다. 현재 realm_* registry는 생성된 Realm을 VM 수명 동안 root로 유지하며, importValue의 module cache ownership은 다음 구조 단위로 남는다.
+```
+
 ## Map and Set prototype tags
 
 `Map.prototype` and `Set.prototype` now own the specified
@@ -39,7 +71,7 @@ remains; further class admission still requires exact support-policy ownership.
 - 검토한 주요 대안: Object.prototype.toString에서 Map/Set brand를 하드코딩, 인스턴스마다 tag 설치, main Realm만 보정, 또는 공통 intrinsic 설치 경로에서 prototype descriptor 생성.
 - 선택한 방식: Map/Set constructor와 prototype을 만드는 Realm별 bootstrap에서 non-writable, non-enumerable, configurable own descriptor를 설치한다.
 - 다른 대안 대신 이 방식을 선택한 이유: brand 하드코딩은 삭제 후 Object fallback을 깨고, 인스턴스 property는 spec shape와 상속을 위반하며, main-only 수정은 created Realm을 누락한다.
-- 장점, 단점 및 영향: 세 exact failure와 전체 Map/Set 실행 경계가 green이 되고 delete/redefine semantics가 자연스럽게 property model을 따른다. Temporal과 ShadowRealm은 독립된 대형 미구현 표면으로 남는다.
+- 장점, 단점 및 영향: 세 exact failure와 전체 Map/Set 실행 경계가 green이 되고 delete/redefine semantics가 자연스럽게 property model을 따른다. Temporal은 독립된 대형 미구현 표면이며 ShadowRealm은 importValue module 실행과 Realm ownership 작업이 남는다.
 ```
 
 ## Complete class-elements boundary

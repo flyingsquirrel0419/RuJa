@@ -469,6 +469,13 @@ guarantees are required.
   Module chunks, including in-flight top-level-await graphs, cached rejection
   objects, namespace identity, and JSON/text import attributes. Bare host
   specifiers and the source/defer proposals remain gated.
+- `ShadowRealm` constructor, `evaluate`, primitive transfer, and wrapped
+  callable membranes are implemented. `importValue` performs receiver,
+  specifier, and export-name validation and returns a caller-Realm Promise, but
+  actual target-Realm module loading is not implemented yet. Its four pinned
+  async Module tests remain skipped. Successful secondary Realms also remain
+  rooted by VM-wide intrinsic registries for the VM lifetime; RealmRecord-owned
+  registries are required before unreachable ShadowRealms can be reclaimed.
 - Some strict-mode edge cases are not fully enforced: `this` defaults to
   `undefined` in all modes by design (strict mode does not rebind it to the
   global object), and a top-level strict `eval` `var` still routes through the

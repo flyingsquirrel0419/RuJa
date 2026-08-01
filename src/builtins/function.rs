@@ -26,6 +26,7 @@ pub(crate) fn function_to_string(
                     crate::value::FunctionKind::Interpreted { func } => (func.source.clone(), None),
                     crate::value::FunctionKind::Native { .. } => (None, fun.name.clone()),
                     crate::value::FunctionKind::Bound { .. } => (None, None),
+                    crate::value::FunctionKind::Wrapped { .. } => (None, fun.name.clone()),
                 }
             } else {
                 (None, None)

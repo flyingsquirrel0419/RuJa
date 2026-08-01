@@ -6,6 +6,211 @@ use ruja::{Value, Vm};
 use std::sync::Arc;
 
 #[test]
+fn shadow_realm_evaluate_enforces_the_primitive_and_callable_membrane() {
+    assert_eq!(
+        run(r#"
+            var realm = new ShadowRealm();
+            var descriptor = Object.getOwnPropertyDescriptor(
+              ShadowRealm.prototype,
+              Symbol.toStringTag
+            );
+            var add = realm.evaluate("(left, right) => left + right");
+            var callBlue = realm.evaluate("callback => callback(20, 22)");
+            var nested = realm.evaluate("value => other => value * other")(6);
+            var inspectThis = realm.evaluate(`(function() {
+              "use strict";
+              return Object.getPrototypeOf(this) === Function.prototype;
+            })`);
+            var ignoreBoundaryValues = realm.evaluate(`(function() {
+              "use strict";
+              return true;
+            })`);
+            var rejectedObject = false;
+            var rejectedThrow = false;
+            var rejectedRangeThrow = false;
+            var rejectedThis = false;
+            var syntaxRealm = false;
+            try { realm.evaluate("globalThis"); } catch (error) {
+              rejectedObject = error instanceof TypeError;
+            }
+            try { realm.evaluate("throw new Error('hidden')"); } catch (error) {
+              rejectedThrow = error instanceof TypeError && error.message !== "hidden";
+            }
+            try { realm.evaluate("throw new RangeError('hidden')"); } catch (error) {
+              rejectedRangeThrow = error instanceof TypeError;
+            }
+            try { ({ method: add }).method(1, 2); } catch (error) {
+              rejectedThis = error instanceof TypeError;
+            }
+            try { realm.evaluate("..."); } catch (error) {
+              syntaxRealm = error instanceof SyntaxError;
+            }
+            realm.evaluate("globalThis.marker = 7");
+            var immediateVar = realm.evaluate(
+              "var immediate = 4; globalThis.immediate"
+            );
+            var lexicalOne = realm.evaluate("let lexical = 1; lexical");
+            var lexicalTwo = realm.evaluate("let lexical = 2; lexical");
+            realm.evaluate(`"use strict"; var strictOnly = 1;`);
+            realm.evaluate("var sloppyGlobal = 3;");
+            realm.evaluate(`
+              Object.defineProperty(globalThis, "replaceAccessor", {
+                get() { return 1; }, configurable: true
+              });
+              Object.defineProperty(Object.prototype, "inheritedFunction", {
+                set(value) { globalThis.inheritedSetterCalled = true; },
+                configurable: true
+              });
+              Object.defineProperty(globalThis, "fixedFunction", {
+                value: 1, writable: true, enumerable: true, configurable: false
+              });
+              void 0;
+            `);
+            realm.evaluate(`
+              function replaceAccessor() { return 40; }
+              function inheritedFunction() { return 41; }
+              function fixedFunction() { return 42; }
+            `);
+            var functionBindings = realm.evaluate(`
+              var replaceDescriptor = Object.getOwnPropertyDescriptor(
+                globalThis, "replaceAccessor"
+              );
+              var inheritedDescriptor = Object.getOwnPropertyDescriptor(
+                globalThis, "inheritedFunction"
+              );
+              var fixedDescriptor = Object.getOwnPropertyDescriptor(
+                globalThis, "fixedFunction"
+              );
+              replaceAccessor() === 40 && inheritedFunction() === 41 &&
+                fixedFunction() === 42 &&
+                replaceDescriptor.writable && replaceDescriptor.enumerable &&
+                replaceDescriptor.configurable &&
+                inheritedDescriptor.writable && inheritedDescriptor.enumerable &&
+                inheritedDescriptor.configurable &&
+                typeof inheritedSetterCalled === "undefined" &&
+                fixedDescriptor.writable && fixedDescriptor.enumerable &&
+                fixedDescriptor.configurable === false
+            `);
+            var wrapOrder = "";
+            function observedCallable(label) {
+              return new Proxy(function() {}, {
+                getOwnPropertyDescriptor(target, key) {
+                  if (key === "length") wrapOrder += label;
+                  return Reflect.getOwnPropertyDescriptor(target, key);
+                }
+              });
+            }
+            Reflect.apply(
+              ignoreBoundaryValues,
+              observedCallable("T"),
+              [observedCallable("A"), observedCallable("B")]
+            );
+            [
+              realm instanceof ShadowRealm,
+              Object.getPrototypeOf(realm) === ShadowRealm.prototype,
+              descriptor.value === "ShadowRealm" && descriptor.writable === false &&
+                descriptor.enumerable === false && descriptor.configurable === true,
+              add(19, 23) === 42,
+              callBlue((left, right) => left + right) === 42,
+              nested(7) === 42,
+              Reflect.apply(inspectThis, () => {}, []),
+              realm.evaluate("marker") === 7,
+              immediateVar === 4,
+              lexicalOne === 1 && lexicalTwo === 2,
+              realm.evaluate("typeof strictOnly") === "undefined",
+              realm.evaluate("sloppyGlobal") === 3,
+              functionBindings,
+              wrapOrder === "ABT",
+              typeof globalThis.marker === "undefined",
+              rejectedObject,
+              rejectedThrow,
+              rejectedRangeThrow,
+              rejectedThis,
+              syntaxRealm
+            ].every(Boolean);
+        "#),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn shadow_realm_wrapper_depth_fails_without_rust_stack_overflow() {
+    assert_eq!(
+        run(r#"
+            var realm = new ShadowRealm();
+            var relay = realm.evaluate("value => value");
+            var wrapped = () => 1;
+            for (var index = 0; index < 70; index += 1) {
+              wrapped = relay(wrapped);
+            }
+            var bounded = false;
+            try { wrapped(); } catch (error) {
+              bounded = error instanceof RangeError;
+            }
+            bounded;
+        "#),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn shadow_realm_wrappers_use_the_evaluate_method_realm() {
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var third = $262.createRealm().global;
+            var realm = Reflect.construct(other.ShadowRealm, []);
+            var foreignWrapper = realm.evaluate("() => () => 42");
+            var borrowedWrapper = third.ShadowRealm.prototype.evaluate.call(
+              realm,
+              "() => () => 42"
+            );
+            var foreignError = false;
+            var borrowedError = false;
+            try { foreignWrapper({}); } catch (error) {
+              foreignError = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            try { borrowedWrapper({}); } catch (error) {
+              borrowedError = error instanceof third.TypeError && !(error instanceof TypeError);
+            }
+            [
+              Object.getPrototypeOf(foreignWrapper) === other.Function.prototype,
+              Object.getPrototypeOf(foreignWrapper()) === other.Function.prototype,
+              Object.getPrototypeOf(borrowedWrapper) === third.Function.prototype,
+              Object.getPrototypeOf(borrowedWrapper()) === third.Function.prototype,
+              foreignError,
+              borrowedError
+            ].every(Boolean);
+        "#),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn shadow_realm_and_wrapped_targets_survive_collection() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        globalThis.shadowForGc = new ShadowRealm();
+        globalThis.wrappedForGc = shadowForGc.evaluate(`
+          globalThis.count = 40;
+          callback => {
+            count += 1;
+            return callback(count);
+          };
+        `);
+        "#,
+    )
+    .expect("ShadowRealm GC setup should succeed");
+    vm.gc();
+    assert_eq!(
+        vm.run("wrappedForGc(value => value + 1) === 42 && shadowForGc.evaluate('count') === 41")
+            .expect("ShadowRealm membrane should survive collection"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn array_prototype_has_the_intrinsic_length_property() {
     assert_eq!(
         run(r#"

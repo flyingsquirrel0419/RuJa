@@ -4019,6 +4019,41 @@ constructor.
 - 장점, 단점 및 영향: constructor, static field, exported side effect가 모두 `"default"`를 관찰한다. 장기적으로 export synthetic binding과 inferred display-name 표현을 분리할 때도 이 ordering 계약은 유지해야 한다.
 ```
 
+### ShadowRealm callable membrane
+
+`FunctionKind::Wrapped` is a non-constructable function kind whose closure is
+the caller Realm and whose traced target remains inaccessible to JavaScript.
+The ordinary call dispatcher enters an explicit wrapped execution context,
+finds the target function's Realm through Function, BoundFunction, and Proxy
+layers, wraps callable arguments into that Realm, invokes the target with
+the separately wrapped `thisArgument`, and wraps callable results back into
+the caller Realm. Arguments are wrapped before `thisArgument`, matching the
+observable specification order. Primitive values cross directly. Non-callable
+objects and catchable abrupt completions become fresh caller-Realm TypeErrors,
+so no target object identity crosses the membrane.
+
+ShadowRealm instances retain their inner global environment in a cell-owned
+internal slot. Construction uses the existing transactional secondary-Realm
+bootstrap, including rollback of every provisional intrinsic registry on
+failure. The bootstrap now installs Realm-local scalar globals and JSON in
+addition to the existing constructors and namespaces. `evaluate` parses
+before entering the target Realm, executes without draining unrelated
+microtasks, and then applies the same wrapped-value operation. Every evaluation
+gets a fresh lexical environment. Strict `var` stays there; sloppy `var` and
+function declarations publish immediately through the target global
+environment, including `CreateGlobalFunctionBinding` descriptor replacement
+rules rather than inherited setters or ordinary `[[Set]]`.
+
+```text
+[Decision Log]
+- 목적과 의도: ShadowRealm 경계를 일반 함수 호출, Realm ownership, GC 모델 안에 표현한다.
+- 기존 구현 및 제약 조건: FunctionData closure와 execution context는 callee Realm을 복원했지만 wrapped callable 종류가 없었고 secondary bootstrap이 main global binding 일부를 누락했다.
+- 검토한 주요 대안: native function hidden slot, Proxy/BoundFunction 재사용, 별도 VM, 전용 wrapped function kind.
+- 선택한 방식: target Value를 직접 trace하는 FunctionKind::Wrapped와 Wrapped execution context를 추가하고 secondary Realm transaction을 ShadowRealm constructor가 공유한다.
+- 다른 대안 대신 이 방식을 선택한 이유: 전용 kind만 constructability=false, caller Function.prototype, target Realm traversal, boundary error replacement를 dispatch와 GC가 함께 소유한다.
+- 장점, 단점 및 영향: nested/cross-Realm membranes가 fresh identity를 유지하고 target property를 노출하지 않는다. RealmRecord와 Realm별 module cache가 아직 없어 importValue module 실행과 성공한 Realm 회수는 후속 구조 변경이 필요하다.
+```
+
 ### Realm-local collection prototype tags
 
 Map and Set prototypes receive their `Symbol.toStringTag` descriptors during

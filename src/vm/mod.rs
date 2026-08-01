@@ -292,6 +292,9 @@ pub(crate) enum ExecutionContextKind {
     Interpreted {
         callee: Value,
     },
+    Wrapped {
+        callee: Value,
+    },
     Native {
         callee: Value,
         new_target: Option<Value>,
@@ -582,6 +585,8 @@ pub struct Vm {
     /// `%Function.prototype%` object. Dynamic `Function(...)` calls use this
     /// when there is no explicit `new.target` prototype.
     pub(crate) realm_function_prototypes: HashMap<usize, Value>,
+    /// Realm global environment index -> `%ShadowRealm.prototype%`.
+    pub(crate) realm_shadow_realm_prototypes: HashMap<usize, Value>,
     /// Realm global environment index -> that Realm's intrinsic
     /// `%AsyncFunction.prototype%` object.
     pub(crate) realm_async_function_prototypes: HashMap<usize, Value>,
@@ -727,6 +732,10 @@ pub struct CallFrame {
     /// environment is a local declarative environment. Newly-created
     /// var/function bindings are deletable per EvalDeclarationInstantiation.
     pub eval_deletable_bindings: bool,
+    /// Explicit variable environment for ShadowRealm evaluation. The lexical
+    /// environment remains a fresh child while sloppy declarations publish
+    /// into this Realm global environment.
+    pub eval_variable_env: Option<GcIdx>,
     /// True while a function frame is evaluating parameter initializers before
     /// entering the body variable environment.
     pub in_parameter_initializers: bool,
@@ -748,6 +757,13 @@ pub(crate) struct DirectEvalContext {
     pub caller_new_target: Value,
     pub new_target_allowed: bool,
     pub in_class_field_initializer: bool,
+}
+
+struct EvalFrameOptions {
+    global_bindings: bool,
+    deletable_bindings: bool,
+    variable_env: Option<GcIdx>,
+    new_target: Value,
 }
 
 impl CallFrame {
@@ -791,6 +807,7 @@ impl CallFrame {
             finally_stack: Vec::new(),
             eval_global_bindings: false,
             eval_deletable_bindings: false,
+            eval_variable_env: None,
             in_parameter_initializers: false,
             direct_eval_new_target_allowed: false,
             is_derived_ctor: false,
@@ -1321,6 +1338,7 @@ impl Vm {
             realm_eval_functions: HashMap::new(),
             realm_throw_type_errors: HashMap::new(),
             realm_function_prototypes: HashMap::new(),
+            realm_shadow_realm_prototypes: HashMap::new(),
             realm_async_function_prototypes: HashMap::new(),
             realm_iterator_constructors: HashMap::new(),
             realm_iterator_prototypes: HashMap::new(),
@@ -1699,9 +1717,7 @@ impl Vm {
         chunk: Chunk,
         env: GcIdx,
         this_val: Value,
-        eval_global_bindings: bool,
-        eval_deletable_bindings: bool,
-        new_target: Value,
+        options: EvalFrameOptions,
     ) -> error::Result<Value> {
         let chunk = Arc::new(chunk);
         // eval runs on the shared stack. Push a sentinel Undefined so that
@@ -1718,9 +1734,10 @@ impl Vm {
             this_val,
         ));
         if let Some(frame) = self.frames.last_mut() {
-            frame.eval_global_bindings = eval_global_bindings;
-            frame.eval_deletable_bindings = eval_deletable_bindings;
-            frame.new_target = new_target;
+            frame.eval_global_bindings = options.global_bindings;
+            frame.eval_deletable_bindings = options.deletable_bindings;
+            frame.eval_variable_env = options.variable_env;
+            frame.new_target = options.new_target;
         }
         let depth_before = self.frames.len();
         let result = self.interpret();
@@ -1772,9 +1789,12 @@ impl Vm {
             chunk,
             self.global,
             self.global_this.clone(),
-            false,
-            false,
-            Value::Undefined,
+            EvalFrameOptions {
+                global_bindings: false,
+                deletable_bindings: false,
+                variable_env: None,
+                new_target: Value::Undefined,
+            },
         );
         if !self.microtask_queue.is_empty() {
             self.run_microtasks()?;
@@ -1792,6 +1812,26 @@ impl Vm {
         src: &str,
     ) -> error::Result<Value> {
         let program = crate::parser::Parser::parse_internal(src)?;
+        self.eval_indirect_program_in(global_env, global_this, program, true, false)
+    }
+
+    pub(crate) fn eval_shadowrealm_program_in(
+        &mut self,
+        global_env: GcIdx,
+        global_this: Value,
+        program: crate::ast::Program,
+    ) -> error::Result<Value> {
+        self.eval_indirect_program_in(global_env, global_this, program, false, true)
+    }
+
+    fn eval_indirect_program_in(
+        &mut self,
+        global_env: GcIdx,
+        global_this: Value,
+        program: crate::ast::Program,
+        drain_microtasks: bool,
+        fresh_lexical_environment: bool,
+    ) -> error::Result<Value> {
         let is_strict = program.is_strict;
         let (_, mut var_names, _) = crate::compiler::Compiler::collect_global_declaration_names(
             &program.body,
@@ -1807,7 +1847,10 @@ impl Vm {
         compiler.set_annex_b_plan(annex_b_plan);
         let (chunk, funcs) = compiler.compile_program(&program)?;
         let chunk = self.append_compiled_functions_with_active_source(chunk, funcs);
-        let eval_env = if global_env == self.global {
+        // Eval always owns a fresh lexical environment. Strict eval also uses
+        // it as its variable environment; sloppy eval's var root is the
+        // parent global environment.
+        let eval_env = if fresh_lexical_environment || global_env == self.global {
             crate::environment::new_env(&self.heap, Some(global_env), is_strict)?
         } else {
             global_env
@@ -1823,18 +1866,30 @@ impl Vm {
             chunk,
             eval_env,
             global_this.clone(),
-            !is_strict && global_env == self.global,
-            !is_strict && global_env != self.global,
-            Value::Undefined,
+            EvalFrameOptions {
+                global_bindings: !is_strict && global_env == self.global,
+                deletable_bindings: !is_strict && global_env != self.global,
+                variable_env: (fresh_lexical_environment && !is_strict).then_some(global_env),
+                new_target: Value::Undefined,
+            },
         );
-        if !is_strict && global_env != self.global {
+        if !is_strict && global_env != self.global && !fresh_lexical_environment {
             for name in &var_names {
-                if let Some(value) = crate::environment::get(&self.heap, global_env, name) {
+                if let Some(value) = crate::environment::get_own(&self.heap, eval_env, name)
+                    .or_else(|| crate::environment::get(&self.heap, global_env, name))
+                {
+                    crate::environment::declare_var_with_deletable(
+                        &self.heap,
+                        global_env,
+                        name,
+                        value.clone(),
+                        true,
+                    );
                     self.set_property(&global_this, name, value)?;
                 }
             }
         }
-        if !self.microtask_queue.is_empty() {
+        if drain_microtasks && !self.microtask_queue.is_empty() {
             self.run_microtasks()?;
         }
         result
@@ -2077,12 +2132,15 @@ impl Vm {
             chunk,
             eval_env,
             ctx.this_val,
-            !is_strict && var_env == self.global,
-            !is_strict && var_env != self.global,
-            if ctx.in_class_field_initializer {
-                Value::Undefined
-            } else {
-                ctx.caller_new_target
+            EvalFrameOptions {
+                global_bindings: !is_strict && var_env == self.global,
+                deletable_bindings: !is_strict && var_env != self.global,
+                variable_env: None,
+                new_target: if ctx.in_class_field_initializer {
+                    Value::Undefined
+                } else {
+                    ctx.caller_new_target
+                },
             },
         );
         // After running, copy the var/function bindings that the eval body
@@ -2981,6 +3039,7 @@ impl Vm {
         self.realm_eval_functions.remove(&realm);
         self.realm_throw_type_errors.remove(&realm);
         self.realm_function_prototypes.remove(&realm);
+        self.realm_shadow_realm_prototypes.remove(&realm);
         self.realm_async_function_prototypes.remove(&realm);
         self.realm_iterator_constructors.remove(&realm);
         self.realm_iterator_prototypes.remove(&realm);
@@ -3167,6 +3226,10 @@ enum FuncCallInfo {
         is_async: bool,
         is_class_ctor: bool,
     },
+    Wrapped {
+        target: Value,
+        closure: GcIdx,
+    },
 }
 
 impl Vm {
@@ -3215,14 +3278,18 @@ impl Vm {
     pub(crate) fn current_native_callee(&self) -> Option<&Value> {
         match &self.execution_contexts.last()?.kind {
             ExecutionContextKind::Native { callee, .. } => Some(callee),
-            ExecutionContextKind::Job | ExecutionContextKind::Interpreted { .. } => None,
+            ExecutionContextKind::Job
+            | ExecutionContextKind::Interpreted { .. }
+            | ExecutionContextKind::Wrapped { .. } => None,
         }
     }
 
     pub(crate) fn current_native_new_target(&self) -> Option<&Value> {
         match &self.execution_contexts.last()?.kind {
             ExecutionContextKind::Native { new_target, .. } => new_target.as_ref(),
-            ExecutionContextKind::Job | ExecutionContextKind::Interpreted { .. } => None,
+            ExecutionContextKind::Job
+            | ExecutionContextKind::Interpreted { .. }
+            | ExecutionContextKind::Wrapped { .. } => None,
         }
     }
 
@@ -3235,7 +3302,9 @@ impl Vm {
                 NewTargetPrototype::Observed(prototype) => Some(prototype),
                 NewTargetPrototype::FallbackRealm(_) => None,
             },
-            ExecutionContextKind::Job | ExecutionContextKind::Interpreted { .. } => None,
+            ExecutionContextKind::Job
+            | ExecutionContextKind::Interpreted { .. }
+            | ExecutionContextKind::Wrapped { .. } => None,
         }
     }
 
@@ -3248,7 +3317,9 @@ impl Vm {
                 NewTargetPrototype::FallbackRealm(realm) => Some(*realm),
                 NewTargetPrototype::Observed(_) => None,
             },
-            ExecutionContextKind::Job | ExecutionContextKind::Interpreted { .. } => None,
+            ExecutionContextKind::Job
+            | ExecutionContextKind::Interpreted { .. }
+            | ExecutionContextKind::Wrapped { .. } => None,
         }
     }
 
@@ -3268,7 +3339,9 @@ impl Vm {
             .last()
             .and_then(|context| match &context.kind {
                 ExecutionContextKind::Interpreted { .. } => Some(context.realm_env),
-                ExecutionContextKind::Job | ExecutionContextKind::Native { .. } => None,
+                ExecutionContextKind::Job
+                | ExecutionContextKind::Native { .. }
+                | ExecutionContextKind::Wrapped { .. } => None,
             });
         let env = context_env
             .or_else(|| self.frames.last().map(|frame| frame.env))

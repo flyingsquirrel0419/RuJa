@@ -33,10 +33,10 @@ pub(crate) use global::{
     global_parse_float, global_parse_int,
 };
 pub(crate) use json::{
-    build_json, build_reflect, build_reflect_in_env, date_constructor, date_get_component,
-    date_get_time, date_get_timezone_offset, date_now, date_parse, date_set_component,
-    date_to_iso_string, date_to_json, date_to_primitive, date_to_string, date_to_temporal_instant,
-    date_utc,
+    build_json, build_json_in_env, build_reflect, build_reflect_in_env, date_constructor,
+    date_get_component, date_get_time, date_get_timezone_offset, date_now, date_parse,
+    date_set_component, date_to_iso_string, date_to_json, date_to_primitive, date_to_string,
+    date_to_temporal_instant, date_utc,
 };
 pub(crate) use math::{build_console, build_math_in_env};
 pub(crate) use proxy::*;
@@ -5530,6 +5530,18 @@ fn define_realm_global(vm: &mut Vm, env: GcIdx, global: &Value, name: &str, valu
     }
 }
 
+fn define_realm_global_const(vm: &mut Vm, env: GcIdx, global: &Value, name: &str, value: Value) {
+    crate::environment::declare(&vm.heap, env, name, value.clone(), BindingKind::Const);
+    if let Value::Object(index) = global {
+        vm.heap.with_obj(index.0, |object| {
+            object
+                .props()
+                .lock()
+                .insert(PropertyKey::from(name), const_prop(value));
+        });
+    }
+}
+
 fn make_regexp_constructor_in_env(vm: &mut Vm, env: GcIdx) -> error::Result<(GcIdx, GcIdx)> {
     let (regex_ctor, regex_proto) = make_builtin_constructor_with_proto_class_in_env(
         vm,
@@ -6192,7 +6204,7 @@ fn install_proxy_intrinsic_in_env(
     result
 }
 
-fn populate_test262_realm(vm: &mut Vm, realm_env: GcIdx) -> error::Result<Value> {
+fn populate_secondary_realm(vm: &mut Vm, realm_env: GcIdx) -> error::Result<Value> {
     let global_idx = vm.heap.allocate(HeapObj::Object(crate::value::ObjectData {
         props: Mutex::new(IndexMap::new()),
         proto: Mutex::new(None),
@@ -6212,6 +6224,15 @@ fn populate_test262_realm(vm: &mut Vm, realm_env: GcIdx) -> error::Result<Value>
         BindingKind::Const,
     );
     define_realm_global(vm, realm_env, &global, "globalThis", global.clone());
+    define_realm_global_const(vm, realm_env, &global, "undefined", Value::Undefined);
+    define_realm_global_const(vm, realm_env, &global, "NaN", Value::Number(f64::NAN));
+    define_realm_global_const(
+        vm,
+        realm_env,
+        &global,
+        "Infinity",
+        Value::Number(f64::INFINITY),
+    );
 
     let eval_idx = vm.new_native_function_in_env("eval", global_eval, 1, realm_env)?;
     let eval_value = Value::Object(eval_idx);
@@ -6228,6 +6249,43 @@ fn populate_test262_realm(vm: &mut Vm, realm_env: GcIdx) -> error::Result<Value>
         "parseInt",
         Value::Object(parse_int_idx),
     );
+    let parse_float_idx =
+        vm.new_native_function_in_env("parseFloat", global_parse_float, 1, realm_env)?;
+    define_realm_global(
+        vm,
+        realm_env,
+        &global,
+        "parseFloat",
+        Value::Object(parse_float_idx),
+    );
+    let is_nan_idx = vm.new_native_function_in_env("isNaN", global_is_nan, 1, realm_env)?;
+    define_realm_global(vm, realm_env, &global, "isNaN", Value::Object(is_nan_idx));
+    let is_finite_idx =
+        vm.new_native_function_in_env("isFinite", global_is_finite, 1, realm_env)?;
+    define_realm_global(
+        vm,
+        realm_env,
+        &global,
+        "isFinite",
+        Value::Object(is_finite_idx),
+    );
+    let mut uri_functions = Vec::new();
+    for (name, function) in [
+        ("decodeURI", global_decode_uri as NativeFn),
+        (
+            "decodeURIComponent",
+            global_decode_uri_component as NativeFn,
+        ),
+        ("encodeURI", global_encode_uri as NativeFn),
+        (
+            "encodeURIComponent",
+            global_encode_uri_component as NativeFn,
+        ),
+    ] {
+        let index = vm.new_native_function_in_env(name, function, 1, realm_env)?;
+        define_realm_global(vm, realm_env, &global, name, Value::Object(index));
+        uri_functions.push(index);
+    }
     let realm_function_proto_idx =
         vm.new_native_function_in_env("", function_proto_noop, 0, realm_env)?;
     let realm_function_proto = Value::Object(realm_function_proto_idx);
@@ -6238,7 +6296,16 @@ fn populate_test262_realm(vm: &mut Vm, realm_env: GcIdx) -> error::Result<Value>
     });
     vm.realm_function_prototypes
         .insert(realm_env.0, realm_function_proto.clone());
-    for function in [eval_idx, parse_int_idx] {
+    for function in [
+        eval_idx,
+        parse_int_idx,
+        parse_float_idx,
+        is_nan_idx,
+        is_finite_idx,
+    ]
+    .into_iter()
+    .chain(uri_functions)
+    {
         set_function_object_proto(vm, function, &realm_function_proto);
     }
     install_proxy_intrinsic_in_env(vm, realm_env, Some(&global))?;
@@ -6372,6 +6439,9 @@ fn populate_test262_realm(vm: &mut Vm, realm_env: GcIdx) -> error::Result<Value>
 
     let realm_math = build_math_in_env(vm, realm_env, realm_object_prototype.clone())?;
     define_realm_global(vm, realm_env, &global, "Math", realm_math);
+
+    let realm_json = build_json_in_env(vm, realm_env, realm_object_prototype.clone())?;
+    define_realm_global(vm, realm_env, &global, "JSON", realm_json);
 
     let realm_intl = intl::build_intl_in_env(vm, realm_env, realm_object_prototype.clone())?;
     define_realm_global(vm, realm_env, &global, "Intl", realm_intl);
@@ -6715,6 +6785,7 @@ fn populate_test262_realm(vm: &mut Vm, realm_env: GcIdx) -> error::Result<Value>
     install_atomics_in_env(vm, realm_env, Some(&global))?;
     install_weak_ref_constructor_in_env(vm, realm_env, Some(&global))?;
     install_finalization_registry_constructor_in_env(vm, realm_env, Some(&global))?;
+    install_shadow_realm_intrinsic_in_env(vm, realm_env, Some(&global))?;
     vm.install_heap_limit_error_in_realm(realm_env)?;
 
     Ok(global)
@@ -6831,14 +6902,227 @@ fn install_date_intrinsic_in_env(
     result
 }
 
-fn make_test262_realm(vm: &mut Vm) -> error::Result<Value> {
-    make_test262_realm_transaction(vm, |_| {})
+fn shadow_realm_slot_key() -> crate::value::PrivateSlotKey {
+    crate::value::PrivateSlotKey::Internal(Arc::from("[[ShadowRealm]]"))
 }
 
-fn make_test262_realm_transaction(
+fn shadow_realm_environment(vm: &Vm, receiver: &Value) -> error::Result<GcIdx> {
+    let Value::Object(index) = receiver else {
+        return Err(Error::type_err(
+            "ShadowRealm method called on incompatible receiver",
+        ));
+    };
+    match vm
+        .heap
+        .get_private_element(index.0, &shadow_realm_slot_key())
+    {
+        Some(crate::value::PrivateSlot::Value(Value::Object(environment))) => Ok(environment),
+        _ => Err(Error::type_err(
+            "ShadowRealm method called on incompatible receiver",
+        )),
+    }
+}
+
+fn shadow_realm_constructor(
+    vm: &mut Vm,
+    _args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
+    if vm.current_native_new_target().is_none() {
+        return Err(Error::type_err("ShadowRealm constructor requires 'new'"));
+    }
+    let constructor_realm = crate::environment::global_env_root(
+        &vm.heap,
+        vm.native_callee_closure().unwrap_or(vm.global),
+    );
+    let fallback = vm
+        .realm_shadow_realm_prototypes
+        .get(&constructor_realm.0)
+        .cloned()
+        .ok_or_else(|| Error::internal("missing ShadowRealm prototype"))?;
+    let prototype = native_constructor_prototype_with_default(vm, "ShadowRealm", fallback)?;
+    let instance = new_object_with_prototype(vm, prototype)?;
+    let instance_pin = vm.pin(&instance);
+    make_realm_transaction(
+        vm,
+        |_| {},
+        |vm, realm_env, _| {
+            let Value::Object(index) = &instance else {
+                return Err(Error::internal("ShadowRealm receiver is not an object"));
+            };
+            vm.heap.with_private_elements(index.0, |slots| {
+                slots.insert(
+                    shadow_realm_slot_key(),
+                    crate::value::PrivateSlot::Value(Value::Object(realm_env)),
+                );
+            });
+            Ok(instance.clone())
+        },
+    )
+    .inspect(|_| vm.unpin_many(instance_pin))
+    .inspect_err(|_| vm.unpin_many(instance_pin))
+}
+
+fn shadow_realm_evaluate(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let receiver = this.unwrap_or(Value::Undefined);
+    let eval_realm = shadow_realm_environment(vm, &receiver)?;
+    let source = match args.first().cloned().unwrap_or(Value::Undefined) {
+        Value::String(source) => source,
+        _ => {
+            return Err(Error::type_err(
+                "ShadowRealm evaluate source must be a String",
+            ))
+        }
+    };
+    let caller_realm = crate::environment::global_env_root(
+        &vm.heap,
+        vm.native_callee_closure().unwrap_or(vm.global),
+    );
+    // Parsing belongs to the caller Realm. Once execution starts, every
+    // catchable abrupt completion is replaced at the membrane boundary.
+    let program = crate::parser::Parser::parse_internal(&source)?;
+    let global = vm.realm_global_for_env(eval_realm);
+    let result = vm.eval_shadowrealm_program_in(eval_realm, global, program);
+    let value = match result {
+        Ok(value) => value,
+        Err(error) if Vm::preserve_shadowrealm_host_error(&error) => return Err(error),
+        Err(_) => return Err(Error::type_err("ShadowRealm evaluation failed")),
+    };
+    match vm.shadowrealm_wrap_value(caller_realm, value) {
+        Ok(value) => Ok(value),
+        Err(error) if Vm::preserve_shadowrealm_host_error(&error) => Err(error),
+        Err(_) => Err(Error::type_err(
+            "ShadowRealm result cannot cross the boundary",
+        )),
+    }
+}
+
+fn shadow_realm_import_value(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let receiver = this.unwrap_or(Value::Undefined);
+    let _eval_realm = shadow_realm_environment(vm, &receiver)?;
+    let _specifier = vm.to_string(args.first().unwrap_or(&Value::Undefined))?;
+    if !matches!(args.get(1), Some(Value::String(_))) {
+        return Err(Error::type_err(
+            "ShadowRealm importValue export name must be a String",
+        ));
+    }
+
+    // Module loading is a separate Realm-owned cache unit. Preserve the
+    // required Promise return contract while that loader is being migrated.
+    let caller_realm = crate::environment::global_env_root(
+        &vm.heap,
+        vm.native_callee_closure().unwrap_or(vm.global),
+    );
+    let constructor = vm.promise_constructor_for_env(caller_realm);
+    let capability = new_promise_capability_in_env(vm, constructor, caller_realm)?;
+    let error = Error::type_err("ShadowRealm importValue is not implemented");
+    let reason = vm.make_error_value_in_realm(&error, caller_realm)?;
+    vm.call_function(&capability.reject, &[reason], Some(Value::Undefined))?;
+    Ok(capability.promise)
+}
+
+fn install_shadow_realm_intrinsic_in_env(
+    vm: &mut Vm,
+    realm_env: GcIdx,
+    realm_global: Option<&Value>,
+) -> error::Result<()> {
+    let realm = crate::environment::global_env_root(&vm.heap, realm_env);
+    let object_prototype = vm
+        .realm_object_prototypes
+        .get(&realm.0)
+        .cloned()
+        .ok_or_else(|| Error::internal("missing ShadowRealm Object prototype"))?;
+    let evaluate = vm.new_native_function_in_env("evaluate", shadow_realm_evaluate, 1, realm)?;
+    let mut pin_count = vm.pin(&Value::Object(evaluate));
+    let import_value =
+        vm.new_native_function_in_env("importValue", shadow_realm_import_value, 2, realm)?;
+    pin_count += vm.pin(&Value::Object(import_value));
+    let prototype = Value::Object(vm.alloc(HeapObj::Object(ObjectData {
+        props: Mutex::new(IndexMap::new()),
+        proto: Mutex::new(Some(object_prototype)),
+        extensible: AtomicBool::new(true),
+        class_name: Some(Arc::from("ShadowRealm")),
+        private_fields: Mutex::new(std::collections::HashMap::new()),
+        primitive: Mutex::new(None),
+    }))?);
+    pin_count += vm.pin(&prototype);
+    let constructor = vm.new_native_constructor_in_env(
+        "ShadowRealm",
+        shadow_realm_constructor,
+        0,
+        realm,
+        NativeConstructMode::InternalDeferredPrototype,
+    )?;
+    pin_count += vm.pin(&Value::Object(constructor));
+    vm.heap.with_obj(constructor.0, |object| {
+        if let HeapObj::Function(function) = object {
+            *function.prototype.lock() = Some(prototype.clone());
+        }
+        object.props().lock().insert(
+            PropertyKey::from("prototype"),
+            const_prop(prototype.clone()),
+        );
+    });
+    let Value::Object(prototype_index) = prototype else {
+        unreachable!("ShadowRealm prototype must be an object");
+    };
+    vm.heap.with_obj(prototype_index.0, |object| {
+        let mut props = object.props().lock();
+        props.insert(
+            PropertyKey::from("constructor"),
+            data_prop(Value::Object(constructor)),
+        );
+        props.insert(
+            PropertyKey::from("evaluate"),
+            data_prop(Value::Object(evaluate)),
+        );
+        props.insert(
+            PropertyKey::from("importValue"),
+            data_prop(Value::Object(import_value)),
+        );
+        let mut tag = data_prop(Value::String(Arc::from("ShadowRealm")));
+        tag.writable = false;
+        props.insert(
+            PropertyKey::symbol(vm.well_known_symbols.to_string_tag),
+            tag,
+        );
+    });
+    vm.realm_shadow_realm_prototypes
+        .insert(realm.0, Value::Object(prototype_index));
+    if let Some(global) = realm_global {
+        define_realm_global(vm, realm, global, "ShadowRealm", Value::Object(constructor));
+    } else {
+        define_global(vm, "ShadowRealm", Value::Object(constructor));
+    }
+    vm.unpin_many(pin_count);
+    Ok(())
+}
+
+fn make_test262_realm(vm: &mut Vm) -> error::Result<Value> {
+    make_realm_transaction(
+        vm,
+        |_| {},
+        |vm, _, global| {
+            let realm = vm.new_object()?;
+            vm.heap.with_obj(realm.0, |obj| {
+                obj.props()
+                    .lock()
+                    .insert(PropertyKey::from("global"), data_prop(global));
+            });
+            Ok(Value::Object(realm))
+        },
+    )
+}
+
+fn make_realm_transaction<T>(
     vm: &mut Vm,
     before_population: impl FnOnce(&mut Vm),
-) -> error::Result<Value> {
+    finish: impl FnOnce(&mut Vm, GcIdx, Value) -> error::Result<T>,
+) -> error::Result<T> {
     let pin_base = vm.gc_pins.len();
     let realm_env = crate::environment::new_env(&vm.heap, None, true)?;
     // Realm installers use fallible, stack-disciplined temporary pins. The
@@ -6848,14 +7132,8 @@ fn make_test262_realm_transaction(
     vm.gc_pins.push(realm_env.0);
     before_population(vm);
     let result = (|| {
-        let global = populate_test262_realm(vm, realm_env)?;
-        let realm = vm.new_object()?;
-        vm.heap.with_obj(realm.0, |obj| {
-            obj.props()
-                .lock()
-                .insert(PropertyKey::from("global"), data_prop(global));
-        });
-        Ok(Value::Object(realm))
+        let global = populate_secondary_realm(vm, realm_env)?;
+        finish(vm, realm_env, global)
     })();
     if result.is_ok() {
         debug_assert_eq!(
@@ -6874,7 +7152,19 @@ fn make_test262_realm_transaction(
 #[cfg(test)]
 pub(crate) fn make_test262_realm_after_environment_gc(vm: &mut Vm) -> error::Result<Value> {
     // At this point the explicit pin is the environment's only GC root.
-    make_test262_realm_transaction(vm, |vm| vm.gc())
+    make_realm_transaction(
+        vm,
+        |vm| vm.gc(),
+        |vm, _, global| {
+            let realm = vm.new_object()?;
+            vm.heap.with_obj(realm.0, |obj| {
+                obj.props()
+                    .lock()
+                    .insert(PropertyKey::from("global"), data_prop(global));
+            });
+            Ok(Value::Object(realm))
+        },
+    )
 }
 
 fn test262_create_realm(vm: &mut Vm, _args: &[Value], _: Option<Value>) -> error::Result<Value> {
@@ -14212,6 +14502,7 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
     setup_collections(vm)?;
     install_weak_ref_constructor_in_env(vm, vm.global, None)?;
     install_finalization_registry_constructor_in_env(vm, vm.global, None)?;
+    install_shadow_realm_intrinsic_in_env(vm, vm.global, None)?;
     install_test262_host(vm)?;
     vm.realm_globals.insert(vm.global.0, vm.global_this.clone());
     for (kind, prototype) in [

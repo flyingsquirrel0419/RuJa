@@ -481,7 +481,11 @@ impl Vm {
                     // scope root, without touching with-object properties.
                     let env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
                     let root = crate::environment::function_scope_root(&self.heap, env);
-                    if root == self.global {
+                    let eval_variable_env =
+                        self.frames.last().and_then(|frame| frame.eval_variable_env);
+                    if let Some(variable_env) = eval_variable_env {
+                        self.create_realm_eval_var_binding(variable_env, &name)?;
+                    } else if root == self.global {
                         let configurable = self
                             .frames
                             .last()
@@ -588,6 +592,8 @@ impl Vm {
                     let value = self.stack.pop().unwrap_or(Value::Undefined);
                     let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
                     let root = crate::environment::function_scope_root(&self.heap, cur_env);
+                    let eval_variable_env =
+                        self.frames.last().and_then(|frame| frame.eval_variable_env);
                     // Per spec (ES5 12.2): `var x = expr` is equivalent to
                     // `var x; x = expr`. The `var x` hoisting creates a binding
                     // in the variable environment (function scope) initialized
@@ -603,7 +609,9 @@ impl Vm {
                         .frames
                         .last()
                         .is_some_and(|frame| frame.eval_global_bindings);
-                    if root == self.global {
+                    if let Some(variable_env) = eval_variable_env {
+                        self.create_realm_eval_var_binding(variable_env, &name)?;
+                    } else if root == self.global {
                         self.create_global_var_binding_with_configurable(
                             &name,
                             eval_global_bindings,
@@ -660,7 +668,9 @@ impl Vm {
                             );
                         }
                     }
-                    if root == self.global {
+                    if let Some(variable_env) = eval_variable_env {
+                        self.set_realm_eval_var_binding(variable_env, &name, value)?;
+                    } else if root == self.global {
                         if eval_global_bindings {
                             self.set_global_eval_var_property(&name, value);
                         } else {
@@ -685,7 +695,11 @@ impl Vm {
                     let value = self.stack.pop().unwrap_or(Value::Undefined);
                     let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
                     let root = crate::environment::function_scope_root(&self.heap, cur_env);
-                    if root == self.global {
+                    let eval_variable_env =
+                        self.frames.last().and_then(|frame| frame.eval_variable_env);
+                    if let Some(variable_env) = eval_variable_env {
+                        self.create_realm_eval_function_binding(variable_env, &name, value)?;
+                    } else if root == self.global {
                         let configurable = self
                             .frames
                             .last()

@@ -2199,11 +2199,24 @@ pub(crate) fn build_reflect_in_env(
 }
 
 pub(crate) fn build_json(vm: &mut Vm) -> error::Result<Value> {
+    let object_proto = vm.object_proto.clone();
+    build_json_in_env(vm, vm.global, object_proto)
+}
+
+pub(crate) fn build_json_in_env(
+    vm: &mut Vm,
+    env: GcIdx,
+    object_proto: Value,
+) -> error::Result<Value> {
     let mut props: IndexMap<PropertyKey, PropertyDescriptor> = IndexMap::new();
-    let pi = vm.new_native_function("parse", json_parse, 2)?;
-    let si = vm.new_native_function("stringify", json_stringify, 3)?;
-    let raw = vm.new_native_function("rawJSON", json_raw_json, 1)?;
-    let is_raw = vm.new_native_function("isRawJSON", json_is_raw_json, 1)?;
+    let pi = vm.new_native_function_in_env("parse", json_parse, 2, env)?;
+    let mut pin_count = vm.pin(&Value::Object(pi));
+    let si = vm.new_native_function_in_env("stringify", json_stringify, 3, env)?;
+    pin_count += vm.pin(&Value::Object(si));
+    let raw = vm.new_native_function_in_env("rawJSON", json_raw_json, 1, env)?;
+    pin_count += vm.pin(&Value::Object(raw));
+    let is_raw = vm.new_native_function_in_env("isRawJSON", json_is_raw_json, 1, env)?;
+    pin_count += vm.pin(&Value::Object(is_raw));
     props.insert(PropertyKey::from("parse"), data_prop(Value::Object(pi)));
     props.insert(PropertyKey::from("stringify"), data_prop(Value::Object(si)));
     props.insert(PropertyKey::from("rawJSON"), data_prop(Value::Object(raw)));
@@ -2221,13 +2234,15 @@ pub(crate) fn build_json(vm: &mut Vm) -> error::Result<Value> {
     );
     let obj = HeapObj::Object(ObjectData {
         props: Mutex::new(props),
-        proto: Mutex::new(Some(vm.object_proto.clone())),
+        proto: Mutex::new(Some(object_proto)),
         extensible: AtomicBool::new(true),
         class_name: Some(Arc::from("JSON")),
         private_fields: Mutex::new(std::collections::HashMap::new()),
         primitive: Mutex::new(None),
     });
-    Ok(Value::Object(GcIdx(vm.heap.allocate(obj)?)))
+    let result = vm.alloc(obj).map(Value::Object);
+    vm.unpin_many(pin_count);
+    result
 }
 
 #[cfg(test)]

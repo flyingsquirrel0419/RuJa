@@ -243,6 +243,10 @@ from test262_function_tostring_admission import (
     FUNCTION_TOSTRING_FEATURES,
     FUNCTION_TOSTRING_FILES,
 )
+from test262_shadowrealm_admission import (
+    SHADOWREALM_FEATURES,
+    SHADOWREALM_FILES,
+)
 from test262_language_early_error_admission import (
     LANGUAGE_EARLY_ERROR_FEATURES,
     LANGUAGE_EARLY_ERROR_FILES,
@@ -4900,6 +4904,60 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                         )
                 finally:
                     tool.TEST262 = original_root
+
+    def test_shadowrealm_admission_is_exact_live_and_shared(self):
+        manifest = Path(__file__).with_name("test262_shadowrealm_admission.txt")
+        entries = tuple(
+            line
+            for raw_line in manifest.read_text().splitlines()
+            if (line := raw_line.strip()) and not line.startswith("#")
+        )
+        self.assertEqual(len(entries), 60)
+        self.assertEqual(SHADOWREALM_FILES, frozenset(entries))
+        self.assertEqual(frozenset(SHADOWREALM_FEATURES), SHADOWREALM_FILES)
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        try:
+            test_root_available = test_root.is_dir()
+        except OSError:
+            test_root_available = False
+        for tool in (test262_runner, test262_analyze):
+            original_root = tool.TEST262
+            try:
+                tool.TEST262 = str(test_root.parent)
+                for relative, features in SHADOWREALM_FEATURES.items():
+                    path = test_root / relative
+                    self.assertTrue(tool.shadowrealm_path(path), relative)
+                    self.assertEqual(tool.shadowrealm_features(path), features, relative)
+                    self.assertFalse(
+                        tool.should_skip({"features": sorted(features)}, path),
+                        relative,
+                    )
+                    self.assertTrue(
+                        tool.should_skip(
+                            {"features": sorted(features | {"decorators"})},
+                            path,
+                        ),
+                        relative,
+                    )
+                    if test_root_available:
+                        metadata = tool.parse_meta(path.read_text())
+                        self.assertEqual(
+                            frozenset(metadata.get("features", [])),
+                            features,
+                            relative,
+                        )
+                future = test_root / "built-ins/ShadowRealm/future-sibling.js"
+                self.assertFalse(tool.shadowrealm_path(future))
+                self.assertEqual(tool.shadowrealm_features(future), frozenset())
+                self.assertTrue(
+                    tool.should_skip({"features": ["ShadowRealm"]}, future)
+                )
+                for invalid in (None, object()):
+                    self.assertFalse(tool.shadowrealm_path(invalid))
+                    self.assertEqual(tool.shadowrealm_features(invalid), frozenset())
+            finally:
+                tool.TEST262 = original_root
 
     def test_function_tostring_admission_is_exact_live_disjoint_and_shared(self):
         manifest = Path(__file__).with_name(

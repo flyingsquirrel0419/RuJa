@@ -1247,6 +1247,9 @@ pub enum FunctionKind {
         bound_args: Vec<Value>,
         constructable: bool,
     },
+    /// ShadowRealm callable boundary. The wrapper owns its caller Realm
+    /// through `FunctionData::closure` and never exposes [[Construct]].
+    Wrapped { target: Value },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

@@ -4,6 +4,18 @@
 
 ### Changed
 
+- Added the non-module ShadowRealm runtime: Realm-local constructors and
+  prototypes, isolated `evaluate`, primitive transfer, and non-constructable
+  `FunctionKind::Wrapped` membranes for callable arguments and results.
+  Catchable target exceptions and object values are replaced by caller-Realm
+  `TypeError` objects; initial parse failures remain caller-Realm
+  `SyntaxError`s. Evaluation uses a fresh lexical environment while sloppy
+  global `var`/function declarations publish with global binding descriptor
+  rules. Secondary Realms now expose the same scalar globals and JSON namespace
+  required by the main Realm. Pinned Test262 moves from **0 pass /
+  54 fail / 10 skip** to **60 pass / 0 fail / 4 skip**; the remaining four are
+  the Realm-owned module-loading portion of `importValue`.
+
 - `Map.prototype` and `Set.prototype` now expose their specified own
   `Symbol.toStringTag` data properties in every Realm. The properties are
   non-writable, non-enumerable, configurable, and continue to drive
