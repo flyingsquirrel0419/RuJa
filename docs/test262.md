@@ -19,6 +19,14 @@ fail / 22 skip** to **105 pass / 0 fail / 6 skip** over 111 files. The exact
 conversion checks. Six IsHTMLDDA files remain closed. Complete Annex B moves
 from **842/170/74** to **938/90/58**, with 0 timeout/error.
 
+Validation on implementation commit `14df555` passes ordinary CI **3/3**
+(`30693875975`) and full CI **45/45** (`30693875949`). The ordinary subset is
+byte-identical to the preceding run. Of 32 full result artifacts, 31 are
+byte-identical; only Annex B changes, by **+96 pass / -80 fail / -16 skip**.
+The CI shard records one contention timeout that passes in the isolated local
+Annex B run, giving a normalized aggregate of **33266 pass / 4205 fail / 10995
+skip / 3 timeout / 0 error** over 48469 files.
+
 ```text
 [Decision Log]
 - 목적과 의도: Annex B String legacy methods를 ordinary native builtin, Realm identity, UTF-16 String semantics와 통합한다.
