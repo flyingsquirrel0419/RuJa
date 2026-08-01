@@ -281,6 +281,7 @@ from test262_json_parse_admission import JSON_PARSE_FILES
 from test262_json_raw_admission import JSON_RAW_FILES
 from test262_json_stringify_admission import JSON_STRINGIFY_FILES
 from test262_module_admission import (
+    MODULE_CLASS_ELEMENTS_FILES,
     MODULE_STATIC_SEMANTICS_FILES,
     MODULE_TLA_RUNTIME_FILES,
     MODULE_TLA_SYNTAX_FILES,
@@ -1181,6 +1182,7 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
             "namespace/internals/super-set-to-tdz-binding-with-accessor.js",
         })
         expected = {f"language/module-code/{name}" for name in expected_names}
+        expected.update(MODULE_CLASS_ELEMENTS_FILES)
         expected.update(MODULE_STATIC_SEMANTICS_FILES)
         expected.update(MODULE_TLA_SYNTAX_FILES)
         expected.update(MODULE_TLA_RUNTIME_FILES)
@@ -1207,6 +1209,56 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                     self.assertFalse(tool.should_skip(namespace_meta, namespace))
                     self.assertTrue(tool.should_skip(meta, future))
                     self.assertTrue(tool.should_skip(meta, outside))
+                finally:
+                    tool.TEST262 = original_root
+
+    def test_module_class_elements_manifest_is_exact_and_shared(self):
+        admitted = (
+            "language/expressions/class/elements/"
+            "class-name-static-initializer-default-export.js"
+        )
+        self.assertEqual(MODULE_CLASS_ELEMENTS_FILES, frozenset({admitted}))
+        meta = {
+            "flags": ["module"],
+            "features": ["class-static-fields-public"],
+        }
+        test_root = Path(test262_runner.TEST262) / "test"
+        if test_root.is_dir():
+            path = test_root / admitted
+            self.assertTrue(path.is_file())
+            live_meta = test262_runner.parse_meta(path.read_text())
+            self.assertEqual(live_meta.get("flags", []), meta["flags"])
+            self.assertEqual(live_meta.get("features", []), meta["features"])
+            self.assertEqual(live_meta.get("includes", []), [])
+            self.assertNotIn("negative", live_meta)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            path = root / "test" / admitted
+            future = path.with_name(
+                "class-name-static-initializer-default-export-future.js"
+            )
+            outside = root / "test/language/statements/class/elements" / path.name
+            for tool in (test262_runner, test262_analyze):
+                self.assertIs(
+                    tool.MODULE_CLASS_ELEMENTS_FILES, MODULE_CLASS_ELEMENTS_FILES
+                )
+                self.assertTrue(MODULE_CLASS_ELEMENTS_FILES <= tool.MODULE_CORE_FILES)
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    self.assertFalse(tool.should_skip(meta, path))
+                    self.assertTrue(tool.should_skip(meta, future))
+                    self.assertTrue(tool.should_skip(meta, outside))
+                    self.assertTrue(
+                        tool.should_skip(
+                            {
+                                "flags": meta["flags"],
+                                "features": meta["features"] + ["decorators"],
+                            },
+                            path,
+                        )
+                    )
                 finally:
                     tool.TEST262 = original_root
 

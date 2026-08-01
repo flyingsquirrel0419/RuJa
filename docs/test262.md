@@ -1,5 +1,34 @@
 # test262 conformance
 
+## Complete class-elements boundary
+
+The last skipped class-elements file is a Module test for an anonymous
+`export default class`. RuJa already assigns that class the inferred name
+`"default"` before its public static fields execute. A module-graph regression
+now observes the name through the constructor, the static field, and an
+exported side effect.
+
+Runner and analyzer share one exact module admission for
+`language/expressions/class/elements/class-name-static-initializer-default-export.js`.
+Tooling checks pinned live metadata, shared policy identity, future and mirrored
+sibling rejection, and unsupported extra features. Full CI repeats that pinned
+preflight. At revision `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the
+combined expression and statement class-elements directories move from
+**2,961 pass / 0 fail / 1 skip** to **2,962 pass / 0 fail / 0 skip**.
+The supported statements/expressions subset moves from **12,765/0/7,674** to
+**12,766 pass / 0 fail / 7,673 skip** over 20,439 files, exactly **+1 pass /
+-1 skip**.
+
+```text
+[Decision Log]
+- 목적과 의도: 이미 구현된 익명 default-export class의 이름 추론과 static initializer 순서를 supported Test262 경계에 정확히 편입한다.
+- 기존 구현 및 제약 조건: parser와 compiler는 `"default"` 이름을 static element보다 먼저 설치했지만 broad module gate가 class-elements의 유일한 Module 파일을 skip했다.
+- 검토한 주요 대안: 모든 class-elements Module 파일 허용, module feature gate 전역 해제, skip 유지, 또는 현재 pinned 파일 하나만 exact admission.
+- 선택한 방식: shared singleton admission을 module core에 합치고 runtime 순서, pinned metadata, runner/analyzer identity, future sibling 거부를 고정한다.
+- 다른 대안 대신 이 방식을 선택한 이유: prefix나 전역 허용은 검증하지 않은 미래 Module 동작까지 소유한다. exact admission은 증명된 한 경계만 공개한다.
+- 장점, 단점 및 영향: class-elements가 2962/0/0으로 닫히며 runtime 의미론은 바뀌지 않는다. 새 upstream Module 사례는 별도 검토가 필요하다.
+```
+
 ## Frame-owned compiler temporaries
 
 Nested destructuring now allocates distinct compiler temporaries for source

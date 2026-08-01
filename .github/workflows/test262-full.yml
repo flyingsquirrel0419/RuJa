@@ -54,6 +54,12 @@ jobs:
           TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
           test262_tooling_test.ModuleCoreAdmissionTests.test_language_early_error_admission_is_exact_and_shared
           -v
+      - name: Verify exact module class-elements admission
+        working-directory: tools
+        run: >-
+          TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
+          test262_tooling_test.ModuleCoreAdmissionTests.test_module_class_elements_manifest_is_exact_and_shared
+          -v
       - name: Verify exact class built-in subclass admission
         working-directory: tools
         run: >-
@@ -597,6 +603,16 @@ jobs:
           cat primitive_reference_result.txt
           grep -q '^RATE=100.0 PASS=664 FAIL=0 SKIP=0 TOTAL=664 RAN=664$' \
             primitive_reference_result.txt
+      - name: Require complete class-elements boundary to pass
+        if: matrix.dir == 'language/expressions'
+        run: |
+          TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
+            language/expressions/class/elements \
+            language/statements/class/elements \
+            > class_elements_result.txt 2>&1
+          cat class_elements_result.txt
+          grep -q '^RATE=100.0 PASS=2962 FAIL=0 SKIP=0 TOTAL=2962 RAN=2962$' \
+            class_elements_result.txt
       - name: Publish /${{ matrix.dir }} pass rate
         if: always()
         run: |

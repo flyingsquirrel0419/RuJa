@@ -4,6 +4,17 @@
 
 ### Changed
 
+- Completed the pinned Test262 class-elements boundary. The anonymous
+  default-export class already receives the inferred name `"default"` before
+  public static field initialization; a module-graph regression now fixes that
+  ordering. Runner and analyzer share one exact module admission for the sole
+  previously skipped file, while tooling freezes its live metadata and rejects
+  future, mirrored, and extra-feature cases. The two class-elements directories
+  move from **2,961 pass / 0 fail / 1 skip** to **2,962/0/0**. Full CI now
+  preflights the exact admission against pinned Test262. Supported statements/
+  expressions move from **12,765/0/7,674** to **12,766/0/7,673** over 20,439
+  files, exactly **+1 pass / -1 skip**.
+
 - Moved compiler-generated destructuring, iterator, Reference, and switch
   completion state from synthetic Environment bindings into dense `CallFrame`
   slots. Nested defaults, host reentry, class/with environment changes, and

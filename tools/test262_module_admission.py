@@ -1,6 +1,13 @@
-"""Frozen Test262 module files admitted after static-semantics auditing."""
+"""Frozen Test262 module files admitted after focused conformance auditing."""
 
 from pathlib import Path
+
+MODULE_CLASS_ELEMENTS_FILES = frozenset(
+    {
+        "language/expressions/class/elements/"
+        "class-name-static-initializer-default-export.js",
+    }
+)
 
 MODULE_STATIC_SEMANTICS_FILES = frozenset(
     f"language/module-code/{name}"

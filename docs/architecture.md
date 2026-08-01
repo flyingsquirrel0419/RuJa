@@ -4001,4 +4001,22 @@ premature outer finally execution and skipped outer finally blocks.
 - 장점, 단점 및 영향: partial Reference가 await continuation에 남지 않고 saved env가 모든 root visitor에 포함된다. same-loop/outer-loop continue와 nested finally가 정확히 분리된다. cleanup opcode 형식이 trampoline 또는 다중 Jump로 바뀌면 destination resolver와 회귀 테스트도 함께 변경해야 한다.
 ```
 
+### Anonymous default-export class naming
+
+Module parsing gives an anonymous default-export class the synthetic internal
+name `"default"`. Class compilation installs that name on the constructor and
+initializes the class's inner binding before executing static fields and blocks.
+The module export and every static element therefore observe the same named
+constructor.
+
+```text
+[Decision Log]
+- 목적과 의도: 익명 default-export class의 spec name inference가 static initialization보다 먼저 관찰되도록 유지한다.
+- 기존 구현 및 제약 조건: Module export에는 synthetic local binding이 필요하며 class static fields는 완성된 constructor를 `this`로 받아야 한다.
+- 검토한 주요 대안: export 이후 이름 설정, static initialization 이후 property 보정, inferred-name metadata만 사용, 또는 parsing 단계에서 synthetic `"default"` class name 부여.
+- 선택한 방식: parser가 anonymous default class에 synthetic name을 부여하고 기존 class compilation ordering으로 constructor name과 inner binding을 static elements 전에 초기화한다.
+- 다른 대안 대신 이 방식을 선택한 이유: 사후 보정은 static initializer의 observable `this.name`을 되돌릴 수 없다. 기존 class pipeline에 이름을 일찍 공급하면 export binding과 initialization order가 하나의 경로를 공유한다.
+- 장점, 단점 및 영향: constructor, static field, exported side effect가 모두 `"default"`를 관찰한다. 장기적으로 export synthetic binding과 inferred display-name 표현을 분리할 때도 이 ordering 계약은 유지해야 한다.
+```
+
 **Next:** [Features](features.md) · [Known limitations](limitations.md) · [Back to README](../README.md)

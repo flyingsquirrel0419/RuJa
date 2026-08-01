@@ -238,7 +238,8 @@ try:
     from test262_json_raw_admission import JSON_RAW_FILES
     from test262_json_stringify_admission import JSON_STRINGIFY_FILES
     from test262_module_admission import (
-        MODULE_STATIC_SEMANTICS_FILES, MODULE_TLA_RUNTIME_FILES, MODULE_TLA_SYNTAX_FILES,
+        MODULE_CLASS_ELEMENTS_FILES, MODULE_STATIC_SEMANTICS_FILES,
+        MODULE_TLA_RUNTIME_FILES, MODULE_TLA_SYNTAX_FILES,
     )
 except ModuleNotFoundError:
     from tools.test262_class_computed_field_admission import CLASS_COMPUTED_FIELD_FILES
@@ -472,7 +473,8 @@ except ModuleNotFoundError:
     from tools.test262_json_raw_admission import JSON_RAW_FILES
     from tools.test262_json_stringify_admission import JSON_STRINGIFY_FILES
     from tools.test262_module_admission import (
-        MODULE_STATIC_SEMANTICS_FILES, MODULE_TLA_RUNTIME_FILES, MODULE_TLA_SYNTAX_FILES,
+        MODULE_CLASS_ELEMENTS_FILES, MODULE_STATIC_SEMANTICS_FILES,
+        MODULE_TLA_RUNTIME_FILES, MODULE_TLA_SYNTAX_FILES,
     )
 
 RUJA = str(Path(__file__).resolve().parent.parent / "target/release/ruja")
@@ -592,6 +594,7 @@ MODULE_NAMESPACE_FILES = {
     )
 }
 MODULE_CORE_FILES.update(MODULE_NAMESPACE_FILES)
+MODULE_CORE_FILES.update(MODULE_CLASS_ELEMENTS_FILES)
 MODULE_CORE_FILES.update(MODULE_STATIC_SEMANTICS_FILES)
 MODULE_CORE_FILES.update(MODULE_TLA_SYNTAX_FILES)
 MODULE_CORE_FILES.update(MODULE_TLA_RUNTIME_FILES)

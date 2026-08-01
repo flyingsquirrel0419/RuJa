@@ -257,12 +257,19 @@ fn module_graph_supports_default_bindings_and_reexports() {
     .expect("anonymous default entry should be written");
     fs::write(
         dir.join("expression.js"),
-        "export default class { valueOf() { return 9; } }",
+        r#"
+        var observed;
+        export default class {
+            static field = (observed = this.name);
+            valueOf() { return 9; }
+        }
+        export { observed };
+        "#,
     )
     .expect("default class should be written");
     fs::write(
         dir.join("expression-entry.js"),
-        "import C from './expression.js'; [new C().valueOf(), C.name].join('|');",
+        "import C, { observed } from './expression.js'; [new C().valueOf(), C.name, C.field, observed].join('|');",
     )
     .expect("default class entry should be written");
 
@@ -280,7 +287,7 @@ fn module_graph_supports_default_bindings_and_reexports() {
     assert_eq!(
         vm.run_module_file(dir.join("expression-entry.js"))
             .expect("default class should evaluate"),
-        Value::String(Arc::from("9|default"))
+        Value::String(Arc::from("9|default|default|default"))
     );
     fs::remove_dir_all(dir).expect("module fixtures should be removed");
 }
