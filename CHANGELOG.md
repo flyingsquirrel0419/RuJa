@@ -20,7 +20,11 @@
   form a NativeFunction `IdentifierName`, while preserving their exact `.name`
   properties. Exact accessor tests move from
   **0/24** to **24/0/0**; the complete Annex B RegExp subtree moves from
-  **34 pass / 18 fail / 10 skip** to **58/0/4**.
+  **34 pass / 18 fail / 10 skip** to **58/0/4**. Commits `91674cd` and
+  `3c71f0b` pass ordinary CI `30703293505` (**3/3**) and full Test262 CI
+  `30703293498` (**45/45**). Ordinary artifacts are byte-identical; 31/32 full
+  result artifacts are byte-identical and only Annex B changes. The normalized
+  aggregate is **33315 pass / 4166 fail / 10985 skip / 3 timeout / 0 error**.
 
 - Implemented the Stage 3 legacy `RegExp.prototype.compile` boundary in every
   Realm. RegExp instances now retain their creating Realm and whether they were

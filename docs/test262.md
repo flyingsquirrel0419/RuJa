@@ -42,6 +42,16 @@ The four residual skips are separate invalid control-escape and named-group
 grammar work. Isolated complete Annex B moves from **963/69/54** to
 **987/51/48**, with no timeout/error.
 
+Implementation commits `91674cd` and `3c71f0b` pass ordinary CI
+`30703293505` (**3/3**) and full Test262 CI `30703293498` (**45/45**). The
+ordinary supported-subset artifact is byte-identical to `30696563521`.
+Against full baseline `30696563526`, 31/32 result artifacts are byte-identical;
+only Annex B changes by **+25 pass / -18 fail / -6 skip / -1 timeout**. The
+removed timeout is the unchanged contention case that passed in the preceding
+isolated baseline, so the normalized semantic change is **+24 pass / -18 fail
+/ -6 skip**. New aggregate is **33315 pass / 4166 fail / 10985 skip / 3 timeout
+/ 0 error** over 48469 files.
+
 ```text
 [Decision Log]
 - 목적과 의도: legacy RegExp static accessors의 descriptor surface뿐 아니라 successful-match state, invalidation, Realm ownership을 실제 실행 경로에 통합한다.
