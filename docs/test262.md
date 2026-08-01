@@ -28,6 +28,15 @@ timeout/error. Complete Annex B moves from **938/90/58** to **963/69/54**.
 The remaining 18 failures are the separate legacy constructor static-accessor/
 state unit.
 
+Implementation commit `12f47b4` passes ordinary CI `30696563521` (3/3) and
+full Test262 CI `30696563526` (45/45). The ordinary supported-subset artifact
+is byte-identical to `30693875975`; against full baseline `30693875949`, 31 of
+32 result artifacts are byte-identical and only Annex B moves by +25 pass,
+-21 fail, and -4 skip. Raw aggregate is **33290/4184/10991** with four
+timeouts and no errors over 48469 tests. The unchanged Annex B contention
+timeout passes in the isolated pinned run above, yielding normalized aggregate
+**33291/4184/10991**, three timeouts, and no errors.
+
 ```text
 [Decision Log]
 - 목적과 의도: Stage 3 legacy-regexp proposal의 compile brand, Realm, reinitialization semantics를 기존 RegExp runtime에 통합한다.
