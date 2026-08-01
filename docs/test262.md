@@ -22,6 +22,15 @@ owns constructor, descriptor, `evaluate`, WrappedFunction, and synchronous
 closed until `importValue` receives a Realm-owned module cache and loader.
 Full CI hard-gates **60/0/4**.
 
+Implementation commit `c8e4882` passes ordinary CI `30687712196` (**3/3**)
+and full matrix `30687712195` (**45/45**). Compared with `30683219888`,
+**31/32** result artifacts are byte-identical; only `built-ins` moves from
+**16,756 pass / 4,169 fail / 2,740 skip** to **16,816 pass / 4,115 fail /
+2,734 skip**. The aggregate is **33,166 pass / 4,285 fail / 11,015 skip / 3
+timeout / 0 error** over 48,469 files, with 37,451 pass/fail executions.
+Filename-sorted result content hashes to
+`7bd7ee319599e2f9b24ffead37760fc788ea2e21cfa0eae5a0547bb020216329`.
+
 ```text
 [Decision Log]
 - 목적과 의도: 객체 identity나 예외 객체를 유출하지 않는 실제 ShadowRealm callable membrane을 도입한다.
