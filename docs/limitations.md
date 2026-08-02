@@ -5,6 +5,12 @@
 RuJa is designed for running untrusted JavaScript safely inside a host process.
 The following resource limits are enforced:
 
+- **Temporal scope**: `%Temporal%` and `%Temporal.Now%` currently provide only
+  Realm-local namespace identity and `Symbol.toStringTag` descriptors. Temporal
+  constructors and namespace methods remain unsupported. The existing
+  `Date.prototype.toTemporalInstant` bridge still returns its minimal
+  Instant-shaped object and does not imply full Temporal support.
+
 - **Execution fuel**: `Vm::set_fuel(Some(n))` bounds dispatched opcodes and
   explicitly metered native-loop steps. Proxy `[[Call]]`, `[[Delete]]`,
   `[[Get]]`, `[[Set]]`, `[[GetOwnProperty]]`, `[[DefineOwnProperty]]`,

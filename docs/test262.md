@@ -14055,3 +14055,27 @@ implemented and audited.
 - 다른 대안 대신 이 방식을 선택한 이유: A new registry duplicates existing Realm lifecycle machinery; AggregateError has incompatible iteration and property semantics; broad feature or prefix admission would hide unsupported syntax and future tests. The selected design reuses proven Realm/GC behavior while keeping policy exact.
 - 장점, 단점 및 영향: The complete intrinsic directory becomes measurable as 22/0/0 with correct descriptors, ordering, plain-call behavior, subclassing, and cross-Realm fallback. Explicit resource-management statements and disposal algorithms remain a separate implementation unit.
 ```
+
+## Temporal namespace tag admission
+
+Every Realm now owns distinct `%Temporal%` and `%Temporal.Now%` ordinary
+namespace objects. Both inherit from that Realm's `%Object.prototype%` and
+have configurable, non-enumerable, non-writable `Symbol.toStringTag`
+properties with values `"Temporal"` and `"Temporal.Now"`. `%Temporal%` exposes
+`Now` as a writable, configurable, non-enumerable data property.
+
+The frozen admission contains exactly four pinned `toStringTag` files and
+requires **4 pass / 0 fail / 0 skip**. Runner and analyzer share the exact
+path set; future Temporal files remain outside this boundary. This does not
+claim Temporal constructors, `Temporal.Now` methods, calendar arithmetic, or
+timezone algorithms.
+
+```text
+[Decision Log]
+- 목적과 의도: Establish the smallest truthful Temporal conformance boundary before implementing constructors and algorithms.
+- 기존 구현 및 제약 조건: Date.prototype.toTemporalInstant returned a minimal Instant-shaped object, but the Temporal global and namespace identity were absent. The complete Temporal corpus is a large independent surface with thousands of failures.
+- 검토한 주요 대안: Implement Temporal.Instant first, expose one shared namespace across Realms, admit the complete Temporal directory, or add only Realm-local namespace objects and four exact tag tests.
+- 선택한 방식: Allocate Realm-local ordinary Temporal and Temporal.Now objects, root the first object while allocating the second, publish only after both allocations succeed, and freeze the four current toStringTag paths.
+- 다른 대안 대신 이 방식을 선택한 이유: Constructor work has much larger parsing and arithmetic scope; shared objects violate Realm identity; directory-wide admission would overstate support. The selected boundary is independently complete and measurable.
+- 장점, 단점 및 영향: Namespace descriptors, prototypes, Realm identity, allocation rollback, and exact 4/0/0 coverage are verified. All Temporal constructors and algorithms remain explicitly unsupported and can land in later narrow units.
+```

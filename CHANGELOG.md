@@ -4,6 +4,12 @@
 
 ### Changed
 
+- Added Realm-local `%Temporal%` and `%Temporal.Now%` namespace objects with
+  specification-shaped prototypes, property descriptors, and
+  `Symbol.toStringTag` values. A frozen four-file Test262 boundary covers only
+  these namespace tags and requires **4 pass / 0 fail / 0 skip**; Temporal
+  constructors and algorithms remain separate.
+
 - Added Realm-local `SuppressedError(error, suppressed, message)` with the
   specified Error inheritance, constructor metadata, optional message
   coercion, and non-enumerable `error`/`suppressed` properties. Constructor

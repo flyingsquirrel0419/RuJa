@@ -6281,6 +6281,56 @@ fn install_proxy_intrinsic_in_env(
     result
 }
 
+pub(crate) fn install_temporal_namespace_in_env(
+    vm: &mut Vm,
+    env: GcIdx,
+    global: Option<&Value>,
+    object_proto: Value,
+) -> error::Result<Value> {
+    vm.try_reserve_gc_pins(1)?;
+    let mut now_tag = data_prop(Value::String(Arc::from("Temporal.Now")));
+    now_tag.writable = false;
+    let now = Value::Object(vm.alloc(HeapObj::Object(ObjectData {
+        props: Mutex::new(IndexMap::from([(
+            PropertyKey::symbol(vm.well_known_symbols.to_string_tag),
+            now_tag,
+        )])),
+        proto: Mutex::new(Some(object_proto.clone())),
+        extensible: AtomicBool::new(true),
+        class_name: Some(Arc::from("Temporal.Now")),
+        private_fields: Mutex::new(std::collections::HashMap::new()),
+        primitive: Mutex::new(None),
+    }))?);
+    let pin_count = vm.pin(&now);
+    let temporal = {
+        let mut temporal_tag = data_prop(Value::String(Arc::from("Temporal")));
+        temporal_tag.writable = false;
+        vm.alloc(HeapObj::Object(ObjectData {
+            props: Mutex::new(IndexMap::from([
+                (PropertyKey::from("Now"), data_prop(now)),
+                (
+                    PropertyKey::symbol(vm.well_known_symbols.to_string_tag),
+                    temporal_tag,
+                ),
+            ])),
+            proto: Mutex::new(Some(object_proto)),
+            extensible: AtomicBool::new(true),
+            class_name: Some(Arc::from("Temporal")),
+            private_fields: Mutex::new(std::collections::HashMap::new()),
+            primitive: Mutex::new(None),
+        }))
+    };
+    vm.unpin_many(pin_count);
+    let temporal = Value::Object(temporal?);
+
+    if let Some(global) = global {
+        define_realm_global(vm, env, global, "Temporal", temporal.clone());
+    } else {
+        define_global(vm, "Temporal", temporal.clone());
+    }
+    Ok(temporal)
+}
+
 fn populate_secondary_realm(vm: &mut Vm, realm_env: GcIdx) -> error::Result<Value> {
     let global_idx = vm.heap.allocate(HeapObj::Object(crate::value::ObjectData {
         props: Mutex::new(IndexMap::new()),
@@ -6788,7 +6838,7 @@ fn populate_secondary_realm(vm: &mut Vm, realm_env: GcIdx) -> error::Result<Valu
     );
     let symbol_proto_idx = vm.heap.allocate(HeapObj::Object(ObjectData {
         props: Mutex::new(symbol_proto_props),
-        proto: Mutex::new(Some(object_proto)),
+        proto: Mutex::new(Some(object_proto.clone())),
         extensible: AtomicBool::new(true),
         class_name: Some(Arc::from("Symbol")),
         private_fields: Mutex::new(std::collections::HashMap::new()),
@@ -6841,6 +6891,8 @@ fn populate_secondary_realm(vm: &mut Vm, realm_env: GcIdx) -> error::Result<Valu
         vm.realm_primitive_prototypes
             .insert((realm_env.0, kind), prototype);
     }
+
+    install_temporal_namespace_in_env(vm, realm_env, Some(&global), object_proto.clone())?;
 
     install_date_intrinsic_in_env(vm, realm_env, Some(&global))?;
 
@@ -14377,6 +14429,7 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
     // Reflect
     let reflect = build_reflect(vm)?;
     define_global(vm, "Reflect", reflect);
+    install_temporal_namespace_in_env(vm, vm.global, None, vm.object_proto.clone())?;
 
     install_proxy_intrinsic_in_env(vm, vm.global, None)?;
 

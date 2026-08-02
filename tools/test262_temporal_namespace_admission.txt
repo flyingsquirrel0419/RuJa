@@ -1,0 +1,5 @@
+# Exact feature-gated Temporal namespace coverage.
+built-ins/Temporal/Now/toStringTag/prop-desc.js
+built-ins/Temporal/Now/toStringTag/string.js
+built-ins/Temporal/toStringTag/prop-desc.js
+built-ins/Temporal/toStringTag/string.js

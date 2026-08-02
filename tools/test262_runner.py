@@ -57,6 +57,9 @@ try:
     from test262_suppressed_error_admission import (
         SUPPRESSED_ERROR_FEATURES, SUPPRESSED_ERROR_FILES,
     )
+    from test262_temporal_namespace_admission import (
+        TEMPORAL_NAMESPACE_FEATURES, TEMPORAL_NAMESPACE_FILES,
+    )
     from test262_object_from_entries_admission import (
         OBJECT_FROM_ENTRIES_FEATURES, OBJECT_FROM_ENTRIES_FILES,
     )
@@ -310,6 +313,9 @@ except ModuleNotFoundError:
     )
     from tools.test262_suppressed_error_admission import (
         SUPPRESSED_ERROR_FEATURES, SUPPRESSED_ERROR_FILES,
+    )
+    from tools.test262_temporal_namespace_admission import (
+        TEMPORAL_NAMESPACE_FEATURES, TEMPORAL_NAMESPACE_FILES,
     )
     from tools.test262_object_from_entries_admission import (
         OBJECT_FROM_ENTRIES_FEATURES, OBJECT_FROM_ENTRIES_FILES,
@@ -671,7 +677,7 @@ SKIP_FEATURES = {
     "proxy-missing-checks", "Proxy", "Reflect",
     "Reflect.construct", "regexp-duplicate-named-groups",
     "regexp-named-groups", "regexp-unicode-property-escapes", "regexp-v-flag",
-    "resizable-arraybuffer", "ShadowRealm",
+    "resizable-arraybuffer", "ShadowRealm", "Temporal",
     "sharedarraybuffer", "source-phase-imports",
     "source-phase-imports-module-source", "tail-call-optimization",
     "top-level-await", "u180e",
@@ -2269,6 +2275,18 @@ def suppressed_error_features(path):
     except (OSError, TypeError, ValueError):
         return frozenset()
     return SUPPRESSED_ERROR_FEATURES.get(rel.as_posix(), frozenset())
+
+def temporal_namespace_path(path):
+    if path is None:
+        return False
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except (OSError, TypeError, ValueError):
+        return False
+    return rel.as_posix() in TEMPORAL_NAMESPACE_FILES
+
+def temporal_namespace_features(path):
+    return TEMPORAL_NAMESPACE_FEATURES if temporal_namespace_path(path) else frozenset()
 
 def error_constructor_realm_path(path):
     try:
@@ -4053,6 +4071,8 @@ def should_skip(meta, path=None):
         feats.difference_update(AGGREGATE_ERROR_FEATURES)
     if path is not None and suppressed_error_path(path):
         feats.difference_update(suppressed_error_features(path))
+    if path is not None and temporal_namespace_path(path):
+        feats.difference_update(temporal_namespace_features(path))
     if path is not None and error_constructor_realm_path(path):
         feats.difference_update(ERROR_CONSTRUCTOR_REALM_FEATURES)
     if path is not None and error_cause_path(path):

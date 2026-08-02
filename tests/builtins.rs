@@ -12826,6 +12826,39 @@ fn math_tag_and_created_realm_intrinsic_are_spec_shaped() {
 }
 
 #[test]
+fn temporal_namespace_tags_are_realm_local_and_spec_shaped() {
+    assert_eq!(
+        run(r#"
+            var temporalTag = Object.getOwnPropertyDescriptor(Temporal, Symbol.toStringTag);
+            var nowTag = Object.getOwnPropertyDescriptor(Temporal.Now, Symbol.toStringTag);
+            var now = Object.getOwnPropertyDescriptor(Temporal, "Now");
+            var globalTemporal = Object.getOwnPropertyDescriptor(globalThis, "Temporal");
+            var other = $262.createRealm().global;
+            [
+              temporalTag.value, temporalTag.writable, temporalTag.enumerable,
+              temporalTag.configurable, Object.prototype.toString.call(Temporal),
+              nowTag.value, nowTag.writable, nowTag.enumerable,
+              nowTag.configurable, Object.prototype.toString.call(Temporal.Now),
+              now.value === Temporal.Now, now.writable, now.enumerable, now.configurable,
+              globalTemporal.value === Temporal, globalTemporal.writable,
+              globalTemporal.enumerable, globalTemporal.configurable,
+              Object.getPrototypeOf(Temporal) === Object.prototype,
+              Object.getPrototypeOf(Temporal.Now) === Object.prototype,
+              other.Temporal !== Temporal,
+              other.Temporal.Now !== Temporal.Now,
+              other.Object.getPrototypeOf(other.Temporal) === other.Object.prototype,
+              other.Object.getPrototypeOf(other.Temporal.Now) === other.Object.prototype,
+              other.Object.prototype.toString.call(other.Temporal),
+              other.Object.prototype.toString.call(other.Temporal.Now)
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "Temporal|false|false|true|[object Temporal]|Temporal.Now|false|false|true|[object Temporal.Now]|true|true|false|true|true|true|false|true|true|true|true|true|true|true|[object Temporal]|[object Temporal.Now]"
+        ))
+    );
+}
+
+#[test]
 fn math_round_half() {
     assert_eq!(run("Object.is(Math.round(-0), -0);"), Value::Bool(true));
     assert_eq!(run("Object.is(Math.round(-0.5), -0);"), Value::Bool(true));

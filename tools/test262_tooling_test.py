@@ -76,6 +76,10 @@ from test262_suppressed_error_admission import (
     SUPPRESSED_ERROR_FEATURES,
     SUPPRESSED_ERROR_FILES,
 )
+from test262_temporal_namespace_admission import (
+    TEMPORAL_NAMESPACE_FEATURES,
+    TEMPORAL_NAMESPACE_FILES,
+)
 from test262_object_from_entries_admission import (
     OBJECT_FROM_ENTRIES_FEATURES,
     OBJECT_FROM_ENTRIES_FILES,
@@ -2906,6 +2910,73 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                                 {"features": ["explicit-resource-management"]},
                                 path,
                             )
+                        )
+                finally:
+                    tool.TEST262 = original_root
+
+    def test_temporal_namespace_manifest_is_exact_live_disjoint_and_shared(self):
+        expected = {
+            "built-ins/Temporal/Now/toStringTag/prop-desc.js",
+            "built-ins/Temporal/Now/toStringTag/string.js",
+            "built-ins/Temporal/toStringTag/prop-desc.js",
+            "built-ins/Temporal/toStringTag/string.js",
+        }
+        features = frozenset({"Symbol.toStringTag", "Temporal"})
+        self.assertEqual(TEMPORAL_NAMESPACE_FILES, frozenset(expected))
+        self.assertEqual(TEMPORAL_NAMESPACE_FEATURES, features)
+
+        tools_dir = Path(__file__).resolve().parent
+        for manifest in tools_dir.glob("test262_*_admission.txt"):
+            if manifest.name == "test262_temporal_namespace_admission.txt":
+                continue
+            existing = {
+                line
+                for raw_line in manifest.read_text().splitlines()
+                if (line := raw_line.strip()) and not line.startswith("#")
+            }
+            self.assertTrue(TEMPORAL_NAMESPACE_FILES.isdisjoint(existing), manifest.name)
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        try:
+            test_root_available = test_root.is_dir()
+        except OSError:
+            test_root_available = False
+        if test_root_available:
+            for relative in expected:
+                path = test_root / relative
+                self.assertTrue(path.is_file(), relative)
+                metadata = test262_runner.parse_meta(path.read_text())
+                self.assertEqual(frozenset(metadata.get("features", [])), features)
+                self.assertEqual(metadata.get("flags", []), [])
+                self.assertIsNone(metadata.get("negative"))
+                expected_includes = (
+                    ["propertyHelper.js"] if relative.endswith("prop-desc.js") else []
+                )
+                self.assertEqual(metadata.get("includes", []), expected_includes)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            future = root / "test/built-ins/Temporal/toStringTag/future.js"
+            outside = root / "test/built-ins/Other/toStringTag/string.js"
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for relative in expected:
+                        path = root / "test" / relative
+                        self.assertTrue(tool.temporal_namespace_path(path), relative)
+                        self.assertEqual(tool.temporal_namespace_features(path), features)
+                        self.assertFalse(tool.should_skip({"features": sorted(features)}, path))
+                        self.assertTrue(
+                            tool.should_skip(
+                                {"features": sorted(features | {"decorators"})}, path
+                            )
+                        )
+                    for path in (future, outside):
+                        self.assertFalse(tool.temporal_namespace_path(path))
+                        self.assertEqual(tool.temporal_namespace_features(path), frozenset())
+                        self.assertTrue(
+                            tool.should_skip({"features": ["Temporal"]}, path)
                         )
                 finally:
                     tool.TEST262 = original_root

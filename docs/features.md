@@ -29,6 +29,9 @@
 
 ## ES2015+
 
+- Realm-local `Temporal` and `Temporal.Now` namespace objects expose their
+  standard `Symbol.toStringTag` identities. Temporal constructors and calendar,
+  duration, timezone, and `Now` methods are not implemented yet.
 - `class`/`extends`/`super`
 - Default & rest parameters
 - Array/object destructuring (swaps, holes, rest, rename, nested) and object
