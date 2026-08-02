@@ -14033,7 +14033,11 @@ including foreign-Realm fallback. A defined message is coerced before the own
 writable, non-enumerable, and configurable. Constructor inputs and the result
 remain rooted across observable message coercion. Error-family prototypes keep
 `toString` only on `%Error.prototype%`; `SuppressedError.prototype` inherits the
-same Realm-local function instead of shadowing it.
+same Realm-local function instead of shadowing it. Forced-GC regressions remove
+each message fixture's global root only immediately before its own coercion, so
+successful and abrupt paths independently prove constructor-owned rooting.
+Root-reservation and result-allocation failures also verify exact pin-depth
+restoration.
 
 The frozen admission contains all **22** files in
 `built-ins/SuppressedError` at pinned Test262 revision

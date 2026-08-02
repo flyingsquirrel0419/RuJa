@@ -970,12 +970,10 @@ fn suppressed_error_roots_payloads_across_message_coercion_and_restores_pins() {
     let primary = vm.get_global("suppressedErrorPrimary");
     let secondary = vm.get_global("suppressedErrorSecondary");
     let message = vm.get_global("suppressedErrorMessage");
-    let abrupt_message = vm.get_global("suppressedErrorAbruptMessage");
     vm.run(
         "suppressedErrorPrimary = undefined; \
          suppressedErrorSecondary = undefined; \
-         suppressedErrorMessage = undefined; \
-         suppressedErrorAbruptMessage = undefined;",
+         suppressedErrorMessage = undefined;",
     )
     .expect("fixtures should be reachable only through constructor inputs");
     let baseline = vm.gc_pins.len();
@@ -1003,6 +1001,9 @@ fn suppressed_error_roots_payloads_across_message_coercion_and_restores_pins() {
     );
     assert_eq!(vm.gc_pins.len(), baseline);
 
+    let abrupt_message = vm.get_global("suppressedErrorAbruptMessage");
+    vm.run("suppressedErrorAbruptMessage = undefined;")
+        .expect("abrupt fixture should be reachable only through constructor input");
     let error = crate::builtins::suppressed_error_constructor(
         &mut vm,
         &[primary.clone(), secondary.clone(), abrupt_message],
@@ -1010,6 +1011,17 @@ fn suppressed_error_roots_payloads_across_message_coercion_and_restores_pins() {
     )
     .expect_err("abrupt message coercion should propagate");
     assert!(error.message.contains("message abrupt"));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    vm.set_max_heap_objects(Some(1));
+    let error = crate::builtins::suppressed_error_constructor(
+        &mut vm,
+        &[primary.clone(), secondary.clone(), message.clone()],
+        None,
+    )
+    .expect_err("result allocation failure should propagate after rooting inputs");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    vm.set_max_heap_objects(None);
     assert_eq!(vm.gc_pins.len(), baseline);
 
     vm.fail_next_gc_pin_reservation = true;
