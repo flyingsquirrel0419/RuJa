@@ -17,7 +17,7 @@ Pinned Test262 `9e61c12835c5e4a3bdba93850427e6742c4f64c4`
 uses an exact five-file admission for three non-constructor tests and two
 Symbol coercion tests. The complete Date scope moves from **5 pass / 19 fail /
 0 skip** to **24/0/0**. Complete Annex B is expected to move from
-**1027/19/40** to **1046/0/40**; all remaining skips require IsHTMLDDA.
+**1027/19/40** to **1051/0/35**; all remaining skips require IsHTMLDDA.
 
 ```text
 [Decision Log]

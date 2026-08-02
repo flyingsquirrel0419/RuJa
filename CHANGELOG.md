@@ -11,7 +11,7 @@
   five-file admission opens only the verified Symbol and non-constructor
   metadata tests. Pinned focused Test262 moves from **5 pass / 19 fail / 0
   skip** to **24/0/0**; complete Annex B is expected to move from
-  **1027/19/40** to **1046/0/40**, with the remaining skips limited to
+  **1027/19/40** to **1051/0/35**, with the remaining skips limited to
   IsHTMLDDA host-exotic coverage.
 
 - Implemented Annex B global `escape` and `unescape` in every Realm. Both

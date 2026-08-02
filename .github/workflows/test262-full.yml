@@ -102,6 +102,12 @@ jobs:
           TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
           test262_tooling_test.ModuleCoreAdmissionTests.test_annex_b_escape_manifest_is_exact_live_disjoint_and_shared
           -v
+      - name: Verify exact Annex B Date admission
+        working-directory: tools
+        run: >-
+          TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
+          test262_tooling_test.ModuleCoreAdmissionTests.test_annex_b_date_manifest_is_exact_live_disjoint_and_shared
+          -v
       - name: Verify exact RegExp compile admission
         working-directory: tools
         run: >-
@@ -664,6 +670,14 @@ jobs:
           cat annex_b_escape_result.txt
           grep -q '^RATE=100.0 PASS=35 FAIL=0 SKIP=0 TOTAL=35 RAN=35$' \
             annex_b_escape_result.txt
+      - name: Require Annex B Date legacy methods to pass
+        if: matrix.dir == 'annexB'
+        run: |
+          TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
+            annexB/built-ins/Date > annex_b_date_result.txt 2>&1
+          cat annex_b_date_result.txt
+          grep -q '^RATE=100.0 PASS=24 FAIL=0 SKIP=0 TOTAL=24 RAN=24$' \
+            annex_b_date_result.txt
       - name: Require RegExp compile boundary to pass
         if: matrix.dir == 'annexB'
         run: |
