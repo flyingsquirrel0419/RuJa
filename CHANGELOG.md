@@ -10,9 +10,12 @@
   `toGMTString` aliases the original `toUTCString` function object. A frozen
   five-file admission opens only the verified Symbol and non-constructor
   metadata tests. Pinned focused Test262 moves from **5 pass / 19 fail / 0
-  skip** to **24/0/0**; complete Annex B is expected to move from
-  **1027/19/40** to **1051/0/35**, with the remaining skips limited to
-  IsHTMLDDA host-exotic coverage.
+  skip** to **24/0/0**. Commits `c3b1da6` and `0c52930` pass ordinary CI
+  `30727866413` (**3/3**) and full Test262 CI `30727866412` (**45/45**).
+  Complete Annex B is raw **1050 pass / 0 fail / 35 skip / 1 timeout**;
+  normalized movement from **1027/19/40** is **+24 pass / -19 fail / -5
+  skip**, with one unrelated timeout. Aggregate is raw **33378 pass / 4115
+  fail / 10972 skip / 4 timeout / 0 error** over 48469 files.
 
 - Implemented Annex B global `escape` and `unescape` in every Realm. Both
   functions coerce their argument exactly once, operate on UTF-16 code units,

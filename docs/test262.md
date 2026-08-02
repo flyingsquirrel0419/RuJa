@@ -16,8 +16,15 @@ reference to each Realm's original `toUTCString`, preserving identity and the
 Pinned Test262 `9e61c12835c5e4a3bdba93850427e6742c4f64c4`
 uses an exact five-file admission for three non-constructor tests and two
 Symbol coercion tests. The complete Date scope moves from **5 pass / 19 fail /
-0 skip** to **24/0/0**. Complete Annex B is expected to move from
-**1027/19/40** to **1051/0/35**; all remaining skips require IsHTMLDDA.
+0 skip** to **24/0/0**.
+
+Implementation commit `c3b1da6` and exact workflow gate commit `0c52930` pass
+ordinary CI `30727866413` (**3/3**) and full Test262 CI `30727866412`
+(**45/45**). The required Annex B Date gate is exactly **24/0/0**. Complete
+Annex B is raw **1050 pass / 0 fail / 35 skip / 1 timeout**; normalized
+movement from **1027/19/40** is **+24 pass / -19 fail / -5 skip**, while one
+unrelated file timed out. All 35 skips require IsHTMLDDA. Aggregate is raw
+**33378 pass / 4115 fail / 10972 skip / 4 timeout / 0 error** over 48469 files.
 
 ```text
 [Decision Log]
