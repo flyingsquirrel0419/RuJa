@@ -1016,7 +1016,7 @@ fn suppressed_error_roots_payloads_across_message_coercion_and_restores_pins() {
     vm.set_max_heap_objects(Some(1));
     let error = crate::builtins::suppressed_error_constructor(
         &mut vm,
-        &[primary.clone(), secondary.clone(), message.clone()],
+        &[primary.clone(), secondary.clone(), Value::Undefined],
         None,
     )
     .expect_err("result allocation failure should propagate after rooting inputs");
@@ -1027,7 +1027,7 @@ fn suppressed_error_roots_payloads_across_message_coercion_and_restores_pins() {
     vm.fail_next_gc_pin_reservation = true;
     let error = crate::builtins::suppressed_error_constructor(
         &mut vm,
-        &[primary, secondary, message],
+        &[primary, secondary, Value::Undefined],
         None,
     )
     .expect_err("temporary-root reservation failure should propagate");
