@@ -4080,6 +4080,10 @@ fn global_uri_functions_follow_percent_encoding_rules() {
         run("decodeURI('%F3%B0%80%80') === String.fromCharCode(0xDB80, 0xDC00);"),
         Value::Bool(true)
     );
+    assert_eq!(
+        run("decodeURI('é%3b%F0%9F%98%80') + '|' + decodeURIComponent('%41'.repeat(4096)).length;"),
+        Value::String(Arc::from("é%3b😀|4096"))
+    );
     assert!(run_err("decodeURIComponent('%C0%AF');").contains("URIError"));
     assert!(run_err("decodeURIComponent('%ED%BF%BF');").contains("URIError"));
     assert!(run_err("encodeURI(String.fromCharCode(0xD800));").contains("URIError"));

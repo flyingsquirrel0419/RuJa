@@ -74,6 +74,37 @@ fn annex_b_escape_native_scans_consume_fuel_before_materialization() {
 }
 
 #[test]
+fn uri_decode_native_scan_consumes_fuel_before_materialization() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        globalThis.uriDecodeCalls = 0;
+        globalThis.uriDecodeInput = {
+          toString() {
+            uriDecodeCalls += 1;
+            return "%41".repeat(512);
+          }
+        };
+        "#,
+    )
+    .expect("URI decode fuel fixture should initialize");
+
+    vm.set_fuel(Some(50));
+    let error = vm
+        .run("decodeURIComponent(uriDecodeInput);")
+        .expect_err("URI decoding must meter its native byte scan");
+    assert_eq!(error.kind, ruja::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+
+    vm.set_fuel(None);
+    assert_eq!(
+        vm.run("var decoded = decodeURIComponent(uriDecodeInput); uriDecodeCalls + '|' + decoded.length;")
+            .expect("refilled URI decode should complete"),
+        Value::String("2|512".into())
+    );
+}
+
+#[test]
 fn array_sort_native_index_scans_consume_fuel() {
     for method in ["sort", "toSorted"] {
         let mut vm = Vm::new().expect("failed to initialize VM");

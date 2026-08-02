@@ -4,6 +4,18 @@
 
 ### Changed
 
+- Reworked `decodeURI` and `decodeURIComponent` into a byte-indexed decoder.
+  Percent triplets now use a fixed four-byte stack buffer, reserved escapes
+  retain their original spelling, and supplementary scalars append directly
+  through RuJa's canonical UTF-16 sentinel representation without temporary
+  per-scalar strings. The decoder reserves its intermediate result fallibly;
+  final `Arc<str>` publication retains the existing infallible host-allocation
+  boundary. It charges a conservative input-byte fuel bound after `ToString`
+  but before native scanning. The existing focused URI boundary remains **167 pass / 0 fail / 2
+  timeout / 4 skip**: the two RFC 3629 exhaustive tests execute roughly one
+  million JavaScript calls per variant and remain an interpreter-throughput
+  boundary rather than receiving a larger timeout.
+
 - Completed the Annex B legacy Date boundary in every Realm. `getYear`
   returns the local year minus 1900, `setYear` snapshots the receiver before
   argument coercion and applies the legacy 0-99 year offset, and

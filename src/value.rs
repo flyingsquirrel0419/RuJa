@@ -2442,8 +2442,11 @@ pub(crate) fn push_utf16_scalar(out: &mut String, ch: char) {
         return;
     }
 
-    let mut units = [0; 2];
-    out.push_str(&utf16_to_string(ch.encode_utf16(&mut units)));
+    let supplementary = cp - 0x10000;
+    let high = 0xD800 + (supplementary >> 10) as u16;
+    let low = 0xDC00 + (supplementary & 0x3FF) as u16;
+    out.push(surrogate_to_sentinel(high));
+    out.push(surrogate_to_sentinel(low));
 }
 
 /// Convert well-formed UTF-8 text at an external boundary into RuJa's

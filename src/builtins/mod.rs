@@ -7992,7 +7992,7 @@ fn object_lookup_setter(vm: &mut Vm, args: &[Value], this: Option<Value>) -> err
 
 fn global_decode_uri(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
     let input = vm.to_string(args.first().unwrap_or(&Value::Undefined))?;
-    uri_decode(&input, URI_RESERVED_SET)
+    uri_decode(vm, &input, URI_RESERVED_SET)
 }
 
 fn global_decode_uri_component(
@@ -8001,7 +8001,7 @@ fn global_decode_uri_component(
     _this: Option<Value>,
 ) -> error::Result<Value> {
     let input = vm.to_string(args.first().unwrap_or(&Value::Undefined))?;
-    uri_decode(&input, "")
+    uri_decode(vm, &input, "")
 }
 
 fn global_encode_uri(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
@@ -8065,38 +8065,43 @@ fn uri_encode(input: &str, unescaped_set: &str) -> error::Result<Value> {
     Ok(Value::String(Arc::from(out.as_str())))
 }
 
-fn uri_decode(input: &str, reserved_set: &str) -> error::Result<Value> {
+fn uri_decode(vm: &mut Vm, input: &str, reserved_set: &str) -> error::Result<Value> {
+    // Input bytes bound both scan work and output size: each decoded scalar is
+    // no larger than its percent-encoded source, including RuJa's UTF-16
+    // sentinel representation for supplementary code points.
+    vm.consume_fuel_units(input.len().min(i64::MAX as usize) as i64)?;
     let mut out = String::new();
-    let chars: Vec<char> = input.chars().collect();
+    out.try_reserve_exact(input.len())
+        .map_err(|_| Error::range("decoded URI result is too large"))?;
+    let bytes = input.as_bytes();
     let mut index = 0;
-    while index < chars.len() {
-        if chars[index] != '%' {
-            out.push(chars[index]);
-            index += 1;
+    while index < bytes.len() {
+        if bytes[index] != b'%' {
+            let ch = input[index..]
+                .chars()
+                .next()
+                .expect("index remains on a UTF-8 boundary");
+            out.push(ch);
+            index += ch.len_utf8();
             continue;
         }
 
-        let first = parse_uri_hex_byte(&chars, index)?;
+        let first = parse_uri_hex_byte(bytes, index)?;
         let utf8_len = uri_utf8_sequence_len(first)?;
-        let mut bytes = Vec::with_capacity(utf8_len);
-        let mut raw = String::with_capacity(utf8_len * 3);
+        let mut decoded_bytes = [0u8; 4];
         for offset in 0..utf8_len {
             let triplet_index = index + offset * 3;
-            let byte = parse_uri_hex_byte(&chars, triplet_index)?;
-            bytes.push(byte);
-            raw.push('%');
-            raw.push(chars[triplet_index + 1]);
-            raw.push(chars[triplet_index + 2]);
+            decoded_bytes[offset] = parse_uri_hex_byte(bytes, triplet_index)?;
         }
 
-        let decoded =
-            std::str::from_utf8(&bytes).map_err(|_| Error::uri("malformed URI sequence"))?;
-        if decoded.chars().count() != 1 {
-            return Err(Error::uri("malformed URI sequence"));
-        }
-        let decoded_char = decoded.chars().next().unwrap();
+        let decoded = std::str::from_utf8(&decoded_bytes[..utf8_len])
+            .map_err(|_| Error::uri("malformed URI sequence"))?;
+        let decoded_char = decoded
+            .chars()
+            .next()
+            .expect("validated URI sequence contains one scalar");
         if reserved_set.contains(decoded_char) {
-            out.push_str(&raw);
+            out.push_str(&input[index..index + utf8_len * 3]);
         } else {
             push_decoded_uri_char(&mut out, decoded_char);
         }
@@ -8106,24 +8111,31 @@ fn uri_decode(input: &str, reserved_set: &str) -> error::Result<Value> {
 }
 
 fn push_decoded_uri_char(out: &mut String, ch: char) {
-    let mut units = [0; 2];
-    let encoded = ch.encode_utf16(&mut units);
-    out.push_str(&crate::value::utf16_from_codes(encoded));
+    crate::value::push_utf16_scalar(out, ch);
 }
 
-fn parse_uri_hex_byte(chars: &[char], index: usize) -> error::Result<u8> {
-    if chars.get(index) != Some(&'%') {
+fn parse_uri_hex_byte(bytes: &[u8], index: usize) -> error::Result<u8> {
+    if bytes.get(index) != Some(&b'%') {
         return Err(Error::uri("malformed URI sequence"));
     }
-    let high = chars
+    let high = bytes
         .get(index + 1)
-        .and_then(|ch| ch.to_digit(16))
+        .and_then(|byte| uri_hex_value(*byte))
         .ok_or_else(|| Error::uri("malformed URI sequence"))?;
-    let low = chars
+    let low = bytes
         .get(index + 2)
-        .and_then(|ch| ch.to_digit(16))
+        .and_then(|byte| uri_hex_value(*byte))
         .ok_or_else(|| Error::uri("malformed URI sequence"))?;
-    Ok(((high << 4) | low) as u8)
+    Ok((high << 4) | low)
+}
+
+fn uri_hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        _ => None,
+    }
 }
 
 fn uri_utf8_sequence_len(first: u8) -> error::Result<usize> {

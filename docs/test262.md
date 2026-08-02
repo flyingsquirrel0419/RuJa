@@ -1,5 +1,41 @@
 # test262 conformance
 
+## URI decoder allocation and sandbox boundary
+
+`decodeURI` and `decodeURIComponent` now scan the canonical internal string by
+UTF-8 byte index instead of first copying the complete input into `Vec<char>`.
+Each percent-encoded scalar uses a fixed four-byte stack buffer and the original
+input slice is copied when `decodeURI` must preserve a reserved escape. The
+shared scalar append path directly emits RuJa's surrogate sentinels for the
+private collision range, avoiding a temporary String while preserving the
+distinction between U+F0000-U+F07FF scalars and lone UTF-16 surrogates.
+
+After the observable `ToString`, the decoder charges an O(1)-available input
+byte-length fuel bound before scanning. The result reserves at most the input
+byte length with `try_reserve_exact`; decoded scalar output is no longer than
+its percent spelling, including the two-sentinel collision representation.
+Capacity failure is reported as `RangeError` rather than relying on an
+infallible intermediate allocation. The final `Arc<str>` publication retains
+the engine's existing infallible host-allocation boundary.
+
+Pinned Test262 `9e61c12835c5e4a3bdba93850427e6742c4f64c4`
+retains the honest URI boundary **167 pass / 0 fail / 2 timeout / 4 skip**. The
+two remaining RFC 3629 files each perform about 983,000 JavaScript calls per
+variant; byte-decoder allocation removal does not make that interpreted loop
+fit the ordinary eight-second process limit. No timeout exception is added.
+Closing those two files requires broader interpreter dispatch/call throughput,
+not a URI semantic change.
+
+```text
+[Decision Log]
+- 목적과 의도: URI decode의 호출당 불필요한 할당과 무계측 native 선형 작업을 제거하되, 대형 Test262 timeout을 정책 상향으로 숨기지 않는다.
+- 기존 구현 및 제약 조건: 입력 전체 Vec<char>, percent sequence별 Vec와 String, supplementary scalar별 임시 String이 필요했고 native scan은 fuel을 소비하지 않았다. 두 exhaustive tests는 각 variant에서 약 98만 번 JS 호출한다.
+- 검토한 주요 대안: 두 파일에 extended timeout 추가, 기존 char 기반 구현 유지, UTF-8 검증 수동 구현, 또는 byte scanner와 표준 from_utf8 검증 및 direct sentinel append.
+- 선택한 방식: ToString 뒤 입력 byte 길이만큼 fuel을 선차감하고 결과를 fallible reserve한 뒤, byte index와 [u8; 4] stack buffer로 decode한다. reserved escape는 원문 slice를 보존하고 scalar는 shared sentinel helper에 직접 append한다.
+- 다른 대안 대신 이 방식을 선택한 이유: timeout 상향은 인터프리터 병목을 숨기고, 수동 UTF-8 검증은 malformed/overlong/surrogate 거부 위험을 키운다. byte scanner는 명세 의미를 바꾸지 않고 실제 native 비용만 줄인다.
+- 장점, 단점 및 영향: decoder의 중간 heap allocation과 unmetered scan이 제거되고 lowercase reserved spelling, malformed UTF-8, sentinel collision이 유지된다. 두 exhaustive timeout은 별도 interpreter throughput 과제로 남는다.
+```
+
 ## Annex B legacy Date methods
 
 Every Realm installs fresh non-constructable `getYear` and `setYear` methods.
