@@ -36,6 +36,10 @@ from test262_annex_b_escape_admission import (
     ANNEX_B_ESCAPE_FEATURES,
     ANNEX_B_ESCAPE_FILES,
 )
+from test262_annex_b_date_admission import (
+    ANNEX_B_DATE_FEATURES,
+    ANNEX_B_DATE_FILES,
+)
 from test262_regexp_compile_admission import (
     REGEXP_COMPILE_FEATURES,
     REGEXP_COMPILE_FILES,
@@ -2227,6 +2231,87 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                     self.assertEqual(
                         tool.annex_b_escape_features(invalid), frozenset()
                     )
+            finally:
+                tool.TEST262 = original_root
+
+    def test_annex_b_date_manifest_is_exact_live_disjoint_and_shared(self):
+        expected_features = {
+            "annexB/built-ins/Date/prototype/getYear/not-a-constructor.js": frozenset(
+                {"Reflect.construct", "arrow-function"}
+            ),
+            "annexB/built-ins/Date/prototype/setYear/not-a-constructor.js": frozenset(
+                {"Reflect.construct", "arrow-function"}
+            ),
+            "annexB/built-ins/Date/prototype/setYear/year-nan.js": frozenset(
+                {"Symbol"}
+            ),
+            "annexB/built-ins/Date/prototype/setYear/year-to-number-err.js": frozenset(
+                {"Symbol"}
+            ),
+            "annexB/built-ins/Date/prototype/toGMTString/not-a-constructor.js": frozenset(
+                {"Reflect.construct", "arrow-function"}
+            ),
+        }
+        manifest = Path(__file__).with_name("test262_annex_b_date_admission.txt")
+        entries = tuple(
+            line
+            for raw_line in manifest.read_text().splitlines()
+            if (line := raw_line.strip()) and not line.startswith("#")
+        )
+        self.assertEqual(tuple(expected_features), entries)
+        self.assertEqual(entries, tuple(sorted(entries)))
+        self.assertEqual(ANNEX_B_DATE_FILES, frozenset(entries))
+        self.assertEqual(ANNEX_B_DATE_FEATURES, expected_features)
+
+        for other_manifest in Path(__file__).parent.glob("test262_*_admission.txt"):
+            if other_manifest == manifest:
+                continue
+            other_entries = {
+                line
+                for raw_line in other_manifest.read_text().splitlines()
+                if (line := raw_line.strip()) and not line.startswith("#")
+            }
+            self.assertTrue(
+                ANNEX_B_DATE_FILES.isdisjoint(other_entries),
+                other_manifest.name,
+            )
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        try:
+            test_root_available = test_root.is_dir()
+        except OSError:
+            test_root_available = False
+        for tool in (test262_runner, test262_analyze):
+            original_root = tool.TEST262
+            try:
+                tool.TEST262 = str(test_root.parent)
+                for relative, features in ANNEX_B_DATE_FEATURES.items():
+                    path = test_root / relative
+                    self.assertTrue(tool.annex_b_date_path(path), relative)
+                    self.assertEqual(tool.annex_b_date_features(path), features)
+                    self.assertFalse(
+                        tool.should_skip({"features": sorted(features)}, path),
+                        relative,
+                    )
+                    if test_root_available:
+                        metadata = tool.parse_meta(path.read_text())
+                        self.assertEqual(
+                            frozenset(metadata.get("features", [])),
+                            features,
+                            relative,
+                        )
+                future = test_root / "annexB/built-ins/Date/prototype/future.js"
+                self.assertFalse(tool.annex_b_date_path(future))
+                self.assertEqual(tool.annex_b_date_features(future), frozenset())
+                self.assertTrue(
+                    tool.should_skip(
+                        {"features": ["Reflect.construct", "arrow-function"]},
+                        future,
+                    )
+                )
+                for invalid in (None, object()):
+                    self.assertFalse(tool.annex_b_date_path(invalid))
+                    self.assertEqual(tool.annex_b_date_features(invalid), frozenset())
             finally:
                 tool.TEST262 = original_root
 

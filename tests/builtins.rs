@@ -24355,6 +24355,105 @@ fn date_date_setters_update_components_and_lengths() {
 }
 
 #[test]
+fn date_annex_b_legacy_methods_follow_spec() {
+    assert_eq!(
+        run(r#"
+            var d = new Date(Date.UTC(2016, 6, 1, 2, 3, 4, 5));
+            [
+              d.getYear(),
+              d.setYear(99),
+              d.getUTCFullYear(),
+              d.getUTCMonth(),
+              d.getUTCDate(),
+              d.getUTCHours(),
+              Date.prototype.getYear.length,
+              Date.prototype.setYear.length,
+              Date.prototype.toGMTString === Date.prototype.toUTCString,
+              Date.prototype.toGMTString.name
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "116|930794584005|1999|6|1|2|0|1|true|toUTCString"
+        ))
+    );
+    assert_eq!(
+        run(r#"
+            var d = new Date(NaN);
+            var result = d.setYear(16);
+            [result, d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()].join('|');
+        "#),
+        Value::String(Arc::from("-1704153600000|1916|0|1"))
+    );
+    assert_eq!(
+        run(r#"
+            var d = new Date(0);
+            var result = d.setYear({
+              valueOf: function() { d.setTime(86400000); return 70; }
+            });
+            result + ':' + d.getTime();
+        "#),
+        Value::String(Arc::from("0:0"))
+    );
+    assert_eq!(
+        run(r#"
+            var d = new Date(0);
+            var result = d.setYear({
+              valueOf: function() { d.setTime(1); return NaN; }
+            });
+            (result !== result) + ':' + (d.getTime() !== d.getTime());
+        "#),
+        Value::String(Arc::from("true:true"))
+    );
+    assert!(matches!(run("new Date(NaN).getYear();"), Value::Number(n) if n.is_nan()));
+    assert_eq!(
+        run(r#"
+            var names = ['getYear', 'setYear', 'toGMTString'];
+            names.map(function(name) {
+              var desc = Object.getOwnPropertyDescriptor(Date.prototype, name);
+              return desc.writable + ':' + desc.enumerable + ':' + desc.configurable;
+            }).join('|');
+        "#),
+        Value::String(Arc::from("true:false:true|true:false:true|true:false:true"))
+    );
+    assert_eq!(
+        run(r#"
+            var d = new Date(123);
+            try {
+              d.setYear({ valueOf: function() { throw new Error('stop'); } });
+            } catch (error) {}
+            d.getTime();
+        "#),
+        Value::Number(123.0)
+    );
+    assert!(run_err("new Date(0).setYear(Symbol());").contains("TypeError"));
+    assert!(matches!(
+        run("var d = new Date(0); d.setYear(); d.getTime();"),
+        Value::Number(n) if n.is_nan()
+    ));
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            [
+              other.Date.prototype.getYear !== Date.prototype.getYear,
+              other.Date.prototype.setYear !== Date.prototype.setYear,
+              other.Date.prototype.toGMTString === other.Date.prototype.toUTCString,
+              other.Date.prototype.toGMTString !== Date.prototype.toGMTString
+            ].join('|');
+        "#),
+        Value::String(Arc::from("true|true|true|true"))
+    );
+    for source in [
+        "Date.prototype.getYear.call({});",
+        "Date.prototype.setYear.call({}, 2000);",
+        "new Date.prototype.getYear();",
+        "new Date.prototype.setYear();",
+        "new Date.prototype.toGMTString();",
+    ] {
+        assert!(run_err(source).contains("TypeError"), "source: {source}");
+    }
+}
+
+#[test]
 fn date_stringification_parse_and_json_follow_spec() {
     assert_eq!(
         run(r#"

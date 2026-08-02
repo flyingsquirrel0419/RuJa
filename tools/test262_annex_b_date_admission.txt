@@ -1,0 +1,5 @@
+annexB/built-ins/Date/prototype/getYear/not-a-constructor.js
+annexB/built-ins/Date/prototype/setYear/not-a-constructor.js
+annexB/built-ins/Date/prototype/setYear/year-nan.js
+annexB/built-ins/Date/prototype/setYear/year-to-number-err.js
+annexB/built-ins/Date/prototype/toGMTString/not-a-constructor.js

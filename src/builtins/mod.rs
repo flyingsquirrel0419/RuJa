@@ -6891,6 +6891,7 @@ fn install_date_intrinsic_in_env(
             ("valueOf", date_get_time, 0),
             ("getTime", date_get_time, 0),
             ("getFullYear", date_get_component, 0),
+            ("getYear", date_get_component, 0),
             ("getUTCFullYear", date_get_component, 0),
             ("getMonth", date_get_component, 0),
             ("getUTCMonth", date_get_component, 0),
@@ -6921,6 +6922,7 @@ fn install_date_intrinsic_in_env(
             ("setUTCMonth", date_set_component, 2),
             ("setFullYear", date_set_component, 3),
             ("setUTCFullYear", date_set_component, 3),
+            ("setYear", date_set_component, 1),
             ("toString", date_to_string, 0),
             ("toLocaleString", date_to_string, 0),
             ("toUTCString", date_to_string, 0),
@@ -6950,8 +6952,17 @@ fn install_date_intrinsic_in_env(
         let utc = vm.new_native_function_in_env("UTC", date_utc, 7, realm_env)?;
         pin_count += vm.pin(&Value::Object(utc));
 
+        let to_gmt_string = vm.heap.with_obj(prototype.0, |object| {
+            object
+                .props()
+                .lock()
+                .get(&PropertyKey::from("toUTCString"))
+                .map(|descriptor| descriptor.value.clone())
+        });
+
         vm.heap.with_obj(prototype.0, |object| {
-            object.props().lock().insert(
+            let mut props = object.props().lock();
+            props.insert(
                 PropertyKey::symbol(vm.well_known_symbols.to_primitive),
                 PropertyDescriptor {
                     value: Value::Object(to_primitive),
@@ -6963,6 +6974,9 @@ fn install_date_intrinsic_in_env(
                     is_accessor: false,
                 },
             );
+            if let Some(to_gmt_string) = to_gmt_string {
+                props.insert(PropertyKey::from("toGMTString"), data_prop(to_gmt_string));
+            }
         });
         vm.heap.with_obj(constructor.0, |object| {
             let mut props = object.props().lock();

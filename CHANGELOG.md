@@ -4,6 +4,16 @@
 
 ### Changed
 
+- Completed the Annex B legacy Date boundary in every Realm. `getYear`
+  returns the local year minus 1900, `setYear` snapshots the receiver before
+  argument coercion and applies the legacy 0-99 year offset, and
+  `toGMTString` aliases the original `toUTCString` function object. A frozen
+  five-file admission opens only the verified Symbol and non-constructor
+  metadata tests. Pinned focused Test262 moves from **5 pass / 19 fail / 0
+  skip** to **24/0/0**; complete Annex B is expected to move from
+  **1027/19/40** to **1046/0/40**, with the remaining skips limited to
+  IsHTMLDDA host-exotic coverage.
+
 - Implemented Annex B global `escape` and `unescape` in every Realm. Both
   functions coerce their argument exactly once, operate on UTF-16 code units,
   preserve lone surrogates, expose the specified metadata, and reject

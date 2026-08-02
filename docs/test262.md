@@ -1,5 +1,34 @@
 # test262 conformance
 
+## Annex B legacy Date methods
+
+Every Realm installs fresh non-constructable `getYear` and `setYear` methods.
+`getYear` reports `YearFromTime(LocalTime(t)) - 1900`; RuJa currently defines
+local time as UTC. `setYear` reads `[[DateValue]]` before `ToNumber`, uses +0
+for an invalid original value, applies the legacy 1900 offset to integer years
+0 through 99, clips the result, and writes NaN when conversion produces NaN.
+Abrupt argument conversion leaves the original Date value unchanged.
+
+`toGMTString` is not a second native function. It is a descriptor-correct
+reference to each Realm's original `toUTCString`, preserving identity and the
+`toUTCString` name while keeping functions distinct across Realms.
+
+Pinned Test262 `9e61c12835c5e4a3bdba93850427e6742c4f64c4`
+uses an exact five-file admission for three non-constructor tests and two
+Symbol coercion tests. The complete Date scope moves from **5 pass / 19 fail /
+0 skip** to **24/0/0**. Complete Annex B is expected to move from
+**1027/19/40** to **1046/0/40**; all remaining skips require IsHTMLDDA.
+
+```text
+[Decision Log]
+- 목적과 의도: Annex B legacy Date API의 runtime 의미론, Realm identity, metadata, Test262 실행 경계를 함께 완성한다.
+- 기존 구현 및 제약 조건: getYear/setYear/toGMTString이 없었고 Date local-time 연산은 엔진 전체 정책상 UTC로 고정되어 있다. 다섯 metadata tests는 broad unsupported-feature policy에 의해 skip되었다.
+- 검토한 주요 대안: 표준 getFullYear/setFullYear 함수를 직접 alias, 별도 toGMTString native 생성, broad Symbol/Reflect.construct admission, 또는 legacy 전용 계산과 exact five-file admission.
+- 선택한 방식: getYear는 기존 DateValue snapshot에서 year-1900을 계산한다. setYear는 coercion 전 snapshot과 기존 MakeDay/TimeClip helpers를 사용하며 0-99 offset을 별도로 적용한다. toGMTString은 bootstrap 시 toUTCString의 동일 Value를 설치하고, pinned 다섯 경로의 실제 metadata feature만 제거한다.
+- 다른 대안 대신 이 방식을 선택한 이유: 표준 setter alias는 0-99 및 invalid-date 규칙이 다르고 별도 native는 명세의 function identity를 깨뜨린다. Broad admission은 검증하지 않은 미래 tests까지 연다.
+- 장점, 단점 및 영향: focused 24 tests가 전부 실행·통과하고 Annex B runtime failure가 제거된다. 향후 비-UTC timezone을 지원하면 getYear/setYear의 LocalTime 및 UTC 변환 경계를 함께 재검토해야 한다.
+```
+
 ## Annex B global escape functions
 
 Every Realm now installs fresh non-constructable `escape` and `unescape`

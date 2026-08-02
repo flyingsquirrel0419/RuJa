@@ -1617,6 +1617,7 @@ pub(crate) fn date_get_component(
     let time = date_time_within_day(ts);
     let value = match name.as_ref() {
         "getFullYear" | "getUTCFullYear" => year as f64,
+        "getYear" => year as f64 - 1900.0,
         "getMonth" | "getUTCMonth" => (month_one_based - 1) as f64,
         "getDate" | "getUTCDate" => date as f64,
         "getDay" | "getUTCDay" => (day + 4).rem_euclid(7) as f64,
@@ -1651,10 +1652,14 @@ pub(crate) fn date_set_component(
         "setDate" | "setUTCDate" => date_set_date_component(vm, args, ts, value, 1)?,
         "setMonth" | "setUTCMonth" => date_set_date_component(vm, args, ts, value, 2)?,
         "setFullYear" | "setUTCFullYear" => date_set_date_component(vm, args, ts, value, 3)?,
+        "setYear" => date_set_legacy_year(ts, value),
         _ => value,
     };
     if value.is_nan()
-        && !matches!(name.as_ref(), "setTime" | "setFullYear" | "setUTCFullYear")
+        && !matches!(
+            name.as_ref(),
+            "setTime" | "setFullYear" | "setUTCFullYear" | "setYear"
+        )
         && ts.is_nan()
     {
         return Ok(Value::Number(f64::NAN));
@@ -1668,6 +1673,15 @@ pub(crate) fn date_set_component(
         }
     });
     Ok(Value::Number(value))
+}
+
+fn date_set_legacy_year(ts: f64, year: f64) -> f64 {
+    let base = if ts.is_nan() { 0.0 } else { ts };
+    let (_, month, date, _, time) = date_components(base);
+    date_time_clip(date_make_date(
+        date_make_day_with_year_offset(year, month, date),
+        time,
+    ))
 }
 
 fn date_set_time_component(
