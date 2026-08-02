@@ -4,6 +4,13 @@
 
 ### Changed
 
+- Added Realm-local `SuppressedError(error, suppressed, message)` with the
+  specified Error inheritance, constructor metadata, optional message
+  coercion, and non-enumerable `error`/`suppressed` properties. Constructor
+  inputs and the result stay rooted across observable message coercion. A
+  frozen 22-file Test262 admission opens only the intrinsic tests; explicit
+  resource-management syntax remains independently gated.
+
 - Reworked `decodeURI` and `decodeURIComponent` into a byte-indexed decoder.
   Percent triplets now use a fixed four-byte stack buffer, reserved escapes
   retain their original spelling, and supplementary scalars append directly

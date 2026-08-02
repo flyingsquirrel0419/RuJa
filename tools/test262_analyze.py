@@ -50,6 +50,9 @@ try:
     from test262_object_constructor_admission import (
         OBJECT_CONSTRUCTOR_FEATURES, OBJECT_CONSTRUCTOR_FILES,
     )
+    from test262_suppressed_error_admission import (
+        SUPPRESSED_ERROR_FEATURES, SUPPRESSED_ERROR_FILES,
+    )
     from test262_object_from_entries_admission import (
         OBJECT_FROM_ENTRIES_FEATURES, OBJECT_FROM_ENTRIES_FILES,
     )
@@ -300,6 +303,9 @@ except ModuleNotFoundError:
     )
     from tools.test262_object_constructor_admission import (
         OBJECT_CONSTRUCTOR_FEATURES, OBJECT_CONSTRUCTOR_FILES,
+    )
+    from tools.test262_suppressed_error_admission import (
+        SUPPRESSED_ERROR_FEATURES, SUPPRESSED_ERROR_FILES,
     )
     from tools.test262_object_from_entries_admission import (
         OBJECT_FROM_ENTRIES_FEATURES, OBJECT_FROM_ENTRIES_FILES,
@@ -2238,6 +2244,24 @@ def aggregate_error_path(path):
     rel_text = rel.as_posix()
     return rel_text.startswith(AGGREGATE_ERROR_PREFIXES)
 
+def suppressed_error_path(path):
+    if path is None:
+        return False
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except (OSError, TypeError, ValueError):
+        return False
+    return rel.as_posix() in SUPPRESSED_ERROR_FILES
+
+def suppressed_error_features(path):
+    if path is None:
+        return frozenset()
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except (OSError, TypeError, ValueError):
+        return frozenset()
+    return SUPPRESSED_ERROR_FEATURES.get(rel.as_posix(), frozenset())
+
 def error_constructor_realm_path(path):
     try:
         rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
@@ -4027,6 +4051,8 @@ def should_skip(meta, path=None):
         feats.difference_update(ERROR_STACK_FEATURES)
     if path is not None and aggregate_error_path(path):
         feats.difference_update(AGGREGATE_ERROR_FEATURES)
+    if path is not None and suppressed_error_path(path):
+        feats.difference_update(suppressed_error_features(path))
     if path is not None and error_constructor_realm_path(path):
         feats.difference_update(ERROR_CONSTRUCTOR_REALM_FEATURES)
     if path is not None and error_cause_path(path):

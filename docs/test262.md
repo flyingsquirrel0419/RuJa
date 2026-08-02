@@ -14023,3 +14023,31 @@ the job matrix.
 - 다른 대안 대신 이 방식을 선택한 이유: Directory-wide admission accepts future tests implicitly; the broader class corpus needs a frozen strict/sloppy-aware audit; forced evidence does not correct supported accounting. Four exact rows match the complete residual exotic surface.
 - 장점, 단점 및 영향: Both subclass directories become 72/72 with no hidden skip, policy drift is tested, and unrelated SharedArrayBuffer/WeakRef gates remain intact. This unit changes conformance ownership, not runtime semantics.
 ```
+## SuppressedError exact admission
+
+RuJa now installs `SuppressedError(error, suppressed, message)` in every Realm.
+The constructor inherits from that Realm's `%Error%`, its prototype inherits
+from `%Error.prototype%`, and construction follows the active `newTarget`
+including foreign-Realm fallback. A defined message is coerced before the own
+`error` and `suppressed` properties are created; all three properties are
+writable, non-enumerable, and configurable. Constructor inputs and the result
+remain rooted across observable message coercion. Error-family prototypes keep
+`toString` only on `%Error.prototype%`; `SuppressedError.prototype` inherits the
+same Realm-local function instead of shadowing it.
+
+The frozen admission contains all **22** files in
+`built-ins/SuppressedError` at pinned Test262 revision
+`9e61c12835c5e4a3bdba93850427e6742c4f64c4`. Runner and analyzer remove only
+each exact file's declared features. Future siblings and the wider
+explicit-resource-management syntax corpus remain skipped until independently
+implemented and audited.
+
+```text
+[Decision Log]
+- 목적과 의도: Complete the standalone SuppressedError intrinsic without claiming support for the wider explicit-resource-management syntax and disposal semantics.
+- 기존 구현 및 제약 조건: The error-family factory already supplied Realm-local prototypes and newTarget fallback, but SuppressedError was absent; message coercion can execute arbitrary JavaScript and trigger GC before payload properties are published.
+- 검토한 주요 대안: Add a separate intrinsic registry, reuse AggregateError, lift explicit-resource-management globally, admit the directory by prefix, or extend the existing error-family factory with an exact manifest.
+- 선택한 방식: Extend the error-family factory with a dedicated three-argument constructor, root inputs and result across coercion, reuse the existing Realm error-prototype registry, and freeze all 22 current paths with their complete feature metadata.
+- 다른 대안 대신 이 방식을 선택한 이유: A new registry duplicates existing Realm lifecycle machinery; AggregateError has incompatible iteration and property semantics; broad feature or prefix admission would hide unsupported syntax and future tests. The selected design reuses proven Realm/GC behavior while keeping policy exact.
+- 장점, 단점 및 영향: The complete intrinsic directory becomes measurable as 22/0/0 with correct descriptors, ordering, plain-call behavior, subclassing, and cross-Realm fallback. Explicit resource-management statements and disposal algorithms remain a separate implementation unit.
+```

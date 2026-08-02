@@ -72,6 +72,10 @@ from test262_object_constructor_admission import (
     OBJECT_CONSTRUCTOR_FEATURES,
     OBJECT_CONSTRUCTOR_FILES,
 )
+from test262_suppressed_error_admission import (
+    SUPPRESSED_ERROR_FEATURES,
+    SUPPRESSED_ERROR_FILES,
+)
 from test262_object_from_entries_admission import (
     OBJECT_FROM_ENTRIES_FEATURES,
     OBJECT_FROM_ENTRIES_FILES,
@@ -2756,6 +2760,152 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                         self.assertFalse(tool.object_from_entries_path(path))
                         self.assertTrue(
                             tool.should_skip({"features": ["Symbol.iterator"]}, path)
+                        )
+                finally:
+                    tool.TEST262 = original_root
+
+    def test_suppressed_error_manifest_is_exact_live_disjoint_and_shared(self):
+        expected = {
+            "built-ins/SuppressedError/is-a-constructor.js": {
+                "Reflect.construct",
+                "explicit-resource-management",
+            },
+            "built-ins/SuppressedError/length.js": {"explicit-resource-management"},
+            "built-ins/SuppressedError/message-method-prop-cast.js": {
+                "explicit-resource-management",
+            },
+            "built-ins/SuppressedError/message-method-prop.js": {
+                "explicit-resource-management",
+            },
+            "built-ins/SuppressedError/message-tostring-abrupt-symbol.js": {
+                "explicit-resource-management",
+                "Symbol",
+                "Symbol.toPrimitive",
+            },
+            "built-ins/SuppressedError/message-tostring-abrupt.js": {
+                "explicit-resource-management",
+                "Symbol.toPrimitive",
+            },
+            "built-ins/SuppressedError/message-undefined-no-prop.js": {
+                "explicit-resource-management",
+            },
+            "built-ins/SuppressedError/name.js": {"explicit-resource-management"},
+            "built-ins/SuppressedError/newtarget-is-undefined.js": {
+                "explicit-resource-management",
+            },
+            "built-ins/SuppressedError/newtarget-proto-custom.js": {
+                "explicit-resource-management",
+                "Reflect.construct",
+            },
+            "built-ins/SuppressedError/newtarget-proto-fallback.js": {
+                "explicit-resource-management",
+                "Symbol",
+            },
+            "built-ins/SuppressedError/newtarget-proto.js": {
+                "explicit-resource-management",
+            },
+            "built-ins/SuppressedError/order-of-args-evaluation.js": {
+                "explicit-resource-management",
+                "Symbol.iterator",
+            },
+            "built-ins/SuppressedError/prop-desc.js": {
+                "explicit-resource-management",
+            },
+            "built-ins/SuppressedError/proto-from-ctor-realm.js": {
+                "explicit-resource-management",
+                "cross-realm",
+                "Reflect",
+                "Symbol",
+            },
+            "built-ins/SuppressedError/proto.js": {"explicit-resource-management"},
+            "built-ins/SuppressedError/prototype/constructor.js": {
+                "explicit-resource-management",
+            },
+            "built-ins/SuppressedError/prototype/errors-absent-on-prototype.js": {
+                "explicit-resource-management",
+            },
+            "built-ins/SuppressedError/prototype/message.js": {
+                "explicit-resource-management",
+            },
+            "built-ins/SuppressedError/prototype/name.js": {
+                "explicit-resource-management",
+            },
+            "built-ins/SuppressedError/prototype/prop-desc.js": {
+                "explicit-resource-management",
+            },
+            "built-ins/SuppressedError/prototype/proto.js": {
+                "explicit-resource-management",
+            },
+        }
+        expected = {
+            relative: frozenset(features) for relative, features in expected.items()
+        }
+        self.assertEqual(len(expected), 22)
+        self.assertEqual(SUPPRESSED_ERROR_FILES, frozenset(expected))
+        self.assertEqual(SUPPRESSED_ERROR_FEATURES, expected)
+
+        tools_dir = Path(__file__).resolve().parent
+        for manifest in tools_dir.glob("test262_*_admission.txt"):
+            if manifest.name == "test262_suppressed_error_admission.txt":
+                continue
+            existing = {
+                line
+                for raw_line in manifest.read_text().splitlines()
+                if (line := raw_line.strip()) and not line.startswith("#")
+            }
+            self.assertTrue(SUPPRESSED_ERROR_FILES.isdisjoint(existing), manifest.name)
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        try:
+            test_root_available = test_root.is_dir()
+        except OSError:
+            test_root_available = False
+        if test_root_available:
+            for relative, features in expected.items():
+                path = test_root / relative
+                self.assertTrue(path.is_file(), relative)
+                metadata = test262_runner.parse_meta(path.read_text())
+                self.assertEqual(
+                    frozenset(metadata.get("features", [])), features, relative
+                )
+                self.assertEqual(metadata.get("flags", []), [], relative)
+                self.assertIsNone(metadata.get("negative"), relative)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            future = root / "test/built-ins/SuppressedError/future.js"
+            outside = root / "test/built-ins/Other/suppressed-error.js"
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for relative, features in expected.items():
+                        path = root / "test" / relative
+                        self.assertTrue(tool.suppressed_error_path(path), relative)
+                        self.assertEqual(
+                            tool.suppressed_error_features(path), features, relative
+                        )
+                        self.assertFalse(
+                            tool.should_skip({"features": sorted(features)}, path),
+                            relative,
+                        )
+                        self.assertTrue(
+                            tool.should_skip(
+                                {"features": sorted(features | {"decorators"})},
+                                path,
+                            ),
+                            relative,
+                        )
+                    for path in (future, outside):
+                        self.assertFalse(tool.suppressed_error_path(path))
+                        self.assertEqual(
+                            tool.suppressed_error_features(path), frozenset()
+                        )
+                        self.assertTrue(
+                            tool.should_skip(
+                                {"features": ["explicit-resource-management"]},
+                                path,
+                            )
                         )
                 finally:
                     tool.TEST262 = original_root

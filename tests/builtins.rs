@@ -13143,6 +13143,81 @@ fn native_error_constructors_inherit_from_error_constructor() {
 }
 
 #[test]
+fn suppressed_error_constructor_shape_order_and_realms() {
+    assert_eq!(
+        run(r#"
+            var error = { kind: "primary" };
+            var suppressed = { kind: "secondary" };
+            var value = new SuppressedError(error, suppressed, 42, { cause: 1 });
+            var message = Object.getOwnPropertyDescriptor(value, "message");
+            var errorDesc = Object.getOwnPropertyDescriptor(value, "error");
+            var suppressedDesc = Object.getOwnPropertyDescriptor(value, "suppressed");
+            var globalDesc = Object.getOwnPropertyDescriptor(globalThis, "SuppressedError");
+            [
+              SuppressedError.length,
+              SuppressedError.name,
+              Object.getPrototypeOf(SuppressedError) === Error,
+              Object.getPrototypeOf(SuppressedError.prototype) === Error.prototype,
+              SuppressedError.prototype.constructor === SuppressedError,
+              SuppressedError.prototype.name,
+              SuppressedError.prototype.message,
+              value instanceof SuppressedError,
+              Error.isError(value),
+              value.message,
+              value.error === error,
+              value.suppressed === suppressed,
+              Object.prototype.hasOwnProperty.call(value, "cause"),
+              Object.getOwnPropertyNames(value).slice(-3).join(":"),
+              message.writable && !message.enumerable && message.configurable,
+              errorDesc.writable && !errorDesc.enumerable && errorDesc.configurable,
+              suppressedDesc.writable && !suppressedDesc.enumerable && suppressedDesc.configurable,
+              globalDesc.writable && !globalDesc.enumerable && globalDesc.configurable,
+              !Object.getOwnPropertyDescriptor(SuppressedError, "prototype").writable,
+              !Object.getOwnPropertyDescriptor(SuppressedError, "prototype").configurable,
+              !Object.prototype.hasOwnProperty.call(new SuppressedError(), "message"),
+              !Object.prototype.hasOwnProperty.call(SuppressedError.prototype, "toString"),
+              SuppressedError.prototype.toString === Error.prototype.toString
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "3|SuppressedError|true|true|true|SuppressedError||true|true|42|true|true|false|message:error:suppressed|true|true|true|true|true|true|true|true|true"
+        ))
+    );
+
+    assert_eq!(
+        run(r#"
+            var plain = SuppressedError(1, 2, "plain");
+            var custom = {};
+            function NewTarget() {}
+            NewTarget.prototype = custom;
+            var customValue = Reflect.construct(SuppressedError, [1, 2], NewTarget);
+            var other = $262.createRealm().global;
+            var foreignTarget = new other.Function();
+            foreignTarget.prototype = undefined;
+            var foreignValue = Reflect.construct(SuppressedError, [1, 2], foreignTarget);
+            [
+              Object.getPrototypeOf(plain) === SuppressedError.prototype,
+              plain instanceof SuppressedError,
+              Object.getPrototypeOf(customValue) === custom,
+              Object.getPrototypeOf(foreignValue) === other.SuppressedError.prototype,
+              Object.getPrototypeOf(other.SuppressedError) === other.Error,
+              Object.getPrototypeOf(other.SuppressedError.prototype) === other.Error.prototype
+            ].join(",");
+        "#),
+        Value::String(Arc::from("true,true,true,true,true,true"))
+    );
+
+    assert!(run_err(
+        r#"
+        new SuppressedError(1, 2, {
+          toString: function() { throw new Error("message boom"); }
+        });
+        "#
+    )
+    .contains("message boom"));
+}
+
+#[test]
 fn error_constructors_use_new_target_realm_default_prototype() {
     assert_eq!(
         run(r#"

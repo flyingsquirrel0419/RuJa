@@ -942,6 +942,89 @@ fn direct_reference_rooting_restores_pins_after_key_coercion_errors() {
 }
 
 #[test]
+fn suppressed_error_roots_payloads_across_message_coercion_and_restores_pins() {
+    fn force_gc(vm: &mut Vm, _: &[Value], _: Option<Value>) -> crate::error::Result<Value> {
+        vm.gc();
+        Ok(Value::String("rooted message".into()))
+    }
+
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn("forceSuppressedErrorGc", force_gc, 0)
+        .expect("forced-GC hook should register");
+    vm.run(
+        r#"
+        var suppressedErrorPrimary = { marker: "primary" };
+        var suppressedErrorSecondary = { marker: "secondary" };
+        var suppressedErrorMessage = {
+          toString: function() { return forceSuppressedErrorGc(); }
+        };
+        var suppressedErrorAbruptMessage = {
+          toString: function() {
+            forceSuppressedErrorGc();
+            throw new Error("message abrupt");
+          }
+        };
+        "#,
+    )
+    .expect("SuppressedError root fixtures should initialize");
+    let primary = vm.get_global("suppressedErrorPrimary");
+    let secondary = vm.get_global("suppressedErrorSecondary");
+    let message = vm.get_global("suppressedErrorMessage");
+    let abrupt_message = vm.get_global("suppressedErrorAbruptMessage");
+    vm.run(
+        "suppressedErrorPrimary = undefined; \
+         suppressedErrorSecondary = undefined; \
+         suppressedErrorMessage = undefined; \
+         suppressedErrorAbruptMessage = undefined;",
+    )
+    .expect("fixtures should be reachable only through constructor inputs");
+    let baseline = vm.gc_pins.len();
+
+    let result = crate::builtins::suppressed_error_constructor(
+        &mut vm,
+        &[primary.clone(), secondary.clone(), message.clone()],
+        None,
+    )
+    .expect("payloads should survive message coercion GC");
+    assert_eq!(
+        vm.get_property(&result, "error")
+            .expect("primary payload should exist"),
+        primary
+    );
+    assert_eq!(
+        vm.get_property(&result, "suppressed")
+            .expect("secondary payload should exist"),
+        secondary
+    );
+    assert_eq!(
+        vm.get_property(&result, "message")
+            .expect("coerced message should exist"),
+        Value::String("rooted message".into())
+    );
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    let error = crate::builtins::suppressed_error_constructor(
+        &mut vm,
+        &[primary.clone(), secondary.clone(), abrupt_message],
+        None,
+    )
+    .expect_err("abrupt message coercion should propagate");
+    assert!(error.message.contains("message abrupt"));
+    assert_eq!(vm.gc_pins.len(), baseline);
+
+    vm.fail_next_gc_pin_reservation = true;
+    let error = crate::builtins::suppressed_error_constructor(
+        &mut vm,
+        &[primary, secondary, message],
+        None,
+    )
+    .expect_err("temporary-root reservation failure should propagate");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert!(!vm.fail_next_gc_pin_reservation);
+    assert_eq!(vm.gc_pins.len(), baseline);
+}
+
+#[test]
 fn retained_reference_move_reserves_roots_before_get_and_restores_pins() {
     let mut vm = Vm::new().expect("failed to initialize VM");
     vm.run(
@@ -1238,6 +1321,7 @@ const EAGER_NATIVE_CONSTRUCTOR_SOURCES: &[&str] = &[
     "TypeError",
     "URIError",
     "AggregateError",
+    "SuppressedError",
 ];
 
 const DEFERRED_NATIVE_CONSTRUCTOR_SOURCES: &[&str] = &[
@@ -1297,6 +1381,7 @@ const FOREIGN_EAGER_NATIVE_CONSTRUCTOR_SOURCES: &[&str] = &[
     "TypeError",
     "URIError",
     "AggregateError",
+    "SuppressedError",
 ];
 
 fn realm_registry_counts(vm: &Vm) -> [usize; 40] {

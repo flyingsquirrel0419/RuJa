@@ -4446,7 +4446,8 @@ pub(crate) fn object_to_string(
                             Some("RegExp") => "RegExp".to_string(),
                             Some(
                                 "Error" | "EvalError" | "RangeError" | "ReferenceError"
-                                | "SyntaxError" | "TypeError" | "URIError" | "AggregateError",
+                                | "SyntaxError" | "TypeError" | "URIError" | "AggregateError"
+                                | "SuppressedError",
                             ) => "Error".to_string(),
                             _ => "Object".to_string(),
                         }
@@ -5416,12 +5417,11 @@ fn make_error_constructor_in_env(
     });
     let proto_idx = GcIdx(vm.heap.allocate(proto_obj)?);
 
-    let ctor_native = if name == "AggregateError" {
-        aggregate_error_constructor
-    } else {
-        error_constructor
+    let (ctor_native, ctor_length): (NativeFn, usize) = match name {
+        "AggregateError" => (aggregate_error_constructor, 2),
+        "SuppressedError" => (suppressed_error_constructor, 3),
+        _ => (error_constructor, 1),
     };
-    let ctor_length = if name == "AggregateError" { 2 } else { 1 };
     let ctor_func = FunctionData {
         name: Some(Arc::from(name)),
         kind: FunctionKind::Native {
@@ -5458,7 +5458,6 @@ fn make_error_constructor_in_env(
             );
         });
     }
-    let ts_fn = vm.new_native_function_in_env("toString", error_to_string, 0, env)?;
     vm.heap.with_obj(proto_idx.0, |obj| {
         obj.props().lock().insert(
             PropertyKey::from("constructor"),
@@ -5472,15 +5471,16 @@ fn make_error_constructor_in_env(
             PropertyKey::from("message"),
             data_prop(Value::String(Arc::from(""))),
         );
-        obj.props().lock().insert(
-            PropertyKey::from("toString"),
-            data_prop(Value::Object(ts_fn)),
-        );
     });
     if name == "Error" {
+        let ts_fn = vm.new_native_function_in_env("toString", error_to_string, 0, env)?;
         let stack_get = vm.new_native_function_in_env("get stack", error_stack_get, 0, env)?;
         let stack_set = vm.new_native_function_in_env("set stack", error_stack_set, 1, env)?;
         vm.heap.with_obj(proto_idx.0, |obj| {
+            obj.props().lock().insert(
+                PropertyKey::from("toString"),
+                data_prop(Value::Object(ts_fn)),
+            );
             obj.props().lock().insert(
                 PropertyKey::from("stack"),
                 accessor_prop(Value::Object(stack_get), Value::Object(stack_set)),
@@ -6544,6 +6544,7 @@ fn populate_secondary_realm(vm: &mut Vm, realm_env: GcIdx) -> error::Result<Valu
         "TypeError",
         "URIError",
         "AggregateError",
+        "SuppressedError",
     ] {
         let (ctor, proto) = make_error_constructor_in_env(vm, name, realm_env)?;
         vm.heap.with_obj(ctor.0, |obj| {
@@ -11717,6 +11718,56 @@ fn aggregate_error_constructor(
     Ok(Value::Object(idx))
 }
 
+pub(crate) fn suppressed_error_constructor(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let error = args.first().cloned().unwrap_or(Value::Undefined);
+    let suppressed = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let message = args.get(2).cloned().unwrap_or(Value::Undefined);
+    let values = [error, suppressed, message];
+    let required_roots = values.iter().try_fold(1usize, |count, value| {
+        count
+            .checked_add(Vm::value_root_count(value))
+            .ok_or_else(|| Error::range("temporary root set is too large"))
+    })?;
+    vm.try_reserve_gc_pins(required_roots)?;
+    let mut pin_count = vm.pin_many(&values);
+    let idx = match error_object_for_constructor(vm, this) {
+        Ok(idx) => idx,
+        Err(error) => {
+            vm.unpin_many(pin_count);
+            return Err(error);
+        }
+    };
+    pin_count += vm.pin(&Value::Object(idx));
+
+    let result = (|| {
+        if !matches!(values[2], Value::Undefined) {
+            let message = vm.to_string(&values[2])?;
+            vm.define_own_property_or_throw(
+                &Value::Object(idx),
+                PropertyKey::from("message"),
+                data_prop(Value::String(message)),
+            )?;
+        }
+        vm.define_own_property_or_throw(
+            &Value::Object(idx),
+            PropertyKey::from("error"),
+            data_prop(values[0].clone()),
+        )?;
+        vm.define_own_property_or_throw(
+            &Value::Object(idx),
+            PropertyKey::from("suppressed"),
+            data_prop(values[1].clone()),
+        )?;
+        Ok(Value::Object(idx))
+    })();
+    vm.unpin_many(pin_count);
+    result
+}
+
 const OBJECT_STATIC_METHODS: &[(&str, NativeFn, usize)] = &[
     ("keys", object_keys, 1),
     ("values", object_values, 1),
@@ -11865,6 +11916,7 @@ pub fn setup(vm: &mut Vm) -> error::Result<()> {
         "EvalError",
         "URIError",
         "AggregateError",
+        "SuppressedError",
     ] {
         let (ctor, _) = make_error_constructor(vm, name)?;
         vm.heap.with_obj(ctor.0, |obj| {

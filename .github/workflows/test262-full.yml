@@ -66,6 +66,12 @@ jobs:
           TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
           test262_tooling_test.ClassSubclassBuiltinAdmissionTests
           -v
+      - name: Verify exact SuppressedError admission
+        working-directory: tools
+        run: >-
+          TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
+          test262_tooling_test.ModuleCoreAdmissionTests.test_suppressed_error_manifest_is_exact_live_disjoint_and_shared
+          -v
       - name: Verify exact static import-attribute admission
         working-directory: tools
         run: >-
@@ -219,6 +225,36 @@ jobs:
           cat regexp_unicode_sets_result.txt
           grep -q '^RATE=100.0 PASS=142 FAIL=0 SKIP=0 TOTAL=142 RAN=142$' \
             regexp_unicode_sets_result.txt
+
+  suppressed-error:
+    needs: [build, setup]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download RuJa binary
+        uses: actions/download-artifact@v4
+        with:
+          name: ruja-release
+          path: target/release/
+      - run: chmod +x target/release/ruja
+      - name: Checkout pinned SuppressedError tests
+        uses: actions/checkout@v4
+        with:
+          repository: tc39/test262
+          ref: ${{ env.TEST262_REV }}
+          path: test262
+          sparse-checkout: |
+            harness
+            test/built-ins/SuppressedError
+      - name: Require the exact SuppressedError boundary to pass
+        run: |
+          mapfile -t files < <(sed -e '/^#/d' -e '/^$/d' \
+            tools/test262_suppressed_error_admission.txt)
+          TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
+            "${files[@]}" > suppressed_error_result.txt 2>&1
+          cat suppressed_error_result.txt
+          grep -q '^RATE=100.0 PASS=22 FAIL=0 SKIP=0 TOTAL=22 RAN=22$' \
+            suppressed_error_result.txt
 
   regexp-named-groups:
     needs: [build, setup]
