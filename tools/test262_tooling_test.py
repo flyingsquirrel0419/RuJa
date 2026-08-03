@@ -3093,6 +3093,7 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                 "basic.js",
                 "builtin.js",
                 "length.js",
+                "limits.js",
                 "name.js",
                 "non-integer.js",
                 "not-a-constructor.js",
@@ -3106,6 +3107,7 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                 "basic.js",
                 "builtin.js",
                 "length.js",
+                "limits.js",
                 "name.js",
                 "not-a-constructor.js",
                 "prop-desc.js",
@@ -3114,7 +3116,7 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
         }
         test_root = Path(test262_runner.TEST262) / "test"
         self.assertEqual(TEMPORAL_INSTANT_EPOCH_FACTORY_FILES, frozenset(expected))
-        self.assertEqual(len(expected), 17)
+        self.assertEqual(len(expected), 19)
 
         live_directories = tuple(
             test_root / prefix for prefix in (milliseconds, nanoseconds)
@@ -3132,17 +3134,29 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                 path.relative_to(test_root).as_posix()
                 for prefix in (milliseconds, nanoseconds)
                 for path in (test_root / prefix).glob("*.js")
-                if path.name != "limits.js"
             }
             self.assertEqual(live, expected)
             for relative in expected:
                 metadata = test262_runner.parse_meta((test_root / relative).read_text())
+                filename = Path(relative).name
+                if filename in {"length.js", "name.js", "prop-desc.js"}:
+                    expected_includes = ["propertyHelper.js"]
+                elif filename == "not-a-constructor.js":
+                    expected_includes = ["isConstructor.js"]
+                elif filename in {"limits.js", "subclassing-ignored.js"}:
+                    expected_includes = ["temporalHelpers.js"]
+                else:
+                    expected_includes = []
                 self.assertEqual(
                     TEMPORAL_INSTANT_EPOCH_FACTORY_FEATURES[relative],
                     frozenset(metadata.get("features", [])),
                 )
                 self.assertEqual(metadata.get("flags", []), [])
                 self.assertIsNone(metadata.get("negative"))
+                self.assertEqual(
+                    metadata.get("includes", []),
+                    expected_includes,
+                )
 
         with patch("pathlib.Path.is_dir", side_effect=PermissionError):
             self.assertFalse(live_test262_available())

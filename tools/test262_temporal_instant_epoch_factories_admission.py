@@ -20,5 +20,5 @@ TEMPORAL_INSTANT_EPOCH_FACTORY_FEATURES = {
     for path in TEMPORAL_INSTANT_EPOCH_FACTORY_FILES
 }
 
-if len(TEMPORAL_INSTANT_EPOCH_FACTORY_FILES) != 17:
-    raise RuntimeError("Temporal.Instant epoch factory admission must contain 17 files")
+if len(TEMPORAL_INSTANT_EPOCH_FACTORY_FILES) != 19:
+    raise RuntimeError("Temporal.Instant epoch factory admission must contain 19 files")

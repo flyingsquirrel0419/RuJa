@@ -14079,7 +14079,27 @@ timezone algorithms.
 - 다른 대안 대신 이 방식을 선택한 이유: Constructor work has much larger parsing and arithmetic scope; shared objects violate Realm identity; directory-wide admission would overstate support. The selected boundary is independently complete and measurable.
 - 장점, 단점 및 영향: Namespace descriptors, prototypes, Realm identity, allocation rollback, and exact 4/0/0 coverage are verified. All Temporal constructors and algorithms remain explicitly unsupported and can land in later narrow units.
 ```
-# Temporal.Instant.from canonical string boundary
+## Temporal.Instant epoch factory completion
+
+`tools/test262_temporal_instant_epoch_factories_admission.txt` freezes all
+**19** files in the pinned `fromEpochMilliseconds` and
+`fromEpochNanoseconds` directories. The two endpoint files are admitted now
+that their shared `Temporal.Instant.from(string)` and `equals` assertions use
+the exact nanosecond conversion path. Tooling freezes each path, feature list,
+flags, negative metadata, and exact harness include lists. The dedicated CI job
+requires **19 pass / 0 fail / 0 skip**.
+
+```text
+[Decision Log]
+- 목적과 의도: 이미 구현된 두 epoch factory의 전체 pinned Test262 디렉터리를 누락 없이 지원 경계로 공개한다.
+- 기존 구현 및 제약 조건: 초기 17개 admission은 factory만으로 독립 실행 가능한 파일에 한정됐고, 두 limits.js는 당시 미구현이던 Instant 문자열 변환과 equals에 의존했다. 그 의존성은 현재 구현됐다.
+- 검토한 주요 대안: 17개 경계를 유지하기, 디렉터리 prefix 전체를 허용하기, 현재 19개 파일과 메타데이터를 exact manifest로 고정하기를 검토했다.
+- 선택한 방식: 두 limits.js를 manifest에 추가하고 정적 기대 집합, live metadata, CI 결과 개수를 19개로 함께 고정한다.
+- 다른 대안 대신 이 방식을 선택한 이유: 구현된 endpoint 의미론을 supported accounting에 반영하되 미래 테스트가 검토 없이 허용되는 prefix 정책은 피하기 위해서다.
+- 장점, 단점 및 영향: 두 factory 디렉터리가 19/0/0으로 완결되고 metadata drift도 실패한다. 향후 새 sibling 파일은 별도 admission 변경이 필요하다.
+```
+
+## Temporal.Instant.from canonical string boundary
 
 `tools/test262_temporal_instant_from_admission.txt` freezes 15 tests for
 `Temporal.Instant.from` and the matching `equals` conversion path. The admitted

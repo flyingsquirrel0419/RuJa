@@ -375,7 +375,7 @@ jobs:
           TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
             "${files[@]}" > temporal_instant_epoch_factories_result.txt 2>&1
           cat temporal_instant_epoch_factories_result.txt
-          grep -q '^RATE=100.0 PASS=17 FAIL=0 SKIP=0 TOTAL=17 RAN=17$' \
+          grep -q '^RATE=100.0 PASS=19 FAIL=0 SKIP=0 TOTAL=19 RAN=19$' \
             temporal_instant_epoch_factories_result.txt
 
   temporal-instant-equals:
