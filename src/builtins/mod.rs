@@ -6288,7 +6288,7 @@ pub(crate) fn install_temporal_namespace_in_env(
     global: Option<&Value>,
     object_proto: Value,
 ) -> error::Result<Value> {
-    vm.try_reserve_gc_pins(8)?;
+    vm.try_reserve_gc_pins(9)?;
     let mut pin_count = 0;
     let result = (|| {
         let instant_prototype = Value::Object(vm.alloc(HeapObj::Object(ObjectData {
@@ -6337,6 +6337,13 @@ pub(crate) fn install_temporal_namespace_in_env(
             env,
         )?);
         pin_count += vm.pin(&epoch_nanoseconds);
+        let equals = Value::Object(vm.new_native_function_in_env_with_gc_retry(
+            "equals",
+            temporal_instant_equals,
+            1,
+            env,
+        )?);
+        pin_count += vm.pin(&equals);
 
         let Value::Object(instant_constructor_index) = instant_constructor.clone() else {
             unreachable!()
@@ -6376,6 +6383,7 @@ pub(crate) fn install_temporal_namespace_in_env(
                 PropertyKey::from("epochNanoseconds"),
                 accessor_get_prop(epoch_nanoseconds),
             );
+            props.insert(PropertyKey::from("equals"), data_prop(equals));
             let mut tag = data_prop(Value::String(Arc::from("Temporal.Instant")));
             tag.writable = false;
             props.insert(
@@ -6551,6 +6559,17 @@ fn temporal_instant_epoch_nanoseconds(
     this: Option<Value>,
 ) -> error::Result<Value> {
     temporal_instant_epoch(vm, this).map(Value::BigInt)
+}
+
+fn temporal_instant_equals(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let epoch_nanoseconds = temporal_instant_epoch(vm, this)?;
+    let other_epoch_nanoseconds =
+        temporal_instant_epoch(vm, Some(args.first().cloned().unwrap_or(Value::Undefined)))?;
+    Ok(Value::Bool(epoch_nanoseconds == other_epoch_nanoseconds))
 }
 
 fn temporal_instant_epoch_milliseconds(

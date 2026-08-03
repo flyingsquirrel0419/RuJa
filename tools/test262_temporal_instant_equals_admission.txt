@@ -1,0 +1,8 @@
+# Frozen Temporal.Instant.prototype.equals tests independent of string parsing.
+built-ins/Temporal/Instant/prototype/equals/basic.js
+built-ins/Temporal/Instant/prototype/equals/branding.js
+built-ins/Temporal/Instant/prototype/equals/builtin.js
+built-ins/Temporal/Instant/prototype/equals/length.js
+built-ins/Temporal/Instant/prototype/equals/name.js
+built-ins/Temporal/Instant/prototype/equals/not-a-constructor.js
+built-ins/Temporal/Instant/prototype/equals/prop-desc.js

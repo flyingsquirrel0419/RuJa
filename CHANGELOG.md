@@ -4,6 +4,21 @@
 
 ### Changed
 
+- Added `Temporal.Instant.prototype.equals` for exact comparison between
+  branded Instant values, including cross-Realm instances. Receiver branding
+  is checked before the argument, and installation preserves the existing
+  GC-retry/rooting contract. A frozen seven-file Test262 boundary covers this
+  independently complete surface; string/object/ZonedDateTime conversion
+  remains gated until `ToTemporalInstant` is implemented.
+
+  [Decision Log]
+  - 목적과 의도: ISO 파싱 없이 완결 가능한 Instant 내부 슬롯 비교와 표준 메서드 형태를 먼저 제공한다.
+  - 기존 구현 및 제약 조건: branded Instant와 정확한 epoch 저장소는 있었지만 `equals`가 없었고, 전체 알고리즘의 인수 변환은 아직 ISO 파서와 ZonedDateTime 지원에 의존한다.
+  - 검토한 주요 대안: 전체 `ToTemporalInstant`를 동시에 구현하기, 임시 문자열 파서를 넣기, branded Instant 경계만 고정하기를 검토했다.
+  - 선택한 방식: receiver를 먼저 브랜드 검사한 뒤 branded Instant 인수의 숨은 epoch 값을 직접 비교하고 독립적인 7개 파일만 admission에 등록했다.
+  - 다른 대안 대신 이 방식을 선택한 이유: 관찰 가능한 프로퍼티에 의존하지 않는 정확한 비교를 제공하면서 미완성 변환 규칙을 부분 구현으로 위장하지 않기 위해서다.
+  - 장점, 단점 및 영향: Realm과 GC 경계가 작고 검증 가능하다. 문자열, 변환 객체, ZonedDateTime 인수는 후속 `ToTemporalInstant` 단위 전까지 TypeError다.
+
 - Added Realm-local `Temporal.Instant.fromEpochMilliseconds` and
   `fromEpochNanoseconds`. Both ignore the receiver, allocate through the
   method function's intrinsic Realm, preserve exact integer conversion, and

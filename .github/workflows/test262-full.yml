@@ -90,6 +90,12 @@ jobs:
           TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_instant_epoch_factory_manifest_is_exact_live_disjoint_and_shared
           -v
+      - name: Verify exact Temporal.Instant equals admission
+        working-directory: tools
+        run: >-
+          TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
+          test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_instant_equals_manifest_is_exact_live_disjoint_and_shared
+          -v
       - name: Verify exact static import-attribute admission
         working-directory: tools
         run: >-
@@ -365,6 +371,36 @@ jobs:
           cat temporal_instant_epoch_factories_result.txt
           grep -q '^RATE=100.0 PASS=17 FAIL=0 SKIP=0 TOTAL=17 RAN=17$' \
             temporal_instant_epoch_factories_result.txt
+
+  temporal-instant-equals:
+    needs: [build, setup]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download RuJa binary
+        uses: actions/download-artifact@v4
+        with:
+          name: ruja-release
+          path: target/release/
+      - run: chmod +x target/release/ruja
+      - name: Checkout pinned Temporal.Instant equals tests
+        uses: actions/checkout@v4
+        with:
+          repository: tc39/test262
+          ref: ${{ env.TEST262_REV }}
+          path: test262
+          sparse-checkout: |
+            harness
+            test/built-ins/Temporal/Instant/prototype/equals
+      - name: Require exact Temporal.Instant equals boundary
+        run: |
+          mapfile -t files < <(sed -e '/^#/d' -e '/^$/d' \
+            tools/test262_temporal_instant_equals_admission.txt)
+          TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
+            "${files[@]}" > temporal_instant_equals_result.txt 2>&1
+          cat temporal_instant_equals_result.txt
+          grep -q '^RATE=100.0 PASS=7 FAIL=0 SKIP=0 TOTAL=7 RAN=7$' \
+            temporal_instant_equals_result.txt
 
   regexp-named-groups:
     needs: [build, setup]

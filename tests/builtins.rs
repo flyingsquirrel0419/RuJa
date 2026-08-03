@@ -24854,6 +24854,59 @@ fn temporal_instant_epoch_factories_use_method_realm_and_ignore_receiver() {
 }
 
 #[test]
+fn temporal_instant_equals_compares_branded_epoch_values() {
+    assert_eq!(
+        run(r#"
+            var first = new Temporal.Instant(1234567890123456789n);
+            var equal = new Temporal.Instant(1234567890123456789n);
+            var different = new Temporal.Instant(1234567890123456000n);
+            [
+              first.equals(equal),
+              first.equals(different),
+              Temporal.Instant.prototype.equals.length,
+              Temporal.Instant.prototype.equals.name
+            ].join('|');
+        "#),
+        Value::String(Arc::from("true|false|1|equals"))
+    );
+    for source in [
+        "new Temporal.Instant(0n).equals()",
+        "new Temporal.Instant(0n).equals({})",
+        "Temporal.Instant.prototype.equals.call({}, new Temporal.Instant(0n))",
+        "new Temporal.Instant.prototype.equals(new Temporal.Instant(0n))",
+    ] {
+        assert!(run_err(source).contains("TypeError"), "{source}");
+    }
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var main = new Temporal.Instant(7n);
+            var foreign = new other.Temporal.Instant(7n);
+            var reads = 0;
+            Object.defineProperty(main, 'epochNanoseconds', {
+              get: function () { reads++; throw new Error('observed'); }
+            });
+            var crossRealm = main.equals(foreign) &&
+              other.Temporal.Instant.prototype.equals.call(main, foreign);
+            var receiverRealm;
+            var argumentRealm;
+            try {
+              other.Temporal.Instant.prototype.equals.call({}, foreign);
+            } catch (error) {
+              receiverRealm = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            try {
+              other.Temporal.Instant.prototype.equals.call(foreign, {});
+            } catch (error) {
+              argumentRealm = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            crossRealm && reads === 0 && receiverRealm && argumentRealm;
+        "#),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn date_symbol_to_primitive_uses_hint_specific_ordinary_conversion() {
     assert_eq!(
         run(r#"
