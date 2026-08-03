@@ -24907,6 +24907,96 @@ fn temporal_instant_equals_compares_branded_epoch_values() {
 }
 
 #[test]
+fn temporal_instant_compare_converts_in_order_and_returns_sign() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            var one = {
+              valueOf: function () { throw new Error('wrong hint'); },
+              toString: function () { log.push('one'); return '1963-02-13T09:36:29.123456789Z'; }
+            };
+            var two = {
+              toString: function () { log.push('two'); return '1976-11-18T15:23:30.123456789Z'; }
+            };
+            var hinted = {
+              [Symbol.toPrimitive]: function (hint) {
+                log.push(hint);
+                return '1976-11-18T15:23:30.123456789Z';
+              }
+            };
+            [
+              Temporal.Instant.compare(one, two),
+              Temporal.Instant.compare(two, one),
+              Temporal.Instant.compare(two, new Temporal.Instant(217178610123456789n)),
+              Object.is(Temporal.Instant.compare(two, two), +0),
+              Temporal.Instant.compare(hinted, two),
+              log.join(','),
+              Temporal.Instant.compare.length,
+              Temporal.Instant.compare.name
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "-1|1|0|true|0|one,two,two,one,two,two,two,string,two|2|compare"
+        ))
+    );
+
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var method = other.Temporal.Instant.compare;
+            var main = new Temporal.Instant(7n);
+            var foreign = new other.Temporal.Instant(8n);
+            var reads = 0;
+            Object.defineProperty(main, 'epochNanoseconds', {
+              get: function () { reads++; throw new Error('observed'); }
+            });
+            var receiverCalls = 0;
+            var typeRealm;
+            var rangeRealm;
+            try { method(1, foreign); } catch (error) {
+              typeRealm = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            try { method('invalid', foreign); } catch (error) {
+              rangeRealm = error instanceof other.RangeError && !(error instanceof RangeError);
+            }
+            [
+              method.call(function Receiver() { receiverCalls++; }, main, foreign),
+              reads,
+              receiverCalls,
+              typeRealm,
+              rangeRealm
+            ].join('|');
+        "#),
+        Value::String(Arc::from("-1|0|0|true|true"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var secondRead = false;
+            var second = { toString: function () { secondRead = true; throw 'second'; } };
+            var rangeFirst;
+            try { Temporal.Instant.compare('+275760-09-13T00:00:00.000-12', second); }
+            catch (error) { rangeFirst = error instanceof RangeError && !secondRead; }
+            var marker = {};
+            var abruptFirst;
+            try {
+              Temporal.Instant.compare({ toString: function () { throw marker; } }, second);
+            } catch (error) { abruptFirst = error === marker && !secondRead; }
+            rangeFirst && abruptFirst;
+        "#),
+        Value::Bool(true)
+    );
+
+    for source in [
+        "Temporal.Instant.compare()",
+        "new Temporal.Instant.compare()",
+        "Temporal.Instant.compare(Symbol(), new Temporal.Instant(0n))",
+    ] {
+        assert!(run_err(source).contains("TypeError"), "{source}");
+    }
+}
+
+#[test]
 fn temporal_instant_from_and_equals_share_exact_string_conversion() {
     assert_eq!(
         run(r#"

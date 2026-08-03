@@ -7,17 +7,17 @@ The following resource limits are enforced:
 
 - **Temporal scope**: Realm-local `%Temporal%`, `%Temporal.Now%`, and
   `%Temporal.Instant%` are installed. Instant supports construction, exact
-  epoch accessors, epoch factories, `equals`, `from`, the always-throwing
-  `valueOf`, `toString` with all precision/rounding options and deterministic
+  epoch accessors, epoch factories, static `compare`, `equals`, `from`, the
+  always-throwing `valueOf`, `toString` with all precision/rounding options and
+  deterministic
   UTC/fixed-offset time zones plus ambiguity-checked annotated date/time
   forms, and `Date.prototype.toTemporalInstant`. String
   conversion accepts basic and
   extended date/time/offset forms, nanosecond-precision offset seconds, and the
   audited RFC 9557 annotation subset, with a required `Z` or numeric offset.
   Named IANA time-zone transitions, the remaining RFC 9557 grammar,
-  ZonedDateTime conversion,
-  calendar/duration/timezone types, and `Temporal.Now` methods remain
-  unsupported.
+  ZonedDateTime conversion and its Instant fast path, calendar/duration/timezone
+  types, and `Temporal.Now` methods remain unsupported.
 
 - **Execution fuel**: `Vm::set_fuel(Some(n))` bounds dispatched opcodes and
   explicitly metered native-loop steps. Proxy `[[Call]]`, `[[Delete]]`,

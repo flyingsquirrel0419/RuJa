@@ -154,6 +154,31 @@ fn temporal_namespace_installation_restores_roots_after_to_string_allocation_fai
 }
 
 #[test]
+fn temporal_namespace_installation_restores_roots_after_compare_allocation_failure() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.gc();
+    let original = vm.get_global("Temporal");
+    let baseline_pins = vm.gc_pins.len();
+    let baseline_live = vm.heap.live_count();
+    let global = vm.global;
+    let object_proto = vm.object_proto.clone();
+    // Ten earlier allocations fit exactly; the eleventh, compare, must fail.
+    vm.set_max_heap_objects(Some(baseline_live + 10));
+
+    let result =
+        crate::builtins::install_temporal_namespace_in_env(&mut vm, global, None, object_proto);
+
+    vm.set_max_heap_objects(None);
+    let error = result.expect_err("compare allocation must hit the cap");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(error.message, "heap limit exceeded");
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.get_global("Temporal"), original);
+    vm.gc();
+    assert_eq!(vm.heap.live_count(), baseline_live);
+}
+
+#[test]
 fn temporal_instant_from_retries_result_allocation_after_converted_input_gc() {
     let mut vm = Vm::new().expect("VM should initialize");
     let baseline_pins = vm.gc_pins.len();
@@ -1537,6 +1562,7 @@ const NON_CONSTRUCTIBLE_NATIVE_FUNCTION_SOURCES: &[&str] = &[
     "Array.prototype.push",
     "BigInt.asIntN",
     "Symbol.for",
+    "Temporal.Instant.compare",
 ];
 
 const FOREIGN_EAGER_NATIVE_CONSTRUCTOR_SOURCES: &[&str] = &[

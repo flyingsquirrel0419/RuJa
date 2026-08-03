@@ -80,6 +80,23 @@ transition support requires a deterministic bundled backend.
 - 장점, 단점 및 영향: option getter/coercion order, exact singular/plural units, annotated-time ambiguity, negative epoch, midnight rollover, extended year가 독립 테스트 가능하다. 새 time-zone consumer는 이 parser를 재사용해야 하며 named IANA와 ZonedDateTime은 deterministic backend 전까지 거부한다.
 ```
 
+`Temporal.Instant.compare` reuses the same epoch-only conversion boundary as
+`from` and `equals`, but does not allocate temporary Instant objects. It fully
+converts the first input before touching the second, then compares the two
+shared `BigInt` epochs and returns a Number sign. Native call dispatch keeps
+both JavaScript arguments rooted; completed conversion results are Rust
+`Arc<BigInt>` values and need no extra GC pins.
+
+```text
+[Decision Log]
+- 목적과 의도: static Instant comparison의 observable conversion 순서와 allocation-free numeric core를 분리한다.
+- 기존 구현 및 제약 조건: shared conversion은 branded Instant와 exact strings를 처리하고 byte fuel을 선차감한다. ZonedDateTime 내부 슬롯은 아직 없다.
+- 검토한 주요 대안: 공개 epoch getter, 임시 Instant 생성, 두 입력 선처리, shared conversion의 순차 재사용을 검토했다.
+- 선택한 방식: first conversion completion 후 second conversion을 시작하고 `Arc<BigInt>` ordering을 Number -1/+0/1로 매핑한다. method Realm은 native callee closure가 소유한다.
+- 다른 대안 대신 이 방식을 선택한 이유: 공개 getter와 임시 객체는 관찰·GC 경계를 추가하며, 순차 conversion은 specification abrupt-completion order를 그대로 유지한다.
+- 장점, 단점 및 영향: 별도 formatter/parser drift가 없고 result allocation도 없다. ZonedDateTime fast path는 해당 객체 모델 도입 전까지 exact admission에서 제외한다.
+```
+
 ## Compiler temporary storage
 
 Compiler-generated carriers for destructuring sources, iterator state,

@@ -14080,6 +14080,25 @@ timezone algorithms.
 - 장점, 단점 및 영향: Namespace descriptors, prototypes, Realm identity, allocation rollback, and exact 4/0/0 coverage are verified. All Temporal constructors and algorithms remain explicitly unsupported and can land in later narrow units.
 ```
 
+## Temporal.Instant.compare completion
+
+`tools/test262_temporal_instant_compare_admission.txt` freezes **29** exact
+paths from the pinned `built-ins/Temporal/Instant/compare` directory. Dedicated
+CI requires **29 pass / 0 fail / 0 skip**. The complete directory is
+**29/0/1**;
+`argument-zoneddatetime.js` remains gated because its shared helper constructs
+a real `Temporal.ZonedDateTime` and verifies the internal-slot fast path.
+
+```text
+[Decision Log]
+- 목적과 의도: static Instant comparison과 shared conversion의 conformance 증가를 exact accounting에 반영한다.
+- 기존 구현 및 제약 조건: 30개 파일 중 29개는 Instant/string conversion만 요구하지만 1개는 아직 없는 ZonedDateTime constructor와 hidden nanoseconds slot을 요구한다.
+- 검토한 주요 대안: 전체 directory 허용, 가짜 ZonedDateTime, 29개 exact path와 blocker metadata를 고정하는 방식을 검토했다.
+- 선택한 방식: 29개 path와 feature/include/flag/negative metadata를 고정하고, remaining blocker의 존재·metadata·skip 정책도 검증한다.
+- 다른 대안 대신 이 방식을 선택한 이유: compare 자체 범위는 완결하면서 아직 없는 Temporal 객체 모델을 지원한다고 과장하지 않는다.
+- 장점, 단점 및 영향: future sibling은 자동 허용되지 않고 exact 29/0/0 및 full 29/0/1 경계가 재현된다. ZonedDateTime 도입 시 단일 blocker를 재감사한다.
+```
+
 ## Temporal.Instant.prototype.toString fixed-offset completion
 
 `tools/test262_temporal_instant_to_string_admission.txt` freezes **54** exact
@@ -14144,7 +14163,7 @@ the complete path set, features, includes, flags, and negative metadata.
 - 검토한 주요 대안: 상속 유지, epoch BigInt 반환, 브랜드 검사 후 예외, receiver를 관찰하지 않는 즉시 TypeError를 검토했다.
 - 선택한 방식: Realm 설치 과정에서 valueOf native function을 GC-rooted allocation으로 만들고 Instant prototype에 표준 descriptor로 게시한다.
 - 다른 대안 대신 이 방식을 선택한 이유: 표준 알고리즘은 receiver 종류와 관계없이 예외를 요구하고, epoch 반환은 명시적 Instant 비교 의미론을 우회한다.
-- 장점, 단점 및 영향: 전체 7/0/0 경계와 관계 연산 거부가 재현 가능하다. Temporal.Instant.compare와 ZonedDateTime fast path는 별도 후속 단위다.
+- 장점, 단점 및 영향: 전체 7/0/0 경계와 관계 연산 거부가 재현 가능하다. ZonedDateTime fast path는 별도 후속 단위다.
 ```
 
 ## Temporal.Instant epoch factory completion

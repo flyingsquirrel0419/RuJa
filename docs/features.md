@@ -31,8 +31,9 @@
 
 - Realm-local `Temporal`, `Temporal.Now`, and `Temporal.Instant` expose their
   standard identities. Instant supports construction, exact epoch accessors,
-  epoch factories, branded/string `equals`, basic and extended ISO `from`, the
-  audited RFC 9557 annotation and nanosecond-offset subset, an always-throwing
+  epoch factories, static `compare`, branded/string `equals`, basic and
+  extended ISO `from`, the audited RFC 9557 annotation and nanosecond-offset
+  subset, an always-throwing
   `valueOf`, exact `toString` options/rounding with UTC, fixed offsets, and
   ambiguity-checked annotated date/time forms, and
   `Date.prototype.toTemporalInstant`. Calendar, duration, named IANA timezone,

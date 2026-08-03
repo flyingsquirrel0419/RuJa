@@ -6366,6 +6366,13 @@ pub(crate) fn install_temporal_namespace_in_env(
             env,
         )?);
         pin_count += vm.pin(&to_string);
+        let compare = Value::Object(vm.new_native_function_in_env_with_gc_retry(
+            "compare",
+            temporal_instant_compare,
+            2,
+            env,
+        )?);
+        pin_count += vm.pin(&compare);
 
         let Value::Object(instant_constructor_index) = instant_constructor.clone() else {
             unreachable!()
@@ -6391,6 +6398,10 @@ pub(crate) fn install_temporal_namespace_in_env(
                 .props
                 .lock()
                 .insert(PropertyKey::from("from"), data_prop(from));
+            function
+                .props
+                .lock()
+                .insert(PropertyKey::from("compare"), data_prop(compare));
         });
         let Value::Object(instant_prototype_index) = instant_prototype.clone() else {
             unreachable!()
@@ -6620,6 +6631,21 @@ fn temporal_instant_from(
     let epoch_nanoseconds =
         to_temporal_instant_epoch(vm, args.first().unwrap_or(&Value::Undefined))?;
     temporal_instant_factory_result(vm, epoch_nanoseconds)
+}
+
+fn temporal_instant_compare(
+    vm: &mut Vm,
+    args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
+    let one = to_temporal_instant_epoch(vm, args.first().unwrap_or(&Value::Undefined))?;
+    let two = to_temporal_instant_epoch(vm, args.get(1).unwrap_or(&Value::Undefined))?;
+    let result = match one.cmp(&two) {
+        std::cmp::Ordering::Less => -1.0,
+        std::cmp::Ordering::Equal => 0.0,
+        std::cmp::Ordering::Greater => 1.0,
+    };
+    Ok(Value::Number(result))
 }
 
 fn temporal_instant_epoch_nanoseconds(

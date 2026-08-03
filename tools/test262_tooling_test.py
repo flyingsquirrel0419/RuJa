@@ -84,6 +84,10 @@ from test262_temporal_instant_core_admission import (
     TEMPORAL_INSTANT_CORE_FEATURES,
     TEMPORAL_INSTANT_CORE_FILES,
 )
+from test262_temporal_instant_compare_admission import (
+    TEMPORAL_INSTANT_COMPARE_FEATURES,
+    TEMPORAL_INSTANT_COMPARE_FILES,
+)
 from test262_temporal_instant_epoch_factories_admission import (
     TEMPORAL_INSTANT_EPOCH_FACTORY_FEATURES,
     TEMPORAL_INSTANT_EPOCH_FACTORY_FILES,
@@ -3205,6 +3209,134 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                         self.assertFalse(tool.temporal_instant_epoch_factory_path(path))
                         self.assertEqual(
                             tool.temporal_instant_epoch_factory_features(path), frozenset()
+                        )
+                        self.assertTrue(tool.should_skip({"features": ["Temporal"]}, path))
+                finally:
+                    tool.TEST262 = original_root
+
+    def test_temporal_instant_compare_manifest_is_exact_live_disjoint_and_shared(self):
+        prefix = "built-ins/Temporal/Instant/compare/"
+        names = {
+            "argument-object-tostring.js",
+            "argument-string-calendar-annotation-invalid-key.js",
+            "argument-string-calendar-annotation.js",
+            "argument-string-critical-unknown-annotation.js",
+            "argument-string-date-with-utc-offset.js",
+            "argument-string-invalid.js",
+            "argument-string-limits.js",
+            "argument-string-minus-sign.js",
+            "argument-string-multiple-calendar.js",
+            "argument-string-multiple-time-zone.js",
+            "argument-string-time-separators.js",
+            "argument-string-time-zone-annotation.js",
+            "argument-string-too-many-decimals.js",
+            "argument-string-unknown-annotation.js",
+            "argument-string-with-offset-not-valid-epoch-nanoseconds.js",
+            "argument-wrong-type.js",
+            "builtin.js",
+            "cross-epoch.js",
+            "exhaustive.js",
+            "instant-string-multiple-offsets.js",
+            "instant-string-sub-minute-offset.js",
+            "instant-string.js",
+            "leap-second.js",
+            "length.js",
+            "name.js",
+            "no-fractional-minutes-hours.js",
+            "not-a-constructor.js",
+            "prop-desc.js",
+            "year-zero.js",
+        }
+        expected = {prefix + name for name in names}
+        expected_features = {}
+        for relative in expected:
+            name = Path(relative).name
+            features = {"Temporal"}
+            if name == "argument-wrong-type.js":
+                features.update({"BigInt", "Symbol"})
+            if name == "argument-string-invalid.js":
+                features.add("arrow-function")
+            if name == "not-a-constructor.js":
+                features.add("Reflect.construct")
+            expected_features[relative] = frozenset(features)
+        self.assertEqual(TEMPORAL_INSTANT_COMPARE_FILES, frozenset(expected))
+        self.assertEqual(TEMPORAL_INSTANT_COMPARE_FEATURES, expected_features)
+        self.assertEqual(len(expected), 29)
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        directory = test_root / prefix
+        try:
+            live_available = directory.is_dir()
+        except OSError:
+            live_available = False
+        if live_available:
+            blocker = prefix + "argument-zoneddatetime.js"
+            live = {
+                path.relative_to(test_root).as_posix()
+                for path in directory.glob("*.js")
+            }
+            self.assertEqual(live, expected | {blocker})
+            for relative, features in expected_features.items():
+                path = test_root / relative
+                self.assertTrue(path.is_file(), relative)
+                metadata = test262_runner.parse_meta(path.read_text())
+                self.assertEqual(frozenset(metadata.get("features", [])), features)
+                includes = (
+                    ["propertyHelper.js"]
+                    if path.name in {"length.js", "name.js", "prop-desc.js"}
+                    else ["isConstructor.js"]
+                    if path.name == "not-a-constructor.js"
+                    else []
+                )
+                self.assertEqual(metadata.get("includes", []), includes)
+                self.assertEqual(metadata.get("flags", []), [])
+                self.assertIsNone(metadata.get("negative"))
+
+            blocker_path = test_root / blocker
+            metadata = test262_runner.parse_meta(blocker_path.read_text())
+            self.assertEqual(set(metadata.get("features", [])), {"Temporal"})
+            self.assertEqual(
+                metadata.get("includes", []),
+                ["compareArray.js", "temporalHelpers.js"],
+            )
+            self.assertEqual(metadata.get("flags", []), [])
+            self.assertIsNone(metadata.get("negative"))
+            for tool in (test262_runner, test262_analyze):
+                self.assertTrue(tool.should_skip(metadata, blocker_path))
+
+        tools_dir = Path(__file__).resolve().parent
+        for manifest in tools_dir.glob("test262_*_admission.txt"):
+            if manifest.name == "test262_temporal_instant_compare_admission.txt":
+                continue
+            existing = {
+                line
+                for raw_line in manifest.read_text().splitlines()
+                if (line := raw_line.strip()) and not line.startswith("#")
+            }
+            self.assertTrue(TEMPORAL_INSTANT_COMPARE_FILES.isdisjoint(existing), manifest.name)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            future = root / "test" / prefix / "future.js"
+            outside = root / "test/built-ins/Temporal/Instant/prototype/compare/basic.js"
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for relative, features in expected_features.items():
+                        path = root / "test" / relative
+                        self.assertTrue(tool.temporal_instant_compare_path(path), relative)
+                        self.assertEqual(tool.temporal_instant_compare_features(path), features)
+                        self.assertFalse(tool.should_skip({"features": sorted(features)}, path))
+                        self.assertTrue(
+                            tool.should_skip(
+                                {"features": sorted(features | {"decorators"})}, path
+                            )
+                        )
+                    for path in (future, outside):
+                        self.assertFalse(tool.temporal_instant_compare_path(path))
+                        self.assertEqual(
+                            tool.temporal_instant_compare_features(path), frozenset()
                         )
                         self.assertTrue(tool.should_skip({"features": ["Temporal"]}, path))
                 finally:

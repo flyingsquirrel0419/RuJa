@@ -4,6 +4,22 @@
 
 ### Changed
 
+- Added Realm-local, non-constructable `Temporal.Instant.compare`. It converts
+  both inputs in specification order through the shared exact Instant path,
+  compares hidden epoch nanoseconds without observing public properties, and
+  returns Number `-1`, `+0`, or `1`. String bytes remain fuel-metered. An exact
+  29-file Test262 boundary passes completely; the full directory is **29 pass /
+  0 fail / 1 skip**, with only the real ZonedDateTime internal-slot fast path
+  gated.
+
+  [Decision Log]
+  - 목적과 의도: Instant의 정적 순서 비교를 기존 문자열·브랜드 변환 의미론과 하나의 경로로 제공한다.
+  - 기존 구현 및 제약 조건: `from`과 `equals`는 exact `ToTemporalInstant` subset을 공유하지만 static `compare`는 없었다. `%Temporal.ZonedDateTime%` 객체 모델은 아직 없다.
+  - 검토한 주요 대안: 공개 `epochNanoseconds` getter 사용, 두 입력의 동시 coercion, 비교 전 임시 Instant 객체 생성, shared epoch conversion을 순차 재사용하는 방식을 검토했다.
+  - 선택한 방식: 첫 입력 변환을 완결한 뒤 둘째 입력을 변환하고 두 `Arc<BigInt>`를 직접 비교한다. installer는 Realm-local length-2 native function을 게시하며 29개 exact path만 연다.
+  - 다른 대안 대신 이 방식을 선택한 이유: 공개 getter는 shadowing을 잘못 관찰하고 임시 객체는 불필요한 GC/heap 실패점을 만든다. 순차 shared conversion만 abrupt completion, Realm error, parser, fuel 순서를 보존한다.
+  - 장점, 단점 및 영향: cross-Realm branded Instant, string-hint coercion, first-error short circuit, pre/post-epoch sign, allocation rollback이 검증된다. ZonedDateTime fast path 1개는 실제 내부 슬롯 도입 후 재감사한다.
+
 - Added Realm-local, non-constructable `Temporal.Instant.prototype.toString`.
   It reads and converts options in specification order, implements all nine
   as-if-positive rounding modes, formats the complete Instant year range at
