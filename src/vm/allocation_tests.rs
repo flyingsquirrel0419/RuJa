@@ -104,12 +104,16 @@ fn temporal_namespace_installation_restores_roots_after_from_allocation_failure(
 }
 
 #[test]
-fn temporal_instant_from_retains_converted_input_across_result_gc_retry() {
+fn temporal_instant_from_retries_result_allocation_after_converted_input_gc() {
     let mut vm = Vm::new().expect("VM should initialize");
+    let baseline_pins = vm.gc_pins.len();
     vm.register_fn(
-        "forceGc",
+        "prepareResultRetry",
         |vm, _, _| {
             vm.gc();
+            let _garbage = vm.new_object()?;
+            vm.clear_kept_objects();
+            vm.set_max_heap_objects(Some(vm.heap.live_count()));
             Ok(Value::Undefined)
         },
         0,
@@ -121,16 +125,18 @@ fn temporal_instant_from_retains_converted_input_across_result_gc_retry() {
             r#"
             var input = {
               toString: function () {
-                forceGc();
+                prepareResultRetry();
                 return '1970-01-01T00:00:00.000000007Z';
               }
             };
             Temporal.Instant.from(input).epochNanoseconds;
             "#,
         )
-        .expect("converted input and method Realm should survive GC");
+        .expect("result allocation should collect garbage and retry");
 
+    vm.set_max_heap_objects(None);
     assert_eq!(result, Value::BigInt(Arc::new(7.into())));
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
 }
 
 #[test]

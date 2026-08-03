@@ -5,11 +5,14 @@
 RuJa is designed for running untrusted JavaScript safely inside a host process.
 The following resource limits are enforced:
 
-- **Temporal scope**: `%Temporal%` and `%Temporal.Now%` currently provide only
-  Realm-local namespace identity and `Symbol.toStringTag` descriptors. Temporal
-  constructors and namespace methods remain unsupported. The existing
-  `Date.prototype.toTemporalInstant` bridge still returns its minimal
-  Instant-shaped object and does not imply full Temporal support.
+- **Temporal scope**: Realm-local `%Temporal%`, `%Temporal.Now%`, and
+  `%Temporal.Instant%` are installed. Instant supports construction, exact
+  epoch accessors, epoch factories, `equals`, `from`, and
+  `Date.prototype.toTemporalInstant`. String conversion currently accepts the
+  extended ISO date-time subset with a required `Z` or `+/-HH:MM` offset.
+  RFC 9557 annotations, compact and second-bearing offsets, ZonedDateTime
+  conversion, calendar/duration/timezone types, and `Temporal.Now` methods
+  remain unsupported.
 
 - **Execution fuel**: `Vm::set_fuel(Some(n))` bounds dispatched opcodes and
   explicitly metered native-loop steps. Proxy `[[Call]]`, `[[Delete]]`,

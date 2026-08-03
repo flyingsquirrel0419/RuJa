@@ -196,4 +196,29 @@ mod tests {
             assert!(parse_instant_string(source).is_none(), "{source}");
         }
     }
+
+    #[test]
+    fn preserves_gregorian_offset_and_instant_boundaries() {
+        let cases = [
+            (
+                "-271821-04-20T00:00:00Z",
+                -8_640_000_000_000_000_000_000_i128,
+            ),
+            (
+                "+275760-09-13T00:00:00Z",
+                8_640_000_000_000_000_000_000_i128,
+            ),
+            ("1970-01-01T00:30:00+01:00", -1_800_000_000_000_i128),
+            ("2000-02-29T00:00:00Z", 951_782_400_000_000_000_i128),
+            ("-000001-01-01T00:00:00Z", -62_198_755_200_000_000_000_i128),
+        ];
+        for (source, expected) in cases {
+            assert_eq!(
+                parse_instant_string(source),
+                Some(BigInt::from(expected)),
+                "{source}"
+            );
+        }
+        assert!(parse_instant_string("1900-02-29T00:00:00Z").is_none());
+    }
 }

@@ -29,9 +29,12 @@
 
 ## ES2015+
 
-- Realm-local `Temporal` and `Temporal.Now` namespace objects expose their
-  standard `Symbol.toStringTag` identities. Temporal constructors and calendar,
-  duration, timezone, and `Now` methods are not implemented yet.
+- Realm-local `Temporal`, `Temporal.Now`, and `Temporal.Instant` expose their
+  standard identities. Instant supports construction, exact epoch accessors,
+  epoch factories, branded/string `equals`, canonical extended-ISO `from`,
+  and `Date.prototype.toTemporalInstant`. Calendar, duration, timezone,
+  ZonedDateTime, RFC 9557 annotations, and `Temporal.Now` methods remain
+  outside the supported boundary.
 - `class`/`extends`/`super`
 - Default & rest parameters
 - Array/object destructuring (swaps, holes, rest, rename, nested) and object
