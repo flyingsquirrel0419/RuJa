@@ -39,10 +39,11 @@ source ─► Lexer ─► Parser ─► Compiler ─► Bytecode ─► VM
 
 ## Temporal Instant conversion
 
-`Temporal.Instant.from`, `Temporal.Instant.prototype.equals`, and future
-Instant consumers share one conversion path. Branded Instant objects return
-their hidden epoch value without observable property access. Other objects use
-string-hint primitive conversion. A resulting String is charged by UTF-8 byte
+`Temporal.Instant.from`, `Temporal.Instant.prototype.equals`, and other
+Instant consumers share one conversion path. Branded Instant and ZonedDateTime
+objects return their hidden epoch value without observable property access.
+Non-Temporal objects use string-hint primitive conversion. A resulting String
+is charged by UTF-8 byte
 length against VM fuel before `src/builtins/temporal.rs` scans basic/extended
 date, time, numeric offset, and trailing annotations. The parser returns exact
 epoch nanoseconds; the caller enforces the inclusive Instant range and selects
@@ -94,7 +95,25 @@ both JavaScript arguments rooted; completed conversion results are Rust
 - 검토한 주요 대안: 공개 epoch getter, 임시 Instant 생성, 두 입력 선처리, shared conversion의 순차 재사용을 검토했다.
 - 선택한 방식: first conversion completion 후 second conversion을 시작하고 `Arc<BigInt>` ordering을 Number -1/+0/1로 매핑한다. method Realm은 native callee closure가 소유한다.
 - 다른 대안 대신 이 방식을 선택한 이유: 공개 getter와 임시 객체는 관찰·GC 경계를 추가하며, 순차 conversion은 specification abrupt-completion order를 그대로 유지한다.
-- 장점, 단점 및 영향: 별도 formatter/parser drift가 없고 result allocation도 없다. ZonedDateTime fast path는 해당 객체 모델 도입 전까지 exact admission에서 제외한다.
+- 장점, 단점 및 영향: 별도 formatter/parser drift가 없고 result allocation도 없다. 최초 경계에서 제외했던 ZonedDateTime fast path는 이후 hidden-slot core admission이 소유한다.
+```
+
+`TemporalKind::ZonedDateTime` extends the same heap object family with immutable
+epoch nanoseconds, a canonical UTC/fixed-offset identifier and minute offset,
+and the ISO calendar identifier. Constructor fallback uses two Realm-owned
+intrinsic registries. The Instant conversion fast path matches the hidden kind
+before any primitive conversion, so shadowed getters and `toString` are not
+observable. These slots contain only `Arc` and integers, so the exhaustive GC
+match has no additional heap edge.
+
+```text
+[Decision Log]
+- 목적과 의도: ZonedDateTime을 이후 calendar/time-zone 알고리즘이 확장할 수 있는 real internal-slot 객체로 도입한다.
+- 기존 구현 및 제약 조건: Temporal heap kind는 Instant만 포함했고 Realm registry와 rollback/root inventory는 수동 동기화 구조다. 기존 time-zone parser는 formatter option용 ISO date/time syntax까지 허용한다.
+- 검토한 주요 대안: ordinary properties, Instant wrapper, 기존 broad parser 재사용, 별도 strict identifier parser와 ZonedDateTime variant를 검토했다.
+- 선택한 방식: constructor 전용 parser는 ASCII case-insensitive UTC와 minute fixed offset만 canonicalize한다. epoch/time-zone/calendar 변환 후 newTarget prototype을 읽고 pinned allocation으로 hidden-slot instance를 만든다.
+- 다른 대안 대신 이 방식을 선택한 이유: broad parser는 constructor가 ISO date/time 문자열을 잘못 수용하고 ordinary properties는 branding과 fast path를 깨뜨린다. deterministic backend 없는 IANA 수용은 후속 메서드 의미론을 제공할 수 없다.
+- 장점, 단점 및 영향: Realm/GC/rollback/fuel과 cross-Realm ToTemporalInstant가 명시적으로 고정된다. 새 Realm registry를 추가할 때 fields, initialization, root collection, rollback, default-prototype mapping, inventory test를 함께 갱신해야 한다.
 ```
 
 ## Compiler temporary storage

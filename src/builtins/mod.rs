@@ -51,7 +51,7 @@ use crate::value::{
     FunctionKind, GcIdx, HeapObj, IteratorConcatIterable, IteratorHelperData, IteratorHelperInner,
     IteratorHelperKind, IteratorZipMode, MapData, MapKey, NativeConstructMode, ObjectData,
     PropertyDescriptor, PropertyKey, RegExpStringIteratorData, SetData, TemporalData, TemporalKind,
-    Value,
+    TemporalTimeZone, Value,
 };
 use crate::vm::{NativeFn, Vm};
 use indexmap::{IndexMap, IndexSet};
@@ -6289,7 +6289,7 @@ pub(crate) fn install_temporal_namespace_in_env(
     global: Option<&Value>,
     object_proto: Value,
 ) -> error::Result<Value> {
-    vm.try_reserve_gc_pins(12)?;
+    vm.try_reserve_gc_pins(18)?;
     let mut pin_count = 0;
     let result = (|| {
         let instant_prototype = Value::Object(vm.alloc(HeapObj::Object(ObjectData {
@@ -6374,6 +6374,53 @@ pub(crate) fn install_temporal_namespace_in_env(
         )?);
         pin_count += vm.pin(&compare);
 
+        let zoned_date_time_prototype = Value::Object(vm.alloc(HeapObj::Object(ObjectData {
+            props: Mutex::new(IndexMap::new()),
+            proto: Mutex::new(Some(object_proto.clone())),
+            extensible: AtomicBool::new(true),
+            class_name: None,
+            private_fields: Mutex::new(std::collections::HashMap::new()),
+            primitive: Mutex::new(None),
+        }))?);
+        pin_count += vm.pin(&zoned_date_time_prototype);
+        let zoned_date_time_constructor =
+            Value::Object(vm.new_native_constructor_in_env_with_gc_retry(
+                "ZonedDateTime",
+                temporal_zoned_date_time_constructor,
+                2,
+                env,
+                NativeConstructMode::InternalDeferredPrototype,
+            )?);
+        pin_count += vm.pin(&zoned_date_time_constructor);
+        let zoned_epoch_milliseconds = Value::Object(vm.new_native_function_in_env_with_gc_retry(
+            "get epochMilliseconds",
+            temporal_zoned_date_time_epoch_milliseconds,
+            0,
+            env,
+        )?);
+        pin_count += vm.pin(&zoned_epoch_milliseconds);
+        let zoned_epoch_nanoseconds = Value::Object(vm.new_native_function_in_env_with_gc_retry(
+            "get epochNanoseconds",
+            temporal_zoned_date_time_epoch_nanoseconds,
+            0,
+            env,
+        )?);
+        pin_count += vm.pin(&zoned_epoch_nanoseconds);
+        let time_zone_id = Value::Object(vm.new_native_function_in_env_with_gc_retry(
+            "get timeZoneId",
+            temporal_zoned_date_time_time_zone_id,
+            0,
+            env,
+        )?);
+        pin_count += vm.pin(&time_zone_id);
+        let calendar_id = Value::Object(vm.new_native_function_in_env_with_gc_retry(
+            "get calendarId",
+            temporal_zoned_date_time_calendar_id,
+            0,
+            env,
+        )?);
+        pin_count += vm.pin(&calendar_id);
+
         let Value::Object(instant_constructor_index) = instant_constructor.clone() else {
             unreachable!()
         };
@@ -6431,6 +6478,52 @@ pub(crate) fn install_temporal_namespace_in_env(
             );
         });
 
+        let Value::Object(zoned_constructor_index) = zoned_date_time_constructor.clone() else {
+            unreachable!()
+        };
+        vm.heap.with_obj(zoned_constructor_index.0, |object| {
+            let HeapObj::Function(function) = object else {
+                unreachable!()
+            };
+            *function.prototype.lock() = Some(zoned_date_time_prototype.clone());
+            function.props.lock().insert(
+                PropertyKey::from("prototype"),
+                const_prop(zoned_date_time_prototype.clone()),
+            );
+        });
+        let Value::Object(zoned_prototype_index) = zoned_date_time_prototype.clone() else {
+            unreachable!()
+        };
+        vm.heap.with_obj(zoned_prototype_index.0, |object| {
+            let mut props = object.props().lock();
+            props.insert(
+                PropertyKey::from("constructor"),
+                data_prop(zoned_date_time_constructor.clone()),
+            );
+            props.insert(
+                PropertyKey::from("epochMilliseconds"),
+                accessor_get_prop(zoned_epoch_milliseconds),
+            );
+            props.insert(
+                PropertyKey::from("epochNanoseconds"),
+                accessor_get_prop(zoned_epoch_nanoseconds),
+            );
+            props.insert(
+                PropertyKey::from("timeZoneId"),
+                accessor_get_prop(time_zone_id),
+            );
+            props.insert(
+                PropertyKey::from("calendarId"),
+                accessor_get_prop(calendar_id),
+            );
+            let mut tag = data_prop(Value::String(Arc::from("Temporal.ZonedDateTime")));
+            tag.writable = false;
+            props.insert(
+                PropertyKey::symbol(vm.well_known_symbols.to_string_tag),
+                tag,
+            );
+        });
+
         let mut now_tag = data_prop(Value::String(Arc::from("Temporal.Now")));
         now_tag.writable = false;
         let now = Value::Object(vm.alloc(HeapObj::Object(ObjectData {
@@ -6455,6 +6548,10 @@ pub(crate) fn install_temporal_namespace_in_env(
                     data_prop(instant_constructor.clone()),
                 ),
                 (
+                    PropertyKey::from("ZonedDateTime"),
+                    data_prop(zoned_date_time_constructor.clone()),
+                ),
+                (
                     PropertyKey::symbol(vm.well_known_symbols.to_string_tag),
                     temporal_tag,
                 ),
@@ -6470,6 +6567,10 @@ pub(crate) fn install_temporal_namespace_in_env(
             .insert(env.0, instant_constructor);
         vm.realm_temporal_instant_prototypes
             .insert(env.0, instant_prototype);
+        vm.realm_temporal_zoned_date_time_constructors
+            .insert(env.0, zoned_date_time_constructor);
+        vm.realm_temporal_zoned_date_time_prototypes
+            .insert(env.0, zoned_date_time_prototype);
 
         if let Some(global) = global {
             define_realm_global(vm, env, global, "Temporal", temporal.clone());
@@ -6515,6 +6616,7 @@ fn create_temporal_instant(
             "Temporal.Instant epoch nanoseconds out of range",
         ));
     }
+    vm.try_reserve_gc_pins(1)?;
     let pin_count = vm.pin(&prototype);
     let result = vm.alloc(HeapObj::Temporal(TemporalData {
         kind: TemporalKind::Instant { epoch_nanoseconds },
@@ -6563,6 +6665,160 @@ fn temporal_instant_constructor(
     create_temporal_instant(vm, epoch_nanoseconds, prototype)
 }
 
+fn temporal_zoned_date_time_slots(
+    vm: &Vm,
+    this: Option<Value>,
+) -> error::Result<(Arc<BigInt>, TemporalTimeZone, Arc<str>)> {
+    let Value::Object(index) = this.unwrap_or(Value::Undefined) else {
+        return Err(Error::type_err(
+            "Temporal.ZonedDateTime method called on incompatible receiver",
+        ));
+    };
+    vm.heap.with_obj(index.0, |object| match object {
+        HeapObj::Temporal(TemporalData {
+            kind:
+                TemporalKind::ZonedDateTime {
+                    epoch_nanoseconds,
+                    time_zone,
+                    calendar_identifier,
+                },
+            ..
+        }) => Ok((
+            epoch_nanoseconds.clone(),
+            time_zone.clone(),
+            calendar_identifier.clone(),
+        )),
+        _ => Err(Error::type_err(
+            "Temporal.ZonedDateTime method called on incompatible receiver",
+        )),
+    })
+}
+
+fn create_temporal_zoned_date_time(
+    vm: &mut Vm,
+    epoch_nanoseconds: Arc<BigInt>,
+    time_zone: TemporalTimeZone,
+    calendar_identifier: Arc<str>,
+    prototype: Value,
+) -> error::Result<Value> {
+    vm.try_reserve_gc_pins(1)?;
+    let pin_count = vm.pin(&prototype);
+    let result = vm.alloc(HeapObj::Temporal(TemporalData {
+        kind: TemporalKind::ZonedDateTime {
+            epoch_nanoseconds,
+            time_zone,
+            calendar_identifier,
+        },
+        props: Mutex::new(IndexMap::new()),
+        proto: Mutex::new(Some(prototype)),
+        extensible: AtomicBool::new(true),
+    }));
+    vm.unpin_many(pin_count);
+    result.map(Value::Object)
+}
+
+fn temporal_zoned_date_time_constructor(
+    vm: &mut Vm,
+    args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
+    if vm.current_native_new_target().is_none() {
+        return Err(Error::type_err("Temporal.ZonedDateTime requires 'new'"));
+    }
+    let epoch_nanoseconds = vm.coerce_bigint_shared(args.first().unwrap_or(&Value::Undefined))?;
+    if epoch_nanoseconds.as_ref().abs() > temporal_instant_limit_nanoseconds() {
+        return Err(Error::range(
+            "Temporal.ZonedDateTime epoch nanoseconds out of range",
+        ));
+    }
+
+    let Value::String(time_zone_source) = args.get(1).unwrap_or(&Value::Undefined) else {
+        return Err(Error::type_err(
+            "Temporal.ZonedDateTime time zone must be a String",
+        ));
+    };
+    vm.consume_fuel_units(time_zone_source.len().min(i64::MAX as usize) as i64)?;
+    let (time_zone_identifier, offset_minutes) =
+        temporal::parse_time_zone_identifier(time_zone_source)
+            .ok_or_else(|| Error::range("Invalid Temporal time zone identifier"))?;
+    let time_zone = TemporalTimeZone {
+        identifier: time_zone_identifier,
+        offset_minutes,
+    };
+
+    let calendar_identifier = match args.get(2).unwrap_or(&Value::Undefined) {
+        Value::Undefined => Arc::from("iso8601"),
+        Value::String(source) => {
+            vm.consume_fuel_units(source.len().min(i64::MAX as usize) as i64)?;
+            if !source.eq_ignore_ascii_case("iso8601") {
+                return Err(Error::range("Invalid Temporal calendar identifier"));
+            }
+            Arc::from("iso8601")
+        }
+        _ => {
+            return Err(Error::type_err(
+                "Temporal.ZonedDateTime calendar must be a String",
+            ))
+        }
+    };
+
+    let realm = env::global_env_root(&vm.heap, vm.native_callee_closure().unwrap_or(vm.global));
+    let fallback = vm
+        .realm_temporal_zoned_date_time_prototypes
+        .get(&realm.0)
+        .cloned()
+        .ok_or_else(|| Error::internal("Temporal.ZonedDateTime prototype is not installed"))?;
+    let prototype =
+        native_constructor_prototype_with_default(vm, "Temporal.ZonedDateTime", fallback)?;
+    create_temporal_zoned_date_time(
+        vm,
+        epoch_nanoseconds,
+        time_zone,
+        calendar_identifier,
+        prototype,
+    )
+}
+
+fn temporal_zoned_date_time_epoch_nanoseconds(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    temporal_zoned_date_time_slots(vm, this).map(|(epoch, _, _)| Value::BigInt(epoch))
+}
+
+fn temporal_zoned_date_time_epoch_milliseconds(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let (epoch_nanoseconds, _, _) = temporal_zoned_date_time_slots(vm, this)?;
+    let milliseconds = epoch_nanoseconds
+        .as_ref()
+        .div_floor(&BigInt::from(1_000_000_i64))
+        .to_f64()
+        .ok_or_else(|| Error::range("Temporal epoch milliseconds out of Number range"))?;
+    Ok(Value::Number(milliseconds))
+}
+
+fn temporal_zoned_date_time_time_zone_id(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    temporal_zoned_date_time_slots(vm, this)
+        .map(|(_, time_zone, _)| Value::String(time_zone.identifier))
+}
+
+fn temporal_zoned_date_time_calendar_id(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    temporal_zoned_date_time_slots(vm, this)
+        .map(|(_, _, calendar_identifier)| Value::String(calendar_identifier))
+}
+
 fn temporal_instant_factory_result(
     vm: &mut Vm,
     epoch_nanoseconds: Arc<BigInt>,
@@ -6595,10 +6851,12 @@ fn temporal_instant_from_epoch_nanoseconds(
 fn to_temporal_instant_epoch(vm: &mut Vm, value: &Value) -> error::Result<Arc<BigInt>> {
     if let Value::Object(index) = value {
         if let Some(epoch_nanoseconds) = vm.heap.with_obj(index.0, |object| match object {
-            HeapObj::Temporal(TemporalData {
-                kind: TemporalKind::Instant { epoch_nanoseconds },
-                ..
-            }) => Some(epoch_nanoseconds.clone()),
+            HeapObj::Temporal(TemporalData { kind, .. }) => match kind {
+                TemporalKind::Instant { epoch_nanoseconds }
+                | TemporalKind::ZonedDateTime {
+                    epoch_nanoseconds, ..
+                } => Some(epoch_nanoseconds.clone()),
+            },
             _ => None,
         }) {
             return Ok(epoch_nanoseconds);

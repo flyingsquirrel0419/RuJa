@@ -579,6 +579,8 @@ pub struct Vm {
     /// never mutable `globalThis.Temporal` properties.
     pub(crate) realm_temporal_instant_constructors: HashMap<usize, Value>,
     pub(crate) realm_temporal_instant_prototypes: HashMap<usize, Value>,
+    pub(crate) realm_temporal_zoned_date_time_constructors: HashMap<usize, Value>,
+    pub(crate) realm_temporal_zoned_date_time_prototypes: HashMap<usize, Value>,
     /// Realm global environment index -> that Realm's original intrinsic
     /// `%eval%` function object. Direct eval detection must not consult the
     /// mutable global `eval` property because scripts may replace it.
@@ -1341,6 +1343,8 @@ impl Vm {
             realm_date_prototypes: HashMap::new(),
             realm_temporal_instant_constructors: HashMap::new(),
             realm_temporal_instant_prototypes: HashMap::new(),
+            realm_temporal_zoned_date_time_constructors: HashMap::new(),
+            realm_temporal_zoned_date_time_prototypes: HashMap::new(),
             realm_eval_functions: HashMap::new(),
             realm_throw_type_errors: HashMap::new(),
             realm_function_prototypes: HashMap::new(),
@@ -3049,6 +3053,10 @@ impl Vm {
         self.realm_date_prototypes.remove(&realm);
         self.realm_temporal_instant_constructors.remove(&realm);
         self.realm_temporal_instant_prototypes.remove(&realm);
+        self.realm_temporal_zoned_date_time_constructors
+            .remove(&realm);
+        self.realm_temporal_zoned_date_time_prototypes
+            .remove(&realm);
         self.realm_eval_functions.remove(&realm);
         self.realm_throw_type_errors.remove(&realm);
         self.realm_function_prototypes.remove(&realm);
@@ -3154,6 +3162,8 @@ impl Vm {
         push_realm_value!(realm_date_prototypes);
         push_realm_value!(realm_temporal_instant_constructors);
         push_realm_value!(realm_temporal_instant_prototypes);
+        push_realm_value!(realm_temporal_zoned_date_time_constructors);
+        push_realm_value!(realm_temporal_zoned_date_time_prototypes);
         push_realm_value!(realm_eval_functions);
         push_realm_value!(realm_throw_type_errors);
         push_realm_value!(realm_function_prototypes);

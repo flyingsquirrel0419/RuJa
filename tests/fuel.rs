@@ -118,6 +118,60 @@ fn temporal_instant_compare_precharges_each_string_argument() {
 }
 
 #[test]
+fn temporal_zoned_date_time_precharges_identifier_bytes() {
+    const BUDGET: i64 = 20_000;
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        globalThis.temporalZoneInvalidShort = "x";
+        globalThis.temporalZoneInvalidLong = "x".repeat(512);
+        globalThis.temporalCalendarInvalidShort = "x";
+        globalThis.temporalCalendarInvalidLong = "x".repeat(512);
+        "#,
+    )
+    .expect("Temporal ZonedDateTime fuel fixtures should initialize");
+
+    vm.set_fuel(Some(BUDGET));
+    vm.run("new Temporal.ZonedDateTime(0n, 'UTC', 'iso8601');")
+        .expect("short ZonedDateTime identifiers should construct");
+    let valid_work = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+
+    vm.set_fuel(Some(BUDGET));
+    vm.run("new Temporal.ZonedDateTime(0n, temporalZoneInvalidShort);")
+        .expect_err("short invalid time zone should throw");
+    let short_zone_work = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+
+    vm.set_fuel(Some(BUDGET));
+    vm.run("new Temporal.ZonedDateTime(0n, temporalZoneInvalidLong);")
+        .expect_err("long invalid time zone should throw");
+    let long_zone_work = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+    assert!(long_zone_work >= short_zone_work + 500);
+
+    vm.set_fuel(Some(BUDGET));
+    vm.run("new Temporal.ZonedDateTime(0n, 'UTC', temporalCalendarInvalidShort);")
+        .expect_err("short invalid calendar should throw");
+    let short_calendar_work = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+
+    vm.set_fuel(Some(BUDGET));
+    vm.run("new Temporal.ZonedDateTime(0n, 'UTC', temporalCalendarInvalidLong);")
+        .expect_err("long invalid calendar should throw");
+    let long_calendar_work = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+    assert!(long_calendar_work >= short_calendar_work + 500);
+
+    vm.set_fuel(Some(valid_work - 1));
+    let error = vm
+        .run("new Temporal.ZonedDateTime(0n, 'UTC', 'iso8601');")
+        .expect_err("N-1 fuel must abort identifier processing");
+    assert_eq!(error.kind, ruja::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+
+    vm.set_fuel(Some(valid_work));
+    vm.run("new Temporal.ZonedDateTime(0n, 'UTC', 'iso8601');")
+        .expect("exact measured fuel should construct successfully");
+    assert_eq!(vm.fuel_remaining(), Some(0));
+}
+
+#[test]
 fn temporal_instant_to_string_precharges_time_zone_bytes() {
     const BUDGET: i64 = 10_000;
     let mut vm = Vm::new().expect("failed to initialize VM");

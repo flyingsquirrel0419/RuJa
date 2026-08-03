@@ -24997,6 +24997,95 @@ fn temporal_instant_compare_converts_in_order_and_returns_sign() {
 }
 
 #[test]
+fn temporal_zoned_date_time_core_uses_hidden_slots_and_realm_intrinsics() {
+    assert_eq!(
+        run(r#"
+            var zdt = new Temporal.ZonedDateTime(-217175010876543211n, '+01:30', 'ISO8601');
+            class Custom extends Temporal.ZonedDateTime {}
+            var custom = new Custom(true, 'utc');
+            [
+              Temporal.ZonedDateTime.name,
+              Temporal.ZonedDateTime.length,
+              zdt.epochNanoseconds,
+              zdt.epochMilliseconds,
+              zdt.timeZoneId,
+              zdt.calendarId,
+              Object.prototype.toString.call(zdt),
+              custom.epochNanoseconds,
+              custom.timeZoneId,
+              new Temporal.ZonedDateTime(0n, '-00').timeZoneId,
+              Object.getPrototypeOf(custom) === Custom.prototype,
+              custom instanceof Temporal.ZonedDateTime
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "ZonedDateTime|2|-217175010876543211|-217175010877|+01:30|iso8601|[object Temporal.ZonedDateTime]|1|UTC|+00:00|true|true"
+        ))
+    );
+
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var foreign = new other.Temporal.ZonedDateTime(1000000000987654321n, 'UTC');
+            var reads = 0;
+            Object.defineProperty(foreign, 'toString', {
+              get: function () { reads++; throw new Error('observed'); }
+            });
+            Object.defineProperty(foreign, 'epochNanoseconds', {
+              get: function () { reads++; throw new Error('observed'); }
+            });
+            var copied = Temporal.Instant.from(foreign);
+            var compared = Temporal.Instant.compare(foreign, new Temporal.Instant(1000000000000000000n));
+            var equal = new Temporal.Instant(1000000000987654321n).equals(foreign);
+            var getter = Object.getOwnPropertyDescriptor(
+              other.Temporal.ZonedDateTime.prototype,
+              'epochNanoseconds'
+            ).get;
+            [copied.epochNanoseconds, compared, equal, getter.call(foreign), reads].join('|');
+        "#),
+        Value::String(Arc::from(
+            "1000000000987654321|1|true|1000000000987654321|0"
+        ))
+    );
+
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var getter = Object.getOwnPropertyDescriptor(
+              other.Temporal.ZonedDateTime.prototype,
+              'calendarId'
+            ).get;
+            var getterRealm;
+            var constructorRealm;
+            try { getter.call({}); } catch (error) {
+              getterRealm = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            try { new other.Temporal.ZonedDateTime(0n, 'invalid'); } catch (error) {
+              constructorRealm = error instanceof other.RangeError && !(error instanceof RangeError);
+            }
+            getterRealm && constructorRealm;
+        "#),
+        Value::Bool(true)
+    );
+
+    for source in [
+        "Temporal.ZonedDateTime(0n, 'UTC')",
+        "new Temporal.ZonedDateTime()",
+        "new Temporal.ZonedDateTime(Symbol(), 'UTC')",
+        "new Temporal.ZonedDateTime(0n, {})",
+        "new Temporal.ZonedDateTime(0n, '1997-12-04T12:34[+01:00]')",
+        "new Temporal.ZonedDateTime(0n, 'UTC', {})",
+        "Object.getOwnPropertyDescriptor(Temporal.ZonedDateTime.prototype, 'timeZoneId').get.call({})",
+    ] {
+        let error = run_err(source);
+        assert!(
+            error.contains("TypeError") || error.contains("RangeError"),
+            "{source}: {error}"
+        );
+    }
+}
+
+#[test]
 fn temporal_instant_from_and_equals_share_exact_string_conversion() {
     assert_eq!(
         run(r#"

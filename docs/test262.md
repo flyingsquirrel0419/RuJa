@@ -14080,23 +14080,42 @@ timezone algorithms.
 - 장점, 단점 및 영향: Namespace descriptors, prototypes, Realm identity, allocation rollback, and exact 4/0/0 coverage are verified. All Temporal constructors and algorithms remain explicitly unsupported and can land in later narrow units.
 ```
 
+## Temporal.ZonedDateTime hidden-slot core
+
+`tools/test262_temporal_zoned_date_time_core_admission.txt` freezes **36**
+exact paths: 18 constructor-root files, 15 prototype/identifier files, and the
+three ZonedDateTime-to-Instant fast-path files. Dedicated CI requires **36 pass
+/ 0 fail / 0 skip**. Instant `compare` is now **30/0/0**, combined `from` and
+`equals` are **62/0/0**, and the ZonedDateTime top-level constructor directory
+is **18/0/2**. The two remaining files require the broader civil/formatting
+surface or the not-yet-installed Duration constructor.
+
+```text
+[Decision Log]
+- 목적과 의도: real ZonedDateTime hidden-slot core와 Instant fast path를 exact supported accounting에 반영한다.
+- 기존 구현 및 제약 조건: Instant 세 디렉터리는 ZonedDateTime helper 3개만 skip했고 ZonedDateTime root 20개 중 2개는 별도 Temporal type/method surface를 요구한다.
+- 검토한 주요 대안: Instant blocker 3개만 허용, ZonedDateTime prefix 전체 허용, constructor/accessor metadata까지 포함한 exact 36개를 검토했다.
+- 선택한 방식: 36개 path와 feature/include/flag/negative metadata를 고정하고 root blocker 2개의 존재·metadata·skip 정책도 검증한다.
+- 다른 대안 대신 이 방식을 선택한 이유: fast path만 고정하면 객체 모델 증거가 약하고 prefix admission은 아직 없는 Duration/civil formatting을 거짓 지원한다.
+- 장점, 단점 및 영향: future sibling은 자동 허용되지 않고 exact 36/0/0, compare 30/0/0, from+equals 62/0/0 경계가 재현된다. 두 root blocker는 후속 단위에서 재감사한다.
+```
+
 ## Temporal.Instant.compare completion
 
 `tools/test262_temporal_instant_compare_admission.txt` freezes **29** exact
 paths from the pinned `built-ins/Temporal/Instant/compare` directory. Dedicated
-CI requires **29 pass / 0 fail / 0 skip**. The complete directory is
-**29/0/1**;
-`argument-zoneddatetime.js` remains gated because its shared helper constructs
-a real `Temporal.ZonedDateTime` and verifies the internal-slot fast path.
+CI requires **29 pass / 0 fail / 0 skip**. The complete directory is now
+**30/0/0** after the ZonedDateTime hidden-slot core admits the remaining
+fast-path file.
 
 ```text
 [Decision Log]
 - 목적과 의도: static Instant comparison과 shared conversion의 conformance 증가를 exact accounting에 반영한다.
-- 기존 구현 및 제약 조건: 30개 파일 중 29개는 Instant/string conversion만 요구하지만 1개는 아직 없는 ZonedDateTime constructor와 hidden nanoseconds slot을 요구한다.
+- 기존 구현 및 제약 조건: 첫 단위에서 30개 파일 중 29개만 Instant/string conversion으로 완결됐고 1개는 ZonedDateTime constructor와 hidden nanoseconds slot을 요구했다.
 - 검토한 주요 대안: 전체 directory 허용, 가짜 ZonedDateTime, 29개 exact path와 blocker metadata를 고정하는 방식을 검토했다.
 - 선택한 방식: 29개 path와 feature/include/flag/negative metadata를 고정하고, remaining blocker의 존재·metadata·skip 정책도 검증한다.
 - 다른 대안 대신 이 방식을 선택한 이유: compare 자체 범위는 완결하면서 아직 없는 Temporal 객체 모델을 지원한다고 과장하지 않는다.
-- 장점, 단점 및 영향: future sibling은 자동 허용되지 않고 exact 29/0/0 및 full 29/0/1 경계가 재현된다. ZonedDateTime 도입 시 단일 blocker를 재감사한다.
+- 장점, 단점 및 영향: 원래 exact 29개 경계는 유지되고 ZonedDateTime core admission이 마지막 파일을 별도 소유해 full 30/0/0을 재현한다.
 ```
 
 ## Temporal.Instant.prototype.toString fixed-offset completion
@@ -14112,8 +14131,8 @@ pass / 0 fail / 0 skip**. The complete `toString` directory is **52/0/2**;
 `smallestunit-plurals-accepted.js` and `timezone-wrong-type.js` remain gated
 because the first test's shared helper and the second test's body construct
 Temporal types not yet implemented.
-The complete `from` plus `equals` directories improve to **60/0/2**, leaving
-only the two ZonedDateTime fast-path files.
+The complete `from` plus `equals` directories are now **62/0/0** after the
+ZonedDateTime hidden-slot core admits the two fast-path files.
 
 ```text
 [Decision Log]
@@ -14134,8 +14153,8 @@ basic or extended independently. Hour-only forms, offset seconds and
 nanosecond fractions, leap seconds, Instant endpoint adjustment, and the
 audited RFC 9557 annotation subset use one exact integer parser. The dedicated
 CI job requires **36 pass / 0 fail / 0 skip**. Across both complete method
-directories the policy now runs **60 pass / 0 fail / 2 skip**; the two skips
-are exactly the ZonedDateTime fast-path files.
+directories the policy now runs **62 pass / 0 fail / 0 skip** after the
+ZonedDateTime hidden-slot core.
 
 ```text
 [Decision Log]
@@ -14144,7 +14163,7 @@ are exactly the ZonedDateTime fast-path files.
 - 검토한 주요 대안: Date parser 재사용, 메서드별 parser, 외부 full-Temporal parser, 현재 integer parser의 단계별 확장을 검토했다.
 - 선택한 방식: basic/extended date, time, offset과 trailing annotation을 별도 단계로 검증하고 최종 local nanoseconds에서 exact offset nanoseconds를 차감한다. input bytes는 parsing 전에 fuel로 선차감한다.
 - 다른 대안 대신 이 방식을 선택한 이유: 공유 integer 경로만이 정밀도, coercion 순서, range check, sandbox 비용을 일치시키면서 아직 없는 Temporal type 문법을 거짓 지원하지 않는다.
-- 장점, 단점 및 영향: exact 36/0/0과 combined 60/0/2가 재현된다. full RFC 9557 문법과 ZonedDateTime fast path는 명시적으로 남는다.
+- 장점, 단점 및 영향: exact 36/0/0과 현재 combined 62/0/0이 재현된다. full RFC 9557 문법은 명시적으로 남는다.
 ```
 
 ## Temporal.Instant.prototype.valueOf completion
@@ -14163,7 +14182,7 @@ the complete path set, features, includes, flags, and negative metadata.
 - 검토한 주요 대안: 상속 유지, epoch BigInt 반환, 브랜드 검사 후 예외, receiver를 관찰하지 않는 즉시 TypeError를 검토했다.
 - 선택한 방식: Realm 설치 과정에서 valueOf native function을 GC-rooted allocation으로 만들고 Instant prototype에 표준 descriptor로 게시한다.
 - 다른 대안 대신 이 방식을 선택한 이유: 표준 알고리즘은 receiver 종류와 관계없이 예외를 요구하고, epoch 반환은 명시적 Instant 비교 의미론을 우회한다.
-- 장점, 단점 및 영향: 전체 7/0/0 경계와 관계 연산 거부가 재현 가능하다. ZonedDateTime fast path는 별도 후속 단위다.
+- 장점, 단점 및 영향: 전체 7/0/0 경계와 관계 연산 거부가 재현 가능하다. ZonedDateTime fast path는 이후 hidden-slot core 단위가 완결했다.
 ```
 
 ## Temporal.Instant epoch factory completion
@@ -14192,6 +14211,7 @@ requires **19 pass / 0 fail / 0 skip**.
 `Temporal.Instant.from` and the matching `equals` conversion path. The admitted
 grammar is the exact nanosecond, extended ISO date-time subset with a required
 `Z` or colonized minute offset. RFC 9557 annotations, compact offsets, offset
-seconds, and ZonedDateTime conversion remain behind the broad `Temporal` gate.
+seconds remain behind the broad `Temporal` gate. ZonedDateTime conversion is
+owned separately by the exact hidden-slot core admission.
 The dedicated `temporal-instant-from` CI job requires **15 pass / 0 fail / 0
 skip** at the pinned Test262 revision.

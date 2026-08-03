@@ -1053,6 +1053,17 @@ pub enum TemporalKind {
     Instant {
         epoch_nanoseconds: Arc<num_bigint::BigInt>,
     },
+    ZonedDateTime {
+        epoch_nanoseconds: Arc<num_bigint::BigInt>,
+        time_zone: TemporalTimeZone,
+        calendar_identifier: Arc<str>,
+    },
+}
+
+#[derive(Clone)]
+pub struct TemporalTimeZone {
+    pub identifier: Arc<str>,
+    pub offset_minutes: i16,
 }
 
 pub struct TemporalData {

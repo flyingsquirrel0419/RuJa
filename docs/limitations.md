@@ -15,9 +15,11 @@ The following resource limits are enforced:
   conversion accepts basic and
   extended date/time/offset forms, nanosecond-precision offset seconds, and the
   audited RFC 9557 annotation subset, with a required `Z` or numeric offset.
-  Named IANA time-zone transitions, the remaining RFC 9557 grammar,
-  ZonedDateTime conversion and its Instant fast path, calendar/duration/timezone
-  types, and `Temporal.Now` methods remain unsupported.
+  Realm-local `%Temporal.ZonedDateTime%` supports hidden-slot construction for
+  UTC and fixed offsets, exact epoch/time-zone/calendar accessors, subclassing,
+  and its Instant fast path. Named IANA time-zone transitions, the remaining
+  RFC 9557 grammar, ZonedDateTime civil/calendar accessors and methods,
+  calendar/duration types, and `Temporal.Now` methods remain unsupported.
 
 - **Execution fuel**: `Vm::set_fuel(Some(n))` bounds dispatched opcodes and
   explicitly metered native-loop steps. Proxy `[[Call]]`, `[[Delete]]`,

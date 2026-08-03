@@ -108,6 +108,10 @@ from test262_temporal_instant_to_string_admission import (
     TEMPORAL_INSTANT_TO_STRING_FEATURES,
     TEMPORAL_INSTANT_TO_STRING_FILES,
 )
+from test262_temporal_zoned_date_time_core_admission import (
+    TEMPORAL_ZONED_DATE_TIME_CORE_FEATURES,
+    TEMPORAL_ZONED_DATE_TIME_CORE_FILES,
+)
 from test262_temporal_instant_value_of_admission import (
     TEMPORAL_INSTANT_VALUE_OF_FEATURES,
     TEMPORAL_INSTANT_VALUE_OF_FILES,
@@ -3214,6 +3218,198 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                 finally:
                     tool.TEST262 = original_root
 
+    def test_temporal_zoned_date_time_core_manifest_is_exact_live_disjoint_and_shared(self):
+        zoned_prefix = "built-ins/Temporal/ZonedDateTime/"
+        root_names = {
+            "argument-convert.js",
+            "builtin.js",
+            "calendar-case-insensitive.js",
+            "calendar-invalid-iso-string.js",
+            "calendar-string.js",
+            "calendar-undefined.js",
+            "constructor.js",
+            "get-prototype-from-constructor-throws.js",
+            "length.js",
+            "limits.js",
+            "missing-arguments.js",
+            "name.js",
+            "prop-desc.js",
+            "subclass.js",
+            "timezone-case-insensitive.js",
+            "timezone-iso-string.js",
+            "timezone-string.js",
+            "timezone-wrong-type.js",
+        }
+        expected = {zoned_prefix + name for name in root_names}
+        expected.update(
+            {
+                zoned_prefix + "prototype/constructor.js",
+                zoned_prefix + "prototype/prop-desc.js",
+                zoned_prefix + "prototype/toStringTag/prop-desc.js",
+                "built-ins/Temporal/Instant/compare/argument-zoneddatetime.js",
+                "built-ins/Temporal/Instant/from/argument-zoneddatetime.js",
+                "built-ins/Temporal/Instant/prototype/equals/argument-zoneddatetime.js",
+            }
+        )
+        for directory in ("calendarId", "epochMilliseconds", "epochNanoseconds", "timeZoneId"):
+            expected.update(
+                zoned_prefix + f"prototype/{directory}/{name}"
+                for name in ("basic.js", "branding.js", "prop-desc.js")
+            )
+
+        bigint = {
+            zoned_prefix + "calendar-undefined.js",
+            zoned_prefix + "prototype/epochMilliseconds/basic.js",
+            zoned_prefix + "prototype/epochNanoseconds/basic.js",
+            zoned_prefix + "timezone-wrong-type.js",
+        }
+        symbol = {
+            zoned_prefix + "prototype/calendarId/branding.js",
+            zoned_prefix + "prototype/epochMilliseconds/branding.js",
+            zoned_prefix + "prototype/epochNanoseconds/branding.js",
+            zoned_prefix + "prototype/timeZoneId/branding.js",
+            zoned_prefix + "timezone-wrong-type.js",
+        }
+        expected_features = {
+            relative: frozenset(
+                {"Temporal"}
+                | ({"BigInt"} if relative in bigint else set())
+                | ({"Symbol"} if relative in symbol else set())
+            )
+            for relative in expected
+        }
+        self.assertEqual(TEMPORAL_ZONED_DATE_TIME_CORE_FILES, frozenset(expected))
+        self.assertEqual(TEMPORAL_ZONED_DATE_TIME_CORE_FEATURES, expected_features)
+        self.assertEqual(len(expected), 36)
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        root_directory = test_root / zoned_prefix
+        try:
+            live_available = root_directory.is_dir()
+        except OSError:
+            live_available = False
+        if live_available:
+            blockers = {
+                zoned_prefix + "calendar-wrong-type.js": (
+                    {"BigInt", "Symbol", "Temporal"},
+                    [],
+                ),
+                zoned_prefix + "construction-and-properties.js": ({"Temporal"}, []),
+            }
+            live_root = {
+                path.relative_to(test_root).as_posix()
+                for path in root_directory.glob("*.js")
+            }
+            self.assertEqual(
+                live_root,
+                {zoned_prefix + name for name in root_names} | set(blockers),
+            )
+            live_prototype_root = {
+                path.relative_to(test_root).as_posix()
+                for path in (root_directory / "prototype").glob("*.js")
+            }
+            self.assertEqual(
+                live_prototype_root,
+                {
+                    zoned_prefix + "prototype/constructor.js",
+                    zoned_prefix + "prototype/prop-desc.js",
+                },
+            )
+            for directory in ("calendarId", "epochMilliseconds", "epochNanoseconds", "timeZoneId"):
+                live = {
+                    path.relative_to(test_root).as_posix()
+                    for path in (root_directory / "prototype" / directory).glob("*.js")
+                }
+                self.assertEqual(
+                    live,
+                    {
+                        zoned_prefix + f"prototype/{directory}/{name}"
+                        for name in ("basic.js", "branding.js", "prop-desc.js")
+                    },
+                )
+
+            property_helper = {
+                zoned_prefix + "length.js",
+                zoned_prefix + "name.js",
+                zoned_prefix + "prop-desc.js",
+                zoned_prefix + "prototype/constructor.js",
+                zoned_prefix + "prototype/prop-desc.js",
+                zoned_prefix + "prototype/toStringTag/prop-desc.js",
+            }
+            instant_helpers = {
+                "built-ins/Temporal/Instant/compare/argument-zoneddatetime.js",
+                "built-ins/Temporal/Instant/from/argument-zoneddatetime.js",
+                "built-ins/Temporal/Instant/prototype/equals/argument-zoneddatetime.js",
+            }
+            for relative, features in expected_features.items():
+                path = test_root / relative
+                self.assertTrue(path.is_file(), relative)
+                metadata = test262_runner.parse_meta(path.read_text())
+                self.assertEqual(frozenset(metadata.get("features", [])), features)
+                includes = (
+                    ["compareArray.js", "temporalHelpers.js"]
+                    if relative in instant_helpers
+                    else ["propertyHelper.js"]
+                    if relative in property_helper
+                    else []
+                )
+                self.assertEqual(metadata.get("includes", []), includes)
+                self.assertEqual(metadata.get("flags", []), [])
+                self.assertIsNone(metadata.get("negative"))
+
+            for relative, (features, includes) in blockers.items():
+                path = test_root / relative
+                metadata = test262_runner.parse_meta(path.read_text())
+                self.assertEqual(set(metadata.get("features", [])), features)
+                self.assertEqual(metadata.get("includes", []), includes)
+                self.assertEqual(metadata.get("flags", []), [])
+                self.assertIsNone(metadata.get("negative"))
+                for tool in (test262_runner, test262_analyze):
+                    self.assertTrue(tool.should_skip(metadata, path))
+
+        tools_dir = Path(__file__).resolve().parent
+        for manifest in tools_dir.glob("test262_*_admission.txt"):
+            if manifest.name == "test262_temporal_zoned_date_time_core_admission.txt":
+                continue
+            existing = {
+                line
+                for raw_line in manifest.read_text().splitlines()
+                if (line := raw_line.strip()) and not line.startswith("#")
+            }
+            self.assertTrue(
+                TEMPORAL_ZONED_DATE_TIME_CORE_FILES.isdisjoint(existing),
+                manifest.name,
+            )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            future = root / "test" / zoned_prefix / "future.js"
+            outside = root / "test/built-ins/Temporal/ZonedDateTime/prototype/year/basic.js"
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for relative, features in expected_features.items():
+                        path = root / "test" / relative
+                        self.assertTrue(tool.temporal_zoned_date_time_core_path(path), relative)
+                        self.assertEqual(
+                            tool.temporal_zoned_date_time_core_features(path), features
+                        )
+                        self.assertFalse(tool.should_skip({"features": sorted(features)}, path))
+                        self.assertTrue(
+                            tool.should_skip(
+                                {"features": sorted(features | {"decorators"})}, path
+                            )
+                        )
+                    for path in (future, outside):
+                        self.assertFalse(tool.temporal_zoned_date_time_core_path(path))
+                        self.assertEqual(
+                            tool.temporal_zoned_date_time_core_features(path), frozenset()
+                        )
+                        self.assertTrue(tool.should_skip({"features": ["Temporal"]}, path))
+                finally:
+                    tool.TEST262 = original_root
+
     def test_temporal_instant_compare_manifest_is_exact_live_disjoint_and_shared(self):
         prefix = "built-ins/Temporal/Instant/compare/"
         names = {
@@ -3302,7 +3498,7 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
             self.assertEqual(metadata.get("flags", []), [])
             self.assertIsNone(metadata.get("negative"))
             for tool in (test262_runner, test262_analyze):
-                self.assertTrue(tool.should_skip(metadata, blocker_path))
+                self.assertFalse(tool.should_skip(metadata, blocker_path))
 
         tools_dir = Path(__file__).resolve().parent
         for manifest in tools_dir.glob("test262_*_admission.txt"):
@@ -3678,14 +3874,15 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                 self.assertEqual(metadata.get("flags", []), [])
                 self.assertIsNone(metadata.get("negative"))
                 for tool in (test262_runner, test262_analyze):
-                    self.assertTrue(tool.should_skip(metadata, test_root / relative))
+                    self.assertFalse(tool.should_skip(metadata, test_root / relative))
             owned = (
                 TEMPORAL_INSTANT_FROM_FILES
                 | TEMPORAL_INSTANT_EQUALS_FILES
                 | TEMPORAL_INSTANT_STRING_PARSER_FILES
                 | TEMPORAL_INSTANT_TO_STRING_FILES
+                | TEMPORAL_ZONED_DATE_TIME_CORE_FILES
             ) & live
-            self.assertEqual(owned, live - blockers)
+            self.assertEqual(owned, live)
 
         tools_dir = Path(__file__).resolve().parent
         for manifest in tools_dir.glob("test262_*_admission.txt"):

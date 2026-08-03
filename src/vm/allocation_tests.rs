@@ -179,6 +179,31 @@ fn temporal_namespace_installation_restores_roots_after_compare_allocation_failu
 }
 
 #[test]
+fn temporal_namespace_installation_restores_roots_after_zoned_calendar_allocation_failure() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.gc();
+    let original = vm.get_global("Temporal");
+    let baseline_pins = vm.gc_pins.len();
+    let baseline_live = vm.heap.live_count();
+    let global = vm.global;
+    let object_proto = vm.object_proto.clone();
+    // Sixteen earlier allocations fit; the seventeenth, calendarId, must fail.
+    vm.set_max_heap_objects(Some(baseline_live + 16));
+
+    let result =
+        crate::builtins::install_temporal_namespace_in_env(&mut vm, global, None, object_proto);
+
+    vm.set_max_heap_objects(None);
+    let error = result.expect_err("ZonedDateTime calendarId allocation must hit the cap");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(error.message, "heap limit exceeded");
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.get_global("Temporal"), original);
+    vm.gc();
+    assert_eq!(vm.heap.live_count(), baseline_live);
+}
+
+#[test]
 fn temporal_instant_from_retries_result_allocation_after_converted_input_gc() {
     let mut vm = Vm::new().expect("VM should initialize");
     let baseline_pins = vm.gc_pins.len();
@@ -1554,6 +1579,8 @@ const DEFERRED_NATIVE_CONSTRUCTOR_SOURCES: &[&str] = &[
     "Float64Array",
     "BigInt64Array",
     "BigUint64Array",
+    "Temporal.Instant",
+    "Temporal.ZonedDateTime",
 ];
 
 const NON_CONSTRUCTIBLE_NATIVE_FUNCTION_SOURCES: &[&str] = &[
@@ -1582,7 +1609,7 @@ const FOREIGN_EAGER_NATIVE_CONSTRUCTOR_SOURCES: &[&str] = &[
     "SuppressedError",
 ];
 
-fn realm_registry_counts(vm: &Vm) -> [usize; 42] {
+fn realm_registry_counts(vm: &Vm) -> [usize; 51] {
     [
         vm.realm_globals.len(),
         vm.realm_object_prototypes.len(),
@@ -1596,6 +1623,8 @@ fn realm_registry_counts(vm: &Vm) -> [usize; 42] {
         vm.realm_set_prototypes.len(),
         vm.realm_weakmap_prototypes.len(),
         vm.realm_weakset_prototypes.len(),
+        vm.realm_weakref_prototypes.len(),
+        vm.realm_finalization_registry_prototypes.len(),
         vm.realm_generator_prototypes.len(),
         vm.realm_generator_function_constructors.len(),
         vm.realm_generator_function_prototypes.len(),
@@ -1607,9 +1636,12 @@ fn realm_registry_counts(vm: &Vm) -> [usize; 42] {
         vm.realm_date_prototypes.len(),
         vm.realm_temporal_instant_constructors.len(),
         vm.realm_temporal_instant_prototypes.len(),
+        vm.realm_temporal_zoned_date_time_constructors.len(),
+        vm.realm_temporal_zoned_date_time_prototypes.len(),
         vm.realm_eval_functions.len(),
         vm.realm_throw_type_errors.len(),
         vm.realm_function_prototypes.len(),
+        vm.realm_shadow_realm_prototypes.len(),
         vm.realm_async_function_prototypes.len(),
         vm.realm_iterator_constructors.len(),
         vm.realm_iterator_prototypes.len(),
@@ -1623,6 +1655,10 @@ fn realm_registry_counts(vm: &Vm) -> [usize; 42] {
         vm.realm_heap_limit_errors.len(),
         vm.realm_regexp_constructors.len(),
         vm.realm_regexp_prototypes.len(),
+        vm.realm_intl_locale_constructors.len(),
+        vm.realm_intl_locale_prototypes.len(),
+        vm.realm_intl_collator_constructors.len(),
+        vm.realm_intl_collator_prototypes.len(),
         vm.realm_regexp_string_iterator_prototypes.len(),
         vm.realm_array_buffer_prototypes.len(),
         vm.realm_typed_array_constructors.len(),
@@ -1704,7 +1740,7 @@ fn assert_main_realm_range_error(vm: &Vm, error: &crate::error::Error) {
 fn assert_failed_realm_attempt(
     vm: &mut Vm,
     baseline_live: usize,
-    baseline_registries: [usize; 42],
+    baseline_registries: [usize; 51],
     baseline_pins: usize,
     extra_capacity: usize,
 ) {

@@ -90,6 +90,12 @@ jobs:
           TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_instant_compare_manifest_is_exact_live_disjoint_and_shared
           -v
+      - name: Verify exact Temporal.ZonedDateTime core admission
+        working-directory: tools
+        run: >-
+          TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
+          test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_zoned_date_time_core_manifest_is_exact_live_disjoint_and_shared
+          -v
       - name: Verify exact Temporal.Instant epoch factory admission
         working-directory: tools
         run: >-
@@ -400,6 +406,39 @@ jobs:
           cat temporal_instant_compare_result.txt
           grep -q '^RATE=100.0 PASS=29 FAIL=0 SKIP=0 TOTAL=29 RAN=29$' \
             temporal_instant_compare_result.txt
+
+  temporal-zoned-date-time-core:
+    needs: [build, setup]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download RuJa binary
+        uses: actions/download-artifact@v4
+        with:
+          name: ruja-release
+          path: target/release/
+      - run: chmod +x target/release/ruja
+      - name: Checkout pinned Temporal.ZonedDateTime core tests
+        uses: actions/checkout@v4
+        with:
+          repository: tc39/test262
+          ref: ${{ env.TEST262_REV }}
+          path: test262
+          sparse-checkout: |
+            harness
+            test/built-ins/Temporal/Instant/compare
+            test/built-ins/Temporal/Instant/from
+            test/built-ins/Temporal/Instant/prototype/equals
+            test/built-ins/Temporal/ZonedDateTime
+      - name: Require exact Temporal.ZonedDateTime core boundary
+        run: |
+          mapfile -t files < <(sed -e '/^#/d' -e '/^$/d' \
+            tools/test262_temporal_zoned_date_time_core_admission.txt)
+          TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
+            "${files[@]}" > temporal_zoned_date_time_core_result.txt 2>&1
+          cat temporal_zoned_date_time_core_result.txt
+          grep -q '^RATE=100.0 PASS=36 FAIL=0 SKIP=0 TOTAL=36 RAN=36$' \
+            temporal_zoned_date_time_core_result.txt
 
   temporal-instant-epoch-factories:
     needs: [build, setup]

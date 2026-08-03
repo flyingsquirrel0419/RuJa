@@ -1,6 +1,7 @@
 use num_bigint::BigInt;
 use num_traits::ToPrimitive;
 use std::fmt::Write;
+use std::sync::Arc;
 
 const NS_PER_SECOND: i128 = 1_000_000_000;
 const SECONDS_PER_DAY: i128 = 86_400;
@@ -382,6 +383,24 @@ fn minute_precision_offset(source: &[u8]) -> Option<i128> {
         .then_some(offset)
 }
 
+pub(crate) fn parse_time_zone_identifier(source: &str) -> Option<(Arc<str>, i16)> {
+    if source.eq_ignore_ascii_case("UTC") {
+        return Some((Arc::from("UTC"), 0));
+    }
+    let bytes = source.as_bytes();
+    if !matches!(bytes.first(), Some(b'+') | Some(b'-')) {
+        return None;
+    }
+    let offset = minute_precision_offset(bytes)?;
+    let offset_minutes = i16::try_from(offset / (60 * NS_PER_SECOND)).ok()?;
+    let sign = if offset_minutes < 0 { '-' } else { '+' };
+    let magnitude = offset_minutes.unsigned_abs();
+    Some((
+        Arc::from(format!("{sign}{:02}:{:02}", magnitude / 60, magnitude % 60)),
+        offset_minutes,
+    ))
+}
+
 fn resolve_time_zone_syntax(
     offset_nanoseconds: Option<i128>,
     offset_has_sub_minute_syntax: bool,
@@ -721,8 +740,8 @@ pub(crate) fn format_instant(
 #[cfg(test)]
 mod tests {
     use super::{
-        format_instant, parse_instant_string, parse_time_zone_offset, InstantPrecision,
-        InstantRoundingMode,
+        format_instant, parse_instant_string, parse_time_zone_identifier, parse_time_zone_offset,
+        InstantPrecision, InstantRoundingMode,
     };
     use num_bigint::BigInt;
 
@@ -869,6 +888,32 @@ mod tests {
             "-000000-01-01T00:00Z",
         ] {
             assert_eq!(parse_time_zone_offset(source), None, "{source}");
+        }
+    }
+
+    #[test]
+    fn parses_only_constructor_time_zone_identifiers() {
+        for (source, identifier, offset_minutes) in [
+            ("utc", "UTC", 0),
+            ("-00", "+00:00", 0),
+            ("-00:00", "+00:00", 0),
+            ("+01", "+01:00", 60),
+            ("-01:30", "-01:30", -90),
+            ("+0130", "+01:30", 90),
+        ] {
+            let (actual_identifier, actual_offset) =
+                parse_time_zone_identifier(source).expect("identifier should parse");
+            assert_eq!(actual_identifier.as_ref(), identifier, "{source}");
+            assert_eq!(actual_offset, offset_minutes, "{source}");
+        }
+        for source in [
+            "",
+            "Europe/Vienna",
+            "1997-12-04T12:34[+01:00]",
+            "+24:00",
+            "+01:00:00",
+        ] {
+            assert!(parse_time_zone_identifier(source).is_none(), "{source}");
         }
     }
 
