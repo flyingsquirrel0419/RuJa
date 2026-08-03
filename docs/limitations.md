@@ -8,11 +8,14 @@ The following resource limits are enforced:
 - **Temporal scope**: Realm-local `%Temporal%`, `%Temporal.Now%`, and
   `%Temporal.Instant%` are installed. Instant supports construction, exact
   epoch accessors, epoch factories, `equals`, `from`, the always-throwing
-  `valueOf`, and
-  `Date.prototype.toTemporalInstant`. String conversion accepts basic and
+  `valueOf`, `toString` with all precision/rounding options and deterministic
+  UTC/fixed-offset time zones plus ambiguity-checked annotated date/time
+  forms, and `Date.prototype.toTemporalInstant`. String
+  conversion accepts basic and
   extended date/time/offset forms, nanosecond-precision offset seconds, and the
   audited RFC 9557 annotation subset, with a required `Z` or numeric offset.
-  The remaining RFC 9557 grammar, ZonedDateTime conversion,
+  Named IANA time-zone transitions, the remaining RFC 9557 grammar,
+  ZonedDateTime conversion,
   calendar/duration/timezone types, and `Temporal.Now` methods remain
   unsupported.
 

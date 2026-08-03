@@ -1,4 +1,6 @@
 use num_bigint::BigInt;
+use num_traits::ToPrimitive;
+use std::fmt::Write;
 
 const NS_PER_SECOND: i128 = 1_000_000_000;
 const SECONDS_PER_DAY: i128 = 86_400;
@@ -93,6 +95,11 @@ fn parse_offset_nanoseconds(bytes: &[u8], index: &mut usize) -> Option<i128> {
     Some(if negative { -value } else { value })
 }
 
+fn offset_has_sub_minute_syntax(bytes: &[u8], start: usize, end: usize) -> bool {
+    let extended = bytes.get(start + 3) == Some(&b':');
+    end > start + if extended { 6 } else { 5 }
+}
+
 fn valid_annotation_key(key: &[u8]) -> bool {
     key.first()
         .is_some_and(|byte| byte.is_ascii_lowercase() || *byte == b'_')
@@ -144,8 +151,9 @@ fn valid_named_time_zone_annotation(value: &[u8]) -> bool {
         })
 }
 
-fn parse_annotations(bytes: &[u8], index: &mut usize) -> Option<()> {
+fn parse_annotations<'a>(bytes: &'a [u8], index: &mut usize) -> Option<Option<&'a [u8]>> {
     let mut time_zone_seen = false;
+    let mut time_zone_annotation = None;
     let mut annotation_seen = false;
     let mut calendar_count = 0_u32;
     let mut critical_calendar_seen = false;
@@ -198,9 +206,10 @@ fn parse_annotations(bytes: &[u8], index: &mut usize) -> Option<()> {
                 return None;
             }
             time_zone_seen = true;
+            time_zone_annotation = Some(body);
         }
     }
-    Some(())
+    Some(time_zone_annotation)
 }
 
 fn leap_year(year: i128) -> bool {
@@ -242,7 +251,15 @@ fn days_from_civil(year: i128, month: i128, day: i128) -> Option<i128> {
         .checked_sub(719_468)
 }
 
-pub(crate) fn parse_instant_string(source: &str) -> Option<BigInt> {
+struct ParsedDateTime<'a> {
+    local_nanoseconds: i128,
+    offset_nanoseconds: Option<i128>,
+    offset_has_sub_minute_syntax: bool,
+    z: bool,
+    time_zone_annotation: Option<&'a [u8]>,
+}
+
+fn parse_date_time(source: &str) -> Option<ParsedDateTime<'_>> {
     let bytes = source.as_bytes();
     let mut index = 0;
     let year = if matches!(bytes.first(), Some(b'+') | Some(b'-')) {
@@ -311,15 +328,23 @@ pub(crate) fn parse_instant_string(source: &str) -> Option<BigInt> {
     }
     second = second.min(59);
 
-    let offset_nanoseconds = match bytes.get(index) {
+    let (offset_nanoseconds, offset_has_sub_minute_syntax, z) = match bytes.get(index) {
         Some(b'Z') | Some(b'z') => {
             index += 1;
-            0
+            (Some(0), false, true)
         }
-        Some(b'+') | Some(b'-') => parse_offset_nanoseconds(bytes, &mut index)?,
-        _ => return None,
+        Some(b'+') | Some(b'-') => {
+            let start = index;
+            let offset = parse_offset_nanoseconds(bytes, &mut index)?;
+            (
+                Some(offset),
+                offset_has_sub_minute_syntax(bytes, start, index),
+                false,
+            )
+        }
+        _ => (None, false, false),
     };
-    parse_annotations(bytes, &mut index)?;
+    let time_zone_annotation = parse_annotations(bytes, &mut index)?;
     if index != bytes.len() {
         return None;
     }
@@ -328,16 +353,377 @@ pub(crate) fn parse_instant_string(source: &str) -> Option<BigInt> {
     let local_seconds = days
         .checked_mul(SECONDS_PER_DAY)?
         .checked_add(hour * 3_600 + minute * 60 + second)?;
-    let epoch = local_seconds
+    let local_nanoseconds = local_seconds
         .checked_mul(NS_PER_SECOND)?
-        .checked_add(fraction)?
-        .checked_sub(offset_nanoseconds)?;
-    Some(BigInt::from(epoch))
+        .checked_add(fraction)?;
+    Some(ParsedDateTime {
+        local_nanoseconds,
+        offset_nanoseconds,
+        offset_has_sub_minute_syntax,
+        z,
+        time_zone_annotation,
+    })
+}
+
+pub(crate) fn parse_instant_string(source: &str) -> Option<BigInt> {
+    let parsed = parse_date_time(source)?;
+    let offset_nanoseconds = parsed.offset_nanoseconds?;
+    Some(BigInt::from(
+        parsed.local_nanoseconds.checked_sub(offset_nanoseconds)?,
+    ))
+}
+
+fn minute_precision_offset(source: &[u8]) -> Option<i128> {
+    let mut index = 0;
+    let offset = parse_offset_nanoseconds(source, &mut index)?;
+    (index == source.len()
+        && !offset_has_sub_minute_syntax(source, 0, index)
+        && offset % (60 * NS_PER_SECOND) == 0)
+        .then_some(offset)
+}
+
+fn resolve_time_zone_syntax(
+    offset_nanoseconds: Option<i128>,
+    offset_has_sub_minute_syntax: bool,
+    z: bool,
+    annotation: Option<&[u8]>,
+) -> Option<i128> {
+    if let Some(annotation) = annotation {
+        if annotation.eq_ignore_ascii_case(b"UTC") {
+            return Some(0);
+        }
+        return minute_precision_offset(annotation);
+    }
+    if z {
+        Some(0)
+    } else {
+        offset_nanoseconds
+            .filter(|offset| !offset_has_sub_minute_syntax && offset % (60 * NS_PER_SECOND) == 0)
+    }
+}
+
+fn parse_time_zone_from_time(source: &str) -> Option<i128> {
+    let bytes = source.as_bytes();
+    let has_designator = matches!(bytes.first(), Some(b'T') | Some(b't'));
+    let mut index = usize::from(has_designator);
+    let hour = digits(bytes, &mut index, 2)?;
+    let extended = bytes.get(index) == Some(&b':');
+    let mut minute = 0;
+    let mut second = 0;
+    let minute_present = if extended {
+        index += 1;
+        minute = digits(bytes, &mut index, 2)?;
+        true
+    } else if bytes.get(index).is_some_and(u8::is_ascii_digit) {
+        minute = digits(bytes, &mut index, 2)?;
+        true
+    } else {
+        false
+    };
+    let second_present = if extended && bytes.get(index) == Some(&b':') {
+        index += 1;
+        second = digits(bytes, &mut index, 2)?;
+        true
+    } else if !extended && minute_present && bytes.get(index).is_some_and(u8::is_ascii_digit) {
+        second = digits(bytes, &mut index, 2)?;
+        true
+    } else {
+        false
+    };
+    if second_present {
+        fraction_nanoseconds(bytes, &mut index)?;
+    }
+    if hour > 23 || minute > 59 || second > 60 {
+        return None;
+    }
+
+    let (offset, sub_minute) = if matches!(bytes.get(index), Some(b'+') | Some(b'-')) {
+        let start = index;
+        let offset = parse_offset_nanoseconds(bytes, &mut index)?;
+        (
+            Some(offset),
+            offset_has_sub_minute_syntax(bytes, start, index),
+        )
+    } else {
+        (None, false)
+    };
+    if !has_designator
+        && offset.is_some()
+        && (parse_annotated_year_month(&bytes[..index]).is_some()
+            || parse_annotated_month_day(&bytes[..index]).is_some())
+    {
+        return None;
+    }
+    let annotation = parse_annotations(bytes, &mut index)?;
+    (index == bytes.len())
+        .then(|| resolve_time_zone_syntax(offset, sub_minute, false, annotation))?
+}
+
+fn parse_date_year(bytes: &[u8], index: &mut usize) -> Option<i128> {
+    if matches!(bytes.get(*index), Some(b'+') | Some(b'-')) {
+        let negative = bytes[*index] == b'-';
+        *index += 1;
+        let magnitude = digits(bytes, index, 6)?;
+        if negative && magnitude == 0 {
+            return None;
+        }
+        Some(if negative { -magnitude } else { magnitude })
+    } else {
+        digits(bytes, index, 4)
+    }
+}
+
+fn annotations_at_end<'a>(bytes: &'a [u8], index: &mut usize) -> Option<Option<&'a [u8]>> {
+    let annotation = parse_annotations(bytes, index)?;
+    (*index == bytes.len()).then_some(annotation)
+}
+
+fn parse_annotated_full_date(bytes: &[u8]) -> Option<Option<&[u8]>> {
+    let mut index = 0;
+    let year = parse_date_year(bytes, &mut index)?;
+    let extended = bytes.get(index) == Some(&b'-');
+    if extended {
+        index += 1;
+    }
+    let month = digits(bytes, &mut index, 2)?;
+    if extended {
+        take(bytes, &mut index, b'-')?;
+    }
+    let day = digits(bytes, &mut index, 2)?;
+    if day == 0 || day > days_in_month(year, month)? {
+        return None;
+    }
+    annotations_at_end(bytes, &mut index)
+}
+
+fn parse_annotated_year_month(bytes: &[u8]) -> Option<Option<&[u8]>> {
+    let mut index = 0;
+    parse_date_year(bytes, &mut index)?;
+    if bytes.get(index) == Some(&b'-') {
+        index += 1;
+    }
+    let month = digits(bytes, &mut index, 2)?;
+    if !(1..=12).contains(&month) {
+        return None;
+    }
+    annotations_at_end(bytes, &mut index)
+}
+
+fn parse_annotated_month_day(bytes: &[u8]) -> Option<Option<&[u8]>> {
+    let mut index = 0;
+    if bytes.get(0..2) == Some(b"--") {
+        index = 2;
+    }
+    let month = digits(bytes, &mut index, 2)?;
+    if bytes.get(index) == Some(&b'-') {
+        index += 1;
+    }
+    let day = digits(bytes, &mut index, 2)?;
+    if day == 0 || day > days_in_month(1972, month)? {
+        return None;
+    }
+    annotations_at_end(bytes, &mut index)
+}
+
+fn parse_time_zone_from_annotated_date(source: &str) -> Option<i128> {
+    let bytes = source.as_bytes();
+    let annotation = parse_annotated_full_date(bytes)
+        .or_else(|| parse_annotated_year_month(bytes))
+        .or_else(|| parse_annotated_month_day(bytes))??;
+    resolve_time_zone_syntax(None, false, false, Some(annotation))
+}
+
+pub(crate) fn parse_time_zone_offset(source: &str) -> Option<i128> {
+    if source.eq_ignore_ascii_case("UTC") {
+        return Some(0);
+    }
+    if let Some(offset) = minute_precision_offset(source.as_bytes()) {
+        return Some(offset);
+    }
+
+    if let Some(parsed) = parse_date_time(source) {
+        if let Some(offset) = resolve_time_zone_syntax(
+            parsed.offset_nanoseconds,
+            parsed.offset_has_sub_minute_syntax,
+            parsed.z,
+            parsed.time_zone_annotation,
+        ) {
+            return Some(offset);
+        }
+    }
+    parse_time_zone_from_time(source).or_else(|| parse_time_zone_from_annotated_date(source))
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum InstantPrecision {
+    Auto,
+    Minute,
+    Digits(u8),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum InstantRoundingMode {
+    Ceil,
+    Expand,
+    Floor,
+    HalfCeil,
+    HalfEven,
+    HalfExpand,
+    HalfFloor,
+    HalfTrunc,
+    Trunc,
+}
+
+fn rounding_increment(precision: InstantPrecision) -> Option<i128> {
+    match precision {
+        InstantPrecision::Auto => Some(1),
+        InstantPrecision::Minute => Some(60 * NS_PER_SECOND),
+        InstantPrecision::Digits(digits) if digits <= 9 => Some(10_i128.pow(u32::from(9 - digits))),
+        InstantPrecision::Digits(_) => None,
+    }
+}
+
+fn round_as_if_positive(value: i128, increment: i128, mode: InstantRoundingMode) -> Option<i128> {
+    let quotient = value.div_euclid(increment);
+    let remainder = value.rem_euclid(increment);
+    if remainder == 0 {
+        return Some(value);
+    }
+    let lower = quotient.checked_mul(increment)?;
+    let upper = lower.checked_add(increment)?;
+    let choose_upper = match mode {
+        InstantRoundingMode::Ceil | InstantRoundingMode::Expand => true,
+        InstantRoundingMode::Floor | InstantRoundingMode::Trunc => false,
+        InstantRoundingMode::HalfCeil
+        | InstantRoundingMode::HalfEven
+        | InstantRoundingMode::HalfExpand
+        | InstantRoundingMode::HalfFloor
+        | InstantRoundingMode::HalfTrunc => {
+            let doubled = remainder.checked_mul(2)?;
+            if doubled < increment {
+                false
+            } else if doubled > increment {
+                true
+            } else {
+                match mode {
+                    InstantRoundingMode::HalfCeil | InstantRoundingMode::HalfExpand => true,
+                    InstantRoundingMode::HalfFloor | InstantRoundingMode::HalfTrunc => false,
+                    InstantRoundingMode::HalfEven => quotient.rem_euclid(2) != 0,
+                    _ => unreachable!(),
+                }
+            }
+        }
+    };
+    Some(if choose_upper { upper } else { lower })
+}
+
+fn civil_from_days(days: i128) -> Option<(i128, i128, i128)> {
+    let shifted = days.checked_add(719_468)?;
+    let era = if shifted >= 0 {
+        shifted
+    } else {
+        shifted.checked_sub(146_096)?
+    } / 146_097;
+    let day_of_era = shifted.checked_sub(era.checked_mul(146_097)?)?;
+    let year_of_era = day_of_era
+        .checked_sub(day_of_era / 1_460)?
+        .checked_add(day_of_era / 36_524)?
+        .checked_sub(day_of_era / 146_096)?
+        / 365;
+    let mut year = year_of_era.checked_add(era.checked_mul(400)?)?;
+    let day_of_year = day_of_era.checked_sub(
+        year_of_era
+            .checked_mul(365)?
+            .checked_add(year_of_era / 4)?
+            .checked_sub(year_of_era / 100)?,
+    )?;
+    let shifted_month = day_of_year.checked_mul(5)?.checked_add(2)? / 153;
+    let day = day_of_year
+        .checked_sub(shifted_month.checked_mul(153)?.checked_add(2)? / 5)?
+        .checked_add(1)?;
+    let month = shifted_month.checked_add(if shifted_month < 10 { 3 } else { -9 })?;
+    year = year.checked_add(i128::from(month <= 2))?;
+    Some((year, month, day))
+}
+
+fn write_year(output: &mut String, year: i128) -> Option<()> {
+    if (0..=9_999).contains(&year) {
+        write!(output, "{year:04}").ok()?;
+    } else if year < 0 {
+        write!(output, "-{:06}", year.checked_neg()?).ok()?;
+    } else {
+        write!(output, "+{year:06}").ok()?;
+    }
+    Some(())
+}
+
+pub(crate) fn format_instant(
+    epoch_nanoseconds: &BigInt,
+    display_offset_nanoseconds: Option<i128>,
+    precision: InstantPrecision,
+    rounding_mode: InstantRoundingMode,
+) -> Option<String> {
+    let epoch_nanoseconds = epoch_nanoseconds.to_i128()?;
+    let increment = rounding_increment(precision)?;
+    let rounded = round_as_if_positive(epoch_nanoseconds, increment, rounding_mode)?;
+    let offset = display_offset_nanoseconds.unwrap_or(0);
+    let local = rounded.checked_add(offset)?;
+    let nanoseconds_per_day = SECONDS_PER_DAY.checked_mul(NS_PER_SECOND)?;
+    let days = local.div_euclid(nanoseconds_per_day);
+    let within_day = local.rem_euclid(nanoseconds_per_day);
+    let (year, month, day) = civil_from_days(days)?;
+    let second_of_day = within_day / NS_PER_SECOND;
+    let hour = second_of_day / 3_600;
+    let minute = second_of_day % 3_600 / 60;
+    let second = second_of_day % 60;
+    let fraction = within_day % NS_PER_SECOND;
+
+    let mut output = String::with_capacity(40);
+    write_year(&mut output, year)?;
+    write!(output, "-{month:02}-{day:02}T{hour:02}:{minute:02}").ok()?;
+    if precision != InstantPrecision::Minute {
+        write!(output, ":{second:02}").ok()?;
+        match precision {
+            InstantPrecision::Auto if fraction != 0 => {
+                let fraction = format!("{fraction:09}");
+                output.push('.');
+                output.push_str(fraction.trim_end_matches('0'));
+            }
+            InstantPrecision::Digits(digits) if digits != 0 => {
+                let divisor = 10_i128.pow(u32::from(9 - digits));
+                write!(
+                    output,
+                    ".{:0width$}",
+                    fraction / divisor,
+                    width = usize::from(digits)
+                )
+                .ok()?;
+            }
+            _ => {}
+        }
+    }
+    if let Some(offset) = display_offset_nanoseconds {
+        let sign = if offset < 0 { '-' } else { '+' };
+        let total_minutes = offset.abs() / (60 * NS_PER_SECOND);
+        write!(
+            output,
+            "{sign}{:02}:{:02}",
+            total_minutes / 60,
+            total_minutes % 60
+        )
+        .ok()?;
+    } else {
+        output.push('Z');
+    }
+    Some(output)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::parse_instant_string;
+    use super::{
+        format_instant, parse_instant_string, parse_time_zone_offset, InstantPrecision,
+        InstantRoundingMode,
+    };
     use num_bigint::BigInt;
 
     #[test]
@@ -443,6 +829,85 @@ mod tests {
             "1970-01-01T00:00:00+00:0000",
         ] {
             assert!(parse_instant_string(source).is_none(), "{source}");
+        }
+    }
+
+    #[test]
+    fn resolves_fixed_and_utc_time_zone_identifiers() {
+        let minute = 60_i128 * 1_000_000_000;
+        for (source, expected) in [
+            ("UTC", 0),
+            ("-01:30", -90 * minute),
+            ("2021-08-19T17:30Z", 0),
+            ("2021-08-19T17:30-07:00", -420 * minute),
+            ("2021-08-19T17:30-07:00[UTC]", 0),
+            ("12:34+01:00", 60 * minute),
+            ("12:34[UTC]", 0),
+            ("T12:34+01:00", 60 * minute),
+            ("t12:34[UTC]", 0),
+            ("2021-08-19[UTC]", 0),
+            ("2021-08[+01:30]", 90 * minute),
+            ("--02-29[UTC]", 0),
+            ("08-19[UTC]", 0),
+            ("2021-08-19T17:30:45.123456789-12:12[+01:46]", 106 * minute),
+        ] {
+            assert_eq!(parse_time_zone_offset(source), Some(expected), "{source}");
+        }
+        for source in [
+            "2021-08-19T17:30",
+            "-12:12:59.9",
+            "2021-08-19T17:30-07:00:00",
+            "2021-08-19T17:30-07:00:01",
+            "2021-08-19T17:30[Europe/Vienna]",
+            "12:34Z",
+            "2021-08",
+            "08-19",
+            "24:00+01:00",
+            "2021-02-30[UTC]",
+            "9999-13[UTC]",
+            "02-30[UTC]",
+            "-000000-01-01T00:00Z",
+        ] {
+            assert_eq!(parse_time_zone_offset(source), None, "{source}");
+        }
+    }
+
+    #[test]
+    fn formats_instants_with_precision_offsets_and_as_if_positive_rounding() {
+        let epoch = BigInt::from(217_175_010_123_456_789_i128);
+        assert_eq!(
+            format_instant(
+                &epoch,
+                None,
+                InstantPrecision::Auto,
+                InstantRoundingMode::Trunc,
+            )
+            .as_deref(),
+            Some("1976-11-18T14:23:30.123456789Z")
+        );
+        assert_eq!(
+            format_instant(
+                &BigInt::from(0),
+                Some(-90 * 60 * 1_000_000_000_i128),
+                InstantPrecision::Digits(0),
+                InstantRoundingMode::Trunc,
+            )
+            .as_deref(),
+            Some("1969-12-31T22:30:00-01:30")
+        );
+
+        let negative = BigInt::from(-65_261_246_399_500_000_000_i128);
+        for (mode, expected) in [
+            (InstantRoundingMode::Floor, "-000099-12-15T12:00:00Z"),
+            (InstantRoundingMode::Trunc, "-000099-12-15T12:00:00Z"),
+            (InstantRoundingMode::Ceil, "-000099-12-15T12:00:01Z"),
+            (InstantRoundingMode::HalfExpand, "-000099-12-15T12:00:01Z"),
+        ] {
+            assert_eq!(
+                format_instant(&negative, None, InstantPrecision::Digits(0), mode).as_deref(),
+                Some(expected),
+                "{mode:?}"
+            );
         }
     }
 }

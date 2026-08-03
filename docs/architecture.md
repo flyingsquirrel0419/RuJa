@@ -33,9 +33,9 @@ source ─► Lexer ─► Parser ─► Compiler ─► Bytecode ─► VM
 - **Builtins** (`src/builtins/mod.rs` + submodules) — the standard library:
   Object, Array, String, Number, Boolean, Function, Math, JSON, console, RegExp,
   Map, Set, Symbol, Promise, Proxy, TypedArray, Temporal, and the Error
-  hierarchy. `src/builtins/temporal.rs` owns syntax-only Instant parsing;
-  Realm allocation, coercion, range checks, and observable methods remain in
-  `src/builtins/mod.rs`.
+  hierarchy. `src/builtins/temporal.rs` owns syntax-only Instant/time-zone
+  parsing and exact integer ISO formatting; Realm allocation, coercion, range
+  checks, and observable methods remain in `src/builtins/mod.rs`.
 
 ## Temporal Instant conversion
 
@@ -56,6 +56,28 @@ the method Realm for result or error materialization.
 - 선택한 방식: observable ToPrimitive는 VM builtin layer에서 수행하고, 그 직후 input bytes를 fuel로 선차감한다. VM/GC 재진입 없는 syntax-only parser가 epoch nanoseconds를 반환하며 VM layer가 range와 Realm을 적용한다.
 - 다른 대안 대신 이 방식을 선택한 이유: parser 내부에서 VM 재진입과 GC를 섞지 않고도 sandbox 비용을 경계 전에 확정할 수 있으며, 모든 소비 API가 같은 정밀도와 rejection 규칙을 사용한다.
 - 장점, 단점 및 영향: parser는 독립 단위 테스트가 가능하고 메서드 간 drift가 사라진다. 새 문자열 소비 API는 반드시 이 conversion path를 재사용해야 하며 full RFC 9557 지원 전에는 audited subset만 문서화해야 한다.
+```
+
+`Temporal.Instant.prototype.toString` keeps observable work in the VM layer:
+receiver branding, options reads/conversions, method-Realm errors, GC pins, and
+time-zone input fuel. It then passes the hidden epoch, resolved precision,
+rounding mode, and optional fixed offset to the pure integer formatter. The
+formatter rounds before applying the display offset, uses Euclidean division
+for pre-epoch values, converts epoch days back to proleptic Gregorian fields,
+and emits bounded ISO text. The syntax layer accepts both `T`-prefixed and
+unprefixed annotated times, applies the specified year-month/month-day
+ambiguity early errors, and resolves exact singular/plural unit spellings
+without suffix heuristics. No host timezone API participates; named IANA
+transition support requires a deterministic bundled backend.
+
+```text
+[Decision Log]
+- 목적과 의도: Instant 직렬화의 observable 옵션 처리와 exact arithmetic/formatting 경계를 분리한다.
+- 기존 구현 및 제약 조건: Date formatting은 f64 milliseconds와 host-oriented 범위를 사용하며, Temporal rounding은 negative epoch에서도 RoundNumberToIncrementAsIfPositive 의미론을 요구한다. host tzdb는 native/WASM 결정성을 깨뜨린다.
+- 검토한 주요 대안: Date helper 재사용, host timezone API, 외부 Temporal crate, VM-free i128 formatter와 fixed-offset parser를 검토했다.
+- 선택한 방식: VM layer가 options를 규정 순서로 읽고 exact unit table, root/fuel/Realm을 관리하며, temporal module이 ISO grammar early errors, i128 civil conversion과 9개 rounding mode를 수행한다. explicit UTC는 +00:00, 기본값은 Z로 구분한다.
+- 다른 대안 대신 이 방식을 선택한 이유: 전체 Instant 범위가 i128에 들어가므로 BigInt를 경계에서 한 번 변환해 precision loss 없이 bounded formatting이 가능하고, pure formatter는 host와 wasm에서 동일하다.
+- 장점, 단점 및 영향: option getter/coercion order, exact singular/plural units, annotated-time ambiguity, negative epoch, midnight rollover, extended year가 독립 테스트 가능하다. 새 time-zone consumer는 이 parser를 재사용해야 하며 named IANA와 ZonedDateTime은 deterministic backend 전까지 거부한다.
 ```
 
 ## Compiler temporary storage

@@ -4,14 +4,36 @@
 
 ### Changed
 
+- Added Realm-local, non-constructable `Temporal.Instant.prototype.toString`.
+  It reads and converts options in specification order, implements all nine
+  as-if-positive rounding modes, formats the complete Instant year range at
+  exact nanosecond precision, and supports deterministic UTC/fixed-offset
+  time-zone identifiers plus date-time, `T`-prefixed time, and unprefixed time
+  forms. Unprefixed year-month/month-day ambiguities follow Temporal's early
+  errors, and unit options accept only exact standard singular/plural names.
+  Time-zone strings are precharged as sandbox fuel. An exact 54-file Test262
+  boundary passes completely: 52
+  `toString` files plus the newly unblocked `from`/`equals` wrong-type files.
+  The `toString` directory is **52 pass / 0 fail / 2 skip**; only tests whose
+  body or shared helper requires real
+  Duration/PlainDateTime/PlainTime/ZonedDateTime constructors remain gated.
+
+  [Decision Log]
+  - 목적과 의도: Instant의 표준 문자열 직렬화, 옵션 관찰 순서, 나노초 반올림, Realm 브랜드 경계를 하나의 정확한 경로로 제공한다.
+  - 기존 구현 및 제약 조건: Instant는 parse/from/equals/valueOf를 지원했지만 자체 toString이 없어 prototype coercion이 RangeError로 잘못 끝났고, Date formatter는 f64 밀리초와 제한된 연도 범위 때문에 재사용할 수 없었다. deterministic tzdb와 다른 Temporal constructors는 아직 없다.
+  - 검토한 주요 대안: Date formatter 재사용, host timezone API, 가짜 Temporal constructors, 외부 full-Temporal 의존성, i128 기반 전용 formatter와 UTC/fixed-offset parser를 검토했다.
+  - 선택한 방식: syntax parser가 date-time/time-zone 구조를 공유하고, pure i128 formatter가 civil date 역변환과 9개 as-if-positive rounding mode를 수행한다. VM layer는 brand/options/GC pin/fuel/Realm을 소유하며 54개 exact path만 연다.
+  - 다른 대안 대신 이 방식을 선택한 이유: host timezone은 native/WASM 결과가 달라지고 가짜 constructors는 지원 범위를 왜곡한다. Instant 범위는 i128 안에 들어 exact 정수 경로로 precision과 pre-epoch floor 의미론을 보존할 수 있다.
+  - 장점, 단점 및 영향: 기본 Z와 명시적 +00:00, negative epoch, extended year, exact singular/plural units, `T`-prefixed time, year-month/month-day ambiguity early errors, option coercion/validation order가 한 구현에서 검증된다. named IANA timezone, ZonedDateTime fast path, 나머지 Temporal constructors와 두 dependent 테스트는 후속 단위다.
+
 - Expanded the shared `Temporal.Instant` string parser used by `from` and
   `equals`. It now accepts independently basic or extended date, time, and
   offset forms; hour-only times and offsets; offset seconds with nanosecond
   fractions; and the audited RFC 9557 time-zone, calendar, and unknown
   annotation subset. Native parsing precharges input bytes as sandbox fuel.
-  A frozen 36-file Test262 boundary passes completely; the two directories are
-  **58 pass / 0 fail / 4 skip**, with only wrong-type/toString branding and
-  ZonedDateTime fast paths still gated.
+  A frozen 36-file Test262 boundary passes completely; after the shared
+  `toString` branding completion, the two directories are **60 pass / 0 fail /
+  2 skip**, with only ZonedDateTime fast paths still gated.
 
   [Decision Log]
   - 목적과 의도: `from`, `equals`, 후속 `compare`가 공유할 정확한 나노초 Instant 문자열 변환 기반을 확장한다.
@@ -19,7 +41,7 @@
   - 검토한 주요 대안: 메서드별 parser 복제, Date parser 재사용, 외부 Temporal parser 의존성, 현재 정수 parser를 구조화해 확장하는 방식을 검토했다.
   - 선택한 방식: date/time/main-offset/annotation 단계를 분리하고 main offset을 나노초 정수로 계산한다. 변환 후 문자열 byte 길이를 fuel로 선차감하며 36개 exact path만 admission에 등록한다.
   - 다른 대안 대신 이 방식을 선택한 이유: Date parser는 밀리초 부동소수점과 관대한 정규화를 사용하고, 메서드별 복제는 coercion과 range 의미론을 분기시킨다. 현재 경로 확장은 공유 정밀도와 sandbox 경계를 보존한다.
-  - 장점, 단점 및 영향: basic/extended 조합, sub-minute offset, annotation critical/중복 규칙과 Instant 경계값이 한 경로에서 검증된다. full RFC 9557 grammar, prototype toString branding, ZonedDateTime 내부 슬롯은 후속 단위다.
+  - 장점, 단점 및 영향: basic/extended 조합, sub-minute offset, annotation critical/중복 규칙과 Instant 경계값이 한 경로에서 검증된다. full RFC 9557 grammar와 ZonedDateTime 내부 슬롯은 후속 단위다.
 
 - Added Realm-local, non-constructable `Temporal.Instant.prototype.valueOf`.
   The method always throws a `TypeError` without reading or branding its

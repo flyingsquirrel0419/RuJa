@@ -33,9 +33,11 @@
   standard identities. Instant supports construction, exact epoch accessors,
   epoch factories, branded/string `equals`, basic and extended ISO `from`, the
   audited RFC 9557 annotation and nanosecond-offset subset, an always-throwing
-  `valueOf`, and `Date.prototype.toTemporalInstant`. Calendar, duration,
-  timezone, ZonedDateTime, the remaining RFC 9557 grammar, and `Temporal.Now`
-  methods remain outside the supported boundary.
+  `valueOf`, exact `toString` options/rounding with UTC, fixed offsets, and
+  ambiguity-checked annotated date/time forms, and
+  `Date.prototype.toTemporalInstant`. Calendar, duration, named IANA timezone,
+  ZonedDateTime, the remaining RFC 9557 grammar, and `Temporal.Now` methods
+  remain outside the supported boundary.
 - `class`/`extends`/`super`
 - Default & rest parameters
 - Array/object destructuring (swaps, holes, rest, rename, nested) and object

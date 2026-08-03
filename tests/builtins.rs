@@ -25007,6 +25007,148 @@ fn temporal_instant_value_of_always_throws_in_the_method_realm() {
 }
 
 #[test]
+fn temporal_instant_to_string_formats_rounds_and_observes_options() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            var options = {};
+            for (let name of ['fractionalSecondDigits', 'roundingMode', 'smallestUnit', 'timeZone']) {
+              Object.defineProperty(options, name, {
+                get: function () { log.push(name); return undefined; }
+              });
+            }
+            var instant = new Temporal.Instant(217175010123456789n);
+            [
+              instant.toString(),
+              instant.toString({ fractionalSecondDigits: 3, roundingMode: 'halfExpand' }),
+              new Temporal.Instant(0n).toString({ timeZone: '-01:30' }),
+              new Temporal.Instant(0n).toString({ timeZone: '12:34+01:00' }),
+              new Temporal.Instant(0n).toString({ timeZone: 'T12:34+01:00' }),
+              instant.toString(options),
+              log.join(','),
+              Temporal.Instant.prototype.toString.length,
+              Temporal.Instant.prototype.toString.name
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "1976-11-18T14:23:30.123456789Z|1976-11-18T14:23:30.123Z|1969-12-31T22:30:00-01:30|1970-01-01T01:00:00+01:00|1970-01-01T01:00:00+01:00|1976-11-18T14:23:30.123456789Z|fractionalSecondDigits,roundingMode,smallestUnit,timeZone|0|toString"
+        ))
+    );
+    for source in [
+        "Temporal.Instant.prototype.toString.call({})",
+        "new Temporal.Instant.prototype.toString()",
+        "new Temporal.Instant(0n).toString(null)",
+        "new Temporal.Instant(0n).toString({ smallestUnit: 'hour' })",
+        "new Temporal.Instant(0n).toString({ timeZone: 'Europe/Vienna' })",
+    ] {
+        let expected = if source.contains("smallestUnit") || source.contains("timeZone") {
+            "RangeError"
+        } else {
+            "TypeError"
+        };
+        assert!(run_err(source).contains(expected), "{source}");
+    }
+    assert!(run_err("Temporal.Instant.from(Temporal.Instant.prototype)").contains("TypeError"));
+    assert!(
+        run_err("new Temporal.Instant(0n).equals(Temporal.Instant.prototype)")
+            .contains("TypeError")
+    );
+}
+
+#[test]
+fn temporal_instant_to_string_uses_the_method_realm_for_errors() {
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var method = other.Temporal.Instant.prototype.toString;
+            var instant = new Temporal.Instant(0n);
+            var typeRealm;
+            var rangeRealm;
+            try { method.call({}); } catch (error) {
+              typeRealm = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            try { method.call(instant, { smallestUnit: 'hour' }); } catch (error) {
+              rangeRealm = error instanceof other.RangeError && !(error instanceof RangeError);
+            }
+            typeRealm && rangeRealm && method.call(instant) === '1970-01-01T00:00:00Z';
+        "#),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn temporal_instant_to_string_validates_each_option_at_its_specified_boundary() {
+    assert_eq!(
+        run(r#"
+            var instant = new Temporal.Instant(0n);
+            var laterRead = false;
+            var first;
+            try {
+              instant.toString({
+                fractionalSecondDigits: 'invalid',
+                get roundingMode() { laterRead = true; throw 'late'; }
+              });
+            } catch (error) { first = error instanceof RangeError && !laterRead; }
+
+            laterRead = false;
+            var second;
+            try {
+              instant.toString({
+                roundingMode: 'invalid',
+                get smallestUnit() { laterRead = true; throw 'late'; }
+              });
+            } catch (error) { second = error instanceof RangeError && !laterRead; }
+
+            laterRead = false;
+            var third;
+            try {
+              instant.toString({
+                smallestUnit: 'not-a-unit',
+                get timeZone() { laterRead = true; throw 'late'; }
+              });
+            } catch (error) { third = error instanceof RangeError && !laterRead; }
+
+            var marker = {};
+            var fourth;
+            try {
+              instant.toString({
+                smallestUnit: 'month',
+                get timeZone() { throw marker; }
+              });
+            } catch (error) { fourth = error === marker; }
+
+            var fifth;
+            try {
+              instant.toString({
+                smallestUnit: 'auto',
+                get timeZone() { throw marker; }
+              });
+            } catch (error) { fifth = error === marker; }
+
+            laterRead = false;
+            var sixth;
+            try {
+              instant.toString({
+                smallestUnit: 'autos',
+                get timeZone() { laterRead = true; throw 'late'; }
+              });
+            } catch (error) { sixth = error instanceof RangeError && !laterRead; }
+
+            laterRead = false;
+            var seventh;
+            try {
+              instant.toString({
+                smallestUnit: 'era',
+                get timeZone() { laterRead = true; throw 'late'; }
+              });
+            } catch (error) { seventh = error instanceof RangeError && !laterRead; }
+            first && second && third && fourth && fifth && sixth && seventh;
+        "#),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn date_symbol_to_primitive_uses_hint_specific_ordinary_conversion() {
     assert_eq!(
         run(r#"

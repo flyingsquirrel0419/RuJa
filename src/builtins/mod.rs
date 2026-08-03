@@ -6289,7 +6289,7 @@ pub(crate) fn install_temporal_namespace_in_env(
     global: Option<&Value>,
     object_proto: Value,
 ) -> error::Result<Value> {
-    vm.try_reserve_gc_pins(11)?;
+    vm.try_reserve_gc_pins(12)?;
     let mut pin_count = 0;
     let result = (|| {
         let instant_prototype = Value::Object(vm.alloc(HeapObj::Object(ObjectData {
@@ -6359,6 +6359,13 @@ pub(crate) fn install_temporal_namespace_in_env(
             env,
         )?);
         pin_count += vm.pin(&value_of);
+        let to_string = Value::Object(vm.new_native_function_in_env_with_gc_retry(
+            "toString",
+            temporal_instant_to_string,
+            0,
+            env,
+        )?);
+        pin_count += vm.pin(&to_string);
 
         let Value::Object(instant_constructor_index) = instant_constructor.clone() else {
             unreachable!()
@@ -6403,6 +6410,7 @@ pub(crate) fn install_temporal_namespace_in_env(
                 accessor_get_prop(epoch_nanoseconds),
             );
             props.insert(PropertyKey::from("equals"), data_prop(equals));
+            props.insert(PropertyKey::from("toString"), data_prop(to_string));
             props.insert(PropertyKey::from("valueOf"), data_prop(value_of));
             let mut tag = data_prop(Value::String(Arc::from("Temporal.Instant")));
             tag.writable = false;
@@ -6641,6 +6649,182 @@ fn temporal_instant_value_of(
     Err(Error::type_err(
         "Temporal.Instant.prototype.valueOf always throws",
     ))
+}
+
+enum InstantFractionalSecondDigits {
+    Auto,
+    Number(f64),
+    String(Arc<str>),
+}
+
+#[derive(Clone, Copy)]
+enum InstantSmallestUnit {
+    DateOrHour,
+    Minute,
+    Second,
+    Millisecond,
+    Microsecond,
+    Nanosecond,
+}
+
+fn temporal_option_to_string(vm: &mut Vm, value: &Value) -> error::Result<Arc<str>> {
+    vm.try_reserve_value_roots(std::slice::from_ref(value))?;
+    let pin_count = vm.pin(value);
+    let result = vm.to_string(value);
+    vm.unpin_many(pin_count);
+    result
+}
+
+fn temporal_instant_rounding_mode(
+    value: Option<&str>,
+) -> error::Result<temporal::InstantRoundingMode> {
+    Ok(match value.unwrap_or("trunc") {
+        "ceil" => temporal::InstantRoundingMode::Ceil,
+        "expand" => temporal::InstantRoundingMode::Expand,
+        "floor" => temporal::InstantRoundingMode::Floor,
+        "halfCeil" => temporal::InstantRoundingMode::HalfCeil,
+        "halfEven" => temporal::InstantRoundingMode::HalfEven,
+        "halfExpand" => temporal::InstantRoundingMode::HalfExpand,
+        "halfFloor" => temporal::InstantRoundingMode::HalfFloor,
+        "halfTrunc" => temporal::InstantRoundingMode::HalfTrunc,
+        "trunc" => temporal::InstantRoundingMode::Trunc,
+        _ => return Err(Error::range("Invalid Temporal roundingMode option")),
+    })
+}
+
+fn temporal_instant_fractional_second_digits(
+    fractional_second_digits: InstantFractionalSecondDigits,
+) -> error::Result<Option<u8>> {
+    Ok(match fractional_second_digits {
+        InstantFractionalSecondDigits::Auto => None,
+        InstantFractionalSecondDigits::Number(number) => {
+            let number = number.floor();
+            if !number.is_finite() || !(0.0..=9.0).contains(&number) {
+                return Err(Error::range(
+                    "Invalid Temporal fractionalSecondDigits option",
+                ));
+            }
+            Some(number as u8)
+        }
+        InstantFractionalSecondDigits::String(value) if value.as_ref() == "auto" => None,
+        InstantFractionalSecondDigits::String(_) => {
+            return Err(Error::range(
+                "Invalid Temporal fractionalSecondDigits option",
+            ));
+        }
+    })
+}
+
+fn temporal_instant_smallest_unit(
+    value: Option<&str>,
+) -> error::Result<Option<InstantSmallestUnit>> {
+    let Some(unit) = value else {
+        return Ok(None);
+    };
+    Ok(Some(match unit {
+        "auto" | "year" | "years" | "month" | "months" | "week" | "weeks" | "day" | "days"
+        | "hour" | "hours" => InstantSmallestUnit::DateOrHour,
+        "minute" | "minutes" => InstantSmallestUnit::Minute,
+        "second" | "seconds" => InstantSmallestUnit::Second,
+        "millisecond" | "milliseconds" => InstantSmallestUnit::Millisecond,
+        "microsecond" | "microseconds" => InstantSmallestUnit::Microsecond,
+        "nanosecond" | "nanoseconds" => InstantSmallestUnit::Nanosecond,
+        _ => return Err(Error::range("Invalid Temporal smallestUnit option")),
+    }))
+}
+
+fn temporal_instant_precision(
+    digits: Option<u8>,
+    smallest_unit: Option<InstantSmallestUnit>,
+) -> error::Result<temporal::InstantPrecision> {
+    let Some(unit) = smallest_unit else {
+        return Ok(digits.map_or(
+            temporal::InstantPrecision::Auto,
+            temporal::InstantPrecision::Digits,
+        ));
+    };
+    Ok(match unit {
+        InstantSmallestUnit::DateOrHour => {
+            return Err(Error::range("Invalid Temporal smallestUnit option"));
+        }
+        InstantSmallestUnit::Minute => temporal::InstantPrecision::Minute,
+        InstantSmallestUnit::Second => temporal::InstantPrecision::Digits(0),
+        InstantSmallestUnit::Millisecond => temporal::InstantPrecision::Digits(3),
+        InstantSmallestUnit::Microsecond => temporal::InstantPrecision::Digits(6),
+        InstantSmallestUnit::Nanosecond => temporal::InstantPrecision::Digits(9),
+    })
+}
+
+fn temporal_instant_to_string(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let epoch_nanoseconds = temporal_instant_epoch(vm, this)?;
+    let options = args.first().cloned().unwrap_or(Value::Undefined);
+    if !matches!(options, Value::Undefined | Value::Object(_)) {
+        return Err(Error::type_err(
+            "Temporal.Instant.prototype.toString options must be an object",
+        ));
+    }
+
+    vm.try_reserve_value_roots(std::slice::from_ref(&options))?;
+    let options_pin = vm.pin(&options);
+    let result = (|| {
+        let get_option = |vm: &mut Vm, name: &str| {
+            if options.is_undefined() {
+                Ok(Value::Undefined)
+            } else {
+                vm.get_property(&options, name)
+            }
+        };
+
+        let fractional_second_digits = match get_option(vm, "fractionalSecondDigits")? {
+            Value::Undefined => InstantFractionalSecondDigits::Auto,
+            Value::Number(number) => InstantFractionalSecondDigits::Number(number),
+            value => InstantFractionalSecondDigits::String(temporal_option_to_string(vm, &value)?),
+        };
+        let fractional_second_digits =
+            temporal_instant_fractional_second_digits(fractional_second_digits)?;
+        let rounding_mode_value = get_option(vm, "roundingMode")?;
+        let rounding_mode = if rounding_mode_value.is_undefined() {
+            None
+        } else {
+            Some(temporal_option_to_string(vm, &rounding_mode_value)?)
+        };
+        let rounding_mode = temporal_instant_rounding_mode(rounding_mode.as_deref())?;
+        let smallest_unit_value = get_option(vm, "smallestUnit")?;
+        let smallest_unit = if smallest_unit_value.is_undefined() {
+            None
+        } else {
+            Some(temporal_option_to_string(vm, &smallest_unit_value)?)
+        };
+        let smallest_unit = temporal_instant_smallest_unit(smallest_unit.as_deref())?;
+        let time_zone = get_option(vm, "timeZone")?;
+
+        let precision = temporal_instant_precision(fractional_second_digits, smallest_unit)?;
+        let display_offset = match time_zone {
+            Value::Undefined => None,
+            Value::String(source) => {
+                vm.consume_fuel_units(source.len().min(i64::MAX as usize) as i64)?;
+                Some(
+                    temporal::parse_time_zone_offset(&source)
+                        .ok_or_else(|| Error::range("Invalid Temporal timeZone option"))?,
+                )
+            }
+            _ => {
+                return Err(Error::type_err(
+                    "Temporal timeZone option must be a String or undefined",
+                ));
+            }
+        };
+        temporal::format_instant(&epoch_nanoseconds, display_offset, precision, rounding_mode)
+            .map(Arc::<str>::from)
+            .map(Value::String)
+            .ok_or_else(|| Error::range("Temporal.Instant string formatting failed"))
+    })();
+    vm.unpin_many(options_pin);
+    result
 }
 
 fn temporal_instant_epoch_milliseconds(

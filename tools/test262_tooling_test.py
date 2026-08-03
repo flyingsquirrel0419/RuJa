@@ -100,6 +100,10 @@ from test262_temporal_instant_string_parser_admission import (
     TEMPORAL_INSTANT_STRING_PARSER_FEATURES,
     TEMPORAL_INSTANT_STRING_PARSER_FILES,
 )
+from test262_temporal_instant_to_string_admission import (
+    TEMPORAL_INSTANT_TO_STRING_FEATURES,
+    TEMPORAL_INSTANT_TO_STRING_FILES,
+)
 from test262_temporal_instant_value_of_admission import (
     TEMPORAL_INSTANT_VALUE_OF_FEATURES,
     TEMPORAL_INSTANT_VALUE_OF_FILES,
@@ -3528,25 +3532,17 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                 for path in directory.glob("*.js")
             }
             blockers = {
-                prefix + name
+                prefix + "argument-zoneddatetime.js"
                 for prefix in (from_prefix, equals_prefix)
-                for name in ("argument-wrong-type.js", "argument-zoneddatetime.js")
             }
             self.assertLessEqual(blockers, live)
             for relative in blockers:
                 metadata = test262_runner.parse_meta((test_root / relative).read_text())
-                blocker_features = (
-                    {"BigInt", "Symbol", "Temporal"}
-                    if relative.endswith("/argument-wrong-type.js")
-                    else {"Temporal"}
+                self.assertEqual(set(metadata.get("features", [])), {"Temporal"})
+                self.assertEqual(
+                    metadata.get("includes", []),
+                    ["compareArray.js", "temporalHelpers.js"],
                 )
-                expected_includes = (
-                    []
-                    if relative.endswith("/argument-wrong-type.js")
-                    else ["compareArray.js", "temporalHelpers.js"]
-                )
-                self.assertEqual(set(metadata.get("features", [])), blocker_features)
-                self.assertEqual(metadata.get("includes", []), expected_includes)
                 self.assertEqual(metadata.get("flags", []), [])
                 self.assertIsNone(metadata.get("negative"))
                 for tool in (test262_runner, test262_analyze):
@@ -3555,6 +3551,7 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                 TEMPORAL_INSTANT_FROM_FILES
                 | TEMPORAL_INSTANT_EQUALS_FILES
                 | TEMPORAL_INSTANT_STRING_PARSER_FILES
+                | TEMPORAL_INSTANT_TO_STRING_FILES
             ) & live
             self.assertEqual(owned, live - blockers)
 
@@ -3597,6 +3594,190 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                         self.assertEqual(
                             tool.temporal_instant_string_parser_features(path), frozenset()
                         )
+                        self.assertTrue(tool.should_skip({"features": ["Temporal"]}, path))
+                finally:
+                    tool.TEST262 = original_root
+
+    def test_temporal_instant_to_string_manifest_is_exact_live_disjoint_and_shared(self):
+        prefix = "built-ins/Temporal/Instant/prototype/toString/"
+        names = {
+            "basic.js",
+            "branding.js",
+            "builtin.js",
+            "fractionalseconddigits-auto.js",
+            "fractionalseconddigits-invalid-string.js",
+            "fractionalseconddigits-nan.js",
+            "fractionalseconddigits-negative.js",
+            "fractionalseconddigits-non-integer.js",
+            "fractionalseconddigits-number.js",
+            "fractionalseconddigits-out-of-range.js",
+            "fractionalseconddigits-undefined.js",
+            "fractionalseconddigits-wrong-type.js",
+            "get-timezone-throws.js",
+            "length.js",
+            "name.js",
+            "negative-epochnanoseconds.js",
+            "negative-instant-rounding.js",
+            "not-a-constructor.js",
+            "options-object.js",
+            "options-read-before-algorithmic-validation.js",
+            "options-undefined.js",
+            "options-wrong-type.js",
+            "order-of-operations.js",
+            "precision.js",
+            "prop-desc.js",
+            "rounding-cross-midnight.js",
+            "rounding-direction.js",
+            "roundingmode-ceil.js",
+            "roundingmode-expand.js",
+            "roundingmode-floor.js",
+            "roundingmode-halfCeil.js",
+            "roundingmode-halfEven.js",
+            "roundingmode-halfExpand.js",
+            "roundingmode-halfFloor.js",
+            "roundingmode-halfTrunc.js",
+            "roundingmode-invalid-string.js",
+            "roundingmode-trunc.js",
+            "roundingmode-undefined.js",
+            "roundingmode-wrong-type.js",
+            "smallestunit-fractionalseconddigits.js",
+            "smallestunit-invalid-string.js",
+            "smallestunit-undefined.js",
+            "smallestunit-valid-units.js",
+            "smallestunit-wrong-type.js",
+            "timezone-offset.js",
+            "timezone-string-datetime.js",
+            "timezone-string-leap-second.js",
+            "timezone-string-multiple-offsets.js",
+            "timezone-string-sub-minute-offset.js",
+            "timezone-string-year-zero.js",
+            "timezone-string.js",
+            "year-format.js",
+        }
+        wrong_type_paths = {
+            "built-ins/Temporal/Instant/from/argument-wrong-type.js",
+            "built-ins/Temporal/Instant/prototype/equals/argument-wrong-type.js",
+        }
+        expected = {prefix + name for name in names} | wrong_type_paths
+        bigint_names = {
+            "basic.js",
+            "fractionalseconddigits-auto.js",
+            "fractionalseconddigits-negative.js",
+            "fractionalseconddigits-number.js",
+            "options-wrong-type.js",
+            "timezone-offset.js",
+        }
+        expected_features = {}
+        for relative in expected:
+            name = Path(relative).name
+            features = {"Temporal"}
+            if name in bigint_names or name == "argument-wrong-type.js":
+                features.add("BigInt")
+            if name in {
+                "branding.js",
+                "options-wrong-type.js",
+                "argument-wrong-type.js",
+            }:
+                features.add("Symbol")
+            if name == "not-a-constructor.js":
+                features.add("Reflect.construct")
+            if name == "timezone-string-year-zero.js":
+                features.add("arrow-function")
+            expected_features[relative] = frozenset(features)
+        self.assertEqual(TEMPORAL_INSTANT_TO_STRING_FILES, frozenset(expected))
+        self.assertEqual(TEMPORAL_INSTANT_TO_STRING_FEATURES, expected_features)
+        self.assertEqual(len(expected), 54)
+
+        helper_includes = {
+            "fractionalseconddigits-wrong-type.js",
+            "options-read-before-algorithmic-validation.js",
+            "order-of-operations.js",
+            "roundingmode-wrong-type.js",
+            "smallestunit-wrong-type.js",
+        }
+        property_includes = {"length.js", "name.js", "prop-desc.js"}
+        test_root = Path(test262_runner.TEST262) / "test"
+        directory = test_root / prefix
+        try:
+            live_available = directory.is_dir()
+        except OSError:
+            live_available = False
+        if live_available:
+            for relative, features in expected_features.items():
+                path = test_root / relative
+                self.assertTrue(path.is_file(), relative)
+                metadata = test262_runner.parse_meta(path.read_text())
+                self.assertEqual(frozenset(metadata.get("features", [])), features)
+                name = path.name
+                includes = (
+                    ["compareArray.js", "temporalHelpers.js"]
+                    if name in helper_includes
+                    else ["propertyHelper.js"]
+                    if name in property_includes
+                    else ["isConstructor.js"]
+                    if name == "not-a-constructor.js"
+                    else []
+                )
+                self.assertEqual(metadata.get("includes", []), includes)
+                self.assertEqual(metadata.get("flags", []), [])
+                self.assertIsNone(metadata.get("negative"))
+
+            blockers = {
+                prefix + "smallestunit-plurals-accepted.js": (
+                    {"Temporal"},
+                    ["temporalHelpers.js"],
+                ),
+                prefix + "timezone-wrong-type.js": (
+                    {"BigInt", "Symbol", "Temporal"},
+                    [],
+                ),
+            }
+            live = {
+                path.relative_to(test_root).as_posix()
+                for path in directory.glob("*.js")
+            }
+            self.assertEqual(live, {prefix + name for name in names} | set(blockers))
+            for relative, (features, includes) in blockers.items():
+                metadata = test262_runner.parse_meta((test_root / relative).read_text())
+                self.assertEqual(set(metadata.get("features", [])), features)
+                self.assertEqual(metadata.get("includes", []), includes)
+                self.assertEqual(metadata.get("flags", []), [])
+                self.assertIsNone(metadata.get("negative"))
+                for tool in (test262_runner, test262_analyze):
+                    self.assertTrue(tool.should_skip(metadata, test_root / relative))
+
+        tools_dir = Path(__file__).resolve().parent
+        for manifest in tools_dir.glob("test262_*_admission.txt"):
+            if manifest.name == "test262_temporal_instant_to_string_admission.txt":
+                continue
+            existing = {
+                line
+                for raw_line in manifest.read_text().splitlines()
+                if (line := raw_line.strip()) and not line.startswith("#")
+            }
+            self.assertTrue(TEMPORAL_INSTANT_TO_STRING_FILES.isdisjoint(existing), manifest.name)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            future = root / "test" / prefix / "future.js"
+            outside = root / "test/built-ins/Temporal/Instant/prototype/round/basic.js"
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for relative, features in expected_features.items():
+                        path = root / "test" / relative
+                        self.assertTrue(tool.temporal_instant_to_string_path(path), relative)
+                        self.assertEqual(tool.temporal_instant_to_string_features(path), features)
+                        self.assertFalse(tool.should_skip({"features": sorted(features)}, path))
+                        self.assertTrue(
+                            tool.should_skip(
+                                {"features": sorted(features | {"decorators"})}, path
+                            )
+                        )
+                    for path in (future, outside):
+                        self.assertFalse(tool.temporal_instant_to_string_path(path))
+                        self.assertEqual(tool.temporal_instant_to_string_features(path), frozenset())
                         self.assertTrue(tool.should_skip({"features": ["Temporal"]}, path))
                 finally:
                     tool.TEST262 = original_root
