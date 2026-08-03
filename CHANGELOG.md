@@ -19,6 +19,10 @@
   - 다른 대안 대신 이 방식을 선택한 이유: receiver나 변경 가능한 전역 프로퍼티를 관찰하지 않는 spec 의미론을 유지하면서 아직 구현하지 않은 ISO 파서를 임시로 흉내 내지 않기 위해서다.
   - 장점, 단점 및 영향: factory 동작과 GC/Realm 경계가 작고 검증 가능하다. 두 경계값 Test262 파일은 `Instant.from`과 `equals` 단위가 끝날 때까지 제외된다.
 
+  Tooling validation now treats an inaccessible default Test262 checkout as
+  unavailable while still checking the frozen 17-file list exactly. CI jobs
+  that provide `TEST262` continue to verify the live pinned files and metadata.
+
 - Added Realm-local `%Temporal.Instant%` construction, branded hidden
   `[[EpochNanoseconds]]` storage, exact `epochNanoseconds` and floor-rounded
   `epochMilliseconds` accessors, and intrinsic fallback behavior for custom

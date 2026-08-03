@@ -3076,29 +3076,68 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                     tool.TEST262 = original_root
 
     def test_temporal_instant_epoch_factory_manifest_is_exact_live_disjoint_and_shared(self):
-        prefixes = (
-            "built-ins/Temporal/Instant/fromEpochMilliseconds/",
-            "built-ins/Temporal/Instant/fromEpochNanoseconds/",
-        )
-        excluded = {prefix + "limits.js" for prefix in prefixes}
-        test_root = Path(test262_runner.TEST262) / "test"
+        milliseconds = "built-ins/Temporal/Instant/fromEpochMilliseconds/"
+        nanoseconds = "built-ins/Temporal/Instant/fromEpochNanoseconds/"
         expected = {
-            path.relative_to(test_root).as_posix()
-            for prefix in prefixes
-            for path in (test_root / prefix).glob("*.js")
-            if path.relative_to(test_root).as_posix() not in excluded
+            milliseconds + name
+            for name in (
+                "argument.js",
+                "basic.js",
+                "builtin.js",
+                "length.js",
+                "name.js",
+                "non-integer.js",
+                "not-a-constructor.js",
+                "prop-desc.js",
+                "subclassing-ignored.js",
+            )
+        } | {
+            nanoseconds + name
+            for name in (
+                "argument.js",
+                "basic.js",
+                "builtin.js",
+                "length.js",
+                "name.js",
+                "not-a-constructor.js",
+                "prop-desc.js",
+                "subclassing-ignored.js",
+            )
         }
+        test_root = Path(test262_runner.TEST262) / "test"
         self.assertEqual(TEMPORAL_INSTANT_EPOCH_FACTORY_FILES, frozenset(expected))
         self.assertEqual(len(expected), 17)
 
-        for relative in expected:
-            metadata = test262_runner.parse_meta((test_root / relative).read_text())
-            self.assertEqual(
-                TEMPORAL_INSTANT_EPOCH_FACTORY_FEATURES[relative],
-                frozenset(metadata.get("features", [])),
-            )
-            self.assertEqual(metadata.get("flags", []), [])
-            self.assertIsNone(metadata.get("negative"))
+        live_directories = tuple(
+            test_root / prefix for prefix in (milliseconds, nanoseconds)
+        )
+
+        def live_test262_available():
+            try:
+                return all(path.is_dir() for path in live_directories)
+            except OSError:
+                return False
+
+        test_root_available = live_test262_available()
+        if test_root_available:
+            live = {
+                path.relative_to(test_root).as_posix()
+                for prefix in (milliseconds, nanoseconds)
+                for path in (test_root / prefix).glob("*.js")
+                if path.name != "limits.js"
+            }
+            self.assertEqual(live, expected)
+            for relative in expected:
+                metadata = test262_runner.parse_meta((test_root / relative).read_text())
+                self.assertEqual(
+                    TEMPORAL_INSTANT_EPOCH_FACTORY_FEATURES[relative],
+                    frozenset(metadata.get("features", [])),
+                )
+                self.assertEqual(metadata.get("flags", []), [])
+                self.assertIsNone(metadata.get("negative"))
+
+        with patch("pathlib.Path.is_dir", side_effect=PermissionError):
+            self.assertFalse(live_test262_available())
 
         tools_dir = Path(__file__).resolve().parent
         for manifest in tools_dir.glob("test262_*_admission.txt"):
