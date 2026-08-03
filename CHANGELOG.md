@@ -4,6 +4,20 @@
 
 ### Changed
 
+- Added Realm-local, non-constructable `Temporal.Instant.prototype.valueOf`.
+  The method always throws a `TypeError` without reading or branding its
+  receiver, preventing implicit numeric or relational coercion of Instant
+  values. A complete seven-file Test262 admission freezes the whole pinned
+  method directory and its metadata.
+
+  [Decision Log]
+  - 목적과 의도: Instant가 암시적 primitive 변환에 참여하지 못하도록 표준의 항상-예외 `valueOf` 경계를 완결한다.
+  - 기존 구현 및 제약 조건: Instant 내부 슬롯과 명시적 비교 경로는 있었지만 상속된 `Object.prototype.valueOf`가 객체를 반환해 관계 비교가 문자열 변환 등 후속 경로로 진행될 수 있었다.
+  - 검토한 주요 대안: `Object.prototype.valueOf` 상속 유지, epoch BigInt 반환, receiver 브랜드 검사 후 예외, receiver를 관찰하지 않고 즉시 예외를 검토했다.
+  - 선택한 방식: 각 Realm의 Instant prototype에 길이 0인 native `valueOf`를 설치하고 모든 호출에서 method Realm의 TypeError를 즉시 던진다.
+  - 다른 대안 대신 이 방식을 선택한 이유: ECMAScript 알고리즘은 receiver 검사나 epoch 노출 없이 무조건 TypeError를 요구하며, epoch 반환은 Instant의 명시적 비교 API를 우회한다.
+  - 장점, 단점 및 영향: 직접 호출과 관계 연산이 일관되게 거부되고 전체 7개 파일이 지원된다. 정렬과 동등성은 `equals` 및 후속 `compare` 구현을 사용해야 한다.
+
 - Added `Temporal.Instant.from` and shared string conversion for
   `Temporal.Instant.prototype.equals`. This first parser boundary accepts exact
   extended ISO date-time strings with a required UTC designator or colonized

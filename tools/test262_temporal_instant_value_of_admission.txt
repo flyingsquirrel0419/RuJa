@@ -1,0 +1,8 @@
+# Complete Temporal.Instant.prototype.valueOf coverage.
+built-ins/Temporal/Instant/prototype/valueOf/basic.js
+built-ins/Temporal/Instant/prototype/valueOf/branding.js
+built-ins/Temporal/Instant/prototype/valueOf/builtin.js
+built-ins/Temporal/Instant/prototype/valueOf/length.js
+built-ins/Temporal/Instant/prototype/valueOf/name.js
+built-ins/Temporal/Instant/prototype/valueOf/not-a-constructor.js
+built-ins/Temporal/Instant/prototype/valueOf/prop-desc.js

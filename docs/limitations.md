@@ -7,7 +7,8 @@ The following resource limits are enforced:
 
 - **Temporal scope**: Realm-local `%Temporal%`, `%Temporal.Now%`, and
   `%Temporal.Instant%` are installed. Instant supports construction, exact
-  epoch accessors, epoch factories, `equals`, `from`, and
+  epoch accessors, epoch factories, `equals`, `from`, the always-throwing
+  `valueOf`, and
   `Date.prototype.toTemporalInstant`. String conversion currently accepts the
   extended ISO date-time subset with a required `Z` or `+/-HH:MM` offset.
   RFC 9557 annotations, compact and second-bearing offsets, ZonedDateTime

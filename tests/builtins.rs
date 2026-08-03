@@ -24965,6 +24965,48 @@ fn temporal_instant_from_and_equals_share_exact_string_conversion() {
 }
 
 #[test]
+fn temporal_instant_value_of_always_throws_in_the_method_realm() {
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var method = other.Temporal.Instant.prototype.valueOf;
+            var instant = new Temporal.Instant(1n);
+            var descriptor = Object.getOwnPropertyDescriptor(
+              other.Temporal.Instant.prototype,
+              'valueOf'
+            );
+            var ownError;
+            var foreignReceiverError;
+            try { method.call(new other.Temporal.Instant(2n)); } catch (error) {
+              ownError = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            try { method.call(instant); } catch (error) {
+              foreignReceiverError =
+                error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            [
+              method.length,
+              method.name,
+              descriptor.writable,
+              descriptor.enumerable,
+              descriptor.configurable,
+              ownError,
+              foreignReceiverError
+            ].join('|');
+        "#),
+        Value::String(Arc::from("0|valueOf|true|false|true|true|true"))
+    );
+    for source in [
+        "new Temporal.Instant(0n).valueOf()",
+        "Temporal.Instant.prototype.valueOf.call({})",
+        "new Temporal.Instant.prototype.valueOf()",
+        "new Temporal.Instant(0n) < new Temporal.Instant(1n)",
+    ] {
+        assert!(run_err(source).contains("TypeError"), "{source}");
+    }
+}
+
+#[test]
 fn date_symbol_to_primitive_uses_hint_specific_ordinary_conversion() {
     assert_eq!(
         run(r#"

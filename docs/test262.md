@@ -14079,6 +14079,26 @@ timezone algorithms.
 - 다른 대안 대신 이 방식을 선택한 이유: Constructor work has much larger parsing and arithmetic scope; shared objects violate Realm identity; directory-wide admission would overstate support. The selected boundary is independently complete and measurable.
 - 장점, 단점 및 영향: Namespace descriptors, prototypes, Realm identity, allocation rollback, and exact 4/0/0 coverage are verified. All Temporal constructors and algorithms remain explicitly unsupported and can land in later narrow units.
 ```
+
+## Temporal.Instant.prototype.valueOf completion
+
+`tools/test262_temporal_instant_value_of_admission.txt` freezes all **7**
+files in the pinned `built-ins/Temporal/Instant/prototype/valueOf` directory.
+The Realm-local native method has length 0, is not constructable, and throws a
+method-Realm `TypeError` for every receiver without reading observable state.
+The dedicated CI job requires **7 pass / 0 fail / 0 skip** and tooling freezes
+the complete path set, features, includes, flags, and negative metadata.
+
+```text
+[Decision Log]
+- 목적과 의도: Instant의 암시적 primitive 변환을 금지하는 표준 경계를 complete-directory admission으로 공개한다.
+- 기존 구현 및 제약 조건: 명시적 equals와 epoch accessors는 있었지만 Instant prototype은 Object.prototype.valueOf를 상속해 표준과 다른 coercion 경로를 허용했다.
+- 검토한 주요 대안: 상속 유지, epoch BigInt 반환, 브랜드 검사 후 예외, receiver를 관찰하지 않는 즉시 TypeError를 검토했다.
+- 선택한 방식: Realm 설치 과정에서 valueOf native function을 GC-rooted allocation으로 만들고 Instant prototype에 표준 descriptor로 게시한다.
+- 다른 대안 대신 이 방식을 선택한 이유: 표준 알고리즘은 receiver 종류와 관계없이 예외를 요구하고, epoch 반환은 명시적 Instant 비교 의미론을 우회한다.
+- 장점, 단점 및 영향: 전체 7/0/0 경계와 관계 연산 거부가 재현 가능하다. Temporal.Instant.compare와 ZonedDateTime fast path는 별도 후속 단위다.
+```
+
 ## Temporal.Instant epoch factory completion
 
 `tools/test262_temporal_instant_epoch_factories_admission.txt` freezes all
