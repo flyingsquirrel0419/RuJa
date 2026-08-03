@@ -9,6 +9,7 @@ mod intl_aliases;
 mod intl_locale_info;
 pub(crate) mod json;
 pub(crate) mod math;
+mod temporal;
 
 pub(crate) mod call_arguments;
 
@@ -6288,7 +6289,7 @@ pub(crate) fn install_temporal_namespace_in_env(
     global: Option<&Value>,
     object_proto: Value,
 ) -> error::Result<Value> {
-    vm.try_reserve_gc_pins(9)?;
+    vm.try_reserve_gc_pins(10)?;
     let mut pin_count = 0;
     let result = (|| {
         let instant_prototype = Value::Object(vm.alloc(HeapObj::Object(ObjectData {
@@ -6344,6 +6345,13 @@ pub(crate) fn install_temporal_namespace_in_env(
             env,
         )?);
         pin_count += vm.pin(&equals);
+        let from = Value::Object(vm.new_native_function_in_env_with_gc_retry(
+            "from",
+            temporal_instant_from,
+            1,
+            env,
+        )?);
+        pin_count += vm.pin(&from);
 
         let Value::Object(instant_constructor_index) = instant_constructor.clone() else {
             unreachable!()
@@ -6365,6 +6373,10 @@ pub(crate) fn install_temporal_namespace_in_env(
                 PropertyKey::from("fromEpochNanoseconds"),
                 data_prop(from_epoch_nanoseconds),
             );
+            function
+                .props
+                .lock()
+                .insert(PropertyKey::from("from"), data_prop(from));
         });
         let Value::Object(instant_prototype_index) = instant_prototype.clone() else {
             unreachable!()
@@ -6553,6 +6565,46 @@ fn temporal_instant_from_epoch_nanoseconds(
     temporal_instant_factory_result(vm, epoch_nanoseconds)
 }
 
+fn to_temporal_instant_epoch(vm: &mut Vm, value: &Value) -> error::Result<Arc<BigInt>> {
+    if let Value::Object(index) = value {
+        if let Some(epoch_nanoseconds) = vm.heap.with_obj(index.0, |object| match object {
+            HeapObj::Temporal(TemporalData {
+                kind: TemporalKind::Instant { epoch_nanoseconds },
+                ..
+            }) => Some(epoch_nanoseconds.clone()),
+            _ => None,
+        }) {
+            return Ok(epoch_nanoseconds);
+        }
+    }
+    let primitive = if matches!(value, Value::Object(_)) {
+        vm.to_primitive_hint(value, true)?
+    } else {
+        value.clone()
+    };
+    let Value::String(source) = primitive else {
+        return Err(Error::type_err("Temporal.Instant input must be a String"));
+    };
+    let epoch_nanoseconds = temporal::parse_instant_string(&source)
+        .ok_or_else(|| Error::range("Invalid Temporal.Instant string"))?;
+    if epoch_nanoseconds.abs() > temporal_instant_limit_nanoseconds() {
+        return Err(Error::range(
+            "Temporal.Instant epoch nanoseconds out of range",
+        ));
+    }
+    Ok(Arc::new(epoch_nanoseconds))
+}
+
+fn temporal_instant_from(
+    vm: &mut Vm,
+    args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
+    let epoch_nanoseconds =
+        to_temporal_instant_epoch(vm, args.first().unwrap_or(&Value::Undefined))?;
+    temporal_instant_factory_result(vm, epoch_nanoseconds)
+}
+
 fn temporal_instant_epoch_nanoseconds(
     vm: &mut Vm,
     _args: &[Value],
@@ -6568,7 +6620,7 @@ fn temporal_instant_equals(
 ) -> error::Result<Value> {
     let epoch_nanoseconds = temporal_instant_epoch(vm, this)?;
     let other_epoch_nanoseconds =
-        temporal_instant_epoch(vm, Some(args.first().cloned().unwrap_or(Value::Undefined)))?;
+        to_temporal_instant_epoch(vm, args.first().unwrap_or(&Value::Undefined))?;
     Ok(Value::Bool(epoch_nanoseconds == other_epoch_nanoseconds))
 }
 

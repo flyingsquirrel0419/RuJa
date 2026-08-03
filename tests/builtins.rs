@@ -24871,12 +24871,12 @@ fn temporal_instant_equals_compares_branded_epoch_values() {
     );
     for source in [
         "new Temporal.Instant(0n).equals()",
-        "new Temporal.Instant(0n).equals({})",
         "Temporal.Instant.prototype.equals.call({}, new Temporal.Instant(0n))",
         "new Temporal.Instant.prototype.equals(new Temporal.Instant(0n))",
     ] {
         assert!(run_err(source).contains("TypeError"), "{source}");
     }
+    assert!(run_err("new Temporal.Instant(0n).equals({})").contains("RangeError"));
     assert_eq!(
         run(r#"
             var other = $262.createRealm().global;
@@ -24898,11 +24898,69 @@ fn temporal_instant_equals_compares_branded_epoch_values() {
             try {
               other.Temporal.Instant.prototype.equals.call(foreign, {});
             } catch (error) {
-              argumentRealm = error instanceof other.TypeError && !(error instanceof TypeError);
+              argumentRealm = error instanceof other.RangeError && !(error instanceof RangeError);
             }
             crossRealm && reads === 0 && receiverRealm && argumentRealm;
         "#),
         Value::Bool(true)
+    );
+}
+
+#[test]
+fn temporal_instant_from_and_equals_share_exact_string_conversion() {
+    assert_eq!(
+        run(r#"
+            var source = {
+              valueOf: function () { throw new Error('wrong order'); },
+              toString: function () { return '1976-11-18T15:23:30.123456789Z'; }
+            };
+            var instant = Temporal.Instant.from(source);
+            var original = new Temporal.Instant(7n);
+            [
+              instant.epochNanoseconds === 217178610123456789n,
+              instant.equals('1976-11-18t15:23:30.123456789Z'),
+              new Temporal.Instant(1483228799000000000n).equals('2016-12-31T23:59:60Z'),
+              Temporal.Instant.from(original) !== original,
+              Temporal.Instant.from.length,
+              Temporal.Instant.from.name
+            ].join('|');
+        "#),
+        Value::String(Arc::from("true|true|true|true|1|from"))
+    );
+    for source in [
+        "Temporal.Instant.from(1)",
+        "Temporal.Instant.from('2020-02-30T00:00Z')",
+        "Temporal.Instant.from('2020-01-01T00:00')",
+        "new Temporal.Instant.from('1970-01-01T00:00Z')",
+    ] {
+        let expected = if source.contains("(1)") || source.starts_with("new ") {
+            "TypeError"
+        } else {
+            "RangeError"
+        };
+        assert!(run_err(source).contains(expected), "{source}");
+    }
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var foreignFrom = other.Temporal.Instant.from;
+            var instant = foreignFrom.call(function Receiver() {}, '1970-01-01T00:00:00.000000007Z');
+            var typeRealm;
+            var rangeRealm;
+            try { foreignFrom(1); } catch (error) {
+              typeRealm = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            try { foreignFrom('invalid'); } catch (error) {
+              rangeRealm = error instanceof other.RangeError && !(error instanceof RangeError);
+            }
+            [
+              Object.getPrototypeOf(instant) === other.Temporal.Instant.prototype,
+              instant.epochNanoseconds === 7n,
+              typeRealm,
+              rangeRealm
+            ].join('|');
+        "#),
+        Value::String(Arc::from("true|true|true|true"))
     );
 }
 

@@ -92,6 +92,10 @@ from test262_temporal_instant_equals_admission import (
     TEMPORAL_INSTANT_EQUALS_FEATURES,
     TEMPORAL_INSTANT_EQUALS_FILES,
 )
+from test262_temporal_instant_from_admission import (
+    TEMPORAL_INSTANT_FROM_FEATURES,
+    TEMPORAL_INSTANT_FROM_FILES,
+)
 from test262_object_from_entries_admission import (
     OBJECT_FROM_ENTRIES_FEATURES,
     OBJECT_FROM_ENTRIES_FILES,
@@ -3262,6 +3266,84 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                         self.assertEqual(
                             tool.temporal_instant_equals_features(path), frozenset()
                         )
+                        self.assertTrue(tool.should_skip({"features": ["Temporal"]}, path))
+                finally:
+                    tool.TEST262 = original_root
+
+    def test_temporal_instant_from_manifest_is_exact_live_disjoint_and_shared(self):
+        expected = {
+            "built-ins/Temporal/Instant/from/argument-instant.js",
+            "built-ins/Temporal/Instant/from/argument-object-tostring.js",
+            "built-ins/Temporal/Instant/from/argument-string-time-separators.js",
+            "built-ins/Temporal/Instant/from/basic.js",
+            "built-ins/Temporal/Instant/from/builtin.js",
+            "built-ins/Temporal/Instant/from/leap-second.js",
+            "built-ins/Temporal/Instant/from/length.js",
+            "built-ins/Temporal/Instant/from/name.js",
+            "built-ins/Temporal/Instant/from/not-a-constructor.js",
+            "built-ins/Temporal/Instant/from/prop-desc.js",
+            "built-ins/Temporal/Instant/from/subclassing-ignored.js",
+            "built-ins/Temporal/Instant/prototype/equals/argument-object-tostring.js",
+            "built-ins/Temporal/Instant/prototype/equals/argument-string-time-separators.js",
+            "built-ins/Temporal/Instant/prototype/equals/cross-epoch.js",
+            "built-ins/Temporal/Instant/prototype/equals/leap-second.js",
+        }
+        expected_features = {
+            path: frozenset(
+                {"Temporal"}
+                | (
+                    {"Reflect.construct"}
+                    if path.endswith("/not-a-constructor.js")
+                    else set()
+                )
+            )
+            for path in expected
+        }
+        self.assertEqual(TEMPORAL_INSTANT_FROM_FILES, frozenset(expected))
+        self.assertEqual(TEMPORAL_INSTANT_FROM_FEATURES, expected_features)
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        try:
+            live_metadata = {
+                relative: test262_runner.parse_meta((test_root / relative).read_text())
+                for relative in expected_features
+            }
+        except OSError:
+            live_metadata = None
+        if live_metadata is not None:
+            for relative, features in expected_features.items():
+                metadata = live_metadata[relative]
+                self.assertEqual(frozenset(metadata.get("features", [])), features)
+                self.assertEqual(metadata.get("flags", []), [])
+                self.assertIsNone(metadata.get("negative"))
+
+        tools_dir = Path(__file__).resolve().parent
+        for manifest in tools_dir.glob("test262_*_admission.txt"):
+            if manifest.name == "test262_temporal_instant_from_admission.txt":
+                continue
+            existing = {
+                line
+                for raw_line in manifest.read_text().splitlines()
+                if (line := raw_line.strip()) and not line.startswith("#")
+            }
+            self.assertTrue(TEMPORAL_INSTANT_FROM_FILES.isdisjoint(existing), manifest.name)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            future = root / "test/built-ins/Temporal/Instant/from/future.js"
+            outside = root / "test/built-ins/Other/from/basic.js"
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for relative, features in expected_features.items():
+                        path = root / "test" / relative
+                        self.assertTrue(tool.temporal_instant_from_path(path), relative)
+                        self.assertEqual(tool.temporal_instant_from_features(path), features)
+                        self.assertFalse(tool.should_skip({"features": sorted(features)}, path))
+                    for path in (future, outside):
+                        self.assertFalse(tool.temporal_instant_from_path(path))
+                        self.assertEqual(tool.temporal_instant_from_features(path), frozenset())
                         self.assertTrue(tool.should_skip({"features": ["Temporal"]}, path))
                 finally:
                     tool.TEST262 = original_root

@@ -14079,3 +14079,12 @@ timezone algorithms.
 - 다른 대안 대신 이 방식을 선택한 이유: Constructor work has much larger parsing and arithmetic scope; shared objects violate Realm identity; directory-wide admission would overstate support. The selected boundary is independently complete and measurable.
 - 장점, 단점 및 영향: Namespace descriptors, prototypes, Realm identity, allocation rollback, and exact 4/0/0 coverage are verified. All Temporal constructors and algorithms remain explicitly unsupported and can land in later narrow units.
 ```
+# Temporal.Instant.from canonical string boundary
+
+`tools/test262_temporal_instant_from_admission.txt` freezes 15 tests for
+`Temporal.Instant.from` and the matching `equals` conversion path. The admitted
+grammar is the exact nanosecond, extended ISO date-time subset with a required
+`Z` or colonized minute offset. RFC 9557 annotations, compact offsets, offset
+seconds, and ZonedDateTime conversion remain behind the broad `Temporal` gate.
+The dedicated `temporal-instant-from` CI job requires **15 pass / 0 fail / 0
+skip** at the pinned Test262 revision.

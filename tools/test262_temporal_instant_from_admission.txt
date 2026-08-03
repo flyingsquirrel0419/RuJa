@@ -1,0 +1,16 @@
+# Frozen Temporal.Instant.from and shared string-conversion tests.
+built-ins/Temporal/Instant/from/argument-instant.js
+built-ins/Temporal/Instant/from/argument-object-tostring.js
+built-ins/Temporal/Instant/from/argument-string-time-separators.js
+built-ins/Temporal/Instant/from/basic.js
+built-ins/Temporal/Instant/from/builtin.js
+built-ins/Temporal/Instant/from/leap-second.js
+built-ins/Temporal/Instant/from/length.js
+built-ins/Temporal/Instant/from/name.js
+built-ins/Temporal/Instant/from/not-a-constructor.js
+built-ins/Temporal/Instant/from/prop-desc.js
+built-ins/Temporal/Instant/from/subclassing-ignored.js
+built-ins/Temporal/Instant/prototype/equals/argument-object-tostring.js
+built-ins/Temporal/Instant/prototype/equals/argument-string-time-separators.js
+built-ins/Temporal/Instant/prototype/equals/cross-epoch.js
+built-ins/Temporal/Instant/prototype/equals/leap-second.js

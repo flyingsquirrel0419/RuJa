@@ -79,6 +79,61 @@ fn temporal_namespace_installation_restores_roots_after_equals_allocation_failur
 }
 
 #[test]
+fn temporal_namespace_installation_restores_roots_after_from_allocation_failure() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.gc();
+    let original = vm.get_global("Temporal");
+    let baseline_pins = vm.gc_pins.len();
+    let baseline_live = vm.heap.live_count();
+    let global = vm.global;
+    let object_proto = vm.object_proto.clone();
+    // Seven earlier allocations fit exactly; the eighth, from, must fail.
+    vm.set_max_heap_objects(Some(baseline_live + 7));
+
+    let result =
+        crate::builtins::install_temporal_namespace_in_env(&mut vm, global, None, object_proto);
+
+    vm.set_max_heap_objects(None);
+    let error = result.expect_err("from allocation must hit the cap");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(error.message, "heap limit exceeded");
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.get_global("Temporal"), original);
+    vm.gc();
+    assert_eq!(vm.heap.live_count(), baseline_live);
+}
+
+#[test]
+fn temporal_instant_from_retains_converted_input_across_result_gc_retry() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("GC hook should register");
+
+    let result = vm
+        .run(
+            r#"
+            var input = {
+              toString: function () {
+                forceGc();
+                return '1970-01-01T00:00:00.000000007Z';
+              }
+            };
+            Temporal.Instant.from(input).epochNanoseconds;
+            "#,
+        )
+        .expect("converted input and method Realm should survive GC");
+
+    assert_eq!(result, Value::BigInt(Arc::new(7.into())));
+}
+
+#[test]
 fn json_builder_retries_at_heap_cap_and_roots_partial_tree() {
     for (source, key, outer_is_array) in [(r#"{"items":[]}"#, "items", false), ("[[]]", "0", true)]
     {

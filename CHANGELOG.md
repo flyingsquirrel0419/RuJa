@@ -4,6 +4,24 @@
 
 ### Changed
 
+- Added `Temporal.Instant.from` and shared string conversion for
+  `Temporal.Instant.prototype.equals`. This first parser boundary accepts exact
+  extended ISO date-time strings with a required UTC designator or colonized
+  minute offset, nanosecond precision, alternate time separators, and leap
+  seconds. It also preserves branded-Instant fast paths, string-hint object
+  coercion, method-Realm allocation, and the inclusive Instant range. A frozen
+  15-file Test262 admission covers only this completed surface; RFC 9557
+  annotations, compact offsets, offset seconds, and ZonedDateTime conversion
+  remain gated.
+
+  [Decision Log]
+  - 목적과 의도: Instant 생성과 비교가 공유하는 첫 `ToTemporalInstant` 문자열 변환 경계를 정확한 나노초 단위로 제공한다.
+  - 기존 구현 및 제약 조건: branded Instant 비교와 epoch factory는 있었지만 문자열 입력은 거부했고, 기존 Date 파서는 부동소수점 밀리초와 관대한 정규화 때문에 재사용할 수 없었다.
+  - 검토한 주요 대안: Date 파서 재사용, RFC 9557 전체 파서 일괄 구현, 검증 가능한 extended ISO 부분집합을 먼저 고정하는 방식을 검토했다.
+  - 선택한 방식: 전용 정수 파서와 공유 변환 helper를 추가하고 현재 완결된 15개 Test262 파일만 admission으로 연다.
+  - 다른 대안 대신 이 방식을 선택한 이유: 나노초 정밀도와 Temporal의 엄격한 날짜 검증을 보존하면서 아직 지원하지 않는 annotation 및 ZonedDateTime 의미론을 지원하는 것처럼 보이지 않게 하기 위해서다.
+  - 장점, 단점 및 영향: `from`과 `equals`의 coercion 및 range 규칙이 한 경로로 통합된다. 전체 RFC 9557 문법은 후속 parser 단위가 필요하다.
+
 - Added `Temporal.Instant.prototype.equals` for exact comparison between
   branded Instant values, including cross-Realm instances. Receiver branding
   is checked before the argument, and installation preserves the existing
