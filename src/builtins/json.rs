@@ -1882,21 +1882,9 @@ pub(crate) fn date_to_temporal_instant(
         return Err(Error::range("Invalid time value"));
     }
 
-    let epoch_nanoseconds = BigInt::from(ts as i64) * BigInt::from(1_000_000_i64);
-    let mut props = IndexMap::new();
-    props.insert(
-        PropertyKey::from("epochNanoseconds"),
-        data_prop(Value::bigint(epoch_nanoseconds)),
-    );
-    let obj = HeapObj::Object(ObjectData {
-        props: Mutex::new(props),
-        proto: Mutex::new(Some(vm.object_proto.clone())),
-        extensible: AtomicBool::new(true),
-        class_name: Some(Arc::from("Temporal.Instant")),
-        private_fields: Mutex::new(std::collections::HashMap::new()),
-        primitive: Mutex::new(None),
-    });
-    Ok(Value::Object(vm.alloc(obj)?))
+    let epoch_nanoseconds = Arc::new(BigInt::from(ts as i64) * BigInt::from(1_000_000_i64));
+    let realm = vm.native_callee_closure().unwrap_or(vm.global);
+    create_temporal_instant_in_realm(vm, epoch_nanoseconds, realm)
 }
 
 pub(crate) fn date_get_timezone_offset(

@@ -1420,7 +1420,7 @@ const FOREIGN_EAGER_NATIVE_CONSTRUCTOR_SOURCES: &[&str] = &[
     "SuppressedError",
 ];
 
-fn realm_registry_counts(vm: &Vm) -> [usize; 40] {
+fn realm_registry_counts(vm: &Vm) -> [usize; 42] {
     [
         vm.realm_globals.len(),
         vm.realm_object_prototypes.len(),
@@ -1443,6 +1443,8 @@ fn realm_registry_counts(vm: &Vm) -> [usize; 40] {
         vm.realm_async_generator_function_prototypes.len(),
         vm.realm_primitive_prototypes.len(),
         vm.realm_date_prototypes.len(),
+        vm.realm_temporal_instant_constructors.len(),
+        vm.realm_temporal_instant_prototypes.len(),
         vm.realm_eval_functions.len(),
         vm.realm_throw_type_errors.len(),
         vm.realm_function_prototypes.len(),
@@ -1540,7 +1542,7 @@ fn assert_main_realm_range_error(vm: &Vm, error: &crate::error::Error) {
 fn assert_failed_realm_attempt(
     vm: &mut Vm,
     baseline_live: usize,
-    baseline_registries: [usize; 40],
+    baseline_registries: [usize; 42],
     baseline_pins: usize,
     extra_capacity: usize,
 ) {

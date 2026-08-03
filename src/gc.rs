@@ -646,6 +646,7 @@ fn trace_obj_impl(obj: &HeapObj, worklist: &mut Vec<usize>) {
                 push_value(compare, worklist);
             }
         }
+        HeapObj::Temporal(_) => {}
         HeapObj::Environment(e) => {
             for (_, b) in e.vars.lock().iter() {
                 push_value(&b.value.lock(), worklist);

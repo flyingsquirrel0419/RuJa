@@ -49,7 +49,8 @@ use crate::value::{
     ArrayData, BindingKind, CollectionIteratorData, CollectionIteratorKind, FunctionData,
     FunctionKind, GcIdx, HeapObj, IteratorConcatIterable, IteratorHelperData, IteratorHelperInner,
     IteratorHelperKind, IteratorZipMode, MapData, MapKey, NativeConstructMode, ObjectData,
-    PropertyDescriptor, PropertyKey, RegExpStringIteratorData, SetData, Value,
+    PropertyDescriptor, PropertyKey, RegExpStringIteratorData, SetData, TemporalData, TemporalKind,
+    Value,
 };
 use crate::vm::{NativeFn, Vm};
 use indexmap::{IndexMap, IndexSet};
@@ -6287,27 +6288,103 @@ pub(crate) fn install_temporal_namespace_in_env(
     global: Option<&Value>,
     object_proto: Value,
 ) -> error::Result<Value> {
-    vm.try_reserve_gc_pins(1)?;
-    let mut now_tag = data_prop(Value::String(Arc::from("Temporal.Now")));
-    now_tag.writable = false;
-    let now = Value::Object(vm.alloc(HeapObj::Object(ObjectData {
-        props: Mutex::new(IndexMap::from([(
-            PropertyKey::symbol(vm.well_known_symbols.to_string_tag),
-            now_tag,
-        )])),
-        proto: Mutex::new(Some(object_proto.clone())),
-        extensible: AtomicBool::new(true),
-        class_name: Some(Arc::from("Temporal.Now")),
-        private_fields: Mutex::new(std::collections::HashMap::new()),
-        primitive: Mutex::new(None),
-    }))?);
-    let pin_count = vm.pin(&now);
-    let temporal = {
+    vm.try_reserve_gc_pins(6)?;
+    let mut pin_count = 0;
+    let result = (|| {
+        let instant_prototype = Value::Object(vm.alloc(HeapObj::Object(ObjectData {
+            props: Mutex::new(IndexMap::new()),
+            proto: Mutex::new(Some(object_proto.clone())),
+            extensible: AtomicBool::new(true),
+            class_name: None,
+            private_fields: Mutex::new(std::collections::HashMap::new()),
+            primitive: Mutex::new(None),
+        }))?);
+        pin_count += vm.pin(&instant_prototype);
+
+        let instant_constructor = Value::Object(vm.new_native_constructor_in_env_with_gc_retry(
+            "Instant",
+            temporal_instant_constructor,
+            1,
+            env,
+            NativeConstructMode::InternalDeferredPrototype,
+        )?);
+        pin_count += vm.pin(&instant_constructor);
+        let epoch_milliseconds = Value::Object(vm.new_native_function_in_env(
+            "get epochMilliseconds",
+            temporal_instant_epoch_milliseconds,
+            0,
+            env,
+        )?);
+        pin_count += vm.pin(&epoch_milliseconds);
+        let epoch_nanoseconds = Value::Object(vm.new_native_function_in_env(
+            "get epochNanoseconds",
+            temporal_instant_epoch_nanoseconds,
+            0,
+            env,
+        )?);
+        pin_count += vm.pin(&epoch_nanoseconds);
+
+        let Value::Object(instant_constructor_index) = instant_constructor.clone() else {
+            unreachable!()
+        };
+        vm.heap.with_obj(instant_constructor_index.0, |object| {
+            let HeapObj::Function(function) = object else {
+                unreachable!()
+            };
+            *function.prototype.lock() = Some(instant_prototype.clone());
+            function.props.lock().insert(
+                PropertyKey::from("prototype"),
+                const_prop(instant_prototype.clone()),
+            );
+        });
+        let Value::Object(instant_prototype_index) = instant_prototype.clone() else {
+            unreachable!()
+        };
+        vm.heap.with_obj(instant_prototype_index.0, |object| {
+            let mut props = object.props().lock();
+            props.insert(
+                PropertyKey::from("constructor"),
+                data_prop(instant_constructor.clone()),
+            );
+            props.insert(
+                PropertyKey::from("epochMilliseconds"),
+                accessor_get_prop(epoch_milliseconds),
+            );
+            props.insert(
+                PropertyKey::from("epochNanoseconds"),
+                accessor_get_prop(epoch_nanoseconds),
+            );
+            let mut tag = data_prop(Value::String(Arc::from("Temporal.Instant")));
+            tag.writable = false;
+            props.insert(
+                PropertyKey::symbol(vm.well_known_symbols.to_string_tag),
+                tag,
+            );
+        });
+
+        let mut now_tag = data_prop(Value::String(Arc::from("Temporal.Now")));
+        now_tag.writable = false;
+        let now = Value::Object(vm.alloc(HeapObj::Object(ObjectData {
+            props: Mutex::new(IndexMap::from([(
+                PropertyKey::symbol(vm.well_known_symbols.to_string_tag),
+                now_tag,
+            )])),
+            proto: Mutex::new(Some(object_proto.clone())),
+            extensible: AtomicBool::new(true),
+            class_name: Some(Arc::from("Temporal.Now")),
+            private_fields: Mutex::new(std::collections::HashMap::new()),
+            primitive: Mutex::new(None),
+        }))?);
+        pin_count += vm.pin(&now);
         let mut temporal_tag = data_prop(Value::String(Arc::from("Temporal")));
         temporal_tag.writable = false;
-        vm.alloc(HeapObj::Object(ObjectData {
+        let temporal = Value::Object(vm.alloc(HeapObj::Object(ObjectData {
             props: Mutex::new(IndexMap::from([
                 (PropertyKey::from("Now"), data_prop(now)),
+                (
+                    PropertyKey::from("Instant"),
+                    data_prop(instant_constructor.clone()),
+                ),
                 (
                     PropertyKey::symbol(vm.well_known_symbols.to_string_tag),
                     temporal_tag,
@@ -6318,17 +6395,126 @@ pub(crate) fn install_temporal_namespace_in_env(
             class_name: Some(Arc::from("Temporal")),
             private_fields: Mutex::new(std::collections::HashMap::new()),
             primitive: Mutex::new(None),
-        }))
-    };
-    vm.unpin_many(pin_count);
-    let temporal = Value::Object(temporal?);
+        }))?);
 
-    if let Some(global) = global {
-        define_realm_global(vm, env, global, "Temporal", temporal.clone());
-    } else {
-        define_global(vm, "Temporal", temporal.clone());
+        vm.realm_temporal_instant_constructors
+            .insert(env.0, instant_constructor);
+        vm.realm_temporal_instant_prototypes
+            .insert(env.0, instant_prototype);
+
+        if let Some(global) = global {
+            define_realm_global(vm, env, global, "Temporal", temporal.clone());
+        } else {
+            define_global(vm, "Temporal", temporal.clone());
+        }
+        Ok(temporal)
+    })();
+    vm.unpin_many(pin_count);
+    result
+}
+
+const TEMPORAL_INSTANT_LIMIT_MILLISECONDS: i64 = 8_640_000_000_000_000;
+
+fn temporal_instant_limit_nanoseconds() -> BigInt {
+    BigInt::from(TEMPORAL_INSTANT_LIMIT_MILLISECONDS) * BigInt::from(1_000_000_i64)
+}
+
+fn temporal_instant_epoch(vm: &Vm, this: Option<Value>) -> error::Result<Arc<BigInt>> {
+    let Value::Object(index) = this.unwrap_or(Value::Undefined) else {
+        return Err(Error::type_err(
+            "Temporal.Instant method called on incompatible receiver",
+        ));
+    };
+    vm.heap.with_obj(index.0, |object| match object {
+        HeapObj::Temporal(TemporalData {
+            kind: TemporalKind::Instant { epoch_nanoseconds },
+            ..
+        }) => Ok(epoch_nanoseconds.clone()),
+        _ => Err(Error::type_err(
+            "Temporal.Instant method called on incompatible receiver",
+        )),
+    })
+}
+
+fn create_temporal_instant(
+    vm: &mut Vm,
+    epoch_nanoseconds: Arc<BigInt>,
+    prototype: Value,
+) -> error::Result<Value> {
+    if epoch_nanoseconds.as_ref().abs() > temporal_instant_limit_nanoseconds() {
+        return Err(Error::range(
+            "Temporal.Instant epoch nanoseconds out of range",
+        ));
     }
-    Ok(temporal)
+    let pin_count = vm.pin(&prototype);
+    let result = vm.alloc(HeapObj::Temporal(TemporalData {
+        kind: TemporalKind::Instant { epoch_nanoseconds },
+        props: Mutex::new(IndexMap::new()),
+        proto: Mutex::new(Some(prototype)),
+        extensible: AtomicBool::new(true),
+    }));
+    vm.unpin_many(pin_count);
+    result.map(Value::Object)
+}
+
+pub(crate) fn create_temporal_instant_in_realm(
+    vm: &mut Vm,
+    epoch_nanoseconds: Arc<BigInt>,
+    realm: GcIdx,
+) -> error::Result<Value> {
+    let prototype = vm
+        .realm_temporal_instant_prototypes
+        .get(&env::global_env_root(&vm.heap, realm).0)
+        .cloned()
+        .ok_or_else(|| Error::internal("Temporal.Instant prototype is not installed"))?;
+    create_temporal_instant(vm, epoch_nanoseconds, prototype)
+}
+
+fn temporal_instant_constructor(
+    vm: &mut Vm,
+    args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
+    if vm.current_native_new_target().is_none() {
+        return Err(Error::type_err("Temporal.Instant requires 'new'"));
+    }
+    let epoch_nanoseconds = vm.coerce_bigint_shared(args.first().unwrap_or(&Value::Undefined))?;
+    if epoch_nanoseconds.as_ref().abs() > temporal_instant_limit_nanoseconds() {
+        return Err(Error::range(
+            "Temporal.Instant epoch nanoseconds out of range",
+        ));
+    }
+    let realm = env::global_env_root(&vm.heap, vm.native_callee_closure().unwrap_or(vm.global));
+    let fallback = vm
+        .realm_temporal_instant_prototypes
+        .get(&realm.0)
+        .cloned()
+        .ok_or_else(|| Error::internal("Temporal.Instant prototype is not installed"))?;
+    let prototype = native_constructor_prototype_with_default(vm, "Temporal.Instant", fallback)?;
+    create_temporal_instant(vm, epoch_nanoseconds, prototype)
+}
+
+fn temporal_instant_epoch_nanoseconds(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    temporal_instant_epoch(vm, this).map(Value::BigInt)
+}
+
+fn temporal_instant_epoch_milliseconds(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let epoch_nanoseconds = temporal_instant_epoch(vm, this)?;
+    let milliseconds = epoch_nanoseconds
+        .as_ref()
+        .div_floor(&BigInt::from(1_000_000_i64));
+    let number = milliseconds
+        .to_f64()
+        .ok_or_else(|| Error::range("Temporal.Instant milliseconds out of range"))?;
+    Ok(Value::Number(number))
 }
 
 fn populate_secondary_realm(vm: &mut Vm, realm_env: GcIdx) -> error::Result<Value> {

@@ -1046,6 +1046,22 @@ pub struct ModuleNamespaceData {
     pub proto: Mutex<Option<Value>>,
 }
 
+/// Temporal objects keep specification internal slots outside observable
+/// property storage. New Temporal kinds extend this enum instead of encoding
+/// branded state in ordinary-object fields.
+pub enum TemporalKind {
+    Instant {
+        epoch_nanoseconds: Arc<num_bigint::BigInt>,
+    },
+}
+
+pub struct TemporalData {
+    pub kind: TemporalKind,
+    pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
+    pub proto: Mutex<Option<Value>>,
+    pub extensible: AtomicBool,
+}
+
 /// A heap-allocated JS object. All heap-resident data is one of these.
 pub enum HeapObj {
     Object(ObjectData),
@@ -1072,6 +1088,7 @@ pub enum HeapObj {
     DataView(DataViewData),
     IntlLocale(IntlLocaleData),
     IntlCollator(IntlCollatorData),
+    Temporal(TemporalData),
 }
 
 /// Immutable ECMA-402 Locale internal slots attached to an ordinary object.
@@ -1972,6 +1989,7 @@ impl HeapObj {
             HeapObj::DataView(d) => &d.props,
             HeapObj::IntlLocale(locale) => &locale.props,
             HeapObj::IntlCollator(collator) => &collator.props,
+            HeapObj::Temporal(temporal) => &temporal.props,
             HeapObj::Iterator(_) => panic!("iterator has no props"),
             HeapObj::Environment(_) => panic!("env has no props"),
         }
@@ -2002,6 +2020,7 @@ impl HeapObj {
             HeapObj::DataView(d) => &d.proto,
             HeapObj::IntlLocale(locale) => &locale.proto,
             HeapObj::IntlCollator(collator) => &collator.proto,
+            HeapObj::Temporal(temporal) => &temporal.proto,
             HeapObj::Environment(_) => panic!("env has no proto"),
             HeapObj::Iterator(_) => panic!("iterator has no proto"),
         }
@@ -2064,6 +2083,9 @@ impl HeapObj {
             HeapObj::DataView(_) => "DataView",
             HeapObj::IntlLocale(_) => "Object",
             HeapObj::IntlCollator(_) => "Object",
+            HeapObj::Temporal(temporal) => match &temporal.kind {
+                TemporalKind::Instant { .. } => "Temporal.Instant",
+            },
         }
     }
 
@@ -2092,6 +2114,7 @@ impl HeapObj {
             HeapObj::DataView(view) => view.extensible.load(Ordering::Relaxed),
             HeapObj::IntlLocale(locale) => locale.extensible.load(Ordering::Relaxed),
             HeapObj::IntlCollator(collator) => collator.extensible.load(Ordering::Relaxed),
+            HeapObj::Temporal(temporal) => temporal.extensible.load(Ordering::Relaxed),
             HeapObj::ModuleNamespace(_) => false,
             _ => true,
         }
@@ -2119,6 +2142,7 @@ impl HeapObj {
             HeapObj::DataView(view) => &view.extensible,
             HeapObj::IntlLocale(locale) => &locale.extensible,
             HeapObj::IntlCollator(collator) => &collator.extensible,
+            HeapObj::Temporal(temporal) => &temporal.extensible,
             _ => return,
         };
         extensible.store(false, Ordering::Relaxed);

@@ -1347,6 +1347,13 @@ impl Vm {
                 .cloned()
                 .unwrap_or(fallback));
         }
+        if intrinsic == "Temporal.Instant" {
+            return Ok(self
+                .realm_temporal_instant_prototypes
+                .get(&realm.0)
+                .cloned()
+                .unwrap_or(fallback));
+        }
         if intrinsic == "RegExp" {
             return Ok(self
                 .realm_regexp_prototypes

@@ -56,6 +56,9 @@ try:
     from test262_temporal_namespace_admission import (
         TEMPORAL_NAMESPACE_FEATURES, TEMPORAL_NAMESPACE_FILES,
     )
+    from test262_temporal_instant_core_admission import (
+        TEMPORAL_INSTANT_CORE_FEATURES, TEMPORAL_INSTANT_CORE_FILES,
+    )
     from test262_object_from_entries_admission import (
         OBJECT_FROM_ENTRIES_FEATURES, OBJECT_FROM_ENTRIES_FILES,
     )
@@ -312,6 +315,9 @@ except ModuleNotFoundError:
     )
     from tools.test262_temporal_namespace_admission import (
         TEMPORAL_NAMESPACE_FEATURES, TEMPORAL_NAMESPACE_FILES,
+    )
+    from tools.test262_temporal_instant_core_admission import (
+        TEMPORAL_INSTANT_CORE_FEATURES, TEMPORAL_INSTANT_CORE_FILES,
     )
     from tools.test262_object_from_entries_admission import (
         OBJECT_FROM_ENTRIES_FEATURES, OBJECT_FROM_ENTRIES_FILES,
@@ -2280,6 +2286,21 @@ def temporal_namespace_path(path):
 def temporal_namespace_features(path):
     return TEMPORAL_NAMESPACE_FEATURES if temporal_namespace_path(path) else frozenset()
 
+def temporal_instant_core_path(path):
+    if path is None:
+        return False
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except (OSError, TypeError, ValueError):
+        return False
+    return rel.as_posix() in TEMPORAL_INSTANT_CORE_FILES
+
+def temporal_instant_core_features(path):
+    if not temporal_instant_core_path(path):
+        return frozenset()
+    rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    return TEMPORAL_INSTANT_CORE_FEATURES[rel.as_posix()]
+
 def error_constructor_realm_path(path):
     try:
         rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
@@ -4073,6 +4094,8 @@ def should_skip(meta, path=None):
         feats.difference_update(suppressed_error_features(path))
     if path is not None and temporal_namespace_path(path):
         feats.difference_update(temporal_namespace_features(path))
+    if path is not None and temporal_instant_core_path(path):
+        feats.difference_update(temporal_instant_core_features(path))
     if path is not None and error_constructor_realm_path(path):
         feats.difference_update(ERROR_CONSTRUCTOR_REALM_FEATURES)
     if path is not None and error_cause_path(path):

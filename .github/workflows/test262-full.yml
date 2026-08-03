@@ -78,6 +78,12 @@ jobs:
           TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_namespace_manifest_is_exact_live_disjoint_and_shared
           -v
+      - name: Verify exact Temporal.Instant core admission
+        working-directory: tools
+        run: >-
+          TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
+          test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_instant_core_manifest_is_exact_live_disjoint_and_shared
+          -v
       - name: Verify exact static import-attribute admission
         working-directory: tools
         run: >-
@@ -292,6 +298,36 @@ jobs:
           cat temporal_namespace_result.txt
           grep -q '^RATE=100.0 PASS=4 FAIL=0 SKIP=0 TOTAL=4 RAN=4$' \
             temporal_namespace_result.txt
+
+  temporal-instant-core:
+    needs: [build, setup]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download RuJa binary
+        uses: actions/download-artifact@v4
+        with:
+          name: ruja-release
+          path: target/release/
+      - run: chmod +x target/release/ruja
+      - name: Checkout pinned Temporal.Instant core tests
+        uses: actions/checkout@v4
+        with:
+          repository: tc39/test262
+          ref: ${{ env.TEST262_REV }}
+          path: test262
+          sparse-checkout: |
+            harness
+            test/built-ins/Temporal/Instant
+      - name: Require the exact Temporal.Instant core boundary to pass
+        run: |
+          mapfile -t files < <(sed -e '/^#/d' -e '/^$/d' \
+            tools/test262_temporal_instant_core_admission.txt)
+          TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
+            "${files[@]}" > temporal_instant_core_result.txt 2>&1
+          cat temporal_instant_core_result.txt
+          grep -q '^RATE=100.0 PASS=19 FAIL=0 SKIP=0 TOTAL=19 RAN=19$' \
+            temporal_instant_core_result.txt
 
   regexp-named-groups:
     needs: [build, setup]

@@ -4,6 +4,21 @@
 
 ### Changed
 
+- Added Realm-local `%Temporal.Instant%` construction, branded hidden
+  `[[EpochNanoseconds]]` storage, exact `epochNanoseconds` and floor-rounded
+  `epochMilliseconds` accessors, and intrinsic fallback behavior for custom
+  `newTarget`. `Date.prototype.toTemporalInstant` now returns a real branded
+  Instant selected from the method function's Realm. A frozen 19-file
+  Test262 boundary covers this core surface.
+
+  [Decision Log]
+  - 목적과 의도: Temporal의 후속 연산이 신뢰할 수 있는 Instant 내부 슬롯과 Realm별 intrinsic identity를 먼저 확립한다.
+  - 기존 구현 및 제약 조건: Date bridge는 관찰 가능한 일반 프로퍼티를 가진 모양만 비슷한 객체를 만들었고, 생성자와 브랜드 검증이 없었다.
+  - 검토한 주요 대안: 일반 객체의 비공개 이름 프로퍼티, 기존 Date 저장소 재사용, 전용 heap variant를 검토했다.
+  - 선택한 방식: 전용 `HeapObj::Temporal` 내부 슬롯과 immutable Realm registry를 사용하고, 생성과 Date bridge를 같은 allocation helper로 통합했다.
+  - 다른 대안 대신 이 방식을 선택한 이유: JavaScript 프로퍼티 조작으로 브랜드나 epoch 값을 위조할 수 없어야 하며, 변경 가능한 전역 `Temporal` 바인딩에 intrinsic 선택이 의존하면 안 된다.
+  - 장점, 단점 및 영향: 브랜드/Realm/GC 경계가 명확해지고 후속 Temporal 타입을 확장할 기반이 생긴다. 현재 enum과 registry가 Instant 중심이라 다른 Temporal 타입은 별도 단위로 추가해야 한다.
+
 - Added Realm-local `%Temporal%` and `%Temporal.Now%` namespace objects with
   specification-shaped prototypes, property descriptors, and
   `Symbol.toStringTag` values. A frozen four-file Test262 boundary covers only
@@ -6881,8 +6896,8 @@ Current supported subset count: **9838 pass / 0 fail / 10601 skip / 0 timeout**.
   `toTemporalInstant` coverage.
 - **Date toTemporalInstant bridge**: `Date.prototype.toTemporalInstant` now
   validates Date-branded receivers, throws `RangeError` for invalid dates, and
-  returns a minimal Temporal Instant-shaped object exposing
-  `epochNanoseconds` as a BigInt millisecond-to-nanosecond conversion. The
+  returns a branded `%Temporal.Instant%` with hidden epoch storage and
+  `epochNanoseconds` exposed through the prototype accessor. The
   focused `built-ins/Date/prototype/toTemporalInstant` run improves from **0
   pass / 6 fail / 2 skip** to **6 pass / 0 fail / 2 skip**, closing the
   broader `built-ins/Date` diagnostic at **482 pass / 0 fail / 112 skip**.

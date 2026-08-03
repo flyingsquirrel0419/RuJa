@@ -24645,6 +24645,18 @@ fn date_to_temporal_instant_returns_epoch_nanoseconds() {
         Value::Bool(true)
     );
     assert_eq!(
+        run(r#"
+            var instant = new Date(-1).toTemporalInstant();
+            [
+              instant instanceof Temporal.Instant,
+              instant.epochMilliseconds === -1,
+              Object.prototype.hasOwnProperty.call(instant, 'epochNanoseconds'),
+              Object.prototype.toString.call(instant)
+            ].join('|');
+        "#),
+        Value::String(Arc::from("true|true|false|[object Temporal.Instant]"))
+    );
+    assert_eq!(
         run("new Date(-8640000000000000).toTemporalInstant().epochNanoseconds === -8640000000000000000000n;"),
         Value::Bool(true)
     );
@@ -24654,6 +24666,95 @@ fn date_to_temporal_instant_returns_epoch_nanoseconds() {
         run_err("Date.prototype.toTemporalInstant.call(Date.prototype);").contains("TypeError")
     );
     assert!(run_err("var d = new Date(0); new d.toTemporalInstant();").contains("TypeError"));
+}
+
+#[test]
+fn temporal_instant_core_is_spec_shaped_and_branded() {
+    assert_eq!(
+        run(r#"
+            var positive = new Temporal.Instant(217175010123456789n);
+            var negative = new Temporal.Instant(-217175010876543211n);
+            [
+              Temporal.Instant.length,
+              Temporal.Instant.name,
+              positive.epochNanoseconds === 217175010123456789n,
+              positive.epochMilliseconds,
+              negative.epochMilliseconds,
+              Object.getPrototypeOf(positive) === Temporal.Instant.prototype,
+              Object.prototype.toString.call(Temporal.Instant.prototype),
+              Object.prototype.toString.call(positive),
+              new Temporal.Instant('7').epochNanoseconds === 7n,
+              new Temporal.Instant(true).epochNanoseconds === 1n
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "1|Instant|true|217175010123|-217175010877|true|[object Temporal.Instant]|[object Temporal.Instant]|true|true"
+        ))
+    );
+    for source in [
+        "Temporal.Instant(0n)",
+        "new Temporal.Instant()",
+        "new Temporal.Instant(0)",
+        "new Temporal.Instant(null)",
+        "new Temporal.Instant(Symbol())",
+    ] {
+        assert!(run_err(source).contains("TypeError"), "{source}");
+    }
+    assert!(run_err("new Temporal.Instant('nope')").contains("SyntaxError"));
+    assert!(run_err("new Temporal.Instant(8640000000000000000001n)").contains("RangeError"));
+    assert_eq!(
+        run("new Temporal.Instant(8640000000000000000000n).epochNanoseconds === 8640000000000000000000n"),
+        Value::Bool(true)
+    );
+    assert!(run_err(
+        "Object.getOwnPropertyDescriptor(Temporal.Instant.prototype, 'epochNanoseconds').get.call({})"
+    )
+    .contains("TypeError"));
+}
+
+#[test]
+fn temporal_instant_observes_new_target_once_and_uses_intrinsic_fallback() {
+    assert_eq!(
+        run(r#"
+            var count = 0;
+            var NewTarget = function () {}.bind(null);
+            Object.defineProperty(NewTarget, 'prototype', {
+              get: function () { count++; return null; }
+            });
+            var value = Reflect.construct(Temporal.Instant, [1n], NewTarget);
+            count + '|' + (Object.getPrototypeOf(value) === Temporal.Instant.prototype);
+        "#),
+        Value::String(Arc::from("1|true"))
+    );
+    assert!(run_err(r#"
+        var target = function () {}.bind(null);
+        Object.defineProperty(target, 'prototype', { get: function () { throw new Error('seen'); } });
+        Reflect.construct(Temporal.Instant, [0n], target);
+    "#)
+    .contains("seen"));
+    assert_eq!(
+        run(r#"
+            var original = Temporal.Instant.prototype;
+            delete globalThis.Temporal;
+            var instant = new Date(0).toTemporalInstant();
+            Object.getPrototypeOf(instant) === original && instant.epochNanoseconds === 0n;
+        "#),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var mainMethod = Date.prototype.toTemporalInstant;
+            var otherMethod = other.Date.prototype.toTemporalInstant;
+            var mainDate = new Date(0);
+            var otherDate = new other.Date(0);
+            var fromMain = mainMethod.call(otherDate);
+            var fromOther = otherMethod.call(mainDate);
+            Object.getPrototypeOf(fromMain) === Temporal.Instant.prototype &&
+              Object.getPrototypeOf(fromOther) === other.Temporal.Instant.prototype;
+        "#),
+        Value::Bool(true)
+    );
 }
 
 #[test]
