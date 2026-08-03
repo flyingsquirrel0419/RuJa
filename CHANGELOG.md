@@ -19,6 +19,10 @@
   - 다른 대안 대신 이 방식을 선택한 이유: JavaScript 프로퍼티 조작으로 브랜드나 epoch 값을 위조할 수 없어야 하며, 변경 가능한 전역 `Temporal` 바인딩에 intrinsic 선택이 의존하면 안 된다.
   - 장점, 단점 및 영향: 브랜드/Realm/GC 경계가 명확해지고 후속 Temporal 타입을 확장할 기반이 생긴다. 현재 enum과 registry가 Instant 중심이라 다른 Temporal 타입은 별도 단위로 추가해야 한다.
 
+  Getter 설치도 GC 재시도 경로를 사용해 Realm 생성의 heap-cap 계약을
+  유지한다. `Symbol.toStringTag`가 삭제되거나 문자열이 아니면 일반 객체
+  fallback인 `[object Object]`를 반환한다.
+
 - Added Realm-local `%Temporal%` and `%Temporal.Now%` namespace objects with
   specification-shaped prototypes, property descriptors, and
   `Symbol.toStringTag` values. A frozen four-file Test262 boundary covers only

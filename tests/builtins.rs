@@ -24710,6 +24710,16 @@ fn temporal_instant_core_is_spec_shaped_and_branded() {
         "Object.getOwnPropertyDescriptor(Temporal.Instant.prototype, 'epochNanoseconds').get.call({})"
     )
     .contains("TypeError"));
+    assert_eq!(
+        run(r#"
+            var instant = new Temporal.Instant(0n);
+            delete Temporal.Instant.prototype[Symbol.toStringTag];
+            var deleted = Object.prototype.toString.call(instant);
+            Temporal.Instant.prototype[Symbol.toStringTag] = 1;
+            deleted + '|' + Object.prototype.toString.call(instant);
+        "#),
+        Value::String(Arc::from("[object Object]|[object Object]"))
+    );
 }
 
 #[test]

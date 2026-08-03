@@ -2083,9 +2083,7 @@ impl HeapObj {
             HeapObj::DataView(_) => "DataView",
             HeapObj::IntlLocale(_) => "Object",
             HeapObj::IntlCollator(_) => "Object",
-            HeapObj::Temporal(temporal) => match &temporal.kind {
-                TemporalKind::Instant { .. } => "Temporal.Instant",
-            },
+            HeapObj::Temporal(_) => "Object",
         }
     }
 

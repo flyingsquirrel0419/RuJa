@@ -6309,14 +6309,14 @@ pub(crate) fn install_temporal_namespace_in_env(
             NativeConstructMode::InternalDeferredPrototype,
         )?);
         pin_count += vm.pin(&instant_constructor);
-        let epoch_milliseconds = Value::Object(vm.new_native_function_in_env(
+        let epoch_milliseconds = Value::Object(vm.new_native_function_in_env_with_gc_retry(
             "get epochMilliseconds",
             temporal_instant_epoch_milliseconds,
             0,
             env,
         )?);
         pin_count += vm.pin(&epoch_milliseconds);
-        let epoch_nanoseconds = Value::Object(vm.new_native_function_in_env(
+        let epoch_nanoseconds = Value::Object(vm.new_native_function_in_env_with_gc_retry(
             "get epochNanoseconds",
             temporal_instant_epoch_nanoseconds,
             0,
