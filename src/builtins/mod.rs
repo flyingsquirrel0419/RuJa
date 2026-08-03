@@ -6593,6 +6593,7 @@ fn to_temporal_instant_epoch(vm: &mut Vm, value: &Value) -> error::Result<Arc<Bi
     let Value::String(source) = primitive else {
         return Err(Error::type_err("Temporal.Instant input must be a String"));
     };
+    vm.consume_fuel_units(source.len().min(i64::MAX as usize) as i64)?;
     let epoch_nanoseconds = temporal::parse_instant_string(&source)
         .ok_or_else(|| Error::range("Invalid Temporal.Instant string"))?;
     if epoch_nanoseconds.abs() > temporal_instant_limit_nanoseconds() {

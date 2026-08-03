@@ -4,6 +4,23 @@
 
 ### Changed
 
+- Expanded the shared `Temporal.Instant` string parser used by `from` and
+  `equals`. It now accepts independently basic or extended date, time, and
+  offset forms; hour-only times and offsets; offset seconds with nanosecond
+  fractions; and the audited RFC 9557 time-zone, calendar, and unknown
+  annotation subset. Native parsing precharges input bytes as sandbox fuel.
+  A frozen 36-file Test262 boundary passes completely; the two directories are
+  **58 pass / 0 fail / 4 skip**, with only wrong-type/toString branding and
+  ZonedDateTime fast paths still gated.
+
+  [Decision Log]
+  - 목적과 의도: `from`, `equals`, 후속 `compare`가 공유할 정확한 나노초 Instant 문자열 변환 기반을 확장한다.
+  - 기존 구현 및 제약 조건: 기존 parser는 dashed date, colonized minute offset, annotation 없는 문자열만 처리했고 offset을 초 단위로 계산했다. 전체 Temporal parser crate 도입은 아직 없는 다른 Temporal type 문법까지 함께 소유하게 된다.
+  - 검토한 주요 대안: 메서드별 parser 복제, Date parser 재사용, 외부 Temporal parser 의존성, 현재 정수 parser를 구조화해 확장하는 방식을 검토했다.
+  - 선택한 방식: date/time/main-offset/annotation 단계를 분리하고 main offset을 나노초 정수로 계산한다. 변환 후 문자열 byte 길이를 fuel로 선차감하며 36개 exact path만 admission에 등록한다.
+  - 다른 대안 대신 이 방식을 선택한 이유: Date parser는 밀리초 부동소수점과 관대한 정규화를 사용하고, 메서드별 복제는 coercion과 range 의미론을 분기시킨다. 현재 경로 확장은 공유 정밀도와 sandbox 경계를 보존한다.
+  - 장점, 단점 및 영향: basic/extended 조합, sub-minute offset, annotation critical/중복 규칙과 Instant 경계값이 한 경로에서 검증된다. full RFC 9557 grammar, prototype toString branding, ZonedDateTime 내부 슬롯은 후속 단위다.
+
 - Added Realm-local, non-constructable `Temporal.Instant.prototype.valueOf`.
   The method always throws a `TypeError` without reading or branding its
   receiver, preventing implicit numeric or relational coercion of Instant

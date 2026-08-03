@@ -31,9 +31,10 @@
 
 - Realm-local `Temporal`, `Temporal.Now`, and `Temporal.Instant` expose their
   standard identities. Instant supports construction, exact epoch accessors,
-  epoch factories, branded/string `equals`, canonical extended-ISO `from`, an
-  always-throwing `valueOf`, and `Date.prototype.toTemporalInstant`. Calendar,
-  duration, timezone, ZonedDateTime, RFC 9557 annotations, and `Temporal.Now`
+  epoch factories, branded/string `equals`, basic and extended ISO `from`, the
+  audited RFC 9557 annotation and nanosecond-offset subset, an always-throwing
+  `valueOf`, and `Date.prototype.toTemporalInstant`. Calendar, duration,
+  timezone, ZonedDateTime, the remaining RFC 9557 grammar, and `Temporal.Now`
   methods remain outside the supported boundary.
 - `class`/`extends`/`super`
 - Default & rest parameters

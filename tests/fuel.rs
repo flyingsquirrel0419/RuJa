@@ -29,6 +29,42 @@ fn fuel_unbounded_by_default() {
 }
 
 #[test]
+fn temporal_instant_string_parsing_precharges_input_bytes() {
+    const BUDGET: i64 = 10_000;
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        globalThis.temporalShort = "1970-01-01T00:00Z[foo=a]";
+        globalThis.temporalLong = "1970-01-01T00:00Z[foo=" + "a".repeat(512) + "]";
+        "#,
+    )
+    .expect("Temporal fuel fixtures should initialize");
+
+    vm.set_fuel(Some(BUDGET));
+    vm.run("Temporal.Instant.from(temporalShort);")
+        .expect("short Temporal input should parse");
+    let short_work = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+
+    vm.set_fuel(Some(BUDGET));
+    vm.run("Temporal.Instant.from(temporalLong);")
+        .expect("long Temporal input should parse");
+    let long_work = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+    assert!(long_work >= short_work + 500);
+
+    vm.set_fuel(Some(long_work - 1));
+    let error = vm
+        .run("Temporal.Instant.from(temporalLong);")
+        .expect_err("N-1 fuel must abort before parsing");
+    assert_eq!(error.kind, ruja::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+
+    vm.set_fuel(Some(long_work));
+    vm.run("Temporal.Instant.from(temporalLong);")
+        .expect("exact measured fuel should parse successfully");
+    assert_eq!(vm.fuel_remaining(), Some(0));
+}
+
+#[test]
 fn annex_b_escape_native_scans_consume_fuel_before_materialization() {
     let mut vm = Vm::new().expect("failed to initialize VM");
     vm.run(

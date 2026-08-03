@@ -71,6 +71,10 @@ try:
         TEMPORAL_INSTANT_FROM_FEATURES,
         TEMPORAL_INSTANT_FROM_FILES,
     )
+    from test262_temporal_instant_string_parser_admission import (
+        TEMPORAL_INSTANT_STRING_PARSER_FEATURES,
+        TEMPORAL_INSTANT_STRING_PARSER_FILES,
+    )
     from test262_temporal_instant_value_of_admission import (
         TEMPORAL_INSTANT_VALUE_OF_FEATURES,
         TEMPORAL_INSTANT_VALUE_OF_FILES,
@@ -346,6 +350,10 @@ except ModuleNotFoundError:
     from tools.test262_temporal_instant_from_admission import (
         TEMPORAL_INSTANT_FROM_FEATURES,
         TEMPORAL_INSTANT_FROM_FILES,
+    )
+    from tools.test262_temporal_instant_string_parser_admission import (
+        TEMPORAL_INSTANT_STRING_PARSER_FEATURES,
+        TEMPORAL_INSTANT_STRING_PARSER_FILES,
     )
     from tools.test262_temporal_instant_value_of_admission import (
         TEMPORAL_INSTANT_VALUE_OF_FEATURES,
@@ -2393,6 +2401,21 @@ def temporal_instant_from_features(path):
     rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
     return TEMPORAL_INSTANT_FROM_FEATURES[rel.as_posix()]
 
+def temporal_instant_string_parser_path(path):
+    if path is None:
+        return False
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except (OSError, TypeError, ValueError):
+        return False
+    return rel.as_posix() in TEMPORAL_INSTANT_STRING_PARSER_FILES
+
+def temporal_instant_string_parser_features(path):
+    if not temporal_instant_string_parser_path(path):
+        return frozenset()
+    rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    return TEMPORAL_INSTANT_STRING_PARSER_FEATURES[rel.as_posix()]
+
 def error_constructor_realm_path(path):
     try:
         rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
@@ -4196,6 +4219,8 @@ def should_skip(meta, path=None):
         feats.difference_update(temporal_instant_value_of_features(path))
     if path is not None and temporal_instant_from_path(path):
         feats.difference_update(temporal_instant_from_features(path))
+    if path is not None and temporal_instant_string_parser_path(path):
+        feats.difference_update(temporal_instant_string_parser_features(path))
     if path is not None and error_constructor_realm_path(path):
         feats.difference_update(ERROR_CONSTRUCTOR_REALM_FEATURES)
     if path is not None and error_cause_path(path):

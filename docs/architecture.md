@@ -32,7 +32,31 @@ source ─► Lexer ─► Parser ─► Compiler ─► Bytecode ─► VM
   `GcIdx` handles.
 - **Builtins** (`src/builtins/mod.rs` + submodules) — the standard library:
   Object, Array, String, Number, Boolean, Function, Math, JSON, console, RegExp,
-  Map, Set, Symbol, Promise, Proxy, TypedArray, and the Error hierarchy.
+  Map, Set, Symbol, Promise, Proxy, TypedArray, Temporal, and the Error
+  hierarchy. `src/builtins/temporal.rs` owns syntax-only Instant parsing;
+  Realm allocation, coercion, range checks, and observable methods remain in
+  `src/builtins/mod.rs`.
+
+## Temporal Instant conversion
+
+`Temporal.Instant.from`, `Temporal.Instant.prototype.equals`, and future
+Instant consumers share one conversion path. Branded Instant objects return
+their hidden epoch value without observable property access. Other objects use
+string-hint primitive conversion. A resulting String is charged by UTF-8 byte
+length against VM fuel before `src/builtins/temporal.rs` scans basic/extended
+date, time, numeric offset, and trailing annotations. The parser returns exact
+epoch nanoseconds; the caller enforces the inclusive Instant range and selects
+the method Realm for result or error materialization.
+
+```text
+[Decision Log]
+- 목적과 의도: Instant 문자열 문법, observable coercion, sandbox 비용, Realm/range 정책의 소유 경계를 분리한다.
+- 기존 구현 및 제약 조건: Date parsing은 부동소수점 밀리초와 관대한 normalization을 사용한다. Instant는 나노초 정밀도와 strict calendar validation이 필요하고 object coercion은 JavaScript를 재진입할 수 있다.
+- 검토한 주요 대안: Date parser 재사용, 각 Instant 메서드에 parser 복제, 외부 full-Temporal parser, syntax-only 공용 integer parser를 검토했다.
+- 선택한 방식: observable ToPrimitive는 VM builtin layer에서 수행하고, 그 직후 input bytes를 fuel로 선차감한다. VM/GC 재진입 없는 syntax-only parser가 epoch nanoseconds를 반환하며 VM layer가 range와 Realm을 적용한다.
+- 다른 대안 대신 이 방식을 선택한 이유: parser 내부에서 VM 재진입과 GC를 섞지 않고도 sandbox 비용을 경계 전에 확정할 수 있으며, 모든 소비 API가 같은 정밀도와 rejection 규칙을 사용한다.
+- 장점, 단점 및 영향: parser는 독립 단위 테스트가 가능하고 메서드 간 drift가 사라진다. 새 문자열 소비 API는 반드시 이 conversion path를 재사용해야 하며 full RFC 9557 지원 전에는 audited subset만 문서화해야 한다.
+```
 
 ## Compiler temporary storage
 

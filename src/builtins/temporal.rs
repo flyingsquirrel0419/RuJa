@@ -25,6 +25,184 @@ fn take(bytes: &[u8], index: &mut usize, expected: u8) -> Option<()> {
     Some(())
 }
 
+fn fraction_nanoseconds(bytes: &[u8], index: &mut usize) -> Option<i128> {
+    if !matches!(bytes.get(*index), Some(b'.') | Some(b',')) {
+        return Some(0);
+    }
+    *index += 1;
+    let start = *index;
+    while bytes.get(*index).is_some_and(u8::is_ascii_digit) {
+        *index += 1;
+    }
+    let count = *index - start;
+    if !(1..=9).contains(&count) {
+        return None;
+    }
+    Some(
+        bytes[start..*index]
+            .iter()
+            .fold(0_i128, |value, byte| value * 10 + i128::from(byte - b'0'))
+            * 10_i128.pow((9 - count) as u32),
+    )
+}
+
+fn parse_offset_nanoseconds(bytes: &[u8], index: &mut usize) -> Option<i128> {
+    let negative = bytes.get(*index) == Some(&b'-');
+    if !negative && bytes.get(*index) != Some(&b'+') {
+        return None;
+    }
+    *index += 1;
+
+    let hour = digits(bytes, index, 2)?;
+    let extended = bytes.get(*index) == Some(&b':');
+    let mut minute = 0;
+    let mut second = 0;
+    let mut fraction = 0;
+
+    let minute_present = if extended {
+        *index += 1;
+        minute = digits(bytes, index, 2)?;
+        true
+    } else if bytes.get(*index).is_some_and(u8::is_ascii_digit) {
+        minute = digits(bytes, index, 2)?;
+        true
+    } else {
+        false
+    };
+
+    let second_present = if extended && bytes.get(*index) == Some(&b':') {
+        *index += 1;
+        second = digits(bytes, index, 2)?;
+        true
+    } else if !extended && minute_present && bytes.get(*index).is_some_and(u8::is_ascii_digit) {
+        second = digits(bytes, index, 2)?;
+        true
+    } else {
+        false
+    };
+    if second_present {
+        fraction = fraction_nanoseconds(bytes, index)?;
+    }
+    if hour > 23 || minute > 59 || second > 59 {
+        return None;
+    }
+
+    let value = (hour * 3_600 + minute * 60 + second)
+        .checked_mul(NS_PER_SECOND)?
+        .checked_add(fraction)?;
+    Some(if negative { -value } else { value })
+}
+
+fn valid_annotation_key(key: &[u8]) -> bool {
+    key.first()
+        .is_some_and(|byte| byte.is_ascii_lowercase() || *byte == b'_')
+        && key.iter().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-')
+        })
+}
+
+fn valid_annotation_value(value: &[u8]) -> bool {
+    value
+        .split(|byte| *byte == b'-')
+        .all(|component| !component.is_empty() && component.iter().all(u8::is_ascii_alphanumeric))
+}
+
+fn valid_numeric_time_zone_annotation(value: &[u8]) -> bool {
+    if !matches!(value.first(), Some(b'+') | Some(b'-')) {
+        return false;
+    }
+    let mut index = 1;
+    let Some(hour) = digits(value, &mut index, 2) else {
+        return false;
+    };
+    let minute = if index == value.len() {
+        0
+    } else if value.get(index) == Some(&b':') {
+        index += 1;
+        let Some(minute) = digits(value, &mut index, 2) else {
+            return false;
+        };
+        minute
+    } else {
+        let Some(minute) = digits(value, &mut index, 2) else {
+            return false;
+        };
+        minute
+    };
+    index == value.len() && hour <= 23 && minute <= 59
+}
+
+fn valid_named_time_zone_annotation(value: &[u8]) -> bool {
+    !value.is_empty()
+        && value.split(|byte| *byte == b'/').all(|component| {
+            component
+                .first()
+                .is_some_and(|byte| byte.is_ascii_alphabetic() || matches!(byte, b'.' | b'_'))
+                && component[1..].iter().all(|byte| {
+                    byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'+' | b'-')
+                })
+        })
+}
+
+fn parse_annotations(bytes: &[u8], index: &mut usize) -> Option<()> {
+    let mut time_zone_seen = false;
+    let mut annotation_seen = false;
+    let mut calendar_count = 0_u32;
+    let mut critical_calendar_seen = false;
+
+    while bytes.get(*index) == Some(&b'[') {
+        *index += 1;
+        let start = *index;
+        while bytes.get(*index).is_some_and(|byte| *byte != b']') {
+            *index += 1;
+        }
+        let end = *index;
+        take(bytes, index, b']')?;
+
+        let content = bytes.get(start..end)?;
+        let (critical, body) = if content.first() == Some(&b'!') {
+            (true, content.get(1..)?)
+        } else {
+            (false, content)
+        };
+        if body.is_empty() {
+            return None;
+        }
+
+        if let Some(separator) = body.iter().position(|byte| *byte == b'=') {
+            let key = &body[..separator];
+            let value = &body[separator + 1..];
+            if !valid_annotation_key(key) || !valid_annotation_value(value) {
+                return None;
+            }
+            if key == b"u-ca" {
+                calendar_count += 1;
+                critical_calendar_seen |= critical;
+                if calendar_count > 1 && critical_calendar_seen {
+                    return None;
+                }
+            } else if critical {
+                return None;
+            }
+            annotation_seen = true;
+        } else {
+            if time_zone_seen || annotation_seen {
+                return None;
+            }
+            let valid = if matches!(body.first(), Some(b'+') | Some(b'-')) {
+                valid_numeric_time_zone_annotation(body)
+            } else {
+                valid_named_time_zone_annotation(body)
+            };
+            if !valid {
+                return None;
+            }
+            time_zone_seen = true;
+        }
+    }
+    Some(())
+}
+
 fn leap_year(year: i128) -> bool {
     year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
 }
@@ -82,9 +260,14 @@ pub(crate) fn parse_instant_string(source: &str) -> Option<BigInt> {
     } else {
         digits(bytes, &mut index, 4)?
     };
-    take(bytes, &mut index, b'-')?;
+    let extended_date = bytes.get(index) == Some(&b'-');
+    if extended_date {
+        index += 1;
+    }
     let month = digits(bytes, &mut index, 2)?;
-    take(bytes, &mut index, b'-')?;
+    if extended_date {
+        take(bytes, &mut index, b'-')?;
+    }
     let day = digits(bytes, &mut index, 2)?;
     if day == 0 || day > days_in_month(year, month)? {
         return None;
@@ -94,61 +277,49 @@ pub(crate) fn parse_instant_string(source: &str) -> Option<BigInt> {
     }
     index += 1;
     let hour = digits(bytes, &mut index, 2)?;
-    take(bytes, &mut index, b':')?;
-    let minute = digits(bytes, &mut index, 2)?;
-    if hour > 23 || minute > 59 {
-        return None;
-    }
-
+    let extended_time = bytes.get(index) == Some(&b':');
+    let mut minute = 0;
     let mut second = 0;
     let mut fraction = 0_i128;
-    if bytes.get(index) == Some(&b':') {
+
+    let minute_present = if extended_time {
+        index += 1;
+        minute = digits(bytes, &mut index, 2)?;
+        true
+    } else if bytes.get(index).is_some_and(u8::is_ascii_digit) {
+        minute = digits(bytes, &mut index, 2)?;
+        true
+    } else {
+        false
+    };
+
+    let second_present = if extended_time && bytes.get(index) == Some(&b':') {
         index += 1;
         second = digits(bytes, &mut index, 2)?;
-        if second > 60 {
-            return None;
-        }
-        second = second.min(59);
-        if matches!(bytes.get(index), Some(b'.') | Some(b',')) {
-            index += 1;
-            let start = index;
-            while bytes.get(index).is_some_and(u8::is_ascii_digit) {
-                index += 1;
-            }
-            let count = index - start;
-            if !(1..=9).contains(&count) {
-                return None;
-            }
-            fraction = bytes[start..index]
-                .iter()
-                .fold(0_i128, |value, byte| value * 10 + i128::from(byte - b'0'))
-                * 10_i128.pow((9 - count) as u32);
-        }
+        true
+    } else if !extended_time && minute_present && bytes.get(index).is_some_and(u8::is_ascii_digit) {
+        second = digits(bytes, &mut index, 2)?;
+        true
+    } else {
+        false
+    };
+    if second_present {
+        fraction = fraction_nanoseconds(bytes, &mut index)?;
     }
+    if hour > 23 || minute > 59 || second > 60 {
+        return None;
+    }
+    second = second.min(59);
 
-    let offset_seconds = match bytes.get(index) {
+    let offset_nanoseconds = match bytes.get(index) {
         Some(b'Z') | Some(b'z') => {
             index += 1;
             0
         }
-        Some(b'+') | Some(b'-') => {
-            let negative = bytes[index] == b'-';
-            index += 1;
-            let offset_hour = digits(bytes, &mut index, 2)?;
-            take(bytes, &mut index, b':')?;
-            let offset_minute = digits(bytes, &mut index, 2)?;
-            if offset_hour > 23 || offset_minute > 59 {
-                return None;
-            }
-            let value = offset_hour * 3_600 + offset_minute * 60;
-            if negative {
-                -value
-            } else {
-                value
-            }
-        }
+        Some(b'+') | Some(b'-') => parse_offset_nanoseconds(bytes, &mut index)?,
         _ => return None,
     };
+    parse_annotations(bytes, &mut index)?;
     if index != bytes.len() {
         return None;
     }
@@ -158,9 +329,9 @@ pub(crate) fn parse_instant_string(source: &str) -> Option<BigInt> {
         .checked_mul(SECONDS_PER_DAY)?
         .checked_add(hour * 3_600 + minute * 60 + second)?;
     let epoch = local_seconds
-        .checked_sub(offset_seconds)?
         .checked_mul(NS_PER_SECOND)?
-        .checked_add(fraction)?;
+        .checked_add(fraction)?
+        .checked_sub(offset_nanoseconds)?;
     Some(BigInt::from(epoch))
 }
 
@@ -220,5 +391,58 @@ mod tests {
             );
         }
         assert!(parse_instant_string("1900-02-29T00:00:00Z").is_none());
+    }
+
+    #[test]
+    fn parses_basic_time_and_nanosecond_offsets() {
+        let cases = [
+            ("19761118T152330.1+0000", 217_178_610_100_000_000_i128),
+            ("1976-11-18T15Z", 217_177_200_000_000_000_i128),
+            ("1970-01-01T00:19:32.37+00:19:32.37", 0_i128),
+            (
+                "-271821-04-19T00:00:00.000000001-23:59:59.999999999",
+                -8_640_000_000_000_000_000_000_i128,
+            ),
+        ];
+        for (source, expected) in cases {
+            assert_eq!(
+                parse_instant_string(source),
+                Some(BigInt::from(expected)),
+                "{source}"
+            );
+        }
+    }
+
+    #[test]
+    fn validates_rfc_9557_annotations_without_resolving_them() {
+        for source in [
+            "1970-01-01T00:00Z[UTC][u-ca=gregory]",
+            "1970-01-01T00:00Z[!Europe/Vienna][foo=bar]",
+            "1970-01-01T00:00Z[u-ca=iso8601][u-ca=discord]",
+            "1970-01-01T00:00Z[+12]",
+            "1970-01-01T00:00Z[.][foo=Alpha-123]",
+        ] {
+            assert_eq!(
+                parse_instant_string(source),
+                Some(BigInt::from(0)),
+                "{source}"
+            );
+        }
+
+        for source in [
+            "1970-01-01T00:00Z[UTC][UTC]",
+            "1970-01-01T00:00Z[u-ca=iso8601][!u-ca=gregory]",
+            "1970-01-01T00:00Z[!foo=bar]",
+            "1970-01-01T00:00Z[U-CA=iso8601]",
+            "1970-01-01T00:00Z[-07:00:00]",
+            "1970-01-01T00:00Z[UTC/]",
+            "1970-01-01T00:00Z[1UTC]",
+            "1970-01-01T00:00Z[foo=bad_value]",
+            "1970-01-01T00:00Z[foo=bad--value]",
+            "1970-01-01T00:00Z[foo=bar][UTC]",
+            "1970-01-01T00:00:00+00:0000",
+        ] {
+            assert!(parse_instant_string(source).is_none(), "{source}");
+        }
     }
 }

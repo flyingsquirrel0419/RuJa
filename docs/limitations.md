@@ -9,11 +9,12 @@ The following resource limits are enforced:
   `%Temporal.Instant%` are installed. Instant supports construction, exact
   epoch accessors, epoch factories, `equals`, `from`, the always-throwing
   `valueOf`, and
-  `Date.prototype.toTemporalInstant`. String conversion currently accepts the
-  extended ISO date-time subset with a required `Z` or `+/-HH:MM` offset.
-  RFC 9557 annotations, compact and second-bearing offsets, ZonedDateTime
-  conversion, calendar/duration/timezone types, and `Temporal.Now` methods
-  remain unsupported.
+  `Date.prototype.toTemporalInstant`. String conversion accepts basic and
+  extended date/time/offset forms, nanosecond-precision offset seconds, and the
+  audited RFC 9557 annotation subset, with a required `Z` or numeric offset.
+  The remaining RFC 9557 grammar, ZonedDateTime conversion,
+  calendar/duration/timezone types, and `Temporal.Now` methods remain
+  unsupported.
 
 - **Execution fuel**: `Vm::set_fuel(Some(n))` bounds dispatched opcodes and
   explicitly metered native-loop steps. Proxy `[[Call]]`, `[[Delete]]`,

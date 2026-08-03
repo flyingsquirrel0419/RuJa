@@ -14080,6 +14080,29 @@ timezone algorithms.
 - 장점, 단점 및 영향: Namespace descriptors, prototypes, Realm identity, allocation rollback, and exact 4/0/0 coverage are verified. All Temporal constructors and algorithms remain explicitly unsupported and can land in later narrow units.
 ```
 
+## Temporal.Instant shared string parser expansion
+
+`tools/test262_temporal_instant_string_parser_admission.txt` freezes **36**
+new string-focused files shared by `Temporal.Instant.from` and
+`Temporal.Instant.prototype.equals`. Date, time, and main-offset styles may be
+basic or extended independently. Hour-only forms, offset seconds and
+nanosecond fractions, leap seconds, Instant endpoint adjustment, and the
+audited RFC 9557 annotation subset use one exact integer parser. The dedicated
+CI job requires **36 pass / 0 fail / 0 skip**. Across both complete method
+directories the policy now runs **58 pass / 0 fail / 4 skip**; the four skips
+are exactly the two wrong-type/toString-branding and two ZonedDateTime fast-path
+files.
+
+```text
+[Decision Log]
+- 목적과 의도: Instant의 세 문자열 소비 API가 공유할 parser 의미론을 넓히고 supported accounting에 정확히 반영한다.
+- 기존 구현 및 제약 조건: 첫 15-file 경계는 extended date-time과 colonized minute offset만 허용했다. Date parser는 Temporal의 strict validation과 nanosecond precision을 보존하지 못한다.
+- 검토한 주요 대안: Date parser 재사용, 메서드별 parser, 외부 full-Temporal parser, 현재 integer parser의 단계별 확장을 검토했다.
+- 선택한 방식: basic/extended date, time, offset과 trailing annotation을 별도 단계로 검증하고 최종 local nanoseconds에서 exact offset nanoseconds를 차감한다. input bytes는 parsing 전에 fuel로 선차감한다.
+- 다른 대안 대신 이 방식을 선택한 이유: 공유 integer 경로만이 정밀도, coercion 순서, range check, sandbox 비용을 일치시키면서 아직 없는 Temporal type 문법을 거짓 지원하지 않는다.
+- 장점, 단점 및 영향: exact 36/0/0과 combined 58/0/4가 재현된다. full RFC 9557 문법, Instant.prototype.toString 브랜드 검사, ZonedDateTime fast path는 명시적으로 남는다.
+```
+
 ## Temporal.Instant.prototype.valueOf completion
 
 `tools/test262_temporal_instant_value_of_admission.txt` freezes all **7**
