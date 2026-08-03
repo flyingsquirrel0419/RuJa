@@ -6288,7 +6288,7 @@ pub(crate) fn install_temporal_namespace_in_env(
     global: Option<&Value>,
     object_proto: Value,
 ) -> error::Result<Value> {
-    vm.try_reserve_gc_pins(6)?;
+    vm.try_reserve_gc_pins(8)?;
     let mut pin_count = 0;
     let result = (|| {
         let instant_prototype = Value::Object(vm.alloc(HeapObj::Object(ObjectData {
@@ -6309,6 +6309,20 @@ pub(crate) fn install_temporal_namespace_in_env(
             NativeConstructMode::InternalDeferredPrototype,
         )?);
         pin_count += vm.pin(&instant_constructor);
+        let from_epoch_milliseconds = Value::Object(vm.new_native_function_in_env_with_gc_retry(
+            "fromEpochMilliseconds",
+            temporal_instant_from_epoch_milliseconds,
+            1,
+            env,
+        )?);
+        pin_count += vm.pin(&from_epoch_milliseconds);
+        let from_epoch_nanoseconds = Value::Object(vm.new_native_function_in_env_with_gc_retry(
+            "fromEpochNanoseconds",
+            temporal_instant_from_epoch_nanoseconds,
+            1,
+            env,
+        )?);
+        pin_count += vm.pin(&from_epoch_nanoseconds);
         let epoch_milliseconds = Value::Object(vm.new_native_function_in_env_with_gc_retry(
             "get epochMilliseconds",
             temporal_instant_epoch_milliseconds,
@@ -6335,6 +6349,14 @@ pub(crate) fn install_temporal_namespace_in_env(
             function.props.lock().insert(
                 PropertyKey::from("prototype"),
                 const_prop(instant_prototype.clone()),
+            );
+            function.props.lock().insert(
+                PropertyKey::from("fromEpochMilliseconds"),
+                data_prop(from_epoch_milliseconds),
+            );
+            function.props.lock().insert(
+                PropertyKey::from("fromEpochNanoseconds"),
+                data_prop(from_epoch_nanoseconds),
             );
         });
         let Value::Object(instant_prototype_index) = instant_prototype.clone() else {
@@ -6492,6 +6514,35 @@ fn temporal_instant_constructor(
         .ok_or_else(|| Error::internal("Temporal.Instant prototype is not installed"))?;
     let prototype = native_constructor_prototype_with_default(vm, "Temporal.Instant", fallback)?;
     create_temporal_instant(vm, epoch_nanoseconds, prototype)
+}
+
+fn temporal_instant_factory_result(
+    vm: &mut Vm,
+    epoch_nanoseconds: Arc<BigInt>,
+) -> error::Result<Value> {
+    let realm = vm.native_callee_closure().unwrap_or(vm.global);
+    create_temporal_instant_in_realm(vm, epoch_nanoseconds, realm)
+}
+
+fn temporal_instant_from_epoch_milliseconds(
+    vm: &mut Vm,
+    args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
+    let milliseconds = vm.to_number(args.first().unwrap_or(&Value::Undefined))?;
+    let milliseconds = Vm::number_to_bigint_exact(milliseconds).ok_or_else(|| {
+        Error::range("Temporal.Instant epoch milliseconds must be an integral Number")
+    })?;
+    temporal_instant_factory_result(vm, Arc::new(milliseconds * BigInt::from(1_000_000_i64)))
+}
+
+fn temporal_instant_from_epoch_nanoseconds(
+    vm: &mut Vm,
+    args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
+    let epoch_nanoseconds = vm.coerce_bigint_shared(args.first().unwrap_or(&Value::Undefined))?;
+    temporal_instant_factory_result(vm, epoch_nanoseconds)
 }
 
 fn temporal_instant_epoch_nanoseconds(

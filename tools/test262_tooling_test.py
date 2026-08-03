@@ -84,6 +84,10 @@ from test262_temporal_instant_core_admission import (
     TEMPORAL_INSTANT_CORE_FEATURES,
     TEMPORAL_INSTANT_CORE_FILES,
 )
+from test262_temporal_instant_epoch_factories_admission import (
+    TEMPORAL_INSTANT_EPOCH_FACTORY_FEATURES,
+    TEMPORAL_INSTANT_EPOCH_FACTORY_FILES,
+)
 from test262_object_from_entries_admission import (
     OBJECT_FROM_ENTRIES_FEATURES,
     OBJECT_FROM_ENTRIES_FILES,
@@ -3067,6 +3071,68 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                     for path in (future, outside):
                         self.assertFalse(tool.temporal_instant_core_path(path))
                         self.assertEqual(tool.temporal_instant_core_features(path), frozenset())
+                        self.assertTrue(tool.should_skip({"features": ["Temporal"]}, path))
+                finally:
+                    tool.TEST262 = original_root
+
+    def test_temporal_instant_epoch_factory_manifest_is_exact_live_disjoint_and_shared(self):
+        prefixes = (
+            "built-ins/Temporal/Instant/fromEpochMilliseconds/",
+            "built-ins/Temporal/Instant/fromEpochNanoseconds/",
+        )
+        excluded = {prefix + "limits.js" for prefix in prefixes}
+        test_root = Path(test262_runner.TEST262) / "test"
+        expected = {
+            path.relative_to(test_root).as_posix()
+            for prefix in prefixes
+            for path in (test_root / prefix).glob("*.js")
+            if path.relative_to(test_root).as_posix() not in excluded
+        }
+        self.assertEqual(TEMPORAL_INSTANT_EPOCH_FACTORY_FILES, frozenset(expected))
+        self.assertEqual(len(expected), 17)
+
+        for relative in expected:
+            metadata = test262_runner.parse_meta((test_root / relative).read_text())
+            self.assertEqual(
+                TEMPORAL_INSTANT_EPOCH_FACTORY_FEATURES[relative],
+                frozenset(metadata.get("features", [])),
+            )
+            self.assertEqual(metadata.get("flags", []), [])
+            self.assertIsNone(metadata.get("negative"))
+
+        tools_dir = Path(__file__).resolve().parent
+        for manifest in tools_dir.glob("test262_*_admission.txt"):
+            if manifest.name == "test262_temporal_instant_epoch_factories_admission.txt":
+                continue
+            existing = {
+                line
+                for raw_line in manifest.read_text().splitlines()
+                if (line := raw_line.strip()) and not line.startswith("#")
+            }
+            self.assertTrue(
+                TEMPORAL_INSTANT_EPOCH_FACTORY_FILES.isdisjoint(existing), manifest.name
+            )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            future = root / "test/built-ins/Temporal/Instant/fromEpochMilliseconds/future.js"
+            outside = root / "test/built-ins/Other/fromEpochMilliseconds/basic.js"
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for relative, features in TEMPORAL_INSTANT_EPOCH_FACTORY_FEATURES.items():
+                        path = root / "test" / relative
+                        self.assertTrue(tool.temporal_instant_epoch_factory_path(path), relative)
+                        self.assertEqual(
+                            tool.temporal_instant_epoch_factory_features(path), features
+                        )
+                        self.assertFalse(tool.should_skip({"features": sorted(features)}, path))
+                    for path in (future, outside):
+                        self.assertFalse(tool.temporal_instant_epoch_factory_path(path))
+                        self.assertEqual(
+                            tool.temporal_instant_epoch_factory_features(path), frozenset()
+                        )
                         self.assertTrue(tool.should_skip({"features": ["Temporal"]}, path))
                 finally:
                     tool.TEST262 = original_root

@@ -4,6 +4,21 @@
 
 ### Changed
 
+- Added Realm-local `Temporal.Instant.fromEpochMilliseconds` and
+  `fromEpochNanoseconds`. Both ignore the receiver, allocate through the
+  method function's intrinsic Realm, preserve exact integer conversion, and
+  enforce the inclusive Instant range. A frozen 17-file Test262 boundary
+  covers factory behavior; the two `limits.js` files remain gated because
+  their assertions also require `Temporal.Instant.from(string)` and `equals`.
+
+  [Decision Log]
+  - 목적과 의도: ISO 문자열 파싱과 독립적인 epoch 기반 Instant 생성 경로를 먼저 완결한다.
+  - 기존 구현 및 제약 조건: Instant 생성자와 내부 슬롯은 있었지만 표준 static factory가 없었고, factory 디렉터리의 경계 테스트 두 개는 아직 없는 문자열 파싱과 `equals`까지 요구한다.
+  - 검토한 주요 대안: 19개 전체를 한 번에 열기, `equals`와 문자열 파싱까지 동시에 구현하기, 독립적인 17개만 고정하기를 검토했다.
+  - 선택한 방식: `ToNumber`/`NumberToBigInt` 및 `ToBigInt` 변환 뒤 기존 Realm-local Instant allocation helper를 재사용하고 독립적인 17개만 admission에 등록했다.
+  - 다른 대안 대신 이 방식을 선택한 이유: receiver나 변경 가능한 전역 프로퍼티를 관찰하지 않는 spec 의미론을 유지하면서 아직 구현하지 않은 ISO 파서를 임시로 흉내 내지 않기 위해서다.
+  - 장점, 단점 및 영향: factory 동작과 GC/Realm 경계가 작고 검증 가능하다. 두 경계값 Test262 파일은 `Instant.from`과 `equals` 단위가 끝날 때까지 제외된다.
+
 - Added Realm-local `%Temporal.Instant%` construction, branded hidden
   `[[EpochNanoseconds]]` storage, exact `epochNanoseconds` and floor-rounded
   `epochMilliseconds` accessors, and intrinsic fallback behavior for custom

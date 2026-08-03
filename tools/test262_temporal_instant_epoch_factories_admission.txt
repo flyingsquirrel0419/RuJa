@@ -1,0 +1,18 @@
+# Exact feature-gated Temporal.Instant epoch factory coverage.
+built-ins/Temporal/Instant/fromEpochMilliseconds/argument.js
+built-ins/Temporal/Instant/fromEpochMilliseconds/basic.js
+built-ins/Temporal/Instant/fromEpochMilliseconds/builtin.js
+built-ins/Temporal/Instant/fromEpochMilliseconds/length.js
+built-ins/Temporal/Instant/fromEpochMilliseconds/name.js
+built-ins/Temporal/Instant/fromEpochMilliseconds/non-integer.js
+built-ins/Temporal/Instant/fromEpochMilliseconds/not-a-constructor.js
+built-ins/Temporal/Instant/fromEpochMilliseconds/prop-desc.js
+built-ins/Temporal/Instant/fromEpochMilliseconds/subclassing-ignored.js
+built-ins/Temporal/Instant/fromEpochNanoseconds/argument.js
+built-ins/Temporal/Instant/fromEpochNanoseconds/basic.js
+built-ins/Temporal/Instant/fromEpochNanoseconds/builtin.js
+built-ins/Temporal/Instant/fromEpochNanoseconds/length.js
+built-ins/Temporal/Instant/fromEpochNanoseconds/name.js
+built-ins/Temporal/Instant/fromEpochNanoseconds/not-a-constructor.js
+built-ins/Temporal/Instant/fromEpochNanoseconds/prop-desc.js
+built-ins/Temporal/Instant/fromEpochNanoseconds/subclassing-ignored.js

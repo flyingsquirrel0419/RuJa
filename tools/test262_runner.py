@@ -63,6 +63,10 @@ try:
     from test262_temporal_instant_core_admission import (
         TEMPORAL_INSTANT_CORE_FEATURES, TEMPORAL_INSTANT_CORE_FILES,
     )
+    from test262_temporal_instant_epoch_factories_admission import (
+        TEMPORAL_INSTANT_EPOCH_FACTORY_FEATURES,
+        TEMPORAL_INSTANT_EPOCH_FACTORY_FILES,
+    )
     from test262_object_from_entries_admission import (
         OBJECT_FROM_ENTRIES_FEATURES, OBJECT_FROM_ENTRIES_FILES,
     )
@@ -322,6 +326,10 @@ except ModuleNotFoundError:
     )
     from tools.test262_temporal_instant_core_admission import (
         TEMPORAL_INSTANT_CORE_FEATURES, TEMPORAL_INSTANT_CORE_FILES,
+    )
+    from tools.test262_temporal_instant_epoch_factories_admission import (
+        TEMPORAL_INSTANT_EPOCH_FACTORY_FEATURES,
+        TEMPORAL_INSTANT_EPOCH_FACTORY_FILES,
     )
     from tools.test262_object_from_entries_admission import (
         OBJECT_FROM_ENTRIES_FEATURES, OBJECT_FROM_ENTRIES_FILES,
@@ -2309,6 +2317,21 @@ def temporal_instant_core_features(path):
     rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
     return TEMPORAL_INSTANT_CORE_FEATURES[rel.as_posix()]
 
+def temporal_instant_epoch_factory_path(path):
+    if path is None:
+        return False
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except (OSError, TypeError, ValueError):
+        return False
+    return rel.as_posix() in TEMPORAL_INSTANT_EPOCH_FACTORY_FILES
+
+def temporal_instant_epoch_factory_features(path):
+    if not temporal_instant_epoch_factory_path(path):
+        return frozenset()
+    rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    return TEMPORAL_INSTANT_EPOCH_FACTORY_FEATURES[rel.as_posix()]
+
 def error_constructor_realm_path(path):
     try:
         rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
@@ -4096,6 +4119,8 @@ def should_skip(meta, path=None):
         feats.difference_update(temporal_namespace_features(path))
     if path is not None and temporal_instant_core_path(path):
         feats.difference_update(temporal_instant_core_features(path))
+    if path is not None and temporal_instant_epoch_factory_path(path):
+        feats.difference_update(temporal_instant_epoch_factory_features(path))
     if path is not None and error_constructor_realm_path(path):
         feats.difference_update(ERROR_CONSTRUCTOR_REALM_FEATURES)
     if path is not None and error_cause_path(path):

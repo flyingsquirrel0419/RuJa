@@ -24768,6 +24768,92 @@ fn temporal_instant_observes_new_target_once_and_uses_intrinsic_fallback() {
 }
 
 #[test]
+fn temporal_instant_epoch_factories_are_intrinsic_and_exact() {
+    assert_eq!(
+        run(r#"
+            var ms = Temporal.Instant.fromEpochMilliseconds(-217175010876);
+            var ns = Temporal.Instant.fromEpochNanoseconds(217175010123456789n);
+            [
+              ms.epochNanoseconds === -217175010876000000n,
+              ns.epochNanoseconds === 217175010123456789n,
+              ms !== Temporal.Instant.fromEpochMilliseconds(-217175010876),
+              Temporal.Instant.fromEpochMilliseconds.length,
+              Temporal.Instant.fromEpochNanoseconds.name
+            ].join('|');
+        "#),
+        Value::String(Arc::from("true|true|true|1|fromEpochNanoseconds"))
+    );
+    for source in [
+        "Temporal.Instant.fromEpochMilliseconds()",
+        "Temporal.Instant.fromEpochMilliseconds(NaN)",
+        "Temporal.Instant.fromEpochMilliseconds(Infinity)",
+        "Temporal.Instant.fromEpochMilliseconds(1.5)",
+        "Temporal.Instant.fromEpochMilliseconds(8640000000000001)",
+        "Temporal.Instant.fromEpochNanoseconds(8640000000000000000001n)",
+    ] {
+        assert!(run_err(source).contains("RangeError"), "{source}");
+    }
+    for source in [
+        "Temporal.Instant.fromEpochMilliseconds(1n)",
+        "Temporal.Instant.fromEpochNanoseconds()",
+        "Temporal.Instant.fromEpochNanoseconds(1)",
+        "new Temporal.Instant.fromEpochMilliseconds(0)",
+        "new Temporal.Instant.fromEpochNanoseconds(0n)",
+    ] {
+        assert!(run_err(source).contains("TypeError"), "{source}");
+    }
+    assert!(run_err(
+        r#"
+        Temporal.Instant.fromEpochMilliseconds({
+          valueOf: function () { throw new Error('coercion'); }
+        });
+    "#
+    )
+    .contains("coercion"));
+    assert_eq!(
+        run(r#"
+            var count = 0;
+            var input = { valueOf: function () { count++; return -0; } };
+            var low = Temporal.Instant.fromEpochMilliseconds(-8640000000000000);
+            var high = Temporal.Instant.fromEpochNanoseconds(8640000000000000000000n);
+            var zero = Temporal.Instant.fromEpochMilliseconds(input);
+            [
+              count,
+              zero.epochNanoseconds === 0n,
+              low.epochNanoseconds === -8640000000000000000000n,
+              high.epochNanoseconds === 8640000000000000000000n
+            ].join('|');
+        "#),
+        Value::String(Arc::from("1|true|true|true"))
+    );
+}
+
+#[test]
+fn temporal_instant_epoch_factories_use_method_realm_and_ignore_receiver() {
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var mainMethod = Temporal.Instant.fromEpochMilliseconds;
+            var mainPrototype = Temporal.Instant.prototype;
+            var otherMethod = other.Temporal.Instant.fromEpochNanoseconds;
+            var called = 0;
+            function Receiver() { called++; }
+            var fromMain = mainMethod.call(Receiver, 1);
+            var fromOther = otherMethod.call(Receiver, 2n);
+            delete globalThis.Temporal;
+            var afterDelete = mainMethod(3);
+            [
+              called,
+              Object.getPrototypeOf(fromMain) === mainPrototype,
+              Object.getPrototypeOf(fromOther) === other.Temporal.Instant.prototype,
+              Object.getPrototypeOf(afterDelete) === Object.getPrototypeOf(fromMain)
+            ].join('|');
+        "#),
+        Value::String(Arc::from("0|true|true|true"))
+    );
+}
+
+#[test]
 fn date_symbol_to_primitive_uses_hint_specific_ordinary_conversion() {
     assert_eq!(
         run(r#"
