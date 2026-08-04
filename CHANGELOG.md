@@ -20,6 +20,10 @@
   - 다른 대안 대신 이 방식을 선택한 이유: constructor/public property 경로는 subclass와 shadowed coercion hooks를 관찰하며, property-bag의 undefined 기본값은 `withCalendar(undefined)` TypeError와 충돌한다. parser 공유는 문법 중복 없이 time-zone 해석 결과를 분리한다.
   - 장점, 단점 및 영향: hidden-property 비관찰, UTC 대 fixed-zero identity, cross-Realm TypeError/RangeError/result, exact fuel과 heap-cap GC retry, installer rollback, 39개 time-string 형식과 exact 14/0/0이 검증된다. 다른 calendar-bearing Temporal types와 Duration을 선행 생성하는 2개는 blocker로 남는다.
 
+  Implementation commit `86124ef` is pushed. Ordinary CI `30906827851`
+  passes **3/3** jobs and full Test262 CI `30906827947` passes **60/60**,
+  including exact/forced `withCalendar` **14/0/0** and **14/2/0-skip**.
+
 - Added Realm-local `Temporal.ZonedDateTime.prototype.withTimeZone`. It brands
   the receiver before converting a String or branded ZonedDateTime time-zone
   input, preserves epoch nanoseconds and calendar identity, canonicalizes UTC

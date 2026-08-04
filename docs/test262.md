@@ -14210,6 +14210,10 @@ the complete 39-case time-string table.
 - 장점, 단점 및 영향: exact 14/0/0과 forced 14/2가 재현되며 future sibling은 자동 허용되지 않는다. calendar-bearing Temporal types나 Duration 도입 시 blocker를 실측 후 이동해야 한다.
 ```
 
+Implementation commit `86124ef` is confirmed by ordinary CI `30906827851`
+(**3/3**) and full matrix `30906827947` (**60/60**). The dedicated job
+reproduces exact/forced `withCalendar` **14/0/0** and **14/2/0-skip**.
+
 ## Temporal.Instant.compare completion
 
 `tools/test262_temporal_instant_compare_admission.txt` freezes **29** exact
