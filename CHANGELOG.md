@@ -22,6 +22,11 @@
   - 다른 대안 대신 이 방식을 선택한 이유: host timezone은 native/WASM 재현성이 없고 tzdb 없는 IANA 수용은 DST 의미론을 거짓 지원한다. shared integer 경로는 Instant 범위 전체에서 precision과 pre-epoch floor를 보존한다.
   - 장점, 단점 및 영향: 24개 civil/calendar/offset accessor, fixed-offset parsing, formatting/rounding, Instant conversion, serialization, Realm·allocation 경계가 검증된다. property bag, named IANA/DST, Duration/PlainDateTime 의존 파일은 후속 범위로 남는다.
 
+  Implementation commit `64146f6` and inaccessible-checkout portability fix
+  `6a4c1a1` are pushed. Ordinary CI `30867357732` passes **3/3** jobs and
+  full Test262 CI `30867357709` passes **57/57**, including exact
+  **208/0/0** and forced **208/58/0-skip** ZonedDateTime gates.
+
 - Added a real Realm-local `%Temporal.ZonedDateTime%` hidden-slot core for UTC
   and fixed-offset identifiers. Construction, subclass/new-target behavior,
   exact epoch accessors, canonical time-zone/calendar identifiers, and
