@@ -20,6 +20,11 @@
   - 다른 대안 대신 이 방식을 선택한 이유: public getter와 constructor 재호출은 internal-slot 의미론 및 observable order를 깨뜨린다. 공유 helper는 property-bag과 같은 canonical UTC/fixed-offset parser, fuel, TypeError 경계를 유지한다.
   - 장점, 단점 및 영향: hidden getter 비관찰, subclass 결과 무시, cross-Realm brand/error/result, exact fuel과 heap-cap GC retry, installer rollback, datetime/leap-second/bracket-offset 문법과 exact 14/0/0이 검증된다. `toPlainDateTime`과 `Temporal.Duration` 의존 2개는 blocker로 남는다.
 
+  Implementation commit `593d047` is pushed. Ordinary CI `30879142138`
+  passes **3/3** jobs and full Test262 CI `30879142121` passes **59/59**,
+  including exact/forced `withTimeZone` **14/0/0**, **14/2/0-skip** and
+  updated equals **52/0/0**, **52/3/0-skip** gates.
+
 - Added Realm-local `Temporal.ZonedDateTime.prototype.equals` with complete
   argument conversion before hidden epoch, canonical time-zone, and calendar
   identity comparison. Shared ZonedDateTime string conversion now accepts

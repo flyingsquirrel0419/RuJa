@@ -14182,6 +14182,11 @@ negative-zero years, sub-minute rejection, and bracket precedence.
 - 장점, 단점 및 영향: exact 14/0/0, forced 14/2와 equals 52/3이 재현된다. blocker dependency 구현 시 corpus를 다시 실측해 이동해야 한다.
 ```
 
+Implementation commit `593d047` is confirmed by ordinary CI `30879142138`
+(**3/3**) and full matrix `30879142121` (**59/59**). The dedicated jobs
+reproduce exact/forced `withTimeZone` **14/0/0**, **14/2/0-skip** and equals
+**52/0/0**, **52/3/0-skip**.
+
 ## Temporal.Instant.compare completion
 
 `tools/test262_temporal_instant_compare_admission.txt` freezes **29** exact
