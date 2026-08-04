@@ -3457,7 +3457,10 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
         property_helper_directories = {"from", "toInstant", "toString", "toJSON", "valueOf"}
 
         test_root = Path(test262_runner.TEST262) / "test"
-        live_available = (test_root / "built-ins/Temporal/ZonedDateTime").is_dir()
+        try:
+            live_available = (test_root / "built-ins/Temporal/ZonedDateTime").is_dir()
+        except OSError:
+            live_available = False
         if live_available:
             zoned_root = test_root / "built-ins/Temporal/ZonedDateTime"
             surface = {

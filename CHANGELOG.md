@@ -10,7 +10,9 @@
   and always-throwing `valueOf`. Civil conversion and formatting use exact
   integer nanoseconds across negative epochs and extended years; method results
   and errors follow the native function Realm. A metadata-frozen 208-file
-  Test262 boundary passes completely.
+  Test262 boundary passes completely. Optional local live-manifest probing
+  treats an inaccessible default checkout as absent, while explicit CI
+  checkouts still require exact live equality.
 
   [Decision Log]
   - 목적과 의도: ZonedDateTime hidden-slot core를 실제 고정 오프셋 civil 조회·변환·직렬화 API로 확장한다.
