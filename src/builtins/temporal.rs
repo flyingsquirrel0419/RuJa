@@ -260,7 +260,7 @@ struct ParsedDateTime<'a> {
     time_zone_annotation: Option<&'a [u8]>,
 }
 
-fn parse_date_time(source: &str) -> Option<ParsedDateTime<'_>> {
+fn parse_date_time(source: &str, allow_date_only: bool) -> Option<ParsedDateTime<'_>> {
     let bytes = source.as_bytes();
     let mut index = 0;
     let year = if matches!(bytes.first(), Some(b'+') | Some(b'-')) {
@@ -290,12 +290,22 @@ fn parse_date_time(source: &str) -> Option<ParsedDateTime<'_>> {
     if day == 0 || day > days_in_month(year, month)? {
         return None;
     }
-    if !matches!(bytes.get(index), Some(b'T') | Some(b't') | Some(b' ')) {
+    let has_time = matches!(bytes.get(index), Some(b'T') | Some(b't') | Some(b' '));
+    if !has_time && !allow_date_only {
         return None;
     }
-    index += 1;
-    let hour = digits(bytes, &mut index, 2)?;
-    let extended_time = bytes.get(index) == Some(&b':');
+    if !has_time && bytes.get(index) != Some(&b'[') {
+        return None;
+    }
+    if has_time {
+        index += 1;
+    }
+    let hour = if has_time {
+        digits(bytes, &mut index, 2)?
+    } else {
+        0
+    };
+    let extended_time = has_time && bytes.get(index) == Some(&b':');
     let mut minute = 0;
     let mut second = 0;
     let mut fraction = 0_i128;
@@ -304,7 +314,7 @@ fn parse_date_time(source: &str) -> Option<ParsedDateTime<'_>> {
         index += 1;
         minute = digits(bytes, &mut index, 2)?;
         true
-    } else if bytes.get(index).is_some_and(u8::is_ascii_digit) {
+    } else if has_time && bytes.get(index).is_some_and(u8::is_ascii_digit) {
         minute = digits(bytes, &mut index, 2)?;
         true
     } else {
@@ -367,7 +377,7 @@ fn parse_date_time(source: &str) -> Option<ParsedDateTime<'_>> {
 }
 
 pub(crate) fn parse_instant_string(source: &str) -> Option<BigInt> {
-    let parsed = parse_date_time(source)?;
+    let parsed = parse_date_time(source, false)?;
     let offset_nanoseconds = parsed.offset_nanoseconds?;
     Some(BigInt::from(
         parsed.local_nanoseconds.checked_sub(offset_nanoseconds)?,
@@ -402,7 +412,7 @@ fn zoned_date_time_calendar_identifier(source: &str) -> Option<Arc<str>> {
 }
 
 pub(crate) fn parse_zoned_date_time_string(source: &str) -> Option<ParsedZonedDateTime> {
-    let parsed = parse_date_time(source)?;
+    let parsed = parse_date_time(source, true)?;
     let annotation = std::str::from_utf8(parsed.time_zone_annotation?).ok()?;
     let (time_zone_identifier, offset_minutes) = parse_time_zone_identifier(annotation)?;
     let calendar_identifier = zoned_date_time_calendar_identifier(source)?;
@@ -699,7 +709,7 @@ pub(crate) fn parse_time_zone_offset(source: &str) -> Option<i128> {
         return Some(offset);
     }
 
-    if let Some(parsed) = parse_date_time(source) {
+    if let Some(parsed) = parse_date_time(source, false) {
         if let Some(offset) = resolve_time_zone_syntax(
             parsed.offset_nanoseconds,
             parsed.offset_has_sub_minute_syntax,
@@ -716,7 +726,7 @@ pub(crate) fn parse_time_zone_identifier_like(source: &str) -> Option<(Arc<str>,
     if let Some(identifier) = parse_time_zone_identifier(source) {
         return Some(identifier);
     }
-    if let Some(parsed) = parse_date_time(source) {
+    if let Some(parsed) = parse_date_time(source, false) {
         if let Some(annotation) = parsed.time_zone_annotation {
             return parse_time_zone_identifier(std::str::from_utf8(annotation).ok()?);
         }
@@ -745,7 +755,7 @@ pub(crate) fn parse_calendar_identifier(source: &str) -> Option<Arc<str>> {
         return Some(Arc::from("iso8601"));
     }
     let bytes = source.as_bytes();
-    let valid_iso_syntax = parse_date_time(source).is_some()
+    let valid_iso_syntax = parse_date_time(source, false).is_some()
         || parse_annotated_full_date(bytes).is_some()
         || parse_annotated_year_month(bytes).is_some()
         || parse_annotated_month_day(bytes).is_some();
@@ -1303,6 +1313,17 @@ mod tests {
         );
         assert_eq!(parsed.time_zone_identifier.as_ref(), "UTC");
         assert_eq!(parsed.calendar_identifier.as_ref(), "iso8601");
+
+        let date_only = parse_zoned_date_time_string("1970-01-01[UtC]")
+            .expect("ZonedDateTime strings may omit the time");
+        assert_eq!(
+            resolve_zoned_date_time_epoch(&date_only, ZonedDateTimeOffsetOption::Reject),
+            Some(BigInt::from(0))
+        );
+        assert_eq!(date_only.time_zone_identifier.as_ref(), "UTC");
+        assert!(parse_instant_string("1970-01-01[UTC]").is_none());
+        assert!(parse_zoned_date_time_string("1970-01-01Z[UTC]").is_none());
+        assert!(parse_zoned_date_time_string("1970-01-01+00:00[UTC]").is_none());
 
         let exact =
             parse_zoned_date_time_string("1970-01-01T00:00Z[+01:00][u-ca=iso8601][u-ca=gregory]")

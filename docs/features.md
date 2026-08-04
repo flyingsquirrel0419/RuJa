@@ -40,7 +40,9 @@
   supports hidden-slot construction for UTC/fixed offsets, exact epoch and
   identifier accessors, all ISO civil/calendar/offset accessors, subclassing,
   branded, fixed-offset-string, and ISO property-bag `from`, direct Instant
-  conversion, option-aware `toString`, `toJSON`, and `valueOf`. Property-bag
+  conversion, hidden-identity `equals`, option-aware `toString`, `toJSON`, and
+  `valueOf`. ZonedDateTime strings may omit time when followed directly by a
+  time-zone annotation. Property-bag
   conversion currently accepts ISO calendars with UTC or minute-precision
   fixed offsets. Calendar arithmetic, duration, named IANA timezone
   transitions, the remaining RFC 9557 grammar, and `Temporal.Now` methods

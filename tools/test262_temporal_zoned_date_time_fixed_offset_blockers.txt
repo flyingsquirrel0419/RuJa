@@ -2,19 +2,9 @@
 # Exact unsupported complement of the 266-file fixed-offset civil surface.
 built-ins/Temporal/ZonedDateTime/from/argument-object.js
 built-ins/Temporal/ZonedDateTime/from/argument-propertybag-calendar-wrong-type.js
-built-ins/Temporal/ZonedDateTime/from/argument-propertybag-function-object.js
-built-ins/Temporal/ZonedDateTime/from/argument-propertybag-ignores-incorrect-properties.js
-built-ins/Temporal/ZonedDateTime/from/argument-propertybag-monthcode-month.js
-built-ins/Temporal/ZonedDateTime/from/argument-propertybag-optional-properties.js
 built-ins/Temporal/ZonedDateTime/from/argument-propertybag-timezone-wrong-type.js
-built-ins/Temporal/ZonedDateTime/from/argument-string-basic-and-extended-format.js
-built-ins/Temporal/ZonedDateTime/from/argument-string-decimal-places.js
-built-ins/Temporal/ZonedDateTime/from/argument-string-negative-extended-year.js
-built-ins/Temporal/ZonedDateTime/from/argument-string-optional-parts.js
-built-ins/Temporal/ZonedDateTime/from/argument-string-variant-decimal-separator.js
 built-ins/Temporal/ZonedDateTime/from/argument-string.js
 built-ins/Temporal/ZonedDateTime/from/calendar-temporal-object.js
-built-ins/Temporal/ZonedDateTime/from/overflow-options.js
 built-ins/Temporal/ZonedDateTime/from/roundtrip-from-property-bag.js
 built-ins/Temporal/ZonedDateTime/from/roundtrip-from-string.js
 built-ins/Temporal/ZonedDateTime/prototype/dayOfYear/basic.js

@@ -6431,6 +6431,7 @@ pub(crate) fn install_temporal_namespace_in_env(
         }
 
         alloc_zoned_native!(zoned_from, "from", temporal_zoned_date_time_from, 1);
+        alloc_zoned_native!(zoned_equals, "equals", temporal_zoned_date_time_equals, 1);
         alloc_zoned_native!(zoned_era, "get era", temporal_zoned_date_time_era, 0);
         alloc_zoned_native!(
             zoned_era_year,
@@ -6741,6 +6742,7 @@ pub(crate) fn install_temporal_namespace_in_env(
                 accessor_get_prop(zoned_offset_nanoseconds),
             );
             props.insert(PropertyKey::from("offset"), accessor_get_prop(zoned_offset));
+            props.insert(PropertyKey::from("equals"), data_prop(zoned_equals));
             props.insert(PropertyKey::from("toInstant"), data_prop(zoned_to_instant));
             props.insert(PropertyKey::from("toString"), data_prop(zoned_to_string));
             props.insert(PropertyKey::from("toJSON"), data_prop(zoned_to_json));
@@ -7117,23 +7119,40 @@ fn temporal_zoned_date_time_from(
     _this: Option<Value>,
 ) -> error::Result<Value> {
     let item = args.first().unwrap_or(&Value::Undefined);
+    let (epoch_nanoseconds, time_zone, calendar_identifier) =
+        to_temporal_zoned_date_time(vm, item, args.get(1))?;
+    let realm = vm.native_callee_closure().unwrap_or(vm.global);
+    create_temporal_zoned_date_time_in_realm(
+        vm,
+        epoch_nanoseconds,
+        time_zone,
+        calendar_identifier,
+        realm,
+    )
+}
+
+fn to_temporal_zoned_date_time(
+    vm: &mut Vm,
+    item: &Value,
+    options: Option<&Value>,
+) -> error::Result<(Arc<BigInt>, TemporalTimeZone, Arc<str>)> {
     let (epoch_nanoseconds, time_zone, calendar_identifier) = if let Some(slots) =
         temporal_zoned_date_time_slots_if_present(vm, item)
     {
-        temporal_zoned_date_time_from_options(vm, args.get(1))?;
+        temporal_zoned_date_time_from_options(vm, options)?;
         slots
     } else if matches!(item, Value::Object(_)) {
-        temporal_zoned_date_time_from_property_bag(vm, item, args.get(1))?
+        temporal_zoned_date_time_from_property_bag(vm, item, options)?
     } else {
         let Value::String(source) = item else {
             return Err(Error::type_err(
-                "Temporal.ZonedDateTime.from input must be a String or ZonedDateTime",
+                "Temporal.ZonedDateTime input must be a String or object",
             ));
         };
         vm.consume_fuel_units(source.len().min(i64::MAX as usize) as i64)?;
         let parsed = temporal::parse_zoned_date_time_string(source)
             .ok_or_else(|| Error::range("Invalid Temporal.ZonedDateTime string"))?;
-        let options = temporal_zoned_date_time_from_options(vm, args.get(1))?;
+        let options = temporal_zoned_date_time_from_options(vm, options)?;
         let epoch_nanoseconds = temporal::resolve_zoned_date_time_epoch(&parsed, options.offset)
             .ok_or_else(|| Error::range("Temporal.ZonedDateTime offset does not match"))?;
         if epoch_nanoseconds.abs() > temporal_instant_limit_nanoseconds() {
@@ -7155,14 +7174,31 @@ fn temporal_zoned_date_time_from(
             parsed.calendar_identifier,
         )
     };
-    let realm = vm.native_callee_closure().unwrap_or(vm.global);
-    create_temporal_zoned_date_time_in_realm(
-        vm,
-        epoch_nanoseconds,
-        time_zone,
-        calendar_identifier,
-        realm,
-    )
+    Ok((epoch_nanoseconds, time_zone, calendar_identifier))
+}
+
+fn temporal_zoned_date_time_equals(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let (epoch_nanoseconds, time_zone, calendar_identifier) =
+        temporal_zoned_date_time_slots(vm, this)?;
+    let (other_epoch, other_time_zone, other_calendar) =
+        to_temporal_zoned_date_time(vm, args.first().unwrap_or(&Value::Undefined), None)?;
+    Ok(Value::Bool(
+        epoch_nanoseconds == other_epoch
+            && temporal_time_zone_equals(&time_zone, &other_time_zone)
+            && temporal_calendar_equals(&calendar_identifier, &other_calendar),
+    ))
+}
+
+fn temporal_time_zone_equals(one: &TemporalTimeZone, two: &TemporalTimeZone) -> bool {
+    one.identifier == two.identifier
+}
+
+fn temporal_calendar_equals(one: &str, two: &str) -> bool {
+    one == two
 }
 
 #[derive(Clone, Copy)]

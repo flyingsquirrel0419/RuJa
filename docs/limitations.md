@@ -19,9 +19,10 @@ The following resource limits are enforced:
   UTC and fixed offsets, exact epoch/time-zone/calendar accessors, subclassing,
   all ISO civil/calendar/offset accessors, fixed-offset String and ISO
   property-bag `from`, its Instant fast path, option-aware `toString`,
-  `toJSON`, and `valueOf`. Property bags support ISO calendars and UTC or
+  `toJSON`, `valueOf`, and hidden-identity `equals`. Date-only ZonedDateTime
+  strings require an immediate time-zone annotation. Property bags support ISO calendars and UTC or
   minute-precision fixed offsets only. Named IANA time-zone transitions,
-  date-only and remaining ZonedDateTime string grammar, the remaining RFC 9557
+  the remaining ZonedDateTime string grammar, the remaining RFC 9557
   grammar, calendar/duration types, and `Temporal.Now` methods remain
   unsupported.
 

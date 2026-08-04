@@ -25336,6 +25336,62 @@ fn temporal_zoned_date_time_from_prepares_iso_property_bags_observably() {
 }
 
 #[test]
+fn temporal_zoned_date_time_equals_compares_complete_hidden_identity() {
+    assert_eq!(
+        run(r#"
+            var base = new Temporal.ZonedDateTime(0n, '+00');
+            var same = new Temporal.ZonedDateTime(0n, '+0000');
+            var utc = new Temporal.ZonedDateTime(0n, 'UTC');
+            var later = new Temporal.ZonedDateTime(1n, '+00:00');
+            var reads = 0;
+            Object.defineProperty(same, 'epochNanoseconds', {
+              get: function () { reads++; throw new Error('observed'); }
+            });
+            [
+              base.equals(same),
+              base.equals(utc),
+              base.equals(later),
+              base.equals({ year: 1970, month: 1, day: 1, timeZone: '+00:00' }),
+              base.equals('1970-01-01T00:00Z[+00:00]'),
+              utc.equals('1970-01-01[utC]'),
+              base.equals('1970-01-01[+00:00]'),
+              reads,
+              Temporal.ZonedDateTime.prototype.equals.length,
+              Temporal.ZonedDateTime.prototype.equals.name
+            ].join('|');
+        "#),
+        Value::String(Arc::from("true|false|false|true|true|true|true|0|1|equals"))
+    );
+
+    for source in [
+        "new Temporal.ZonedDateTime(0n, 'UTC').equals()",
+        "Temporal.ZonedDateTime.prototype.equals.call({}, new Temporal.ZonedDateTime(0n, 'UTC'))",
+        "new Temporal.ZonedDateTime.prototype.equals(new Temporal.ZonedDateTime(0n, 'UTC'))",
+    ] {
+        assert!(run_err(source).contains("TypeError"), "{source}");
+    }
+
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var method = other.Temporal.ZonedDateTime.prototype.equals;
+            var main = new Temporal.ZonedDateTime(0n, 'UTC');
+            var foreign = new other.Temporal.ZonedDateTime(0n, 'UTC');
+            var receiverRealm;
+            var argumentRealm;
+            try { method.call({}, foreign); } catch (error) {
+              receiverRealm = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            try { method.call(foreign, {}); } catch (error) {
+              argumentRealm = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            [main.equals(foreign), method.call(main, foreign), receiverRealm, argumentRealm].join('|');
+        "#),
+        Value::String(Arc::from("true|true|true|true"))
+    );
+}
+
+#[test]
 fn temporal_zoned_date_time_methods_use_their_function_realm() {
     assert_eq!(
         run(r#"

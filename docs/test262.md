@@ -14103,17 +14103,17 @@ surface or the not-yet-installed Duration constructor.
 ## Temporal.ZonedDateTime fixed-offset civil and formatting surface
 
 `tools/test262_temporal_zoned_date_time_fixed_offset_admission.txt` freezes
-exactly **243** pinned files. The boundary covers the 24 ISO
+exactly **253** pinned files. The boundary covers the 24 ISO
 civil/calendar/offset accessors, `construction-and-properties.js`, complete
 `toInstant`, complete `toJSON` and `valueOf`, 61 independently runnable
-`toString` files, and 74 static `from` cases supported by branded values, the
+`toString` files, and 84 static `from` cases supported by branded values, the
 strict fixed-offset string parser, or ISO property bags. Dedicated CI requires
-**243 pass / 0 fail / 0 skip**.
+**253 pass / 0 fail / 0 skip**.
 
 `tools/test262_temporal_zoned_date_time_fixed_offset_blockers.txt` freezes the
 exact unsupported complement. CI forces the complete 266-file surface and
-requires **243 pass / 23 fail / 0 skip**. The 23 retained blockers are explicit:
-17 `from` cases need currently absent `equals`/`toPlainDateTime`, other
+requires **253 pass / 13 fail / 0 skip**. The 13 retained blockers are explicit:
+seven `from` cases need currently absent `toPlainDateTime`, other
 Temporal constructors, or remaining RFC 9557/string roundtrip semantics; five
 `basic.js` accessor cases construct `Temporal.PlainDateTime`; and one
 `toString` helper checks other unimplemented Temporal constructors before
@@ -14121,16 +14121,37 @@ comparing plural-unit string results. UTC and minute-precision fixed offsets
 are deterministic. Named IANA zones and DST transitions are not claimed.
 Implementation commit `02d019f` and CI contract correction `f9adc40` are
 confirmed by ordinary CI `30872435648` (**3/3**) and full matrix
-`30872435664` (**57/57**).
+`30872435664` (**57/57**) for the preceding 243/23 checkpoint.
 
 ```text
 [Decision Log]
 - 목적과 의도: ZonedDateTime core 위에 exact fixed-offset civil 조회, Instant 변환, parsing, property-bag preparation, rounding, serialization을 추가하고 supported accounting에 반영한다.
 - 기존 구현 및 제약 조건: hidden slot과 civil/formatting은 있었지만 ordinary object `from`을 branded object로 오인했다. host tzdb와 Duration/PlainDateTime 등 다른 Temporal type은 없다.
 - 검토한 주요 대안: host timezone API, IANA identifier를 offset 없이 저장, prefix 전체 admission, f64/i128 조기 field 축소, exact fixed-offset property-bag 경로를 검토했다.
-- 선택한 방식: VM이 field/options Get과 coercion/root/fuel 순서를 소유하고 finite integer를 BigInt로 options 이후까지 보존한다. pure helper는 ISO calendar syntax, overflow-regulated civil fields와 fixed-offset arithmetic을 처리한다. runner/analyzer는 실제 통과한 243개 path만 해제하고 blocker manifest와 forced CI가 266개 전체 경계를 고정한다.
-- 다른 대안 대신 이 방식을 선택한 이유: host timezone은 native/WASM 결과가 다르고 tzdb 없는 IANA 지원은 DST 의미론을 위반한다. 조기 integer narrowing은 observable options-before-validation을 깨뜨리며 prefix admission은 23개 blocker와 미래 파일을 숨긴다.
-- 장점, 단점 및 영향: negative epoch, extended year, ISO week/year, 9개 rounding mode, property/option order, monthCode/overflow/offset mismatch, branding, method Realm, allocation rollback과 exact 243/0/0이 재현된다. named IANA/DST와 다른 Temporal types는 다음 구현 단위로 남는다.
+- 선택한 방식: VM이 field/options Get과 coercion/root/fuel 순서를 소유하고 finite integer를 BigInt로 options 이후까지 보존한다. pure helper는 ISO calendar syntax, overflow-regulated civil fields와 fixed-offset arithmetic을 처리한다. runner/analyzer는 실제 통과한 253개 path만 해제하고 blocker manifest와 forced CI가 266개 전체 경계를 고정한다.
+- 다른 대안 대신 이 방식을 선택한 이유: host timezone은 native/WASM 결과가 다르고 tzdb 없는 IANA 지원은 DST 의미론을 위반한다. 조기 integer narrowing은 observable options-before-validation을 깨뜨리며 prefix admission은 13개 blocker와 미래 파일을 숨긴다.
+- 장점, 단점 및 영향: negative epoch, extended year, ISO week/year, 9개 rounding mode, property/option order, monthCode/overflow/offset mismatch, branding, method Realm, allocation rollback과 exact 253/0/0이 재현된다. named IANA/DST와 다른 Temporal types는 다음 구현 단위로 남는다.
+```
+
+## Temporal.ZonedDateTime.prototype.equals
+
+`tools/test262_temporal_zoned_date_time_equals_admission.txt` freezes **50**
+exact paths from the pinned 55-file equals directory. Dedicated CI requires
+**50 pass / 0 fail / 0 skip**; the forced complement requires **50 pass / 5
+fail / 0 skip**. The five blockers require `withTimeZone`,
+`Temporal.Duration`, or calendar slots from other Temporal object types.
+The admitted surface covers receiver branding, complete property-bag/string
+conversion order, canonical UTC and offset spellings, calendar identity,
+date-only annotated strings, cross-Realm behavior, and metadata descriptors.
+
+```text
+[Decision Log]
+- 목적과 의도: ZonedDateTime equality 구현과 전체 55-file corpus의 실제 지원 경계를 별도 exact gate로 고정한다.
+- 기존 구현 및 제약 조건: fixed-offset manifest는 `from`/civil/formatting만 소유했고 equals directory는 Temporal feature gate로 전부 skip됐다.
+- 검토한 주요 대안: equals 전체 prefix 허용, fixed-offset manifest에 50개를 혼합, admission/blocker 분리와 전용 diagnostic을 검토했다.
+- 선택한 방식: 실제 통과한 50개 path와 exact metadata를 별도 admission으로 열고 나머지 5개를 blocker manifest로 고정한다. 기존 266-file surface에서 새로 통과한 10개 `from` path도 admission으로 이동한다.
+- 다른 대안 대신 이 방식을 선택한 이유: prefix 허용은 아직 없는 Temporal types를 거짓 지원하고, 기존 surface 혼합은 method 단위 회귀를 숨긴다. 별도 gate는 50/5 complement와 admission disjointness를 직접 증명한다.
+- 장점, 단점 및 영향: future sibling은 자동 허용되지 않고 exact 50/0/0, forced 50/5, fixed 253/13을 재현한다. 다른 Temporal constructors가 추가되면 blocker를 실측 후 이동해야 한다.
 ```
 
 ## Temporal.Instant.compare completion

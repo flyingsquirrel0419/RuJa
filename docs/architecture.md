@@ -141,6 +141,27 @@ fuel, GC, errors, options, and Realm allocation.
 - 장점, 단점 및 영향: Proxy/getter/ToPrimitive 재진입, required-field error order, constrain/reject, exact offset options가 한 경계에서 검증된다. named IANA branch는 deterministic tzdb가 추가될 때 disambiguation 결과까지 확장해야 한다.
 ```
 
+`Temporal.ZonedDateTime.prototype.equals` reuses the same slot-producing
+conversion without allocating an observable result object. Receiver branding
+precedes argument conversion; conversion still completes before any identity
+comparison. Equality then compares epoch nanoseconds, canonical time-zone
+identity, and calendar identity. Dedicated equality helpers deliberately own
+the latter two comparisons so a future deterministic IANA/calendar backend
+can add primary-identifier canonicalization without changing method order.
+The shared parser accepts date-only ZonedDateTime input only when a time-zone
+annotation immediately follows the date; Instant parsing and date-only `Z` or
+numeric offsets remain rejected.
+
+```text
+[Decision Log]
+- 목적과 의도: `from`과 `equals`가 동일한 ToTemporalZonedDateTime 의미론을 공유하면서 불필요한 결과 allocation을 피한다.
+- 기존 구현 및 제약 조건: `from`은 conversion과 result allocation이 한 함수에 묶였고 time-zone/calendar equality 확장 지점이 없었다. date-only 문자열은 모든 Temporal parser에서 일괄 거부됐다.
+- 검토한 주요 대안: `equals`가 `from` native를 호출, public getter 비교, parser 전체에 date-only 허용, slot tuple conversion과 별도 equality helper를 검토했다.
+- 선택한 방식: conversion은 immutable slot tuple을 반환하고 `from`만 method Realm에 결과를 만든다. `equals`는 full conversion 뒤 세 identity를 비교하며 date-only 허용은 parser 인자로 제한한다.
+- 다른 대안 대신 이 방식을 선택한 이유: 임시 객체는 관찰 불가능한 allocation 비용만 만들고 public getter는 internal-slot contract를 위반한다. 전역 date-only 허용은 Instant 문법을 잘못 넓힌다.
+- 장점, 단점 및 영향: from/equals coercion·Realm·fuel 경로가 일치하고 UTC 대 `+00:00`, offset canonical spelling, date-only grammar가 독립 검증된다. named IANA/calendar alias 도입 시 equality helper의 canonical identity만 확장하면 된다.
+```
+
 ## Compiler temporary storage
 
 Compiler-generated carriers for destructuring sources, iterator state,

@@ -4,6 +4,24 @@
 
 ### Changed
 
+- Added Realm-local `Temporal.ZonedDateTime.prototype.equals` with complete
+  argument conversion before hidden epoch, canonical time-zone, and calendar
+  identity comparison. Shared ZonedDateTime string conversion now accepts
+  date-only forms with a required time-zone annotation while continuing to
+  reject date-only `Z` and numeric-offset forms. Exact Test262 ownership is
+  **50/0/0** over the 55-file equals directory; the five retained blockers
+  require `withTimeZone`, `Temporal.Duration`, or other calendar-bearing
+  Temporal types. The existing 266-file fixed-offset boundary grows from 243
+  to **253** passing files with **13** blockers.
+
+  [Decision Log]
+  - 목적과 의도: ZonedDateTime 동등성을 공개 property 관찰 없이 명세의 세 internal identity로 비교하고, 공유 변환 경로를 `from`과 일치시킨다.
+  - 기존 구현 및 제약 조건: `equals`가 없었고 `from` 내부 변환이 결과 객체 생성을 포함했다. parser는 시간이 생략된 ZonedDateTime 문자열을 거부했으며 deterministic IANA transition backend와 다른 Temporal constructors는 아직 없다.
+  - 검토한 주요 대안: epoch만 비교, public accessor 호출, `from` 결과를 임시 할당, identifier 직접 비교를 method 안에 고정, ZonedDateTime 전용 공유 slot conversion을 검토했다.
+  - 선택한 방식: receiver brand를 먼저 검사하고 shared `to_temporal_zoned_date_time`이 argument를 완전히 변환한 뒤 epoch, time-zone helper, calendar helper 순서로 비교한다. date-only parser 허용은 ZonedDateTime 호출에만 주고 `[` annotation이 즉시 이어질 때만 자정으로 해석한다.
+  - 다른 대안 대신 이 방식을 선택한 이유: argument 변환은 epoch 불일치에도 observable하며 public property 기반 비교는 hidden-slot 의미론을 깨뜨린다. helper 경계는 이후 IANA/calendar canonical equality를 한곳에서 확장하게 하고, parser flag는 Instant 문법의 required offset을 보존한다.
+  - 장점, 단점 및 영향: cross-Realm brand/error, property-bag order, canonical UTC/offset spelling, date-only validity, allocation rollback과 exact 50/0/0이 검증된다. IANA alias와 non-ISO calendar equality는 해당 backend/type 도입 시 helper를 확장해야 한다.
+
 - Added ISO property-bag conversion to `Temporal.ZonedDateTime.from` for UTC
   and minute-precision fixed offsets. Calendar and field properties are read
   and coerced in specification order, getter results remain rooted across
@@ -19,7 +37,7 @@
   - 검토한 주요 대안: property를 한꺼번에 수집한 뒤 coercion, f64/i128 조기 축소, host timezone API, fixed-offset 전용 PrepareCalendarFields 경로를 검토했다.
   - 선택한 방식: calendar 후 lexicographic field 순서로 Get과 coercion을 즉시 수행하고, options 세 개를 읽은 뒤 ISO required/range validation을 한다. finite Number는 BigInt mathematical integer로 보존하고 UTC/fixed offset만 exact nanoseconds로 해석한다.
   - 다른 대안 대신 이 방식을 선택한 이유: getter/coercion은 사용자 JavaScript를 재진입하므로 순서와 GC root가 observable하다. i128 조기 축소는 options-before-validation을 깨뜨리고 host timezone은 native/WASM 결정성을 잃는다.
-  - 장점, 단점 및 영향: property order, string/number primitive hints, monthCode, overflow, offset mismatch, Realm allocation, fuel과 35개 신규 Test262 경로가 검증된다. named IANA/DST, equals/toPlainDateTime/Duration 의존 23개는 정확한 blocker로 남는다.
+  - 장점, 단점 및 영향: property order, string/number primitive hints, monthCode, overflow, offset mismatch, Realm allocation, fuel과 35개 신규 Test262 경로가 검증된다. 이 checkpoint에서는 named IANA/DST, equals/toPlainDateTime/Duration 의존 23개가 정확한 blocker로 남았다.
 
   Implementation commit `02d019f` and CI-count correction `f9adc40` are
   pushed. Ordinary CI `30872435648` passes **3/3** jobs and full Test262 CI
