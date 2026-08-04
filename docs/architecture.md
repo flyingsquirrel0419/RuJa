@@ -162,6 +162,25 @@ numeric offsets remain rejected.
 - 장점, 단점 및 영향: from/equals coercion·Realm·fuel 경로가 일치하고 UTC 대 `+00:00`, offset canonical spelling, date-only grammar가 독립 검증된다. named IANA/calendar alias 도입 시 equality helper의 canonical identity만 확장하면 된다.
 ```
 
+`Temporal.ZonedDateTime.prototype.withTimeZone` uses the same slot-aware
+time-zone conversion as property bags. It brands the receiver first, then
+accepts only a String or another branded ZonedDateTime; no public getter or
+primitive coercion is observed. The original epoch and calendar `Arc` values
+are retained while the canonical time-zone slot changes, and the result uses
+the native method Realm's intrinsic prototype. Constructor, String `from`, and
+the shared converter use one factory so named `UTC` remains distinct from the
+fixed offset `+00:00` even though both currently resolve to zero nanoseconds.
+
+```text
+[Decision Log]
+- 목적과 의도: instant/calendar identity를 보존하는 time-zone replacement를 hidden-slot 경계에서 제공한다.
+- 기존 구현 및 제약 조건: time-zone conversion과 method-Realm allocator는 각각 존재했지만 이를 결합하는 공개 메서드가 없었다. zero-offset kind 분류와 installer pin 예약도 경로별로 불일치했다. named IANA transition 계산은 아직 닫혀 있다.
+- 검토한 주요 대안: public accessor 기반 복제, constructor 재사용, String 전용 메서드, branded object fast path와 shared converter를 검토했다.
+- 선택한 방식: receiver slot을 먼저 복제하고 shared converter로 argument를 변환한 뒤 method Realm에 새 ZonedDateTime을 생성한다.
+- 다른 대안 대신 이 방식을 선택한 이유: constructor/public property 경로는 subclass와 shadowed getter를 관찰한다. immutable slot 복제는 명세의 CreateTemporalZonedDateTime과 직접 일치한다.
+- 장점, 단점 및 영향: canonical offset/UTC, cross-Realm object input, result Realm, GC/fuel/allocation 경계가 재사용된다. IANA 지원 시 converter는 available identifier record를 추가하고 equality helper가 primary identifier 비교를 맡아야 한다.
+```
+
 ## Compiler temporary storage
 
 Compiler-generated carriers for destructuring sources, iterator state,

@@ -1,4 +1,5 @@
 # Exact Temporal.ZonedDateTime.prototype.equals surface.
+built-ins/Temporal/ZonedDateTime/prototype/equals/argument-object.js
 built-ins/Temporal/ZonedDateTime/prototype/equals/argument-propertybag-calendar-case-insensitive.js
 built-ins/Temporal/ZonedDateTime/prototype/equals/argument-propertybag-calendar-invalid-iso-string.js
 built-ins/Temporal/ZonedDateTime/prototype/equals/argument-propertybag-calendar-iso-string.js
@@ -30,6 +31,7 @@ built-ins/Temporal/ZonedDateTime/prototype/equals/argument-string-time-separator
 built-ins/Temporal/ZonedDateTime/prototype/equals/argument-string-time-zone-annotation.js
 built-ins/Temporal/ZonedDateTime/prototype/equals/argument-string-too-many-decimals.js
 built-ins/Temporal/ZonedDateTime/prototype/equals/argument-string-unknown-annotation.js
+built-ins/Temporal/ZonedDateTime/prototype/equals/argument-valid.js
 built-ins/Temporal/ZonedDateTime/prototype/equals/argument-wrong-type.js
 built-ins/Temporal/ZonedDateTime/prototype/equals/branding.js
 built-ins/Temporal/ZonedDateTime/prototype/equals/builtin.js

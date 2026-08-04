@@ -14135,11 +14135,11 @@ confirmed by ordinary CI `30872435648` (**3/3**) and full matrix
 
 ## Temporal.ZonedDateTime.prototype.equals
 
-`tools/test262_temporal_zoned_date_time_equals_admission.txt` freezes **50**
+`tools/test262_temporal_zoned_date_time_equals_admission.txt` freezes **52**
 exact paths from the pinned 55-file equals directory. Dedicated CI requires
-**50 pass / 0 fail / 0 skip**; the forced complement requires **50 pass / 5
-fail / 0 skip**. The five blockers require `withTimeZone`,
-`Temporal.Duration`, or calendar slots from other Temporal object types.
+**52 pass / 0 fail / 0 skip**; the forced complement requires **52 pass / 3
+fail / 0 skip**. The three blockers require `Temporal.Duration` or calendar
+slots from other Temporal object types.
 The admitted surface covers receiver branding, complete property-bag/string
 conversion order, canonical UTC and offset spellings, calendar identity,
 date-only annotated strings, cross-Realm behavior, and metadata descriptors.
@@ -14149,14 +14149,38 @@ date-only annotated strings, cross-Realm behavior, and metadata descriptors.
 - 목적과 의도: ZonedDateTime equality 구현과 전체 55-file corpus의 실제 지원 경계를 별도 exact gate로 고정한다.
 - 기존 구현 및 제약 조건: fixed-offset manifest는 `from`/civil/formatting만 소유했고 equals directory는 Temporal feature gate로 전부 skip됐다.
 - 검토한 주요 대안: equals 전체 prefix 허용, fixed-offset manifest에 50개를 혼합, admission/blocker 분리와 전용 diagnostic을 검토했다.
-- 선택한 방식: 실제 통과한 50개 path와 exact metadata를 별도 admission으로 열고 나머지 5개를 blocker manifest로 고정한다. 기존 266-file surface에서 새로 통과한 10개 `from` path도 admission으로 이동한다.
-- 다른 대안 대신 이 방식을 선택한 이유: prefix 허용은 아직 없는 Temporal types를 거짓 지원하고, 기존 surface 혼합은 method 단위 회귀를 숨긴다. 별도 gate는 50/5 complement와 admission disjointness를 직접 증명한다.
-- 장점, 단점 및 영향: future sibling은 자동 허용되지 않고 exact 50/0/0, forced 50/5, fixed 253/13을 재현한다. 다른 Temporal constructors가 추가되면 blocker를 실측 후 이동해야 한다.
+- 선택한 방식: 실제 통과한 52개 path와 exact metadata를 별도 admission으로 열고 나머지 3개를 blocker manifest로 고정한다. 기존 266-file surface에서 새로 통과한 10개 `from` path도 admission으로 이동한다.
+- 다른 대안 대신 이 방식을 선택한 이유: prefix 허용은 아직 없는 Temporal types를 거짓 지원하고, 기존 surface 혼합은 method 단위 회귀를 숨긴다. 별도 gate는 52/3 complement와 admission disjointness를 직접 증명한다.
+- 장점, 단점 및 영향: future sibling은 자동 허용되지 않고 exact 52/0/0, forced 52/3, fixed 253/13을 재현한다. 다른 Temporal constructors가 추가되면 blocker를 실측 후 이동해야 한다.
 ```
 
-Implementation commit `1490baa` is confirmed by ordinary CI `30875867855`
-(**3/3**) and full matrix `30875867994` (**58/58**), including the dedicated
-equals and updated fixed-offset jobs.
+At the pre-`withTimeZone` checkpoint, implementation commit `1490baa` is
+confirmed by ordinary CI `30875867855` (**3/3**) and full matrix
+`30875867994` (**58/58**), including the then-current **50/0/0** exact and
+**50/5/0-skip** forced equals jobs. The **52/3** boundary above belongs to the
+subsequent `withTimeZone` change and requires its own CI evidence.
+
+## Temporal.ZonedDateTime.prototype.withTimeZone
+
+`tools/test262_temporal_zoned_date_time_with_time_zone_admission.txt` freezes
+**14** exact paths from the pinned 16-file method directory. Dedicated CI
+requires **14 pass / 0 fail / 0 skip**; the forced complement requires **14
+pass / 2 fail / 0 skip**. `preserves-instant.js` needs the absent
+`toPlainDateTime`/PlainDateTime object model, while `timezone-wrong-type.js`
+constructs the absent `Temporal.Duration` before reaching the method. The
+admitted surface covers branding, descriptors, subclass suppression,
+canonical UTC/fixed-offset and annotated datetime input, leap seconds,
+negative-zero years, sub-minute rejection, and bracket precedence.
+
+```text
+[Decision Log]
+- 목적과 의도: withTimeZone 구현과 전체 16-file corpus의 실제 지원 경계를 exact accounting에 반영한다.
+- 기존 구현 및 제약 조건: Temporal feature gate가 전체 directory를 skip했고 equals의 두 파일도 withTimeZone 부재로 막혔다.
+- 검토한 주요 대안: 전체 prefix admission, blocker 의존성을 가짜 constructor로 충족, 실제 14개와 2개 complement를 분리하는 방식을 검토했다.
+- 선택한 방식: 실제 통과한 14개 path와 metadata를 별도 admission으로 열고 2개 blocker를 forced diagnostic으로 고정한다. 해제된 equals 두 파일은 equals admission으로 이동한다.
+- 다른 대안 대신 이 방식을 선택한 이유: prefix admission은 아직 없는 PlainDateTime/Duration을 거짓 지원하고 미래 파일을 자동 허용한다. 별도 method gate는 regression 위치를 직접 보여 준다.
+- 장점, 단점 및 영향: exact 14/0/0, forced 14/2와 equals 52/3이 재현된다. blocker dependency 구현 시 corpus를 다시 실측해 이동해야 한다.
+```
 
 ## Temporal.Instant.compare completion
 

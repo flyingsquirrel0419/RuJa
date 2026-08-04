@@ -6289,7 +6289,7 @@ pub(crate) fn install_temporal_namespace_in_env(
     global: Option<&Value>,
     object_proto: Value,
 ) -> error::Result<Value> {
-    vm.try_reserve_gc_pins(47)?;
+    vm.try_reserve_gc_pins(49)?;
     let mut pin_count = 0;
     let result = (|| {
         let instant_prototype = Value::Object(vm.alloc(HeapObj::Object(ObjectData {
@@ -6432,6 +6432,12 @@ pub(crate) fn install_temporal_namespace_in_env(
 
         alloc_zoned_native!(zoned_from, "from", temporal_zoned_date_time_from, 1);
         alloc_zoned_native!(zoned_equals, "equals", temporal_zoned_date_time_equals, 1);
+        alloc_zoned_native!(
+            zoned_with_time_zone,
+            "withTimeZone",
+            temporal_zoned_date_time_with_time_zone,
+            1
+        );
         alloc_zoned_native!(zoned_era, "get era", temporal_zoned_date_time_era, 0);
         alloc_zoned_native!(
             zoned_era_year,
@@ -6742,6 +6748,10 @@ pub(crate) fn install_temporal_namespace_in_env(
                 accessor_get_prop(zoned_offset_nanoseconds),
             );
             props.insert(PropertyKey::from("offset"), accessor_get_prop(zoned_offset));
+            props.insert(
+                PropertyKey::from("withTimeZone"),
+                data_prop(zoned_with_time_zone),
+            );
             props.insert(PropertyKey::from("equals"), data_prop(zoned_equals));
             props.insert(PropertyKey::from("toInstant"), data_prop(zoned_to_instant));
             props.insert(PropertyKey::from("toString"), data_prop(zoned_to_string));
@@ -6997,14 +7007,7 @@ fn temporal_zoned_date_time_constructor(
     let (time_zone_identifier, offset_minutes) =
         temporal::parse_time_zone_identifier(time_zone_source)
             .ok_or_else(|| Error::range("Invalid Temporal time zone identifier"))?;
-    let time_zone = TemporalTimeZone {
-        identifier: time_zone_identifier,
-        kind: if offset_minutes == 0 {
-            TemporalTimeZoneKind::Utc
-        } else {
-            TemporalTimeZoneKind::FixedOffset(offset_minutes)
-        },
-    };
+    let time_zone = temporal_time_zone_from_identifier(time_zone_identifier, offset_minutes);
 
     let calendar_identifier = match args.get(2).unwrap_or(&Value::Undefined) {
         Value::Undefined => Arc::from("iso8601"),
@@ -7160,17 +7163,9 @@ fn to_temporal_zoned_date_time(
                 "Temporal.ZonedDateTime epoch nanoseconds out of range",
             ));
         }
-        let kind = if parsed.offset_minutes == 0 {
-            TemporalTimeZoneKind::Utc
-        } else {
-            TemporalTimeZoneKind::FixedOffset(parsed.offset_minutes)
-        };
         (
             Arc::new(epoch_nanoseconds),
-            TemporalTimeZone {
-                identifier: parsed.time_zone_identifier,
-                kind,
-            },
+            temporal_time_zone_from_identifier(parsed.time_zone_identifier, parsed.offset_minutes),
             parsed.calendar_identifier,
         )
     };
@@ -7191,6 +7186,24 @@ fn temporal_zoned_date_time_equals(
             && temporal_time_zone_equals(&time_zone, &other_time_zone)
             && temporal_calendar_equals(&calendar_identifier, &other_calendar),
     ))
+}
+
+fn temporal_zoned_date_time_with_time_zone(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let (epoch_nanoseconds, _, calendar_identifier) = temporal_zoned_date_time_slots(vm, this)?;
+    let time_zone =
+        temporal_time_zone_from_value(vm, args.first().cloned().unwrap_or(Value::Undefined))?;
+    let realm = vm.native_callee_closure().unwrap_or(vm.global);
+    create_temporal_zoned_date_time_in_realm(
+        vm,
+        epoch_nanoseconds,
+        time_zone,
+        calendar_identifier,
+        realm,
+    )
 }
 
 fn temporal_time_zone_equals(one: &TemporalTimeZone, two: &TemporalTimeZone) -> bool {
@@ -7323,14 +7336,24 @@ fn temporal_time_zone_from_value(vm: &mut Vm, value: Value) -> error::Result<Tem
     vm.consume_fuel_units(source.len().min(i64::MAX as usize) as i64)?;
     let (identifier, offset_minutes) = temporal::parse_time_zone_identifier_like(&source)
         .ok_or_else(|| Error::range("Invalid Temporal time zone identifier"))?;
-    Ok(TemporalTimeZone {
+    Ok(temporal_time_zone_from_identifier(
+        identifier,
+        offset_minutes,
+    ))
+}
+
+fn temporal_time_zone_from_identifier(
+    identifier: Arc<str>,
+    offset_minutes: i16,
+) -> TemporalTimeZone {
+    TemporalTimeZone {
         kind: if identifier.as_ref() == "UTC" {
             TemporalTimeZoneKind::Utc
         } else {
             TemporalTimeZoneKind::FixedOffset(offset_minutes)
         },
         identifier,
-    })
+    }
 }
 
 fn temporal_zoned_date_time_property_fields(

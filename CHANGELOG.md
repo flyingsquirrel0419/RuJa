@@ -4,13 +4,29 @@
 
 ### Changed
 
+- Added Realm-local `Temporal.ZonedDateTime.prototype.withTimeZone`. It brands
+  the receiver before converting a String or branded ZonedDateTime time-zone
+  input, preserves epoch nanoseconds and calendar identity, canonicalizes UTC
+  and minute-precision offsets, and creates the result in the method Realm.
+  Exact Test262 ownership is **14/0/0** over the 16-file method directory with
+  two explicit blockers; the equals directory improves from **50/5** to
+  **52/3** as canonical time-zone object construction becomes available.
+
+  [Decision Log]
+  - 목적과 의도: ZonedDateTime의 instant와 calendar를 유지하면서 time-zone identity만 명세 순서로 교체한다.
+  - 기존 구현 및 제약 조건: hidden time-zone slot과 property-bag용 변환 helper는 있었지만 공개 `withTimeZone` 메서드와 method-Realm 결과 생성 경로가 없었다. installer pin 예약은 최대 live pin보다 작았고 `+00:00` kind 분류가 constructor/converter 사이에서 달랐다. named IANA transition backend와 다른 Temporal constructors는 아직 없다.
+  - 검토한 주요 대안: public `timeZoneId` getter 관찰, constructor 재호출, string-only 변환, 기존 slot-aware time-zone helper와 direct hidden-slot result 생성을 검토했다.
+  - 선택한 방식: receiver brand를 먼저 검사하고 `temporal_time_zone_from_value`가 branded ZonedDateTime 또는 String을 변환한다. 원본 epoch/calendar Arc를 보존하고 method Realm intrinsic prototype으로 새 ZonedDateTime을 만든다. 모든 parser consumer는 UTC와 fixed-zero를 구별하는 한 factory를 공유하며 installer는 최대 49 pin을 선예약한다.
+  - 다른 대안 대신 이 방식을 선택한 이유: public getter와 constructor 재호출은 internal-slot 의미론 및 observable order를 깨뜨린다. 공유 helper는 property-bag과 같은 canonical UTC/fixed-offset parser, fuel, TypeError 경계를 유지한다.
+  - 장점, 단점 및 영향: hidden getter 비관찰, subclass 결과 무시, cross-Realm brand/error/result, exact fuel과 heap-cap GC retry, installer rollback, datetime/leap-second/bracket-offset 문법과 exact 14/0/0이 검증된다. `toPlainDateTime`과 `Temporal.Duration` 의존 2개는 blocker로 남는다.
+
 - Added Realm-local `Temporal.ZonedDateTime.prototype.equals` with complete
   argument conversion before hidden epoch, canonical time-zone, and calendar
   identity comparison. Shared ZonedDateTime string conversion now accepts
   date-only forms with a required time-zone annotation while continuing to
   reject date-only `Z` and numeric-offset forms. Exact Test262 ownership is
-  **50/0/0** over the 55-file equals directory; the five retained blockers
-  require `withTimeZone`, `Temporal.Duration`, or other calendar-bearing
+  **52/0/0** over the 55-file equals directory; the three retained blockers
+  require `Temporal.Duration` or other calendar-bearing
   Temporal types. The existing 266-file fixed-offset boundary grows from 243
   to **253** passing files with **13** blockers.
 
@@ -20,12 +36,14 @@
   - 검토한 주요 대안: epoch만 비교, public accessor 호출, `from` 결과를 임시 할당, identifier 직접 비교를 method 안에 고정, ZonedDateTime 전용 공유 slot conversion을 검토했다.
   - 선택한 방식: receiver brand를 먼저 검사하고 shared `to_temporal_zoned_date_time`이 argument를 완전히 변환한 뒤 epoch, time-zone helper, calendar helper 순서로 비교한다. date-only parser 허용은 ZonedDateTime 호출에만 주고 `[` annotation이 즉시 이어질 때만 자정으로 해석한다.
   - 다른 대안 대신 이 방식을 선택한 이유: argument 변환은 epoch 불일치에도 observable하며 public property 기반 비교는 hidden-slot 의미론을 깨뜨린다. helper 경계는 이후 IANA/calendar canonical equality를 한곳에서 확장하게 하고, parser flag는 Instant 문법의 required offset을 보존한다.
-  - 장점, 단점 및 영향: cross-Realm brand/error, property-bag order, canonical UTC/offset spelling, date-only validity, allocation rollback과 exact 50/0/0이 검증된다. IANA alias와 non-ISO calendar equality는 해당 backend/type 도입 시 helper를 확장해야 한다.
+  - 장점, 단점 및 영향: cross-Realm brand/error, property-bag order, canonical UTC/offset spelling, date-only validity, allocation rollback과 현재 exact 52/0/0이 검증된다. IANA alias와 non-ISO calendar equality는 해당 backend/type 도입 시 helper를 확장해야 한다.
 
-  Implementation commit `1490baa` is pushed. Ordinary CI `30875867855`
-  passes **3/3** jobs and full Test262 CI `30875867994` passes **58/58**,
-  including exact/forced **50/0/0**, **50/5/0-skip** equals and
-  **253/0/0**, **253/13/0-skip** fixed-offset gates.
+  At the pre-`withTimeZone` checkpoint, implementation commit `1490baa`
+  passed ordinary CI `30875867855` (**3/3**) and full Test262 CI
+  `30875867994` (**58/58**), including the then-current exact/forced
+  **50/0/0**, **50/5/0-skip** equals and **253/0/0**, **253/13/0-skip**
+  fixed-offset gates. The **52/3** boundary above belongs to the subsequent
+  `withTimeZone` change and requires its own CI evidence.
 
 - Added ISO property-bag conversion to `Temporal.ZonedDateTime.from` for UTC
   and minute-precision fixed offsets. Calendar and field properties are read

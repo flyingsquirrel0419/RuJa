@@ -127,6 +127,8 @@ fn temporal_zoned_date_time_precharges_identifier_bytes() {
         globalThis.temporalZoneInvalidLong = "x".repeat(512);
         globalThis.temporalCalendarInvalidShort = "x";
         globalThis.temporalCalendarInvalidLong = "x".repeat(512);
+        globalThis.temporalWithTimeZone = new Temporal.ZonedDateTime(0n, "UTC");
+        globalThis.temporalWithTimeZoneString = "2021-08-19T17:30Z[UTC]";
         "#,
     )
     .expect("Temporal ZonedDateTime fuel fixtures should initialize");
@@ -168,6 +170,23 @@ fn temporal_zoned_date_time_precharges_identifier_bytes() {
     vm.set_fuel(Some(valid_work));
     vm.run("new Temporal.ZonedDateTime(0n, 'UTC', 'iso8601');")
         .expect("exact measured fuel should construct successfully");
+    assert_eq!(vm.fuel_remaining(), Some(0));
+
+    vm.set_fuel(Some(BUDGET));
+    vm.run("temporalWithTimeZone.withTimeZone(temporalWithTimeZoneString);")
+        .expect("withTimeZone should parse its string argument");
+    let with_time_zone_work = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+
+    vm.set_fuel(Some(with_time_zone_work - 1));
+    let error = vm
+        .run("temporalWithTimeZone.withTimeZone(temporalWithTimeZoneString);")
+        .expect_err("N-1 fuel must abort withTimeZone conversion");
+    assert_eq!(error.kind, ruja::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+
+    vm.set_fuel(Some(with_time_zone_work));
+    vm.run("temporalWithTimeZone.withTimeZone(temporalWithTimeZoneString);")
+        .expect("exact measured fuel should complete withTimeZone");
     assert_eq!(vm.fuel_remaining(), Some(0));
 }
 

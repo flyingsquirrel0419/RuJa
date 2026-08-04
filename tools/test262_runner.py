@@ -102,6 +102,10 @@ try:
         TEMPORAL_ZONED_DATE_TIME_EQUALS_FEATURES,
         TEMPORAL_ZONED_DATE_TIME_EQUALS_FILES,
     )
+    from test262_temporal_zoned_date_time_with_time_zone_admission import (
+        TEMPORAL_ZONED_DATE_TIME_WITH_TIME_ZONE_FEATURES,
+        TEMPORAL_ZONED_DATE_TIME_WITH_TIME_ZONE_FILES,
+    )
     from test262_object_from_entries_admission import (
         OBJECT_FROM_ENTRIES_FEATURES, OBJECT_FROM_ENTRIES_FILES,
     )
@@ -400,6 +404,10 @@ except ModuleNotFoundError:
     from tools.test262_temporal_zoned_date_time_equals_admission import (
         TEMPORAL_ZONED_DATE_TIME_EQUALS_FEATURES,
         TEMPORAL_ZONED_DATE_TIME_EQUALS_FILES,
+    )
+    from tools.test262_temporal_zoned_date_time_with_time_zone_admission import (
+        TEMPORAL_ZONED_DATE_TIME_WITH_TIME_ZONE_FEATURES,
+        TEMPORAL_ZONED_DATE_TIME_WITH_TIME_ZONE_FILES,
     )
     from tools.test262_object_from_entries_admission import (
         OBJECT_FROM_ENTRIES_FEATURES, OBJECT_FROM_ENTRIES_FILES,
@@ -2492,6 +2500,21 @@ def temporal_zoned_date_time_equals_features(path):
     rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
     return TEMPORAL_ZONED_DATE_TIME_EQUALS_FEATURES[rel.as_posix()]
 
+def temporal_zoned_date_time_with_time_zone_path(path):
+    if path is None:
+        return False
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except (OSError, TypeError, ValueError):
+        return False
+    return rel.as_posix() in TEMPORAL_ZONED_DATE_TIME_WITH_TIME_ZONE_FILES
+
+def temporal_zoned_date_time_with_time_zone_features(path):
+    if not temporal_zoned_date_time_with_time_zone_path(path):
+        return frozenset()
+    rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    return TEMPORAL_ZONED_DATE_TIME_WITH_TIME_ZONE_FEATURES[rel.as_posix()]
+
 def temporal_instant_from_path(path):
     if path is None:
         return False
@@ -4338,6 +4361,8 @@ def should_skip(meta, path=None):
         feats.difference_update(temporal_zoned_date_time_fixed_offset_features(path))
     if path is not None and temporal_zoned_date_time_equals_path(path):
         feats.difference_update(temporal_zoned_date_time_equals_features(path))
+    if path is not None and temporal_zoned_date_time_with_time_zone_path(path):
+        feats.difference_update(temporal_zoned_date_time_with_time_zone_features(path))
     if path is not None and temporal_instant_from_path(path):
         feats.difference_update(temporal_instant_from_features(path))
     if path is not None and temporal_instant_string_parser_path(path):

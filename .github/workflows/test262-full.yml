@@ -108,6 +108,12 @@ jobs:
           TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_zoned_date_time_equals_manifest_is_exact_live_disjoint_and_shared
           -v
+      - name: Verify exact Temporal.ZonedDateTime withTimeZone admission
+        working-directory: tools
+        run: >-
+          TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
+          test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_zoned_date_time_with_time_zone_manifest_is_exact_live_disjoint_and_shared
+          -v
       - name: Verify exact Temporal.Instant epoch factory admission
         working-directory: tools
         run: >-
@@ -521,7 +527,7 @@ jobs:
           TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
             "${files[@]}" > temporal_zoned_date_time_equals_result.txt 2>&1
           cat temporal_zoned_date_time_equals_result.txt
-          grep -q '^RATE=100.0 PASS=50 FAIL=0 SKIP=0 TOTAL=50 RAN=50$' \
+          grep -q '^RATE=100.0 PASS=52 FAIL=0 SKIP=0 TOTAL=52 RAN=52$' \
             temporal_zoned_date_time_equals_result.txt
       - name: Freeze Temporal.ZonedDateTime equals blockers
         run: |
@@ -533,8 +539,50 @@ jobs:
             python3 tools/test262_temporal_zoned_date_time_equals_diagnostic.py \
             "${files[@]}" > temporal_zoned_date_time_equals_diagnostic.txt 2>&1
           cat temporal_zoned_date_time_equals_diagnostic.txt
-          grep -q '^RATE=90.9 PASS=50 FAIL=5 SKIP=0 TOTAL=55 RAN=55$' \
+          grep -q '^RATE=94.5 PASS=52 FAIL=3 SKIP=0 TOTAL=55 RAN=55$' \
             temporal_zoned_date_time_equals_diagnostic.txt
+
+  temporal-zoned-date-time-with-time-zone:
+    needs: [build, setup]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download RuJa binary
+        uses: actions/download-artifact@v4
+        with:
+          name: ruja-release
+          path: target/release/
+      - run: chmod +x target/release/ruja
+      - name: Checkout pinned Temporal.ZonedDateTime withTimeZone tests
+        uses: actions/checkout@v4
+        with:
+          repository: tc39/test262
+          ref: ${{ env.TEST262_REV }}
+          path: test262
+          sparse-checkout: |
+            harness
+            test/built-ins/Temporal/ZonedDateTime/prototype/withTimeZone
+      - name: Require exact Temporal.ZonedDateTime withTimeZone boundary
+        run: |
+          mapfile -t files < <(sed -e '/^#/d' -e '/^$/d' \
+            tools/test262_temporal_zoned_date_time_with_time_zone_admission.txt)
+          TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
+            "${files[@]}" > temporal_zoned_date_time_with_time_zone_result.txt 2>&1
+          cat temporal_zoned_date_time_with_time_zone_result.txt
+          grep -q '^RATE=100.0 PASS=14 FAIL=0 SKIP=0 TOTAL=14 RAN=14$' \
+            temporal_zoned_date_time_with_time_zone_result.txt
+      - name: Freeze Temporal.ZonedDateTime withTimeZone blockers
+        run: |
+          mapfile -t files < <(cat \
+            tools/test262_temporal_zoned_date_time_with_time_zone_admission.txt \
+            tools/test262_temporal_zoned_date_time_with_time_zone_blockers.txt | \
+            sed -e '/^#/d' -e '/^$/d')
+          TEST262="$GITHUB_WORKSPACE/test262" \
+            python3 tools/test262_temporal_zoned_date_time_with_time_zone_diagnostic.py \
+            "${files[@]}" > temporal_zoned_date_time_with_time_zone_diagnostic.txt 2>&1
+          cat temporal_zoned_date_time_with_time_zone_diagnostic.txt
+          grep -q '^RATE=87.5 PASS=14 FAIL=2 SKIP=0 TOTAL=16 RAN=16$' \
+            temporal_zoned_date_time_with_time_zone_diagnostic.txt
 
   temporal-instant-epoch-factories:
     needs: [build, setup]

@@ -1,0 +1,4 @@
+# Pinned Test262 revision: 9e61c12835c5e4a3bdba93850427e6742c4f64c4
+# Exact unsupported complement of the 16-file ZonedDateTime withTimeZone surface.
+built-ins/Temporal/ZonedDateTime/prototype/withTimeZone/preserves-instant.js
+built-ins/Temporal/ZonedDateTime/prototype/withTimeZone/timezone-wrong-type.js
