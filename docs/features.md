@@ -41,6 +41,7 @@
   identifier accessors, all ISO civil/calendar/offset accessors, subclassing,
   branded, fixed-offset-string, and ISO property-bag `from`, direct Instant
   conversion, hidden-identity `equals`, instant-preserving `withTimeZone`,
+  instant/time-zone-preserving `withCalendar`,
   option-aware `toString`, `toJSON`, and `valueOf`. ZonedDateTime strings may omit time when followed directly by a
   time-zone annotation. Property-bag
   conversion currently accepts ISO calendars with UTC or minute-precision

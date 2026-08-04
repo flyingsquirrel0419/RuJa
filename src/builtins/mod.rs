@@ -6289,7 +6289,7 @@ pub(crate) fn install_temporal_namespace_in_env(
     global: Option<&Value>,
     object_proto: Value,
 ) -> error::Result<Value> {
-    vm.try_reserve_gc_pins(49)?;
+    vm.try_reserve_gc_pins(50)?;
     let mut pin_count = 0;
     let result = (|| {
         let instant_prototype = Value::Object(vm.alloc(HeapObj::Object(ObjectData {
@@ -6436,6 +6436,12 @@ pub(crate) fn install_temporal_namespace_in_env(
             zoned_with_time_zone,
             "withTimeZone",
             temporal_zoned_date_time_with_time_zone,
+            1
+        );
+        alloc_zoned_native!(
+            zoned_with_calendar,
+            "withCalendar",
+            temporal_zoned_date_time_with_calendar,
             1
         );
         alloc_zoned_native!(zoned_era, "get era", temporal_zoned_date_time_era, 0);
@@ -6751,6 +6757,10 @@ pub(crate) fn install_temporal_namespace_in_env(
             props.insert(
                 PropertyKey::from("withTimeZone"),
                 data_prop(zoned_with_time_zone),
+            );
+            props.insert(
+                PropertyKey::from("withCalendar"),
+                data_prop(zoned_with_calendar),
             );
             props.insert(PropertyKey::from("equals"), data_prop(zoned_equals));
             props.insert(PropertyKey::from("toInstant"), data_prop(zoned_to_instant));
@@ -7206,6 +7216,26 @@ fn temporal_zoned_date_time_with_time_zone(
     )
 }
 
+fn temporal_zoned_date_time_with_calendar(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let (epoch_nanoseconds, time_zone, _) = temporal_zoned_date_time_slots(vm, this)?;
+    let calendar_identifier = temporal_calendar_identifier_from_value(
+        vm,
+        args.first().cloned().unwrap_or(Value::Undefined),
+    )?;
+    let realm = vm.native_callee_closure().unwrap_or(vm.global);
+    create_temporal_zoned_date_time_in_realm(
+        vm,
+        epoch_nanoseconds,
+        time_zone,
+        calendar_identifier,
+        realm,
+    )
+}
+
 fn temporal_time_zone_equals(one: &TemporalTimeZone, two: &TemporalTimeZone) -> bool {
     one.identifier == two.identifier
 }
@@ -7311,6 +7341,10 @@ fn temporal_calendar_from_value(vm: &mut Vm, value: Value) -> error::Result<Arc<
     if value.is_undefined() {
         return Ok(Arc::from("iso8601"));
     }
+    temporal_calendar_identifier_from_value(vm, value)
+}
+
+fn temporal_calendar_identifier_from_value(vm: &mut Vm, value: Value) -> error::Result<Arc<str>> {
     if let Some((_, _, calendar)) = temporal_zoned_date_time_slots_if_present(vm, &value) {
         return Ok(calendar);
     }

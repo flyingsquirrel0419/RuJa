@@ -181,6 +181,25 @@ fixed offset `+00:00` even though both currently resolve to zero nanoseconds.
 - 장점, 단점 및 영향: canonical offset/UTC, cross-Realm object input, result Realm, GC/fuel/allocation 경계가 재사용된다. IANA 지원 시 converter는 available identifier record를 추가하고 equality helper가 primary identifier 비교를 맡아야 한다.
 ```
 
+`Temporal.ZonedDateTime.prototype.withCalendar` separates strict
+`ToTemporalCalendarIdentifier` conversion from the property-bag defaulting
+path. A missing argument therefore throws instead of becoming `iso8601`.
+Branded ZonedDateTime inputs return their hidden calendar without observing
+`calendar`, `calendarId`, or primitive-conversion hooks. String conversion
+shares one validated time-syntax parser with time-zone parsing, but calendar
+interpretation remains independent. Result creation copies the exact epoch and
+complete `TemporalTimeZone` value into the native method Realm.
+
+```text
+[Decision Log]
+- 목적과 의도: calendar만 교체하는 명세 operation을 기존 immutable ZonedDateTime slot/Realm 구조에 추가한다.
+- 기존 구현 및 제약 조건: property-bag helper의 undefined 기본값은 strict method 입력에 부적합했고 time-only 문자열 문법은 time-zone parser 내부에서 성공 여부를 노출하지 않았다.
+- 검토한 주요 대안: helper에 mode flag 추가, parser 복제, constructor/public getter 재사용, strict wrapper와 parsed-time record 분리를 검토했다.
+- 선택한 방식: property-bag wrapper가 undefined만 기본 처리하고 strict helper가 hidden slot/String 경계를 소유한다. time parser는 syntax record를 반환하고 각 consumer가 calendar 또는 zone 의미를 별도로 해석한다.
+- 다른 대안 대신 이 방식을 선택한 이유: mode flag는 서로 다른 명세 operation의 오류 경계를 숨기고 parser 복제는 RFC 9557 drift를 만든다. immutable Rust slot 복제는 JavaScript 재진입 없이 GC root 범위를 최소화한다.
+- 장점, 단점 및 영향: receiver-first order, hidden fast path, UTC/fixed-zero 보존, method Realm, allocation rollback과 byte-proportional fuel이 직접 검증된다. PlainDate 계열 도입 시 strict helper의 hidden-calendar matcher를 확장해야 한다.
+```
+
 ## Compiler temporary storage
 
 Compiler-generated carriers for destructuring sources, iterator state,

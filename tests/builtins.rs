@@ -25454,6 +25454,85 @@ fn temporal_zoned_date_time_with_time_zone_preserves_hidden_identity() {
 }
 
 #[test]
+fn temporal_zoned_date_time_with_calendar_preserves_hidden_identity() {
+    assert_eq!(
+        run(r#"
+            var base = new Temporal.ZonedDateTime(123456789n, '+0130');
+            var source = new Temporal.ZonedDateTime(0n, 'UTC', 'ISO8601');
+            var reads = 0;
+            ['calendar', 'calendarId', 'toString'].forEach(function (name) {
+              Object.defineProperty(source, name, {
+                get: function () { reads++; throw new Error('observed'); }
+              });
+            });
+            Object.defineProperty(source, Symbol.toPrimitive, {
+              get: function () { reads++; throw new Error('observed'); }
+            });
+            var changed = base.withCalendar(source);
+            var parsed = base.withCalendar('15:23:30.12-02:00');
+            var utc = new Temporal.ZonedDateTime(0n, 'UTC').withCalendar('iso8601');
+            var fixedZero = new Temporal.ZonedDateTime(0n, '+00:00').withCalendar('iso8601');
+            [
+              changed !== base,
+              changed.epochNanoseconds,
+              changed.timeZoneId,
+              changed.calendarId,
+              parsed.calendarId,
+              utc.timeZoneId,
+              fixedZero.timeZoneId,
+              reads,
+              Temporal.ZonedDateTime.prototype.withCalendar.length,
+              Temporal.ZonedDateTime.prototype.withCalendar.name
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "true|123456789|+01:30|iso8601|iso8601|UTC|+00:00|0|1|withCalendar"
+        ))
+    );
+
+    for source in [
+        "new Temporal.ZonedDateTime(0n, 'UTC').withCalendar()",
+        "new Temporal.ZonedDateTime(0n, 'UTC').withCalendar({})",
+        "Temporal.ZonedDateTime.prototype.withCalendar.call({}, 'iso8601')",
+        "new Temporal.ZonedDateTime.prototype.withCalendar('iso8601')",
+    ] {
+        assert!(run_err(source).contains("TypeError"), "{source}");
+    }
+
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var method = other.Temporal.ZonedDateTime.prototype.withCalendar;
+            var main = new Temporal.ZonedDateTime(1n, '+02:00');
+            var foreignCalendar = new other.Temporal.ZonedDateTime(2n, 'UTC');
+            var result = method.call(main, foreignCalendar);
+            var receiverRealm;
+            var argumentRealm;
+            var rangeRealm;
+            try { method.call({}, 'iso8601'); } catch (error) {
+              receiverRealm = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            try { method.call(main, {}); } catch (error) {
+              argumentRealm = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            try { method.call(main, 'notacal'); } catch (error) {
+              rangeRealm = error instanceof other.RangeError && !(error instanceof RangeError);
+            }
+            [
+              Object.getPrototypeOf(result) === other.Temporal.ZonedDateTime.prototype,
+              result.epochNanoseconds,
+              result.timeZoneId,
+              result.calendarId,
+              receiverRealm,
+              argumentRealm,
+              rangeRealm
+            ].join('|');
+        "#),
+        Value::String(Arc::from("true|1|+02:00|iso8601|true|true|true"))
+    );
+}
+
+#[test]
 fn temporal_zoned_date_time_methods_use_their_function_realm() {
     assert_eq!(
         run(r#"

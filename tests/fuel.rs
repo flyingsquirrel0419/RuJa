@@ -129,6 +129,8 @@ fn temporal_zoned_date_time_precharges_identifier_bytes() {
         globalThis.temporalCalendarInvalidLong = "x".repeat(512);
         globalThis.temporalWithTimeZone = new Temporal.ZonedDateTime(0n, "UTC");
         globalThis.temporalWithTimeZoneString = "2021-08-19T17:30Z[UTC]";
+        globalThis.temporalWithCalendar = new Temporal.ZonedDateTime(0n, "UTC");
+        globalThis.temporalWithCalendarString = "2021-08-19T17:30[u-ca=iso8601]";
         "#,
     )
     .expect("Temporal ZonedDateTime fuel fixtures should initialize");
@@ -187,6 +189,35 @@ fn temporal_zoned_date_time_precharges_identifier_bytes() {
     vm.set_fuel(Some(with_time_zone_work));
     vm.run("temporalWithTimeZone.withTimeZone(temporalWithTimeZoneString);")
         .expect("exact measured fuel should complete withTimeZone");
+    assert_eq!(vm.fuel_remaining(), Some(0));
+
+    vm.set_fuel(Some(BUDGET));
+    vm.run("temporalWithCalendar.withCalendar(temporalWithCalendarString);")
+        .expect("withCalendar should parse its string argument");
+    let with_calendar_work = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+
+    vm.set_fuel(Some(BUDGET));
+    vm.run("temporalWithCalendar.withCalendar(temporalCalendarInvalidShort);")
+        .expect_err("short invalid withCalendar input should throw");
+    let short_with_calendar_work =
+        BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+
+    vm.set_fuel(Some(BUDGET));
+    vm.run("temporalWithCalendar.withCalendar(temporalCalendarInvalidLong);")
+        .expect_err("long invalid withCalendar input should throw");
+    let long_with_calendar_work = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+    assert!(long_with_calendar_work >= short_with_calendar_work + 500);
+
+    vm.set_fuel(Some(with_calendar_work - 1));
+    let error = vm
+        .run("temporalWithCalendar.withCalendar(temporalWithCalendarString);")
+        .expect_err("N-1 fuel must abort withCalendar conversion");
+    assert_eq!(error.kind, ruja::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+
+    vm.set_fuel(Some(with_calendar_work));
+    vm.run("temporalWithCalendar.withCalendar(temporalWithCalendarString);")
+        .expect("exact measured fuel should complete withCalendar");
     assert_eq!(vm.fuel_remaining(), Some(0));
 }
 

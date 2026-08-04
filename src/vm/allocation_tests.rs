@@ -212,9 +212,9 @@ fn temporal_namespace_installation_covers_every_fixed_offset_allocation_boundary
     let baseline_live = vm.heap.live_count();
     let global = vm.global;
 
-    // Allocations 18 through 50 cover the new method/accessor batch and the
+    // Allocations 18 through 51 cover the new method/accessor batch and the
     // two namespace objects that must publish only after the batch succeeds.
-    for extra_capacity in 17..50 {
+    for extra_capacity in 17..51 {
         vm.set_max_heap_objects(Some(baseline_live + extra_capacity));
         let object_proto = vm.object_proto.clone();
         let result =
@@ -235,19 +235,51 @@ fn temporal_namespace_installation_covers_every_fixed_offset_allocation_boundary
         );
     }
 
-    vm.set_max_heap_objects(Some(baseline_live + 50));
+    vm.set_max_heap_objects(Some(baseline_live + 51));
     let object_proto = vm.object_proto.clone();
     let temporal =
         crate::builtins::install_temporal_namespace_in_env(&mut vm, global, None, object_proto)
-            .expect("exact 50-object capacity must install the complete namespace");
+            .expect("exact 51-object capacity must install the complete namespace");
     vm.set_max_heap_objects(None);
     assert_eq!(vm.gc_pins.len(), baseline_pins);
     assert_eq!(vm.get_global("Temporal"), temporal);
     assert_eq!(
-        vm.run("typeof Temporal.ZonedDateTime.prototype.withTimeZone")
+        vm.run("typeof Temporal.ZonedDateTime.prototype.withCalendar")
             .expect("installed namespace should remain usable"),
         Value::String(Arc::from("function"))
     );
+}
+
+#[test]
+fn temporal_with_calendar_result_allocation_fails_cleanly_and_retries_after_gc() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run("globalThis.zdtForCalendar = new Temporal.ZonedDateTime(1n, 'UTC');")
+        .expect("withCalendar fixture should initialize");
+    vm.gc();
+    let baseline_pins = vm.gc_pins.len();
+    let baseline_live = vm.heap.live_count();
+
+    vm.set_max_heap_objects(Some(baseline_live));
+    let error = vm
+        .run("zdtForCalendar.withCalendar('iso8601');")
+        .expect_err("result allocation must obey the exact heap cap");
+    vm.set_max_heap_objects(None);
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(error.message, "heap limit exceeded");
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.heap.live_count(), baseline_live);
+
+    let _garbage = vm.new_object().expect("garbage allocation should succeed");
+    vm.set_max_heap_objects(Some(vm.heap.live_count()));
+    let result = vm
+        .run(
+            "globalThis.changedCalendar = zdtForCalendar.withCalendar('iso8601'); \
+             changedCalendar.epochNanoseconds + '|' + changedCalendar.calendarId;",
+        )
+        .expect("result allocation should retry after collecting garbage");
+    vm.set_max_heap_objects(None);
+    assert_eq!(result, Value::String(Arc::from("1|iso8601")));
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
 }
 
 #[test]

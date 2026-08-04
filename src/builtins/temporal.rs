@@ -570,7 +570,13 @@ fn resolve_time_zone_syntax(
     }
 }
 
-fn parse_time_zone_from_time(source: &str) -> Option<i128> {
+struct ParsedTimeSyntax<'a> {
+    offset: Option<i128>,
+    offset_has_sub_minute_syntax: bool,
+    time_zone_annotation: Option<&'a [u8]>,
+}
+
+fn parse_time_syntax(source: &str) -> Option<ParsedTimeSyntax<'_>> {
     let bytes = source.as_bytes();
     let has_designator = matches!(bytes.first(), Some(b'T') | Some(b't'));
     let mut index = usize::from(has_designator);
@@ -622,9 +628,22 @@ fn parse_time_zone_from_time(source: &str) -> Option<i128> {
     {
         return None;
     }
-    let annotation = parse_annotations(bytes, &mut index)?;
-    (index == bytes.len())
-        .then(|| resolve_time_zone_syntax(offset, sub_minute, false, annotation))?
+    let time_zone_annotation = parse_annotations(bytes, &mut index)?;
+    (index == bytes.len()).then_some(ParsedTimeSyntax {
+        offset,
+        offset_has_sub_minute_syntax: sub_minute,
+        time_zone_annotation,
+    })
+}
+
+fn parse_time_zone_from_time(source: &str) -> Option<i128> {
+    let parsed = parse_time_syntax(source)?;
+    resolve_time_zone_syntax(
+        parsed.offset,
+        parsed.offset_has_sub_minute_syntax,
+        false,
+        parsed.time_zone_annotation,
+    )
 }
 
 fn parse_date_year(bytes: &[u8], index: &mut usize) -> Option<i128> {
@@ -756,6 +775,7 @@ pub(crate) fn parse_calendar_identifier(source: &str) -> Option<Arc<str>> {
     }
     let bytes = source.as_bytes();
     let valid_iso_syntax = parse_date_time(source, false).is_some()
+        || parse_time_syntax(source).is_some()
         || parse_annotated_full_date(bytes).is_some()
         || parse_annotated_year_month(bytes).is_some()
         || parse_annotated_month_day(bytes).is_some();
@@ -1266,6 +1286,10 @@ mod tests {
             "2020-01-01T00:00[u-ca=iso8601]",
             "2020-01",
             "01-01",
+            "15:23",
+            "T152330.123456789",
+            "152330.1-08",
+            "15:23:30.12-02:00",
         ] {
             assert_eq!(
                 parse_calendar_identifier(source).as_deref(),
@@ -1273,7 +1297,13 @@ mod tests {
                 "{source}"
             );
         }
-        for source in ["gregory", "2020-01-01[u-ca=gregory]", "invalid"] {
+        for source in [
+            "gregory",
+            "2020-01-01[u-ca=gregory]",
+            "15:23[u-ca=gregory]",
+            "24:00",
+            "invalid",
+        ] {
             assert!(parse_calendar_identifier(source).is_none(), "{source}");
         }
 

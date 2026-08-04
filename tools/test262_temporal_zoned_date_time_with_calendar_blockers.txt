@@ -1,0 +1,4 @@
+# Pinned Test262 revision: 9e61c12835c5e4a3bdba93850427e6742c4f64c4
+# Exact unsupported complement of the 16-file ZonedDateTime withCalendar surface.
+built-ins/Temporal/ZonedDateTime/prototype/withCalendar/calendar-temporal-object.js
+built-ins/Temporal/ZonedDateTime/prototype/withCalendar/calendar-wrong-type.js

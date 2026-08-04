@@ -14187,6 +14187,29 @@ Implementation commit `593d047` is confirmed by ordinary CI `30879142138`
 reproduce exact/forced `withTimeZone` **14/0/0**, **14/2/0-skip** and equals
 **52/0/0**, **52/3/0-skip**.
 
+## Temporal.ZonedDateTime.prototype.withCalendar
+
+`tools/test262_temporal_zoned_date_time_with_calendar_admission.txt` freezes
+**14** exact paths from the pinned 16-file method directory. Dedicated CI
+requires **14 pass / 0 fail / 0 skip**; the forced complement requires **14
+pass / 2 fail / 0 skip**. `calendar-temporal-object.js` constructs the absent
+PlainDate, PlainDateTime, PlainMonthDay, and PlainYearMonth object models, and
+`calendar-wrong-type.js` constructs the absent `Temporal.Duration` before its
+assertions. The admitted surface covers branding, descriptors, subclass
+suppression, strict wrong-type/missing-argument errors, case-insensitive ISO
+canonicalization, date/time/month-day/year-month strings, leap seconds, and
+the complete 39-case time-string table.
+
+```text
+[Decision Log]
+- 목적과 의도: withCalendar 구현과 전체 16-file corpus의 실제 지원 경계를 exact accounting에 반영한다.
+- 기존 구현 및 제약 조건: Temporal feature gate가 전체 directory를 skip했고 두 파일은 아직 없는 다른 Temporal constructors를 선행 생성한다.
+- 검토한 주요 대안: 전체 prefix admission, blocker용 가짜 constructors, 기존 fixed-offset manifest 혼합, 별도 14-path admission과 2-path complement를 검토했다.
+- 선택한 방식: 실제 통과한 14개 path와 live metadata를 runner/analyzer 공유 manifest로 열고 2개 blocker를 forced diagnostic으로 고정한다.
+- 다른 대안 대신 이 방식을 선택한 이유: prefix와 가짜 constructor는 지원하지 않는 object model을 과장하고, 기존 manifest 혼합은 method 단위 회귀와 미래 sibling drift를 숨긴다.
+- 장점, 단점 및 영향: exact 14/0/0과 forced 14/2가 재현되며 future sibling은 자동 허용되지 않는다. calendar-bearing Temporal types나 Duration 도입 시 blocker를 실측 후 이동해야 한다.
+```
+
 ## Temporal.Instant.compare completion
 
 `tools/test262_temporal_instant_compare_admission.txt` freezes **29** exact

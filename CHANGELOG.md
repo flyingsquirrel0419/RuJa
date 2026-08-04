@@ -4,6 +4,22 @@
 
 ### Changed
 
+- Added Realm-local `Temporal.ZonedDateTime.prototype.withCalendar`. Receiver
+  branding precedes strict calendar conversion; branded ZonedDateTime inputs
+  use hidden slots without public-property coercion, while bare calendar,
+  date/time, instant, month-day, and year-month Strings canonicalize to the ISO
+  calendar. The result preserves exact epoch and time-zone identity in the
+  method Realm. Exact Test262 ownership is **14/0/0** over the 16-file method
+  directory with two explicit dependency blockers.
+
+  [Decision Log]
+  - 목적과 의도: ZonedDateTime의 instant와 time-zone identity를 유지하면서 calendar identity만 명세 순서로 교체한다.
+  - 기존 구현 및 제약 조건: property-bag calendar helper는 `undefined`를 ISO 기본값으로 처리했고 date/time parser는 time-only calendar 문자열을 인식하지 않았다. PlainDate 계열과 Duration object model은 아직 없다.
+  - 검토한 주요 대안: constructor 재호출, public calendar getter 관찰, property-bag helper 직접 재사용, strict converter와 공용 time syntax parser를 검토했다.
+  - 선택한 방식: receiver brand 후 strict converter가 branded ZonedDateTime 또는 String만 허용한다. time parser의 validated syntax record를 calendar parser가 재사용하고, 원본 epoch/time-zone slot을 method Realm 결과에 그대로 복제한다.
+  - 다른 대안 대신 이 방식을 선택한 이유: constructor/public property 경로는 subclass와 shadowed coercion hooks를 관찰하며, property-bag의 undefined 기본값은 `withCalendar(undefined)` TypeError와 충돌한다. parser 공유는 문법 중복 없이 time-zone 해석 결과를 분리한다.
+  - 장점, 단점 및 영향: hidden-property 비관찰, UTC 대 fixed-zero identity, cross-Realm TypeError/RangeError/result, exact fuel과 heap-cap GC retry, installer rollback, 39개 time-string 형식과 exact 14/0/0이 검증된다. 다른 calendar-bearing Temporal types와 Duration을 선행 생성하는 2개는 blocker로 남는다.
+
 - Added Realm-local `Temporal.ZonedDateTime.prototype.withTimeZone`. It brands
   the receiver before converting a String or branded ZonedDateTime time-zone
   input, preserves epoch nanoseconds and calendar identity, canonicalizes UTC
