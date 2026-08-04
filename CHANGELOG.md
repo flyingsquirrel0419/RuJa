@@ -21,6 +21,11 @@
   - 다른 대안 대신 이 방식을 선택한 이유: getter/coercion은 사용자 JavaScript를 재진입하므로 순서와 GC root가 observable하다. i128 조기 축소는 options-before-validation을 깨뜨리고 host timezone은 native/WASM 결정성을 잃는다.
   - 장점, 단점 및 영향: property order, string/number primitive hints, monthCode, overflow, offset mismatch, Realm allocation, fuel과 35개 신규 Test262 경로가 검증된다. named IANA/DST, equals/toPlainDateTime/Duration 의존 23개는 정확한 blocker로 남는다.
 
+  Implementation commit `02d019f` and CI-count correction `f9adc40` are
+  pushed. Ordinary CI `30872435648` passes **3/3** jobs and full Test262 CI
+  `30872435664` passes **57/57**, including exact **243/0/0** and forced
+  **243/23/0-skip** ZonedDateTime gates.
+
 - Expanded Realm-local `%Temporal.ZonedDateTime%` with its complete ISO
   fixed-offset civil accessor set, static `from` for branded values and
   fixed-offset strings, `toInstant`, option-aware `toString`, `toJSON`,

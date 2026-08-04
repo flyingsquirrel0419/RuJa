@@ -14119,6 +14119,9 @@ Temporal constructors, or remaining RFC 9557/string roundtrip semantics; five
 `toString` helper checks other unimplemented Temporal constructors before
 comparing plural-unit string results. UTC and minute-precision fixed offsets
 are deterministic. Named IANA zones and DST transitions are not claimed.
+Implementation commit `02d019f` and CI contract correction `f9adc40` are
+confirmed by ordinary CI `30872435648` (**3/3**) and full matrix
+`30872435664` (**57/57**).
 
 ```text
 [Decision Log]
