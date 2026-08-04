@@ -51,7 +51,7 @@ use crate::value::{
     FunctionKind, GcIdx, HeapObj, IteratorConcatIterable, IteratorHelperData, IteratorHelperInner,
     IteratorHelperKind, IteratorZipMode, MapData, MapKey, NativeConstructMode, ObjectData,
     PropertyDescriptor, PropertyKey, RegExpStringIteratorData, SetData, TemporalData, TemporalKind,
-    TemporalTimeZone, Value,
+    TemporalTimeZone, TemporalTimeZoneKind, Value,
 };
 use crate::vm::{NativeFn, Vm};
 use indexmap::{IndexMap, IndexSet};
@@ -6289,7 +6289,7 @@ pub(crate) fn install_temporal_namespace_in_env(
     global: Option<&Value>,
     object_proto: Value,
 ) -> error::Result<Value> {
-    vm.try_reserve_gc_pins(18)?;
+    vm.try_reserve_gc_pins(47)?;
     let mut pin_count = 0;
     let result = (|| {
         let instant_prototype = Value::Object(vm.alloc(HeapObj::Object(ObjectData {
@@ -6421,6 +6421,155 @@ pub(crate) fn install_temporal_namespace_in_env(
         )?);
         pin_count += vm.pin(&calendar_id);
 
+        macro_rules! alloc_zoned_native {
+            ($binding:ident, $name:literal, $native:ident, $length:expr) => {
+                let $binding = Value::Object(
+                    vm.new_native_function_in_env_with_gc_retry($name, $native, $length, env)?,
+                );
+                pin_count += vm.pin(&$binding);
+            };
+        }
+
+        alloc_zoned_native!(zoned_from, "from", temporal_zoned_date_time_from, 1);
+        alloc_zoned_native!(zoned_era, "get era", temporal_zoned_date_time_era, 0);
+        alloc_zoned_native!(
+            zoned_era_year,
+            "get eraYear",
+            temporal_zoned_date_time_era_year,
+            0
+        );
+        alloc_zoned_native!(zoned_year, "get year", temporal_zoned_date_time_year, 0);
+        alloc_zoned_native!(zoned_month, "get month", temporal_zoned_date_time_month, 0);
+        alloc_zoned_native!(
+            zoned_month_code,
+            "get monthCode",
+            temporal_zoned_date_time_month_code,
+            0
+        );
+        alloc_zoned_native!(zoned_day, "get day", temporal_zoned_date_time_day, 0);
+        alloc_zoned_native!(zoned_hour, "get hour", temporal_zoned_date_time_hour, 0);
+        alloc_zoned_native!(
+            zoned_minute,
+            "get minute",
+            temporal_zoned_date_time_minute,
+            0
+        );
+        alloc_zoned_native!(
+            zoned_second,
+            "get second",
+            temporal_zoned_date_time_second,
+            0
+        );
+        alloc_zoned_native!(
+            zoned_millisecond,
+            "get millisecond",
+            temporal_zoned_date_time_millisecond,
+            0
+        );
+        alloc_zoned_native!(
+            zoned_microsecond,
+            "get microsecond",
+            temporal_zoned_date_time_microsecond,
+            0
+        );
+        alloc_zoned_native!(
+            zoned_nanosecond,
+            "get nanosecond",
+            temporal_zoned_date_time_nanosecond,
+            0
+        );
+        alloc_zoned_native!(
+            zoned_day_of_week,
+            "get dayOfWeek",
+            temporal_zoned_date_time_day_of_week,
+            0
+        );
+        alloc_zoned_native!(
+            zoned_day_of_year,
+            "get dayOfYear",
+            temporal_zoned_date_time_day_of_year,
+            0
+        );
+        alloc_zoned_native!(
+            zoned_week_of_year,
+            "get weekOfYear",
+            temporal_zoned_date_time_week_of_year,
+            0
+        );
+        alloc_zoned_native!(
+            zoned_year_of_week,
+            "get yearOfWeek",
+            temporal_zoned_date_time_year_of_week,
+            0
+        );
+        alloc_zoned_native!(
+            zoned_hours_in_day,
+            "get hoursInDay",
+            temporal_zoned_date_time_hours_in_day,
+            0
+        );
+        alloc_zoned_native!(
+            zoned_days_in_week,
+            "get daysInWeek",
+            temporal_zoned_date_time_days_in_week,
+            0
+        );
+        alloc_zoned_native!(
+            zoned_days_in_month,
+            "get daysInMonth",
+            temporal_zoned_date_time_days_in_month,
+            0
+        );
+        alloc_zoned_native!(
+            zoned_days_in_year,
+            "get daysInYear",
+            temporal_zoned_date_time_days_in_year,
+            0
+        );
+        alloc_zoned_native!(
+            zoned_months_in_year,
+            "get monthsInYear",
+            temporal_zoned_date_time_months_in_year,
+            0
+        );
+        alloc_zoned_native!(
+            zoned_in_leap_year,
+            "get inLeapYear",
+            temporal_zoned_date_time_in_leap_year,
+            0
+        );
+        alloc_zoned_native!(
+            zoned_offset_nanoseconds,
+            "get offsetNanoseconds",
+            temporal_zoned_date_time_offset_nanoseconds,
+            0
+        );
+        alloc_zoned_native!(
+            zoned_offset,
+            "get offset",
+            temporal_zoned_date_time_offset,
+            0
+        );
+        alloc_zoned_native!(
+            zoned_to_instant,
+            "toInstant",
+            temporal_zoned_date_time_to_instant,
+            0
+        );
+        alloc_zoned_native!(
+            zoned_to_string,
+            "toString",
+            temporal_zoned_date_time_to_string,
+            0
+        );
+        alloc_zoned_native!(zoned_to_json, "toJSON", temporal_zoned_date_time_to_json, 0);
+        alloc_zoned_native!(
+            zoned_value_of,
+            "valueOf",
+            temporal_zoned_date_time_value_of,
+            0
+        );
+
         let Value::Object(instant_constructor_index) = instant_constructor.clone() else {
             unreachable!()
         };
@@ -6490,6 +6639,10 @@ pub(crate) fn install_temporal_namespace_in_env(
                 PropertyKey::from("prototype"),
                 const_prop(zoned_date_time_prototype.clone()),
             );
+            function
+                .props
+                .lock()
+                .insert(PropertyKey::from("from"), data_prop(zoned_from));
         });
         let Value::Object(zoned_prototype_index) = zoned_date_time_prototype.clone() else {
             unreachable!()
@@ -6516,6 +6669,82 @@ pub(crate) fn install_temporal_namespace_in_env(
                 PropertyKey::from("calendarId"),
                 accessor_get_prop(calendar_id),
             );
+            props.insert(PropertyKey::from("era"), accessor_get_prop(zoned_era));
+            props.insert(
+                PropertyKey::from("eraYear"),
+                accessor_get_prop(zoned_era_year),
+            );
+            props.insert(PropertyKey::from("year"), accessor_get_prop(zoned_year));
+            props.insert(PropertyKey::from("month"), accessor_get_prop(zoned_month));
+            props.insert(
+                PropertyKey::from("monthCode"),
+                accessor_get_prop(zoned_month_code),
+            );
+            props.insert(PropertyKey::from("day"), accessor_get_prop(zoned_day));
+            props.insert(PropertyKey::from("hour"), accessor_get_prop(zoned_hour));
+            props.insert(PropertyKey::from("minute"), accessor_get_prop(zoned_minute));
+            props.insert(PropertyKey::from("second"), accessor_get_prop(zoned_second));
+            props.insert(
+                PropertyKey::from("millisecond"),
+                accessor_get_prop(zoned_millisecond),
+            );
+            props.insert(
+                PropertyKey::from("microsecond"),
+                accessor_get_prop(zoned_microsecond),
+            );
+            props.insert(
+                PropertyKey::from("nanosecond"),
+                accessor_get_prop(zoned_nanosecond),
+            );
+            props.insert(
+                PropertyKey::from("dayOfWeek"),
+                accessor_get_prop(zoned_day_of_week),
+            );
+            props.insert(
+                PropertyKey::from("dayOfYear"),
+                accessor_get_prop(zoned_day_of_year),
+            );
+            props.insert(
+                PropertyKey::from("weekOfYear"),
+                accessor_get_prop(zoned_week_of_year),
+            );
+            props.insert(
+                PropertyKey::from("yearOfWeek"),
+                accessor_get_prop(zoned_year_of_week),
+            );
+            props.insert(
+                PropertyKey::from("hoursInDay"),
+                accessor_get_prop(zoned_hours_in_day),
+            );
+            props.insert(
+                PropertyKey::from("daysInWeek"),
+                accessor_get_prop(zoned_days_in_week),
+            );
+            props.insert(
+                PropertyKey::from("daysInMonth"),
+                accessor_get_prop(zoned_days_in_month),
+            );
+            props.insert(
+                PropertyKey::from("daysInYear"),
+                accessor_get_prop(zoned_days_in_year),
+            );
+            props.insert(
+                PropertyKey::from("monthsInYear"),
+                accessor_get_prop(zoned_months_in_year),
+            );
+            props.insert(
+                PropertyKey::from("inLeapYear"),
+                accessor_get_prop(zoned_in_leap_year),
+            );
+            props.insert(
+                PropertyKey::from("offsetNanoseconds"),
+                accessor_get_prop(zoned_offset_nanoseconds),
+            );
+            props.insert(PropertyKey::from("offset"), accessor_get_prop(zoned_offset));
+            props.insert(PropertyKey::from("toInstant"), data_prop(zoned_to_instant));
+            props.insert(PropertyKey::from("toString"), data_prop(zoned_to_string));
+            props.insert(PropertyKey::from("toJSON"), data_prop(zoned_to_json));
+            props.insert(PropertyKey::from("valueOf"), data_prop(zoned_value_of));
             let mut tag = data_prop(Value::String(Arc::from("Temporal.ZonedDateTime")));
             tag.writable = false;
             props.insert(
@@ -6743,7 +6972,11 @@ fn temporal_zoned_date_time_constructor(
             .ok_or_else(|| Error::range("Invalid Temporal time zone identifier"))?;
     let time_zone = TemporalTimeZone {
         identifier: time_zone_identifier,
-        offset_minutes,
+        kind: if offset_minutes == 0 {
+            TemporalTimeZoneKind::Utc
+        } else {
+            TemporalTimeZoneKind::FixedOffset(offset_minutes)
+        },
     };
 
     let calendar_identifier = match args.get(2).unwrap_or(&Value::Undefined) {
@@ -6817,6 +7050,450 @@ fn temporal_zoned_date_time_calendar_id(
 ) -> error::Result<Value> {
     temporal_zoned_date_time_slots(vm, this)
         .map(|(_, _, calendar_identifier)| Value::String(calendar_identifier))
+}
+
+fn temporal_time_zone_offset_nanoseconds(
+    time_zone: &TemporalTimeZone,
+    _epoch_nanoseconds: &BigInt,
+) -> error::Result<i128> {
+    match &time_zone.kind {
+        TemporalTimeZoneKind::Utc => Ok(0),
+        TemporalTimeZoneKind::FixedOffset(minutes) => Ok(i128::from(*minutes) * 60 * 1_000_000_000),
+        TemporalTimeZoneKind::Named(identifier) => Err(Error::range(format!(
+            "Named Temporal time zone is not available: {identifier}"
+        ))),
+    }
+}
+
+fn create_temporal_zoned_date_time_in_realm(
+    vm: &mut Vm,
+    epoch_nanoseconds: Arc<BigInt>,
+    time_zone: TemporalTimeZone,
+    calendar_identifier: Arc<str>,
+    realm: GcIdx,
+) -> error::Result<Value> {
+    let prototype = vm
+        .realm_temporal_zoned_date_time_prototypes
+        .get(&env::global_env_root(&vm.heap, realm).0)
+        .cloned()
+        .ok_or_else(|| Error::internal("Temporal.ZonedDateTime prototype is not installed"))?;
+    create_temporal_zoned_date_time(
+        vm,
+        epoch_nanoseconds,
+        time_zone,
+        calendar_identifier,
+        prototype,
+    )
+}
+
+fn temporal_zoned_date_time_from(
+    vm: &mut Vm,
+    args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
+    let item = args.first().unwrap_or(&Value::Undefined);
+    let (epoch_nanoseconds, time_zone, calendar_identifier) = if matches!(item, Value::Object(_)) {
+        let slots = temporal_zoned_date_time_slots(vm, Some(item.clone()))?;
+        temporal_zoned_date_time_from_options(vm, args.get(1))?;
+        slots
+    } else {
+        let Value::String(source) = item else {
+            return Err(Error::type_err(
+                "Temporal.ZonedDateTime.from input must be a String or ZonedDateTime",
+            ));
+        };
+        vm.consume_fuel_units(source.len().min(i64::MAX as usize) as i64)?;
+        let parsed = temporal::parse_zoned_date_time_string(source)
+            .ok_or_else(|| Error::range("Invalid Temporal.ZonedDateTime string"))?;
+        let offset_option = temporal_zoned_date_time_from_options(vm, args.get(1))?;
+        let epoch_nanoseconds = temporal::resolve_zoned_date_time_epoch(&parsed, offset_option)
+            .ok_or_else(|| Error::range("Temporal.ZonedDateTime offset does not match"))?;
+        if epoch_nanoseconds.abs() > temporal_instant_limit_nanoseconds() {
+            return Err(Error::range(
+                "Temporal.ZonedDateTime epoch nanoseconds out of range",
+            ));
+        }
+        let kind = if parsed.offset_minutes == 0 {
+            TemporalTimeZoneKind::Utc
+        } else {
+            TemporalTimeZoneKind::FixedOffset(parsed.offset_minutes)
+        };
+        (
+            Arc::new(epoch_nanoseconds),
+            TemporalTimeZone {
+                identifier: parsed.time_zone_identifier,
+                kind,
+            },
+            parsed.calendar_identifier,
+        )
+    };
+    let realm = vm.native_callee_closure().unwrap_or(vm.global);
+    create_temporal_zoned_date_time_in_realm(
+        vm,
+        epoch_nanoseconds,
+        time_zone,
+        calendar_identifier,
+        realm,
+    )
+}
+
+fn temporal_zoned_date_time_from_options(
+    vm: &mut Vm,
+    options: Option<&Value>,
+) -> error::Result<temporal::ZonedDateTimeOffsetOption> {
+    let options = options.cloned().unwrap_or(Value::Undefined);
+    if !matches!(options, Value::Undefined | Value::Object(_)) {
+        return Err(Error::type_err(
+            "Temporal.ZonedDateTime.from options must be an object",
+        ));
+    }
+    vm.try_reserve_value_roots(std::slice::from_ref(&options))?;
+    let pin_count = vm.pin(&options);
+    let result = (|| {
+        let get_option = |vm: &mut Vm, name: &str| {
+            if options.is_undefined() {
+                Ok(None)
+            } else {
+                let value = vm.get_property(&options, name)?;
+                if value.is_undefined() {
+                    Ok(None)
+                } else {
+                    temporal_option_to_string(vm, &value).map(Some)
+                }
+            }
+        };
+
+        match get_option(vm, "disambiguation")?
+            .as_deref()
+            .unwrap_or("compatible")
+        {
+            "compatible" | "earlier" | "later" | "reject" => {}
+            _ => return Err(Error::range("Invalid Temporal disambiguation option")),
+        }
+        let offset = match get_option(vm, "offset")?.as_deref().unwrap_or("reject") {
+            "ignore" => temporal::ZonedDateTimeOffsetOption::Ignore,
+            "prefer" => temporal::ZonedDateTimeOffsetOption::Prefer,
+            "reject" => temporal::ZonedDateTimeOffsetOption::Reject,
+            "use" => temporal::ZonedDateTimeOffsetOption::Use,
+            _ => return Err(Error::range("Invalid Temporal offset option")),
+        };
+        match get_option(vm, "overflow")?
+            .as_deref()
+            .unwrap_or("constrain")
+        {
+            "constrain" | "reject" => {}
+            _ => return Err(Error::range("Invalid Temporal overflow option")),
+        }
+        Ok(offset)
+    })();
+    vm.unpin_many(pin_count);
+    result
+}
+
+#[derive(Clone, Copy)]
+enum TemporalZonedDateTimeField {
+    Era,
+    EraYear,
+    Year,
+    Month,
+    MonthCode,
+    Day,
+    Hour,
+    Minute,
+    Second,
+    Millisecond,
+    Microsecond,
+    Nanosecond,
+    DayOfWeek,
+    DayOfYear,
+    WeekOfYear,
+    YearOfWeek,
+    HoursInDay,
+    DaysInWeek,
+    DaysInMonth,
+    DaysInYear,
+    MonthsInYear,
+    InLeapYear,
+    OffsetNanoseconds,
+    Offset,
+}
+
+fn temporal_zoned_date_time_field(
+    vm: &mut Vm,
+    this: Option<Value>,
+    field: TemporalZonedDateTimeField,
+) -> error::Result<Value> {
+    let (epoch_nanoseconds, time_zone, _) = temporal_zoned_date_time_slots(vm, this)?;
+    let offset_nanoseconds = temporal_time_zone_offset_nanoseconds(&time_zone, &epoch_nanoseconds)?;
+    if matches!(field, TemporalZonedDateTimeField::Offset) {
+        let identifier = if offset_nanoseconds == 0 {
+            Arc::from("+00:00")
+        } else {
+            time_zone.identifier
+        };
+        return Ok(Value::String(identifier));
+    }
+    if matches!(field, TemporalZonedDateTimeField::OffsetNanoseconds) {
+        return Ok(Value::Number(offset_nanoseconds as f64));
+    }
+    if matches!(
+        field,
+        TemporalZonedDateTimeField::Era | TemporalZonedDateTimeField::EraYear
+    ) {
+        return Ok(Value::Undefined);
+    }
+
+    let date_time = temporal::iso_date_time(&epoch_nanoseconds, offset_nanoseconds)
+        .ok_or_else(|| Error::range("Temporal.ZonedDateTime local date is out of range"))?;
+    let number = match field {
+        TemporalZonedDateTimeField::Year => date_time.year,
+        TemporalZonedDateTimeField::Month => date_time.month,
+        TemporalZonedDateTimeField::Day => date_time.day,
+        TemporalZonedDateTimeField::Hour => date_time.hour,
+        TemporalZonedDateTimeField::Minute => date_time.minute,
+        TemporalZonedDateTimeField::Second => date_time.second,
+        TemporalZonedDateTimeField::Millisecond => date_time.millisecond,
+        TemporalZonedDateTimeField::Microsecond => date_time.microsecond,
+        TemporalZonedDateTimeField::Nanosecond => date_time.nanosecond,
+        TemporalZonedDateTimeField::DayOfWeek => temporal::iso_day_of_week(date_time.epoch_days),
+        TemporalZonedDateTimeField::DayOfYear => temporal::iso_day_of_year(date_time)
+            .ok_or_else(|| Error::range("Temporal dayOfYear is out of range"))?,
+        TemporalZonedDateTimeField::WeekOfYear => {
+            temporal::iso_week_of_year(date_time)
+                .ok_or_else(|| Error::range("Temporal weekOfYear is out of range"))?
+                .0
+        }
+        TemporalZonedDateTimeField::YearOfWeek => {
+            temporal::iso_week_of_year(date_time)
+                .ok_or_else(|| Error::range("Temporal yearOfWeek is out of range"))?
+                .1
+        }
+        TemporalZonedDateTimeField::DaysInWeek => 7,
+        TemporalZonedDateTimeField::DaysInMonth => {
+            temporal::days_in_month(date_time.year, date_time.month)
+                .ok_or_else(|| Error::range("Temporal daysInMonth is out of range"))?
+        }
+        TemporalZonedDateTimeField::DaysInYear => {
+            if temporal::leap_year(date_time.year) {
+                366
+            } else {
+                365
+            }
+        }
+        TemporalZonedDateTimeField::MonthsInYear => 12,
+        TemporalZonedDateTimeField::HoursInDay => {
+            let nanoseconds_per_day = BigInt::from(86_400_000_000_000_i64);
+            let offset = BigInt::from(offset_nanoseconds);
+            let today = BigInt::from(date_time.epoch_days) * &nanoseconds_per_day - &offset;
+            let tomorrow = &today + &nanoseconds_per_day;
+            let limit = temporal_instant_limit_nanoseconds();
+            if today.abs() > limit || tomorrow.abs() > limit {
+                return Err(Error::range("Temporal hoursInDay boundary is out of range"));
+            }
+            24
+        }
+        TemporalZonedDateTimeField::InLeapYear => {
+            return Ok(Value::Bool(temporal::leap_year(date_time.year)))
+        }
+        TemporalZonedDateTimeField::MonthCode => {
+            return Ok(Value::String(Arc::from(format!("M{:02}", date_time.month))))
+        }
+        TemporalZonedDateTimeField::Era
+        | TemporalZonedDateTimeField::EraYear
+        | TemporalZonedDateTimeField::OffsetNanoseconds
+        | TemporalZonedDateTimeField::Offset => unreachable!(),
+    };
+    Ok(Value::Number(number as f64))
+}
+
+macro_rules! temporal_zoned_date_time_getter {
+    ($name:ident, $field:ident) => {
+        fn $name(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+            temporal_zoned_date_time_field(vm, this, TemporalZonedDateTimeField::$field)
+        }
+    };
+}
+
+temporal_zoned_date_time_getter!(temporal_zoned_date_time_era, Era);
+temporal_zoned_date_time_getter!(temporal_zoned_date_time_era_year, EraYear);
+temporal_zoned_date_time_getter!(temporal_zoned_date_time_year, Year);
+temporal_zoned_date_time_getter!(temporal_zoned_date_time_month, Month);
+temporal_zoned_date_time_getter!(temporal_zoned_date_time_month_code, MonthCode);
+temporal_zoned_date_time_getter!(temporal_zoned_date_time_day, Day);
+temporal_zoned_date_time_getter!(temporal_zoned_date_time_hour, Hour);
+temporal_zoned_date_time_getter!(temporal_zoned_date_time_minute, Minute);
+temporal_zoned_date_time_getter!(temporal_zoned_date_time_second, Second);
+temporal_zoned_date_time_getter!(temporal_zoned_date_time_millisecond, Millisecond);
+temporal_zoned_date_time_getter!(temporal_zoned_date_time_microsecond, Microsecond);
+temporal_zoned_date_time_getter!(temporal_zoned_date_time_nanosecond, Nanosecond);
+temporal_zoned_date_time_getter!(temporal_zoned_date_time_day_of_week, DayOfWeek);
+temporal_zoned_date_time_getter!(temporal_zoned_date_time_day_of_year, DayOfYear);
+temporal_zoned_date_time_getter!(temporal_zoned_date_time_week_of_year, WeekOfYear);
+temporal_zoned_date_time_getter!(temporal_zoned_date_time_year_of_week, YearOfWeek);
+temporal_zoned_date_time_getter!(temporal_zoned_date_time_hours_in_day, HoursInDay);
+temporal_zoned_date_time_getter!(temporal_zoned_date_time_days_in_week, DaysInWeek);
+temporal_zoned_date_time_getter!(temporal_zoned_date_time_days_in_month, DaysInMonth);
+temporal_zoned_date_time_getter!(temporal_zoned_date_time_days_in_year, DaysInYear);
+temporal_zoned_date_time_getter!(temporal_zoned_date_time_months_in_year, MonthsInYear);
+temporal_zoned_date_time_getter!(temporal_zoned_date_time_in_leap_year, InLeapYear);
+temporal_zoned_date_time_getter!(
+    temporal_zoned_date_time_offset_nanoseconds,
+    OffsetNanoseconds
+);
+temporal_zoned_date_time_getter!(temporal_zoned_date_time_offset, Offset);
+
+fn temporal_zoned_date_time_to_instant(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let (epoch_nanoseconds, _, _) = temporal_zoned_date_time_slots(vm, this)?;
+    let realm = vm.native_callee_closure().unwrap_or(vm.global);
+    create_temporal_instant_in_realm(vm, epoch_nanoseconds, realm)
+}
+
+fn temporal_annotation_display(
+    value: Option<&str>,
+    option: &str,
+    allow_always: bool,
+) -> error::Result<temporal::AnnotationDisplay> {
+    Ok(match value.unwrap_or("auto") {
+        "auto" => temporal::AnnotationDisplay::Auto,
+        "always" if allow_always => temporal::AnnotationDisplay::Always,
+        "critical" => temporal::AnnotationDisplay::Critical,
+        "never" => temporal::AnnotationDisplay::Never,
+        _ => return Err(Error::range(format!("Invalid Temporal {option} option"))),
+    })
+}
+
+fn temporal_zoned_date_time_format(
+    vm: &mut Vm,
+    epoch_nanoseconds: &BigInt,
+    time_zone: &TemporalTimeZone,
+    calendar_identifier: &str,
+    options: temporal::ZonedDateTimeFormatOptions,
+) -> error::Result<Value> {
+    let offset_nanoseconds = temporal_time_zone_offset_nanoseconds(time_zone, epoch_nanoseconds)?;
+    temporal::format_zoned_date_time(
+        epoch_nanoseconds,
+        offset_nanoseconds,
+        &time_zone.identifier,
+        calendar_identifier,
+        options,
+    )
+    .map(Arc::<str>::from)
+    .map(Value::String)
+    .ok_or_else(|| Error::range("Temporal.ZonedDateTime string formatting failed"))
+}
+
+fn temporal_zoned_date_time_to_string(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let (epoch_nanoseconds, time_zone, calendar_identifier) =
+        temporal_zoned_date_time_slots(vm, this)?;
+    let options = args.first().cloned().unwrap_or(Value::Undefined);
+    if !matches!(options, Value::Undefined | Value::Object(_)) {
+        return Err(Error::type_err(
+            "Temporal.ZonedDateTime.prototype.toString options must be an object",
+        ));
+    }
+    vm.try_reserve_value_roots(std::slice::from_ref(&options))?;
+    let options_pin = vm.pin(&options);
+    let result = (|| {
+        let get_option = |vm: &mut Vm, name: &str| {
+            if options.is_undefined() {
+                Ok(Value::Undefined)
+            } else {
+                vm.get_property(&options, name)
+            }
+        };
+        let option_string = |vm: &mut Vm, value: Value| {
+            if value.is_undefined() {
+                Ok(None)
+            } else {
+                temporal_option_to_string(vm, &value).map(Some)
+            }
+        };
+
+        let calendar_name = get_option(vm, "calendarName")?;
+        let calendar_name = option_string(vm, calendar_name)?;
+        let calendar_name =
+            temporal_annotation_display(calendar_name.as_deref(), "calendarName", true)?;
+        let fractional_second_digits = match get_option(vm, "fractionalSecondDigits")? {
+            Value::Undefined => InstantFractionalSecondDigits::Auto,
+            Value::Number(number) => InstantFractionalSecondDigits::Number(number),
+            value => InstantFractionalSecondDigits::String(temporal_option_to_string(vm, &value)?),
+        };
+        let fractional_second_digits =
+            temporal_instant_fractional_second_digits(fractional_second_digits)?;
+        let offset = get_option(vm, "offset")?;
+        let offset = option_string(vm, offset)?;
+        let show_offset = match offset.as_deref().unwrap_or("auto") {
+            "auto" => true,
+            "never" => false,
+            _ => return Err(Error::range("Invalid Temporal offset option")),
+        };
+        let rounding_mode = get_option(vm, "roundingMode")?;
+        let rounding_mode = option_string(vm, rounding_mode)?;
+        let rounding_mode = temporal_instant_rounding_mode(rounding_mode.as_deref())?;
+        let smallest_unit = get_option(vm, "smallestUnit")?;
+        let smallest_unit = option_string(vm, smallest_unit)?;
+        let smallest_unit = temporal_instant_smallest_unit(smallest_unit.as_deref())?;
+        let time_zone_name = get_option(vm, "timeZoneName")?;
+        let time_zone_name = option_string(vm, time_zone_name)?;
+        let time_zone_name =
+            temporal_annotation_display(time_zone_name.as_deref(), "timeZoneName", false)?;
+        let precision = temporal_instant_precision(fractional_second_digits, smallest_unit)?;
+        temporal_zoned_date_time_format(
+            vm,
+            &epoch_nanoseconds,
+            &time_zone,
+            &calendar_identifier,
+            temporal::ZonedDateTimeFormatOptions {
+                precision,
+                rounding_mode,
+                show_offset,
+                time_zone_name,
+                calendar_name,
+            },
+        )
+    })();
+    vm.unpin_many(options_pin);
+    result
+}
+
+fn temporal_zoned_date_time_to_json(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let (epoch_nanoseconds, time_zone, calendar_identifier) =
+        temporal_zoned_date_time_slots(vm, this)?;
+    temporal_zoned_date_time_format(
+        vm,
+        &epoch_nanoseconds,
+        &time_zone,
+        &calendar_identifier,
+        temporal::ZonedDateTimeFormatOptions {
+            precision: temporal::InstantPrecision::Auto,
+            rounding_mode: temporal::InstantRoundingMode::Trunc,
+            show_offset: true,
+            time_zone_name: temporal::AnnotationDisplay::Auto,
+            calendar_name: temporal::AnnotationDisplay::Auto,
+        },
+    )
+}
+
+fn temporal_zoned_date_time_value_of(
+    _vm: &mut Vm,
+    _args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
+    Err(Error::type_err(
+        "Temporal.ZonedDateTime.prototype.valueOf always throws",
+    ))
 }
 
 fn temporal_instant_factory_result(
@@ -6954,7 +7631,10 @@ enum InstantSmallestUnit {
 fn temporal_option_to_string(vm: &mut Vm, value: &Value) -> error::Result<Arc<str>> {
     vm.try_reserve_value_roots(std::slice::from_ref(value))?;
     let pin_count = vm.pin(value);
-    let result = vm.to_string(value);
+    let result = vm.to_string(value).and_then(|source| {
+        vm.consume_fuel_units(source.len().min(i64::MAX as usize) as i64)?;
+        Ok(source)
+    });
     vm.unpin_many(pin_count);
     result
 }

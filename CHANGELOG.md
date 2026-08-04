@@ -4,6 +4,22 @@
 
 ### Changed
 
+- Expanded Realm-local `%Temporal.ZonedDateTime%` with its complete ISO
+  fixed-offset civil accessor set, static `from` for branded values and
+  fixed-offset strings, `toInstant`, option-aware `toString`, `toJSON`,
+  and always-throwing `valueOf`. Civil conversion and formatting use exact
+  integer nanoseconds across negative epochs and extended years; method results
+  and errors follow the native function Realm. A metadata-frozen 208-file
+  Test262 boundary passes completely.
+
+  [Decision Log]
+  - 목적과 의도: ZonedDateTime hidden-slot core를 실제 고정 오프셋 civil 조회·변환·직렬화 API로 확장한다.
+  - 기존 구현 및 제약 조건: epoch/time-zone/calendar slot과 네 core accessor만 있었고, deterministic tzdb·property-bag conversion·다른 Temporal 타입은 아직 없다.
+  - 검토한 주요 대안: host timezone API 사용, named IANA를 식별자만으로 허용, 외부 Temporal 구현 도입, 현재 exact UTC/fixed-offset 모델을 확장하는 방식을 검토했다.
+  - 선택한 방식: time-zone slot을 UTC/fixed/named 종류로 명시하고, exact ISO civil helper를 accessor와 formatter가 공유한다. VM layer가 brand/options/fuel/Realm/GC publication을 소유하며 실제 통과한 208개 path만 exact admission으로 연다.
+  - 다른 대안 대신 이 방식을 선택한 이유: host timezone은 native/WASM 재현성이 없고 tzdb 없는 IANA 수용은 DST 의미론을 거짓 지원한다. shared integer 경로는 Instant 범위 전체에서 precision과 pre-epoch floor를 보존한다.
+  - 장점, 단점 및 영향: 24개 civil/calendar/offset accessor, fixed-offset parsing, formatting/rounding, Instant conversion, serialization, Realm·allocation 경계가 검증된다. property bag, named IANA/DST, Duration/PlainDateTime 의존 파일은 후속 범위로 남는다.
+
 - Added a real Realm-local `%Temporal.ZonedDateTime%` hidden-slot core for UTC
   and fixed-offset identifiers. Construction, subclass/new-target behavior,
   exact epoch accessors, canonical time-zone/calendar identifiers, and

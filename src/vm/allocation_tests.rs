@@ -204,6 +204,53 @@ fn temporal_namespace_installation_restores_roots_after_zoned_calendar_allocatio
 }
 
 #[test]
+fn temporal_namespace_installation_covers_every_fixed_offset_allocation_boundary() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.gc();
+    let original = vm.get_global("Temporal");
+    let baseline_pins = vm.gc_pins.len();
+    let baseline_live = vm.heap.live_count();
+    let global = vm.global;
+
+    // Allocations 18 through 48 cover the new method/accessor batch and the
+    // two namespace objects that must publish only after the batch succeeds.
+    for extra_capacity in 17..48 {
+        vm.set_max_heap_objects(Some(baseline_live + extra_capacity));
+        let object_proto = vm.object_proto.clone();
+        let result =
+            crate::builtins::install_temporal_namespace_in_env(&mut vm, global, None, object_proto);
+        vm.set_max_heap_objects(None);
+
+        let error = result.expect_err("each fixed-offset installer boundary must fail");
+        assert_eq!(error.kind, crate::error::ErrorKind::Range);
+        assert_eq!(error.message, "heap limit exceeded");
+        assert_eq!(vm.gc_pins.len(), baseline_pins);
+        assert_eq!(vm.get_global("Temporal"), original);
+        vm.gc();
+        assert_eq!(
+            vm.heap.live_count(),
+            baseline_live,
+            "failed allocation {next} must be collectible",
+            next = extra_capacity + 1
+        );
+    }
+
+    vm.set_max_heap_objects(Some(baseline_live + 48));
+    let object_proto = vm.object_proto.clone();
+    let temporal =
+        crate::builtins::install_temporal_namespace_in_env(&mut vm, global, None, object_proto)
+            .expect("exact 48-object capacity must install the complete namespace");
+    vm.set_max_heap_objects(None);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.get_global("Temporal"), temporal);
+    assert_eq!(
+        vm.run("typeof Temporal.ZonedDateTime.prototype.toJSON")
+            .expect("installed namespace should remain usable"),
+        Value::String(Arc::from("function"))
+    );
+}
+
+#[test]
 fn temporal_instant_from_retries_result_allocation_after_converted_input_gc() {
     let mut vm = Vm::new().expect("VM should initialize");
     let baseline_pins = vm.gc_pins.len();

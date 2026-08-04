@@ -14100,6 +14100,37 @@ surface or the not-yet-installed Duration constructor.
 - 장점, 단점 및 영향: future sibling은 자동 허용되지 않고 exact 36/0/0, compare 30/0/0, from+equals 62/0/0 경계가 재현된다. 두 root blocker는 후속 단위에서 재감사한다.
 ```
 
+## Temporal.ZonedDateTime fixed-offset civil and formatting surface
+
+`tools/test262_temporal_zoned_date_time_fixed_offset_admission.txt` freezes
+exactly **208** pinned files. The boundary covers the 24 ISO
+civil/calendar/offset accessors, `construction-and-properties.js`, complete
+`toInstant`, complete `toJSON` and `valueOf`, 61 independently runnable
+`toString` files, and 40 static `from` cases supported by branded values or
+the strict fixed-offset string parser. Dedicated CI requires **208 pass / 0
+fail / 0 skip**.
+
+`tools/test262_temporal_zoned_date_time_fixed_offset_blockers.txt` freezes the
+exact unsupported complement. CI forces the complete 266-file surface and
+requires **208 pass / 58 fail / 0 skip**. The 58 retained blockers are explicit:
+51 `from` cases need ISO property bags, named-IANA
+behavior, or remaining RFC 9557/date-only/string-option semantics;
+one accessor case needs property-bag `from`; five
+`basic.js` accessor cases construct `Temporal.PlainDateTime`; and one
+`toString` helper checks other unimplemented Temporal constructors before
+comparing plural-unit string results. UTC and minute-precision fixed offsets
+are deterministic. Named IANA zones and DST transitions are not claimed.
+
+```text
+[Decision Log]
+- 목적과 의도: ZonedDateTime core 위에 exact fixed-offset civil 조회, Instant 변환, parsing, rounding, serialization을 추가하고 supported accounting에 반영한다.
+- 기존 구현 및 제약 조건: hidden epoch/time-zone/calendar slot은 있었지만 civil accessor와 표준 formatting API가 없었다. host tzdb, property-bag conversion, Duration/PlainDateTime 등 다른 Temporal type도 없다.
+- 검토한 주요 대안: host timezone API, IANA identifier를 offset 없이 저장, prefix 전체 admission, 외부 full-Temporal crate, exact fixed-offset integer surface를 검토했다.
+- 선택한 방식: UTC/fixed/named time-zone 종류를 slot에 명시하고 ISO civil conversion과 formatter를 exact integer helper로 공유한다. runner/analyzer는 실제 통과한 208개 path와 전체 feature metadata만 해제하고, 별도 blocker manifest와 forced CI가 266개 전체 경계를 고정한다.
+- 다른 대안 대신 이 방식을 선택한 이유: host timezone은 native/WASM 결과가 다르고 tzdb 없는 IANA 지원은 DST 의미론을 위반한다. prefix admission은 58개 blocker와 미래 파일을 숨긴다.
+- 장점, 단점 및 영향: negative epoch, extended year, ISO week/year, 9개 rounding mode, option order, branding, method Realm, allocation rollback과 exact 208/0/0이 재현된다. property bag, named IANA/DST, 다른 Temporal types는 다음 구현 단위로 남는다.
+```
+
 ## Temporal.Instant.compare completion
 
 `tools/test262_temporal_instant_compare_admission.txt` freezes **29** exact

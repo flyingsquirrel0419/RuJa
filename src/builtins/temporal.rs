@@ -213,11 +213,11 @@ fn parse_annotations<'a>(bytes: &'a [u8], index: &mut usize) -> Option<Option<&'
     Some(time_zone_annotation)
 }
 
-fn leap_year(year: i128) -> bool {
+pub(crate) fn leap_year(year: i128) -> bool {
     year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
 }
 
-fn days_in_month(year: i128, month: i128) -> Option<i128> {
+pub(crate) fn days_in_month(year: i128, month: i128) -> Option<i128> {
     Some(match month {
         1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
         4 | 6 | 9 | 11 => 30,
@@ -227,7 +227,7 @@ fn days_in_month(year: i128, month: i128) -> Option<i128> {
     })
 }
 
-fn days_from_civil(year: i128, month: i128, day: i128) -> Option<i128> {
+pub(crate) fn days_from_civil(year: i128, month: i128, day: i128) -> Option<i128> {
     let year = year.checked_sub(i128::from(month <= 2))?;
     let era = if year >= 0 {
         year
@@ -371,6 +371,99 @@ pub(crate) fn parse_instant_string(source: &str) -> Option<BigInt> {
     let offset_nanoseconds = parsed.offset_nanoseconds?;
     Some(BigInt::from(
         parsed.local_nanoseconds.checked_sub(offset_nanoseconds)?,
+    ))
+}
+
+pub(crate) struct ParsedZonedDateTime {
+    local_nanoseconds: i128,
+    source_offset_nanoseconds: Option<i128>,
+    z: bool,
+    pub time_zone_identifier: Arc<str>,
+    pub offset_minutes: i16,
+    pub calendar_identifier: Arc<str>,
+}
+
+fn zoned_date_time_calendar_identifier(source: &str) -> Option<Arc<str>> {
+    let mut first_calendar = None;
+    for annotation in source.as_bytes().split(|byte| *byte == b'[').skip(1) {
+        let body = annotation.split(|byte| *byte == b']').next()?;
+        let body = body.strip_prefix(b"!").unwrap_or(body);
+        let Some(value) = body.strip_prefix(b"u-ca=") else {
+            continue;
+        };
+        if first_calendar.is_none() {
+            first_calendar = Some(value);
+        }
+    }
+    if first_calendar.is_some_and(|value| !value.eq_ignore_ascii_case(b"iso8601")) {
+        return None;
+    }
+    Some(Arc::from("iso8601"))
+}
+
+pub(crate) fn parse_zoned_date_time_string(source: &str) -> Option<ParsedZonedDateTime> {
+    let parsed = parse_date_time(source)?;
+    let annotation = std::str::from_utf8(parsed.time_zone_annotation?).ok()?;
+    let (time_zone_identifier, offset_minutes) = parse_time_zone_identifier(annotation)?;
+    let calendar_identifier = zoned_date_time_calendar_identifier(source)?;
+    Some(ParsedZonedDateTime {
+        local_nanoseconds: parsed.local_nanoseconds,
+        source_offset_nanoseconds: parsed.offset_nanoseconds,
+        z: parsed.z,
+        time_zone_identifier,
+        offset_minutes,
+        calendar_identifier,
+    })
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum ZonedDateTimeOffsetOption {
+    Ignore,
+    Prefer,
+    Reject,
+    Use,
+}
+
+pub(crate) fn resolve_zoned_date_time_epoch(
+    parsed: &ParsedZonedDateTime,
+    offset_option: ZonedDateTimeOffsetOption,
+) -> Option<BigInt> {
+    if parsed.z {
+        return Some(BigInt::from(parsed.local_nanoseconds));
+    }
+    let annotation_offset = i128::from(parsed.offset_minutes) * 60 * NS_PER_SECOND;
+    if parsed.source_offset_nanoseconds.is_some()
+        && matches!(
+            offset_option,
+            ZonedDateTimeOffsetOption::Prefer | ZonedDateTimeOffsetOption::Reject
+        )
+        && parsed
+            .local_nanoseconds
+            .div_euclid(SECONDS_PER_DAY * NS_PER_SECOND)
+            .unsigned_abs()
+            > 100_000_000
+    {
+        return None;
+    }
+    let selected_offset = match (parsed.source_offset_nanoseconds, offset_option) {
+        (None, _) | (_, ZonedDateTimeOffsetOption::Ignore) => annotation_offset,
+        (Some(source), ZonedDateTimeOffsetOption::Use) => source,
+        (Some(source), ZonedDateTimeOffsetOption::Prefer) => {
+            if source == annotation_offset {
+                source
+            } else {
+                annotation_offset
+            }
+        }
+        (Some(source), ZonedDateTimeOffsetOption::Reject) => {
+            if source != annotation_offset {
+                return None;
+            }
+            source
+        }
+    };
+    Some(BigInt::from(
+        parsed.local_nanoseconds.checked_sub(selected_offset)?,
     ))
 }
 
@@ -665,6 +758,83 @@ fn civil_from_days(days: i128) -> Option<(i128, i128, i128)> {
     Some((year, month, day))
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct IsoDateTime {
+    pub epoch_days: i128,
+    pub year: i128,
+    pub month: i128,
+    pub day: i128,
+    pub hour: i128,
+    pub minute: i128,
+    pub second: i128,
+    pub millisecond: i128,
+    pub microsecond: i128,
+    pub nanosecond: i128,
+}
+
+pub(crate) fn iso_date_time(
+    epoch_nanoseconds: &BigInt,
+    offset_nanoseconds: i128,
+) -> Option<IsoDateTime> {
+    let local = epoch_nanoseconds
+        .to_i128()?
+        .checked_add(offset_nanoseconds)?;
+    let nanoseconds_per_day = SECONDS_PER_DAY.checked_mul(NS_PER_SECOND)?;
+    let epoch_days = local.div_euclid(nanoseconds_per_day);
+    let within_day = local.rem_euclid(nanoseconds_per_day);
+    let (year, month, day) = civil_from_days(epoch_days)?;
+    let second_of_day = within_day / NS_PER_SECOND;
+    let fraction = within_day % NS_PER_SECOND;
+    Some(IsoDateTime {
+        epoch_days,
+        year,
+        month,
+        day,
+        hour: second_of_day / 3_600,
+        minute: second_of_day % 3_600 / 60,
+        second: second_of_day % 60,
+        millisecond: fraction / 1_000_000,
+        microsecond: fraction / 1_000 % 1_000,
+        nanosecond: fraction % 1_000,
+    })
+}
+
+pub(crate) fn iso_day_of_week(epoch_days: i128) -> i128 {
+    (epoch_days + 3).rem_euclid(7) + 1
+}
+
+pub(crate) fn iso_day_of_year(date_time: IsoDateTime) -> Option<i128> {
+    let first = days_from_civil(date_time.year, 1, 1)?;
+    date_time.epoch_days.checked_sub(first)?.checked_add(1)
+}
+
+fn iso_weeks_in_year(year: i128) -> Option<i128> {
+    let first_day = iso_day_of_week(days_from_civil(year, 1, 1)?);
+    Some(if first_day == 4 || (first_day == 3 && leap_year(year)) {
+        53
+    } else {
+        52
+    })
+}
+
+pub(crate) fn iso_week_of_year(date_time: IsoDateTime) -> Option<(i128, i128)> {
+    let day_of_year = iso_day_of_year(date_time)?;
+    let day_of_week = iso_day_of_week(date_time.epoch_days);
+    let mut week = (day_of_year - day_of_week + 10) / 7;
+    let mut year = date_time.year;
+    if week < 1 {
+        year = year.checked_sub(1)?;
+        week = iso_weeks_in_year(year)?;
+    } else {
+        let weeks = iso_weeks_in_year(year)?;
+        if week > weeks {
+            year = year.checked_add(1)?;
+            week = 1;
+        }
+    }
+    Some((week, year))
+}
+
 fn write_year(output: &mut String, year: i128) -> Option<()> {
     if (0..=9_999).contains(&year) {
         write!(output, "{year:04}").ok()?;
@@ -676,17 +846,16 @@ fn write_year(output: &mut String, year: i128) -> Option<()> {
     Some(())
 }
 
-pub(crate) fn format_instant(
+fn format_iso_date_time(
     epoch_nanoseconds: &BigInt,
-    display_offset_nanoseconds: Option<i128>,
+    offset_nanoseconds: i128,
     precision: InstantPrecision,
     rounding_mode: InstantRoundingMode,
 ) -> Option<String> {
     let epoch_nanoseconds = epoch_nanoseconds.to_i128()?;
     let increment = rounding_increment(precision)?;
     let rounded = round_as_if_positive(epoch_nanoseconds, increment, rounding_mode)?;
-    let offset = display_offset_nanoseconds.unwrap_or(0);
-    let local = rounded.checked_add(offset)?;
+    let local = rounded.checked_add(offset_nanoseconds)?;
     let nanoseconds_per_day = SECONDS_PER_DAY.checked_mul(NS_PER_SECOND)?;
     let days = local.div_euclid(nanoseconds_per_day);
     let within_day = local.rem_euclid(nanoseconds_per_day);
@@ -721,18 +890,91 @@ pub(crate) fn format_instant(
             _ => {}
         }
     }
+    Some(output)
+}
+
+fn write_offset(output: &mut String, offset_nanoseconds: i128) -> Option<()> {
+    let sign = if offset_nanoseconds < 0 { '-' } else { '+' };
+    let total_minutes = offset_nanoseconds.abs() / (60 * NS_PER_SECOND);
+    write!(
+        output,
+        "{sign}{:02}:{:02}",
+        total_minutes / 60,
+        total_minutes % 60
+    )
+    .ok()
+}
+
+pub(crate) fn format_instant(
+    epoch_nanoseconds: &BigInt,
+    display_offset_nanoseconds: Option<i128>,
+    precision: InstantPrecision,
+    rounding_mode: InstantRoundingMode,
+) -> Option<String> {
+    let offset = display_offset_nanoseconds.unwrap_or(0);
+    let mut output = format_iso_date_time(epoch_nanoseconds, offset, precision, rounding_mode)?;
     if let Some(offset) = display_offset_nanoseconds {
-        let sign = if offset < 0 { '-' } else { '+' };
-        let total_minutes = offset.abs() / (60 * NS_PER_SECOND);
-        write!(
-            output,
-            "{sign}{:02}:{:02}",
-            total_minutes / 60,
-            total_minutes % 60
-        )
-        .ok()?;
+        write_offset(&mut output, offset)?;
     } else {
         output.push('Z');
+    }
+    Some(output)
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum AnnotationDisplay {
+    Auto,
+    Always,
+    Critical,
+    Never,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct ZonedDateTimeFormatOptions {
+    pub precision: InstantPrecision,
+    pub rounding_mode: InstantRoundingMode,
+    pub show_offset: bool,
+    pub time_zone_name: AnnotationDisplay,
+    pub calendar_name: AnnotationDisplay,
+}
+
+pub(crate) fn format_zoned_date_time(
+    epoch_nanoseconds: &BigInt,
+    offset_nanoseconds: i128,
+    time_zone_identifier: &str,
+    calendar_identifier: &str,
+    options: ZonedDateTimeFormatOptions,
+) -> Option<String> {
+    let mut output = format_iso_date_time(
+        epoch_nanoseconds,
+        offset_nanoseconds,
+        options.precision,
+        options.rounding_mode,
+    )?;
+    if options.show_offset {
+        write_offset(&mut output, offset_nanoseconds)?;
+    }
+    if options.time_zone_name != AnnotationDisplay::Never {
+        output.push('[');
+        if options.time_zone_name == AnnotationDisplay::Critical {
+            output.push('!');
+        }
+        output.push_str(time_zone_identifier);
+        output.push(']');
+    }
+    let show_calendar = match options.calendar_name {
+        AnnotationDisplay::Auto => calendar_identifier != "iso8601",
+        AnnotationDisplay::Always | AnnotationDisplay::Critical => true,
+        AnnotationDisplay::Never => false,
+    };
+    if show_calendar {
+        output.push('[');
+        if options.calendar_name == AnnotationDisplay::Critical {
+            output.push('!');
+        }
+        output.push_str("u-ca=");
+        output.push_str(calendar_identifier);
+        output.push(']');
     }
     Some(output)
 }
@@ -741,7 +983,8 @@ pub(crate) fn format_instant(
 mod tests {
     use super::{
         format_instant, parse_instant_string, parse_time_zone_identifier, parse_time_zone_offset,
-        InstantPrecision, InstantRoundingMode,
+        parse_zoned_date_time_string, resolve_zoned_date_time_epoch, InstantPrecision,
+        InstantRoundingMode, ZonedDateTimeOffsetOption,
     };
     use num_bigint::BigInt;
 
@@ -914,6 +1157,40 @@ mod tests {
             "+01:00:00",
         ] {
             assert!(parse_time_zone_identifier(source).is_none(), "{source}");
+        }
+    }
+
+    #[test]
+    fn zoned_date_time_strings_preserve_only_supported_iso_calendars() {
+        let parsed = parse_zoned_date_time_string("1970-01-01T00:00Z[UTC][u-ca=ISO8601]")
+            .expect("ISO calendar annotation should parse");
+        assert_eq!(
+            resolve_zoned_date_time_epoch(&parsed, ZonedDateTimeOffsetOption::Reject),
+            Some(BigInt::from(0))
+        );
+        assert_eq!(parsed.time_zone_identifier.as_ref(), "UTC");
+        assert_eq!(parsed.calendar_identifier.as_ref(), "iso8601");
+
+        let exact =
+            parse_zoned_date_time_string("1970-01-01T00:00Z[+01:00][u-ca=iso8601][u-ca=gregory]")
+                .expect("Z and a later noncritical calendar should parse");
+        assert_eq!(
+            resolve_zoned_date_time_epoch(&exact, ZonedDateTimeOffsetOption::Reject),
+            Some(BigInt::from(0))
+        );
+
+        let wall = parse_zoned_date_time_string("1970-01-01T00:00[+01:00]")
+            .expect("wall time should parse");
+        assert_eq!(
+            resolve_zoned_date_time_epoch(&wall, ZonedDateTimeOffsetOption::Reject),
+            Some(BigInt::from(-3_600_000_000_000_i64))
+        );
+
+        for source in [
+            "1970-01-01T00:00Z[UTC][u-ca=gregory]",
+            "1970-01-01T00:00Z[UTC][!u-ca=gregory]",
+        ] {
+            assert!(parse_zoned_date_time_string(source).is_none(), "{source}");
         }
     }
 

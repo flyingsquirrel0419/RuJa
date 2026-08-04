@@ -25086,6 +25086,203 @@ fn temporal_zoned_date_time_core_uses_hidden_slots_and_realm_intrinsics() {
 }
 
 #[test]
+fn temporal_zoned_date_time_fixed_offset_civil_fields_are_exact() {
+    assert_eq!(
+        run(r#"
+            var zdt = new Temporal.ZonedDateTime(
+              217178610123456789n,
+              '+01:30'
+            );
+            [
+              zdt.era, zdt.eraYear, zdt.year, zdt.month, zdt.monthCode,
+              zdt.day, zdt.hour, zdt.minute, zdt.second,
+              zdt.millisecond, zdt.microsecond, zdt.nanosecond,
+              zdt.dayOfWeek, zdt.dayOfYear, zdt.weekOfYear, zdt.yearOfWeek,
+              zdt.hoursInDay, zdt.daysInWeek, zdt.daysInMonth,
+              zdt.daysInYear, zdt.monthsInYear, zdt.inLeapYear,
+              zdt.offsetNanoseconds, zdt.offset
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "||1976|11|M11|18|16|53|30|123|456|789|4|323|47|1976|24|7|30|366|12|true|5400000000000|+01:30"
+        ))
+    );
+
+    assert_eq!(
+        run(r#"
+            var beforeEpoch = new Temporal.ZonedDateTime(-1n, 'UTC');
+            var newYear = Temporal.ZonedDateTime.from(
+              '2021-01-01T00:00:00+00:00[UTC]'
+            );
+            [
+              beforeEpoch.year, beforeEpoch.month, beforeEpoch.day,
+              beforeEpoch.hour, beforeEpoch.minute, beforeEpoch.second,
+              beforeEpoch.millisecond, beforeEpoch.microsecond,
+              beforeEpoch.nanosecond, beforeEpoch.offset,
+              newYear.weekOfYear, newYear.yearOfWeek
+            ].join('|');
+        "#),
+        Value::String(Arc::from("1969|12|31|23|59|59|999|999|999|+00:00|53|2020"))
+    );
+}
+
+#[test]
+fn temporal_zoned_date_time_fixed_offset_conversion_and_formatting() {
+    assert_eq!(
+        run(r#"
+            var source = '1976-11-18T16:53:30.123456789+01:30[+01:30]';
+            var zdt = Temporal.ZonedDateTime.from(source);
+            var copy = Temporal.ZonedDateTime.from(zdt);
+            var instant = zdt.toInstant();
+            var exact = Temporal.ZonedDateTime.from(
+              '1970-01-01T00:00Z[+01:00]'
+            );
+            var ignored = Temporal.ZonedDateTime.from(
+              '1970-01-01T00:00-04:15[+01:00]',
+              { offset: 'ignore' }
+            );
+            [
+              zdt.toString(),
+              zdt.toJSON(),
+              zdt.toString({ fractionalSecondDigits: 3 }),
+              zdt.toString({ offset: 'never', timeZoneName: 'never' }),
+              zdt.toString({ calendarName: 'always' }),
+              zdt.toString({ timeZoneName: 'critical' }),
+              zdt.epochNanoseconds === 217178610123456789n,
+              instant.epochNanoseconds === zdt.epochNanoseconds,
+              instant instanceof Temporal.Instant,
+              copy !== zdt,
+              copy.epochNanoseconds === zdt.epochNanoseconds,
+              exact.epochNanoseconds === 0n,
+              ignored.epochNanoseconds === -3600000000000n,
+              Temporal.ZonedDateTime.from.length,
+              Temporal.ZonedDateTime.prototype.toInstant.length
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "1976-11-18T16:53:30.123456789+01:30[+01:30]|1976-11-18T16:53:30.123456789+01:30[+01:30]|1976-11-18T16:53:30.123+01:30[+01:30]|1976-11-18T16:53:30.123456789|1976-11-18T16:53:30.123456789+01:30[+01:30][u-ca=iso8601]|1976-11-18T16:53:30.123456789+01:30[!+01:30]|true|true|true|true|true|true|true|1|0"
+        ))
+    );
+
+    for source in [
+        "new Temporal.ZonedDateTime.from('1970-01-01T00:00Z[UTC]')",
+        "new (Temporal.ZonedDateTime.prototype.toInstant)()",
+        "new Temporal.ZonedDateTime(0n, 'UTC').toString({ offset: 'bad' })",
+        "new Temporal.ZonedDateTime(0n, 'UTC').toString({ timeZoneName: 'always' })",
+        "Temporal.ZonedDateTime.from('1970-01-01T00:00+01:00[UTC]')",
+        "Temporal.ZonedDateTime.from('1970-01-01T00:00Z[UTC][u-ca=gregory]')",
+        "Temporal.ZonedDateTime.prototype.toJSON.call({})",
+        "Temporal.ZonedDateTime.prototype.valueOf.call(new Temporal.ZonedDateTime(0n, 'UTC'))",
+    ] {
+        let error = run_err(source);
+        assert!(
+            error.contains("TypeError") || error.contains("RangeError"),
+            "{source}: {error}"
+        );
+    }
+
+    assert_eq!(
+        run(r#"
+            Temporal.ZonedDateTime.from(
+              '1970-01-01T00:00Z[UTC][u-ca=ISO8601]'
+            ).calendarId;
+        "#),
+        Value::String(Arc::from("iso8601"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var laterRead = false;
+            var options = {
+              calendarName: 'invalid',
+              get fractionalSecondDigits() {
+                laterRead = true;
+                throw new Error('wrong error');
+              }
+            };
+            var earlyRange;
+            try {
+              new Temporal.ZonedDateTime(0n, 'UTC').toString(options);
+            } catch (error) {
+              earlyRange = error instanceof RangeError;
+            }
+            earlyRange && !laterRead;
+        "#),
+        Value::Bool(true)
+    );
+
+    assert_eq!(
+        run(r#"
+            var zdt = new Temporal.ZonedDateTime(0n, 'UTC');
+            var reads = [];
+            var options = {
+              get disambiguation() { reads.push('disambiguation'); return 'compatible'; },
+              get offset() { reads.push('offset'); return 'reject'; },
+              get overflow() { reads.push('overflow'); return 'constrain'; }
+            };
+            var copy = Temporal.ZonedDateTime.from(zdt, options);
+            [copy.epochNanoseconds === 0n, reads.join(',')].join('|');
+        "#),
+        Value::String(Arc::from("true|disambiguation,offset,overflow"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var source = '-271821-04-19T23:00-01:00[-01:00]';
+            var results = [];
+            for (var offset of ['use', 'ignore']) {
+              results.push(Temporal.ZonedDateTime.from(source, { offset }).epochNanoseconds);
+            }
+            for (var offset of ['prefer', 'reject']) {
+              try {
+                Temporal.ZonedDateTime.from(source, { offset });
+                results.push('accepted');
+              } catch (error) {
+                results.push(error instanceof RangeError);
+              }
+            }
+            results.join('|');
+        "#),
+        Value::String(Arc::from(
+            "-8640000000000000000000|-8640000000000000000000|true|true"
+        ))
+    );
+}
+
+#[test]
+fn temporal_zoned_date_time_methods_use_their_function_realm() {
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var main = new Temporal.ZonedDateTime(0n, 'UTC');
+            var foreign = new other.Temporal.ZonedDateTime(0n, 'UTC');
+            var fromOther = other.Temporal.ZonedDateTime.from(main);
+            var instantFromOther = other.Temporal.ZonedDateTime.prototype.toInstant.call(main);
+            var getter = other.Object.getOwnPropertyDescriptor(
+              other.Temporal.ZonedDateTime.prototype,
+              'year'
+            ).get;
+            var getterRealm;
+            var formatRealm;
+            try { getter.call({}); } catch (error) {
+              getterRealm = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            try {
+              other.Temporal.ZonedDateTime.prototype.toString.call(foreign, null);
+            } catch (error) {
+              formatRealm = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            [
+              Object.getPrototypeOf(fromOther) === other.Temporal.ZonedDateTime.prototype,
+              Object.getPrototypeOf(instantFromOther) === other.Temporal.Instant.prototype,
+              getter.call(main), getterRealm, formatRealm
+            ].join('|');
+        "#),
+        Value::String(Arc::from("true|true|1970|true|true"))
+    );
+}
+
+#[test]
 fn temporal_instant_from_and_equals_share_exact_string_conversion() {
     assert_eq!(
         run(r#"

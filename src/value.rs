@@ -1063,7 +1063,14 @@ pub enum TemporalKind {
 #[derive(Clone)]
 pub struct TemporalTimeZone {
     pub identifier: Arc<str>,
-    pub offset_minutes: i16,
+    pub kind: TemporalTimeZoneKind,
+}
+
+#[derive(Clone)]
+pub enum TemporalTimeZoneKind {
+    Utc,
+    FixedOffset(i16),
+    Named(Arc<str>),
 }
 
 pub struct TemporalData {

@@ -78,7 +78,7 @@ transition support requires a deterministic bundled backend.
 - 검토한 주요 대안: Date helper 재사용, host timezone API, 외부 Temporal crate, VM-free i128 formatter와 fixed-offset parser를 검토했다.
 - 선택한 방식: VM layer가 options를 규정 순서로 읽고 exact unit table, root/fuel/Realm을 관리하며, temporal module이 ISO grammar early errors, i128 civil conversion과 9개 rounding mode를 수행한다. explicit UTC는 +00:00, 기본값은 Z로 구분한다.
 - 다른 대안 대신 이 방식을 선택한 이유: 전체 Instant 범위가 i128에 들어가므로 BigInt를 경계에서 한 번 변환해 precision loss 없이 bounded formatting이 가능하고, pure formatter는 host와 wasm에서 동일하다.
-- 장점, 단점 및 영향: option getter/coercion order, exact singular/plural units, annotated-time ambiguity, negative epoch, midnight rollover, extended year가 독립 테스트 가능하다. 새 time-zone consumer는 이 parser를 재사용해야 하며 named IANA와 ZonedDateTime은 deterministic backend 전까지 거부한다.
+- 장점, 단점 및 영향: option getter/coercion order, exact singular/plural units, annotated-time ambiguity, negative epoch, midnight rollover, extended year가 독립 테스트 가능하다. 새 time-zone consumer는 이 parser를 재사용해야 하며 named IANA transition은 deterministic backend 전까지 거부한다. ZonedDateTime의 UTC/fixed-offset 경로는 이후 단위에서 구현됐다.
 ```
 
 `Temporal.Instant.compare` reuses the same epoch-only conversion boundary as
@@ -99,12 +99,15 @@ both JavaScript arguments rooted; completed conversion results are Rust
 ```
 
 `TemporalKind::ZonedDateTime` extends the same heap object family with immutable
-epoch nanoseconds, a canonical UTC/fixed-offset identifier and minute offset,
-and the ISO calendar identifier. Constructor fallback uses two Realm-owned
-intrinsic registries. The Instant conversion fast path matches the hidden kind
-before any primitive conversion, so shadowed getters and `toString` are not
-observable. These slots contain only `Arc` and integers, so the exhaustive GC
-match has no additional heap edge.
+epoch nanoseconds, a canonical time-zone record, and the ISO calendar
+identifier. The time-zone record distinguishes UTC, fixed minute offsets, and
+named identifiers; current execution accepts UTC/fixed offsets and rejects the
+named branch until a deterministic transition backend exists. Constructor
+fallback uses two Realm-owned intrinsic registries. Civil accessors and
+formatters share exact integer ISO conversion, while the Instant conversion
+fast path matches the hidden kind before primitive conversion, so shadowed
+getters and `toString` are not observable. These slots contain only `Arc` and
+integers, so the exhaustive GC match has no additional heap edge.
 
 ```text
 [Decision Log]
@@ -113,7 +116,7 @@ match has no additional heap edge.
 - 검토한 주요 대안: ordinary properties, Instant wrapper, 기존 broad parser 재사용, 별도 strict identifier parser와 ZonedDateTime variant를 검토했다.
 - 선택한 방식: constructor 전용 parser는 ASCII case-insensitive UTC와 minute fixed offset만 canonicalize한다. epoch/time-zone/calendar 변환 후 newTarget prototype을 읽고 pinned allocation으로 hidden-slot instance를 만든다.
 - 다른 대안 대신 이 방식을 선택한 이유: broad parser는 constructor가 ISO date/time 문자열을 잘못 수용하고 ordinary properties는 branding과 fast path를 깨뜨린다. deterministic backend 없는 IANA 수용은 후속 메서드 의미론을 제공할 수 없다.
-- 장점, 단점 및 영향: Realm/GC/rollback/fuel과 cross-Realm ToTemporalInstant가 명시적으로 고정된다. 새 Realm registry를 추가할 때 fields, initialization, root collection, rollback, default-prototype mapping, inventory test를 함께 갱신해야 한다.
+- 장점, 단점 및 영향: Realm/GC/rollback/fuel, cross-Realm ToTemporalInstant, ISO civil accessors와 fixed-offset formatting이 명시적으로 고정된다. named branch는 storage contract만 제공하며 transition backend 전에는 실행되지 않는다. 새 Realm registry를 추가할 때 fields, initialization, root collection, rollback, default-prototype mapping, inventory test를 함께 갱신해야 한다.
 ```
 
 ## Compiler temporary storage

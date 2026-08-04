@@ -96,6 +96,12 @@ jobs:
           TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_zoned_date_time_core_manifest_is_exact_live_disjoint_and_shared
           -v
+      - name: Verify exact Temporal.ZonedDateTime fixed-offset admission
+        working-directory: tools
+        run: >-
+          TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
+          test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_zoned_date_time_fixed_offset_manifest_is_exact_live_disjoint_and_shared
+          -v
       - name: Verify exact Temporal.Instant epoch factory admission
         working-directory: tools
         run: >-
@@ -439,6 +445,48 @@ jobs:
           cat temporal_zoned_date_time_core_result.txt
           grep -q '^RATE=100.0 PASS=36 FAIL=0 SKIP=0 TOTAL=36 RAN=36$' \
             temporal_zoned_date_time_core_result.txt
+
+  temporal-zoned-date-time-fixed-offset:
+    needs: [build, setup]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download RuJa binary
+        uses: actions/download-artifact@v4
+        with:
+          name: ruja-release
+          path: target/release
+      - run: chmod +x target/release/ruja
+      - name: Checkout pinned Temporal.ZonedDateTime fixed-offset tests
+        uses: actions/checkout@v4
+        with:
+          repository: tc39/test262
+          ref: ${{ env.TEST262_REV }}
+          path: test262
+          sparse-checkout: |
+            harness
+            test/built-ins/Temporal/ZonedDateTime
+      - name: Require exact Temporal.ZonedDateTime fixed-offset boundary
+        run: |
+          mapfile -t files < <(sed -e '/^#/d' -e '/^$/d' \
+            tools/test262_temporal_zoned_date_time_fixed_offset_admission.txt)
+          TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
+            "${files[@]}" > temporal_zoned_date_time_fixed_offset_result.txt 2>&1
+          cat temporal_zoned_date_time_fixed_offset_result.txt
+          grep -q '^RATE=100.0 PASS=208 FAIL=0 SKIP=0 TOTAL=208 RAN=208$' \
+            temporal_zoned_date_time_fixed_offset_result.txt
+      - name: Freeze Temporal.ZonedDateTime fixed-offset blockers
+        run: |
+          mapfile -t files < <(cat \
+            tools/test262_temporal_zoned_date_time_fixed_offset_admission.txt \
+            tools/test262_temporal_zoned_date_time_fixed_offset_blockers.txt | \
+            sed -e '/^#/d' -e '/^$/d')
+          TEST262="$GITHUB_WORKSPACE/test262" \
+            python3 tools/test262_temporal_zoned_date_time_fixed_offset_diagnostic.py \
+            "${files[@]}" > temporal_zoned_date_time_fixed_offset_diagnostic.txt 2>&1
+          cat temporal_zoned_date_time_fixed_offset_diagnostic.txt
+          grep -q '^RATE=78.2 PASS=208 FAIL=58 SKIP=0 TOTAL=266 RAN=266$' \
+            temporal_zoned_date_time_fixed_offset_diagnostic.txt
 
   temporal-instant-epoch-factories:
     needs: [build, setup]

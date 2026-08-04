@@ -112,6 +112,10 @@ from test262_temporal_zoned_date_time_core_admission import (
     TEMPORAL_ZONED_DATE_TIME_CORE_FEATURES,
     TEMPORAL_ZONED_DATE_TIME_CORE_FILES,
 )
+from test262_temporal_zoned_date_time_fixed_offset_admission import (
+    TEMPORAL_ZONED_DATE_TIME_FIXED_OFFSET_FEATURES,
+    TEMPORAL_ZONED_DATE_TIME_FIXED_OFFSET_FILES,
+)
 from test262_temporal_instant_value_of_admission import (
     TEMPORAL_INSTANT_VALUE_OF_FEATURES,
     TEMPORAL_INSTANT_VALUE_OF_FILES,
@@ -3294,7 +3298,9 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                     {"BigInt", "Symbol", "Temporal"},
                     [],
                 ),
-                zoned_prefix + "construction-and-properties.js": ({"Temporal"}, []),
+            }
+            admitted_elsewhere = {
+                zoned_prefix + "construction-and-properties.js",
             }
             live_root = {
                 path.relative_to(test_root).as_posix()
@@ -3302,7 +3308,9 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
             }
             self.assertEqual(
                 live_root,
-                {zoned_prefix + name for name in root_names} | set(blockers),
+                {zoned_prefix + name for name in root_names}
+                | set(blockers)
+                | admitted_elsewhere,
             )
             live_prototype_root = {
                 path.relative_to(test_root).as_posix()
@@ -3384,7 +3392,7 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             future = root / "test" / zoned_prefix / "future.js"
-            outside = root / "test/built-ins/Temporal/ZonedDateTime/prototype/year/basic.js"
+            outside = root / "test/built-ins/Temporal/ZonedDateTime/prototype/add/basic.js"
             for tool in (test262_runner, test262_analyze):
                 original_root = tool.TEST262
                 tool.TEST262 = str(root)
@@ -3407,6 +3415,175 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                             tool.temporal_zoned_date_time_core_features(path), frozenset()
                         )
                         self.assertTrue(tool.should_skip({"features": ["Temporal"]}, path))
+                finally:
+                    tool.TEST262 = original_root
+
+    def test_temporal_zoned_date_time_fixed_offset_manifest_is_exact_live_disjoint_and_shared(self):
+        files = TEMPORAL_ZONED_DATE_TIME_FIXED_OFFSET_FILES
+        features_by_file = TEMPORAL_ZONED_DATE_TIME_FIXED_OFFSET_FEATURES
+        blockers = {
+            line
+            for raw_line in (
+                Path(__file__).with_name(
+                    "test262_temporal_zoned_date_time_fixed_offset_blockers.txt"
+                )
+            ).read_text().splitlines()
+            if (line := raw_line.strip()) and not line.startswith("#")
+        }
+        self.assertEqual(len(files), 208)
+        self.assertEqual(len(blockers), 58)
+        self.assertEqual(set(features_by_file), set(files))
+        self.assertTrue(files.isdisjoint(blockers))
+        self.assertTrue(files.isdisjoint(TEMPORAL_ZONED_DATE_TIME_CORE_FILES))
+
+        compare_helpers = {
+            "built-ins/Temporal/ZonedDateTime/from/observable-get-overflow-argument-string-invalid.js",
+            "built-ins/Temporal/ZonedDateTime/prototype/toString/calendarname-wrong-type.js",
+            "built-ins/Temporal/ZonedDateTime/prototype/toString/fractionalseconddigits-wrong-type.js",
+            "built-ins/Temporal/ZonedDateTime/prototype/toString/offset-wrong-type.js",
+            "built-ins/Temporal/ZonedDateTime/prototype/toString/options-read-before-algorithmic-validation.js",
+            "built-ins/Temporal/ZonedDateTime/prototype/toString/order-of-operations.js",
+            "built-ins/Temporal/ZonedDateTime/prototype/toString/roundingmode-wrong-type.js",
+            "built-ins/Temporal/ZonedDateTime/prototype/toString/smallestunit-wrong-type.js",
+            "built-ins/Temporal/ZonedDateTime/prototype/toString/timezonename-wrong-type.js",
+        }
+        temporal_helpers = {
+            "built-ins/Temporal/ZonedDateTime/from/subclassing-ignored.js",
+            "built-ins/Temporal/ZonedDateTime/prototype/toInstant/recent-date.js",
+            "built-ins/Temporal/ZonedDateTime/prototype/toInstant/year-less-than-1.js",
+            "built-ins/Temporal/ZonedDateTime/prototype/toInstant/year-less-than-99.js",
+            "built-ins/Temporal/ZonedDateTime/prototype/toInstant/year-zero-leap-day.js",
+        }
+        property_helper_directories = {"from", "toInstant", "toString", "toJSON", "valueOf"}
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        live_available = (test_root / "built-ins/Temporal/ZonedDateTime").is_dir()
+        if live_available:
+            zoned_root = test_root / "built-ins/Temporal/ZonedDateTime"
+            surface = {
+                path.relative_to(test_root).as_posix()
+                for directory in (
+                    zoned_root / "from",
+                    zoned_root / "prototype/toInstant",
+                    zoned_root / "prototype/toString",
+                    zoned_root / "prototype/toJSON",
+                    zoned_root / "prototype/valueOf",
+                    *(zoned_root / "prototype" / name for name in (
+                        "year", "month", "monthCode", "day", "hour", "minute",
+                        "second", "millisecond", "microsecond", "nanosecond",
+                        "era", "eraYear", "dayOfWeek", "dayOfYear", "weekOfYear",
+                        "yearOfWeek", "hoursInDay", "daysInWeek", "daysInMonth",
+                        "daysInYear", "monthsInYear", "inLeapYear",
+                        "offsetNanoseconds", "offset",
+                    )),
+                )
+                for path in directory.rglob("*.js")
+                if "_FIXTURE" not in path.name
+            }
+            surface.add(
+                "built-ins/Temporal/ZonedDateTime/construction-and-properties.js"
+            )
+            self.assertEqual(surface, set(files) | blockers)
+            for relative in files:
+                path = test_root / relative
+                self.assertTrue(path.is_file(), relative)
+                metadata = test262_runner.parse_meta(path.read_text())
+                self.assertEqual(
+                    frozenset(metadata.get("features", [])),
+                    features_by_file[relative],
+                    relative,
+                )
+                parts = Path(relative).parts
+                if relative in compare_helpers:
+                    includes = ["compareArray.js", "temporalHelpers.js"]
+                elif relative in temporal_helpers:
+                    includes = ["temporalHelpers.js"]
+                elif path.name == "not-a-constructor.js":
+                    includes = ["isConstructor.js"]
+                elif (
+                    path.name in {"length.js", "name.js", "prop-desc.js"}
+                    and parts[-2] in property_helper_directories
+                ):
+                    includes = ["propertyHelper.js"]
+                else:
+                    includes = []
+                self.assertEqual(metadata.get("includes", []), includes, relative)
+                self.assertEqual(metadata.get("flags", []), [], relative)
+                self.assertIsNone(metadata.get("negative"), relative)
+                for tool in (test262_runner, test262_analyze):
+                    self.assertTrue(
+                        tool.temporal_zoned_date_time_fixed_offset_path(path), relative
+                    )
+                    self.assertEqual(
+                        tool.temporal_zoned_date_time_fixed_offset_features(path),
+                        features_by_file[relative],
+                    )
+                    self.assertFalse(tool.should_skip(metadata, path), relative)
+
+            for relative in blockers:
+                path = test_root / relative
+                self.assertTrue(path.is_file(), relative)
+                metadata = test262_runner.parse_meta(path.read_text())
+                self.assertIn("Temporal", metadata.get("features", []), relative)
+                for tool in (test262_runner, test262_analyze):
+                    self.assertTrue(tool.should_skip(metadata, path), relative)
+
+        tools_dir = Path(__file__).resolve().parent
+        for manifest in tools_dir.glob("test262_*_admission.txt"):
+            if (
+                manifest.name
+                == "test262_temporal_zoned_date_time_fixed_offset_admission.txt"
+            ):
+                continue
+            existing = {
+                line
+                for raw_line in manifest.read_text().splitlines()
+                if (line := raw_line.strip()) and not line.startswith("#")
+            }
+            self.assertTrue(files.isdisjoint(existing), manifest.name)
+
+        code_only_admissions = (
+            CLASS_SUBCLASS_BUILTIN_FILES
+            | MODULE_CLASS_ELEMENTS_FILES
+            | MODULE_STATIC_SEMANTICS_FILES
+            | MODULE_TLA_SYNTAX_FILES
+            | MODULE_TLA_RUNTIME_FILES
+            | WEAK_COLLECTION_FILES
+            | WEAK_REFERENCE_FILES
+        )
+        self.assertTrue(files.isdisjoint(code_only_admissions))
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            future = root / "test/built-ins/Temporal/ZonedDateTime/prototype/year/future.js"
+            outside = root / "test/built-ins/Temporal/ZonedDateTime/constructor.js"
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for relative, features in features_by_file.items():
+                        path = root / "test" / relative
+                        self.assertTrue(
+                            tool.temporal_zoned_date_time_fixed_offset_path(path), relative
+                        )
+                        self.assertEqual(
+                            tool.temporal_zoned_date_time_fixed_offset_features(path),
+                            features,
+                        )
+                        self.assertFalse(
+                            tool.should_skip({"features": sorted(features)}, path), relative
+                        )
+                    for path in (future, outside):
+                        self.assertFalse(
+                            tool.temporal_zoned_date_time_fixed_offset_path(path)
+                        )
+                        self.assertEqual(
+                            tool.temporal_zoned_date_time_fixed_offset_features(path),
+                            frozenset(),
+                        )
+                    self.assertTrue(
+                        tool.should_skip({"features": ["Temporal"]}, future)
+                    )
                 finally:
                     tool.TEST262 = original_root
 
