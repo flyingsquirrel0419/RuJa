@@ -14154,6 +14154,10 @@ date-only annotated strings, cross-Realm behavior, and metadata descriptors.
 - 장점, 단점 및 영향: future sibling은 자동 허용되지 않고 exact 50/0/0, forced 50/5, fixed 253/13을 재현한다. 다른 Temporal constructors가 추가되면 blocker를 실측 후 이동해야 한다.
 ```
 
+Implementation commit `1490baa` is confirmed by ordinary CI `30875867855`
+(**3/3**) and full matrix `30875867994` (**58/58**), including the dedicated
+equals and updated fixed-offset jobs.
+
 ## Temporal.Instant.compare completion
 
 `tools/test262_temporal_instant_compare_admission.txt` freezes **29** exact

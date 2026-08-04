@@ -22,6 +22,11 @@
   - 다른 대안 대신 이 방식을 선택한 이유: argument 변환은 epoch 불일치에도 observable하며 public property 기반 비교는 hidden-slot 의미론을 깨뜨린다. helper 경계는 이후 IANA/calendar canonical equality를 한곳에서 확장하게 하고, parser flag는 Instant 문법의 required offset을 보존한다.
   - 장점, 단점 및 영향: cross-Realm brand/error, property-bag order, canonical UTC/offset spelling, date-only validity, allocation rollback과 exact 50/0/0이 검증된다. IANA alias와 non-ISO calendar equality는 해당 backend/type 도입 시 helper를 확장해야 한다.
 
+  Implementation commit `1490baa` is pushed. Ordinary CI `30875867855`
+  passes **3/3** jobs and full Test262 CI `30875867994` passes **58/58**,
+  including exact/forced **50/0/0**, **50/5/0-skip** equals and
+  **253/0/0**, **253/13/0-skip** fixed-offset gates.
+
 - Added ISO property-bag conversion to `Temporal.ZonedDateTime.from` for UTC
   and minute-precision fixed offsets. Calendar and field properties are read
   and coerced in specification order, getter results remain rooted across
