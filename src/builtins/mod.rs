@@ -6923,6 +6923,31 @@ fn temporal_zoned_date_time_slots(
     })
 }
 
+fn temporal_zoned_date_time_slots_if_present(
+    vm: &Vm,
+    value: &Value,
+) -> Option<(Arc<BigInt>, TemporalTimeZone, Arc<str>)> {
+    let Value::Object(index) = value else {
+        return None;
+    };
+    vm.heap.with_obj(index.0, |object| match object {
+        HeapObj::Temporal(TemporalData {
+            kind:
+                TemporalKind::ZonedDateTime {
+                    epoch_nanoseconds,
+                    time_zone,
+                    calendar_identifier,
+                },
+            ..
+        }) => Some((
+            epoch_nanoseconds.clone(),
+            time_zone.clone(),
+            calendar_identifier.clone(),
+        )),
+        _ => None,
+    })
+}
+
 fn create_temporal_zoned_date_time(
     vm: &mut Vm,
     epoch_nanoseconds: Arc<BigInt>,
@@ -7092,10 +7117,13 @@ fn temporal_zoned_date_time_from(
     _this: Option<Value>,
 ) -> error::Result<Value> {
     let item = args.first().unwrap_or(&Value::Undefined);
-    let (epoch_nanoseconds, time_zone, calendar_identifier) = if matches!(item, Value::Object(_)) {
-        let slots = temporal_zoned_date_time_slots(vm, Some(item.clone()))?;
+    let (epoch_nanoseconds, time_zone, calendar_identifier) = if let Some(slots) =
+        temporal_zoned_date_time_slots_if_present(vm, item)
+    {
         temporal_zoned_date_time_from_options(vm, args.get(1))?;
         slots
+    } else if matches!(item, Value::Object(_)) {
+        temporal_zoned_date_time_from_property_bag(vm, item, args.get(1))?
     } else {
         let Value::String(source) = item else {
             return Err(Error::type_err(
@@ -7105,8 +7133,8 @@ fn temporal_zoned_date_time_from(
         vm.consume_fuel_units(source.len().min(i64::MAX as usize) as i64)?;
         let parsed = temporal::parse_zoned_date_time_string(source)
             .ok_or_else(|| Error::range("Invalid Temporal.ZonedDateTime string"))?;
-        let offset_option = temporal_zoned_date_time_from_options(vm, args.get(1))?;
-        let epoch_nanoseconds = temporal::resolve_zoned_date_time_epoch(&parsed, offset_option)
+        let options = temporal_zoned_date_time_from_options(vm, args.get(1))?;
+        let epoch_nanoseconds = temporal::resolve_zoned_date_time_epoch(&parsed, options.offset)
             .ok_or_else(|| Error::range("Temporal.ZonedDateTime offset does not match"))?;
         if epoch_nanoseconds.abs() > temporal_instant_limit_nanoseconds() {
             return Err(Error::range(
@@ -7137,10 +7165,343 @@ fn temporal_zoned_date_time_from(
     )
 }
 
+#[derive(Clone, Copy)]
+enum TemporalOverflow {
+    Constrain,
+    Reject,
+}
+
+struct TemporalZonedDateTimeFromOptions {
+    offset: temporal::ZonedDateTimeOffsetOption,
+    overflow: TemporalOverflow,
+}
+
+struct TemporalZonedDateTimePropertyFields {
+    year: Option<BigInt>,
+    month: Option<BigInt>,
+    month_code: Option<(u8, bool)>,
+    day: Option<BigInt>,
+    hour: BigInt,
+    minute: BigInt,
+    second: BigInt,
+    millisecond: BigInt,
+    microsecond: BigInt,
+    nanosecond: BigInt,
+    offset_nanoseconds: Option<i128>,
+    time_zone: TemporalTimeZone,
+    calendar_identifier: Arc<str>,
+}
+
+fn temporal_with_rooted_value<T>(
+    vm: &mut Vm,
+    value: Value,
+    operation: impl FnOnce(&mut Vm, &Value) -> error::Result<T>,
+) -> error::Result<T> {
+    vm.try_reserve_value_roots(std::slice::from_ref(&value))?;
+    let pin_count = vm.pin(&value);
+    let result = operation(vm, &value);
+    vm.unpin_many(pin_count);
+    result
+}
+
+fn temporal_integer_with_truncation(vm: &mut Vm, value: Value) -> error::Result<BigInt> {
+    temporal_with_rooted_value(vm, value, |vm, value| {
+        let primitive = if matches!(value, Value::Object(_)) {
+            vm.to_primitive_number(value)?
+        } else {
+            value.clone()
+        };
+        if let Value::String(source) = &primitive {
+            vm.consume_fuel_units(source.len().min(i64::MAX as usize) as i64)?;
+        }
+        let number = vm.to_number(&primitive)?;
+        if !number.is_finite() {
+            return Err(Error::range("Temporal field must be a finite number"));
+        }
+        BigInt::from_f64(number.trunc())
+            .ok_or_else(|| Error::range("Temporal field is out of range"))
+    })
+}
+
+fn temporal_positive_integer_with_truncation(vm: &mut Vm, value: Value) -> error::Result<BigInt> {
+    let integer = temporal_integer_with_truncation(vm, value)?;
+    if integer <= BigInt::zero() {
+        return Err(Error::range("Temporal field must be positive"));
+    }
+    Ok(integer)
+}
+
+fn temporal_string_primitive(vm: &mut Vm, value: Value, field: &str) -> error::Result<Arc<str>> {
+    temporal_with_rooted_value(vm, value, |vm, value| {
+        let primitive = vm.to_primitive_hint(value, true)?;
+        let Value::String(source) = primitive else {
+            return Err(Error::type_err(format!(
+                "Temporal {field} must convert to a String"
+            )));
+        };
+        vm.consume_fuel_units(source.len().min(i64::MAX as usize) as i64)?;
+        Ok(source)
+    })
+}
+
+fn temporal_month_code(vm: &mut Vm, value: Value) -> error::Result<(u8, bool)> {
+    let source = temporal_string_primitive(vm, value, "monthCode")?;
+    let bytes = source.as_bytes();
+    let leap = bytes.len() == 4 && bytes[3] == b'L';
+    if !((bytes.len() == 3 || leap)
+        && bytes[0] == b'M'
+        && bytes[1].is_ascii_digit()
+        && bytes[2].is_ascii_digit())
+    {
+        return Err(Error::range("Invalid Temporal monthCode"));
+    }
+    Ok(((bytes[1] - b'0') * 10 + bytes[2] - b'0', leap))
+}
+
+fn temporal_calendar_from_value(vm: &mut Vm, value: Value) -> error::Result<Arc<str>> {
+    if value.is_undefined() {
+        return Ok(Arc::from("iso8601"));
+    }
+    if let Some((_, _, calendar)) = temporal_zoned_date_time_slots_if_present(vm, &value) {
+        return Ok(calendar);
+    }
+    let Value::String(source) = value else {
+        return Err(Error::type_err(
+            "Temporal calendar must be a String or Temporal object",
+        ));
+    };
+    vm.consume_fuel_units(source.len().min(i64::MAX as usize) as i64)?;
+    temporal::parse_calendar_identifier(&source)
+        .ok_or_else(|| Error::range("Invalid Temporal calendar identifier"))
+}
+
+fn temporal_time_zone_from_value(vm: &mut Vm, value: Value) -> error::Result<TemporalTimeZone> {
+    if let Some((_, time_zone, _)) = temporal_zoned_date_time_slots_if_present(vm, &value) {
+        return Ok(time_zone);
+    }
+    let Value::String(source) = value else {
+        return Err(Error::type_err(
+            "Temporal timeZone must be a String or ZonedDateTime",
+        ));
+    };
+    vm.consume_fuel_units(source.len().min(i64::MAX as usize) as i64)?;
+    let (identifier, offset_minutes) = temporal::parse_time_zone_identifier_like(&source)
+        .ok_or_else(|| Error::range("Invalid Temporal time zone identifier"))?;
+    Ok(TemporalTimeZone {
+        kind: if identifier.as_ref() == "UTC" {
+            TemporalTimeZoneKind::Utc
+        } else {
+            TemporalTimeZoneKind::FixedOffset(offset_minutes)
+        },
+        identifier,
+    })
+}
+
+fn temporal_zoned_date_time_property_fields(
+    vm: &mut Vm,
+    item: &Value,
+) -> error::Result<TemporalZonedDateTimePropertyFields> {
+    vm.try_reserve_value_roots(std::slice::from_ref(item))?;
+    let item_pins = vm.pin(item);
+    let result = (|| {
+        let calendar_value = vm.get_property(item, "calendar")?;
+        let calendar_identifier = temporal_calendar_from_value(vm, calendar_value)?;
+        let day = match vm.get_property(item, "day")? {
+            Value::Undefined => None,
+            value => Some(temporal_positive_integer_with_truncation(vm, value)?),
+        };
+        let numeric_or_zero = |vm: &mut Vm, name: &str| -> error::Result<BigInt> {
+            match vm.get_property(item, name)? {
+                Value::Undefined => Ok(BigInt::zero()),
+                value => temporal_integer_with_truncation(vm, value),
+            }
+        };
+        let hour = numeric_or_zero(vm, "hour")?;
+        let microsecond = numeric_or_zero(vm, "microsecond")?;
+        let millisecond = numeric_or_zero(vm, "millisecond")?;
+        let minute = numeric_or_zero(vm, "minute")?;
+        let month = match vm.get_property(item, "month")? {
+            Value::Undefined => None,
+            value => Some(temporal_positive_integer_with_truncation(vm, value)?),
+        };
+        let month_code = match vm.get_property(item, "monthCode")? {
+            Value::Undefined => None,
+            value => Some(temporal_month_code(vm, value)?),
+        };
+        let nanosecond = numeric_or_zero(vm, "nanosecond")?;
+        let offset_nanoseconds = match vm.get_property(item, "offset")? {
+            Value::Undefined => None,
+            value => {
+                let source = temporal_string_primitive(vm, value, "offset")?;
+                Some(
+                    temporal::parse_offset_string(&source)
+                        .ok_or_else(|| Error::range("Invalid Temporal offset string"))?,
+                )
+            }
+        };
+        let second = numeric_or_zero(vm, "second")?;
+        let time_zone_value = vm.get_property(item, "timeZone")?;
+        if time_zone_value.is_undefined() {
+            return Err(Error::type_err("Temporal property bag requires timeZone"));
+        }
+        let time_zone = temporal_time_zone_from_value(vm, time_zone_value)?;
+        let year = match vm.get_property(item, "year")? {
+            Value::Undefined => None,
+            value => Some(temporal_integer_with_truncation(vm, value)?),
+        };
+        Ok(TemporalZonedDateTimePropertyFields {
+            year,
+            month,
+            month_code,
+            day,
+            hour,
+            minute,
+            second,
+            millisecond,
+            microsecond,
+            nanosecond,
+            offset_nanoseconds,
+            time_zone,
+            calendar_identifier,
+        })
+    })();
+    vm.unpin_many(item_pins);
+    result
+}
+
+fn temporal_regulate_field(
+    value: BigInt,
+    maximum: i128,
+    overflow: TemporalOverflow,
+) -> error::Result<i128> {
+    let maximum = BigInt::from(maximum);
+    if value >= BigInt::zero() && value <= maximum {
+        return value
+            .to_i128()
+            .ok_or_else(|| Error::range("Temporal field is out of range"));
+    }
+    match overflow {
+        TemporalOverflow::Constrain if value < BigInt::zero() => Ok(0),
+        TemporalOverflow::Constrain => maximum
+            .to_i128()
+            .ok_or_else(|| Error::range("Temporal field is out of range")),
+        TemporalOverflow::Reject => Err(Error::range("Temporal field is out of range")),
+    }
+}
+
+fn temporal_zoned_date_time_from_property_bag(
+    vm: &mut Vm,
+    item: &Value,
+    options: Option<&Value>,
+) -> error::Result<(Arc<BigInt>, TemporalTimeZone, Arc<str>)> {
+    let fields = temporal_zoned_date_time_property_fields(vm, item)?;
+    let options = temporal_zoned_date_time_from_options(vm, options)?;
+
+    let year = fields
+        .year
+        .as_ref()
+        .ok_or_else(|| Error::type_err("Temporal property bag requires year"))?;
+    if fields.month.is_none() && fields.month_code.is_none() {
+        return Err(Error::type_err(
+            "Temporal property bag requires month or monthCode",
+        ));
+    }
+    let mut month = match (&fields.month, fields.month_code) {
+        (Some(month), _) => month.clone(),
+        (None, Some((month_code, _))) => BigInt::from(month_code),
+        (None, None) => unreachable!("month or monthCode was checked"),
+    };
+    let day = fields
+        .day
+        .as_ref()
+        .ok_or_else(|| Error::type_err("Temporal property bag requires day"))?;
+    let year = year
+        .to_i128()
+        .ok_or_else(|| Error::range("Temporal year is out of range"))?;
+    if let Some((month_code, leap)) = fields.month_code {
+        if leap || !(1..=12).contains(&month_code) {
+            return Err(Error::range("Invalid monthCode for ISO 8601 calendar"));
+        }
+        if fields.month.is_some() && month != BigInt::from(month_code) {
+            return Err(Error::range("month and monthCode do not agree"));
+        }
+        month = BigInt::from(month_code);
+    }
+    let month = match options.overflow {
+        TemporalOverflow::Constrain if month > BigInt::from(12) => BigInt::from(12),
+        TemporalOverflow::Constrain => month,
+        TemporalOverflow::Reject if month > BigInt::from(12) => {
+            return Err(Error::range("Temporal month is out of range"))
+        }
+        TemporalOverflow::Reject => month,
+    }
+    .to_i128()
+    .ok_or_else(|| Error::range("Temporal month is out of range"))?;
+    let maximum_day = temporal::days_in_month(year, month)
+        .ok_or_else(|| Error::range("Temporal month is out of range"))?;
+    let day = match options.overflow {
+        TemporalOverflow::Constrain if day > &BigInt::from(maximum_day) => maximum_day,
+        TemporalOverflow::Constrain => day
+            .to_i128()
+            .ok_or_else(|| Error::range("Temporal day is out of range"))?,
+        TemporalOverflow::Reject if day > &BigInt::from(maximum_day) => {
+            return Err(Error::range("Temporal day is out of range"))
+        }
+        TemporalOverflow::Reject => day
+            .to_i128()
+            .ok_or_else(|| Error::range("Temporal day is out of range"))?,
+    };
+    let hour = temporal_regulate_field(fields.hour, 23, options.overflow)?;
+    let minute = temporal_regulate_field(fields.minute, 59, options.overflow)?;
+    let second = temporal_regulate_field(fields.second, 59, options.overflow)?;
+    let millisecond = temporal_regulate_field(fields.millisecond, 999, options.overflow)?;
+    let microsecond = temporal_regulate_field(fields.microsecond, 999, options.overflow)?;
+    let nanosecond = temporal_regulate_field(fields.nanosecond, 999, options.overflow)?;
+    let local_nanoseconds =
+        temporal::iso_date_time_to_local_nanoseconds(temporal::IsoDateTimeFields {
+            year,
+            month,
+            day,
+            hour,
+            minute,
+            second,
+            millisecond,
+            microsecond,
+            nanosecond,
+        })
+        .ok_or_else(|| Error::range("Temporal date-time is out of range"))?;
+    let time_zone_offset_minutes = match &fields.time_zone.kind {
+        TemporalTimeZoneKind::Utc => 0,
+        TemporalTimeZoneKind::FixedOffset(minutes) => *minutes,
+        TemporalTimeZoneKind::Named(_) => {
+            return Err(Error::range("Named Temporal time zones are not available"))
+        }
+    };
+    let epoch_nanoseconds = temporal::resolve_fixed_offset_epoch(
+        local_nanoseconds,
+        fields.offset_nanoseconds,
+        false,
+        time_zone_offset_minutes,
+        options.offset,
+    )
+    .ok_or_else(|| Error::range("Temporal.ZonedDateTime offset does not match"))?;
+    let epoch_nanoseconds = BigInt::from(epoch_nanoseconds);
+    if epoch_nanoseconds.abs() > temporal_instant_limit_nanoseconds() {
+        return Err(Error::range(
+            "Temporal.ZonedDateTime epoch nanoseconds out of range",
+        ));
+    }
+    Ok((
+        Arc::new(epoch_nanoseconds),
+        fields.time_zone,
+        fields.calendar_identifier,
+    ))
+}
+
 fn temporal_zoned_date_time_from_options(
     vm: &mut Vm,
     options: Option<&Value>,
-) -> error::Result<temporal::ZonedDateTimeOffsetOption> {
+) -> error::Result<TemporalZonedDateTimeFromOptions> {
     let options = options.cloned().unwrap_or(Value::Undefined);
     if !matches!(options, Value::Undefined | Value::Object(_)) {
         return Err(Error::type_err(
@@ -7177,14 +7538,15 @@ fn temporal_zoned_date_time_from_options(
             "use" => temporal::ZonedDateTimeOffsetOption::Use,
             _ => return Err(Error::range("Invalid Temporal offset option")),
         };
-        match get_option(vm, "overflow")?
+        let overflow = match get_option(vm, "overflow")?
             .as_deref()
             .unwrap_or("constrain")
         {
-            "constrain" | "reject" => {}
+            "constrain" => TemporalOverflow::Constrain,
+            "reject" => TemporalOverflow::Reject,
             _ => return Err(Error::range("Invalid Temporal overflow option")),
-        }
-        Ok(offset)
+        };
+        Ok(TemporalZonedDateTimeFromOptions { offset, overflow })
     })();
     vm.unpin_many(pin_count);
     result

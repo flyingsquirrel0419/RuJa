@@ -424,28 +424,56 @@ pub(crate) enum ZonedDateTimeOffsetOption {
     Use,
 }
 
-pub(crate) fn resolve_zoned_date_time_epoch(
-    parsed: &ParsedZonedDateTime,
+pub(crate) struct IsoDateTimeFields {
+    pub year: i128,
+    pub month: i128,
+    pub day: i128,
+    pub hour: i128,
+    pub minute: i128,
+    pub second: i128,
+    pub millisecond: i128,
+    pub microsecond: i128,
+    pub nanosecond: i128,
+}
+
+pub(crate) fn iso_date_time_to_local_nanoseconds(fields: IsoDateTimeFields) -> Option<i128> {
+    let days = days_from_civil(fields.year, fields.month, fields.day)?;
+    let seconds = days
+        .checked_mul(SECONDS_PER_DAY)?
+        .checked_add(fields.hour.checked_mul(3_600)?)?
+        .checked_add(fields.minute.checked_mul(60)?)?
+        .checked_add(fields.second)?;
+    seconds
+        .checked_mul(NS_PER_SECOND)?
+        .checked_add(fields.millisecond.checked_mul(1_000_000)?)?
+        .checked_add(fields.microsecond.checked_mul(1_000)?)?
+        .checked_add(fields.nanosecond)
+}
+
+pub(crate) fn resolve_fixed_offset_epoch(
+    local_nanoseconds: i128,
+    source_offset_nanoseconds: Option<i128>,
+    has_utc_designator: bool,
+    time_zone_offset_minutes: i16,
     offset_option: ZonedDateTimeOffsetOption,
-) -> Option<BigInt> {
-    if parsed.z {
-        return Some(BigInt::from(parsed.local_nanoseconds));
+) -> Option<i128> {
+    if has_utc_designator {
+        return Some(local_nanoseconds);
     }
-    let annotation_offset = i128::from(parsed.offset_minutes) * 60 * NS_PER_SECOND;
-    if parsed.source_offset_nanoseconds.is_some()
+    let annotation_offset = i128::from(time_zone_offset_minutes) * 60 * NS_PER_SECOND;
+    if source_offset_nanoseconds.is_some()
         && matches!(
             offset_option,
             ZonedDateTimeOffsetOption::Prefer | ZonedDateTimeOffsetOption::Reject
         )
-        && parsed
-            .local_nanoseconds
+        && local_nanoseconds
             .div_euclid(SECONDS_PER_DAY * NS_PER_SECOND)
             .unsigned_abs()
             > 100_000_000
     {
         return None;
     }
-    let selected_offset = match (parsed.source_offset_nanoseconds, offset_option) {
+    let selected_offset = match (source_offset_nanoseconds, offset_option) {
         (None, _) | (_, ZonedDateTimeOffsetOption::Ignore) => annotation_offset,
         (Some(source), ZonedDateTimeOffsetOption::Use) => source,
         (Some(source), ZonedDateTimeOffsetOption::Prefer) => {
@@ -462,9 +490,21 @@ pub(crate) fn resolve_zoned_date_time_epoch(
             source
         }
     };
-    Some(BigInt::from(
-        parsed.local_nanoseconds.checked_sub(selected_offset)?,
-    ))
+    local_nanoseconds.checked_sub(selected_offset)
+}
+
+pub(crate) fn resolve_zoned_date_time_epoch(
+    parsed: &ParsedZonedDateTime,
+    offset_option: ZonedDateTimeOffsetOption,
+) -> Option<BigInt> {
+    resolve_fixed_offset_epoch(
+        parsed.local_nanoseconds,
+        parsed.source_offset_nanoseconds,
+        parsed.z,
+        parsed.offset_minutes,
+        offset_option,
+    )
+    .map(BigInt::from)
 }
 
 fn minute_precision_offset(source: &[u8]) -> Option<i128> {
@@ -476,6 +516,19 @@ fn minute_precision_offset(source: &[u8]) -> Option<i128> {
         .then_some(offset)
 }
 
+fn minute_offset_identifier(offset_nanoseconds: i128) -> Option<(Arc<str>, i16)> {
+    if offset_nanoseconds % (60 * NS_PER_SECOND) != 0 {
+        return None;
+    }
+    let offset_minutes = i16::try_from(offset_nanoseconds / (60 * NS_PER_SECOND)).ok()?;
+    let sign = if offset_minutes < 0 { '-' } else { '+' };
+    let magnitude = offset_minutes.unsigned_abs();
+    Some((
+        Arc::from(format!("{sign}{:02}:{:02}", magnitude / 60, magnitude % 60)),
+        offset_minutes,
+    ))
+}
+
 pub(crate) fn parse_time_zone_identifier(source: &str) -> Option<(Arc<str>, i16)> {
     if source.eq_ignore_ascii_case("UTC") {
         return Some((Arc::from("UTC"), 0));
@@ -484,14 +537,7 @@ pub(crate) fn parse_time_zone_identifier(source: &str) -> Option<(Arc<str>, i16)
     if !matches!(bytes.first(), Some(b'+') | Some(b'-')) {
         return None;
     }
-    let offset = minute_precision_offset(bytes)?;
-    let offset_minutes = i16::try_from(offset / (60 * NS_PER_SECOND)).ok()?;
-    let sign = if offset_minutes < 0 { '-' } else { '+' };
-    let magnitude = offset_minutes.unsigned_abs();
-    Some((
-        Arc::from(format!("{sign}{:02}:{:02}", magnitude / 60, magnitude % 60)),
-        offset_minutes,
-    ))
+    minute_offset_identifier(minute_precision_offset(bytes)?)
 }
 
 fn resolve_time_zone_syntax(
@@ -664,6 +710,46 @@ pub(crate) fn parse_time_zone_offset(source: &str) -> Option<i128> {
         }
     }
     parse_time_zone_from_time(source).or_else(|| parse_time_zone_from_annotated_date(source))
+}
+
+pub(crate) fn parse_time_zone_identifier_like(source: &str) -> Option<(Arc<str>, i16)> {
+    if let Some(identifier) = parse_time_zone_identifier(source) {
+        return Some(identifier);
+    }
+    if let Some(parsed) = parse_date_time(source) {
+        if let Some(annotation) = parsed.time_zone_annotation {
+            return parse_time_zone_identifier(std::str::from_utf8(annotation).ok()?);
+        }
+        if parsed.z {
+            return Some((Arc::from("UTC"), 0));
+        }
+        if !parsed.offset_has_sub_minute_syntax {
+            return minute_offset_identifier(parsed.offset_nanoseconds?);
+        }
+        return None;
+    }
+    minute_offset_identifier(
+        parse_time_zone_from_time(source)
+            .or_else(|| parse_time_zone_from_annotated_date(source))?,
+    )
+}
+
+pub(crate) fn parse_offset_string(source: &str) -> Option<i128> {
+    let mut index = 0;
+    let offset = parse_offset_nanoseconds(source.as_bytes(), &mut index)?;
+    (index == source.len()).then_some(offset)
+}
+
+pub(crate) fn parse_calendar_identifier(source: &str) -> Option<Arc<str>> {
+    if source.eq_ignore_ascii_case("iso8601") {
+        return Some(Arc::from("iso8601"));
+    }
+    let bytes = source.as_bytes();
+    let valid_iso_syntax = parse_date_time(source).is_some()
+        || parse_annotated_full_date(bytes).is_some()
+        || parse_annotated_year_month(bytes).is_some()
+        || parse_annotated_month_day(bytes).is_some();
+    valid_iso_syntax.then(|| zoned_date_time_calendar_identifier(source))?
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -982,7 +1068,8 @@ pub(crate) fn format_zoned_date_time(
 #[cfg(test)]
 mod tests {
     use super::{
-        format_instant, parse_instant_string, parse_time_zone_identifier, parse_time_zone_offset,
+        format_instant, parse_calendar_identifier, parse_instant_string, parse_offset_string,
+        parse_time_zone_identifier, parse_time_zone_identifier_like, parse_time_zone_offset,
         parse_zoned_date_time_string, resolve_zoned_date_time_epoch, InstantPrecision,
         InstantRoundingMode, ZonedDateTimeOffsetOption,
     };
@@ -1158,6 +1245,52 @@ mod tests {
         ] {
             assert!(parse_time_zone_identifier(source).is_none(), "{source}");
         }
+    }
+
+    #[test]
+    fn parses_property_bag_calendar_time_zone_and_offset_strings() {
+        for source in [
+            "iso8601",
+            "ISO8601",
+            "2020-01-01",
+            "2020-01-01T00:00[u-ca=iso8601]",
+            "2020-01",
+            "01-01",
+        ] {
+            assert_eq!(
+                parse_calendar_identifier(source).as_deref(),
+                Some("iso8601"),
+                "{source}"
+            );
+        }
+        for source in ["gregory", "2020-01-01[u-ca=gregory]", "invalid"] {
+            assert!(parse_calendar_identifier(source).is_none(), "{source}");
+        }
+
+        for (source, identifier, minutes) in [
+            ("2021-08-19T17:30Z", "UTC", 0),
+            ("2021-08-19T17:30-07:00", "-07:00", -420),
+            ("2021-08-19T17:30-07:00[UTC]", "UTC", 0),
+            ("+0130", "+01:30", 90),
+        ] {
+            let (actual_identifier, actual_minutes) =
+                parse_time_zone_identifier_like(source).expect("time zone should parse");
+            assert_eq!(actual_identifier.as_ref(), identifier, "{source}");
+            assert_eq!(actual_minutes, minutes, "{source}");
+        }
+        for source in ["2021-08-19T17:30", "2021-08-19T17:30-07:00:00"] {
+            assert!(
+                parse_time_zone_identifier_like(source).is_none(),
+                "{source}"
+            );
+        }
+
+        assert_eq!(
+            parse_offset_string("+01:02:03.004005006"),
+            Some(3_723_004_005_006)
+        );
+        assert_eq!(parse_offset_string("-00:00"), Some(0));
+        assert!(parse_offset_string("+01:00junk").is_none());
     }
 
     #[test]

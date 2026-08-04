@@ -4,6 +4,23 @@
 
 ### Changed
 
+- Added ISO property-bag conversion to `Temporal.ZonedDateTime.from` for UTC
+  and minute-precision fixed offsets. Calendar and field properties are read
+  and coerced in specification order, getter results remain rooted across
+  JavaScript re-entry, options precede algorithmic validation, and arbitrary
+  finite numeric fields retain mathematical-integer precision until overflow
+  regulation. The exact fixed-offset Test262 boundary grows from 208 to 243
+  passing files; the forced 266-file surface is **243 pass / 23 fail / 0
+  skip**.
+
+  [Decision Log]
+  - 목적과 의도: ZonedDateTime `from`의 ordinary object 입력을 observable order와 exact fixed-offset 의미론을 보존하는 ISO property bag으로 변환한다.
+  - 기존 구현 및 제약 조건: 모든 object를 branded ZonedDateTime으로 간주해 ordinary bag을 TypeError로 거부했고, options helper는 overflow 결과를 버렸다. deterministic tzdb와 다른 Temporal constructors는 아직 없다.
+  - 검토한 주요 대안: property를 한꺼번에 수집한 뒤 coercion, f64/i128 조기 축소, host timezone API, fixed-offset 전용 PrepareCalendarFields 경로를 검토했다.
+  - 선택한 방식: calendar 후 lexicographic field 순서로 Get과 coercion을 즉시 수행하고, options 세 개를 읽은 뒤 ISO required/range validation을 한다. finite Number는 BigInt mathematical integer로 보존하고 UTC/fixed offset만 exact nanoseconds로 해석한다.
+  - 다른 대안 대신 이 방식을 선택한 이유: getter/coercion은 사용자 JavaScript를 재진입하므로 순서와 GC root가 observable하다. i128 조기 축소는 options-before-validation을 깨뜨리고 host timezone은 native/WASM 결정성을 잃는다.
+  - 장점, 단점 및 영향: property order, string/number primitive hints, monthCode, overflow, offset mismatch, Realm allocation, fuel과 35개 신규 Test262 경로가 검증된다. named IANA/DST, equals/toPlainDateTime/Duration 의존 23개는 정확한 blocker로 남는다.
+
 - Expanded Realm-local `%Temporal.ZonedDateTime%` with its complete ISO
   fixed-offset civil accessor set, static `from` for branded values and
   fixed-offset strings, `toInstant`, option-aware `toString`, `toJSON`,

@@ -119,6 +119,28 @@ integers, so the exhaustive GC match has no additional heap edge.
 - 장점, 단점 및 영향: Realm/GC/rollback/fuel, cross-Realm ToTemporalInstant, ISO civil accessors와 fixed-offset formatting이 명시적으로 고정된다. named branch는 storage contract만 제공하며 transition backend 전에는 실행되지 않는다. 새 Realm registry를 추가할 때 fields, initialization, root collection, rollback, default-prototype mapping, inventory test를 함께 갱신해야 한다.
 ```
 
+`Temporal.ZonedDateTime.from` separates branded cloning, String parsing, and
+ordinary property-bag conversion before allocating in the native method Realm.
+Property bags read `calendar`, then the calendar/non-calendar fields in
+code-unit order, coercing each value immediately while its getter result is
+pinned. The VM reads `disambiguation`, `offset`, and `overflow` only after field
+preparation and before required-field or range validation. Finite numeric
+fields become `BigInt` mathematical integers so very large values survive to
+the observable options boundary; ISO regulation then narrows only bounded
+year/date/time values. The pure Temporal module owns syntax and fixed-offset
+nanosecond arithmetic, while the VM layer owns Get, ToPrimitive/ToNumber,
+fuel, GC, errors, options, and Realm allocation.
+
+```text
+[Decision Log]
+- 목적과 의도: property bag의 observable JavaScript 단계와 VM-free ISO/fixed-offset 계산 단계를 분리한다.
+- 기존 구현 및 제약 조건: branded clone과 String parsing만 존재했고 object getter/coercion 순서, overflow 결과, ephemeral getter root가 구현되지 않았다. named time-zone transition backend는 없다.
+- 검토한 주요 대안: generic map 수집 후 변환, f64 또는 i128 field storage, host timezone, VM layer 안에서 전체 calendar arithmetic 수행을 검토했다.
+- 선택한 방식: Get 직후 coercion과 root/fuel 처리를 VM layer가 담당하고 arbitrary finite integer는 BigInt로 보존한다. options 이후 ISO regulation과 exact local-minus-offset 계산만 pure helper에 위임한다.
+- 다른 대안 대신 이 방식을 선택한 이유: field/options 순서는 observable하며 조기 range 축소는 잘못된 예외 순서를 만든다. pure fixed-offset 계산은 host 상태 없이 native/WASM에서 동일하다.
+- 장점, 단점 및 영향: Proxy/getter/ToPrimitive 재진입, required-field error order, constrain/reject, exact offset options가 한 경계에서 검증된다. named IANA branch는 deterministic tzdb가 추가될 때 disambiguation 결과까지 확장해야 한다.
+```
+
 ## Compiler temporary storage
 
 Compiler-generated carriers for destructuring sources, iterator state,

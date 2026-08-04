@@ -27,6 +27,14 @@ _BIGINT_FILES = frozenset(
     }
 )
 
+_ARROW_FUNCTION_FILES = frozenset(
+    {
+        "built-ins/Temporal/ZonedDateTime/from/argument-propertybag-calendar-year-zero.js",
+        "built-ins/Temporal/ZonedDateTime/from/argument-propertybag-timezone-string-year-zero.js",
+        "built-ins/Temporal/ZonedDateTime/from/year-zero.js",
+    }
+)
+
 
 def _features(path):
     features = {"Temporal"}
@@ -42,7 +50,7 @@ def _features(path):
         features.add("Symbol")
     if name == "not-a-constructor.js":
         features.add("Reflect.construct")
-    if path.endswith("/from/year-zero.js"):
+    if path in _ARROW_FUNCTION_FILES:
         features.add("arrow-function")
     return frozenset(features)
 
@@ -51,7 +59,7 @@ TEMPORAL_ZONED_DATE_TIME_FIXED_OFFSET_FEATURES = {
     path: _features(path) for path in TEMPORAL_ZONED_DATE_TIME_FIXED_OFFSET_FILES
 }
 
-if len(TEMPORAL_ZONED_DATE_TIME_FIXED_OFFSET_FILES) != 208:
+if len(TEMPORAL_ZONED_DATE_TIME_FIXED_OFFSET_FILES) != 243:
     raise RuntimeError(
-        "Temporal.ZonedDateTime fixed-offset admission must contain 208 files"
+        "Temporal.ZonedDateTime fixed-offset admission must contain 243 files"
     )

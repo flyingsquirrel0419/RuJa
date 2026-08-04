@@ -3430,14 +3430,21 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
             ).read_text().splitlines()
             if (line := raw_line.strip()) and not line.startswith("#")
         }
-        self.assertEqual(len(files), 208)
-        self.assertEqual(len(blockers), 58)
+        self.assertEqual(len(files), 243)
+        self.assertEqual(len(blockers), 23)
         self.assertEqual(set(features_by_file), set(files))
         self.assertTrue(files.isdisjoint(blockers))
         self.assertTrue(files.isdisjoint(TEMPORAL_ZONED_DATE_TIME_CORE_FILES))
 
         compare_helpers = {
+            "built-ins/Temporal/ZonedDateTime/from/disambiguation-wrong-type.js",
+            "built-ins/Temporal/ZonedDateTime/from/infinity-throws-rangeerror.js",
+            "built-ins/Temporal/ZonedDateTime/from/observable-get-overflow-argument-primitive.js",
             "built-ins/Temporal/ZonedDateTime/from/observable-get-overflow-argument-string-invalid.js",
+            "built-ins/Temporal/ZonedDateTime/from/offset-wrong-type.js",
+            "built-ins/Temporal/ZonedDateTime/from/options-read-before-algorithmic-validation.js",
+            "built-ins/Temporal/ZonedDateTime/from/order-of-operations.js",
+            "built-ins/Temporal/ZonedDateTime/from/overflow-wrong-type.js",
             "built-ins/Temporal/ZonedDateTime/prototype/toString/calendarname-wrong-type.js",
             "built-ins/Temporal/ZonedDateTime/prototype/toString/fractionalseconddigits-wrong-type.js",
             "built-ins/Temporal/ZonedDateTime/prototype/toString/offset-wrong-type.js",

@@ -25250,6 +25250,92 @@ fn temporal_zoned_date_time_fixed_offset_conversion_and_formatting() {
 }
 
 #[test]
+fn temporal_zoned_date_time_from_prepares_iso_property_bags_observably() {
+    assert_eq!(
+        run(r#"
+            var reads = [];
+            var item = {
+              get calendar() { reads.push('calendar'); return 'ISO8601'; },
+              get day() { reads.push('day'); return { valueOf: function () { return 18; } }; },
+              get hour() { reads.push('hour'); return 16; },
+              get microsecond() { reads.push('microsecond'); return 456; },
+              get millisecond() { reads.push('millisecond'); return 123; },
+              get minute() { reads.push('minute'); return 53; },
+              get month() { reads.push('month'); return 11; },
+              get monthCode() { reads.push('monthCode'); return { toString: function () { return 'M11'; } }; },
+              get nanosecond() { reads.push('nanosecond'); return 789; },
+              get offset() { reads.push('offset'); return '+01:30'; },
+              get second() { reads.push('second'); return 30; },
+              get timeZone() { reads.push('timeZone'); return '+01:30'; },
+              get year() { reads.push('year'); return 1976; }
+            };
+            var options = {
+              get disambiguation() { reads.push('disambiguation'); return 'compatible'; },
+              get offset() { reads.push('offsetOption'); return 'reject'; },
+              get overflow() { reads.push('overflow'); return 'reject'; }
+            };
+            var result = Temporal.ZonedDateTime.from(item, options);
+            [
+              result.epochNanoseconds,
+              result.timeZoneId,
+              result.calendarId,
+              reads.join(',')
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "217178610123456789|+01:30|iso8601|calendar,day,hour,microsecond,millisecond,minute,month,monthCode,nanosecond,offset,second,timeZone,year,disambiguation,offsetOption,overflow"
+        ))
+    );
+
+    assert_eq!(
+        run(r#"
+            var zone = new Temporal.ZonedDateTime(0n, '+01:00');
+            var constrained = Temporal.ZonedDateTime.from({
+              year: 2019, month: 1, day: 32, timeZone: zone
+            });
+            var preferred = Temporal.ZonedDateTime.from({
+              year: 1970, month: 1, day: 1,
+              offset: '-04:15', timeZone: '+01:00'
+            }, { offset: 'prefer' });
+            [constrained.day, constrained.timeZoneId, preferred.epochNanoseconds].join('|');
+        "#),
+        Value::String(Arc::from("31|+01:00|-3600000000000"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var reads = [];
+            try {
+              Temporal.ZonedDateTime.from({
+                year: Number.MAX_VALUE, month: 1, day: 1, timeZone: 'UTC'
+              }, {
+                get disambiguation() { reads.push('disambiguation'); return 'compatible'; },
+                get offset() { reads.push('offset'); return 'reject'; },
+                get overflow() { reads.push('overflow'); return 'reject'; }
+              });
+            } catch (error) {
+              reads.push(error.name);
+            }
+            reads.join(',');
+        "#),
+        Value::String(Arc::from("disambiguation,offset,overflow,RangeError"))
+    );
+
+    assert_eq!(
+        run(r#"
+            try {
+              Temporal.ZonedDateTime.from({
+                year: Number.MAX_VALUE, day: 1, timeZone: 'UTC'
+              });
+            } catch (error) {
+              error.name;
+            }
+        "#),
+        Value::String(Arc::from("TypeError"))
+    );
+}
+
+#[test]
 fn temporal_zoned_date_time_methods_use_their_function_realm() {
     assert_eq!(
         run(r#"
