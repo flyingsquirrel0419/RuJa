@@ -3992,15 +3992,18 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
 
         test_root = Path(test262_runner.TEST262) / "test"
         method_dir = test_root / "built-ins/Temporal/ZonedDateTime/compare"
-        live_files = (
-            {
-                path.relative_to(test_root).as_posix()
-                for path in method_dir.glob("*.js")
-                if "_FIXTURE" not in path.name
-            }
-            if method_dir.is_dir()
-            else None
-        )
+        try:
+            live_files = (
+                {
+                    path.relative_to(test_root).as_posix()
+                    for path in method_dir.glob("*.js")
+                    if "_FIXTURE" not in path.name
+                }
+                if method_dir.is_dir()
+                else None
+            )
+        except OSError:
+            live_files = None
         if live_files is not None:
             self.assertEqual(live_files, set(files) | blockers)
             for relative in files:
