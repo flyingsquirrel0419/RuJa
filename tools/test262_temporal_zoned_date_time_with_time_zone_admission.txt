@@ -5,6 +5,7 @@ built-ins/Temporal/ZonedDateTime/prototype/withTimeZone/length.js
 built-ins/Temporal/ZonedDateTime/prototype/withTimeZone/name.js
 built-ins/Temporal/ZonedDateTime/prototype/withTimeZone/not-a-constructor.js
 built-ins/Temporal/ZonedDateTime/prototype/withTimeZone/prop-desc.js
+built-ins/Temporal/ZonedDateTime/prototype/withTimeZone/preserves-instant.js
 built-ins/Temporal/ZonedDateTime/prototype/withTimeZone/subclassing-ignored.js
 built-ins/Temporal/ZonedDateTime/prototype/withTimeZone/timezone-case-insensitive.js
 built-ins/Temporal/ZonedDateTime/prototype/withTimeZone/timezone-string-datetime.js

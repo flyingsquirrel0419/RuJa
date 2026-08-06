@@ -136,6 +136,10 @@ from test262_temporal_zoned_date_time_start_of_day_admission import (
     TEMPORAL_ZONED_DATE_TIME_START_OF_DAY_FEATURES,
     TEMPORAL_ZONED_DATE_TIME_START_OF_DAY_FILES,
 )
+from test262_temporal_zoned_date_time_to_plain_date_time_admission import (
+    TEMPORAL_ZONED_DATE_TIME_TO_PLAIN_DATE_TIME_FEATURES,
+    TEMPORAL_ZONED_DATE_TIME_TO_PLAIN_DATE_TIME_FILES,
+)
 from test262_temporal_duration_core_admission import (
     TEMPORAL_DURATION_CORE_FEATURES,
     TEMPORAL_DURATION_CORE_FILES,
@@ -3456,8 +3460,8 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
             ).read_text().splitlines()
             if (line := raw_line.strip()) and not line.startswith("#")
         }
-        self.assertEqual(len(files), 255)
-        self.assertEqual(len(blockers), 11)
+        self.assertEqual(len(files), 259)
+        self.assertEqual(len(blockers), 7)
         self.assertEqual(set(features_by_file), set(files))
         self.assertTrue(files.isdisjoint(blockers))
         self.assertTrue(files.isdisjoint(TEMPORAL_ZONED_DATE_TIME_CORE_FILES))
@@ -3481,15 +3485,19 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
             "built-ins/Temporal/ZonedDateTime/prototype/toString/timezonename-wrong-type.js",
         }
         temporal_helpers = {
+            "built-ins/Temporal/ZonedDateTime/from/argument-object.js",
             "built-ins/Temporal/ZonedDateTime/from/argument-propertybag-function-object.js",
             "built-ins/Temporal/ZonedDateTime/from/argument-propertybag-ignores-incorrect-properties.js",
             "built-ins/Temporal/ZonedDateTime/from/argument-propertybag-monthcode-month.js",
+            "built-ins/Temporal/ZonedDateTime/from/argument-string.js",
             "built-ins/Temporal/ZonedDateTime/from/argument-string-basic-and-extended-format.js",
             "built-ins/Temporal/ZonedDateTime/from/argument-string-decimal-places.js",
             "built-ins/Temporal/ZonedDateTime/from/argument-string-negative-extended-year.js",
             "built-ins/Temporal/ZonedDateTime/from/argument-string-optional-parts.js",
             "built-ins/Temporal/ZonedDateTime/from/argument-string-variant-decimal-separator.js",
             "built-ins/Temporal/ZonedDateTime/from/overflow-options.js",
+            "built-ins/Temporal/ZonedDateTime/from/roundtrip-from-property-bag.js",
+            "built-ins/Temporal/ZonedDateTime/from/roundtrip-from-string.js",
             "built-ins/Temporal/ZonedDateTime/from/subclassing-ignored.js",
             "built-ins/Temporal/ZonedDateTime/prototype/toInstant/recent-date.js",
             "built-ins/Temporal/ZonedDateTime/prototype/toInstant/year-less-than-1.js",
@@ -3742,17 +3750,8 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
     def test_temporal_zoned_date_time_with_time_zone_manifest_is_exact_live_disjoint_and_shared(self):
         files = TEMPORAL_ZONED_DATE_TIME_WITH_TIME_ZONE_FILES
         features_by_file = TEMPORAL_ZONED_DATE_TIME_WITH_TIME_ZONE_FEATURES
-        blockers = {
-            line
-            for raw_line in Path(__file__).with_name(
-                "test262_temporal_zoned_date_time_with_time_zone_blockers.txt"
-            ).read_text().splitlines()
-            if (line := raw_line.strip()) and not line.startswith("#")
-        }
-        self.assertEqual(len(files), 15)
-        self.assertEqual(len(blockers), 1)
+        self.assertEqual(len(files), 16)
         self.assertEqual(set(features_by_file), set(files))
-        self.assertTrue(files.isdisjoint(blockers))
 
         test_root = Path(test262_runner.TEST262) / "test"
         method_dir = test_root / "built-ins/Temporal/ZonedDateTime/prototype/withTimeZone"
@@ -3769,7 +3768,7 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
         except OSError:
             live_files = None
         if live_files is not None:
-            self.assertEqual(live_files, set(files) | blockers)
+            self.assertEqual(live_files, set(files))
             for relative in files:
                 path = test_root / relative
                 metadata = test262_runner.parse_meta(path.read_text())
@@ -3782,7 +3781,7 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                     includes = ["propertyHelper.js"]
                 elif path.name == "not-a-constructor.js":
                     includes = ["isConstructor.js"]
-                elif path.name == "subclassing-ignored.js":
+                elif path.name in {"preserves-instant.js", "subclassing-ignored.js"}:
                     includes = ["temporalHelpers.js"]
                 else:
                     includes = []
@@ -3799,13 +3798,6 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                         features_by_file[relative],
                     )
                     self.assertFalse(tool.should_skip(metadata, path), relative)
-            for relative in blockers:
-                path = test_root / relative
-                metadata = test262_runner.parse_meta(path.read_text())
-                self.assertIn("Temporal", metadata.get("features", []), relative)
-                for tool in (test262_runner, test262_analyze):
-                    self.assertTrue(tool.should_skip(metadata, path), relative)
-
         tools_dir = Path(__file__).resolve().parent
         for manifest in tools_dir.glob("test262_*_admission.txt"):
             if (
@@ -4073,6 +4065,120 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                         )
                         self.assertEqual(
                             tool.temporal_zoned_date_time_start_of_day_features(path),
+                            frozenset(),
+                        )
+                        self.assertTrue(tool.should_skip({"features": ["Temporal"]}, path))
+                finally:
+                    tool.TEST262 = original_root
+
+    def test_temporal_zoned_date_time_to_plain_date_time_manifest_is_exact_live_disjoint_and_shared(self):
+        files = TEMPORAL_ZONED_DATE_TIME_TO_PLAIN_DATE_TIME_FILES
+        features_by_file = TEMPORAL_ZONED_DATE_TIME_TO_PLAIN_DATE_TIME_FEATURES
+        self.assertEqual(len(files), 10)
+        self.assertEqual(set(features_by_file), set(files))
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        method_dir = (
+            test_root
+            / "built-ins/Temporal/ZonedDateTime/prototype/toPlainDateTime"
+        )
+        try:
+            live_files = (
+                {
+                    path.relative_to(test_root).as_posix()
+                    for path in method_dir.glob("*.js")
+                    if "_FIXTURE" not in path.name
+                }
+                if method_dir.is_dir()
+                else None
+            )
+        except OSError:
+            live_files = None
+        if live_files is not None:
+            self.assertEqual(live_files, set(files))
+            temporal_helpers = {
+                "balance-negative-time-units.js",
+                "basic.js",
+                "limits.js",
+                "negative-epochnanoseconds.js",
+            }
+            for relative in files:
+                path = test_root / relative
+                metadata = test262_runner.parse_meta(path.read_text())
+                self.assertEqual(
+                    frozenset(metadata.get("features", [])),
+                    features_by_file[relative],
+                    relative,
+                )
+                if path.name in {"length.js", "name.js", "prop-desc.js"}:
+                    includes = ["propertyHelper.js"]
+                elif path.name == "not-a-constructor.js":
+                    includes = ["isConstructor.js"]
+                elif path.name in temporal_helpers:
+                    includes = ["temporalHelpers.js"]
+                else:
+                    includes = []
+                self.assertEqual(metadata.get("includes", []), includes, relative)
+                self.assertEqual(metadata.get("flags", []), [], relative)
+                self.assertIsNone(metadata.get("negative"), relative)
+                for tool in (test262_runner, test262_analyze):
+                    self.assertTrue(
+                        tool.temporal_zoned_date_time_to_plain_date_time_path(path),
+                        relative,
+                    )
+                    self.assertEqual(
+                        tool.temporal_zoned_date_time_to_plain_date_time_features(path),
+                        features_by_file[relative],
+                    )
+                    self.assertFalse(tool.should_skip(metadata, path), relative)
+
+        tools_dir = Path(__file__).resolve().parent
+        for manifest in tools_dir.glob("test262_*_admission.txt"):
+            if (
+                manifest.name
+                == "test262_temporal_zoned_date_time_to_plain_date_time_admission.txt"
+            ):
+                continue
+            existing = {
+                line
+                for raw_line in manifest.read_text().splitlines()
+                if (line := raw_line.strip()) and not line.startswith("#")
+            }
+            self.assertTrue(files.isdisjoint(existing), manifest.name)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            future = (
+                root
+                / "test/built-ins/Temporal/ZonedDateTime/prototype/toPlainDateTime/future.js"
+            )
+            outside = (
+                root
+                / "test/built-ins/Other/prototype/toPlainDateTime/basic.js"
+            )
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for relative, features in features_by_file.items():
+                        path = root / "test" / relative
+                        self.assertTrue(
+                            tool.temporal_zoned_date_time_to_plain_date_time_path(path),
+                            relative,
+                        )
+                        self.assertEqual(
+                            tool.temporal_zoned_date_time_to_plain_date_time_features(path),
+                            features,
+                        )
+                        self.assertFalse(
+                            tool.should_skip({"features": sorted(features)}, path)
+                        )
+                    for path in (future, outside):
+                        self.assertFalse(
+                            tool.temporal_zoned_date_time_to_plain_date_time_path(path)
+                        )
+                        self.assertEqual(
+                            tool.temporal_zoned_date_time_to_plain_date_time_features(path),
                             frozenset(),
                         )
                         self.assertTrue(tool.should_skip({"features": ["Temporal"]}, path))

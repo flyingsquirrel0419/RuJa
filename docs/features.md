@@ -50,10 +50,11 @@
   instant-preserving `withTimeZone`,
   instant/time-zone-preserving `withCalendar`,
   local-date `startOfDay` for UTC/fixed offsets,
+  hidden-slot local PlainDateTime conversion,
   option-aware `toString`, `toJSON`, and `valueOf`. ZonedDateTime strings may omit time when followed directly by a
   time-zone annotation. Property-bag
   conversion currently accepts ISO calendars with UTC or minute-precision
-  fixed offsets. PlainDateTime conversion/arithmetic/string methods, Duration
+  fixed offsets. Remaining PlainDateTime conversion/arithmetic/string methods, Duration
   conversion/arithmetic, calendar types, named IANA timezone
   transitions, the remaining RFC 9557 grammar, and `Temporal.Now` methods
   remain outside the supported boundary.

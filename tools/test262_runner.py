@@ -118,6 +118,10 @@ try:
         TEMPORAL_ZONED_DATE_TIME_START_OF_DAY_FEATURES,
         TEMPORAL_ZONED_DATE_TIME_START_OF_DAY_FILES,
     )
+    from test262_temporal_zoned_date_time_to_plain_date_time_admission import (
+        TEMPORAL_ZONED_DATE_TIME_TO_PLAIN_DATE_TIME_FEATURES,
+        TEMPORAL_ZONED_DATE_TIME_TO_PLAIN_DATE_TIME_FILES,
+    )
     from test262_temporal_duration_core_admission import (
         TEMPORAL_DURATION_CORE_FEATURES,
         TEMPORAL_DURATION_CORE_FILES,
@@ -440,6 +444,10 @@ except ModuleNotFoundError:
     from tools.test262_temporal_zoned_date_time_start_of_day_admission import (
         TEMPORAL_ZONED_DATE_TIME_START_OF_DAY_FEATURES,
         TEMPORAL_ZONED_DATE_TIME_START_OF_DAY_FILES,
+    )
+    from tools.test262_temporal_zoned_date_time_to_plain_date_time_admission import (
+        TEMPORAL_ZONED_DATE_TIME_TO_PLAIN_DATE_TIME_FEATURES,
+        TEMPORAL_ZONED_DATE_TIME_TO_PLAIN_DATE_TIME_FILES,
     )
     from tools.test262_temporal_duration_core_admission import (
         TEMPORAL_DURATION_CORE_FEATURES,
@@ -2614,6 +2622,21 @@ def temporal_zoned_date_time_start_of_day_features(path):
     rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
     return TEMPORAL_ZONED_DATE_TIME_START_OF_DAY_FEATURES[rel.as_posix()]
 
+def temporal_zoned_date_time_to_plain_date_time_path(path):
+    if path is None:
+        return False
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except (OSError, TypeError, ValueError):
+        return False
+    return rel.as_posix() in TEMPORAL_ZONED_DATE_TIME_TO_PLAIN_DATE_TIME_FILES
+
+def temporal_zoned_date_time_to_plain_date_time_features(path):
+    if not temporal_zoned_date_time_to_plain_date_time_path(path):
+        return frozenset()
+    rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    return TEMPORAL_ZONED_DATE_TIME_TO_PLAIN_DATE_TIME_FEATURES[rel.as_posix()]
+
 def temporal_duration_core_path(path):
     if path is None:
         return False
@@ -4498,6 +4521,8 @@ def should_skip(meta, path=None):
         feats.difference_update(temporal_zoned_date_time_with_calendar_features(path))
     if path is not None and temporal_zoned_date_time_start_of_day_path(path):
         feats.difference_update(temporal_zoned_date_time_start_of_day_features(path))
+    if path is not None and temporal_zoned_date_time_to_plain_date_time_path(path):
+        feats.difference_update(temporal_zoned_date_time_to_plain_date_time_features(path))
     if path is not None and temporal_duration_core_path(path):
         feats.difference_update(temporal_duration_core_features(path))
     if path is not None and temporal_plain_date_time_core_path(path):

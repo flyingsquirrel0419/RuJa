@@ -37,6 +37,13 @@ _ARROW_FUNCTION_FILES = frozenset(
     }
 )
 
+_ERA_MONTHCODE_FILES = frozenset(
+    {
+        "built-ins/Temporal/ZonedDateTime/from/roundtrip-from-property-bag.js",
+        "built-ins/Temporal/ZonedDateTime/from/roundtrip-from-string.js",
+    }
+)
+
 
 def _features(path):
     features = {"Temporal"}
@@ -56,6 +63,8 @@ def _features(path):
         features.add("Reflect.construct")
     if path in _ARROW_FUNCTION_FILES:
         features.add("arrow-function")
+    if path in _ERA_MONTHCODE_FILES:
+        features.add("Intl.Era-monthcode")
     return frozenset(features)
 
 
@@ -63,7 +72,7 @@ TEMPORAL_ZONED_DATE_TIME_FIXED_OFFSET_FEATURES = {
     path: _features(path) for path in TEMPORAL_ZONED_DATE_TIME_FIXED_OFFSET_FILES
 }
 
-if len(TEMPORAL_ZONED_DATE_TIME_FIXED_OFFSET_FILES) != 255:
+if len(TEMPORAL_ZONED_DATE_TIME_FIXED_OFFSET_FILES) != 259:
     raise RuntimeError(
-        "Temporal.ZonedDateTime fixed-offset admission must contain 255 files"
+        "Temporal.ZonedDateTime fixed-offset admission must contain 259 files"
     )

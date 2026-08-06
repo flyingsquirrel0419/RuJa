@@ -126,6 +126,12 @@ jobs:
           TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_zoned_date_time_start_of_day_manifest_is_exact_live_disjoint_and_shared
           -v
+      - name: Verify exact Temporal.ZonedDateTime toPlainDateTime admission
+        working-directory: tools
+        run: >-
+          TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
+          test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_zoned_date_time_to_plain_date_time_manifest_is_exact_live_disjoint_and_shared
+          -v
       - name: Verify exact Temporal.Duration core admission
         working-directory: tools
         run: >-
@@ -515,7 +521,7 @@ jobs:
           TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
             "${files[@]}" > temporal_zoned_date_time_fixed_offset_result.txt 2>&1
           cat temporal_zoned_date_time_fixed_offset_result.txt
-          grep -q '^RATE=100.0 PASS=255 FAIL=0 SKIP=0 TOTAL=255 RAN=255$' \
+          grep -q '^RATE=100.0 PASS=259 FAIL=0 SKIP=0 TOTAL=259 RAN=259$' \
             temporal_zoned_date_time_fixed_offset_result.txt
       - name: Freeze Temporal.ZonedDateTime fixed-offset blockers
         run: |
@@ -527,7 +533,7 @@ jobs:
             python3 tools/test262_temporal_zoned_date_time_fixed_offset_diagnostic.py \
             "${files[@]}" > temporal_zoned_date_time_fixed_offset_diagnostic.txt 2>&1
           cat temporal_zoned_date_time_fixed_offset_diagnostic.txt
-          grep -q '^RATE=95.9 PASS=255 FAIL=11 SKIP=0 TOTAL=266 RAN=266$' \
+          grep -q '^RATE=97.4 PASS=259 FAIL=7 SKIP=0 TOTAL=266 RAN=266$' \
             temporal_zoned_date_time_fixed_offset_diagnostic.txt
 
   temporal-zoned-date-time-equals:
@@ -599,20 +605,8 @@ jobs:
           TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
             "${files[@]}" > temporal_zoned_date_time_with_time_zone_result.txt 2>&1
           cat temporal_zoned_date_time_with_time_zone_result.txt
-          grep -q '^RATE=100.0 PASS=15 FAIL=0 SKIP=0 TOTAL=15 RAN=15$' \
+          grep -q '^RATE=100.0 PASS=16 FAIL=0 SKIP=0 TOTAL=16 RAN=16$' \
             temporal_zoned_date_time_with_time_zone_result.txt
-      - name: Freeze Temporal.ZonedDateTime withTimeZone blockers
-        run: |
-          mapfile -t files < <(cat \
-            tools/test262_temporal_zoned_date_time_with_time_zone_admission.txt \
-            tools/test262_temporal_zoned_date_time_with_time_zone_blockers.txt | \
-            sed -e '/^#/d' -e '/^$/d')
-          TEST262="$GITHUB_WORKSPACE/test262" \
-            python3 tools/test262_temporal_zoned_date_time_with_time_zone_diagnostic.py \
-            "${files[@]}" > temporal_zoned_date_time_with_time_zone_diagnostic.txt 2>&1
-          cat temporal_zoned_date_time_with_time_zone_diagnostic.txt
-          grep -q '^RATE=93.8 PASS=15 FAIL=1 SKIP=0 TOTAL=16 RAN=16$' \
-            temporal_zoned_date_time_with_time_zone_diagnostic.txt
 
   temporal-zoned-date-time-with-calendar:
     needs: [build, setup]
@@ -685,6 +679,36 @@ jobs:
           cat temporal_zoned_date_time_start_of_day_result.txt
           grep -q '^RATE=100.0 PASS=9 FAIL=0 SKIP=0 TOTAL=9 RAN=9$' \
             temporal_zoned_date_time_start_of_day_result.txt
+
+  temporal-zoned-date-time-to-plain-date-time:
+    needs: [build, setup]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download RuJa binary
+        uses: actions/download-artifact@v4
+        with:
+          name: ruja-release
+          path: target/release/
+      - run: chmod +x target/release/ruja
+      - name: Checkout pinned Temporal.ZonedDateTime toPlainDateTime tests
+        uses: actions/checkout@v4
+        with:
+          repository: tc39/test262
+          ref: ${{ env.TEST262_REV }}
+          path: test262
+          sparse-checkout: |
+            harness
+            test/built-ins/Temporal/ZonedDateTime/prototype/toPlainDateTime
+      - name: Require exact Temporal.ZonedDateTime toPlainDateTime boundary
+        run: |
+          mapfile -t files < <(sed -e '/^#/d' -e '/^$/d' \
+            tools/test262_temporal_zoned_date_time_to_plain_date_time_admission.txt)
+          TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
+            "${files[@]}" > temporal_zoned_date_time_to_plain_date_time_result.txt 2>&1
+          cat temporal_zoned_date_time_to_plain_date_time_result.txt
+          grep -q '^RATE=100.0 PASS=10 FAIL=0 SKIP=0 TOTAL=10 RAN=10$' \
+            temporal_zoned_date_time_to_plain_date_time_result.txt
 
   temporal-zoned-date-time-compare:
     needs: [build, setup]

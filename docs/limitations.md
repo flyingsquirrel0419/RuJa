@@ -29,7 +29,8 @@ The following resource limits are enforced:
   `toJSON`, `valueOf`, exact-instant static `compare`, hidden-identity
   `equals`, and instant-preserving
   `withTimeZone`, instant/time-zone-preserving `withCalendar`, and local-date
-  `startOfDay` for the ISO calendar and UTC/fixed offsets. Date-only ZonedDateTime
+  `startOfDay` plus local PlainDateTime conversion for the ISO calendar and
+  UTC/fixed offsets. Date-only ZonedDateTime
   strings require an immediate time-zone annotation. Property bags support ISO calendars and UTC or
   minute-precision fixed offsets only. `startOfDay` rejects named zones until
   transition-aware midnight gap/overlap resolution exists. Named IANA time-zone transitions,

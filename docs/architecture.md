@@ -144,7 +144,7 @@ range whose endpoints are one day beyond the Instant limits. The constructor,
 prototype, 22 accessors, and `valueOf` are Realm-local roots. Accessors read
 hidden slots directly, derived ISO values reuse the ZonedDateTime civil helper,
 and creation revalidates the record before pinning the selected prototype.
-Namespace installation now has 91 maximum live pins and 92 allocation
+Namespace installation now has 92 maximum live pins and 93 allocation
 boundaries.
 
 ```text
@@ -154,7 +154,25 @@ boundaries.
 - 검토한 주요 대안: ordinary data properties, local nanoseconds 단일값, 9개 ISO fields, 전체 PlainDateTime API 동시 구현을 검토했다.
 - 선택한 방식: compact integer field와 calendar Arc를 hidden kind에 저장하고 BigInt conversion, strict calendar ID, date/time/range validation을 allocation 전에 완료한다.
 - 다른 대안 대신 이 방식을 선택한 이유: field record가 명세 representation과 직접 대응하며 public mutation을 관찰하지 않는다. 단일 local epoch는 field identity를 다시 계산해야 하고 full API는 parser/arithmetic 위험을 한 단위에 결합한다.
-- 장점, 단점 및 영향: Realm/GC/OOM, conversion order, extreme dates, derived ISO getters가 독립 검증된다. `from`, arithmetic, formatting과 ZonedDateTime `toPlainDateTime`은 이 생성 helper를 후속 재사용한다.
+- 장점, 단점 및 영향: Realm/GC/OOM, conversion order, extreme dates, derived ISO getters가 독립 검증된다. ZonedDateTime `toPlainDateTime`은 이 생성 helper를 재사용하며 `from`, arithmetic, formatting은 후속 범위다.
+```
+
+`Temporal.ZonedDateTime.prototype.toPlainDateTime` reads only the receiver's
+hidden epoch, time-zone, and calendar slots. The time-zone dispatcher supplies
+the exact UTC/fixed offset; the shared ISO helper performs checked `epoch +
+offset` arithmetic and Euclidean day/fraction decomposition. The resulting
+compact fields are revalidated and allocated with the method Realm's
+PlainDateTime intrinsic prototype. Public properties, the receiver subclass,
+and mutable global constructor bindings are not observed.
+
+```text
+[Decision Log]
+- 목적과 의도: ZonedDateTime exact time을 local ISO PlainDateTime hidden record로 연결한다.
+- 기존 구현 및 제약 조건: 두 hidden kind와 fixed-offset civil helper는 존재했지만 conversion method가 없어 downstream tests가 public object model을 사용할 수 없었다. named-zone transition 계산은 없다.
+- 검토한 주요 대안: public getter 수집, constructor 호출, 새 offset/date 알고리즘, 기존 slot/helper/result factory 조합을 검토했다.
+- 선택한 방식: brand-first hidden-slot 조회 후 offset을 epoch에 더해 ISO fields를 만들고 calendar Arc와 method Realm을 기존 PlainDateTime factory에 전달한다.
+- 다른 대안 대신 이 방식을 선택한 이유: getter/constructor 경로는 observable order와 subclass 영향을 만들며 별도 산술은 음수·극한 경계 drift 위험이 있다.
+- 장점, 단점 및 영향: 음수 epoch/offset, Instant 양끝과 최대 offset, Realm, OOM rollback이 한 경로로 검증된다. named IANA 지원 시 offset dispatcher만 transition-aware backend로 확장하면 된다.
 ```
 
 `TemporalKind::ZonedDateTime` extends the same heap object family with immutable

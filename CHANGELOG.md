@@ -4,6 +4,23 @@
 
 ### Changed
 
+- Added Realm-local `Temporal.ZonedDateTime.prototype.toPlainDateTime` for UTC
+  and minute-precision fixed offsets. It brands through hidden slots, adds the
+  exact offset to epoch nanoseconds with Euclidean negative-time balancing,
+  preserves the hidden calendar, and creates a fresh PlainDateTime in the
+  method Realm without observing public properties or constructors. The
+  complete pinned method directory is exact **10/0/0**. Four fixed-offset
+  `from` blockers and the final `withTimeZone` blocker are also admitted, so
+  those boundaries are now **259/7** over 266 and complete **16/0**.
+
+  [Decision Log]
+  - 목적과 의도: ZonedDateTime의 exact instant/time-zone/calendar hidden slots를 표준 local PlainDateTime record로 변환한다.
+  - 기존 구현 및 제약 조건: exact fixed-offset civil helper와 Realm-local PlainDateTime 생성 경로는 있었지만 이를 연결하는 prototype method가 없었다. named IANA transition backend는 아직 없다.
+  - 검토한 주요 대안: public accessors 읽기, PlainDateTime constructor 재호출, 별도 civil 계산, 기존 hidden-slot/ISO helper 조합을 검토했다.
+  - 선택한 방식: receiver brand 후 hidden offset을 계산하고 기존 `iso_date_time`의 checked `epoch + offset` 결과를 compact PlainDateTime fields로 변환해 method Realm intrinsic prototype으로 할당한다.
+  - 다른 대안 대신 이 방식을 선택한 이유: public accessors와 constructor 호출은 observable behavior 및 subclass 영향을 추가한다. 기존 helper 재사용은 음수 epoch, offset 부호, 극한 범위를 모든 ZonedDateTime civil API와 일치시킨다.
+  - 장점, 단점 및 영향: public getter 비관찰, subclass 억제, cross-Realm result/error, 음수 balancing, 양끝 범위, OOM pin rollback과 exact 10/0/0이 검증된다. named zones는 deterministic transition backend 전까지 기존 dispatcher에서 거부된다.
+
 - Added Realm-local `%Temporal.PlainDateTime%` construction with immutable ISO
   date-time and calendar hidden slots, subclass/newTarget prototype selection,
   22 branded ISO accessors, `@@toStringTag`, and always-throwing `valueOf`.

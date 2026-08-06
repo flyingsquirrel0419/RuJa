@@ -14103,18 +14103,17 @@ surface.
 ## Temporal.ZonedDateTime fixed-offset civil and formatting surface
 
 `tools/test262_temporal_zoned_date_time_fixed_offset_admission.txt` freezes
-exactly **255** pinned files. The boundary covers the 24 ISO
+exactly **259** pinned files. The boundary covers the 24 ISO
 civil/calendar/offset accessors, `construction-and-properties.js`, complete
 `toInstant`, complete `toJSON` and `valueOf`, 61 independently runnable
-`toString` files, and 84 static `from` cases supported by branded values, the
+`toString` files, and 90 static `from` cases supported by branded values, the
 strict fixed-offset string parser, or ISO property bags. Dedicated CI requires
-**255 pass / 0 fail / 0 skip**.
+**259 pass / 0 fail / 0 skip**.
 
 `tools/test262_temporal_zoned_date_time_fixed_offset_blockers.txt` freezes the
 exact unsupported complement. CI forces the complete 266-file surface and
-requires **255 pass / 11 fail / 0 skip**. The 11 retained blockers are explicit:
-five `from` cases need currently absent `toPlainDateTime`, other
-Temporal constructors, or remaining RFC 9557/string roundtrip semantics; five
+requires **259 pass / 7 fail / 0 skip**. The seven retained blockers are explicit:
+one `from` case needs another Temporal calendar-bearing type; five
 `basic.js` accessor cases construct `Temporal.PlainDateTime`; and one
 `toString` helper checks other unimplemented Temporal constructors before
 comparing plural-unit string results. UTC and minute-precision fixed offsets
@@ -14128,9 +14127,9 @@ confirmed by ordinary CI `30872435648` (**3/3**) and full matrix
 - 목적과 의도: ZonedDateTime core 위에 exact fixed-offset civil 조회, Instant 변환, parsing, property-bag preparation, rounding, serialization을 추가하고 supported accounting에 반영한다.
 - 기존 구현 및 제약 조건: hidden slot과 civil/formatting은 있었지만 ordinary object `from`을 branded object로 오인했다. host tzdb와 Duration/PlainDateTime 등 다른 Temporal type은 없다.
 - 검토한 주요 대안: host timezone API, IANA identifier를 offset 없이 저장, prefix 전체 admission, f64/i128 조기 field 축소, exact fixed-offset property-bag 경로를 검토했다.
-- 선택한 방식: VM이 field/options Get과 coercion/root/fuel 순서를 소유하고 finite integer를 BigInt로 options 이후까지 보존한다. pure helper는 ISO calendar syntax, overflow-regulated civil fields와 fixed-offset arithmetic을 처리한다. runner/analyzer는 현재 통과한 255개 path만 해제하고 blocker manifest와 forced CI가 266개 전체 경계를 고정한다.
-- 다른 대안 대신 이 방식을 선택한 이유: host timezone은 native/WASM 결과가 다르고 tzdb 없는 IANA 지원은 DST 의미론을 위반한다. 조기 integer narrowing은 observable options-before-validation을 깨뜨리며 prefix admission은 11개 blocker와 미래 파일을 숨긴다.
-- 장점, 단점 및 영향: negative epoch, extended year, ISO week/year, 9개 rounding mode, property/option order, monthCode/overflow/offset mismatch, branding, method Realm, allocation rollback과 exact 255/0/0이 재현된다. named IANA/DST와 다른 Temporal types는 다음 구현 단위로 남는다.
+- 선택한 방식: VM이 field/options Get과 coercion/root/fuel 순서를 소유하고 finite integer를 BigInt로 options 이후까지 보존한다. pure helper는 ISO calendar syntax, overflow-regulated civil fields와 fixed-offset arithmetic을 처리한다. runner/analyzer는 현재 통과한 259개 path만 해제하고 blocker manifest와 forced CI가 266개 전체 경계를 고정한다.
+- 다른 대안 대신 이 방식을 선택한 이유: host timezone은 native/WASM 결과가 다르고 tzdb 없는 IANA 지원은 DST 의미론을 위반한다. 조기 integer narrowing은 observable options-before-validation을 깨뜨리며 prefix admission은 7개 blocker와 미래 파일을 숨긴다.
+- 장점, 단점 및 영향: negative epoch, extended year, ISO week/year, 9개 rounding mode, property/option order, monthCode/overflow/offset mismatch, branding, method Realm, allocation rollback과 exact 259/0/0이 재현된다. named IANA/DST와 다른 Temporal types는 다음 구현 단위로 남는다.
 ```
 
 ## Temporal.ZonedDateTime.prototype.equals
@@ -14163,10 +14162,9 @@ was **52/3**; the current Duration-backed boundary is **54/1**.
 ## Temporal.ZonedDateTime.prototype.withTimeZone
 
 `tools/test262_temporal_zoned_date_time_with_time_zone_admission.txt` freezes
-**15** exact paths from the pinned 16-file method directory. Dedicated CI
-requires **15 pass / 0 fail / 0 skip**; the forced complement requires **15
-pass / 1 fail / 0 skip**. `preserves-instant.js` needs the absent
-`toPlainDateTime`/PlainDateTime object model. The
+all **16** paths from the pinned method directory. Dedicated CI requires
+**16 pass / 0 fail / 0 skip**. `preserves-instant.js` is admitted after the
+PlainDateTime object model and `toPlainDateTime` conversion. The
 admitted surface covers branding, descriptors, subclass suppression,
 canonical UTC/fixed-offset and annotated datetime input, leap seconds,
 negative-zero years, sub-minute rejection, and bracket precedence.
@@ -14176,9 +14174,9 @@ negative-zero years, sub-minute rejection, and bracket precedence.
 - 목적과 의도: withTimeZone 구현과 전체 16-file corpus의 실제 지원 경계를 exact accounting에 반영한다.
 - 기존 구현 및 제약 조건: Temporal feature gate가 전체 directory를 skip했고 equals의 두 파일도 withTimeZone 부재로 막혔다.
 - 검토한 주요 대안: 전체 prefix admission, blocker 의존성을 가짜 constructor로 충족, 실제 통과 경계와 complement를 분리하는 방식을 검토했다.
-- 선택한 방식: 현재 통과한 15개 path와 metadata를 별도 admission으로 열고 1개 blocker를 forced diagnostic으로 고정한다.
-- 다른 대안 대신 이 방식을 선택한 이유: prefix admission은 아직 없는 PlainDateTime을 거짓 지원하고 미래 파일을 자동 허용한다. 별도 method gate는 regression 위치를 직접 보여 준다.
-- 장점, 단점 및 영향: exact 15/0/0, forced 15/1과 equals 54/1이 재현된다. blocker dependency 구현 시 corpus를 다시 실측해 이동해야 한다.
+- 선택한 방식: 처음 통과한 15개 path를 exact admission으로 열고 blocker dependency 구현 후 재실측한 마지막 path를 같은 manifest로 이동한다.
+- 다른 대안 대신 이 방식을 선택한 이유: directory prefix는 미래 파일을 자동 허용한다. exact path set은 complete 16-file corpus와 metadata를 고정한다.
+- 장점, 단점 및 영향: complete exact 16/0/0과 equals 54/1이 재현된다. 새 sibling은 별도 검토 전까지 자동 입장하지 않는다.
 ```
 
 Implementation commit `593d047` is confirmed by ordinary CI `30879142138`
@@ -14410,8 +14408,8 @@ Forced diagnostics therefore require **76 pass / 2 fail / 0 skip**.
 
 The same unit unlocks nine previously frozen ZonedDateTime wrong-type paths,
 including the constructor core's `calendar-wrong-type.js`.
-Current exact/forced boundaries are fixed-offset **255/11** over 266, equals
-**54/1** over 55, compare **48/2** over 50, `withTimeZone` **15/1** over 16,
+Current exact/forced boundaries are fixed-offset **259/7** over 266, equals
+**54/1** over 55, compare **48/2** over 50, `withTimeZone` **16/0** over 16,
 and `withCalendar` **15/1** over 16. Every moved path was executed against the
 pinned revision before admission; future Duration siblings remain gated.
 
@@ -14454,3 +14452,24 @@ Implementation commit `71bcdf9` is confirmed by ordinary CI `31107343779`
 (**3/3**) and full Test262 CI `31107343705` (**64/64**). The dedicated jobs
 reproduce PlainDateTime exact **101/0/0** and forced **101/5/0-skip** over the
 frozen 106-file core surface.
+
+## Temporal.ZonedDateTime.prototype.toPlainDateTime
+
+`tools/test262_temporal_zoned_date_time_to_plain_date_time_admission.txt`
+freezes all **10** paths in the pinned method directory. Dedicated CI requires
+**10 pass / 0 fail / 0 skip**. Four behavior files cover exact UTC/fixed-offset
+civil fields, negative epoch and offset balancing, and both PlainDateTime
+limits; six files freeze branding and built-in metadata. The same conversion
+unblocks four fixed-offset `from` roundtrip/input files and the final
+`withTimeZone` file. Those exact/forced boundaries are now **259/7** over 266
+and complete **16/0** over 16.
+
+```text
+[Decision Log]
+- 목적과 의도: ZonedDateTime-to-PlainDateTime conversion의 complete direct corpus와 실제로 해제된 downstream dependency를 supported accounting에 반영한다.
+- 기존 구현 및 제약 조건: broad Temporal gate가 10-file directory를 skip했고 fixed-offset/withTimeZone manifests에는 conversion 부재로 막힌 5개 파일이 남아 있었다.
+- 검토한 주요 대안: directory prefix 허용, direct 10개만 등록, direct exact set과 재실측된 downstream path를 각 소유 manifest에 이동하는 방식을 검토했다.
+- 선택한 방식: direct 10개 path와 features/includes/flags/negative metadata를 exact manifest로 고정하고, pinned binary로 통과한 downstream 5개만 기존 manifests로 이동한다.
+- 다른 대안 대신 이 방식을 선택한 이유: prefix는 미래 sibling을 검토 없이 허용하고 direct-only accounting은 구현이 실제로 복구한 기존 표준 경로를 계속 skip한다.
+- 장점, 단점 및 영향: exact 10/0/0, fixed-offset 259/7, complete withTimeZone 16/0이 재현된다. compare의 2개 blocker는 PlainDateTime.compare 또는 다른 Temporal calendar type을 계속 요구한다.
+```

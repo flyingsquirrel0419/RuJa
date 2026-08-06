@@ -6290,7 +6290,7 @@ pub(crate) fn install_temporal_namespace_in_env(
     global: Option<&Value>,
     object_proto: Value,
 ) -> error::Result<Value> {
-    vm.try_reserve_gc_pins(91)?;
+    vm.try_reserve_gc_pins(92)?;
     let mut pin_count = 0;
     let result = (|| {
         let instant_prototype = Value::Object(vm.alloc(HeapObj::Object(ObjectData {
@@ -6574,6 +6574,12 @@ pub(crate) fn install_temporal_namespace_in_env(
             zoned_to_instant,
             "toInstant",
             temporal_zoned_date_time_to_instant,
+            0
+        );
+        alloc_zoned_native!(
+            zoned_to_plain_date_time,
+            "toPlainDateTime",
+            temporal_zoned_date_time_to_plain_date_time,
             0
         );
         alloc_zoned_native!(
@@ -7088,6 +7094,10 @@ pub(crate) fn install_temporal_namespace_in_env(
             );
             props.insert(PropertyKey::from("equals"), data_prop(zoned_equals));
             props.insert(PropertyKey::from("toInstant"), data_prop(zoned_to_instant));
+            props.insert(
+                PropertyKey::from("toPlainDateTime"),
+                data_prop(zoned_to_plain_date_time),
+            );
             props.insert(PropertyKey::from("toString"), data_prop(zoned_to_string));
             props.insert(PropertyKey::from("toJSON"), data_prop(zoned_to_json));
             props.insert(PropertyKey::from("valueOf"), data_prop(zoned_value_of));
@@ -8753,6 +8763,40 @@ fn temporal_zoned_date_time_to_instant(
     let (epoch_nanoseconds, _, _) = temporal_zoned_date_time_slots(vm, this)?;
     let realm = vm.native_callee_closure().unwrap_or(vm.global);
     create_temporal_instant_in_realm(vm, epoch_nanoseconds, realm)
+}
+
+fn temporal_zoned_date_time_to_plain_date_time(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let (epoch_nanoseconds, time_zone, calendar_identifier) =
+        temporal_zoned_date_time_slots(vm, this)?;
+    let offset_nanoseconds = temporal_time_zone_offset_nanoseconds(&time_zone, &epoch_nanoseconds)?;
+    let date_time = temporal::iso_date_time(&epoch_nanoseconds, offset_nanoseconds)
+        .ok_or_else(|| Error::range("Temporal.ZonedDateTime local date is out of range"))?;
+    let fields = TemporalPlainDateTimeFields {
+        year: i32::try_from(date_time.year)
+            .map_err(|_| Error::range("Temporal.ZonedDateTime local date is out of range"))?,
+        month: u8::try_from(date_time.month)
+            .map_err(|_| Error::range("Temporal.ZonedDateTime local date is out of range"))?,
+        day: u8::try_from(date_time.day)
+            .map_err(|_| Error::range("Temporal.ZonedDateTime local date is out of range"))?,
+        hour: u8::try_from(date_time.hour)
+            .map_err(|_| Error::range("Temporal.ZonedDateTime local date is out of range"))?,
+        minute: u8::try_from(date_time.minute)
+            .map_err(|_| Error::range("Temporal.ZonedDateTime local date is out of range"))?,
+        second: u8::try_from(date_time.second)
+            .map_err(|_| Error::range("Temporal.ZonedDateTime local date is out of range"))?,
+        millisecond: u16::try_from(date_time.millisecond)
+            .map_err(|_| Error::range("Temporal.ZonedDateTime local date is out of range"))?,
+        microsecond: u16::try_from(date_time.microsecond)
+            .map_err(|_| Error::range("Temporal.ZonedDateTime local date is out of range"))?,
+        nanosecond: u16::try_from(date_time.nanosecond)
+            .map_err(|_| Error::range("Temporal.ZonedDateTime local date is out of range"))?,
+    };
+    let realm = vm.native_callee_closure().unwrap_or(vm.global);
+    create_temporal_plain_date_time_in_realm(vm, fields, calendar_identifier, realm)
 }
 
 fn temporal_annotation_display(

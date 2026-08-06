@@ -1,5 +1,6 @@
 # Exact Temporal.ZonedDateTime fixed-offset civil/formatting surface.
 built-ins/Temporal/ZonedDateTime/construction-and-properties.js
+built-ins/Temporal/ZonedDateTime/from/argument-object.js
 built-ins/Temporal/ZonedDateTime/from/argument-propertybag-calendar-case-insensitive.js
 built-ins/Temporal/ZonedDateTime/from/argument-propertybag-calendar-invalid-iso-string.js
 built-ins/Temporal/ZonedDateTime/from/argument-propertybag-calendar-iso-string.js
@@ -24,6 +25,7 @@ built-ins/Temporal/ZonedDateTime/from/argument-propertybag-timezone-string-sub-m
 built-ins/Temporal/ZonedDateTime/from/argument-propertybag-timezone-string-year-zero.js
 built-ins/Temporal/ZonedDateTime/from/argument-propertybag-timezone-string.js
 built-ins/Temporal/ZonedDateTime/from/argument-propertybag-timezone-wrong-type.js
+built-ins/Temporal/ZonedDateTime/from/argument-string.js
 built-ins/Temporal/ZonedDateTime/from/argument-string-basic-and-extended-format.js
 built-ins/Temporal/ZonedDateTime/from/argument-string-calendar-annotation.js
 built-ins/Temporal/ZonedDateTime/from/argument-string-calendar-annotation-invalid-key.js
@@ -81,6 +83,8 @@ built-ins/Temporal/ZonedDateTime/from/overflow-options.js
 built-ins/Temporal/ZonedDateTime/from/overflow-undefined.js
 built-ins/Temporal/ZonedDateTime/from/overflow-wrong-type.js
 built-ins/Temporal/ZonedDateTime/from/prop-desc.js
+built-ins/Temporal/ZonedDateTime/from/roundtrip-from-property-bag.js
+built-ins/Temporal/ZonedDateTime/from/roundtrip-from-string.js
 built-ins/Temporal/ZonedDateTime/from/subclassing-ignored.js
 built-ins/Temporal/ZonedDateTime/from/timezone-case-insensitive.js
 built-ins/Temporal/ZonedDateTime/from/year-zero.js

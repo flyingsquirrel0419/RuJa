@@ -213,9 +213,9 @@ fn temporal_namespace_installation_covers_every_allocation_boundary() {
     let baseline_live = vm.heap.live_count();
     let global = vm.global;
 
-    // Allocations 18 through 92 cover the method/accessor batches and the
+    // Allocations 18 through 93 cover the method/accessor batches and the
     // two namespace objects that must publish only after the batch succeeds.
-    for extra_capacity in 17..92 {
+    for extra_capacity in 17..93 {
         vm.set_max_heap_objects(Some(baseline_live + extra_capacity));
         let object_proto = vm.object_proto.clone();
         let result =
@@ -236,16 +236,16 @@ fn temporal_namespace_installation_covers_every_allocation_boundary() {
         );
     }
 
-    vm.set_max_heap_objects(Some(baseline_live + 92));
+    vm.set_max_heap_objects(Some(baseline_live + 93));
     let object_proto = vm.object_proto.clone();
     let temporal =
         crate::builtins::install_temporal_namespace_in_env(&mut vm, global, None, object_proto)
-            .expect("exact 92-object capacity must install the complete namespace");
+            .expect("exact 93-object capacity must install the complete namespace");
     vm.set_max_heap_objects(None);
     assert_eq!(vm.gc_pins.len(), baseline_pins);
     assert_eq!(vm.get_global("Temporal"), temporal);
     assert_eq!(
-        vm.run("typeof Temporal.PlainDateTime === 'function' && typeof Temporal.ZonedDateTime.prototype.startOfDay")
+        vm.run("typeof Temporal.PlainDateTime === 'function' && typeof Temporal.ZonedDateTime.prototype.toPlainDateTime")
             .expect("installed namespace should remain usable"),
         Value::String(Arc::from("function"))
     );
@@ -280,6 +280,35 @@ fn temporal_start_of_day_result_allocation_fails_cleanly_and_retries_after_gc() 
         result,
         Value::BigInt(Arc::new(BigInt::from(-3_600_000_000_000_i64)))
     );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+}
+
+#[test]
+fn temporal_to_plain_date_time_result_allocation_fails_cleanly_and_retries_after_gc() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run("globalThis.zdtForPlainDateTime = new Temporal.ZonedDateTime(1n, '+01:00');")
+        .expect("toPlainDateTime fixture should initialize");
+    vm.gc();
+    let baseline_pins = vm.gc_pins.len();
+    let baseline_live = vm.heap.live_count();
+
+    vm.set_max_heap_objects(Some(baseline_live));
+    let error = vm
+        .run("zdtForPlainDateTime.toPlainDateTime();")
+        .expect_err("result allocation must obey the exact heap cap");
+    vm.set_max_heap_objects(None);
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(error.message, "heap limit exceeded");
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.heap.live_count(), baseline_live);
+
+    let _garbage = vm.new_object().expect("garbage allocation should succeed");
+    vm.set_max_heap_objects(Some(vm.heap.live_count()));
+    let result = vm
+        .run("zdtForPlainDateTime.toPlainDateTime().hour;")
+        .expect("GC retry should reclaim garbage and allocate the result");
+    vm.set_max_heap_objects(None);
+    assert_eq!(result, Value::Number(1.0));
     assert_eq!(vm.gc_pins.len(), baseline_pins);
 }
 

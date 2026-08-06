@@ -25980,6 +25980,90 @@ fn temporal_zoned_date_time_start_of_day_uses_local_date_and_hidden_slots() {
 }
 
 #[test]
+fn temporal_zoned_date_time_to_plain_date_time_uses_hidden_local_iso_fields() {
+    assert_eq!(
+        run(r#"
+            var value = new Temporal.ZonedDateTime(123_456_789n, '+01:30');
+            var reads = 0;
+            for (var key of ['epochNanoseconds', 'timeZoneId', 'calendarId', 'year', 'hour']) {
+              Object.defineProperty(value, key, {
+                get: function () { reads++; throw new Error('observed'); }
+              });
+            }
+            var result = value.toPlainDateTime();
+            var negativeOffset = new Temporal.ZonedDateTime(1001n, '-00:02').toPlainDateTime();
+            var negativeEpoch = new Temporal.ZonedDateTime(-13_849_764_999_999_999n, 'UTC')
+              .toPlainDateTime();
+            [
+              Object.getPrototypeOf(result) === Temporal.PlainDateTime.prototype,
+              result.year, result.month, result.monthCode, result.day,
+              result.hour, result.minute, result.second,
+              result.millisecond, result.microsecond, result.nanosecond,
+              result.calendarId,
+              negativeOffset.year, negativeOffset.month, negativeOffset.day,
+              negativeOffset.hour, negativeOffset.minute,
+              negativeOffset.microsecond, negativeOffset.nanosecond,
+              negativeEpoch.year, negativeEpoch.month, negativeEpoch.day,
+              negativeEpoch.hour, negativeEpoch.minute, negativeEpoch.second,
+              negativeEpoch.nanosecond,
+              reads,
+              Temporal.ZonedDateTime.prototype.toPlainDateTime.length,
+              Temporal.ZonedDateTime.prototype.toPlainDateTime.name
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "true|1970|1|M01|1|1|30|0|123|456|789|iso8601|1969|12|31|23|58|1|1|1969|7|24|16|50|35|1|0|0|toPlainDateTime"
+        ))
+    );
+
+    assert_eq!(
+        run(r#"
+            var limit = 8_640_000_000_000_000_000_000n;
+            var min = new Temporal.ZonedDateTime(-limit, '-23:59').toPlainDateTime();
+            var max = new Temporal.ZonedDateTime(limit, '+23:59').toPlainDateTime();
+            var Sub = class extends Temporal.ZonedDateTime {};
+            var subclassResult = new Sub(0n, 'UTC').toPlainDateTime();
+            [
+              min.year, min.month, min.day, min.hour, min.minute,
+              max.year, max.month, max.day, max.hour, max.minute,
+              Object.getPrototypeOf(subclassResult) === Temporal.PlainDateTime.prototype
+            ].join('|');
+        "#),
+        Value::String(Arc::from("-271821|4|19|0|1|275760|9|13|23|59|true"))
+    );
+
+    for source in [
+        "Temporal.ZonedDateTime.prototype.toPlainDateTime.call({})",
+        "new Temporal.ZonedDateTime.prototype.toPlainDateTime()",
+    ] {
+        assert!(run_err(source).contains("TypeError"), "{source}");
+    }
+}
+
+#[test]
+fn temporal_zoned_date_time_to_plain_date_time_uses_function_realm() {
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var method = other.Temporal.ZonedDateTime.prototype.toPlainDateTime;
+            var main = new Temporal.ZonedDateTime(123_456_789n, '+01:30');
+            var result = method.call(main);
+            var receiverRealm;
+            try { method.call({}); } catch (error) {
+              receiverRealm = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            [
+              Object.getPrototypeOf(result) === other.Temporal.PlainDateTime.prototype,
+              result.year, result.hour, result.minute,
+              result.millisecond, result.microsecond, result.nanosecond,
+              receiverRealm
+            ].join('|');
+        "#),
+        Value::String(Arc::from("true|1970|1|30|123|456|789|true"))
+    );
+}
+
+#[test]
 fn temporal_zoned_date_time_methods_use_their_function_realm() {
     assert_eq!(
         run(r#"
