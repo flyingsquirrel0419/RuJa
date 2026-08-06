@@ -14353,6 +14353,11 @@ branded fast paths, and the audited ZonedDateTime String grammar.
 - 장점, 단점 및 영향: exact 46/0/0과 forced 46/4가 재현되고 미래 파일은 자동 허용되지 않는다. Duration과 PlainDate family가 구현되면 blocker를 다시 실측해 이동해야 한다.
 ```
 
+Implementation commit `4b7cb2a` and tooling correction `25fc0d0` are confirmed
+by ordinary CI `31090247413` (**3/3**) and full matrix `31090247258`
+(**61/61**). The dedicated job reproduces exact/forced **46/0/0** and
+**46/4/0-skip**.
+
 ## Annex B RegExp BMP escape timeout
 
 The runner and analyzer grant 30 seconds only to
@@ -14370,3 +14375,7 @@ timeouts without weakening the surrounding performance boundary.
 - 다른 대안 대신 이 방식을 선택한 이유: exact 예외만이 exhaustive work를 허용하면서 다른 테스트의 hang 감지를 유지한다.
 - 장점, 단점 및 영향: CI timeout false negative가 사라지고 미래 느린 sibling은 자동 허용되지 않는다.
 ```
+
+Timeout-policy commit `547df84` is confirmed by ordinary CI `31090247413`
+(**3/3**) and full matrix `31090247258` (**61/61**), including Annex B exact
+**62/0/0**.

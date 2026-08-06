@@ -17,6 +17,10 @@
   - 다른 대안 대신 이 방식을 선택한 이유: 전체 prefix 상향은 실제 성능 회귀를 숨기고 재시도는 deterministic 경계를 해결하지 않는다.
   - 장점, 단점 및 영향: 두 exhaustive sweep은 느린 CI에서도 완료되며 ordinary/outside 파일은 8초 sandbox 경계를 유지한다.
 
+  Timeout-policy commit `547df84` is pushed. Ordinary CI `31090247413`
+  passes **3/3** jobs and full Test262 CI `31090247258` passes **61/61**,
+  including the Annex B **62/0/0** exact gate.
+
 - Added Realm-local static `Temporal.ZonedDateTime.compare`. Both inputs are
   fully converted from branded objects, ISO property bags, or ZonedDateTime
   Strings in left-to-right order, then compared only by exact epoch
@@ -32,6 +36,12 @@
   - 선택한 방식: 각 인수를 `to_temporal_zoned_date_time(..., None)`로 완전히 변환한 뒤 두 `BigInt` epoch를 직접 비교해 Number `-1`, `+0`, `1`을 반환한다. constructor Realm에 nonconstructable length-2 native를 게시한다.
   - 다른 대안 대신 이 방식을 선택한 이유: Instant converter는 time-zone annotation 없는 Instant 문자열까지 잘못 허용하고, 임시 객체/public getter는 allocation과 observable behavior를 추가한다. 공용 converter는 property order, Realm 오류, parser, fuel을 `from`과 일치시킨다.
   - 장점, 단점 및 영향: branded hidden-property 비관찰, first-before-second abrupt completion, cross-Realm input/error, exact fuel, installer rollback과 exact 46/0/0이 검증된다. 세 파일은 다른 Temporal constructors를 선행 생성하고 한 파일은 compare 이후 PlainDateTime 후속 assertion을 실행하므로 해당 object model 도입 전까지 blocker다.
+
+  Implementation commit `4b7cb2a`, unavailable-corpus correction `25fc0d0`,
+  and timeout-policy commit `547df84` are pushed. Final ordinary CI
+  `31090247413` passes **3/3** jobs and full Test262 CI `31090247258` passes
+  **61/61**, including dedicated exact/forced compare **46/0/0** and
+  **46/4/0-skip** gates.
 
 - Added Realm-local `Temporal.ZonedDateTime.prototype.withCalendar`. Receiver
   branding precedes strict calendar conversion; branded ZonedDateTime inputs
