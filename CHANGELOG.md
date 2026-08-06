@@ -19,6 +19,10 @@
   - 다른 대안 대신 이 방식을 선택한 이유: 음수 epoch의 truncation은 `-1ns`를 잘못 처리하고, public getter는 observable behavior를 추가한다. 현재 offset 일반화는 DST 자정 gap/overlap에서 명세 `GetStartOfDay`와 달라진다.
   - 장점, 단점 및 영향: hidden getter 비관찰, subclass 무시, cross-Realm TypeError/RangeError/result, exact fuel, heap-cap GC retry, installer rollback과 극한 epoch가 검증된다. named-zone 지원 전까지 해당 kind는 명시적 RangeError를 유지한다.
 
+  Implementation commit `cd49a4b` is pushed. Ordinary CI `31094403387`
+  passes **3/3** jobs and full Test262 CI `31094403310` passes **62/62**,
+  including the dedicated `startOfDay` **9/0/0** exact gate.
+
 - Extended the Test262 timeout only for the two Annex B RegExp BMP escape
   sweeps. Each test exhaustively checks the full BMP and is materially slower
   than ordinary Annex B files; all neighboring paths retain the 8-second

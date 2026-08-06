@@ -14399,3 +14399,7 @@ negative, and zero fixed offsets.
 - 다른 대안 대신 이 방식을 선택한 이유: method 전용 exact gate가 구현 회귀와 metadata drift를 직접 식별하며 미래 sibling을 검토 없이 허용하지 않는다.
 - 장점, 단점 및 영향: complete directory 9/0/0이 재현되고 blocker 파일이 없다. named-zone 테스트가 추가되면 transition backend 구현 후 별도 실측과 admission 변경이 필요하다.
 ```
+
+Implementation commit `cd49a4b` is confirmed by ordinary CI `31094403387`
+(**3/3**) and full matrix `31094403310` (**62/62**). The dedicated job
+reproduces exact `startOfDay` **9/0/0**.
