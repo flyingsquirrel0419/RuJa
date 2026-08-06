@@ -14352,3 +14352,21 @@ branded fast paths, and the audited ZonedDateTime String grammar.
 - 다른 대안 대신 이 방식을 선택한 이유: prefix와 가짜 constructor는 지원하지 않는 object model을 과장하고 미래 sibling drift를 숨긴다. method 전용 gate는 compare 회귀를 직접 식별한다.
 - 장점, 단점 및 영향: exact 46/0/0과 forced 46/4가 재현되고 미래 파일은 자동 허용되지 않는다. Duration과 PlainDate family가 구현되면 blocker를 다시 실측해 이동해야 한다.
 ```
+
+## Annex B RegExp BMP escape timeout
+
+The runner and analyzer grant 30 seconds only to
+`RegExp-leading-escape-BMP.js` and `RegExp-trailing-escape-BMP.js`. Both sweep
+the complete BMP and take about 12.5 seconds locally; ordinary Annex B RegExp
+tests retain the 8-second default. This prevents deterministic slow-runner
+timeouts without weakening the surrounding performance boundary.
+
+```text
+[Decision Log]
+- 목적과 의도: complete BMP escape conformance를 CI 속도 편차와 분리해 안정적으로 검증한다.
+- 기존 구현 및 제약 조건: exact Annex B gate는 engine failure 없이 61/0/1-timeout을 두 번 기록했고 로컬 동일 gate는 62/0/0이었다.
+- 검토한 주요 대안: shard 재시도만 사용, Annex B prefix 전체 timeout 상향, measured 두 파일만 exact 예외로 등록하는 방식을 검토했다.
+- 선택한 방식: 두 path를 30초 set으로 고정하고 runner/analyzer parity와 ordinary/outside negative cases를 테스트한다.
+- 다른 대안 대신 이 방식을 선택한 이유: exact 예외만이 exhaustive work를 허용하면서 다른 테스트의 hang 감지를 유지한다.
+- 장점, 단점 및 영향: CI timeout false negative가 사라지고 미래 느린 sibling은 자동 허용되지 않는다.
+```

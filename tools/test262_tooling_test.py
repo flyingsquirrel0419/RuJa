@@ -10539,6 +10539,42 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
                 finally:
                     tool.TEST262 = original_root
 
+    def test_annex_b_regexp_escape_timeout_is_limited_to_two_bmp_sweeps(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            relative_paths = {
+                "annexB/built-ins/RegExp/RegExp-leading-escape-BMP.js",
+                "annexB/built-ins/RegExp/RegExp-trailing-escape-BMP.js",
+            }
+            ordinary = root / (
+                "test/annexB/built-ins/RegExp/RegExp-leading-escape.js"
+            )
+            outside = root / "test/built-ins/RegExp/RegExp-leading-escape-BMP.js"
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    self.assertEqual(
+                        tool.REGEXP_ANNEX_B_ESCAPE_EXTENDED_TIMEOUT_FILES,
+                        relative_paths,
+                    )
+                    for relative_path in relative_paths:
+                        slow = root / "test" / relative_path
+                        self.assertTrue(
+                            tool.regexp_annex_b_escape_extended_timeout_path(slow)
+                        )
+                        self.assertEqual(tool.test_timeout_seconds(slow), 30)
+                    self.assertFalse(
+                        tool.regexp_annex_b_escape_extended_timeout_path(ordinary)
+                    )
+                    self.assertEqual(tool.test_timeout_seconds(ordinary), 8)
+                    self.assertFalse(
+                        tool.regexp_annex_b_escape_extended_timeout_path(outside)
+                    )
+                    self.assertEqual(tool.test_timeout_seconds(outside), 8)
+                finally:
+                    tool.TEST262 = original_root
+
     def test_zero_execution_rate_preserves_skip_and_total(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

@@ -4,6 +4,19 @@
 
 ### Changed
 
+- Extended the Test262 timeout only for the two Annex B RegExp BMP escape
+  sweeps. Each test exhaustively checks the full BMP and is materially slower
+  than ordinary Annex B files; all neighboring paths retain the 8-second
+  default.
+
+  [Decision Log]
+  - 목적과 의도: deterministic CI에서 전수 BMP sweep의 정상 실행을 engine failure와 구분한다.
+  - 기존 구현 및 제약 조건: 두 파일은 로컬에서도 각각 약 12.5초가 걸리며 CI에서 기본 per-variant 8초를 두 번 연속 초과했다. 동일 62-file gate는 로컬에서 62/0/0이다.
+  - 검토한 주요 대안: 전체 Annex B timeout 상향, 무제한 재시도, 두 exact path만 30초로 확장하는 방식을 검토했다.
+  - 선택한 방식: runner/analyzer 공유 exact set에 leading/trailing BMP sweep 두 파일만 등록하고 tooling이 경로와 30초 값을 고정한다.
+  - 다른 대안 대신 이 방식을 선택한 이유: 전체 prefix 상향은 실제 성능 회귀를 숨기고 재시도는 deterministic 경계를 해결하지 않는다.
+  - 장점, 단점 및 영향: 두 exhaustive sweep은 느린 CI에서도 완료되며 ordinary/outside 파일은 8초 sandbox 경계를 유지한다.
+
 - Added Realm-local static `Temporal.ZonedDateTime.compare`. Both inputs are
   fully converted from branded objects, ISO property bags, or ZonedDateTime
   Strings in left-to-right order, then compared only by exact epoch

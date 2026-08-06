@@ -1132,6 +1132,11 @@ REGEXP_LITERAL_EXTENDED_TIMEOUT_FILES = {
     "language/literals/regexp/S7.8.5_A2.4_T2.js",
 }
 
+REGEXP_ANNEX_B_ESCAPE_EXTENDED_TIMEOUT_FILES = {
+    "annexB/built-ins/RegExp/RegExp-leading-escape-BMP.js",
+    "annexB/built-ins/RegExp/RegExp-trailing-escape-BMP.js",
+}
+
 REGEXP_CHARACTER_CLASS_ESCAPE_EXTENDED_TIMEOUT_FILES = {
     "built-ins/RegExp/CharacterClassEscapes/character-class-digit-class-escape-negative-cases.js",
     "built-ins/RegExp/CharacterClassEscapes/character-class-non-digit-class-escape-positive-cases.js",
@@ -2089,6 +2094,13 @@ def regexp_literal_extended_timeout_path(path):
         return False
     return rel.as_posix() in REGEXP_LITERAL_EXTENDED_TIMEOUT_FILES
 
+def regexp_annex_b_escape_extended_timeout_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except ValueError:
+        return False
+    return rel.as_posix() in REGEXP_ANNEX_B_ESCAPE_EXTENDED_TIMEOUT_FILES
+
 def regexp_character_class_escape_extended_timeout_path(path):
     try:
         rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
@@ -2112,6 +2124,8 @@ def test_timeout_seconds(path):
         return 60
     if regexp_literal_extended_timeout_path(path):
         return 20
+    if regexp_annex_b_escape_extended_timeout_path(path):
+        return 30
     if regexp_character_class_escape_extended_timeout_path(path):
         return 30
     return 8
