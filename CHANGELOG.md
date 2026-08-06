@@ -21,6 +21,10 @@
   - 다른 대안 대신 이 방식을 선택한 이유: 단일 epoch 표현은 calendar-local record 의미를 흐리고 ordinary properties는 brand와 비관찰을 깨뜨린다. 전체 API 동시 구현은 parsing/arithmetic 의존성을 섞어 실제 지원 경계를 과장한다.
   - 장점, 단점 및 영향: hidden-property 비관찰, fractional truncation, extreme range, cross-Realm error/result, subclass/newTarget, fuel, GC/OOM rollback과 101개 Test262 경로가 검증된다. `from`, parsing, arithmetic, `toPlainDateTime` 연결은 후속 단위다.
 
+  Implementation commit `71bcdf9` is confirmed by ordinary CI `31107343779`
+  (**3/3**) and full Test262 CI `31107343705` (**64/64**), including the
+  dedicated exact **101/0/0** and forced **101/5/0-skip** jobs.
+
 - Added Realm-local `%Temporal.Duration%` construction with ten immutable
   numeric hidden slots and branded `years` through `nanoseconds`, `sign`, and
   `blank` accessors. Constructor conversion is left-to-right, accepts only

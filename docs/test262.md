@@ -14449,3 +14449,8 @@ diagnostics therefore require **101 pass / 5 fail / 0 skip**.
 - 다른 대안 대신 이 방식을 선택한 이유: prefix와 stub은 미구현 parsing/arithmetic을 거짓 지원한다. exact complement는 core 자체의 효과와 다음 dependency를 동시에 드러낸다.
 - 장점, 단점 및 영향: exact 101/0/0과 forced 101/5가 고정되고 미래 sibling은 자동 허용되지 않는다. `PlainDateTime.from`과 arithmetic 구현 후 blocker를 재실측해야 한다.
 ```
+
+Implementation commit `71bcdf9` is confirmed by ordinary CI `31107343779`
+(**3/3**) and full Test262 CI `31107343705` (**64/64**). The dedicated jobs
+reproduce PlainDateTime exact **101/0/0** and forced **101/5/0-skip** over the
+frozen 106-file core surface.
