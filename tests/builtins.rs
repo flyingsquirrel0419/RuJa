@@ -24997,6 +24997,163 @@ fn temporal_instant_compare_converts_in_order_and_returns_sign() {
 }
 
 #[test]
+fn temporal_duration_core_uses_hidden_slots_and_exact_integer_fields() {
+    assert_eq!(
+        run(r#"
+            var duration = new Temporal.Duration(1, 2, 3, 4, 5, 6, 7, 8, 9, 10);
+            var negative = new Temporal.Duration(0, 0, 0, -4, -5, -6, -7, -8, -9, -10);
+            var blank = new Temporal.Duration(undefined, -0);
+            class Custom extends Temporal.Duration {}
+            var custom = new Custom(11);
+            [
+              Temporal.Duration.name,
+              Temporal.Duration.length,
+              duration.years,
+              duration.months,
+              duration.weeks,
+              duration.days,
+              duration.hours,
+              duration.minutes,
+              duration.seconds,
+              duration.milliseconds,
+              duration.microseconds,
+              duration.nanoseconds,
+              duration.sign,
+              duration.blank,
+              negative.sign,
+              blank.sign,
+              blank.blank,
+              Object.is(blank.months, 0),
+              Object.prototype.toString.call(duration),
+              Object.getPrototypeOf(custom) === Custom.prototype,
+              custom.years
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "Duration|0|1|2|3|4|5|6|7|8|9|10|1|false|-1|0|true|true|[object Temporal.Duration]|true|11"
+        ))
+    );
+
+    assert_eq!(
+        run(r#"
+            var reads = [];
+            function field(name, value) {
+              return { valueOf: function () { reads.push(name); return value; } };
+            }
+            var duration = new Temporal.Duration(
+              field('years', 1),
+              field('months', 2),
+              undefined,
+              field('days', 4)
+            );
+            Object.defineProperty(duration, 'years', {
+              get: function () { throw new Error('public property observed'); }
+            });
+            var getter = Object.getOwnPropertyDescriptor(
+              Temporal.Duration.prototype,
+              'years'
+            ).get;
+            [reads.join(','), getter.call(duration), duration.months, duration.days].join('|');
+        "#),
+        Value::String(Arc::from("years,months,days|1|2|4"))
+    );
+}
+
+#[test]
+fn temporal_duration_rejects_non_integral_mixed_and_out_of_range_fields() {
+    for source in [
+        "Temporal.Duration()",
+        "new Temporal.Duration(Symbol())",
+        "new Temporal.Duration(1n)",
+        "new Temporal.Duration(NaN)",
+        "new Temporal.Duration(Infinity)",
+        "new Temporal.Duration(1.5)",
+        "new Temporal.Duration(1, -1)",
+        "new Temporal.Duration(2 ** 32)",
+        "new Temporal.Duration(0, 0, 2 ** 32)",
+        "new Temporal.Duration(0, 0, 0, 2 ** 53)",
+        "Object.getOwnPropertyDescriptor(Temporal.Duration.prototype, 'years').get.call({})",
+        "new (Object.getOwnPropertyDescriptor(Temporal.Duration.prototype, 'years').get)()",
+    ] {
+        let error = run_err(source);
+        assert!(
+            error.contains("TypeError") || error.contains("RangeError"),
+            "{source}: {error}"
+        );
+    }
+
+    assert_eq!(
+        run(r#"
+            var below = new Temporal.Duration(0, 0, 0, 0, 0, 0, 2 ** 53 - 1);
+            var dateBelow = new Temporal.Duration(2 ** 32 - 1);
+            below.seconds === 2 ** 53 - 1 && dateBelow.years === 2 ** 32 - 1;
+        "#),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn temporal_duration_constructor_and_getters_honor_function_realms() {
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var foreign = new other.Temporal.Duration(7, 6, 5, 4, 3, 2, 1);
+            var getter = Object.getOwnPropertyDescriptor(
+              other.Temporal.Duration.prototype,
+              'days'
+            ).get;
+            var reads = 0;
+            Object.defineProperty(foreign, 'days', {
+              get: function () { reads++; throw new Error('observed'); }
+            });
+            var getterRealm;
+            var constructorRealm;
+            try { getter.call({}); } catch (error) {
+              getterRealm = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            try { new other.Temporal.Duration(1.5); } catch (error) {
+              constructorRealm = error instanceof other.RangeError && !(error instanceof RangeError);
+            }
+            var NewTarget = function () {}.bind(null);
+            var prototypeReads = 0;
+            Object.defineProperty(NewTarget, 'prototype', {
+              get: function () { prototypeReads++; return null; }
+            });
+            var fallback = Reflect.construct(other.Temporal.Duration, [9], NewTarget);
+            [
+              getter.call(foreign),
+              reads,
+              getterRealm,
+              constructorRealm,
+              prototypeReads,
+              Object.getPrototypeOf(fallback) === Temporal.Duration.prototype,
+              fallback.years
+            ].join('|');
+        "#),
+        Value::String(Arc::from("4|0|true|true|1|true|9"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var marker = {};
+            var NewTarget = function () {}.bind(null);
+            var reads = 0;
+            Object.defineProperty(NewTarget, 'prototype', {
+              get: function () { reads++; throw marker; }
+            });
+            var rangeBeforePrototype = false;
+            try { Reflect.construct(Temporal.Duration, [1.5], NewTarget); }
+            catch (error) { rangeBeforePrototype = error instanceof RangeError && reads === 0; }
+            var abruptPrototype = false;
+            try { Reflect.construct(Temporal.Duration, [1], NewTarget); }
+            catch (error) { abruptPrototype = error === marker && reads === 1; }
+            rangeBeforePrototype && abruptPrototype;
+        "#),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn temporal_zoned_date_time_core_uses_hidden_slots_and_realm_intrinsics() {
     assert_eq!(
         run(r#"

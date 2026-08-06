@@ -18,7 +18,12 @@ def _features(path):
         "timezone-string-year-zero.js"
     ):
         features.add("arrow-function")
-    if path.endswith("/argument-wrong-type.js"):
+    if path.endswith("/argument-wrong-type.js") or path.endswith(
+        (
+            "/argument-propertybag-calendar-wrong-type.js",
+            "/argument-propertybag-timezone-wrong-type.js",
+        )
+    ):
         features.update(("BigInt", "Symbol"))
     if path.endswith("/not-a-constructor.js"):
         features.add("Reflect.construct")
@@ -29,5 +34,5 @@ TEMPORAL_ZONED_DATE_TIME_COMPARE_FEATURES = {
     path: _features(path) for path in TEMPORAL_ZONED_DATE_TIME_COMPARE_FILES
 }
 
-if len(TEMPORAL_ZONED_DATE_TIME_COMPARE_FILES) != 46:
-    raise RuntimeError("Temporal.ZonedDateTime compare admission must contain 46 files")
+if len(TEMPORAL_ZONED_DATE_TIME_COMPARE_FILES) != 48:
+    raise RuntimeError("Temporal.ZonedDateTime compare admission must contain 48 files")

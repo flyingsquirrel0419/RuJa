@@ -65,6 +65,51 @@ fn temporal_instant_string_parsing_precharges_input_bytes() {
 }
 
 #[test]
+fn temporal_duration_numeric_string_conversion_precharges_input_bytes() {
+    const BUDGET: i64 = 10_000;
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        globalThis.temporalDurationShort = "1";
+        globalThis.temporalDurationLong = "0".repeat(512) + "1";
+        globalThis.temporalDurationObject = {
+          valueOf: function () { return temporalDurationLong; }
+        };
+        "#,
+    )
+    .expect("Temporal.Duration fuel fixtures should initialize");
+
+    vm.set_fuel(Some(BUDGET));
+    vm.run("new Temporal.Duration(temporalDurationShort);")
+        .expect("short Duration field should convert");
+    let short_work = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+
+    vm.set_fuel(Some(BUDGET));
+    vm.run("new Temporal.Duration(temporalDurationLong);")
+        .expect("long Duration field should convert");
+    let long_work = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+    assert!(long_work >= short_work + 500);
+
+    vm.set_fuel(Some(BUDGET));
+    vm.run("new Temporal.Duration(temporalDurationObject);")
+        .expect("object-produced Duration field should convert");
+    let object_work = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+    assert!(object_work >= long_work);
+
+    vm.set_fuel(Some(object_work - 1));
+    let error = vm
+        .run("new Temporal.Duration(temporalDurationObject);")
+        .expect_err("N-1 fuel must abort object field conversion");
+    assert_eq!(error.kind, ruja::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+
+    vm.set_fuel(Some(object_work));
+    vm.run("new Temporal.Duration(temporalDurationObject);")
+        .expect("exact measured fuel should construct Duration");
+    assert_eq!(vm.fuel_remaining(), Some(0));
+}
+
+#[test]
 fn temporal_instant_compare_precharges_each_string_argument() {
     const BUDGET: i64 = 20_000;
     let mut vm = Vm::new().expect("failed to initialize VM");

@@ -18,6 +18,8 @@ def _features(path):
         features.add("Symbol")
     if path.endswith("/not-a-constructor.js"):
         features.add("Reflect.construct")
+    if path.endswith("/calendar-wrong-type.js"):
+        features.update(("BigInt", "Symbol"))
     return frozenset(features)
 
 
@@ -25,5 +27,5 @@ TEMPORAL_ZONED_DATE_TIME_WITH_CALENDAR_FEATURES = {
     path: _features(path) for path in TEMPORAL_ZONED_DATE_TIME_WITH_CALENDAR_FILES
 }
 
-if len(TEMPORAL_ZONED_DATE_TIME_WITH_CALENDAR_FILES) != 14:
-    raise RuntimeError("Temporal.ZonedDateTime withCalendar admission must contain 14 files")
+if len(TEMPORAL_ZONED_DATE_TIME_WITH_CALENDAR_FILES) != 15:
+    raise RuntimeError("Temporal.ZonedDateTime withCalendar admission must contain 15 files")

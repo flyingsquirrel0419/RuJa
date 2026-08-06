@@ -1053,11 +1053,28 @@ pub enum TemporalKind {
     Instant {
         epoch_nanoseconds: Arc<num_bigint::BigInt>,
     },
+    Duration {
+        fields: TemporalDurationFields,
+    },
     ZonedDateTime {
         epoch_nanoseconds: Arc<num_bigint::BigInt>,
         time_zone: TemporalTimeZone,
         calendar_identifier: Arc<str>,
     },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TemporalDurationFields {
+    pub years: f64,
+    pub months: f64,
+    pub weeks: f64,
+    pub days: f64,
+    pub hours: f64,
+    pub minutes: f64,
+    pub seconds: f64,
+    pub milliseconds: f64,
+    pub microseconds: f64,
+    pub nanoseconds: f64,
 }
 
 #[derive(Clone)]

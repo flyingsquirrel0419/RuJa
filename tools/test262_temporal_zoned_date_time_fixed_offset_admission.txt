@@ -5,6 +5,7 @@ built-ins/Temporal/ZonedDateTime/from/argument-propertybag-calendar-invalid-iso-
 built-ins/Temporal/ZonedDateTime/from/argument-propertybag-calendar-iso-string.js
 built-ins/Temporal/ZonedDateTime/from/argument-propertybag-calendar-leap-second.js
 built-ins/Temporal/ZonedDateTime/from/argument-propertybag-calendar-string.js
+built-ins/Temporal/ZonedDateTime/from/argument-propertybag-calendar-wrong-type.js
 built-ins/Temporal/ZonedDateTime/from/argument-propertybag-calendar-year-zero.js
 built-ins/Temporal/ZonedDateTime/from/argument-propertybag-empty-throws.js
 built-ins/Temporal/ZonedDateTime/from/argument-propertybag-function-object.js
@@ -22,6 +23,7 @@ built-ins/Temporal/ZonedDateTime/from/argument-propertybag-timezone-string-multi
 built-ins/Temporal/ZonedDateTime/from/argument-propertybag-timezone-string-sub-minute-offset.js
 built-ins/Temporal/ZonedDateTime/from/argument-propertybag-timezone-string-year-zero.js
 built-ins/Temporal/ZonedDateTime/from/argument-propertybag-timezone-string.js
+built-ins/Temporal/ZonedDateTime/from/argument-propertybag-timezone-wrong-type.js
 built-ins/Temporal/ZonedDateTime/from/argument-string-basic-and-extended-format.js
 built-ins/Temporal/ZonedDateTime/from/argument-string-calendar-annotation.js
 built-ins/Temporal/ZonedDateTime/from/argument-string-calendar-annotation-invalid-key.js

@@ -8,6 +8,7 @@ built-ins/Temporal/ZonedDateTime/calendar-case-insensitive.js
 built-ins/Temporal/ZonedDateTime/calendar-invalid-iso-string.js
 built-ins/Temporal/ZonedDateTime/calendar-string.js
 built-ins/Temporal/ZonedDateTime/calendar-undefined.js
+built-ins/Temporal/ZonedDateTime/calendar-wrong-type.js
 built-ins/Temporal/ZonedDateTime/constructor.js
 built-ins/Temporal/ZonedDateTime/get-prototype-from-constructor-throws.js
 built-ins/Temporal/ZonedDateTime/length.js

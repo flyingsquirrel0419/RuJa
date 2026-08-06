@@ -98,6 +98,37 @@ both JavaScript arguments rooted; completed conversion results are Rust
 - 장점, 단점 및 영향: 별도 formatter/parser drift가 없고 result allocation도 없다. 최초 경계에서 제외했던 ZonedDateTime fast path는 이후 hidden-slot core admission이 소유한다.
 ```
 
+## Temporal Duration hidden slots
+
+`TemporalKind::Duration` stores the ten specification fields as immutable,
+integer-valued `f64` slots. This representation preserves the original
+ECMAScript Number identity even when a valid individual nanosecond field is
+larger than `i64`; it does not imply that arbitrary fractional or infinite
+Numbers are accepted. Construction performs `ToIntegerIfIntegral` from years
+through nanoseconds before reading `newTarget.prototype`, canonicalizes both
+zero signs to positive zero, and validates the complete record before
+allocation. Validation converts each already-integral field to `BigInt`, so
+the 2^32 date-unit limits and normalized 2^53-second time limit cannot overflow
+or lose precision while combining days through nanoseconds.
+
+The constructor and prototype are registered per Realm. Accessors brand
+against the hidden kind and never read same-named public properties; errors
+belong to the native function Realm, while constructor result prototypes obey
+`GetPrototypeFromConstructor` and therefore the `newTarget` Realm. Duration
+slots contain no GC references. Namespace installation nevertheless pins the
+prototype, constructor, and twelve getters until all 67 Temporal allocations
+are complete, and Realm root/rollback inventories include both new registries.
+
+```text
+[Decision Log]
+- 목적과 의도: Duration arithmetic과 conversion이 확장될 수 있는 위조 불가능한 숫자 record 및 Realm intrinsic 기반을 확립한다.
+- 기존 구현 및 제약 조건: Temporal heap family는 Instant와 ZonedDateTime만 가졌고 Realm registry, GC exhaustive match, installer OOM rollback은 수동 동기화 구조다. 유효한 Duration Number slot은 i64 범위를 넘을 수 있다.
+- 검토한 주요 대안: ordinary properties, i64 또는 BigInt 전용 슬롯, 전체 arithmetic API 동시 구현, Number-valued hidden slots와 exact validation 경계를 검토했다.
+- 선택한 방식: 열 개의 f64 hidden slot을 원형 보존하고, 생성 시 finite/integral·single-sign 검증 후 BigInt normalized-time 계산을 수행한다. Realm별 constructor/prototype과 branded accessors를 기존 Temporal installer에 추가한다.
+- 다른 대안 대신 이 방식을 선택한 이유: ordinary properties는 brand와 비관찰 의미론을 깨고 i64는 명세상 유효한 큰 Number를 거부한다. BigInt 슬롯은 accessor가 원래 Number를 반환하는 계약과 맞지 않으며, 전체 API 동시 구현은 검증 범위를 과도하게 넓힌다.
+- 장점, 단점 및 영향: 큰 필드와 조합 범위, conversion order, cross-Realm/subclass, fuel, GC/OOM 경계가 독립적으로 검증된다. `Duration.from`, 문자열 parsing, balancing, rounding, compare/total은 이 record 위에 후속 구현해야 한다.
+```
+
 `TemporalKind::ZonedDateTime` extends the same heap object family with immutable
 epoch nanoseconds, a canonical time-zone record, and the ISO calendar
 identifier. The time-zone record distinguishes UTC, fixed minute offsets, and

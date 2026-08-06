@@ -20,6 +20,8 @@ def _features(path):
         features.add("Reflect.construct")
     if path.endswith("/timezone-string-year-zero.js"):
         features.add("arrow-function")
+    if path.endswith("/timezone-wrong-type.js"):
+        features.update(("BigInt", "Symbol"))
     return frozenset(features)
 
 
@@ -27,7 +29,7 @@ TEMPORAL_ZONED_DATE_TIME_WITH_TIME_ZONE_FEATURES = {
     path: _features(path) for path in TEMPORAL_ZONED_DATE_TIME_WITH_TIME_ZONE_FILES
 }
 
-if len(TEMPORAL_ZONED_DATE_TIME_WITH_TIME_ZONE_FILES) != 14:
+if len(TEMPORAL_ZONED_DATE_TIME_WITH_TIME_ZONE_FILES) != 15:
     raise RuntimeError(
-        "Temporal.ZonedDateTime withTimeZone admission must contain 14 files"
+        "Temporal.ZonedDateTime withTimeZone admission must contain 15 files"
     )

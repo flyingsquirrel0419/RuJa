@@ -18,7 +18,12 @@ _ARROW_FUNCTION_FILES = frozenset(
 
 def _features(path):
     features = {"Temporal"}
-    if path.endswith("/argument-wrong-type.js"):
+    if path.endswith("/argument-wrong-type.js") or path.endswith(
+        (
+            "/argument-propertybag-calendar-wrong-type.js",
+            "/argument-propertybag-timezone-wrong-type.js",
+        )
+    ):
         features.update({"BigInt", "Symbol"})
     if path.endswith("/branding.js"):
         features.add("Symbol")
@@ -33,5 +38,5 @@ TEMPORAL_ZONED_DATE_TIME_EQUALS_FEATURES = {
     path: _features(path) for path in TEMPORAL_ZONED_DATE_TIME_EQUALS_FILES
 }
 
-if len(TEMPORAL_ZONED_DATE_TIME_EQUALS_FILES) != 52:
-    raise RuntimeError("Temporal.ZonedDateTime equals admission must contain 52 files")
+if len(TEMPORAL_ZONED_DATE_TIME_EQUALS_FILES) != 54:
+    raise RuntimeError("Temporal.ZonedDateTime equals admission must contain 54 files")

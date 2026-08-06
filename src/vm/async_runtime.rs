@@ -1354,6 +1354,13 @@ impl Vm {
                 .cloned()
                 .unwrap_or(fallback));
         }
+        if intrinsic == "Temporal.Duration" {
+            return Ok(self
+                .realm_temporal_duration_prototypes
+                .get(&realm.0)
+                .cloned()
+                .unwrap_or(fallback));
+        }
         if intrinsic == "Temporal.ZonedDateTime" {
             return Ok(self
                 .realm_temporal_zoned_date_time_prototypes

@@ -1,8 +1,6 @@
 # Pinned Test262 revision: 9e61c12835c5e4a3bdba93850427e6742c4f64c4
 # Exact unsupported complement of the 266-file fixed-offset civil surface.
 built-ins/Temporal/ZonedDateTime/from/argument-object.js
-built-ins/Temporal/ZonedDateTime/from/argument-propertybag-calendar-wrong-type.js
-built-ins/Temporal/ZonedDateTime/from/argument-propertybag-timezone-wrong-type.js
 built-ins/Temporal/ZonedDateTime/from/argument-string.js
 built-ins/Temporal/ZonedDateTime/from/calendar-temporal-object.js
 built-ins/Temporal/ZonedDateTime/from/roundtrip-from-property-bag.js

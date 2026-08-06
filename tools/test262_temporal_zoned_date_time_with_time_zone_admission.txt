@@ -13,3 +13,4 @@ built-ins/Temporal/ZonedDateTime/prototype/withTimeZone/timezone-string-multiple
 built-ins/Temporal/ZonedDateTime/prototype/withTimeZone/timezone-string-sub-minute-offset.js
 built-ins/Temporal/ZonedDateTime/prototype/withTimeZone/timezone-string-year-zero.js
 built-ins/Temporal/ZonedDateTime/prototype/withTimeZone/timezone-string.js
+built-ins/Temporal/ZonedDateTime/prototype/withTimeZone/timezone-wrong-type.js

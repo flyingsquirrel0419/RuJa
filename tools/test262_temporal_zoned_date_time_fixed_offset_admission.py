@@ -14,6 +14,8 @@ TEMPORAL_ZONED_DATE_TIME_FIXED_OFFSET_FILES = frozenset(
 _BIGINT_FILES = frozenset(
     {
         "built-ins/Temporal/ZonedDateTime/from/argument-wrong-type.js",
+        "built-ins/Temporal/ZonedDateTime/from/argument-propertybag-calendar-wrong-type.js",
+        "built-ins/Temporal/ZonedDateTime/from/argument-propertybag-timezone-wrong-type.js",
         "built-ins/Temporal/ZonedDateTime/from/options-wrong-type.js",
         "built-ins/Temporal/ZonedDateTime/prototype/offset/basic.js",
         "built-ins/Temporal/ZonedDateTime/prototype/offsetNanoseconds/basic.js",
@@ -43,6 +45,8 @@ def _features(path):
         features.add("BigInt")
     if (
         "/branding.js" in path
+        or path.endswith("/from/argument-propertybag-calendar-wrong-type.js")
+        or path.endswith("/from/argument-propertybag-timezone-wrong-type.js")
         or path.endswith("/from/argument-wrong-type.js")
         or path.endswith("/from/options-wrong-type.js")
         or path.endswith("/toString/options-wrong-type.js")
@@ -59,7 +63,7 @@ TEMPORAL_ZONED_DATE_TIME_FIXED_OFFSET_FEATURES = {
     path: _features(path) for path in TEMPORAL_ZONED_DATE_TIME_FIXED_OFFSET_FILES
 }
 
-if len(TEMPORAL_ZONED_DATE_TIME_FIXED_OFFSET_FILES) != 253:
+if len(TEMPORAL_ZONED_DATE_TIME_FIXED_OFFSET_FILES) != 255:
     raise RuntimeError(
-        "Temporal.ZonedDateTime fixed-offset admission must contain 253 files"
+        "Temporal.ZonedDateTime fixed-offset admission must contain 255 files"
     )

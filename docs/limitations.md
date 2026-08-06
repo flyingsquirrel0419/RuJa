@@ -15,7 +15,10 @@ The following resource limits are enforced:
   conversion accepts basic and
   extended date/time/offset forms, nanosecond-precision offset seconds, and the
   audited RFC 9557 annotation subset, with a required `Z` or numeric offset.
-  Realm-local `%Temporal.ZonedDateTime%` supports hidden-slot construction for
+  Realm-local `%Temporal.Duration%` supports hidden-slot construction,
+  subclassing, all ten numeric accessors, `sign`, and `blank`; `from`, string
+  parsing, balancing, rounding, `compare`, `total`, and the remaining Duration
+  methods are not implemented. Realm-local `%Temporal.ZonedDateTime%` supports hidden-slot construction for
   UTC and fixed offsets, exact epoch/time-zone/calendar accessors, subclassing,
   all ISO civil/calendar/offset accessors, fixed-offset String and ISO
   property-bag `from`, its Instant fast path, option-aware `toString`,
@@ -27,7 +30,7 @@ The following resource limits are enforced:
   minute-precision fixed offsets only. `startOfDay` rejects named zones until
   transition-aware midnight gap/overlap resolution exists. Named IANA time-zone transitions,
   the remaining ZonedDateTime string grammar, the remaining RFC 9557
-  grammar, calendar/duration types, and `Temporal.Now` methods remain
+  grammar, calendar types, remaining duration operations, and `Temporal.Now` methods remain
   unsupported.
 
 - **Execution fuel**: `Vm::set_fuel(Some(n))` bounds dispatched opcodes and

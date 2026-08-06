@@ -15,6 +15,7 @@ TEMPORAL_ZONED_DATE_TIME_CORE_FILES = frozenset(
 _BIGINT_FILES = frozenset(
     {
         "built-ins/Temporal/ZonedDateTime/calendar-undefined.js",
+        "built-ins/Temporal/ZonedDateTime/calendar-wrong-type.js",
         "built-ins/Temporal/ZonedDateTime/prototype/epochMilliseconds/basic.js",
         "built-ins/Temporal/ZonedDateTime/prototype/epochNanoseconds/basic.js",
         "built-ins/Temporal/ZonedDateTime/timezone-wrong-type.js",
@@ -26,6 +27,7 @@ _SYMBOL_FILES = frozenset(
         "built-ins/Temporal/ZonedDateTime/prototype/epochMilliseconds/branding.js",
         "built-ins/Temporal/ZonedDateTime/prototype/epochNanoseconds/branding.js",
         "built-ins/Temporal/ZonedDateTime/prototype/timeZoneId/branding.js",
+        "built-ins/Temporal/ZonedDateTime/calendar-wrong-type.js",
         "built-ins/Temporal/ZonedDateTime/timezone-wrong-type.js",
     }
 )
@@ -44,5 +46,5 @@ TEMPORAL_ZONED_DATE_TIME_CORE_FEATURES = {
     path: _features(path) for path in TEMPORAL_ZONED_DATE_TIME_CORE_FILES
 }
 
-if len(TEMPORAL_ZONED_DATE_TIME_CORE_FILES) != 36:
-    raise RuntimeError("Temporal.ZonedDateTime core admission must contain 36 files")
+if len(TEMPORAL_ZONED_DATE_TIME_CORE_FILES) != 37:
+    raise RuntimeError("Temporal.ZonedDateTime core admission must contain 37 files")

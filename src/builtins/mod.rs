@@ -50,8 +50,8 @@ use crate::value::{
     ArrayData, BindingKind, CollectionIteratorData, CollectionIteratorKind, FunctionData,
     FunctionKind, GcIdx, HeapObj, IteratorConcatIterable, IteratorHelperData, IteratorHelperInner,
     IteratorHelperKind, IteratorZipMode, MapData, MapKey, NativeConstructMode, ObjectData,
-    PropertyDescriptor, PropertyKey, RegExpStringIteratorData, SetData, TemporalData, TemporalKind,
-    TemporalTimeZone, TemporalTimeZoneKind, Value,
+    PropertyDescriptor, PropertyKey, RegExpStringIteratorData, SetData, TemporalData,
+    TemporalDurationFields, TemporalKind, TemporalTimeZone, TemporalTimeZoneKind, Value,
 };
 use crate::vm::{NativeFn, Vm};
 use indexmap::{IndexMap, IndexSet};
@@ -6289,7 +6289,7 @@ pub(crate) fn install_temporal_namespace_in_env(
     global: Option<&Value>,
     object_proto: Value,
 ) -> error::Result<Value> {
-    vm.try_reserve_gc_pins(52)?;
+    vm.try_reserve_gc_pins(66)?;
     let mut pin_count = 0;
     let result = (|| {
         let instant_prototype = Value::Object(vm.alloc(HeapObj::Object(ObjectData {
@@ -6595,6 +6595,58 @@ pub(crate) fn install_temporal_namespace_in_env(
             0
         );
 
+        let duration_prototype = Value::Object(vm.alloc(HeapObj::Object(ObjectData {
+            props: Mutex::new(IndexMap::new()),
+            proto: Mutex::new(Some(object_proto.clone())),
+            extensible: AtomicBool::new(true),
+            class_name: None,
+            private_fields: Mutex::new(std::collections::HashMap::new()),
+            primitive: Mutex::new(None),
+        }))?);
+        pin_count += vm.pin(&duration_prototype);
+        let duration_constructor = Value::Object(vm.new_native_constructor_in_env_with_gc_retry(
+            "Duration",
+            temporal_duration_constructor,
+            0,
+            env,
+            NativeConstructMode::InternalDeferredPrototype,
+        )?);
+        pin_count += vm.pin(&duration_constructor);
+
+        macro_rules! alloc_duration_getter {
+            ($binding:ident, $name:literal, $native:ident) => {
+                let $binding = Value::Object(
+                    vm.new_native_function_in_env_with_gc_retry($name, $native, 0, env)?,
+                );
+                pin_count += vm.pin(&$binding);
+            };
+        }
+
+        alloc_duration_getter!(duration_years, "get years", temporal_duration_years);
+        alloc_duration_getter!(duration_months, "get months", temporal_duration_months);
+        alloc_duration_getter!(duration_weeks, "get weeks", temporal_duration_weeks);
+        alloc_duration_getter!(duration_days, "get days", temporal_duration_days);
+        alloc_duration_getter!(duration_hours, "get hours", temporal_duration_hours);
+        alloc_duration_getter!(duration_minutes, "get minutes", temporal_duration_minutes);
+        alloc_duration_getter!(duration_seconds, "get seconds", temporal_duration_seconds);
+        alloc_duration_getter!(
+            duration_milliseconds,
+            "get milliseconds",
+            temporal_duration_milliseconds
+        );
+        alloc_duration_getter!(
+            duration_microseconds,
+            "get microseconds",
+            temporal_duration_microseconds
+        );
+        alloc_duration_getter!(
+            duration_nanoseconds,
+            "get nanoseconds",
+            temporal_duration_nanoseconds
+        );
+        alloc_duration_getter!(duration_sign, "get sign", temporal_duration_sign);
+        alloc_duration_getter!(duration_blank, "get blank", temporal_duration_blank);
+
         let Value::Object(instant_constructor_index) = instant_constructor.clone() else {
             unreachable!()
         };
@@ -6645,6 +6697,78 @@ pub(crate) fn install_temporal_namespace_in_env(
             props.insert(PropertyKey::from("toString"), data_prop(to_string));
             props.insert(PropertyKey::from("valueOf"), data_prop(value_of));
             let mut tag = data_prop(Value::String(Arc::from("Temporal.Instant")));
+            tag.writable = false;
+            props.insert(
+                PropertyKey::symbol(vm.well_known_symbols.to_string_tag),
+                tag,
+            );
+        });
+
+        let Value::Object(duration_constructor_index) = duration_constructor.clone() else {
+            unreachable!()
+        };
+        vm.heap.with_obj(duration_constructor_index.0, |object| {
+            let HeapObj::Function(function) = object else {
+                unreachable!()
+            };
+            *function.prototype.lock() = Some(duration_prototype.clone());
+            function.props.lock().insert(
+                PropertyKey::from("prototype"),
+                const_prop(duration_prototype.clone()),
+            );
+        });
+        let Value::Object(duration_prototype_index) = duration_prototype.clone() else {
+            unreachable!()
+        };
+        vm.heap.with_obj(duration_prototype_index.0, |object| {
+            let mut props = object.props().lock();
+            props.insert(
+                PropertyKey::from("constructor"),
+                data_prop(duration_constructor.clone()),
+            );
+            props.insert(
+                PropertyKey::from("years"),
+                accessor_get_prop(duration_years),
+            );
+            props.insert(
+                PropertyKey::from("months"),
+                accessor_get_prop(duration_months),
+            );
+            props.insert(
+                PropertyKey::from("weeks"),
+                accessor_get_prop(duration_weeks),
+            );
+            props.insert(PropertyKey::from("days"), accessor_get_prop(duration_days));
+            props.insert(
+                PropertyKey::from("hours"),
+                accessor_get_prop(duration_hours),
+            );
+            props.insert(
+                PropertyKey::from("minutes"),
+                accessor_get_prop(duration_minutes),
+            );
+            props.insert(
+                PropertyKey::from("seconds"),
+                accessor_get_prop(duration_seconds),
+            );
+            props.insert(
+                PropertyKey::from("milliseconds"),
+                accessor_get_prop(duration_milliseconds),
+            );
+            props.insert(
+                PropertyKey::from("microseconds"),
+                accessor_get_prop(duration_microseconds),
+            );
+            props.insert(
+                PropertyKey::from("nanoseconds"),
+                accessor_get_prop(duration_nanoseconds),
+            );
+            props.insert(PropertyKey::from("sign"), accessor_get_prop(duration_sign));
+            props.insert(
+                PropertyKey::from("blank"),
+                accessor_get_prop(duration_blank),
+            );
+            let mut tag = data_prop(Value::String(Arc::from("Temporal.Duration")));
             tag.writable = false;
             props.insert(
                 PropertyKey::symbol(vm.well_known_symbols.to_string_tag),
@@ -6819,6 +6943,10 @@ pub(crate) fn install_temporal_namespace_in_env(
                     data_prop(instant_constructor.clone()),
                 ),
                 (
+                    PropertyKey::from("Duration"),
+                    data_prop(duration_constructor.clone()),
+                ),
+                (
                     PropertyKey::from("ZonedDateTime"),
                     data_prop(zoned_date_time_constructor.clone()),
                 ),
@@ -6838,6 +6966,10 @@ pub(crate) fn install_temporal_namespace_in_env(
             .insert(env.0, instant_constructor);
         vm.realm_temporal_instant_prototypes
             .insert(env.0, instant_prototype);
+        vm.realm_temporal_duration_constructors
+            .insert(env.0, duration_constructor);
+        vm.realm_temporal_duration_prototypes
+            .insert(env.0, duration_prototype);
         vm.realm_temporal_zoned_date_time_constructors
             .insert(env.0, zoned_date_time_constructor);
         vm.realm_temporal_zoned_date_time_prototypes
@@ -6910,6 +7042,190 @@ pub(crate) fn create_temporal_instant_in_realm(
         .cloned()
         .ok_or_else(|| Error::internal("Temporal.Instant prototype is not installed"))?;
     create_temporal_instant(vm, epoch_nanoseconds, prototype)
+}
+
+fn temporal_duration_sign_value(fields: &TemporalDurationFields) -> i8 {
+    for value in [
+        fields.years,
+        fields.months,
+        fields.weeks,
+        fields.days,
+        fields.hours,
+        fields.minutes,
+        fields.seconds,
+        fields.milliseconds,
+        fields.microseconds,
+        fields.nanoseconds,
+    ] {
+        if value < 0.0 {
+            return -1;
+        }
+        if value > 0.0 {
+            return 1;
+        }
+    }
+    0
+}
+
+fn temporal_duration_is_valid(fields: &TemporalDurationFields) -> bool {
+    let values = [
+        fields.years,
+        fields.months,
+        fields.weeks,
+        fields.days,
+        fields.hours,
+        fields.minutes,
+        fields.seconds,
+        fields.milliseconds,
+        fields.microseconds,
+        fields.nanoseconds,
+    ];
+    if values
+        .iter()
+        .any(|value| !value.is_finite() || value.fract() != 0.0)
+    {
+        return false;
+    }
+    let sign = temporal_duration_sign_value(fields);
+    if values
+        .iter()
+        .any(|value| (*value < 0.0 && sign > 0) || (*value > 0.0 && sign < 0))
+    {
+        return false;
+    }
+    let integers = values
+        .map(|value| BigInt::from_f64(value).expect("finite integral f64 must convert to BigInt"));
+    let date_unit_limit = BigInt::from(1_u64 << 32);
+    if integers[..3]
+        .iter()
+        .any(|value| value.abs() >= date_unit_limit)
+    {
+        return false;
+    }
+    let normalized_nanoseconds = &integers[3] * BigInt::from(86_400_000_000_000_i64)
+        + &integers[4] * BigInt::from(3_600_000_000_000_i64)
+        + &integers[5] * BigInt::from(60_000_000_000_i64)
+        + &integers[6] * BigInt::from(1_000_000_000_i64)
+        + &integers[7] * BigInt::from(1_000_000_i64)
+        + &integers[8] * BigInt::from(1_000_i64)
+        + &integers[9];
+    let time_limit = BigInt::from(1_000_000_000_i64) * BigInt::from(1_u64 << 53);
+    normalized_nanoseconds.abs() < time_limit
+}
+
+fn temporal_duration_slots(vm: &Vm, this: Option<Value>) -> error::Result<TemporalDurationFields> {
+    let Value::Object(index) = this.unwrap_or(Value::Undefined) else {
+        return Err(Error::type_err(
+            "Temporal.Duration method called on incompatible receiver",
+        ));
+    };
+    vm.heap.with_obj(index.0, |object| match object {
+        HeapObj::Temporal(TemporalData {
+            kind: TemporalKind::Duration { fields },
+            ..
+        }) => Ok(*fields),
+        _ => Err(Error::type_err(
+            "Temporal.Duration method called on incompatible receiver",
+        )),
+    })
+}
+
+fn create_temporal_duration(
+    vm: &mut Vm,
+    fields: TemporalDurationFields,
+    prototype: Value,
+) -> error::Result<Value> {
+    if !temporal_duration_is_valid(&fields) {
+        return Err(Error::range("Invalid Temporal.Duration fields"));
+    }
+    vm.try_reserve_gc_pins(1)?;
+    let pin_count = vm.pin(&prototype);
+    let result = vm.alloc(HeapObj::Temporal(TemporalData {
+        kind: TemporalKind::Duration { fields },
+        props: Mutex::new(IndexMap::new()),
+        proto: Mutex::new(Some(prototype)),
+        extensible: AtomicBool::new(true),
+    }));
+    vm.unpin_many(pin_count);
+    result.map(Value::Object)
+}
+
+fn temporal_duration_constructor(
+    vm: &mut Vm,
+    args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
+    if vm.current_native_new_target().is_none() {
+        return Err(Error::type_err("Temporal.Duration requires 'new'"));
+    }
+    let mut values = [0.0; 10];
+    for (index, output) in values.iter_mut().enumerate() {
+        let value = args.get(index).cloned().unwrap_or(Value::Undefined);
+        if !matches!(value, Value::Undefined) {
+            *output = temporal_integer_if_integral(vm, value)?;
+        }
+    }
+    let fields = TemporalDurationFields {
+        years: values[0],
+        months: values[1],
+        weeks: values[2],
+        days: values[3],
+        hours: values[4],
+        minutes: values[5],
+        seconds: values[6],
+        milliseconds: values[7],
+        microseconds: values[8],
+        nanoseconds: values[9],
+    };
+    if !temporal_duration_is_valid(&fields) {
+        return Err(Error::range("Invalid Temporal.Duration fields"));
+    }
+
+    let realm = env::global_env_root(&vm.heap, vm.native_callee_closure().unwrap_or(vm.global));
+    let fallback = vm
+        .realm_temporal_duration_prototypes
+        .get(&realm.0)
+        .cloned()
+        .ok_or_else(|| Error::internal("Temporal.Duration prototype is not installed"))?;
+    let prototype = native_constructor_prototype_with_default(vm, "Temporal.Duration", fallback)?;
+    create_temporal_duration(vm, fields, prototype)
+}
+
+macro_rules! temporal_duration_getter {
+    ($name:ident, $field:ident) => {
+        fn $name(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+            temporal_duration_slots(vm, this).map(|fields| Value::Number(fields.$field))
+        }
+    };
+}
+
+temporal_duration_getter!(temporal_duration_years, years);
+temporal_duration_getter!(temporal_duration_months, months);
+temporal_duration_getter!(temporal_duration_weeks, weeks);
+temporal_duration_getter!(temporal_duration_days, days);
+temporal_duration_getter!(temporal_duration_hours, hours);
+temporal_duration_getter!(temporal_duration_minutes, minutes);
+temporal_duration_getter!(temporal_duration_seconds, seconds);
+temporal_duration_getter!(temporal_duration_milliseconds, milliseconds);
+temporal_duration_getter!(temporal_duration_microseconds, microseconds);
+temporal_duration_getter!(temporal_duration_nanoseconds, nanoseconds);
+
+fn temporal_duration_sign(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    temporal_duration_slots(vm, this)
+        .map(|fields| Value::Number(f64::from(temporal_duration_sign_value(&fields))))
+}
+
+fn temporal_duration_blank(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    temporal_duration_slots(vm, this)
+        .map(|fields| Value::Bool(temporal_duration_sign_value(&fields) == 0))
 }
 
 fn temporal_instant_constructor(
@@ -7363,6 +7679,24 @@ fn temporal_integer_with_truncation(vm: &mut Vm, value: Value) -> error::Result<
         }
         BigInt::from_f64(number.trunc())
             .ok_or_else(|| Error::range("Temporal field is out of range"))
+    })
+}
+
+fn temporal_integer_if_integral(vm: &mut Vm, value: Value) -> error::Result<f64> {
+    temporal_with_rooted_value(vm, value, |vm, value| {
+        let primitive = if matches!(value, Value::Object(_)) {
+            vm.to_primitive_number(value)?
+        } else {
+            value.clone()
+        };
+        if let Value::String(source) = &primitive {
+            vm.consume_fuel_units(source.len().min(i64::MAX as usize) as i64)?;
+        }
+        let number = vm.to_number(&primitive)?;
+        if !number.is_finite() || number.fract() != 0.0 {
+            return Err(Error::range("Temporal.Duration field must be an integer"));
+        }
+        Ok(if number == 0.0 { 0.0 } else { number })
     })
 }
 
@@ -8052,6 +8386,7 @@ fn to_temporal_instant_epoch(vm: &mut Vm, value: &Value) -> error::Result<Arc<Bi
                 | TemporalKind::ZonedDateTime {
                     epoch_nanoseconds, ..
                 } => Some(epoch_nanoseconds.clone()),
+                TemporalKind::Duration { .. } => None,
             },
             _ => None,
         }) {
