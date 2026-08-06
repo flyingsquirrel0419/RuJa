@@ -28,5 +28,5 @@ TEMPORAL_PLAIN_DATE_TIME_CORE_FEATURES = {
     path: _features(path) for path in TEMPORAL_PLAIN_DATE_TIME_CORE_FILES
 }
 
-if len(TEMPORAL_PLAIN_DATE_TIME_CORE_FILES) != 101:
-    raise RuntimeError("Temporal.PlainDateTime core admission must contain 101 files")
+if len(TEMPORAL_PLAIN_DATE_TIME_CORE_FILES) != 105:
+    raise RuntimeError("Temporal.PlainDateTime core admission must contain 105 files")

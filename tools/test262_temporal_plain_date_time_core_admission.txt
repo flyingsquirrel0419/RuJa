@@ -101,3 +101,7 @@ built-ins/Temporal/PlainDateTime/second-undefined.js
 built-ins/Temporal/PlainDateTime/subclass.js
 built-ins/Temporal/PlainDateTime/throws-if-date-is-invalid.js
 built-ins/Temporal/PlainDateTime/throws-if-time-is-invalid.js
+built-ins/Temporal/PlainDateTime/prototype/day/basic.js
+built-ins/Temporal/PlainDateTime/prototype/dayOfYear/basic.js
+built-ins/Temporal/PlainDateTime/prototype/monthCode/no-leap-months.js
+built-ins/Temporal/PlainDateTime/prototype/year/basic.js

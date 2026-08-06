@@ -294,7 +294,7 @@ fn parse_date_time(source: &str, allow_date_only: bool) -> Option<ParsedDateTime
     if !has_time && !allow_date_only {
         return None;
     }
-    if !has_time && bytes.get(index) != Some(&b'[') {
+    if !has_time && !matches!(bytes.get(index), None | Some(b'[')) {
         return None;
     }
     if has_time {
@@ -422,6 +422,34 @@ pub(crate) fn parse_zoned_date_time_string(source: &str) -> Option<ParsedZonedDa
         z: parsed.z,
         time_zone_identifier,
         offset_minutes,
+        calendar_identifier,
+    })
+}
+
+pub(crate) struct ParsedPlainDateTime {
+    pub fields: IsoDateTimeFields,
+    pub calendar_identifier: Arc<str>,
+}
+
+pub(crate) fn parse_plain_date_time_string(source: &str) -> Option<ParsedPlainDateTime> {
+    let parsed = parse_date_time(source, true)?;
+    if parsed.z {
+        return None;
+    }
+    let calendar_identifier = zoned_date_time_calendar_identifier(source)?;
+    let date_time = iso_date_time(&BigInt::from(parsed.local_nanoseconds), 0)?;
+    Some(ParsedPlainDateTime {
+        fields: IsoDateTimeFields {
+            year: date_time.year,
+            month: date_time.month,
+            day: date_time.day,
+            hour: date_time.hour,
+            minute: date_time.minute,
+            second: date_time.second,
+            millisecond: date_time.millisecond,
+            microsecond: date_time.microsecond,
+            nanosecond: date_time.nanosecond,
+        },
         calendar_identifier,
     })
 }
@@ -1111,9 +1139,9 @@ pub(crate) fn format_zoned_date_time(
 mod tests {
     use super::{
         format_instant, parse_calendar_identifier, parse_instant_string, parse_offset_string,
-        parse_time_zone_identifier, parse_time_zone_identifier_like, parse_time_zone_offset,
-        parse_zoned_date_time_string, resolve_zoned_date_time_epoch, InstantPrecision,
-        InstantRoundingMode, ZonedDateTimeOffsetOption,
+        parse_plain_date_time_string, parse_time_zone_identifier, parse_time_zone_identifier_like,
+        parse_time_zone_offset, parse_zoned_date_time_string, resolve_zoned_date_time_epoch,
+        InstantPrecision, InstantRoundingMode, ZonedDateTimeOffsetOption,
     };
     use num_bigint::BigInt;
 
@@ -1388,6 +1416,33 @@ mod tests {
         ] {
             assert!(parse_zoned_date_time_string(source).is_none(), "{source}");
         }
+    }
+
+    #[test]
+    fn plain_date_time_strings_ignore_optional_offsets_and_zones() {
+        let date_only = parse_plain_date_time_string("1976-11-18")
+            .expect("date-only PlainDateTime should parse");
+        assert_eq!(date_only.fields.year, 1976);
+        assert_eq!(date_only.fields.month, 11);
+        assert_eq!(date_only.fields.day, 18);
+        assert_eq!(date_only.fields.hour, 0);
+
+        let with_optional_data = parse_plain_date_time_string(
+            "1976-11-18T15:23:30.123456789+23:59[Custom][u-ca=ISO8601]",
+        )
+        .expect("offset and time-zone annotation should be ignored");
+        assert_eq!(with_optional_data.fields.hour, 15);
+        assert_eq!(with_optional_data.fields.minute, 23);
+        assert_eq!(with_optional_data.fields.second, 30);
+        assert_eq!(with_optional_data.fields.millisecond, 123);
+        assert_eq!(with_optional_data.fields.microsecond, 456);
+        assert_eq!(with_optional_data.fields.nanosecond, 789);
+        assert_eq!(with_optional_data.calendar_identifier.as_ref(), "iso8601");
+
+        assert!(parse_plain_date_time_string("1976-11-18T15:23Z").is_none());
+        assert!(parse_plain_date_time_string("1976-11-18+00:00").is_none());
+        assert!(parse_plain_date_time_string("1976-11-18[u-ca=gregory]").is_none());
+        assert!(parse_plain_date_time_string("-000000-11-18").is_none());
     }
 
     #[test]

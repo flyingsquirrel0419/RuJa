@@ -14430,27 +14430,27 @@ the updated ZonedDateTime admission boundaries.
 
 ## Temporal.PlainDateTime hidden-slot core
 
-`tools/test262_temporal_plain_date_time_core_admission.txt` freezes **101**
+`tools/test262_temporal_plain_date_time_core_admission.txt` freezes **105**
 exact constructor, prototype metadata, ISO accessor, `valueOf`, and
-`@@toStringTag` paths. Dedicated CI requires **101 pass / 0 fail / 0 skip**.
-The blocker manifest completes the audited **106-file** surface: one root file
-requires arithmetic methods, while four accessor basic files call the absent
-`Temporal.PlainDateTime.from` before or during their assertions. Forced
-diagnostics therefore require **101 pass / 5 fail / 0 skip**.
+`@@toStringTag` paths. Dedicated CI requires **105 pass / 0 fail / 0 skip**.
+The blocker manifest completes the audited **106-file** surface: only the root
+`datetime-math.js` file still requires arithmetic methods. Four accessor basic
+files moved into admission after `Temporal.PlainDateTime.from` was implemented.
+Forced diagnostics therefore require **105 pass / 1 fail / 0 skip**.
 
 ```text
 [Decision Log]
 - 목적과 의도: PlainDateTime constructor/hidden accessor core의 실제 conformance 경계를 metadata와 함께 재현 가능하게 고정한다.
-- 기존 구현 및 제약 조건: broad Temporal gate는 전체 PlainDateTime subtree를 skip하며 audited core 안에서도 5개가 constructor/accessor 외부 API를 먼저 요구한다.
+- 기존 구현 및 제약 조건: broad Temporal gate는 전체 PlainDateTime subtree를 skip했고 초기 audited core 안에서 5개가 constructor/accessor 외부 API를 먼저 요구했다. `from` 구현으로 네 accessor 경로가 해제됐다.
 - 검토한 주요 대안: 전체 prefix admission, constructor root만 허용, `from` stub, 106개 frozen surface를 101 admission/5 blocker로 분리하는 방식을 검토했다.
-- 선택한 방식: root direct files, prototype direct metadata, 22 accessor directories, toStringTag, valueOf를 exact surface로 동결하고 runner/analyzer feature maps와 live disjointness를 공유한다.
+- 선택한 방식: root direct files, prototype direct metadata, 22 accessor directories, toStringTag, valueOf를 exact surface로 동결하고 runner/analyzer feature maps와 live disjointness를 공유한다. 재실측으로 통과한 네 path만 blocker에서 admission으로 이동한다.
 - 다른 대안 대신 이 방식을 선택한 이유: prefix와 stub은 미구현 parsing/arithmetic을 거짓 지원한다. exact complement는 core 자체의 효과와 다음 dependency를 동시에 드러낸다.
-- 장점, 단점 및 영향: exact 101/0/0과 forced 101/5가 고정되고 미래 sibling은 자동 허용되지 않는다. `PlainDateTime.from`과 arithmetic 구현 후 blocker를 재실측해야 한다.
+- 장점, 단점 및 영향: exact 105/0/0과 forced 105/1이 고정되고 미래 sibling은 자동 허용되지 않는다. arithmetic 구현 후 마지막 blocker를 재실측해야 한다.
 ```
 
 Implementation commit `71bcdf9` is confirmed by ordinary CI `31107343779`
 (**3/3**) and full Test262 CI `31107343705` (**64/64**). The dedicated jobs
-reproduce PlainDateTime exact **101/0/0** and forced **101/5/0-skip** over the
+reproduce the historical PlainDateTime exact **101/0/0** and forced **101/5/0-skip** over the
 frozen 106-file core surface.
 
 ## Temporal.ZonedDateTime.prototype.toPlainDateTime
@@ -14478,3 +14478,33 @@ Implementation commit `044f765` is confirmed by ordinary CI `31113158807`
 (**3/3**) and full Test262 CI `31113156512` (**65/65**). Dedicated jobs
 reproduce direct `toPlainDateTime` **10/0/0**, fixed-offset exact **259/0/0**
 and forced **259/7/0-skip**, and complete `withTimeZone` **16/0/0**.
+
+## Temporal.PlainDateTime.from
+
+`tools/test262_temporal_plain_date_time_from_admission.txt` freezes **64**
+independently supported paths from the pinned 70-file static method directory.
+Dedicated CI requires **64 pass / 0 fail / 0 skip**. The six-file blocker
+manifest contains five paths that construct absent PlainDate-family objects
+and one path that calls absent `PlainDateTime.prototype.equals`. Forced full
+directory execution is **65 pass / 5 fail** because `options-wrong-type.js`
+currently receives the expected TypeError from the missing `PlainDate`
+constructor before reaching its intended options assertion; this false
+positive remains blocked rather than overstating support.
+
+The admitted surface covers nonconstruction and descriptors, hidden-slot
+PlainDateTime/ZonedDateTime conversion, complete ISO property-bag preparation,
+observable overflow ordering, required/range validation, the audited String
+grammar, extreme dates, method-Realm results/errors, fuel, and GC/OOM rollback.
+The same implementation moves four accessor `basic.js` paths into the frozen
+PlainDateTime core, which is now exact **105/0/0** and forced **105/1/0** over
+106 files.
+
+```text
+[Decision Log]
+- 목적과 의도: static PlainDateTime.from의 실제 독립 지원 경계와 core accessor 개선을 exact Test262 accounting에 반영한다.
+- 기존 구현 및 제약 조건: broad Temporal gate가 70-file directory 전체를 skip했고 여섯 파일은 아직 없는 PlainDate family 또는 PlainDateTime.equals를 실행한다. 이 중 한 파일은 missing-constructor TypeError가 기대 오류와 같아 강제 실행만 보면 거짓 양성이다.
+- 검토한 주요 대안: 70-file prefix 허용, forced 65개 전부 admission, parser/property-bag별 분리 manifest, independently reachable 64개와 dependency complement를 분리하는 방식을 검토했다.
+- 선택한 방식: 실제 intended assertion까지 독립 실행되는 64개 path와 metadata를 runner/analyzer 공유 manifest로 고정하고 여섯 dependency path를 blocker로 유지한다. forced diagnostic은 raw 65/5와 false-positive 이유를 함께 기록한다.
+- 다른 대안 대신 이 방식을 선택한 이유: 단순 process pass는 빠른 선행 TypeError를 intended behavior 증명으로 오인할 수 있다. dependency-aware complement만이 현재 object model을 과장하지 않고 향후 PlainDate/equals 도입 때 재측정 지점을 보존한다.
+- 장점, 단점 및 영향: exact 64/0, forced 65/5, core 105/1 경계와 future-sibling gating이 재현된다. PlainDate family와 PlainDateTime.equals 구현 후 여섯 blocker를 assertion 도달 기준으로 다시 감사해야 한다.
+```

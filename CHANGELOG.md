@@ -4,6 +4,26 @@
 
 ### Changed
 
+- Added Realm-local `Temporal.PlainDateTime.from` conversion for branded
+  PlainDateTime and ZonedDateTime values, complete ISO property bags, and the
+  audited PlainDateTime String grammar. Property preparation preserves the
+  specified getter/coercion order, keeps numeric fields as `BigInt` until
+  overflow is observed, and performs required/range validation afterward.
+  Branded inputs use hidden slots, results use the native method Realm, and
+  parsing ignores optional offsets/zones while rejecting a UTC designator.
+  The pinned direct boundary is exact **64/0/0** with six explicit external
+  dependency blockers. Four former accessor blockers are also admitted, so
+  the PlainDateTime hidden-slot core is now **105/0/0** with one arithmetic
+  blocker.
+
+  [Decision Log]
+  - 목적과 의도: PlainDateTime의 명세 conversion 경계를 hidden-slot core에 연결하고 property bag/String 입력을 observable 순서와 정확한 범위로 처리한다.
+  - 기존 구현 및 제약 조건: constructor와 accessors, ZonedDateTime local conversion은 있었지만 static `from`이 없었다. ZonedDateTime property collector는 month/day positivity를 options 전에 검사해 PlainDateTime 순서에 재사용할 수 없고 PlainDate 계열과 PlainDateTime `equals`는 아직 없다.
+  - 검토한 주요 대안: ZonedDateTime collector 재사용, JS constructor 재호출, parser/property bag을 별도 공개 단위로 분할, 전용 conversion record와 공용 ISO parser 확장을 검토했다.
+  - 선택한 방식: 전용 property field record가 calendar부터 year까지 순차 변환하고 overflow 관찰 후 required/monthCode/date/time/range를 해석한다. String parser는 date-only를 제한적으로 허용하며 offset/time-zone annotation을 검증 후 무시하고, branded values는 immutable slots를 복제한다.
+  - 다른 대안 대신 이 방식을 선택한 이유: 조기 positivity 검사는 abrupt completion 순서를 바꾸고 constructor/public getter 재사용은 subclass와 user code를 관찰한다. parser와 property bag을 함께 완결해야 static API의 실제 reachable corpus를 거짓 없이 열 수 있다.
+  - 장점, 단점 및 영향: getter/options 순서, constrain/reject, leap second, negative balancing, Realm, fuel, GC/OOM rollback과 exact 64/0 및 core 105/0이 검증된다. PlainDate family 의존 5개와 `equals` 의존 1개는 direct blocker이며 arithmetic 1개는 core blocker로 남는다. 전체 forced 65/5에는 미구현 PlainDate 생성의 TypeError가 기대 TypeError와 우연히 일치하는 false positive 한 건이 포함된다.
+
 - Added Realm-local `Temporal.ZonedDateTime.prototype.toPlainDateTime` for UTC
   and minute-precision fixed offsets. It brands through hidden slots, adds the
   exact offset to epoch nanoseconds with Euclidean negative-time balancing,

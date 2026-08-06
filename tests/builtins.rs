@@ -25183,6 +25183,143 @@ fn temporal_plain_date_time_core_uses_hidden_iso_slots() {
 }
 
 #[test]
+fn temporal_plain_date_time_from_converts_supported_inputs_without_observing_slots() {
+    assert_eq!(
+        run(r#"
+            var original = new Temporal.PlainDateTime(1976, 11, 18, 15, 23, 30, 123, 456, 789);
+            var reads = 0;
+            for (var key of ['year', 'month', 'day', 'calendar']) {
+              Object.defineProperty(original, key, {
+                get: function () { reads++; throw new Error('observed'); }
+              });
+            }
+            var copied = Temporal.PlainDateTime.from(original, { overflow: 'reject' });
+            var zoned = Temporal.PlainDateTime.from(
+              new Temporal.ZonedDateTime(3661001001001n, '-00:02')
+            );
+            var constrained = Temporal.PlainDateTime.from({
+              year: 2000, month: 13, day: 40, hour: 24, minute: 60,
+              second: 60, millisecond: 1000, microsecond: 1000, nanosecond: 1000
+            });
+            var parsed = Temporal.PlainDateTime.from(
+              '1976-11-18T15:23:60,123456789+23:59[Custom][u-ca=ISO8601]'
+            );
+            [
+              Temporal.PlainDateTime.from.name,
+              Temporal.PlainDateTime.from.length,
+              copied !== original, copied.year, copied.nanosecond, reads,
+              zoned.hour, zoned.minute, zoned.second, zoned.millisecond,
+              constrained.month, constrained.day, constrained.hour,
+              constrained.minute, constrained.second, constrained.nanosecond,
+              parsed.second, parsed.millisecond, parsed.microsecond, parsed.nanosecond,
+              parsed.calendarId
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "from|1|true|1976|789|0|0|59|1|1|12|31|23|59|59|999|59|123|456|789|iso8601"
+        ))
+    );
+}
+
+#[test]
+fn temporal_plain_date_time_from_preserves_observable_order_and_function_realm() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            function numeric(name, value) {
+              return { valueOf: function () { log.push(name + '.valueOf'); return value; } };
+            }
+            var fields = {};
+            for (var entry of [
+              ['calendar', 'iso8601'], ['day', numeric('day', 2)],
+              ['hour', numeric('hour', 3)], ['microsecond', numeric('microsecond', 7)],
+              ['millisecond', numeric('millisecond', 6)], ['minute', numeric('minute', 4)],
+              ['month', numeric('month', 5)],
+              ['monthCode', { toString: function () { log.push('monthCode.toString'); return 'M05'; } }],
+              ['nanosecond', numeric('nanosecond', 8)], ['second', numeric('second', 5)],
+              ['year', numeric('year', 2000)]
+            ]) {
+              Object.defineProperty(fields, entry[0], {
+                get: (function (name, value) {
+                  return function () { log.push('get ' + name); return value; };
+                })(entry[0], entry[1])
+              });
+            }
+            var options = {};
+            Object.defineProperty(options, 'overflow', {
+              get: function () {
+                log.push('get overflow');
+                return { toString: function () { log.push('overflow.toString'); return 'constrain'; } };
+              }
+            });
+            var result = Temporal.PlainDateTime.from(fields, options);
+            var expected = [
+              'get calendar', 'get day', 'day.valueOf', 'get hour', 'hour.valueOf',
+              'get microsecond', 'microsecond.valueOf', 'get millisecond',
+              'millisecond.valueOf', 'get minute', 'minute.valueOf', 'get month',
+              'month.valueOf', 'get monthCode', 'monthCode.toString', 'get nanosecond',
+              'nanosecond.valueOf', 'get second', 'second.valueOf', 'get year',
+              'year.valueOf', 'get overflow', 'overflow.toString'
+            ].join(',');
+
+            var other = $262.createRealm().global;
+            var foreignFrom = other.Temporal.PlainDateTime.from;
+            var foreign = foreignFrom({ year: 2001, month: 6, day: 3 });
+            var errorRealm = false;
+            try { foreignFrom('invalid'); } catch (error) {
+              errorRealm = error instanceof other.RangeError && !(error instanceof RangeError);
+            }
+            [
+              log.join(',') === expected,
+              result.nanosecond,
+              Object.getPrototypeOf(foreign) === other.Temporal.PlainDateTime.prototype,
+              errorRealm
+            ].join('|');
+        "#),
+        Value::String(Arc::from("true|8|true|true"))
+    );
+}
+
+#[test]
+fn temporal_plain_date_time_from_rejects_invalid_fields_after_required_checks() {
+    for source in [
+        "Temporal.PlainDateTime.from()",
+        "Temporal.PlainDateTime.from(1)",
+        "Temporal.PlainDateTime.from('1976-11-18T15:23Z')",
+        "Temporal.PlainDateTime.from({ monthCode: 'M99L', day: 1 })",
+        "Temporal.PlainDateTime.from({ year: 2000, month: -1, day: 1 })",
+        "Temporal.PlainDateTime.from({ year: 2000, month: 1, day: -1 })",
+        "Temporal.PlainDateTime.from({ year: 2000, month: 2, day: 30 }, { overflow: 'reject' })",
+        "Temporal.PlainDateTime.from({ year: 2000, month: 1, monthCode: 'M02', day: 1 })",
+        "Temporal.PlainDateTime.from({ year: 2000, month: 1, day: 1 }, null)",
+    ] {
+        let error = run_err(source);
+        assert!(
+            error.contains("TypeError") || error.contains("RangeError"),
+            "{source}: {error}"
+        );
+    }
+
+    assert_eq!(
+        run(r#"
+            var missingWins = false;
+            try { Temporal.PlainDateTime.from({ monthCode: 'M99L', day: 1 }); }
+            catch (error) { missingWins = error instanceof TypeError; }
+            var optionsRead = 0;
+            var options = {};
+            Object.defineProperty(options, 'overflow', {
+              get: function () { optionsRead++; return 'reject'; }
+            });
+            var branded = Temporal.PlainDateTime.from(
+              new Temporal.PlainDateTime(2000, 5, 2), options
+            );
+            [missingWins, optionsRead, branded.day].join('|');
+        "#),
+        Value::String(Arc::from("true|1|2"))
+    );
+}
+
+#[test]
 fn temporal_plain_date_time_rejects_invalid_fields_after_ordered_conversion() {
     for source in [
         "Temporal.PlainDateTime(1970, 1, 1)",

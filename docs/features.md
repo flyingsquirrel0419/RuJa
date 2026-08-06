@@ -41,7 +41,8 @@
   and `blank`, with exact mixed-sign and normalized-range validation.
   Realm-local `Temporal.PlainDateTime` supports hidden-slot construction,
   subclassing, calendar ID, all ISO date/time and derived calendar accessors,
-  and always-throwing `valueOf`, with exact extreme-range validation.
+  always-throwing `valueOf`, and static `from` conversion for branded values,
+  ISO property bags, and audited strings, with exact extreme-range validation.
   Realm-local `Temporal.ZonedDateTime`
   supports hidden-slot construction for UTC/fixed offsets, exact epoch and
   identifier accessors, all ISO civil/calendar/offset accessors, subclassing,
@@ -54,7 +55,7 @@
   option-aware `toString`, `toJSON`, and `valueOf`. ZonedDateTime strings may omit time when followed directly by a
   time-zone annotation. Property-bag
   conversion currently accepts ISO calendars with UTC or minute-precision
-  fixed offsets. Remaining PlainDateTime conversion/arithmetic/string methods, Duration
+  fixed offsets. Remaining PlainDateTime comparison/arithmetic/formatting and conversion methods, Duration
   conversion/arithmetic, calendar types, named IANA timezone
   transitions, the remaining RFC 9557 grammar, and `Temporal.Now` methods
   remain outside the supported boundary.

@@ -157,6 +157,28 @@ boundaries.
 - 장점, 단점 및 영향: Realm/GC/OOM, conversion order, extreme dates, derived ISO getters가 독립 검증된다. ZonedDateTime `toPlainDateTime`은 이 생성 helper를 재사용하며 `from`, arithmetic, formatting은 후속 범위다.
 ```
 
+`Temporal.PlainDateTime.from` converts into the same compact hidden record
+without invoking constructors or public accessors. Branded PlainDateTime
+values copy their fields and calendar after validating `overflow`; branded
+ZonedDateTime values first derive local fixed-offset fields, then validate the
+option. Property bags are collected in calendar-field order while values that
+can exceed machine integers remain `BigInt`; required fields and ISO range are
+checked only after the observable option read. The shared parser accepts bare
+date-only PlainDateTime input, rejects date-only offsets and `Z`, validates
+optional annotations, and intentionally ignores numeric offsets and zone IDs.
+Every successful path allocates through the native function Realm's intrinsic
+PlainDateTime prototype.
+
+```text
+[Decision Log]
+- 목적과 의도: branded/property-bag/String 입력을 하나의 immutable PlainDateTime record와 Realm allocator로 수렴한다.
+- 기존 구현 및 제약 조건: ZonedDateTime property collector는 required timeZone/offset과 조기 positive validation을 포함하고 있어 PlainDateTime의 options/error ordering과 다르다. 공용 parser는 annotation 없는 date-only를 허용하지 않았다.
+- 검토한 주요 대안: ZonedDateTime collector mode flag, constructor 재호출, 별도 parser 복제, 전용 field collector와 제한적 공용 parser 확장을 검토했다.
+- 선택한 방식: PlainDateTime 전용 BigInt-backed field record와 overflow interpreter를 두고 parser의 date-only suffix guard는 bare/end 또는 annotation만 허용하도록 넓힌다. hidden ZonedDateTime civil 변환은 prototype method와 static conversion이 공유한다.
+- 다른 대안 대신 이 방식을 선택한 이유: mode flag는 서로 다른 required/order 계약을 숨기고 constructor/public properties는 observable re-entry를 추가한다. 공용 grammar primitive를 유지해야 Instant/ZonedDateTime 문법이 우발적으로 넓어지지 않는다.
+- 장점, 단점 및 영향: exact coercion order, required-before-range, Realm errors/results, negative epoch, extreme range, fuel, GC/OOM 경계가 한 conversion path에서 검증된다. named-zone transition과 비 ISO calendar type은 후속 hidden kinds/backend가 필요하다.
+```
+
 `Temporal.ZonedDateTime.prototype.toPlainDateTime` reads only the receiver's
 hidden epoch, time-zone, and calendar slots. The time-zone dispatcher supplies
 the exact UTC/fixed offset; the shared ISO helper performs checked `epoch +
