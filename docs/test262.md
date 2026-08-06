@@ -14473,3 +14473,8 @@ and complete **16/0** over 16.
 - 다른 대안 대신 이 방식을 선택한 이유: prefix는 미래 sibling을 검토 없이 허용하고 direct-only accounting은 구현이 실제로 복구한 기존 표준 경로를 계속 skip한다.
 - 장점, 단점 및 영향: exact 10/0/0, fixed-offset 259/7, complete withTimeZone 16/0이 재현된다. compare의 2개 blocker는 PlainDateTime.compare 또는 다른 Temporal calendar type을 계속 요구한다.
 ```
+
+Implementation commit `044f765` is confirmed by ordinary CI `31113158807`
+(**3/3**) and full Test262 CI `31113156512` (**65/65**). Dedicated jobs
+reproduce direct `toPlainDateTime` **10/0/0**, fixed-offset exact **259/0/0**
+and forced **259/7/0-skip**, and complete `withTimeZone` **16/0/0**.

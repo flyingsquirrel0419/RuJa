@@ -21,6 +21,11 @@
   - 다른 대안 대신 이 방식을 선택한 이유: public accessors와 constructor 호출은 observable behavior 및 subclass 영향을 추가한다. 기존 helper 재사용은 음수 epoch, offset 부호, 극한 범위를 모든 ZonedDateTime civil API와 일치시킨다.
   - 장점, 단점 및 영향: public getter 비관찰, subclass 억제, cross-Realm result/error, 음수 balancing, 양끝 범위, OOM pin rollback과 exact 10/0/0이 검증된다. named zones는 deterministic transition backend 전까지 기존 dispatcher에서 거부된다.
 
+  Implementation commit `044f765` is confirmed by ordinary CI `31113158807`
+  (**3/3**) and full Test262 CI `31113156512` (**65/65**), including direct
+  `toPlainDateTime` **10/0/0**, fixed-offset exact/forced **259/7**, and
+  complete `withTimeZone` **16/0** jobs.
+
 - Added Realm-local `%Temporal.PlainDateTime%` construction with immutable ISO
   date-time and calendar hidden slots, subclass/newTarget prototype selection,
   22 branded ISO accessors, `@@toStringTag`, and always-throwing `valueOf`.
