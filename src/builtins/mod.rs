@@ -51,7 +51,8 @@ use crate::value::{
     FunctionKind, GcIdx, HeapObj, IteratorConcatIterable, IteratorHelperData, IteratorHelperInner,
     IteratorHelperKind, IteratorZipMode, MapData, MapKey, NativeConstructMode, ObjectData,
     PropertyDescriptor, PropertyKey, RegExpStringIteratorData, SetData, TemporalData,
-    TemporalDurationFields, TemporalKind, TemporalTimeZone, TemporalTimeZoneKind, Value,
+    TemporalDurationFields, TemporalKind, TemporalPlainDateTimeFields, TemporalTimeZone,
+    TemporalTimeZoneKind, Value,
 };
 use crate::vm::{NativeFn, Vm};
 use indexmap::{IndexMap, IndexSet};
@@ -6289,7 +6290,7 @@ pub(crate) fn install_temporal_namespace_in_env(
     global: Option<&Value>,
     object_proto: Value,
 ) -> error::Result<Value> {
-    vm.try_reserve_gc_pins(66)?;
+    vm.try_reserve_gc_pins(91)?;
     let mut pin_count = 0;
     let result = (|| {
         let instant_prototype = Value::Object(vm.alloc(HeapObj::Object(ObjectData {
@@ -6647,6 +6648,124 @@ pub(crate) fn install_temporal_namespace_in_env(
         alloc_duration_getter!(duration_sign, "get sign", temporal_duration_sign);
         alloc_duration_getter!(duration_blank, "get blank", temporal_duration_blank);
 
+        let plain_date_time_prototype = Value::Object(vm.alloc(HeapObj::Object(ObjectData {
+            props: Mutex::new(IndexMap::new()),
+            proto: Mutex::new(Some(object_proto.clone())),
+            extensible: AtomicBool::new(true),
+            class_name: None,
+            private_fields: Mutex::new(std::collections::HashMap::new()),
+            primitive: Mutex::new(None),
+        }))?);
+        pin_count += vm.pin(&plain_date_time_prototype);
+        let plain_date_time_constructor =
+            Value::Object(vm.new_native_constructor_in_env_with_gc_retry(
+                "PlainDateTime",
+                temporal_plain_date_time_constructor,
+                3,
+                env,
+                NativeConstructMode::InternalDeferredPrototype,
+            )?);
+        pin_count += vm.pin(&plain_date_time_constructor);
+
+        macro_rules! alloc_plain_date_time_getter {
+            ($binding:ident, $name:literal, $native:ident) => {
+                let $binding = Value::Object(
+                    vm.new_native_function_in_env_with_gc_retry($name, $native, 0, env)?,
+                );
+                pin_count += vm.pin(&$binding);
+            };
+        }
+
+        alloc_plain_date_time_getter!(
+            plain_calendar_id,
+            "get calendarId",
+            temporal_plain_date_time_calendar_id
+        );
+        alloc_plain_date_time_getter!(plain_era, "get era", temporal_plain_date_time_era);
+        alloc_plain_date_time_getter!(
+            plain_era_year,
+            "get eraYear",
+            temporal_plain_date_time_era_year
+        );
+        alloc_plain_date_time_getter!(plain_year, "get year", temporal_plain_date_time_year);
+        alloc_plain_date_time_getter!(plain_month, "get month", temporal_plain_date_time_month);
+        alloc_plain_date_time_getter!(
+            plain_month_code,
+            "get monthCode",
+            temporal_plain_date_time_month_code
+        );
+        alloc_plain_date_time_getter!(plain_day, "get day", temporal_plain_date_time_day);
+        alloc_plain_date_time_getter!(plain_hour, "get hour", temporal_plain_date_time_hour);
+        alloc_plain_date_time_getter!(plain_minute, "get minute", temporal_plain_date_time_minute);
+        alloc_plain_date_time_getter!(plain_second, "get second", temporal_plain_date_time_second);
+        alloc_plain_date_time_getter!(
+            plain_millisecond,
+            "get millisecond",
+            temporal_plain_date_time_millisecond
+        );
+        alloc_plain_date_time_getter!(
+            plain_microsecond,
+            "get microsecond",
+            temporal_plain_date_time_microsecond
+        );
+        alloc_plain_date_time_getter!(
+            plain_nanosecond,
+            "get nanosecond",
+            temporal_plain_date_time_nanosecond
+        );
+        alloc_plain_date_time_getter!(
+            plain_day_of_week,
+            "get dayOfWeek",
+            temporal_plain_date_time_day_of_week
+        );
+        alloc_plain_date_time_getter!(
+            plain_day_of_year,
+            "get dayOfYear",
+            temporal_plain_date_time_day_of_year
+        );
+        alloc_plain_date_time_getter!(
+            plain_week_of_year,
+            "get weekOfYear",
+            temporal_plain_date_time_week_of_year
+        );
+        alloc_plain_date_time_getter!(
+            plain_year_of_week,
+            "get yearOfWeek",
+            temporal_plain_date_time_year_of_week
+        );
+        alloc_plain_date_time_getter!(
+            plain_days_in_week,
+            "get daysInWeek",
+            temporal_plain_date_time_days_in_week
+        );
+        alloc_plain_date_time_getter!(
+            plain_days_in_month,
+            "get daysInMonth",
+            temporal_plain_date_time_days_in_month
+        );
+        alloc_plain_date_time_getter!(
+            plain_days_in_year,
+            "get daysInYear",
+            temporal_plain_date_time_days_in_year
+        );
+        alloc_plain_date_time_getter!(
+            plain_months_in_year,
+            "get monthsInYear",
+            temporal_plain_date_time_months_in_year
+        );
+        alloc_plain_date_time_getter!(
+            plain_in_leap_year,
+            "get inLeapYear",
+            temporal_plain_date_time_in_leap_year
+        );
+        let plain_value_of = Value::Object(vm.new_native_function_in_env_with_gc_retry(
+            "valueOf",
+            temporal_plain_date_time_value_of,
+            0,
+            env,
+        )?);
+        pin_count += vm.pin(&plain_value_of);
+
         let Value::Object(instant_constructor_index) = instant_constructor.clone() else {
             unreachable!()
         };
@@ -6775,6 +6894,67 @@ pub(crate) fn install_temporal_namespace_in_env(
                 tag,
             );
         });
+
+        let Value::Object(plain_date_time_constructor_index) = plain_date_time_constructor.clone()
+        else {
+            unreachable!()
+        };
+        vm.heap
+            .with_obj(plain_date_time_constructor_index.0, |object| {
+                let HeapObj::Function(function) = object else {
+                    unreachable!()
+                };
+                *function.prototype.lock() = Some(plain_date_time_prototype.clone());
+                function.props.lock().insert(
+                    PropertyKey::from("prototype"),
+                    const_prop(plain_date_time_prototype.clone()),
+                );
+            });
+        let Value::Object(plain_date_time_prototype_index) = plain_date_time_prototype.clone()
+        else {
+            unreachable!()
+        };
+        vm.heap
+            .with_obj(plain_date_time_prototype_index.0, |object| {
+                let mut props = object.props().lock();
+                props.insert(
+                    PropertyKey::from("constructor"),
+                    data_prop(plain_date_time_constructor.clone()),
+                );
+                for (name, getter) in [
+                    ("calendarId", plain_calendar_id),
+                    ("era", plain_era),
+                    ("eraYear", plain_era_year),
+                    ("year", plain_year),
+                    ("month", plain_month),
+                    ("monthCode", plain_month_code),
+                    ("day", plain_day),
+                    ("hour", plain_hour),
+                    ("minute", plain_minute),
+                    ("second", plain_second),
+                    ("millisecond", plain_millisecond),
+                    ("microsecond", plain_microsecond),
+                    ("nanosecond", plain_nanosecond),
+                    ("dayOfWeek", plain_day_of_week),
+                    ("dayOfYear", plain_day_of_year),
+                    ("weekOfYear", plain_week_of_year),
+                    ("yearOfWeek", plain_year_of_week),
+                    ("daysInWeek", plain_days_in_week),
+                    ("daysInMonth", plain_days_in_month),
+                    ("daysInYear", plain_days_in_year),
+                    ("monthsInYear", plain_months_in_year),
+                    ("inLeapYear", plain_in_leap_year),
+                ] {
+                    props.insert(PropertyKey::from(name), accessor_get_prop(getter));
+                }
+                props.insert(PropertyKey::from("valueOf"), data_prop(plain_value_of));
+                let mut tag = data_prop(Value::String(Arc::from("Temporal.PlainDateTime")));
+                tag.writable = false;
+                props.insert(
+                    PropertyKey::symbol(vm.well_known_symbols.to_string_tag),
+                    tag,
+                );
+            });
 
         let Value::Object(zoned_constructor_index) = zoned_date_time_constructor.clone() else {
             unreachable!()
@@ -6947,6 +7127,10 @@ pub(crate) fn install_temporal_namespace_in_env(
                     data_prop(duration_constructor.clone()),
                 ),
                 (
+                    PropertyKey::from("PlainDateTime"),
+                    data_prop(plain_date_time_constructor.clone()),
+                ),
+                (
                     PropertyKey::from("ZonedDateTime"),
                     data_prop(zoned_date_time_constructor.clone()),
                 ),
@@ -6970,6 +7154,10 @@ pub(crate) fn install_temporal_namespace_in_env(
             .insert(env.0, duration_constructor);
         vm.realm_temporal_duration_prototypes
             .insert(env.0, duration_prototype);
+        vm.realm_temporal_plain_date_time_constructors
+            .insert(env.0, plain_date_time_constructor);
+        vm.realm_temporal_plain_date_time_prototypes
+            .insert(env.0, plain_date_time_prototype);
         vm.realm_temporal_zoned_date_time_constructors
             .insert(env.0, zoned_date_time_constructor);
         vm.realm_temporal_zoned_date_time_prototypes
@@ -7227,6 +7415,353 @@ fn temporal_duration_blank(
     temporal_duration_slots(vm, this)
         .map(|fields| Value::Bool(temporal_duration_sign_value(&fields) == 0))
 }
+
+fn temporal_plain_date_time_slots(
+    vm: &Vm,
+    this: Option<Value>,
+) -> error::Result<(TemporalPlainDateTimeFields, Arc<str>)> {
+    let Value::Object(index) = this.unwrap_or(Value::Undefined) else {
+        return Err(Error::type_err(
+            "Temporal.PlainDateTime method called on incompatible receiver",
+        ));
+    };
+    vm.heap.with_obj(index.0, |object| match object {
+        HeapObj::Temporal(TemporalData {
+            kind:
+                TemporalKind::PlainDateTime {
+                    fields,
+                    calendar_identifier,
+                },
+            ..
+        }) => Ok((*fields, calendar_identifier.clone())),
+        _ => Err(Error::type_err(
+            "Temporal.PlainDateTime method called on incompatible receiver",
+        )),
+    })
+}
+
+fn temporal_plain_date_time_fields(values: [BigInt; 9]) -> Option<TemporalPlainDateTimeFields> {
+    let [year, month, day, hour, minute, second, millisecond, microsecond, nanosecond] = values;
+    let (year, month, day, hour, minute, second, millisecond, microsecond, nanosecond) = (
+        year.to_i128()?,
+        month.to_i128()?,
+        day.to_i128()?,
+        hour.to_i128()?,
+        minute.to_i128()?,
+        second.to_i128()?,
+        millisecond.to_i128()?,
+        microsecond.to_i128()?,
+        nanosecond.to_i128()?,
+    );
+    if day < 1
+        || day > temporal::days_in_month(year, month)?
+        || !(0..=23).contains(&hour)
+        || !(0..=59).contains(&minute)
+        || !(0..=59).contains(&second)
+        || !(0..=999).contains(&millisecond)
+        || !(0..=999).contains(&microsecond)
+        || !(0..=999).contains(&nanosecond)
+    {
+        return None;
+    }
+    let local_nanoseconds =
+        temporal::iso_date_time_to_local_nanoseconds(temporal::IsoDateTimeFields {
+            year,
+            month,
+            day,
+            hour,
+            minute,
+            second,
+            millisecond,
+            microsecond,
+            nanosecond,
+        })?;
+    let instant_limit = i128::from(TEMPORAL_INSTANT_LIMIT_MILLISECONDS).checked_mul(1_000_000)?;
+    let day_nanoseconds = 86_400_i128.checked_mul(1_000_000_000)?;
+    let limit = instant_limit.checked_add(day_nanoseconds)?;
+    if local_nanoseconds <= -limit || local_nanoseconds >= limit {
+        return None;
+    }
+    Some(TemporalPlainDateTimeFields {
+        year: i32::try_from(year).ok()?,
+        month: u8::try_from(month).ok()?,
+        day: u8::try_from(day).ok()?,
+        hour: u8::try_from(hour).ok()?,
+        minute: u8::try_from(minute).ok()?,
+        second: u8::try_from(second).ok()?,
+        millisecond: u16::try_from(millisecond).ok()?,
+        microsecond: u16::try_from(microsecond).ok()?,
+        nanosecond: u16::try_from(nanosecond).ok()?,
+    })
+}
+
+fn temporal_plain_date_time_is_valid(fields: TemporalPlainDateTimeFields) -> bool {
+    let validated = temporal_plain_date_time_fields([
+        BigInt::from(fields.year),
+        BigInt::from(fields.month),
+        BigInt::from(fields.day),
+        BigInt::from(fields.hour),
+        BigInt::from(fields.minute),
+        BigInt::from(fields.second),
+        BigInt::from(fields.millisecond),
+        BigInt::from(fields.microsecond),
+        BigInt::from(fields.nanosecond),
+    ]);
+    validated.is_some_and(|validated| validated == fields)
+}
+
+fn temporal_plain_date_time_iso(
+    fields: TemporalPlainDateTimeFields,
+) -> error::Result<temporal::IsoDateTime> {
+    let local_nanoseconds =
+        temporal::iso_date_time_to_local_nanoseconds(temporal::IsoDateTimeFields {
+            year: i128::from(fields.year),
+            month: i128::from(fields.month),
+            day: i128::from(fields.day),
+            hour: i128::from(fields.hour),
+            minute: i128::from(fields.minute),
+            second: i128::from(fields.second),
+            millisecond: i128::from(fields.millisecond),
+            microsecond: i128::from(fields.microsecond),
+            nanosecond: i128::from(fields.nanosecond),
+        })
+        .ok_or_else(|| Error::internal("Invalid Temporal.PlainDateTime slots"))?;
+    temporal::iso_date_time(&BigInt::from(local_nanoseconds), 0)
+        .ok_or_else(|| Error::internal("Invalid Temporal.PlainDateTime slots"))
+}
+
+fn create_temporal_plain_date_time(
+    vm: &mut Vm,
+    fields: TemporalPlainDateTimeFields,
+    calendar_identifier: Arc<str>,
+    prototype: Value,
+) -> error::Result<Value> {
+    if !temporal_plain_date_time_is_valid(fields) {
+        return Err(Error::range("Invalid Temporal.PlainDateTime fields"));
+    }
+    vm.try_reserve_gc_pins(1)?;
+    let pin_count = vm.pin(&prototype);
+    let result = vm.alloc(HeapObj::Temporal(TemporalData {
+        kind: TemporalKind::PlainDateTime {
+            fields,
+            calendar_identifier,
+        },
+        props: Mutex::new(IndexMap::new()),
+        proto: Mutex::new(Some(prototype)),
+        extensible: AtomicBool::new(true),
+    }));
+    vm.unpin_many(pin_count);
+    result.map(Value::Object)
+}
+
+pub(crate) fn create_temporal_plain_date_time_in_realm(
+    vm: &mut Vm,
+    fields: TemporalPlainDateTimeFields,
+    calendar_identifier: Arc<str>,
+    realm: GcIdx,
+) -> error::Result<Value> {
+    let prototype = vm
+        .realm_temporal_plain_date_time_prototypes
+        .get(&env::global_env_root(&vm.heap, realm).0)
+        .cloned()
+        .ok_or_else(|| Error::internal("Temporal.PlainDateTime prototype is not installed"))?;
+    create_temporal_plain_date_time(vm, fields, calendar_identifier, prototype)
+}
+
+fn temporal_plain_date_time_constructor_calendar(
+    vm: &mut Vm,
+    value: Value,
+) -> error::Result<Arc<str>> {
+    let source = match value {
+        Value::Undefined => return Ok(Arc::from("iso8601")),
+        Value::String(source) => source,
+        _ => {
+            return Err(Error::type_err(
+                "Temporal.PlainDateTime calendar must be a String",
+            ));
+        }
+    };
+    vm.consume_fuel_units(source.len().min(i64::MAX as usize) as i64)?;
+    source
+        .eq_ignore_ascii_case("iso8601")
+        .then(|| Arc::from("iso8601"))
+        .ok_or_else(|| Error::range("Invalid Temporal calendar identifier"))
+}
+
+fn temporal_plain_date_time_constructor(
+    vm: &mut Vm,
+    args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
+    if vm.current_native_new_target().is_none() {
+        return Err(Error::type_err("Temporal.PlainDateTime requires 'new'"));
+    }
+    let mut values: [BigInt; 9] = std::array::from_fn(|_| BigInt::zero());
+    for (index, output) in values.iter_mut().enumerate() {
+        let value = args.get(index).cloned().unwrap_or(Value::Undefined);
+        if index < 3 || !value.is_undefined() {
+            *output = temporal_integer_with_truncation(vm, value)?;
+        }
+    }
+    let calendar_identifier = temporal_plain_date_time_constructor_calendar(
+        vm,
+        args.get(9).cloned().unwrap_or(Value::Undefined),
+    )?;
+    let fields = temporal_plain_date_time_fields(values)
+        .ok_or_else(|| Error::range("Invalid Temporal.PlainDateTime fields"))?;
+    let realm = env::global_env_root(&vm.heap, vm.native_callee_closure().unwrap_or(vm.global));
+    let fallback = vm
+        .realm_temporal_plain_date_time_prototypes
+        .get(&realm.0)
+        .cloned()
+        .ok_or_else(|| Error::internal("Temporal.PlainDateTime prototype is not installed"))?;
+    let prototype =
+        native_constructor_prototype_with_default(vm, "Temporal.PlainDateTime", fallback)?;
+    create_temporal_plain_date_time(vm, fields, calendar_identifier, prototype)
+}
+
+macro_rules! temporal_plain_date_time_number_getter {
+    ($name:ident, $field:ident) => {
+        fn $name(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+            temporal_plain_date_time_slots(vm, this)
+                .map(|(fields, _)| Value::Number(f64::from(fields.$field)))
+        }
+    };
+}
+
+temporal_plain_date_time_number_getter!(temporal_plain_date_time_year, year);
+temporal_plain_date_time_number_getter!(temporal_plain_date_time_month, month);
+temporal_plain_date_time_number_getter!(temporal_plain_date_time_day, day);
+temporal_plain_date_time_number_getter!(temporal_plain_date_time_hour, hour);
+temporal_plain_date_time_number_getter!(temporal_plain_date_time_minute, minute);
+temporal_plain_date_time_number_getter!(temporal_plain_date_time_second, second);
+temporal_plain_date_time_number_getter!(temporal_plain_date_time_millisecond, millisecond);
+temporal_plain_date_time_number_getter!(temporal_plain_date_time_microsecond, microsecond);
+temporal_plain_date_time_number_getter!(temporal_plain_date_time_nanosecond, nanosecond);
+
+fn temporal_plain_date_time_calendar_id(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    temporal_plain_date_time_slots(vm, this).map(|(_, calendar)| Value::String(calendar))
+}
+
+fn temporal_plain_date_time_era(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    temporal_plain_date_time_slots(vm, this).map(|_| Value::Undefined)
+}
+
+fn temporal_plain_date_time_era_year(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    temporal_plain_date_time_slots(vm, this).map(|_| Value::Undefined)
+}
+
+fn temporal_plain_date_time_month_code(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    temporal_plain_date_time_slots(vm, this)
+        .map(|(fields, _)| Value::String(Arc::from(format!("M{:02}", fields.month))))
+}
+
+fn temporal_plain_date_time_value_of(
+    _vm: &mut Vm,
+    _args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
+    Err(Error::type_err(
+        "Temporal.PlainDateTime.prototype.valueOf always throws",
+    ))
+}
+
+#[derive(Clone, Copy)]
+enum TemporalPlainDateTimeComputedField {
+    DayOfWeek,
+    DayOfYear,
+    WeekOfYear,
+    YearOfWeek,
+    DaysInWeek,
+    DaysInMonth,
+    DaysInYear,
+    MonthsInYear,
+    InLeapYear,
+}
+
+fn temporal_plain_date_time_computed_field(
+    vm: &mut Vm,
+    this: Option<Value>,
+    field: TemporalPlainDateTimeComputedField,
+) -> error::Result<Value> {
+    let (fields, _) = temporal_plain_date_time_slots(vm, this)?;
+    let date_time = temporal_plain_date_time_iso(fields)?;
+    Ok(match field {
+        TemporalPlainDateTimeComputedField::DayOfWeek => {
+            Value::Number(temporal::iso_day_of_week(date_time.epoch_days) as f64)
+        }
+        TemporalPlainDateTimeComputedField::DayOfYear => Value::Number(
+            temporal::iso_day_of_year(date_time)
+                .ok_or_else(|| Error::internal("Invalid Temporal.PlainDateTime slots"))?
+                as f64,
+        ),
+        TemporalPlainDateTimeComputedField::WeekOfYear => Value::Number(
+            temporal::iso_week_of_year(date_time)
+                .ok_or_else(|| Error::internal("Invalid Temporal.PlainDateTime slots"))?
+                .0 as f64,
+        ),
+        TemporalPlainDateTimeComputedField::YearOfWeek => Value::Number(
+            temporal::iso_week_of_year(date_time)
+                .ok_or_else(|| Error::internal("Invalid Temporal.PlainDateTime slots"))?
+                .1 as f64,
+        ),
+        TemporalPlainDateTimeComputedField::DaysInWeek => Value::Number(7.0),
+        TemporalPlainDateTimeComputedField::DaysInMonth => Value::Number(
+            temporal::days_in_month(date_time.year, date_time.month)
+                .ok_or_else(|| Error::internal("Invalid Temporal.PlainDateTime slots"))?
+                as f64,
+        ),
+        TemporalPlainDateTimeComputedField::DaysInYear => {
+            Value::Number(if temporal::leap_year(date_time.year) {
+                366.0
+            } else {
+                365.0
+            })
+        }
+        TemporalPlainDateTimeComputedField::MonthsInYear => Value::Number(12.0),
+        TemporalPlainDateTimeComputedField::InLeapYear => {
+            Value::Bool(temporal::leap_year(date_time.year))
+        }
+    })
+}
+
+macro_rules! temporal_plain_date_time_computed_getter {
+    ($name:ident, $field:ident) => {
+        fn $name(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+            temporal_plain_date_time_computed_field(
+                vm,
+                this,
+                TemporalPlainDateTimeComputedField::$field,
+            )
+        }
+    };
+}
+
+temporal_plain_date_time_computed_getter!(temporal_plain_date_time_day_of_week, DayOfWeek);
+temporal_plain_date_time_computed_getter!(temporal_plain_date_time_day_of_year, DayOfYear);
+temporal_plain_date_time_computed_getter!(temporal_plain_date_time_week_of_year, WeekOfYear);
+temporal_plain_date_time_computed_getter!(temporal_plain_date_time_year_of_week, YearOfWeek);
+temporal_plain_date_time_computed_getter!(temporal_plain_date_time_days_in_week, DaysInWeek);
+temporal_plain_date_time_computed_getter!(temporal_plain_date_time_days_in_month, DaysInMonth);
+temporal_plain_date_time_computed_getter!(temporal_plain_date_time_days_in_year, DaysInYear);
+temporal_plain_date_time_computed_getter!(temporal_plain_date_time_months_in_year, MonthsInYear);
+temporal_plain_date_time_computed_getter!(temporal_plain_date_time_in_leap_year, InLeapYear);
 
 fn temporal_instant_constructor(
     vm: &mut Vm,
@@ -7745,6 +8280,21 @@ fn temporal_calendar_from_value(vm: &mut Vm, value: Value) -> error::Result<Arc<
 fn temporal_calendar_identifier_from_value(vm: &mut Vm, value: Value) -> error::Result<Arc<str>> {
     if let Some((_, _, calendar)) = temporal_zoned_date_time_slots_if_present(vm, &value) {
         return Ok(calendar);
+    }
+    if let Value::Object(index) = &value {
+        if let Some(calendar) = vm.heap.with_obj(index.0, |object| match object {
+            HeapObj::Temporal(TemporalData {
+                kind:
+                    TemporalKind::PlainDateTime {
+                        calendar_identifier,
+                        ..
+                    },
+                ..
+            }) => Some(calendar_identifier.clone()),
+            _ => None,
+        }) {
+            return Ok(calendar);
+        }
     }
     let Value::String(source) = value else {
         return Err(Error::type_err(
@@ -8386,7 +8936,7 @@ fn to_temporal_instant_epoch(vm: &mut Vm, value: &Value) -> error::Result<Arc<Bi
                 | TemporalKind::ZonedDateTime {
                     epoch_nanoseconds, ..
                 } => Some(epoch_nanoseconds.clone()),
-                TemporalKind::Duration { .. } => None,
+                TemporalKind::Duration { .. } | TemporalKind::PlainDateTime { .. } => None,
             },
             _ => None,
         }) {

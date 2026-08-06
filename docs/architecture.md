@@ -116,7 +116,7 @@ against the hidden kind and never read same-named public properties; errors
 belong to the native function Realm, while constructor result prototypes obey
 `GetPrototypeFromConstructor` and therefore the `newTarget` Realm. Duration
 slots contain no GC references. Namespace installation nevertheless pins the
-prototype, constructor, and twelve getters until all 67 Temporal allocations
+prototype, constructor, and twelve getters until all 92 Temporal allocations
 are complete, and Realm root/rollback inventories include both new registries.
 
 ```text
@@ -127,6 +127,34 @@ are complete, and Realm root/rollback inventories include both new registries.
 - 선택한 방식: 열 개의 f64 hidden slot을 원형 보존하고, 생성 시 finite/integral·single-sign 검증 후 BigInt normalized-time 계산을 수행한다. Realm별 constructor/prototype과 branded accessors를 기존 Temporal installer에 추가한다.
 - 다른 대안 대신 이 방식을 선택한 이유: ordinary properties는 brand와 비관찰 의미론을 깨고 i64는 명세상 유효한 큰 Number를 거부한다. BigInt 슬롯은 accessor가 원래 Number를 반환하는 계약과 맞지 않으며, 전체 API 동시 구현은 검증 범위를 과도하게 넓힌다.
 - 장점, 단점 및 영향: 큰 필드와 조합 범위, conversion order, cross-Realm/subclass, fuel, GC/OOM 경계가 독립적으로 검증된다. `Duration.from`, 문자열 parsing, balancing, rounding, compare/total은 이 record 위에 후속 구현해야 한다.
+```
+
+## Temporal PlainDateTime hidden slots
+
+`TemporalKind::PlainDateTime` stores nine validated ISO fields in compact
+integer slots plus the canonical calendar identifier. Construction converts
+all numeric arguments with the shared BigInt-backed truncation path before
+calendar conversion or validity checks, preserving observable order and large
+finite Number behavior. The constructor calendar path intentionally accepts
+only `undefined` or a bare String ID; generic Temporal-object calendar fast
+paths remain reserved for property-bag algorithms.
+
+Validity combines ISO date/time checks with the PlainDateTime-specific open
+range whose endpoints are one day beyond the Instant limits. The constructor,
+prototype, 22 accessors, and `valueOf` are Realm-local roots. Accessors read
+hidden slots directly, derived ISO values reuse the ZonedDateTime civil helper,
+and creation revalidates the record before pinning the selected prototype.
+Namespace installation now has 91 maximum live pins and 92 allocation
+boundaries.
+
+```text
+[Decision Log]
+- 목적과 의도: local ISO date-time을 위조 불가능한 internal record로 제공해 후속 PlainDateTime 및 ZonedDateTime conversion의 공통 기반을 만든다.
+- 기존 구현 및 제약 조건: exact civil 계산은 ZonedDateTime epoch 변환 뒤에만 존재했고 PlainDateTime constructor calendar 계약은 generic calendar-like conversion보다 좁다.
+- 검토한 주요 대안: ordinary data properties, local nanoseconds 단일값, 9개 ISO fields, 전체 PlainDateTime API 동시 구현을 검토했다.
+- 선택한 방식: compact integer field와 calendar Arc를 hidden kind에 저장하고 BigInt conversion, strict calendar ID, date/time/range validation을 allocation 전에 완료한다.
+- 다른 대안 대신 이 방식을 선택한 이유: field record가 명세 representation과 직접 대응하며 public mutation을 관찰하지 않는다. 단일 local epoch는 field identity를 다시 계산해야 하고 full API는 parser/arithmetic 위험을 한 단위에 결합한다.
+- 장점, 단점 및 영향: Realm/GC/OOM, conversion order, extreme dates, derived ISO getters가 독립 검증된다. `from`, arithmetic, formatting과 ZonedDateTime `toPlainDateTime`은 이 생성 helper를 후속 재사용한다.
 ```
 
 `TemporalKind::ZonedDateTime` extends the same heap object family with immutable

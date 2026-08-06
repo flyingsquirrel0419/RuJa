@@ -4,6 +4,23 @@
 
 ### Changed
 
+- Added Realm-local `%Temporal.PlainDateTime%` construction with immutable ISO
+  date-time and calendar hidden slots, subclass/newTarget prototype selection,
+  22 branded ISO accessors, `@@toStringTag`, and always-throwing `valueOf`.
+  Constructor fields truncate finite Numbers in left-to-right order, optional
+  time fields default to zero, calendars accept only `undefined` or a bare ISO
+  identifier, and the full PlainDateTime range is validated exactly. The
+  pinned hidden-slot surface is exact **101/0/0** with five explicit
+  `PlainDateTime.from` or arithmetic dependency blockers.
+
+  [Decision Log]
+  - 목적과 의도: ZonedDateTime civil conversion과 PlainDateTime 후속 API가 public property 모방 없이 공유할 수 있는 실제 ISO date-time brand를 확립한다.
+  - 기존 구현 및 제약 조건: Temporal heap family에는 Instant, Duration, ZonedDateTime만 있었고 ZonedDateTime의 ISO 계산 helper는 존재했지만 local date-time 객체와 Realm intrinsic이 없었다. constructor calendar는 property-bag calendar fast path보다 좁은 String 전용 계약이다.
+  - 검토한 주요 대안: ordinary properties, local epoch nanoseconds 단일 슬롯, 모든 PlainDateTime API 동시 구현, 9개 compact ISO field와 canonical calendar hidden slots를 검토했다.
+  - 선택한 방식: 유효 범위에 충분한 정수형 ISO slots를 저장하고 숫자 입력은 기존 BigInt-backed `ToIntegerWithTruncation` 경로로 순차 변환한다. 날짜·시간과 Instant 양끝보다 하루 넓은 열린 범위를 allocation 전에 검증하며 constructor/prototype과 23 native methods를 Realm registry에 고정한다.
+  - 다른 대안 대신 이 방식을 선택한 이유: 단일 epoch 표현은 calendar-local record 의미를 흐리고 ordinary properties는 brand와 비관찰을 깨뜨린다. 전체 API 동시 구현은 parsing/arithmetic 의존성을 섞어 실제 지원 경계를 과장한다.
+  - 장점, 단점 및 영향: hidden-property 비관찰, fractional truncation, extreme range, cross-Realm error/result, subclass/newTarget, fuel, GC/OOM rollback과 101개 Test262 경로가 검증된다. `from`, parsing, arithmetic, `toPlainDateTime` 연결은 후속 단위다.
+
 - Added Realm-local `%Temporal.Duration%` construction with ten immutable
   numeric hidden slots and branded `years` through `nanoseconds`, `sign`, and
   `blank` accessors. Constructor conversion is left-to-right, accepts only

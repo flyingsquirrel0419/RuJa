@@ -132,6 +132,12 @@ jobs:
           TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_duration_core_manifest_is_exact_live_disjoint_and_shared
           -v
+      - name: Verify exact Temporal.PlainDateTime core admission
+        working-directory: tools
+        run: >-
+          TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
+          test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_date_time_core_manifest_is_exact_live_disjoint_and_shared
+          -v
       - name: Verify exact Temporal.ZonedDateTime compare admission
         working-directory: tools
         run: >-
@@ -763,6 +769,48 @@ jobs:
           cat temporal_duration_core_diagnostic.txt
           grep -q '^RATE=97.4 PASS=76 FAIL=2 SKIP=0 TOTAL=78 RAN=78$' \
             temporal_duration_core_diagnostic.txt
+
+  temporal-plain-date-time-core:
+    needs: [build, setup]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download RuJa binary
+        uses: actions/download-artifact@v4
+        with:
+          name: ruja-release
+          path: target/release/
+      - run: chmod +x target/release/ruja
+      - name: Checkout pinned Temporal.PlainDateTime core tests
+        uses: actions/checkout@v4
+        with:
+          repository: tc39/test262
+          ref: ${{ env.TEST262_REV }}
+          path: test262
+          sparse-checkout: |
+            harness
+            test/built-ins/Temporal/PlainDateTime
+      - name: Require exact Temporal.PlainDateTime core boundary
+        run: |
+          mapfile -t files < <(sed -e '/^#/d' -e '/^$/d' \
+            tools/test262_temporal_plain_date_time_core_admission.txt)
+          TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
+            "${files[@]}" > temporal_plain_date_time_core_result.txt 2>&1
+          cat temporal_plain_date_time_core_result.txt
+          grep -q '^RATE=100.0 PASS=101 FAIL=0 SKIP=0 TOTAL=101 RAN=101$' \
+            temporal_plain_date_time_core_result.txt
+      - name: Freeze Temporal.PlainDateTime core blockers
+        run: |
+          mapfile -t files < <(cat \
+            tools/test262_temporal_plain_date_time_core_admission.txt \
+            tools/test262_temporal_plain_date_time_core_blockers.txt | \
+            sed -e '/^#/d' -e '/^$/d')
+          TEST262="$GITHUB_WORKSPACE/test262" \
+            python3 tools/test262_temporal_plain_date_time_core_diagnostic.py \
+            "${files[@]}" > temporal_plain_date_time_core_diagnostic.txt 2>&1
+          cat temporal_plain_date_time_core_diagnostic.txt
+          grep -q '^RATE=95.3 PASS=101 FAIL=5 SKIP=0 TOTAL=106 RAN=106$' \
+            temporal_plain_date_time_core_diagnostic.txt
 
   temporal-instant-epoch-factories:
     needs: [build, setup]

@@ -25154,6 +25154,119 @@ fn temporal_duration_constructor_and_getters_honor_function_realms() {
 }
 
 #[test]
+fn temporal_plain_date_time_core_uses_hidden_iso_slots() {
+    assert_eq!(
+        run(r#"
+            var value = new Temporal.PlainDateTime(1976.9, 11.8, 18.7, 15.6, 23.5, 30.4, 123.3, 456.2, 789.1, 'ISO8601');
+            class Custom extends Temporal.PlainDateTime {}
+            var custom = new Custom(2000, 2, 29);
+            var yearGetter = Object.getOwnPropertyDescriptor(Temporal.PlainDateTime.prototype, 'year').get;
+            Object.defineProperty(value, 'year', { get: function () { throw new Error('observed'); } });
+            [
+              Temporal.PlainDateTime.name,
+              Temporal.PlainDateTime.length,
+              yearGetter.call(value), value.month, value.monthCode, value.day,
+              value.hour, value.minute, value.second,
+              value.millisecond, value.microsecond, value.nanosecond,
+              value.calendarId, value.dayOfWeek, value.dayOfYear,
+              value.weekOfYear, value.yearOfWeek, value.daysInWeek,
+              value.daysInMonth, value.daysInYear, value.monthsInYear,
+              value.inLeapYear, value.era, value.eraYear,
+              Object.prototype.toString.call(value),
+              Object.getPrototypeOf(custom) === Custom.prototype
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "PlainDateTime|3|1976|11|M11|18|15|23|30|123|456|789|iso8601|4|323|47|1976|7|30|366|12|true|||[object Temporal.PlainDateTime]|true"
+        ))
+    );
+}
+
+#[test]
+fn temporal_plain_date_time_rejects_invalid_fields_after_ordered_conversion() {
+    for source in [
+        "Temporal.PlainDateTime(1970, 1, 1)",
+        "new Temporal.PlainDateTime()",
+        "new Temporal.PlainDateTime(1970, 1)",
+        "new Temporal.PlainDateTime(Symbol(), 1, 1)",
+        "new Temporal.PlainDateTime(1n, 1, 1)",
+        "new Temporal.PlainDateTime(NaN, 1, 1)",
+        "new Temporal.PlainDateTime(1970, 2, 29)",
+        "new Temporal.PlainDateTime(1970, 1, 1, 24)",
+        "new Temporal.PlainDateTime(-271821, 4, 19)",
+        "new Temporal.PlainDateTime(275760, 9, 14)",
+        "Object.getOwnPropertyDescriptor(Temporal.PlainDateTime.prototype, 'year').get.call({})",
+        "new Temporal.PlainDateTime.prototype.valueOf()",
+    ] {
+        let error = run_err(source);
+        assert!(
+            error.contains("TypeError") || error.contains("RangeError"),
+            "{source}: {error}"
+        );
+    }
+
+    assert_eq!(
+        run(r#"
+            var log = [];
+            function field(name, value) {
+              return { valueOf: function () { log.push(name); return value; } };
+            }
+            var min = new Temporal.PlainDateTime(-271821, 4, 19, 0, 0, 0, 0, 0, 1);
+            var max = new Temporal.PlainDateTime(275760, 9, 13, 23, 59, 59, 999, 999, 999);
+            var converted = new Temporal.PlainDateTime(
+              field('year', 2000), field('month', 5), field('day', 2),
+              field('hour', 3), field('minute', 4), field('second', 5),
+              field('millisecond', 6), field('microsecond', 7), field('nanosecond', 8)
+            );
+            var calendarBeforeRange = false;
+            try { new Temporal.PlainDateTime(2000, 13, 1, 0, 0, 0, 0, 0, 0, {}); }
+            catch (error) { calendarBeforeRange = error instanceof TypeError; }
+            [
+              min.nanosecond, max.nanosecond,
+              log.join(','), converted.hour,
+              calendarBeforeRange
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "1|999|year,month,day,hour,minute,second,millisecond,microsecond,nanosecond|3|true"
+        ))
+    );
+}
+
+#[test]
+fn temporal_plain_date_time_constructor_and_getters_honor_function_realms() {
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var foreign = new other.Temporal.PlainDateTime(2000, 5, 2, 12, 34, 56, 987, 654, 321);
+            var getter = Object.getOwnPropertyDescriptor(other.Temporal.PlainDateTime.prototype, 'day').get;
+            var getterRealm;
+            var constructorRealm;
+            try { getter.call({}); } catch (error) {
+              getterRealm = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            try { new other.Temporal.PlainDateTime(2000, 2, 30); } catch (error) {
+              constructorRealm = error instanceof other.RangeError && !(error instanceof RangeError);
+            }
+            var NewTarget = function () {}.bind(null);
+            var prototypeReads = 0;
+            Object.defineProperty(NewTarget, 'prototype', {
+              get: function () { prototypeReads++; return null; }
+            });
+            var fallback = Reflect.construct(other.Temporal.PlainDateTime, [2001, 6, 3], NewTarget);
+            [
+              getter.call(foreign), getterRealm, constructorRealm,
+              prototypeReads,
+              Object.getPrototypeOf(foreign) === other.Temporal.PlainDateTime.prototype,
+              Object.getPrototypeOf(fallback) === Temporal.PlainDateTime.prototype,
+              fallback.year
+            ].join('|');
+        "#),
+        Value::String(Arc::from("2|true|true|1|true|true|2001"))
+    );
+}
+
+#[test]
 fn temporal_zoned_date_time_core_uses_hidden_slots_and_realm_intrinsics() {
     assert_eq!(
         run(r#"

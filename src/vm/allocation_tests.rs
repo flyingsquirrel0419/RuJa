@@ -205,7 +205,7 @@ fn temporal_namespace_installation_restores_roots_after_zoned_calendar_allocatio
 }
 
 #[test]
-fn temporal_namespace_installation_covers_every_fixed_offset_allocation_boundary() {
+fn temporal_namespace_installation_covers_every_allocation_boundary() {
     let mut vm = Vm::new().expect("failed to initialize VM");
     vm.gc();
     let original = vm.get_global("Temporal");
@@ -213,16 +213,16 @@ fn temporal_namespace_installation_covers_every_fixed_offset_allocation_boundary
     let baseline_live = vm.heap.live_count();
     let global = vm.global;
 
-    // Allocations 18 through 67 cover the method/accessor batches and the
+    // Allocations 18 through 92 cover the method/accessor batches and the
     // two namespace objects that must publish only after the batch succeeds.
-    for extra_capacity in 17..67 {
+    for extra_capacity in 17..92 {
         vm.set_max_heap_objects(Some(baseline_live + extra_capacity));
         let object_proto = vm.object_proto.clone();
         let result =
             crate::builtins::install_temporal_namespace_in_env(&mut vm, global, None, object_proto);
         vm.set_max_heap_objects(None);
 
-        let error = result.expect_err("each fixed-offset installer boundary must fail");
+        let error = result.expect_err("each Temporal installer boundary must fail");
         assert_eq!(error.kind, crate::error::ErrorKind::Range);
         assert_eq!(error.message, "heap limit exceeded");
         assert_eq!(vm.gc_pins.len(), baseline_pins);
@@ -236,16 +236,16 @@ fn temporal_namespace_installation_covers_every_fixed_offset_allocation_boundary
         );
     }
 
-    vm.set_max_heap_objects(Some(baseline_live + 67));
+    vm.set_max_heap_objects(Some(baseline_live + 92));
     let object_proto = vm.object_proto.clone();
     let temporal =
         crate::builtins::install_temporal_namespace_in_env(&mut vm, global, None, object_proto)
-            .expect("exact 67-object capacity must install the complete namespace");
+            .expect("exact 92-object capacity must install the complete namespace");
     vm.set_max_heap_objects(None);
     assert_eq!(vm.gc_pins.len(), baseline_pins);
     assert_eq!(vm.get_global("Temporal"), temporal);
     assert_eq!(
-        vm.run("typeof Temporal.Duration === 'function' && typeof Temporal.ZonedDateTime.prototype.startOfDay")
+        vm.run("typeof Temporal.PlainDateTime === 'function' && typeof Temporal.ZonedDateTime.prototype.startOfDay")
             .expect("installed namespace should remain usable"),
         Value::String(Arc::from("function"))
     );
@@ -307,6 +307,33 @@ fn temporal_duration_result_allocation_fails_cleanly_and_retries_after_gc() {
         .expect("Duration construction should retry after collection");
     vm.set_max_heap_objects(None);
     assert_eq!(duration, Value::Number(1.0));
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+}
+
+#[test]
+fn temporal_plain_date_time_result_allocation_fails_cleanly_and_retries_after_gc() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.gc();
+    let baseline_pins = vm.gc_pins.len();
+    let baseline_live = vm.heap.live_count();
+
+    vm.set_max_heap_objects(Some(baseline_live));
+    let error = vm
+        .run("new Temporal.PlainDateTime(2000, 5, 2);")
+        .expect_err("PlainDateTime result allocation must obey the exact heap cap");
+    vm.set_max_heap_objects(None);
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(error.message, "heap limit exceeded");
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    vm.gc();
+    let after_failure = vm.heap.live_count();
+    vm.set_max_heap_objects(Some(after_failure + 1));
+    let date_time = vm
+        .run("new Temporal.PlainDateTime(2000, 5, 2).day;")
+        .expect("PlainDateTime construction should retry after collection");
+    vm.set_max_heap_objects(None);
+    assert_eq!(date_time, Value::Number(2.0));
     assert_eq!(vm.gc_pins.len(), baseline_pins);
 }
 
@@ -1752,6 +1779,7 @@ const DEFERRED_NATIVE_CONSTRUCTOR_SOURCES: &[&str] = &[
     "BigUint64Array",
     "Temporal.Instant",
     "Temporal.Duration",
+    "Temporal.PlainDateTime",
     "Temporal.ZonedDateTime",
 ];
 
@@ -1781,7 +1809,7 @@ const FOREIGN_EAGER_NATIVE_CONSTRUCTOR_SOURCES: &[&str] = &[
     "SuppressedError",
 ];
 
-fn realm_registry_counts(vm: &Vm) -> [usize; 53] {
+fn realm_registry_counts(vm: &Vm) -> [usize; 55] {
     [
         vm.realm_globals.len(),
         vm.realm_object_prototypes.len(),
@@ -1810,6 +1838,8 @@ fn realm_registry_counts(vm: &Vm) -> [usize; 53] {
         vm.realm_temporal_instant_prototypes.len(),
         vm.realm_temporal_duration_constructors.len(),
         vm.realm_temporal_duration_prototypes.len(),
+        vm.realm_temporal_plain_date_time_constructors.len(),
+        vm.realm_temporal_plain_date_time_prototypes.len(),
         vm.realm_temporal_zoned_date_time_constructors.len(),
         vm.realm_temporal_zoned_date_time_prototypes.len(),
         vm.realm_eval_functions.len(),
@@ -1914,7 +1944,7 @@ fn assert_main_realm_range_error(vm: &Vm, error: &crate::error::Error) {
 fn assert_failed_realm_attempt(
     vm: &mut Vm,
     baseline_live: usize,
-    baseline_registries: [usize; 53],
+    baseline_registries: [usize; 55],
     baseline_pins: usize,
     extra_capacity: usize,
 ) {

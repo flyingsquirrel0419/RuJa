@@ -649,6 +649,7 @@ fn trace_obj_impl(obj: &HeapObj, worklist: &mut Vec<usize>) {
         HeapObj::Temporal(temporal) => match &temporal.kind {
             crate::value::TemporalKind::Instant { .. }
             | crate::value::TemporalKind::Duration { .. }
+            | crate::value::TemporalKind::PlainDateTime { .. }
             | crate::value::TemporalKind::ZonedDateTime { .. } => {}
         },
         HeapObj::Environment(e) => {

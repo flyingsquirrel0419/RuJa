@@ -18,7 +18,11 @@ The following resource limits are enforced:
   Realm-local `%Temporal.Duration%` supports hidden-slot construction,
   subclassing, all ten numeric accessors, `sign`, and `blank`; `from`, string
   parsing, balancing, rounding, `compare`, `total`, and the remaining Duration
-  methods are not implemented. Realm-local `%Temporal.ZonedDateTime%` supports hidden-slot construction for
+  methods are not implemented. Realm-local `%Temporal.PlainDateTime%` supports
+  hidden-slot construction, subclassing, 22 ISO/calendar accessors,
+  `@@toStringTag`, and always-throwing `valueOf`; `from`, string conversion,
+  comparison, arithmetic, rounding, and conversion methods are not implemented.
+  Realm-local `%Temporal.ZonedDateTime%` supports hidden-slot construction for
   UTC and fixed offsets, exact epoch/time-zone/calendar accessors, subclassing,
   all ISO civil/calendar/offset accessors, fixed-offset String and ISO
   property-bag `from`, its Instant fast path, option-aware `toString`,

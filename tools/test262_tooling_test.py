@@ -140,6 +140,10 @@ from test262_temporal_duration_core_admission import (
     TEMPORAL_DURATION_CORE_FEATURES,
     TEMPORAL_DURATION_CORE_FILES,
 )
+from test262_temporal_plain_date_time_core_admission import (
+    TEMPORAL_PLAIN_DATE_TIME_CORE_FEATURES,
+    TEMPORAL_PLAIN_DATE_TIME_CORE_FILES,
+)
 from test262_temporal_instant_value_of_admission import (
     TEMPORAL_INSTANT_VALUE_OF_FEATURES,
     TEMPORAL_INSTANT_VALUE_OF_FILES,
@@ -4181,6 +4185,112 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                     for path in (future, outside):
                         self.assertFalse(tool.temporal_duration_core_path(path))
                         self.assertEqual(tool.temporal_duration_core_features(path), frozenset())
+                        self.assertTrue(tool.should_skip({"features": ["Temporal"]}, path))
+                finally:
+                    tool.TEST262 = original_root
+
+    def test_temporal_plain_date_time_core_manifest_is_exact_live_disjoint_and_shared(self):
+        files = TEMPORAL_PLAIN_DATE_TIME_CORE_FILES
+        features_by_file = TEMPORAL_PLAIN_DATE_TIME_CORE_FEATURES
+        blockers = {
+            line
+            for raw_line in Path(__file__).with_name(
+                "test262_temporal_plain_date_time_core_blockers.txt"
+            ).read_text().splitlines()
+            if (line := raw_line.strip()) and not line.startswith("#")
+        }
+        self.assertEqual(len(files), 101)
+        self.assertEqual(len(blockers), 5)
+        self.assertEqual(set(features_by_file), set(files))
+        self.assertTrue(files.isdisjoint(blockers))
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        plain_dir = test_root / "built-ins/Temporal/PlainDateTime"
+        accessor_names = (
+            "calendarId", "day", "dayOfWeek", "dayOfYear", "daysInMonth",
+            "daysInWeek", "daysInYear", "era", "eraYear", "hour",
+            "inLeapYear", "microsecond", "millisecond", "minute", "month",
+            "monthCode", "monthsInYear", "nanosecond", "second", "weekOfYear",
+            "year", "yearOfWeek", "toStringTag", "valueOf",
+        )
+        try:
+            live_files = (
+                {
+                    path.relative_to(test_root).as_posix()
+                    for path in plain_dir.glob("*.js")
+                    if "_FIXTURE" not in path.name
+                }
+                if plain_dir.is_dir()
+                else None
+            )
+            if live_files is not None:
+                live_files.update(
+                    path.relative_to(test_root).as_posix()
+                    for path in (plain_dir / "prototype").glob("*.js")
+                    if "_FIXTURE" not in path.name
+                )
+                for name in accessor_names:
+                    live_files.update(
+                        path.relative_to(test_root).as_posix()
+                        for path in (plain_dir / "prototype" / name).glob("*.js")
+                        if "_FIXTURE" not in path.name
+                    )
+        except OSError:
+            live_files = None
+        if live_files is not None:
+            self.assertEqual(live_files, set(files) | blockers)
+            for relative in files:
+                path = test_root / relative
+                metadata = test262_runner.parse_meta(path.read_text())
+                self.assertEqual(
+                    frozenset(metadata.get("features", [])),
+                    features_by_file[relative],
+                    relative,
+                )
+                for tool in (test262_runner, test262_analyze):
+                    self.assertTrue(tool.temporal_plain_date_time_core_path(path), relative)
+                    self.assertEqual(
+                        tool.temporal_plain_date_time_core_features(path),
+                        features_by_file[relative],
+                    )
+                    self.assertFalse(tool.should_skip(metadata, path), relative)
+            for relative in blockers:
+                path = test_root / relative
+                metadata = test262_runner.parse_meta(path.read_text())
+                for tool in (test262_runner, test262_analyze):
+                    self.assertTrue(tool.should_skip(metadata, path), relative)
+
+        tools_dir = Path(__file__).resolve().parent
+        for manifest in tools_dir.glob("test262_*_admission.txt"):
+            if manifest.name == "test262_temporal_plain_date_time_core_admission.txt":
+                continue
+            existing = {
+                line
+                for raw_line in manifest.read_text().splitlines()
+                if (line := raw_line.strip()) and not line.startswith("#")
+            }
+            self.assertTrue(files.isdisjoint(existing), manifest.name)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            future = root / "test/built-ins/Temporal/PlainDateTime/prototype/year/future.js"
+            outside = root / "test/built-ins/Other/prototype/year/basic.js"
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for relative, features in features_by_file.items():
+                        path = root / "test" / relative
+                        self.assertTrue(tool.temporal_plain_date_time_core_path(path), relative)
+                        self.assertEqual(
+                            tool.temporal_plain_date_time_core_features(path), features
+                        )
+                        self.assertFalse(tool.should_skip({"features": sorted(features)}, path))
+                    for path in (future, outside):
+                        self.assertFalse(tool.temporal_plain_date_time_core_path(path))
+                        self.assertEqual(
+                            tool.temporal_plain_date_time_core_features(path), frozenset()
+                        )
                         self.assertTrue(tool.should_skip({"features": ["Temporal"]}, path))
                 finally:
                     tool.TEST262 = original_root

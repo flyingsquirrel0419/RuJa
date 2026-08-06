@@ -14429,3 +14429,23 @@ Implementation commit `dc926dd` is confirmed by ordinary CI `31100834541`
 (**3/3**) and full Test262 CI `31100834476` (**63/63**). The dedicated jobs
 reproduce Duration exact **76/0/0** and forced **76/2/0-skip** together with
 the updated ZonedDateTime admission boundaries.
+
+## Temporal.PlainDateTime hidden-slot core
+
+`tools/test262_temporal_plain_date_time_core_admission.txt` freezes **101**
+exact constructor, prototype metadata, ISO accessor, `valueOf`, and
+`@@toStringTag` paths. Dedicated CI requires **101 pass / 0 fail / 0 skip**.
+The blocker manifest completes the audited **106-file** surface: one root file
+requires arithmetic methods, while four accessor basic files call the absent
+`Temporal.PlainDateTime.from` before or during their assertions. Forced
+diagnostics therefore require **101 pass / 5 fail / 0 skip**.
+
+```text
+[Decision Log]
+- 목적과 의도: PlainDateTime constructor/hidden accessor core의 실제 conformance 경계를 metadata와 함께 재현 가능하게 고정한다.
+- 기존 구현 및 제약 조건: broad Temporal gate는 전체 PlainDateTime subtree를 skip하며 audited core 안에서도 5개가 constructor/accessor 외부 API를 먼저 요구한다.
+- 검토한 주요 대안: 전체 prefix admission, constructor root만 허용, `from` stub, 106개 frozen surface를 101 admission/5 blocker로 분리하는 방식을 검토했다.
+- 선택한 방식: root direct files, prototype direct metadata, 22 accessor directories, toStringTag, valueOf를 exact surface로 동결하고 runner/analyzer feature maps와 live disjointness를 공유한다.
+- 다른 대안 대신 이 방식을 선택한 이유: prefix와 stub은 미구현 parsing/arithmetic을 거짓 지원한다. exact complement는 core 자체의 효과와 다음 dependency를 동시에 드러낸다.
+- 장점, 단점 및 영향: exact 101/0/0과 forced 101/5가 고정되고 미래 sibling은 자동 허용되지 않는다. `PlainDateTime.from`과 arithmetic 구현 후 blocker를 재실측해야 한다.
+```
