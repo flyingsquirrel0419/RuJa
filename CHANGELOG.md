@@ -21,6 +21,11 @@
   - 다른 대안 대신 이 방식을 선택한 이유: 유효한 개별 nanosecond 필드는 `i64`를 넘을 수 있고 ECMAScript Number identity를 보존해야 한다. exact validation만이 큰 representable integer 조합에서 overflow나 반올림 오판을 피하며, 숨은 슬롯은 branding과 public-property 비관찰을 보장한다.
   - 장점, 단점 및 영향: subclass/newTarget, cross-Realm getter/error/prototype, GC root/rollback, exact heap cap, 긴 numeric-string fuel, descriptor/branding과 76개 Test262 경로가 고정된다. 문자열/record 변환과 arithmetic methods는 후속 단위로 남고 두 blocker가 그 경계를 명시한다.
 
+  Implementation commit `dc926dd` is pushed. Ordinary CI `31100834541`
+  passes **3/3** jobs and full Test262 CI `31100834476` passes **63/63**,
+  including Duration exact **76/0/0**, forced **76/2/0-skip**, and the
+  updated ZonedDateTime exact/forced gates.
+
 - Added Realm-local `Temporal.ZonedDateTime.prototype.startOfDay` for UTC and
   minute-precision fixed offsets. It brands the receiver through hidden slots,
   computes the local ISO date with mathematical floor division, checks the

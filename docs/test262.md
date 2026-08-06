@@ -14424,3 +14424,8 @@ pinned revision before admission; future Duration siblings remain gated.
 - 다른 대안 대신 이 방식을 선택한 이유: prefix는 수백 개 미구현 arithmetic/string API를 거짓 지원하고 stub은 real Duration brand를 증명하지 않는다. 명시적 complement와 재실측만이 구현 효과와 남은 의존성을 동시에 보여 준다.
 - 장점, 단점 및 영향: exact 76/0/0과 forced 76/2 및 ZonedDateTime 개선 경계가 재현된다. `Duration.from`/`total` 구현 시 두 blocker를 다시 측정해야 하며 새 sibling은 자동 입장하지 않는다.
 ```
+
+Implementation commit `dc926dd` is confirmed by ordinary CI `31100834541`
+(**3/3**) and full Test262 CI `31100834476` (**63/63**). The dedicated jobs
+reproduce Duration exact **76/0/0** and forced **76/2/0-skip** together with
+the updated ZonedDateTime admission boundaries.
