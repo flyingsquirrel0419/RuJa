@@ -915,6 +915,18 @@ pub(crate) fn iso_date_time(
     })
 }
 
+pub(crate) fn fixed_offset_start_of_day_epoch(
+    epoch_nanoseconds: &BigInt,
+    offset_nanoseconds: i128,
+) -> Option<BigInt> {
+    let epoch_days = iso_date_time(epoch_nanoseconds, offset_nanoseconds)?.epoch_days;
+    let nanoseconds_per_day = SECONDS_PER_DAY.checked_mul(NS_PER_SECOND)?;
+    let start = epoch_days
+        .checked_mul(nanoseconds_per_day)?
+        .checked_sub(offset_nanoseconds)?;
+    Some(BigInt::from(start))
+}
+
 pub(crate) fn iso_day_of_week(epoch_days: i128) -> i128 {
     (epoch_days + 3).rem_euclid(7) + 1
 }

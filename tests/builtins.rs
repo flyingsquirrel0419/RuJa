@@ -25633,6 +25633,83 @@ fn temporal_zoned_date_time_with_calendar_preserves_hidden_identity() {
 }
 
 #[test]
+fn temporal_zoned_date_time_start_of_day_uses_local_date_and_hidden_slots() {
+    assert_eq!(
+        run(r#"
+            var value = new Temporal.ZonedDateTime(88000_123_456_789n, '+01:30');
+            var reads = 0;
+            for (var key of ['epochNanoseconds', 'timeZoneId', 'calendarId', 'year', 'day']) {
+              Object.defineProperty(value, key, {
+                get: function () { reads++; throw new Error('observed'); }
+              });
+            }
+            var result = value.startOfDay();
+            var negative = new Temporal.ZonedDateTime(-1n, 'UTC').startOfDay();
+            [
+              result !== value,
+              result.epochNanoseconds,
+              result.timeZoneId,
+              result.calendarId,
+              negative.epochNanoseconds,
+              reads,
+              Temporal.ZonedDateTime.prototype.startOfDay.length,
+              Temporal.ZonedDateTime.prototype.startOfDay.name
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "true|81000000000000|+01:30|iso8601|-86400000000000|0|0|startOfDay"
+        ))
+    );
+
+    assert_eq!(
+        run(r#"
+            var limit = 864n * 10n ** 19n;
+            var zero = new Temporal.ZonedDateTime(-limit, '+00').startOfDay();
+            var results = [zero.epochNanoseconds === -limit];
+            for (var zone of ['-01', '+01']) {
+              try { new Temporal.ZonedDateTime(-limit, zone).startOfDay(); }
+              catch (error) { results.push(error instanceof RangeError); }
+            }
+            results.join('|');
+        "#),
+        Value::String(Arc::from("true|true|true"))
+    );
+
+    for source in [
+        "Temporal.ZonedDateTime.prototype.startOfDay.call({})",
+        "new Temporal.ZonedDateTime.prototype.startOfDay()",
+    ] {
+        assert!(run_err(source).contains("TypeError"), "{source}");
+    }
+
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var method = other.Temporal.ZonedDateTime.prototype.startOfDay;
+            var main = new Temporal.ZonedDateTime(88000_123_456_789n, 'UTC');
+            var result = method.call(main);
+            var receiverRealm;
+            var rangeRealm;
+            try { method.call({}); } catch (error) {
+              receiverRealm = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            try {
+              method.call(new Temporal.ZonedDateTime(-864n * 10n ** 19n, '+01'));
+            } catch (error) {
+              rangeRealm = error instanceof other.RangeError && !(error instanceof RangeError);
+            }
+            [
+              Object.getPrototypeOf(result) === other.Temporal.ZonedDateTime.prototype,
+              result.epochNanoseconds,
+              receiverRealm,
+              rangeRealm
+            ].join('|');
+        "#),
+        Value::String(Arc::from("true|86400000000000|true|true"))
+    );
+}
+
+#[test]
 fn temporal_zoned_date_time_methods_use_their_function_realm() {
     assert_eq!(
         run(r#"

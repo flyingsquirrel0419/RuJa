@@ -1,0 +1,10 @@
+# Exact Temporal.ZonedDateTime.prototype.startOfDay surface.
+built-ins/Temporal/ZonedDateTime/prototype/startOfDay/basic.js
+built-ins/Temporal/ZonedDateTime/prototype/startOfDay/branding.js
+built-ins/Temporal/ZonedDateTime/prototype/startOfDay/builtin.js
+built-ins/Temporal/ZonedDateTime/prototype/startOfDay/length.js
+built-ins/Temporal/ZonedDateTime/prototype/startOfDay/name.js
+built-ins/Temporal/ZonedDateTime/prototype/startOfDay/not-a-constructor.js
+built-ins/Temporal/ZonedDateTime/prototype/startOfDay/prop-desc.js
+built-ins/Temporal/ZonedDateTime/prototype/startOfDay/subclassing-ignored.js
+built-ins/Temporal/ZonedDateTime/prototype/startOfDay/throws-if-epoch-nanoseconds-outside-valid-limits.js

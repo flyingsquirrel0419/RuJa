@@ -169,6 +169,31 @@ fn temporal_zoned_date_time_compare_precharges_each_string_argument() {
 }
 
 #[test]
+fn temporal_zoned_date_time_start_of_day_obeys_exact_fuel_boundary() {
+    const BUDGET: i64 = 10_000;
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run("globalThis.zonedStart = new Temporal.ZonedDateTime(1n, '+01:00');")
+        .expect("startOfDay fuel fixture should initialize");
+
+    vm.set_fuel(Some(BUDGET));
+    vm.run("zonedStart.startOfDay();")
+        .expect("startOfDay should complete under the measurement budget");
+    let work = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+
+    vm.set_fuel(Some(work - 1));
+    let error = vm
+        .run("zonedStart.startOfDay();")
+        .expect_err("N-1 fuel must abort startOfDay");
+    assert_eq!(error.kind, ruja::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+
+    vm.set_fuel(Some(work));
+    vm.run("zonedStart.startOfDay();")
+        .expect("exact measured fuel should complete startOfDay");
+    assert_eq!(vm.fuel_remaining(), Some(0));
+}
+
+#[test]
 fn temporal_zoned_date_time_precharges_identifier_bytes() {
     const BUDGET: i64 = 20_000;
     let mut vm = Vm::new().expect("failed to initialize VM");

@@ -6289,7 +6289,7 @@ pub(crate) fn install_temporal_namespace_in_env(
     global: Option<&Value>,
     object_proto: Value,
 ) -> error::Result<Value> {
-    vm.try_reserve_gc_pins(51)?;
+    vm.try_reserve_gc_pins(52)?;
     let mut pin_count = 0;
     let result = (|| {
         let instant_prototype = Value::Object(vm.alloc(HeapObj::Object(ObjectData {
@@ -6588,6 +6588,12 @@ pub(crate) fn install_temporal_namespace_in_env(
             temporal_zoned_date_time_value_of,
             0
         );
+        alloc_zoned_native!(
+            zoned_start_of_day,
+            "startOfDay",
+            temporal_zoned_date_time_start_of_day,
+            0
+        );
 
         let Value::Object(instant_constructor_index) = instant_constructor.clone() else {
             unreachable!()
@@ -6771,6 +6777,10 @@ pub(crate) fn install_temporal_namespace_in_env(
             props.insert(
                 PropertyKey::from("withCalendar"),
                 data_prop(zoned_with_calendar),
+            );
+            props.insert(
+                PropertyKey::from("startOfDay"),
+                data_prop(zoned_start_of_day),
             );
             props.insert(PropertyKey::from("equals"), data_prop(zoned_equals));
             props.insert(PropertyKey::from("toInstant"), data_prop(zoned_to_instant));
@@ -7257,6 +7267,33 @@ fn temporal_zoned_date_time_with_calendar(
     create_temporal_zoned_date_time_in_realm(
         vm,
         epoch_nanoseconds,
+        time_zone,
+        calendar_identifier,
+        realm,
+    )
+}
+
+fn temporal_zoned_date_time_start_of_day(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let (epoch_nanoseconds, time_zone, calendar_identifier) =
+        temporal_zoned_date_time_slots(vm, this)?;
+    let offset_nanoseconds = temporal_time_zone_offset_nanoseconds(&time_zone, &epoch_nanoseconds)?;
+    let start_epoch =
+        temporal::fixed_offset_start_of_day_epoch(epoch_nanoseconds.as_ref(), offset_nanoseconds)
+            .ok_or_else(|| Error::range("Temporal.ZonedDateTime start of day is out of range"))?;
+    if start_epoch.abs() > temporal_instant_limit_nanoseconds() {
+        return Err(Error::range(
+            "Temporal.ZonedDateTime start of day is out of range",
+        ));
+    }
+
+    let realm = vm.native_callee_closure().unwrap_or(vm.global);
+    create_temporal_zoned_date_time_in_realm(
+        vm,
+        Arc::new(start_epoch),
         time_zone,
         calendar_identifier,
         realm,

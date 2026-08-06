@@ -4,6 +4,21 @@
 
 ### Changed
 
+- Added Realm-local `Temporal.ZonedDateTime.prototype.startOfDay` for UTC and
+  minute-precision fixed offsets. It brands the receiver through hidden slots,
+  computes the local ISO date with mathematical floor division, checks the
+  resulting epoch against the Temporal Instant limits, and creates a fresh
+  result in the method Realm. The complete pinned Test262 directory is exact
+  **9/0/0** with no dependency blockers.
+
+  [Decision Log]
+  - 목적과 의도: ZonedDateTime의 현재 local ISO date에서 시작하는 첫 instant를 public property나 subclass constructor 관찰 없이 반환한다.
+  - 기존 구현 및 제약 조건: hidden epoch/time-zone/calendar slots와 method-Realm allocator는 있었지만 start-of-day operation은 없었다. time-zone backend는 UTC와 고정 오프셋만 계산하며 named IANA transition은 아직 지원하지 않는다.
+  - 검토한 주요 대안: UTC day 단순 절삭, 현재 offset을 모든 time-zone에 일반화, civil-field getter 재사용, fixed-offset 전용 helper와 hidden-slot 경계를 검토했다.
+  - 선택한 방식: UTC/fixed-offset dispatcher가 local epoch의 ISO day를 floor-divide하고 `day * nsPerDay - offset`을 계산한다. 결과 범위를 확인한 뒤 native method Realm intrinsic으로 새 ZonedDateTime을 만든다.
+  - 다른 대안 대신 이 방식을 선택한 이유: 음수 epoch의 truncation은 `-1ns`를 잘못 처리하고, public getter는 observable behavior를 추가한다. 현재 offset 일반화는 DST 자정 gap/overlap에서 명세 `GetStartOfDay`와 달라진다.
+  - 장점, 단점 및 영향: hidden getter 비관찰, subclass 무시, cross-Realm TypeError/RangeError/result, exact fuel, heap-cap GC retry, installer rollback과 극한 epoch가 검증된다. named-zone 지원 전까지 해당 kind는 명시적 RangeError를 유지한다.
+
 - Extended the Test262 timeout only for the two Annex B RegExp BMP escape
   sweeps. Each test exhaustively checks the full BMP and is materially slower
   than ordinary Annex B files; all neighboring paths retain the 8-second

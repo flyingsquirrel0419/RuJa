@@ -43,6 +43,7 @@
   conversion, exact-instant static `compare`, hidden-identity `equals`,
   instant-preserving `withTimeZone`,
   instant/time-zone-preserving `withCalendar`,
+  local-date `startOfDay` for UTC/fixed offsets,
   option-aware `toString`, `toJSON`, and `valueOf`. ZonedDateTime strings may omit time when followed directly by a
   time-zone annotation. Property-bag
   conversion currently accepts ISO calendars with UTC or minute-precision

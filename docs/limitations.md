@@ -21,10 +21,11 @@ The following resource limits are enforced:
   property-bag `from`, its Instant fast path, option-aware `toString`,
   `toJSON`, `valueOf`, exact-instant static `compare`, hidden-identity
   `equals`, and instant-preserving
-  `withTimeZone` plus instant/time-zone-preserving `withCalendar` for the ISO
-  calendar and UTC/fixed offsets. Date-only ZonedDateTime
+  `withTimeZone`, instant/time-zone-preserving `withCalendar`, and local-date
+  `startOfDay` for the ISO calendar and UTC/fixed offsets. Date-only ZonedDateTime
   strings require an immediate time-zone annotation. Property bags support ISO calendars and UTC or
-  minute-precision fixed offsets only. Named IANA time-zone transitions,
+  minute-precision fixed offsets only. `startOfDay` rejects named zones until
+  transition-aware midnight gap/overlap resolution exists. Named IANA time-zone transitions,
   the remaining ZonedDateTime string grammar, the remaining RFC 9557
   grammar, calendar/duration types, and `Temporal.Now` methods remain
   unsupported.

@@ -218,6 +218,24 @@ complete `TemporalTimeZone` value into the native method Realm.
 - 장점, 단점 및 영향: receiver-first order, hidden fast path, UTC/fixed-zero 보존, method Realm, allocation rollback과 byte-proportional fuel이 직접 검증된다. PlainDate 계열 도입 시 strict helper의 hidden-calendar matcher를 확장해야 한다.
 ```
 
+`Temporal.ZonedDateTime.prototype.startOfDay` keeps fixed-offset date
+resolution separate from future named-zone transition logic. The method reads
+only the receiver's hidden epoch, time-zone, and calendar slots. UTC and fixed
+offsets resolve the local ISO day with floor semantics, convert that local
+midnight back to an epoch, enforce the Instant range, and allocate through the
+native method Realm. Named zones continue to fail at the time-zone dispatcher
+instead of reusing the current instant's offset at midnight.
+
+```text
+[Decision Log]
+- 목적과 의도: fixed-offset start-of-day를 명세의 hidden-slot 및 method-Realm 경계에 맞춰 제공한다.
+- 기존 구현 및 제약 조건: civil-field conversion은 정확한 ISO day를 계산하지만 named-zone transition database가 없고 자정 gap/overlap을 해석할 수 없다.
+- 검토한 주요 대안: epoch를 UTC day로 절삭, generic current-offset 수식, public civil getter 조합, fixed-offset helper를 검토했다.
+- 선택한 방식: `fixed_offset_start_of_day_epoch`가 ISO day와 offset만 계산하고 time-zone dispatcher가 UTC/FixedOffset으로 호출 범위를 제한한다.
+- 다른 대안 대신 이 방식을 선택한 이유: helper 이름과 dispatcher 경계가 IANA 도입 시 잘못된 current-offset 재사용을 막으며, floor date conversion은 음수 epoch도 정확하다.
+- 장점, 단점 및 영향: 계산은 allocation 전 순수 연산이고 결과 GC rooting은 공용 Realm allocator가 담당한다. IANA backend 도입 시 Named 분기에 transition-aware `GetStartOfDay`를 별도로 연결해야 한다.
+```
+
 ## Compiler temporary storage
 
 Compiler-generated carriers for destructuring sources, iterator state,

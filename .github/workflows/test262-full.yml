@@ -120,6 +120,12 @@ jobs:
           TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_zoned_date_time_with_calendar_manifest_is_exact_live_disjoint_and_shared
           -v
+      - name: Verify exact Temporal.ZonedDateTime startOfDay admission
+        working-directory: tools
+        run: >-
+          TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
+          test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_zoned_date_time_start_of_day_manifest_is_exact_live_disjoint_and_shared
+          -v
       - name: Verify exact Temporal.ZonedDateTime compare admission
         working-directory: tools
         run: >-
@@ -637,6 +643,36 @@ jobs:
           cat temporal_zoned_date_time_with_calendar_diagnostic.txt
           grep -q '^RATE=87.5 PASS=14 FAIL=2 SKIP=0 TOTAL=16 RAN=16$' \
             temporal_zoned_date_time_with_calendar_diagnostic.txt
+
+  temporal-zoned-date-time-start-of-day:
+    needs: [build, setup]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download RuJa binary
+        uses: actions/download-artifact@v4
+        with:
+          name: ruja-release
+          path: target/release/
+      - run: chmod +x target/release/ruja
+      - name: Checkout pinned Temporal.ZonedDateTime startOfDay tests
+        uses: actions/checkout@v4
+        with:
+          repository: tc39/test262
+          ref: ${{ env.TEST262_REV }}
+          path: test262
+          sparse-checkout: |
+            harness
+            test/built-ins/Temporal/ZonedDateTime/prototype/startOfDay
+      - name: Require exact Temporal.ZonedDateTime startOfDay boundary
+        run: |
+          mapfile -t files < <(sed -e '/^#/d' -e '/^$/d' \
+            tools/test262_temporal_zoned_date_time_start_of_day_admission.txt)
+          TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
+            "${files[@]}" > temporal_zoned_date_time_start_of_day_result.txt 2>&1
+          cat temporal_zoned_date_time_start_of_day_result.txt
+          grep -q '^RATE=100.0 PASS=9 FAIL=0 SKIP=0 TOTAL=9 RAN=9$' \
+            temporal_zoned_date_time_start_of_day_result.txt
 
   temporal-zoned-date-time-compare:
     needs: [build, setup]

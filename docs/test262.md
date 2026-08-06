@@ -14379,3 +14379,23 @@ timeouts without weakening the surrounding performance boundary.
 Timeout-policy commit `547df84` is confirmed by ordinary CI `31090247413`
 (**3/3**) and full matrix `31090247258` (**61/61**), including Annex B exact
 **62/0/0**.
+
+## Temporal.ZonedDateTime.prototype.startOfDay
+
+`tools/test262_temporal_zoned_date_time_start_of_day_admission.txt` freezes all
+**9** files in the pinned method directory. The runner and analyzer share the
+exact path/feature map, and future sibling files remain behind the broad
+`Temporal` gate. The dedicated CI job requires **9 pass / 0 fail / 0 skip**.
+The surface covers branding, descriptors, nonconstruction, subclass-result
+suppression, UTC behavior, and lower-limit RangeError behavior for positive,
+negative, and zero fixed offsets.
+
+```text
+[Decision Log]
+- 목적과 의도: startOfDay 구현과 pinned method directory 전체를 exact supported accounting에 반영한다.
+- 기존 구현 및 제약 조건: broad Temporal gate가 9개 모두 skip했고 corpus는 UTC와 고정 오프셋만 사용한다. named IANA transition conformance는 이 directory가 검증하지 않는다.
+- 검토한 주요 대안: prefix 전체 허용, fixed-offset aggregate admission에 편입, 별도 9-path exact manifest를 검토했다.
+- 선택한 방식: 9개 path와 live features/includes/flags/negative metadata를 runner/analyzer 공유 manifest로 고정하고 독립 CI job에서 9/0/0을 요구한다.
+- 다른 대안 대신 이 방식을 선택한 이유: method 전용 exact gate가 구현 회귀와 metadata drift를 직접 식별하며 미래 sibling을 검토 없이 허용하지 않는다.
+- 장점, 단점 및 영향: complete directory 9/0/0이 재현되고 blocker 파일이 없다. named-zone 테스트가 추가되면 transition backend 구현 후 별도 실측과 admission 변경이 필요하다.
+```
