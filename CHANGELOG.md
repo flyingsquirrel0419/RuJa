@@ -4,6 +4,22 @@
 
 ### Changed
 
+- Added Realm-local static `Temporal.ZonedDateTime.compare`. Both inputs are
+  fully converted from branded objects, ISO property bags, or ZonedDateTime
+  Strings in left-to-right order, then compared only by exact epoch
+  nanoseconds. Public properties of branded ZonedDateTime inputs, calendar
+  identity, time-zone identity, and the call receiver are not observed. Exact
+  Test262 ownership is **46/0/0** over the 50-file method directory with four
+  explicit dependency blockers.
+
+  [Decision Log]
+  - 목적과 의도: 두 ZonedDateTime-like 입력을 명세 순서로 변환하고 local clock이나 zone/calendar identity가 아닌 exact instant만 비교한다.
+  - 기존 구현 및 제약 조건: `from`/`equals`가 공유하는 slot-producing converter는 있었지만 static compare 게시 경로가 없었다. Duration과 PlainDate 계열 object model, named IANA transition backend는 아직 없다.
+  - 검토한 주요 대안: `Instant.compare` converter 재사용, `from`으로 임시 객체 생성, public epoch getter 관찰, shared ZonedDateTime converter에서 epoch만 추출하는 방식을 검토했다.
+  - 선택한 방식: 각 인수를 `to_temporal_zoned_date_time(..., None)`로 완전히 변환한 뒤 두 `BigInt` epoch를 직접 비교해 Number `-1`, `+0`, `1`을 반환한다. constructor Realm에 nonconstructable length-2 native를 게시한다.
+  - 다른 대안 대신 이 방식을 선택한 이유: Instant converter는 time-zone annotation 없는 Instant 문자열까지 잘못 허용하고, 임시 객체/public getter는 allocation과 observable behavior를 추가한다. 공용 converter는 property order, Realm 오류, parser, fuel을 `from`과 일치시킨다.
+  - 장점, 단점 및 영향: branded hidden-property 비관찰, first-before-second abrupt completion, cross-Realm input/error, exact fuel, installer rollback과 exact 46/0/0이 검증된다. 세 파일은 다른 Temporal constructors를 선행 생성하고 한 파일은 compare 이후 PlainDateTime 후속 assertion을 실행하므로 해당 object model 도입 전까지 blocker다.
+
 - Added Realm-local `Temporal.ZonedDateTime.prototype.withCalendar`. Receiver
   branding precedes strict calendar conversion; branded ZonedDateTime inputs
   use hidden slots without public-property coercion, while bare calendar,

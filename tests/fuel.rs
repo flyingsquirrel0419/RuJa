@@ -118,6 +118,57 @@ fn temporal_instant_compare_precharges_each_string_argument() {
 }
 
 #[test]
+fn temporal_zoned_date_time_compare_precharges_each_string_argument() {
+    const BUDGET: i64 = 30_000;
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        globalThis.zonedCompareShort = "1970-01-01T00:00Z[UTC][foo=a]";
+        globalThis.zonedCompareLong =
+          "1970-01-01T00:00:01Z[UTC][foo=" + "a".repeat(512) + "]";
+        globalThis.zonedCompareBranded = new Temporal.ZonedDateTime(1000000000n, "UTC");
+        "#,
+    )
+    .expect("ZonedDateTime compare fuel fixtures should initialize");
+
+    vm.set_fuel(Some(BUDGET));
+    vm.run("Temporal.ZonedDateTime.compare(zonedCompareShort, zonedCompareShort);")
+        .expect("short ZonedDateTime compare should parse both strings");
+    let short_work = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+
+    vm.set_fuel(Some(BUDGET));
+    let result = vm
+        .run("Temporal.ZonedDateTime.compare(zonedCompareShort, zonedCompareLong);")
+        .expect("ZonedDateTime compare should parse both strings");
+    assert_eq!(result, Value::Number(-1.0));
+    let long_work = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+    assert!(long_work >= short_work + 500);
+
+    vm.set_fuel(Some(BUDGET));
+    vm.run("Temporal.ZonedDateTime.compare(zonedCompareLong, zonedCompareShort);")
+        .expect("ZonedDateTime compare should precharge the first string");
+    let first_long_work = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+
+    vm.set_fuel(Some(BUDGET));
+    vm.run("Temporal.ZonedDateTime.compare(zonedCompareBranded, zonedCompareShort);")
+        .expect("branded first argument should leave only the second string to precharge");
+    let branded_first_work = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+    assert!(first_long_work >= branded_first_work + 500);
+
+    vm.set_fuel(Some(long_work - 1));
+    let error = vm
+        .run("Temporal.ZonedDateTime.compare(zonedCompareShort, zonedCompareLong);")
+        .expect_err("N-1 fuel must abort ordered ZonedDateTime conversion");
+    assert_eq!(error.kind, ruja::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+
+    vm.set_fuel(Some(long_work));
+    vm.run("Temporal.ZonedDateTime.compare(zonedCompareShort, zonedCompareLong);")
+        .expect("exact measured fuel should compare successfully");
+    assert_eq!(vm.fuel_remaining(), Some(0));
+}
+
+#[test]
 fn temporal_zoned_date_time_precharges_identifier_bytes() {
     const BUDGET: i64 = 20_000;
     let mut vm = Vm::new().expect("failed to initialize VM");

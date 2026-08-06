@@ -40,7 +40,8 @@
   supports hidden-slot construction for UTC/fixed offsets, exact epoch and
   identifier accessors, all ISO civil/calendar/offset accessors, subclassing,
   branded, fixed-offset-string, and ISO property-bag `from`, direct Instant
-  conversion, hidden-identity `equals`, instant-preserving `withTimeZone`,
+  conversion, exact-instant static `compare`, hidden-identity `equals`,
+  instant-preserving `withTimeZone`,
   instant/time-zone-preserving `withCalendar`,
   option-aware `toString`, `toJSON`, and `valueOf`. ZonedDateTime strings may omit time when followed directly by a
   time-zone annotation. Property-bag

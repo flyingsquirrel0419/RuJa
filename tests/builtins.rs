@@ -25392,6 +25392,106 @@ fn temporal_zoned_date_time_equals_compares_complete_hidden_identity() {
 }
 
 #[test]
+fn temporal_zoned_date_time_compare_converts_in_order_and_compares_exact_time() {
+    assert_eq!(
+        run(r#"
+            var before = new Temporal.ZonedDateTime(0n, 'UTC');
+            var after = new Temporal.ZonedDateTime(1n, '+01:00');
+            var equalDifferentZone = new Temporal.ZonedDateTime(0n, '-08:00');
+            var reads = 0;
+            for (var key of ['epochNanoseconds', 'timeZoneId', 'calendarId']) {
+              Object.defineProperty(before, key, {
+                get: function () { reads++; throw new Error('observed'); }
+              });
+            }
+            [
+              Temporal.ZonedDateTime.compare(before, after),
+              Temporal.ZonedDateTime.compare(after, before),
+              Object.is(Temporal.ZonedDateTime.compare(before, equalDifferentZone), +0),
+              reads,
+              Temporal.ZonedDateTime.compare.length,
+              Temporal.ZonedDateTime.compare.name
+            ].join('|');
+        "#),
+        Value::String(Arc::from("-1|1|true|0|2|compare"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var log = [];
+            function bag(label, second) {
+              var values = {
+                calendar: 'iso8601', day: 1, hour: 0, microsecond: 0,
+                millisecond: 0, minute: 0, month: 1, monthCode: undefined,
+                nanosecond: 0, offset: '+00:00', second: second,
+                timeZone: 'UTC', year: 1970
+              };
+              var result = {};
+              for (let key of Object.keys(values)) {
+                Object.defineProperty(result, key, {
+                  get: function () { log.push(label + '.' + key); return values[key]; }
+                });
+              }
+              return result;
+            }
+            var result = Temporal.ZonedDateTime.compare(bag('one', 0), bag('two', 1));
+            result + '|' + log.join(',');
+        "#),
+        Value::String(Arc::from(
+            "-1|one.calendar,one.day,one.hour,one.microsecond,one.millisecond,one.minute,one.month,one.monthCode,one.nanosecond,one.offset,one.second,one.timeZone,one.year,two.calendar,two.day,two.hour,two.microsecond,two.millisecond,two.minute,two.month,two.monthCode,two.nanosecond,two.offset,two.second,two.timeZone,two.year"
+        ))
+    );
+
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var method = other.Temporal.ZonedDateTime.compare;
+            var main = new Temporal.ZonedDateTime(7n, 'UTC');
+            var foreign = new other.Temporal.ZonedDateTime(8n, '+02:00');
+            var receiverCalls = 0;
+            var typeRealm;
+            var rangeRealm;
+            try { method(1, foreign); } catch (error) {
+              typeRealm = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            try { method('invalid', foreign); } catch (error) {
+              rangeRealm = error instanceof other.RangeError && !(error instanceof RangeError);
+            }
+            [
+              method.call(function Receiver() { receiverCalls++; }, main, foreign),
+              receiverCalls,
+              typeRealm,
+              rangeRealm
+            ].join('|');
+        "#),
+        Value::String(Arc::from("-1|0|true|true"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var secondRead = false;
+            var second = {};
+            Object.defineProperty(second, 'calendar', {
+              get: function () { secondRead = true; throw 'second'; }
+            });
+            var firstFailed;
+            try { Temporal.ZonedDateTime.compare('invalid', second); }
+            catch (error) { firstFailed = error instanceof RangeError && !secondRead; }
+            firstFailed;
+        "#),
+        Value::Bool(true)
+    );
+
+    for source in [
+        "Temporal.ZonedDateTime.compare()",
+        "new Temporal.ZonedDateTime.compare()",
+        "Temporal.ZonedDateTime.compare(Symbol(), new Temporal.ZonedDateTime(0n, 'UTC'))",
+    ] {
+        assert!(run_err(source).contains("TypeError"), "{source}");
+    }
+}
+
+#[test]
 fn temporal_zoned_date_time_with_time_zone_preserves_hidden_identity() {
     assert_eq!(
         run(r#"

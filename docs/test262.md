@@ -14329,3 +14329,26 @@ seconds remain behind the broad `Temporal` gate. ZonedDateTime conversion is
 owned separately by the exact hidden-slot core admission.
 The dedicated `temporal-instant-from` CI job requires **15 pass / 0 fail / 0
 skip** at the pinned Test262 revision.
+
+## Temporal.ZonedDateTime.compare
+
+`tools/test262_temporal_zoned_date_time_compare_admission.txt` freezes **46**
+exact paths from the pinned 50-file static method directory. Dedicated CI
+requires **46 pass / 0 fail / 0 skip**; forced diagnostic accounting requires
+**46 pass / 4 fail / 0 skip**. Two wrong-type files construct the absent
+`Temporal.Duration`; `calendar-temporal-object.js` constructs absent PlainDate
+family objects; `compares-exact-time-not-clock-time.js` additionally requires
+`toPlainDateTime` and `Temporal.PlainDateTime.compare`. The admitted surface
+covers descriptors, nonconstruction, complete left-to-right property-bag
+conversion, abrupt completion, exact epoch ordering, zone-ID disregard,
+branded fast paths, and the audited ZonedDateTime String grammar.
+
+```text
+[Decision Log]
+- 목적과 의도: static compare 구현과 전체 50-file corpus의 실제 지원 경계를 exact accounting에 반영한다.
+- 기존 구현 및 제약 조건: broad Temporal feature gate가 directory 전체를 skip했고 4개 파일은 compare 외부의 아직 없는 Temporal constructors/methods를 선행 실행한다.
+- 검토한 주요 대안: directory prefix 전체 허용, blocker용 가짜 constructors, 기존 from/equals manifest에 중복 편입, 별도 46-path admission과 4-path complement를 검토했다.
+- 선택한 방식: 실제 통과하는 46개 path와 live features/includes/flags/negative metadata를 runner/analyzer 공유 manifest로 열고 4개 blocker를 forced diagnostic으로 고정한다.
+- 다른 대안 대신 이 방식을 선택한 이유: prefix와 가짜 constructor는 지원하지 않는 object model을 과장하고 미래 sibling drift를 숨긴다. method 전용 gate는 compare 회귀를 직접 식별한다.
+- 장점, 단점 및 영향: exact 46/0/0과 forced 46/4가 재현되고 미래 파일은 자동 허용되지 않는다. Duration과 PlainDate family가 구현되면 blocker를 다시 실측해 이동해야 한다.
+```

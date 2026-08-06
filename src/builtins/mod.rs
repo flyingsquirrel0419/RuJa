@@ -6289,7 +6289,7 @@ pub(crate) fn install_temporal_namespace_in_env(
     global: Option<&Value>,
     object_proto: Value,
 ) -> error::Result<Value> {
-    vm.try_reserve_gc_pins(50)?;
+    vm.try_reserve_gc_pins(51)?;
     let mut pin_count = 0;
     let result = (|| {
         let instant_prototype = Value::Object(vm.alloc(HeapObj::Object(ObjectData {
@@ -6431,6 +6431,12 @@ pub(crate) fn install_temporal_namespace_in_env(
         }
 
         alloc_zoned_native!(zoned_from, "from", temporal_zoned_date_time_from, 1);
+        alloc_zoned_native!(
+            zoned_compare,
+            "compare",
+            temporal_zoned_date_time_compare,
+            2
+        );
         alloc_zoned_native!(zoned_equals, "equals", temporal_zoned_date_time_equals, 1);
         alloc_zoned_native!(
             zoned_with_time_zone,
@@ -6656,6 +6662,10 @@ pub(crate) fn install_temporal_namespace_in_env(
                 .props
                 .lock()
                 .insert(PropertyKey::from("from"), data_prop(zoned_from));
+            function
+                .props
+                .lock()
+                .insert(PropertyKey::from("compare"), data_prop(zoned_compare));
         });
         let Value::Object(zoned_prototype_index) = zoned_date_time_prototype.clone() else {
             unreachable!()
@@ -7196,6 +7206,23 @@ fn temporal_zoned_date_time_equals(
             && temporal_time_zone_equals(&time_zone, &other_time_zone)
             && temporal_calendar_equals(&calendar_identifier, &other_calendar),
     ))
+}
+
+fn temporal_zoned_date_time_compare(
+    vm: &mut Vm,
+    args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
+    let (one, _, _) =
+        to_temporal_zoned_date_time(vm, args.first().unwrap_or(&Value::Undefined), None)?;
+    let (two, _, _) =
+        to_temporal_zoned_date_time(vm, args.get(1).unwrap_or(&Value::Undefined), None)?;
+    let result = match one.cmp(&two) {
+        std::cmp::Ordering::Less => -1.0,
+        std::cmp::Ordering::Equal => 0.0,
+        std::cmp::Ordering::Greater => 1.0,
+    };
+    Ok(Value::Number(result))
 }
 
 fn temporal_zoned_date_time_with_time_zone(

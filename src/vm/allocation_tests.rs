@@ -212,9 +212,9 @@ fn temporal_namespace_installation_covers_every_fixed_offset_allocation_boundary
     let baseline_live = vm.heap.live_count();
     let global = vm.global;
 
-    // Allocations 18 through 51 cover the new method/accessor batch and the
+    // Allocations 18 through 52 cover the new method/accessor batch and the
     // two namespace objects that must publish only after the batch succeeds.
-    for extra_capacity in 17..51 {
+    for extra_capacity in 17..52 {
         vm.set_max_heap_objects(Some(baseline_live + extra_capacity));
         let object_proto = vm.object_proto.clone();
         let result =
@@ -235,16 +235,16 @@ fn temporal_namespace_installation_covers_every_fixed_offset_allocation_boundary
         );
     }
 
-    vm.set_max_heap_objects(Some(baseline_live + 51));
+    vm.set_max_heap_objects(Some(baseline_live + 52));
     let object_proto = vm.object_proto.clone();
     let temporal =
         crate::builtins::install_temporal_namespace_in_env(&mut vm, global, None, object_proto)
-            .expect("exact 51-object capacity must install the complete namespace");
+            .expect("exact 52-object capacity must install the complete namespace");
     vm.set_max_heap_objects(None);
     assert_eq!(vm.gc_pins.len(), baseline_pins);
     assert_eq!(vm.get_global("Temporal"), temporal);
     assert_eq!(
-        vm.run("typeof Temporal.ZonedDateTime.prototype.withCalendar")
+        vm.run("typeof Temporal.ZonedDateTime.compare")
             .expect("installed namespace should remain usable"),
         Value::String(Arc::from("function"))
     );

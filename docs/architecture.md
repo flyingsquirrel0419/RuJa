@@ -181,6 +181,24 @@ fixed offset `+00:00` even though both currently resolve to zero nanoseconds.
 - 장점, 단점 및 영향: canonical offset/UTC, cross-Realm object input, result Realm, GC/fuel/allocation 경계가 재사용된다. IANA 지원 시 converter는 available identifier record를 추가하고 equality helper가 primary identifier 비교를 맡아야 한다.
 ```
 
+`Temporal.ZonedDateTime.compare` reuses the slot-producing
+`ToTemporalZonedDateTime` boundary without allocating temporary result
+objects. It converts the first input completely before touching the second,
+retains the first epoch `Arc<BigInt>` across JavaScript re-entry during the
+second conversion, and ignores the static call receiver. Comparison is direct
+integer ordering; time-zone and calendar slots are intentionally discarded
+only after each conversion has completed.
+
+```text
+[Decision Log]
+- 목적과 의도: ZonedDateTime static comparison을 exact instant ordering으로 제공하면서 기존 conversion의 observable 순서를 보존한다.
+- 기존 구현 및 제약 조건: shared converter는 hidden slots를 반환하지만 `Instant.compare`는 ZonedDateTime property bags와 required time-zone annotation을 처리하지 않는다. result는 Number라 Realm별 결과 object allocation이 필요 없다.
+- 검토한 주요 대안: Instant converter 공유, ZonedDateTime.from 호출 후 getter 비교, epoch subtraction, ZonedDateTime converter tuple의 직접 BigInt ordering을 검토했다.
+- 선택한 방식: 두 input을 순차적으로 공용 ZonedDateTime converter에 통과시키고 epoch `cmp`를 `-1.0`, `0.0`, `1.0`으로 매핑한다.
+- 다른 대안 대신 이 방식을 선택한 이유: 임시 object/getter는 불필요한 allocation과 user-observable access를 만들고 subtraction 또는 floating conversion은 큰 epoch 정밀도를 훼손할 수 있다.
+- 장점, 단점 및 영향: first-input abrupt completion, property-bag getter order, hidden-slot fast path, cross-Realm errors, byte-proportional fuel이 공유된다. zone/calendar identity는 명세대로 비교 결과에 영향이 없다.
+```
+
 `Temporal.ZonedDateTime.prototype.withCalendar` separates strict
 `ToTemporalCalendarIdentifier` conversion from the property-bag defaulting
 path. A missing argument therefore throws instead of becoming `iso8601`.
