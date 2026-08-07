@@ -6290,7 +6290,7 @@ pub(crate) fn install_temporal_namespace_in_env(
     global: Option<&Value>,
     object_proto: Value,
 ) -> error::Result<Value> {
-    vm.try_reserve_gc_pins(115)?;
+    vm.try_reserve_gc_pins(116)?;
     let mut pin_count = 0;
     let result = (|| {
         let instant_prototype = Value::Object(vm.alloc(HeapObj::Object(ObjectData {
@@ -6818,6 +6818,13 @@ pub(crate) fn install_temporal_namespace_in_env(
             env,
         )?);
         pin_count += vm.pin(&plain_date_from);
+        let plain_date_compare = Value::Object(vm.new_native_function_in_env_with_gc_retry(
+            "compare",
+            temporal_plain_date_compare,
+            2,
+            env,
+        )?);
+        pin_count += vm.pin(&plain_date_compare);
 
         macro_rules! alloc_plain_date_getter {
             ($binding:ident, $name:literal, $native:ident) => {
@@ -7115,6 +7122,10 @@ pub(crate) fn install_temporal_namespace_in_env(
                 .props
                 .lock()
                 .insert(PropertyKey::from("from"), data_prop(plain_date_from));
+            function
+                .props
+                .lock()
+                .insert(PropertyKey::from("compare"), data_prop(plain_date_compare));
         });
         let Value::Object(plain_date_prototype_index) = plain_date_prototype.clone() else {
             unreachable!()
@@ -9193,6 +9204,21 @@ fn temporal_plain_date_from(
         to_temporal_plain_date(vm, args.first().unwrap_or(&Value::Undefined), args.get(1))?;
     let realm = vm.native_callee_closure().unwrap_or(vm.global);
     create_temporal_plain_date_in_realm(vm, fields, calendar_identifier, realm)
+}
+
+fn temporal_plain_date_compare(
+    vm: &mut Vm,
+    args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
+    let (one, _) = to_temporal_plain_date(vm, args.first().unwrap_or(&Value::Undefined), None)?;
+    let (two, _) = to_temporal_plain_date(vm, args.get(1).unwrap_or(&Value::Undefined), None)?;
+    let result = match (one.year, one.month, one.day).cmp(&(two.year, two.month, two.day)) {
+        std::cmp::Ordering::Less => -1.0,
+        std::cmp::Ordering::Equal => 0.0,
+        std::cmp::Ordering::Greater => 1.0,
+    };
+    Ok(Value::Number(result))
 }
 
 fn to_temporal_plain_date_time(

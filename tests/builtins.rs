@@ -25393,6 +25393,144 @@ fn temporal_plain_date_from_preserves_order_range_and_function_realm() {
 }
 
 #[test]
+fn temporal_plain_date_compare_orders_supported_records_without_observing_slots() {
+    assert_eq!(
+        run(r#"
+            var base = new Temporal.PlainDate(2000, 5, 2);
+            var same = new Temporal.PlainDate(2000, 5, 2);
+            var laterYear = new Temporal.PlainDate(2001, 1, 1);
+            var laterMonth = new Temporal.PlainDate(2000, 6, 1);
+            var laterDay = new Temporal.PlainDate(2000, 5, 3);
+            var reads = 0;
+            for (var value of [base, same]) {
+              for (var key of ['calendar', 'day', 'month', 'monthCode', 'year']) {
+                Object.defineProperty(value, key, {
+                  get: function () { reads++; throw new Error('observed'); }
+                });
+              }
+            }
+            var dateTime = new Temporal.PlainDateTime(2000, 5, 2, 23, 59, 59);
+            var zoned = new Temporal.ZonedDateTime(0n, '+01:00');
+            [
+              Temporal.PlainDate.compare.name,
+              Temporal.PlainDate.compare.length,
+              Temporal.PlainDate.compare(base, same),
+              Temporal.PlainDate.compare(base, laterYear),
+              Temporal.PlainDate.compare(laterYear, base),
+              Temporal.PlainDate.compare(base, laterMonth),
+              Temporal.PlainDate.compare(base, laterDay),
+              Temporal.PlainDate.compare(dateTime, base),
+              Temporal.PlainDate.compare(zoned, new Temporal.PlainDate(1970, 1, 1)),
+              Temporal.PlainDate.compare({ year: 2000, monthCode: 'M05', day: 2 }, base),
+              Temporal.PlainDate.compare('2000-05-02T23:59+23:59[UTC]', base),
+              Object.is(Temporal.PlainDate.compare(base, base), +0),
+              reads
+            ].join('|');
+        "#),
+        Value::String(Arc::from("compare|2|0|-1|1|-1|-1|0|0|0|0|true|0"))
+    );
+}
+
+#[test]
+fn temporal_plain_date_compare_converts_left_to_right_and_uses_function_realm() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            function bag(name, year) {
+              var value = {};
+              for (var entry of [['calendar', 'iso8601'], ['day', 2], ['month', 5],
+                                  ['monthCode', 'M05'], ['year', year]]) {
+                Object.defineProperty(value, entry[0], {
+                  get: (function (label, field) {
+                    return function () { log.push(name + '.' + label); return field; };
+                  })(entry[0], entry[1])
+                });
+              }
+              return value;
+            }
+            var result = Temporal.PlainDate.compare(bag('one', 2000), bag('two', 2001));
+            var secondReads = 0;
+            var second = { get calendar() { secondReads++; return 'iso8601'; } };
+            var firstAbrupt = false;
+            try { Temporal.PlainDate.compare('invalid', second); }
+            catch (error) { firstAbrupt = error instanceof RangeError; }
+            var numberError = false;
+            try { Temporal.PlainDate.compare(1, new Temporal.PlainDate(2000, 5, 2)); }
+            catch (error) { numberError = error instanceof TypeError; }
+            var calendarError = false;
+            try {
+              Temporal.PlainDate.compare(
+                { year: 2000, month: 5, day: 2, calendar: null },
+                new Temporal.PlainDate(2000, 5, 2)
+              );
+            } catch (error) { calendarError = error instanceof TypeError; }
+
+            var other = $262.createRealm().global;
+            var foreignCompare = other.Temporal.PlainDate.compare;
+            var realmError = false;
+            try { foreignCompare('invalid', new Temporal.PlainDate(2000, 5, 2)); }
+            catch (error) {
+              realmError = error instanceof other.RangeError && !(error instanceof RangeError);
+            }
+            var ignoredReceiver = foreignCompare.call(
+              { compare: function () { throw new Error('observed'); } },
+              new Temporal.PlainDate(2000, 5, 2),
+              new other.Temporal.PlainDate(2000, 5, 3)
+            );
+            var nonconstructable = false;
+            try { new Temporal.PlainDate.compare(); }
+            catch (error) { nonconstructable = error instanceof TypeError; }
+            [
+              result, log.join(','), firstAbrupt, secondReads, numberError, calendarError,
+              realmError, ignoredReceiver, nonconstructable
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "-1|one.calendar,one.day,one.month,one.monthCode,one.year,two.calendar,two.day,two.month,two.monthCode,two.year|true|0|true|true|true|-1|true"
+        ))
+    );
+}
+
+#[test]
+fn temporal_plain_date_compare_roots_arguments_across_observable_gc() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+    assert_eq!(
+        vm.run(
+            r#"
+            function bag(year, collect) {
+              return {
+                get calendar() { if (collect) forceGc(); return 'iso8601'; },
+                day: 2,
+                month: 5,
+                monthCode: 'M05',
+                year: year
+              };
+            }
+            [
+              Temporal.PlainDate.compare(
+                bag(2000, true), new Temporal.PlainDate(2001, 5, 2)
+              ),
+              Temporal.PlainDate.compare(
+                new Temporal.PlainDate(2000, 5, 2), bag(2001, true)
+              )
+            ].join('|');
+            "#,
+        )
+        .expect("PlainDate.compare arguments should survive observable GC"),
+        Value::String(Arc::from("-1|-1"))
+    );
+}
+
+#[test]
 fn temporal_plain_date_time_conversion_uses_plain_date_slots_at_midnight() {
     assert_eq!(
         run(r#"

@@ -29,7 +29,8 @@ The following resource limits are enforced:
   construction, subclassing, 16 ISO/calendar accessors, `@@toStringTag`,
   always-throwing `valueOf`, static `from` for branded Temporal values, ISO
   property bags, and audited strings, and hidden-slot conversion to
-  PlainDateTime at midnight. `PlainDate.compare`, formatting, arithmetic, and
+  PlainDateTime at midnight. Static `compare` supports the same branded,
+  property-bag, and String inputs for ISO field ordering. Formatting, arithmetic, and
   remaining prototype conversion methods are not implemented.
   Realm-local `%Temporal.ZonedDateTime%` supports hidden-slot construction for
   UTC and fixed offsets, exact epoch/time-zone/calendar accessors, subclassing,

@@ -150,6 +150,13 @@ jobs:
           TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_date_from_manifest_is_exact_live_disjoint_and_shared
           -v
+      - name: Verify exact Temporal.PlainDate.compare admissions
+        working-directory: tools
+        run: >-
+          TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
+          test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_date_compare_manifest_is_exact_live_disjoint_and_shared
+          test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_date_compare_intl_manifest_is_exact_live_and_shared
+          -v
       - name: Verify exact Temporal.PlainDateTime core admission
         working-directory: tools
         run: >-
@@ -907,6 +914,70 @@ jobs:
           cat temporal_plain_date_from_diagnostic.txt
           grep -q '^RATE=98.6 PASS=70 FAIL=1 SKIP=0 TOTAL=71 RAN=71$' \
             temporal_plain_date_from_diagnostic.txt
+
+  temporal-plain-date-compare:
+    needs: [build, setup]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download RuJa binary
+        uses: actions/download-artifact@v4
+        with:
+          name: ruja-release
+          path: target/release/
+      - run: chmod +x target/release/ruja
+      - name: Checkout pinned Temporal.PlainDate.compare tests
+        uses: actions/checkout@v4
+        with:
+          repository: tc39/test262
+          ref: ${{ env.TEST262_REV }}
+          path: test262
+          sparse-checkout: |
+            harness
+            test/built-ins/Temporal/PlainDate/compare
+            test/intl402/Temporal/PlainDate/compare
+      - name: Require exact Temporal.PlainDate.compare boundary
+        run: |
+          mapfile -t files < <(sed -e '/^#/d' -e '/^$/d' \
+            tools/test262_temporal_plain_date_compare_admission.txt)
+          TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
+            "${files[@]}" > temporal_plain_date_compare_result.txt 2>&1
+          cat temporal_plain_date_compare_result.txt
+          grep -q '^RATE=100.0 PASS=41 FAIL=0 SKIP=0 TOTAL=41 RAN=41$' \
+            temporal_plain_date_compare_result.txt
+      - name: Freeze Temporal.PlainDate.compare blocker
+        run: |
+          mapfile -t files < <(cat \
+            tools/test262_temporal_plain_date_compare_admission.txt \
+            tools/test262_temporal_plain_date_compare_blockers.txt | \
+            sed -e '/^#/d' -e '/^$/d')
+          TEST262="$GITHUB_WORKSPACE/test262" \
+            python3 tools/test262_temporal_plain_date_compare_diagnostic.py \
+            "${files[@]}" > temporal_plain_date_compare_diagnostic.txt 2>&1
+          cat temporal_plain_date_compare_diagnostic.txt
+          grep -q '^RATE=97.6 PASS=41 FAIL=1 SKIP=0 TOTAL=42 RAN=42$' \
+            temporal_plain_date_compare_diagnostic.txt
+      - name: Require exact Intl402 Temporal.PlainDate.compare boundary
+        run: |
+          mapfile -t files < <(sed -e '/^#/d' -e '/^$/d' \
+            tools/test262_temporal_plain_date_compare_intl_admission.txt)
+          TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
+            "${files[@]}" > temporal_plain_date_compare_intl_result.txt 2>&1
+          cat temporal_plain_date_compare_intl_result.txt
+          grep -q '^RATE=100.0 PASS=1 FAIL=0 SKIP=0 TOTAL=1 RAN=1$' \
+            temporal_plain_date_compare_intl_result.txt
+      - name: Freeze Intl402 Temporal.PlainDate.compare blockers
+        run: |
+          mapfile -t files < <(cat \
+            tools/test262_temporal_plain_date_compare_intl_admission.txt \
+            tools/test262_temporal_plain_date_compare_intl_blockers.txt | \
+            sed -e '/^#/d' -e '/^$/d')
+          TEST262="$GITHUB_WORKSPACE/test262" \
+            python3 tools/test262_temporal_plain_date_compare_intl_diagnostic.py \
+            "${files[@]}" > temporal_plain_date_compare_intl_diagnostic.txt 2>&1
+          cat temporal_plain_date_compare_intl_diagnostic.txt
+          grep -q '^RATE=33.3 PASS=1 FAIL=2 SKIP=0 TOTAL=3 RAN=3$' \
+            temporal_plain_date_compare_intl_diagnostic.txt
 
   temporal-plain-date-time-core:
     needs: [build, setup]

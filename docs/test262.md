@@ -14614,3 +14614,30 @@ contracts.
 - 다른 대안 대신 이 방식을 선택한 이유: process exit와 오류 class만으로는 선행 TypeError false positive를 배제할 수 없다. live metadata 및 exact complement가 future sibling drift와 실제 method 회귀를 함께 검출한다.
 - 장점, 단점 및 영향: direct 70/0, forced 70/1, core 78/0이 재현된다. PlainMonthDay/PlainYearMonth 도입 시 마지막 direct blocker를 재감사해야 한다.
 ```
+
+## Temporal.PlainDate.compare
+
+`tools/test262_temporal_plain_date_compare_admission.txt` freezes **41** exact
+paths from the pinned 42-file static method directory. Dedicated CI requires
+**41 pass / 0 fail / 0 skip**; the forced admission-plus-blocker diagnostic is
+**41 pass / 1 fail / 0 skip**. `calendar-temporal-object.js` remains blocked
+because its shared helper constructs absent PlainMonthDay and PlainYearMonth
+objects.
+
+Intl402 is tracked separately rather than being folded into the direct method
+directory. `future-calendar.js` is exact **1/0/0** because unsupported future
+calendar identifiers must fail. Forced execution of its complete three-file
+directory is **1/2/0**; `exhaustive.js` and `infinity-throws-rangeerror.js`
+require non-ISO `gregory` construction and field interpretation. Runner and
+analyzer share both exact path/feature contracts, while tooling freezes each
+directory's live complement and metadata independently.
+
+```text
+[Decision Log]
+- 목적과 의도: PlainDate.compare의 intended assertions에 도달하는 direct 및 Intl402 경계를 pinned Test262에서 독립적으로 증명한다.
+- 기존 구현 및 제약 조건: direct 42개 중 일부 TypeError 기대 테스트는 method 부재만으로도 거짓 양성이 가능하고, direct 한 경로와 Intl402 두 경로에는 별도 calendar dependency가 있다.
+- 검토한 주요 대안: 두 directory prefix 허용, forced pass 전부 admission, Intl402를 direct manifest에 혼합, exact path와 blocker complement 분리를 검토했다.
+- 선택한 방식: direct는 41/1, Intl402는 1/2의 admission/blocker complement로 나누고 features/includes/flags/negative metadata와 runner/analyzer parity를 동결한다.
+- 다른 대안 대신 이 방식을 선택한 이유: exact live complement만 future test drift, 선행 TypeError false positive, non-ISO calendar 지원 과장을 동시에 막는다. 두 corpus를 분리하면 실패 소유권도 명확하다.
+- 장점, 단점 및 영향: direct exact 41/0과 forced 41/1, Intl402 exact 1/0과 forced 1/2가 재현된다. PlainMonthDay/PlainYearMonth 및 gregory calendar 도입 시 세 blocker를 다시 감사해야 한다.
+```

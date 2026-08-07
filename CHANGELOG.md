@@ -4,6 +4,24 @@
 
 ### Changed
 
+- Added Realm-local static `Temporal.PlainDate.compare`. It converts operands
+  left-to-right through the shared date-only hidden-record boundary, ignores
+  calendar identity for ISO field ordering, and returns allocation-free
+  `-1`, `+0`, or `1`. Branded PlainDate, PlainDateTime, and ZonedDateTime
+  inputs remain getter-free; property bags and strings preserve their audited
+  conversion order, abrupt completion, Realm, fuel, and GC behavior. The
+  pinned direct boundary is exact **41/0/0** and forced **41/1/0** over 42
+  files. The separately frozen Intl402 boundary is exact **1/0/0** and forced
+  **1/2/0** over three files.
+
+  [Decision Log]
+  - 목적과 의도: PlainDate ordering을 기존 ToTemporalDate conversion과 동일한 record 경계에 구현하고 direct 및 Intl402 지원 범위를 과장 없이 공개한다.
+  - 기존 구현 및 제약 조건: PlainDate.from converter와 compact ISO date record는 있었지만 static compare가 없었다. direct calendar helper는 없는 PlainMonthDay/PlainYearMonth를 만들고 Intl402 두 경로는 non-ISO gregory calendar를 요구한다.
+  - 검토한 주요 대안: public accessor 비교, 임시 PlainDate 두 개 생성, compare 전용 parser 복제, 공용 converter record의 사전식 비교를 검토했다.
+  - 선택한 방식: 첫 operand를 완전히 변환한 뒤 둘째를 변환하고 `(year, month, day)` tuple만 비교한다. direct와 Intl402는 별도 exact manifest와 live complement로 동결한다.
+  - 다른 대안 대신 이 방식을 선택한 이유: public getter와 임시 object는 관찰 가능 동작과 GC 비용을 추가하고 parser 복제는 order/fuel drift를 만든다. prefix admission은 missing-method TypeError 거짓 양성과 미구현 calendar 지원을 숨긴다.
+  - 장점, 단점 및 영향: ordering, +0, first-abrupt short circuit, method Realm, receiver 무시, hidden getter 비관찰, byte fuel, observable GC와 installer rollback이 검증된다. installer는 116 maximum pins와 117 allocations가 되며 세 calendar blocker는 sibling/non-ISO calendar 구현 후 재감사한다.
+
 - Added Realm-local static `Temporal.PlainDate.from`. It copies branded
   PlainDate, PlainDateTime, and ZonedDateTime hidden slots; converts ISO date
   property bags in observable `calendar`, `day`, `month`, `monthCode`, `year`

@@ -115,9 +115,10 @@ The constructor and prototype are registered per Realm. Accessors brand
 against the hidden kind and never read same-named public properties; errors
 belong to the native function Realm, while constructor result prototypes obey
 `GetPrototypeFromConstructor` and therefore the `newTarget` Realm. Duration
-slots contain no GC references. Namespace installation nevertheless pins the
-   prototype, constructor, and twelve getters until all 115 Temporal allocations
-are complete, and Realm root/rollback inventories include both new registries.
+slots contain no GC references. At the Duration-core checkpoint, namespace
+installation nevertheless pinned the prototype, constructor, and twelve
+getters until all 115 then-current Temporal allocations completed, and Realm
+root/rollback inventories included both new registries.
 
 ```text
 [Decision Log]
@@ -166,7 +167,7 @@ reject a UTC designator and ignore valid numeric offsets and zone annotations.
 Syntax is validated before options; a parsed date observes overflow before its
 noon range check. Allocation uses the native function
 Realm rather than the call receiver or source object's Realm. The added native
-function raises installer accounting to 115 maximum pins and 116 allocations.
+function raised installer accounting to 115 maximum pins and 116 allocations.
 
 ```text
 [Decision Log]
@@ -176,6 +177,23 @@ function raises installer accounting to 115 maximum pins and 116 allocations.
 - 선택한 방식: 5-field BigInt-backed collector, 날짜 전용 ZonedDateTime local helper, 공용 저수준 parser 위의 PlainDate parser, method-Realm allocator를 조합한다.
 - 다른 대안 대신 이 방식을 선택한 이유: 전용 경계만 property order, hidden getter 비관찰, 정오 range, invalid-input/options abrupt 순서를 모두 보존한다.
 - 장점, 단점 및 영향: direct Test262 70/0과 core 78/0이 exact manifest로 고정된다. calendar sibling object 한 경로는 해당 hidden kinds가 생길 때까지 broad gate에 남는다.
+```
+
+Static `Temporal.PlainDate.compare` invokes that converter for the first
+operand and only after it succeeds for the second. It compares the resulting
+ISO `(year, month, day)` records lexicographically and deliberately excludes
+calendar identity. The primitive Number result allocates no heap object.
+Adding the Realm-local native function raises current installer accounting to
+116 maximum pins and 117 allocations.
+
+```text
+[Decision Log]
+- 목적과 의도: PlainDate ordering을 from과 같은 hidden-record conversion 계약 위에 두어 입력 종류별 의미론이 갈라지지 않게 한다.
+- 기존 구현 및 제약 조건: 공용 converter는 branded fast path, property order, String grammar, Realm error를 이미 소유하지만 ordering entry point는 없었다.
+- 검토한 주요 대안: public getters, 두 임시 PlainDate allocation, compare 전용 conversion 복제, compact record 직접 비교를 검토했다.
+- 선택한 방식: 공용 converter를 순차 호출하고 calendar를 제외한 세 ISO field tuple을 비교해 primitive를 반환한다.
+- 다른 대안 대신 이 방식을 선택한 이유: 직접 record 비교만 getter 비관찰, abrupt 순서, parser/fuel 단일 소스, allocation-free 결과를 동시에 보존한다.
+- 장점, 단점 및 영향: observable GC 중 operand rooting과 installer OOM rollback까지 고정된다. non-ISO calendar field interpretation은 calendar subsystem의 후속 책임이다.
 ```
 
 ## Temporal PlainDateTime hidden slots
@@ -193,8 +211,8 @@ range whose endpoints are one day beyond the Instant limits. The constructor,
 prototype, 22 accessors, and `valueOf` are Realm-local roots. Accessors read
 hidden slots directly, derived ISO values reuse the ZonedDateTime civil helper,
 and creation revalidates the record before pinning the selected prototype.
-Namespace installation now has 114 maximum live pins and 115 allocation
-boundaries.
+At the PlainDateTime-core checkpoint, namespace installation had 114 maximum
+live pins and 115 allocation boundaries.
 
 ```text
 [Decision Log]
