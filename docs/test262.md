@@ -14659,7 +14659,9 @@ The complete audit also freezes four true downstream callers without admitting
 them: PlainDate `add` and `subtract` need those absent methods, while Chinese
 and Dangi `monthCode` cases need non-ISO calendar conversion. This separate
 inventory brings the equality-related surface to 50 files without crediting
-unreachable assertions as equals support.
+unreachable assertions as equals support. Live metadata checks run when the
+pinned corpus is readable and otherwise retain the frozen manifest contract,
+matching the tooling's other optional-corpus checks.
 
 ```text
 [Decision Log]

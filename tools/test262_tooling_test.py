@@ -4983,7 +4983,13 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
         self.assertEqual(set(TEMPORAL_PLAIN_DATE_EQUALS_DOWNSTREAM_NEGATIVE), downstream)
         self.assertTrue(TEMPORAL_PLAIN_DATE_EQUALS_FILES.isdisjoint(downstream))
         self.assertTrue(TEMPORAL_PLAIN_DATE_EQUALS_INTL_FILES.isdisjoint(downstream))
-        if all((test_root / relative).is_file() for relative in downstream):
+        try:
+            downstream_is_live = all(
+                (test_root / relative).is_file() for relative in downstream
+            )
+        except OSError:
+            downstream_is_live = False
+        if downstream_is_live:
             for relative in downstream:
                 path = test_root / relative
                 metadata = test262_runner.parse_meta(path.read_text())
