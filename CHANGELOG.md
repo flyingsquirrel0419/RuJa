@@ -24,6 +24,12 @@
   - 다른 대안 대신 이 방식을 선택한 이유: 조기 positivity 검사는 abrupt completion 순서를 바꾸고 constructor/public getter 재사용은 subclass와 user code를 관찰한다. parser와 property bag을 함께 완결해야 static API의 실제 reachable corpus를 거짓 없이 열 수 있다.
   - 장점, 단점 및 영향: getter/options 순서, constrain/reject, leap second, negative balancing, Realm, fuel, GC/OOM rollback과 exact 64/0 및 core 105/0이 검증된다. PlainDate family 의존 5개와 `equals` 의존 1개는 direct blocker이며 arithmetic 1개는 core blocker로 남는다. 전체 forced 65/5에는 미구현 PlainDate 생성의 TypeError가 기대 TypeError와 우연히 일치하는 false positive 한 건이 포함된다.
 
+  Implementation commit `31a7298` is confirmed by ordinary CI `31119606326`
+  (**3/3**, attempt 4 after setup-only runner failures) and full Test262 CI
+  `31119606515` (**66/66**, attempt 3). The dedicated job reproduces direct
+  exact **64/0/0** and forced **65/5/0** over all 70 pinned files; the
+  PlainDateTime core jobs reproduce exact **105/0/0** and forced **105/1/0**.
+
 - Added Realm-local `Temporal.ZonedDateTime.prototype.toPlainDateTime` for UTC
   and minute-precision fixed offsets. It brands through hidden slots, adds the
   exact offset to epoch nanoseconds with Euclidean negative-time balancing,

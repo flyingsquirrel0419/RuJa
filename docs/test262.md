@@ -14508,3 +14508,9 @@ PlainDateTime core, which is now exact **105/0/0** and forced **105/1/0** over
 - 다른 대안 대신 이 방식을 선택한 이유: 단순 process pass는 빠른 선행 TypeError를 intended behavior 증명으로 오인할 수 있다. dependency-aware complement만이 현재 object model을 과장하지 않고 향후 PlainDate/equals 도입 때 재측정 지점을 보존한다.
 - 장점, 단점 및 영향: exact 64/0, forced 65/5, core 105/1 경계와 future-sibling gating이 재현된다. PlainDate family와 PlainDateTime.equals 구현 후 여섯 blocker를 assertion 도달 기준으로 다시 감사해야 한다.
 ```
+
+Implementation commit `31a7298` is confirmed by ordinary CI `31119606326`
+(**3/3**, attempt 4 after setup-only runner failures) and full Test262 CI
+`31119606515` (**66/66**, attempt 3). The dedicated job records exact
+**64/0/0** and forced **65/5/0**; the updated core job records exact
+**105/0/0** and forced **105/1/0**.
