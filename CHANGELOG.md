@@ -21,6 +21,11 @@
   - 다른 대안 대신 이 방식을 선택한 이유: public getter와 임시 객체는 observable behavior 및 GC 비용을 추가하고 converter 복제는 options/order/parser drift를 만든다. 공용 immutable record는 두 API의 coercion과 오류 경계를 동일하게 유지한다.
   - 장점, 단점 및 영향: hidden-property 비관찰, brand-first error, negative ZonedDateTime balancing, cross-Realm error, byte fuel, allocation-free Boolean 결과, installer rollback과 exact 39/0이 검증된다. PlainDate family 도입 시 dedicated midnight/calendar hidden-slot fast paths를 추가하고 두 blocker를 재측정해야 한다.
 
+  Implementation commit `ed47123` passes ordinary CI `31195704556` (**3/3**)
+  and full Test262 CI `31195703365` (**67/67**). Dedicated jobs confirm
+  equals exact **39/0/0** and forced **39/2/0**, plus downstream `from` exact
+  **65/0/0** and forced **66/4/0**.
+
 - Added Realm-local `Temporal.PlainDateTime.from` conversion for branded
   PlainDateTime and ZonedDateTime values, complete ISO property bags, and the
   audited PlainDateTime String grammar. Property preparation preserves the

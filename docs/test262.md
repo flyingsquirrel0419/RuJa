@@ -14535,3 +14535,8 @@ behind the broad Temporal gate.
 - 다른 대안 대신 이 방식을 선택한 이유: prefix와 stub은 미구현 object model을 과장하고 method surface 혼합은 equals 회귀를 숨긴다. exact complement는 intended assertion 도달 여부를 보존한다.
 - 장점, 단점 및 영향: direct exact 39/0, forced 39/2, from exact 65/0 및 forced 66/4가 재현된다. PlainDate family 도입 시 두 direct blocker와 다섯 from blocker를 다시 감사해야 한다.
 ```
+
+Implementation commit `ed47123` is confirmed by ordinary CI `31195704556`
+(**3/3**) and full Test262 CI `31195703365` (**67/67**). Dedicated jobs record
+equals exact **39/0/0** and forced **39/2/0**, and the updated `from` job records
+exact **65/0/0** and forced **66/4/0**.
