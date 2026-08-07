@@ -4,6 +4,22 @@
 
 ### Changed
 
+- Added Realm-local static `Temporal.PlainDateTime.compare`. It converts both
+  operands left-to-right through the shared hidden-record boundary, ignores
+  calendar identity as required for ISO date-time ordering, compares all nine
+  fields lexicographically, and returns an allocation-free `-1`, `+0`, or `1`.
+  The pinned direct boundary is exact **40/0/0** with two PlainDate-family
+  blockers. It also moves `Temporal.ZonedDateTime.compare` to exact
+  **49/0/0** and forced **49/1/0**.
+
+  [Decision Log]
+  - 목적과 의도: PlainDateTime 정렬을 기존 from/equals와 동일한 ToTemporalDateTime 변환 의미론 위에 구현하고 direct 및 downstream 지원 경계를 정확히 공개한다.
+  - 기존 구현 및 제약 조건: 공유 converter는 branded PlainDateTime/ZonedDateTime, ISO property bag, String을 처리하지만 static compare가 없었다. 42개 direct 파일 중 두 개는 아직 없는 PlainDate family를 생성한다.
+  - 검토한 주요 대안: public accessors 비교, 임시 PlainDateTime object 두 개 생성, compare 전용 변환 복제, 공용 compact record 두 개의 사전식 비교를 검토했다.
+  - 선택한 방식: 첫 operand 변환이 완전히 성공한 뒤 둘째를 변환하고, calendar tuple 성분은 버린 채 year부터 nanosecond까지 비교해 primitive Number를 반환한다.
+  - 다른 대안 대신 이 방식을 선택한 이유: public getter와 임시 object는 observable behavior 및 GC 비용을 추가하고 converter 복제는 parser/order/fuel drift를 만든다. 명세상 calendar는 PlainDateTime ordering에 참여하지 않는다.
+  - 장점, 단점 및 영향: 9-field ordering, +0, first-abrupt short circuit, cross-Realm errors, receiver 무시, byte fuel, allocation-free result와 installer rollback이 검증된다. PlainDate family 도입 시 두 direct blocker와 남은 ZonedDateTime blocker를 재측정해야 한다.
+
 - Added Realm-local `Temporal.PlainDateTime.prototype.equals`. The method
   brands the receiver before converting its argument through the same
   allocation-free hidden-record boundary used by static `from`, then compares
@@ -157,9 +173,10 @@
   fully converted from branded objects, ISO property bags, or ZonedDateTime
   Strings in left-to-right order, then compared only by exact epoch
   nanoseconds. Public properties of branded ZonedDateTime inputs, calendar
-  identity, time-zone identity, and the call receiver are not observed. Exact
-  Test262 ownership is now **48/0/0** over the 50-file method directory with
-  two explicit dependency blockers after the Duration core landed.
+  identity, time-zone identity, and the call receiver are not observed. At
+  that historical checkpoint, exact Test262 ownership was **48/0/0** over the
+  50-file method directory with two explicit dependency blockers after the
+  Duration core landed.
 
   [Decision Log]
   - 목적과 의도: 두 ZonedDateTime-like 입력을 명세 순서로 변환하고 local clock이나 zone/calendar identity가 아닌 exact instant만 비교한다.
@@ -167,7 +184,7 @@
   - 검토한 주요 대안: `Instant.compare` converter 재사용, `from`으로 임시 객체 생성, public epoch getter 관찰, shared ZonedDateTime converter에서 epoch만 추출하는 방식을 검토했다.
   - 선택한 방식: 각 인수를 `to_temporal_zoned_date_time(..., None)`로 완전히 변환한 뒤 두 `BigInt` epoch를 직접 비교해 Number `-1`, `+0`, `1`을 반환한다. constructor Realm에 nonconstructable length-2 native를 게시한다.
   - 다른 대안 대신 이 방식을 선택한 이유: Instant converter는 time-zone annotation 없는 Instant 문자열까지 잘못 허용하고, 임시 객체/public getter는 allocation과 observable behavior를 추가한다. 공용 converter는 property order, Realm 오류, parser, fuel을 `from`과 일치시킨다.
-  - 장점, 단점 및 영향: branded hidden-property 비관찰, first-before-second abrupt completion, cross-Realm input/error, exact fuel, installer rollback과 exact 48/0/0이 검증된다. 남은 두 파일은 PlainDate 계열 object model 또는 `toPlainDateTime`/PlainDateTime.compare를 요구한다.
+  - 장점, 단점 및 영향: branded hidden-property 비관찰, first-before-second abrupt completion, cross-Realm input/error, exact fuel, installer rollback과 당시 exact 48/0/0이 검증됐다. 당시 남은 두 파일은 PlainDate 계열 object model 또는 `toPlainDateTime`/PlainDateTime.compare를 요구했으며 후자는 후속 단위에서 해제됐다.
 
   Implementation commit `4b7cb2a`, unavailable-corpus correction `25fc0d0`,
   and timeout-policy commit `547df84` are pushed. Final ordinary CI

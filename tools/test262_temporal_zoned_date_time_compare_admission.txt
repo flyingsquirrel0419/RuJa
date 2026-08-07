@@ -34,6 +34,7 @@ built-ins/Temporal/ZonedDateTime/compare/argument-wrong-type.js
 built-ins/Temporal/ZonedDateTime/compare/basic.js
 built-ins/Temporal/ZonedDateTime/compare/builtin.js
 built-ins/Temporal/ZonedDateTime/compare/casts-arguments.js
+built-ins/Temporal/ZonedDateTime/compare/compares-exact-time-not-clock-time.js
 built-ins/Temporal/ZonedDateTime/compare/disregard-time-zone-ids-if-exact-times-are-equal.js
 built-ins/Temporal/ZonedDateTime/compare/infinity-throws-rangeerror.js
 built-ins/Temporal/ZonedDateTime/compare/leap-second.js

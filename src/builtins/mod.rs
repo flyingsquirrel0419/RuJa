@@ -6290,7 +6290,7 @@ pub(crate) fn install_temporal_namespace_in_env(
     global: Option<&Value>,
     object_proto: Value,
 ) -> error::Result<Value> {
-    vm.try_reserve_gc_pins(94)?;
+    vm.try_reserve_gc_pins(95)?;
     let mut pin_count = 0;
     let result = (|| {
         let instant_prototype = Value::Object(vm.alloc(HeapObj::Object(ObjectData {
@@ -6679,6 +6679,13 @@ pub(crate) fn install_temporal_namespace_in_env(
             env,
         )?);
         pin_count += vm.pin(&plain_date_time_from);
+        let plain_date_time_compare = Value::Object(vm.new_native_function_in_env_with_gc_retry(
+            "compare",
+            temporal_plain_date_time_compare,
+            2,
+            env,
+        )?);
+        pin_count += vm.pin(&plain_date_time_compare);
 
         macro_rules! alloc_plain_date_time_getter {
             ($binding:ident, $name:literal, $native:ident) => {
@@ -6933,6 +6940,10 @@ pub(crate) fn install_temporal_namespace_in_env(
                     .props
                     .lock()
                     .insert(PropertyKey::from("from"), data_prop(plain_date_time_from));
+                function.props.lock().insert(
+                    PropertyKey::from("compare"),
+                    data_prop(plain_date_time_compare),
+                );
             });
         let Value::Object(plain_date_time_prototype_index) = plain_date_time_prototype.clone()
         else {
@@ -8616,6 +8627,44 @@ fn temporal_plain_date_time_from(
         to_temporal_plain_date_time(vm, args.first().unwrap_or(&Value::Undefined), args.get(1))?;
     let realm = vm.native_callee_closure().unwrap_or(vm.global);
     create_temporal_plain_date_time_in_realm(vm, fields, calendar_identifier, realm)
+}
+
+fn temporal_plain_date_time_compare(
+    vm: &mut Vm,
+    args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
+    let (one, _) =
+        to_temporal_plain_date_time(vm, args.first().unwrap_or(&Value::Undefined), None)?;
+    let (two, _) = to_temporal_plain_date_time(vm, args.get(1).unwrap_or(&Value::Undefined), None)?;
+    let one = (
+        one.year,
+        one.month,
+        one.day,
+        one.hour,
+        one.minute,
+        one.second,
+        one.millisecond,
+        one.microsecond,
+        one.nanosecond,
+    );
+    let two = (
+        two.year,
+        two.month,
+        two.day,
+        two.hour,
+        two.minute,
+        two.second,
+        two.millisecond,
+        two.microsecond,
+        two.nanosecond,
+    );
+    let result = match one.cmp(&two) {
+        std::cmp::Ordering::Less => -1.0,
+        std::cmp::Ordering::Equal => 0.0,
+        std::cmp::Ordering::Greater => 1.0,
+    };
+    Ok(Value::Number(result))
 }
 
 fn temporal_plain_date_time_equals(

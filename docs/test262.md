@@ -14326,12 +14326,13 @@ skip** at the pinned Test262 revision.
 
 ## Temporal.ZonedDateTime.compare
 
-`tools/test262_temporal_zoned_date_time_compare_admission.txt` freezes **48**
+`tools/test262_temporal_zoned_date_time_compare_admission.txt` freezes **49**
 exact paths from the pinned 50-file static method directory. Dedicated CI
-requires **48 pass / 0 fail / 0 skip**; forced diagnostic accounting requires
-**48 pass / 2 fail / 0 skip**. `calendar-temporal-object.js` constructs absent
-PlainDate family objects; `compares-exact-time-not-clock-time.js` additionally requires
-`toPlainDateTime` and `Temporal.PlainDateTime.compare`. The admitted surface
+requires **49 pass / 0 fail / 0 skip**; forced diagnostic accounting requires
+**49 pass / 1 fail / 0 skip**. `calendar-temporal-object.js` constructs absent
+PlainDate family objects. `compares-exact-time-not-clock-time.js` moved into
+admission after `toPlainDateTime` and `Temporal.PlainDateTime.compare` became
+available. The admitted surface
 covers descriptors, nonconstruction, complete left-to-right property-bag
 conversion, abrupt completion, exact epoch ordering, zone-ID disregard,
 branded fast paths, and the audited ZonedDateTime String grammar.
@@ -14339,16 +14340,18 @@ branded fast paths, and the audited ZonedDateTime String grammar.
 ```text
 [Decision Log]
 - 목적과 의도: static compare 구현과 전체 50-file corpus의 실제 지원 경계를 exact accounting에 반영한다.
-- 기존 구현 및 제약 조건: broad Temporal feature gate가 directory 전체를 skip했고 현재 2개 파일은 compare 외부의 아직 없는 Temporal constructors/methods를 실행한다.
+- 기존 구현 및 제약 조건: broad Temporal feature gate가 directory 전체를 skip했고 초기 2개 파일은 compare 외부의 아직 없는 Temporal constructors/methods를 실행했다. PlainDateTime.compare 의존성은 현재 해결됐다.
 - 검토한 주요 대안: directory prefix 전체 허용, blocker용 가짜 constructors, 기존 from/equals manifest에 중복 편입, 별도 exact admission과 complement를 검토했다.
-- 선택한 방식: 실제 통과하는 48개 path와 live features/includes/flags/negative metadata를 runner/analyzer 공유 manifest로 열고 2개 blocker를 forced diagnostic으로 고정한다.
+- 선택한 방식: 실제 통과하는 49개 path와 live features/includes/flags/negative metadata를 runner/analyzer 공유 manifest로 열고 PlainDate-family blocker 하나를 forced diagnostic으로 고정한다.
 - 다른 대안 대신 이 방식을 선택한 이유: prefix와 가짜 constructor는 지원하지 않는 object model을 과장하고 미래 sibling drift를 숨긴다. method 전용 gate는 compare 회귀를 직접 식별한다.
-- 장점, 단점 및 영향: exact 48/0/0과 forced 48/2가 재현되고 미래 파일은 자동 허용되지 않는다. PlainDate family가 구현되면 blocker를 다시 실측해 이동해야 한다.
+- 장점, 단점 및 영향: exact 49/0/0과 forced 49/1이 재현되고 미래 파일은 자동 허용되지 않는다. PlainDate family가 구현되면 blocker를 다시 실측해 이동해야 한다.
 ```
 
 Implementation commit `4b7cb2a` and tooling correction `25fc0d0` are confirmed
 by ordinary CI `31090247413` (**3/3**) and full matrix `31090247258`
-(**61/61**) for the historical **46/4** compare checkpoint.
+(**61/61**) for the historical **46/4** compare checkpoint. Later
+ZonedDateTime units moved that historical boundary to **48/2** before the
+current PlainDateTime.compare dependency was resolved.
 
 ## Annex B RegExp BMP escape timeout
 
@@ -14409,7 +14412,7 @@ Forced diagnostics therefore require **76 pass / 2 fail / 0 skip**.
 The same unit unlocks nine previously frozen ZonedDateTime wrong-type paths,
 including the constructor core's `calendar-wrong-type.js`.
 Current exact/forced boundaries are fixed-offset **259/7** over 266, equals
-**54/1** over 55, compare **48/2** over 50, `withTimeZone` **16/0** over 16,
+**54/1** over 55, compare **49/1** over 50, `withTimeZone` **16/0** over 16,
 and `withCalendar` **15/1** over 16. Every moved path was executed against the
 pinned revision before admission; future Duration siblings remain gated.
 
@@ -14471,7 +14474,7 @@ and complete **16/0** over 16.
 - 검토한 주요 대안: directory prefix 허용, direct 10개만 등록, direct exact set과 재실측된 downstream path를 각 소유 manifest에 이동하는 방식을 검토했다.
 - 선택한 방식: direct 10개 path와 features/includes/flags/negative metadata를 exact manifest로 고정하고, pinned binary로 통과한 downstream 5개만 기존 manifests로 이동한다.
 - 다른 대안 대신 이 방식을 선택한 이유: prefix는 미래 sibling을 검토 없이 허용하고 direct-only accounting은 구현이 실제로 복구한 기존 표준 경로를 계속 skip한다.
-- 장점, 단점 및 영향: exact 10/0/0, fixed-offset 259/7, complete withTimeZone 16/0이 재현된다. compare의 2개 blocker는 PlainDateTime.compare 또는 다른 Temporal calendar type을 계속 요구한다.
+- 장점, 단점 및 영향: exact 10/0/0, fixed-offset 259/7, complete withTimeZone 16/0이 재현된다. 당시 compare blocker 두 개 중 PlainDateTime.compare 의존성은 후속 구현으로 해제됐고 PlainDate-family blocker 하나가 남는다.
 ```
 
 Implementation commit `044f765` is confirmed by ordinary CI `31113158807`
@@ -14540,3 +14543,27 @@ Implementation commit `ed47123` is confirmed by ordinary CI `31195704556`
 (**3/3**) and full Test262 CI `31195703365` (**67/67**). Dedicated jobs record
 equals exact **39/0/0** and forced **39/2/0**, and the updated `from` job records
 exact **65/0/0** and forced **66/4/0**.
+
+## Temporal.PlainDateTime.compare
+
+`tools/test262_temporal_plain_date_time_compare_admission.txt` freezes **40**
+independently supported paths from the pinned 42-file static method directory.
+Dedicated CI requires **40 pass / 0 fail / 0 skip**; forced diagnostics require
+**40 pass / 2 fail / 0 skip**. `argument-plaindate.js` requires a PlainDate
+hidden-slot-to-midnight conversion, while `calendar-temporal-object.js`
+constructs absent PlainDate, PlainMonthDay, and PlainYearMonth objects. Future
+siblings remain behind the broad Temporal gate.
+
+The method also admits
+`Temporal/ZonedDateTime/compare/compares-exact-time-not-clock-time.js`, moving
+that exact boundary to **49/0/0** and its forced diagnostic to **49/1/0**.
+
+```text
+[Decision Log]
+- 목적과 의도: static PlainDateTime ordering의 complete reachable corpus와 ZonedDateTime downstream 해제를 exact accounting에 반영한다.
+- 기존 구현 및 제약 조건: 42-file directory 전체가 broad Temporal gate 뒤에 있었고 두 파일은 intended compare assertion 전에 아직 없는 PlainDate family를 생성한다. ZonedDateTime compare blocker 하나는 PlainDateTime.compare만 추가로 필요했다.
+- 검토한 주요 대안: directory prefix 허용, dependency constructors stub, equals manifest와 혼합, direct exact admission과 blocker complement를 검토했다.
+- 선택한 방식: 실제 독립 실행되는 40개 path/features/includes를 runner/analyzer 공유 manifest로 열고 두 PlainDate-family path를 forced diagnostic에 고정한다. 재실측으로 통과한 ZonedDateTime path 하나만 소유 manifest로 이동한다.
+- 다른 대안 대신 이 방식을 선택한 이유: prefix와 stub은 미구현 object model을 과장하고 method surface 혼합은 ordering 회귀를 숨긴다. exact complement는 intended assertion 도달 여부와 future sibling drift를 모두 보존한다.
+- 장점, 단점 및 영향: direct exact 40/0, forced 40/2, ZonedDateTime exact 49/0 및 forced 49/1이 재현된다. PlainDate family 도입 시 direct 두 blocker와 downstream 한 blocker를 다시 감사해야 한다.
+```

@@ -198,6 +198,22 @@ and error Realm behavior remain shared.
 - 장점, 단점 및 영향: Boolean 결과는 heap cap에서도 성공하고 brand-first/cross-Realm/GC rooting이 검증된다. PlainDate 추가 시 generic bag보다 앞선 midnight hidden-slot branch가 필요하다.
 ```
 
+Static `Temporal.PlainDateTime.compare` consumes two of the same immutable
+records in strict left-to-right order. It discards calendar identity and
+lexicographically compares year through nanosecond, returning a primitive
+Number. This preserves the specification distinction between equality, where
+calendar participates, and ISO date-time ordering, where it does not.
+
+```text
+[Decision Log]
+- 목적과 의도: factory/equality/ordering이 하나의 conversion boundary를 공유하되 각 operation의 calendar 의미론을 분리한다.
+- 기존 구현 및 제약 조건: converter는 compact fields와 canonical calendar를 함께 반환하고 equals는 둘 다 비교한다. compare는 두 operand conversion 순서와 calendar 무시가 필요하다.
+- 검토한 주요 대안: equals record comparator 재사용, 생성된 객체 accessor 비교, 별도 converter, tuple field ordering을 검토했다.
+- 선택한 방식: 두 record를 순서대로 얻은 뒤 calendar를 버리고 구조체 선언과 동일한 9-field tuple을 비교한다.
+- 다른 대안 대신 이 방식을 선택한 이유: equals comparator 재사용은 calendar가 다른 동일 ISO date-time을 잘못 구분한다. tuple은 field priority를 명시하면서 allocation을 만들지 않는다.
+- 장점, 단점 및 영향: first-abrupt short circuit와 정확한 -1/+0/1이 보존되고 결과 heap allocation이 없다. 필드 구조를 바꾸면 tuple ordering도 함께 감사해야 한다.
+```
+
 `Temporal.ZonedDateTime.prototype.toPlainDateTime` reads only the receiver's
 hidden epoch, time-zone, and calendar slots. The time-zone dispatcher supplies
 the exact UTC/fixed offset; the shared ISO helper performs checked `epoch +

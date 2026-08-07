@@ -238,14 +238,39 @@ fn temporal_namespace_installation_restores_roots_after_plain_equals_allocation_
     let baseline_live = vm.heap.live_count();
     let global = vm.global;
     let object_proto = vm.object_proto.clone();
-    // Ninety-two earlier allocations fit; the ninety-third, PlainDateTime.equals, must fail.
-    vm.set_max_heap_objects(Some(baseline_live + 92));
+    // Ninety-three earlier allocations fit; the ninety-fourth, PlainDateTime.equals, must fail.
+    vm.set_max_heap_objects(Some(baseline_live + 93));
 
     let result =
         crate::builtins::install_temporal_namespace_in_env(&mut vm, global, None, object_proto);
 
     vm.set_max_heap_objects(None);
     let error = result.expect_err("PlainDateTime.equals allocation must hit the cap");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(error.message, "heap limit exceeded");
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.get_global("Temporal"), original);
+    vm.gc();
+    assert_eq!(vm.heap.live_count(), baseline_live);
+}
+
+#[test]
+fn temporal_namespace_installation_restores_roots_after_plain_compare_allocation_failure() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.gc();
+    let original = vm.get_global("Temporal");
+    let baseline_pins = vm.gc_pins.len();
+    let baseline_live = vm.heap.live_count();
+    let global = vm.global;
+    let object_proto = vm.object_proto.clone();
+    // Sixty-nine earlier allocations fit; the seventieth, PlainDateTime.compare, must fail.
+    vm.set_max_heap_objects(Some(baseline_live + 69));
+
+    let result =
+        crate::builtins::install_temporal_namespace_in_env(&mut vm, global, None, object_proto);
+
+    vm.set_max_heap_objects(None);
+    let error = result.expect_err("PlainDateTime.compare allocation must hit the cap");
     assert_eq!(error.kind, crate::error::ErrorKind::Range);
     assert_eq!(error.message, "heap limit exceeded");
     assert_eq!(vm.gc_pins.len(), baseline_pins);
@@ -263,9 +288,9 @@ fn temporal_namespace_installation_covers_every_allocation_boundary() {
     let baseline_live = vm.heap.live_count();
     let global = vm.global;
 
-    // Allocations 18 through 95 cover the method/accessor batches and the
+    // Allocations 18 through 96 cover the method/accessor batches and the
     // two namespace objects that must publish only after the batch succeeds.
-    for extra_capacity in 17..95 {
+    for extra_capacity in 17..96 {
         vm.set_max_heap_objects(Some(baseline_live + extra_capacity));
         let object_proto = vm.object_proto.clone();
         let result =
@@ -286,16 +311,16 @@ fn temporal_namespace_installation_covers_every_allocation_boundary() {
         );
     }
 
-    vm.set_max_heap_objects(Some(baseline_live + 95));
+    vm.set_max_heap_objects(Some(baseline_live + 96));
     let object_proto = vm.object_proto.clone();
     let temporal =
         crate::builtins::install_temporal_namespace_in_env(&mut vm, global, None, object_proto)
-            .expect("exact 95-object capacity must install the complete namespace");
+            .expect("exact 96-object capacity must install the complete namespace");
     vm.set_max_heap_objects(None);
     assert_eq!(vm.gc_pins.len(), baseline_pins);
     assert_eq!(vm.get_global("Temporal"), temporal);
     assert_eq!(
-        vm.run("typeof Temporal.PlainDateTime.prototype.equals === 'function' && typeof Temporal.ZonedDateTime.prototype.toPlainDateTime")
+        vm.run("typeof Temporal.PlainDateTime.compare === 'function' && typeof Temporal.PlainDateTime.prototype.equals")
             .expect("installed namespace should remain usable"),
         Value::String(Arc::from("function"))
     );
@@ -463,6 +488,28 @@ fn temporal_plain_date_time_equals_returns_without_heap_allocation() {
         .expect("hidden-slot equality should not allocate a result object");
     vm.set_max_heap_objects(None);
     assert_eq!(result, Value::Bool(true));
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.heap.live_count(), baseline_live);
+}
+
+#[test]
+fn temporal_plain_date_time_compare_returns_without_heap_allocation() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        "globalThis.plainCompareOne = new Temporal.PlainDateTime(2000, 5, 2); \
+         globalThis.plainCompareTwo = new Temporal.PlainDateTime(2000, 5, 3);",
+    )
+    .expect("PlainDateTime.compare fixtures should initialize");
+    vm.gc();
+    let baseline_pins = vm.gc_pins.len();
+    let baseline_live = vm.heap.live_count();
+
+    vm.set_max_heap_objects(Some(baseline_live));
+    let result = vm
+        .run("Temporal.PlainDateTime.compare(plainCompareOne, plainCompareTwo);")
+        .expect("hidden-slot comparison should not allocate a result object");
+    vm.set_max_heap_objects(None);
+    assert_eq!(result, Value::Number(-1.0));
     assert_eq!(vm.gc_pins.len(), baseline_pins);
     assert_eq!(vm.heap.live_count(), baseline_live);
 }

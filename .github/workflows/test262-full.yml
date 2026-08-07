@@ -156,6 +156,12 @@ jobs:
           TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_date_time_equals_manifest_is_exact_live_disjoint_and_shared
           -v
+      - name: Verify exact Temporal.PlainDateTime compare admission
+        working-directory: tools
+        run: >-
+          TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
+          test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_date_time_compare_manifest_is_exact_live_disjoint_and_shared
+          -v
       - name: Verify exact Temporal.ZonedDateTime compare admission
         working-directory: tools
         run: >-
@@ -749,7 +755,7 @@ jobs:
           TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
             "${files[@]}" > temporal_zoned_date_time_compare_result.txt 2>&1
           cat temporal_zoned_date_time_compare_result.txt
-          grep -q '^RATE=100.0 PASS=48 FAIL=0 SKIP=0 TOTAL=48 RAN=48$' \
+          grep -q '^RATE=100.0 PASS=49 FAIL=0 SKIP=0 TOTAL=49 RAN=49$' \
             temporal_zoned_date_time_compare_result.txt
       - name: Freeze Temporal.ZonedDateTime compare blockers
         run: |
@@ -761,7 +767,7 @@ jobs:
             python3 tools/test262_temporal_zoned_date_time_compare_diagnostic.py \
             "${files[@]}" > temporal_zoned_date_time_compare_diagnostic.txt 2>&1
           cat temporal_zoned_date_time_compare_diagnostic.txt
-          grep -q '^RATE=96.0 PASS=48 FAIL=2 SKIP=0 TOTAL=50 RAN=50$' \
+          grep -q '^RATE=98.0 PASS=49 FAIL=1 SKIP=0 TOTAL=50 RAN=50$' \
             temporal_zoned_date_time_compare_diagnostic.txt
 
   temporal-duration-core:
@@ -931,6 +937,48 @@ jobs:
           cat temporal_plain_date_time_equals_diagnostic.txt
           grep -q '^RATE=95.1 PASS=39 FAIL=2 SKIP=0 TOTAL=41 RAN=41$' \
             temporal_plain_date_time_equals_diagnostic.txt
+
+  temporal-plain-date-time-compare:
+    needs: [build, setup]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download RuJa binary
+        uses: actions/download-artifact@v4
+        with:
+          name: ruja-release
+          path: target/release/
+      - run: chmod +x target/release/ruja
+      - name: Checkout pinned Temporal.PlainDateTime compare tests
+        uses: actions/checkout@v4
+        with:
+          repository: tc39/test262
+          ref: ${{ env.TEST262_REV }}
+          path: test262
+          sparse-checkout: |
+            harness
+            test/built-ins/Temporal/PlainDateTime/compare
+      - name: Require exact Temporal.PlainDateTime compare boundary
+        run: |
+          mapfile -t files < <(sed -e '/^#/d' -e '/^$/d' \
+            tools/test262_temporal_plain_date_time_compare_admission.txt)
+          TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
+            "${files[@]}" > temporal_plain_date_time_compare_result.txt 2>&1
+          cat temporal_plain_date_time_compare_result.txt
+          grep -q '^RATE=100.0 PASS=40 FAIL=0 SKIP=0 TOTAL=40 RAN=40$' \
+            temporal_plain_date_time_compare_result.txt
+      - name: Freeze Temporal.PlainDateTime compare blockers
+        run: |
+          mapfile -t files < <(cat \
+            tools/test262_temporal_plain_date_time_compare_admission.txt \
+            tools/test262_temporal_plain_date_time_compare_blockers.txt | \
+            sed -e '/^#/d' -e '/^$/d')
+          TEST262="$GITHUB_WORKSPACE/test262" \
+            python3 tools/test262_temporal_plain_date_time_compare_diagnostic.py \
+            "${files[@]}" > temporal_plain_date_time_compare_diagnostic.txt 2>&1
+          cat temporal_plain_date_time_compare_diagnostic.txt
+          grep -q '^RATE=95.2 PASS=40 FAIL=2 SKIP=0 TOTAL=42 RAN=42$' \
+            temporal_plain_date_time_compare_diagnostic.txt
 
   temporal-instant-epoch-factories:
     needs: [build, setup]

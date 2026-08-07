@@ -25383,6 +25383,112 @@ fn temporal_plain_date_time_equals_brands_first_and_uses_function_realm() {
 }
 
 #[test]
+fn temporal_plain_date_time_compare_orders_hidden_records_and_converts_in_order() {
+    assert_eq!(
+        run(r#"
+            var base = [2000, 5, 2, 12, 34, 56, 987, 654, 321];
+            var comparisons = [];
+            for (var index = 0; index < base.length; index++) {
+              var lower = base.slice();
+              lower[index]--;
+              comparisons.push(Temporal.PlainDateTime.compare(
+                new Temporal.PlainDateTime(...lower),
+                new Temporal.PlainDateTime(...base)
+              ));
+            }
+
+            var branded = new Temporal.PlainDateTime(...base);
+            var reads = 0;
+            Object.defineProperty(branded, 'year', {
+              get: function () { reads++; throw new Error('observed'); }
+            });
+            var zoned = new Temporal.ZonedDateTime(3661001001001n, '-00:02');
+            [
+              comparisons.join(','),
+              Object.is(Temporal.PlainDateTime.compare(branded, branded), +0),
+              reads,
+              Temporal.PlainDateTime.compare(
+                { year: 1970, month: 1, day: 1, hour: 0, minute: 59,
+                  second: 1, millisecond: 1, microsecond: 1, nanosecond: 1 },
+                zoned
+              ),
+              Temporal.PlainDateTime.compare('2000-05-02T12:34:56.987654320', branded),
+              Temporal.PlainDateTime.compare.length,
+              Temporal.PlainDateTime.compare.name
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "-1,-1,-1,-1,-1,-1,-1,-1,-1|true|0|0|-1|2|compare"
+        ))
+    );
+
+    assert_eq!(
+        run(r#"
+            var log = [];
+            function bag(label, year) {
+              var values = {
+                calendar: 'iso8601', day: 2, hour: 0, microsecond: 0,
+                millisecond: 0, minute: 0, month: 5, monthCode: undefined,
+                nanosecond: 0, second: 0, year: year
+              };
+              var result = {};
+              for (let key of Object.keys(values)) {
+                Object.defineProperty(result, key, {
+                  get: function () { log.push(label + '.' + key); return values[key]; }
+                });
+              }
+              return result;
+            }
+            var result = Temporal.PlainDateTime.compare(bag('one', 2000), bag('two', 2001));
+            var secondReads = 0;
+            var second = {};
+            Object.defineProperty(second, 'calendar', {
+              get: function () { secondReads++; throw new Error('wrong'); }
+            });
+            var firstError;
+            try { Temporal.PlainDateTime.compare('invalid', second); }
+            catch (error) { firstError = error instanceof RangeError; }
+            [result, log.join(','), firstError, secondReads].join('|');
+        "#),
+        Value::String(Arc::from(
+            "-1|one.calendar,one.day,one.hour,one.microsecond,one.millisecond,one.minute,one.month,one.monthCode,one.nanosecond,one.second,one.year,two.calendar,two.day,two.hour,two.microsecond,two.millisecond,two.minute,two.month,two.monthCode,two.nanosecond,two.second,two.year|true|0"
+        ))
+    );
+}
+
+#[test]
+fn temporal_plain_date_time_compare_ignores_calendar_receiver_and_uses_function_realm() {
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var method = other.Temporal.PlainDateTime.compare;
+            var main = new Temporal.PlainDateTime(2000, 5, 2);
+            var foreign = new other.Temporal.PlainDateTime(2000, 5, 3);
+            var receiverCalls = 0;
+            var typeRealm;
+            var rangeRealm;
+            try { method(1, foreign); } catch (error) {
+              typeRealm = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            try { method('invalid', foreign); } catch (error) {
+              rangeRealm = error instanceof other.RangeError && !(error instanceof RangeError);
+            }
+            [
+              method.call(function Receiver() { receiverCalls++; }, main, foreign),
+              receiverCalls,
+              typeRealm,
+              rangeRealm,
+              Temporal.PlainDateTime.compare(
+                new Temporal.PlainDateTime(2000, 5, 2, 0, 0, 0, 0, 0, 0, 'iso8601'),
+                main
+              )
+            ].join('|');
+        "#),
+        Value::String(Arc::from("-1|0|true|true|0"))
+    );
+}
+
+#[test]
 fn temporal_plain_date_time_rejects_invalid_fields_after_ordered_conversion() {
     for source in [
         "Temporal.PlainDateTime(1970, 1, 1)",

@@ -138,6 +138,57 @@ fn temporal_plain_date_time_equals_precharges_input_bytes() {
 }
 
 #[test]
+fn temporal_plain_date_time_compare_precharges_each_string_argument() {
+    const BUDGET: i64 = 20_000;
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        globalThis.plainCompareShort = "1970-01-01T00:00[foo=a]";
+        globalThis.plainCompareLong =
+          "1970-01-01T00:00:01[foo=" + "a".repeat(512) + "]";
+        globalThis.plainCompareBranded = new Temporal.PlainDateTime(1970, 1, 1, 0, 0, 1);
+        "#,
+    )
+    .expect("PlainDateTime compare fuel fixtures should initialize");
+
+    vm.set_fuel(Some(BUDGET));
+    vm.run("Temporal.PlainDateTime.compare(plainCompareShort, plainCompareShort);")
+        .expect("short PlainDateTime compare should parse both strings");
+    let short_work = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+
+    vm.set_fuel(Some(BUDGET));
+    let result = vm
+        .run("Temporal.PlainDateTime.compare(plainCompareShort, plainCompareLong);")
+        .expect("PlainDateTime compare should parse both strings");
+    assert_eq!(result, Value::Number(-1.0));
+    let long_work = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+    assert!(long_work >= short_work + 500);
+
+    vm.set_fuel(Some(BUDGET));
+    vm.run("Temporal.PlainDateTime.compare(plainCompareLong, plainCompareShort);")
+        .expect("PlainDateTime compare should precharge the first string");
+    let first_long_work = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+
+    vm.set_fuel(Some(BUDGET));
+    vm.run("Temporal.PlainDateTime.compare(plainCompareBranded, plainCompareShort);")
+        .expect("branded first argument should leave only the second string to precharge");
+    let branded_first_work = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+    assert!(first_long_work >= branded_first_work + 500);
+
+    vm.set_fuel(Some(long_work - 1));
+    let error = vm
+        .run("Temporal.PlainDateTime.compare(plainCompareShort, plainCompareLong);")
+        .expect_err("N-1 fuel must abort ordered PlainDateTime conversion");
+    assert_eq!(error.kind, ruja::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+
+    vm.set_fuel(Some(long_work));
+    vm.run("Temporal.PlainDateTime.compare(plainCompareShort, plainCompareLong);")
+        .expect("exact measured fuel should compare successfully");
+    assert_eq!(vm.fuel_remaining(), Some(0));
+}
+
+#[test]
 fn temporal_duration_numeric_string_conversion_precharges_input_bytes() {
     const BUDGET: i64 = 10_000;
     let mut vm = Vm::new().expect("failed to initialize VM");
