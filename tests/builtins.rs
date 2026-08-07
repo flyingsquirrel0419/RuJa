@@ -25531,6 +25531,115 @@ fn temporal_plain_date_compare_roots_arguments_across_observable_gc() {
 }
 
 #[test]
+fn temporal_plain_date_equals_compares_hidden_records_and_converts_arguments() {
+    assert_eq!(
+        run(r#"
+            var value = new Temporal.PlainDate(1976, 11, 18);
+            var same = new Temporal.PlainDate(1976, 11, 18);
+            var reads = 0;
+            for (var key of ['calendar', 'day', 'month', 'monthCode', 'year']) {
+              Object.defineProperty(same, key, {
+                get: function () { reads++; throw new Error('observed'); }
+              });
+            }
+            var dateTime = new Temporal.PlainDateTime(1976, 11, 18, 23, 59, 59);
+            var zoned = new Temporal.ZonedDateTime(0n, 'UTC');
+            [
+              Temporal.PlainDate.prototype.equals.name,
+              Temporal.PlainDate.prototype.equals.length,
+              value.equals(same), reads,
+              value.equals(new Temporal.PlainDate(1976, 11, 17)),
+              value.equals(dateTime),
+              new Temporal.PlainDate(1970, 1, 1).equals(zoned),
+              value.equals({ year: 1976, monthCode: 'M11', day: 18 }),
+              value.equals('1976-11-18T23:59+23:59[UTC]')
+            ].join('|');
+        "#),
+        Value::String(Arc::from("equals|1|true|0|false|true|true|true|true"))
+    );
+}
+
+#[test]
+fn temporal_plain_date_equals_brands_first_and_uses_function_realm() {
+    assert_eq!(
+        run(r#"
+            var reads = 0;
+            var argument = {};
+            Object.defineProperty(argument, 'calendar', {
+              get: function () { reads++; throw new Error('observed'); }
+            });
+            var equals = Temporal.PlainDate.prototype.equals;
+            var brandFirst = false;
+            try { equals.call({}, argument); }
+            catch (error) { brandFirst = error instanceof TypeError && reads === 0; }
+
+            var numberError = false;
+            try { new Temporal.PlainDate(2000, 5, 2).equals(1); }
+            catch (error) { numberError = error instanceof TypeError; }
+            var calendarError = false;
+            try {
+              new Temporal.PlainDate(2000, 5, 2).equals(
+                { year: 2000, month: 5, day: 2, calendar: null }
+              );
+            } catch (error) { calendarError = error instanceof TypeError; }
+
+            var other = $262.createRealm().global;
+            var foreignEquals = other.Temporal.PlainDate.prototype.equals;
+            var foreign = new other.Temporal.PlainDate(2000, 5, 2);
+            var valid = foreignEquals.call(foreign, new Temporal.PlainDate(2000, 5, 2));
+            var receiverRealm = false;
+            var argumentRealm = false;
+            try { foreignEquals.call({}, foreign); } catch (error) {
+              receiverRealm = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            try { foreignEquals.call(foreign, 'invalid'); } catch (error) {
+              argumentRealm = error instanceof other.RangeError && !(error instanceof RangeError);
+            }
+            var nonconstructable = false;
+            try { new Temporal.PlainDate.prototype.equals(); }
+            catch (error) { nonconstructable = error instanceof TypeError; }
+            [
+              brandFirst, numberError, calendarError, valid,
+              receiverRealm, argumentRealm, nonconstructable
+            ].join('|');
+        "#),
+        Value::String(Arc::from("true|true|true|true|true|true|true"))
+    );
+}
+
+#[test]
+fn temporal_plain_date_equals_roots_argument_across_observable_gc() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+    assert_eq!(
+        vm.run(
+            r#"
+            function ephemeralArgument() {
+              return {
+                get calendar() { forceGc(); return 'iso8601'; },
+                day: 2,
+                month: 5,
+                monthCode: 'M05',
+                year: 2000
+              };
+            }
+            new Temporal.PlainDate(2000, 5, 2).equals(ephemeralArgument());
+            "#,
+        )
+        .expect("PlainDate.equals argument should survive observable GC"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn temporal_plain_date_time_conversion_uses_plain_date_slots_at_midnight() {
     assert_eq!(
         run(r#"

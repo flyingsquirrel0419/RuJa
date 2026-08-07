@@ -14641,3 +14641,32 @@ directory's live complement and metadata independently.
 - 다른 대안 대신 이 방식을 선택한 이유: exact live complement만 future test drift, 선행 TypeError false positive, non-ISO calendar 지원 과장을 동시에 막는다. 두 corpus를 분리하면 실패 소유권도 명확하다.
 - 장점, 단점 및 영향: direct exact 41/0과 forced 41/1, Intl402 exact 1/0과 forced 1/2가 재현된다. PlainMonthDay/PlainYearMonth 및 gregory calendar 도입 시 세 blocker를 다시 감사해야 한다.
 ```
+
+## Temporal.PlainDate.prototype.equals
+
+`tools/test262_temporal_plain_date_equals_admission.txt` freezes **39** exact
+paths from the pinned 40-file method directory. Dedicated CI requires **39
+pass / 0 fail / 0 skip**; forced execution is **39 pass / 1 fail / 0 skip**.
+The sole direct blocker, `calendar-temporal-object.js`, constructs absent
+PlainMonthDay and PlainYearMonth objects before its equality assertions.
+
+The separate Intl402 contract admits `future-calendar.js` at exact **1/0/0**.
+Its complete six-file forced surface is **1/5/0**: the five blockers require
+non-ISO calendar construction, canonicalization, comparison, or era-field
+interpretation. Both contracts freeze exact paths, metadata, live directory
+complements, malformed inputs, future siblings, and runner/analyzer parity.
+The complete audit also freezes four true downstream callers without admitting
+them: PlainDate `add` and `subtract` need those absent methods, while Chinese
+and Dangi `monthCode` cases need non-ISO calendar conversion. This separate
+inventory brings the equality-related surface to 50 files without crediting
+unreachable assertions as equals support.
+
+```text
+[Decision Log]
+- 목적과 의도: PlainDate equality의 complete reachable direct/Intl402 corpus를 intended assertion 기준으로 pinned accounting에 반영한다.
+- 기존 구현 및 제약 조건: direct와 Intl402가 broad Temporal/Intl gates 뒤에 있었고 TypeError 기대 파일은 missing method만으로 거짓 양성이 가능하다. calendar sibling 한 경로와 non-ISO calendar 다섯 경로 외에도 add/subtract 및 Chinese/Dangi monthCode가 equals를 downstream 호출하지만 선행 기능에서 막힌다.
+- 검토한 주요 대안: directory prefix admission, forced pass 전부 admission, direct/Intl 혼합, exact admission과 blocker complement 분리를 검토했다.
+- 선택한 방식: direct를 39/1, Intl402를 1/5 complement로 분리하고 features/includes/flags/negative metadata와 live corpus를 각각 동결한다. 네 downstream caller는 지원 수치와 분리된 non-admitting manifest로 동결한다.
+- 다른 대안 대신 이 방식을 선택한 이유: exact complement만 선행 TypeError 거짓 양성, future test drift, 미구현 calendar 의미론 과장을 동시에 검출한다.
+- 장점, 단점 및 영향: direct exact 39/0과 forced 39/1, Intl402 exact 1/0과 forced 1/5가 재현되고 전체 50-file 표면의 metadata가 고정된다. calendar sibling, arithmetic methods, non-ISO calendars 지원 후 blocker와 downstream dependency를 재감사해야 한다.
+```

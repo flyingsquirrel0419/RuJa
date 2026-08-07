@@ -1,0 +1,6 @@
+# Pinned Test262 revision: 9e61c12835c5e4a3bdba93850427e6742c4f64c4
+# Call equals downstream but remain blocked by absent methods or non-ISO calendars.
+built-ins/Temporal/PlainDate/prototype/add/argument-propertybag-optional-properties.js
+built-ins/Temporal/PlainDate/prototype/subtract/argument-propertybag-optional-properties.js
+intl402/Temporal/PlainDate/prototype/monthCode/chinese-calendar-dates.js
+intl402/Temporal/PlainDate/prototype/monthCode/dangi-calendar-dates.js

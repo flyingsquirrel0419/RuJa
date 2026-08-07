@@ -157,6 +157,12 @@ jobs:
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_date_compare_manifest_is_exact_live_disjoint_and_shared
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_date_compare_intl_manifest_is_exact_live_and_shared
           -v
+      - name: Verify exact Temporal.PlainDate equals admissions
+        working-directory: tools
+        run: >-
+          TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
+          test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_date_equals_manifests_are_exact_live_and_shared
+          -v
       - name: Verify exact Temporal.PlainDateTime core admission
         working-directory: tools
         run: >-
@@ -978,6 +984,70 @@ jobs:
           cat temporal_plain_date_compare_intl_diagnostic.txt
           grep -q '^RATE=33.3 PASS=1 FAIL=2 SKIP=0 TOTAL=3 RAN=3$' \
             temporal_plain_date_compare_intl_diagnostic.txt
+
+  temporal-plain-date-equals:
+    needs: [build, setup]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download RuJa binary
+        uses: actions/download-artifact@v4
+        with:
+          name: ruja-release
+          path: target/release/
+      - run: chmod +x target/release/ruja
+      - name: Checkout pinned Temporal.PlainDate equals tests
+        uses: actions/checkout@v4
+        with:
+          repository: tc39/test262
+          ref: ${{ env.TEST262_REV }}
+          path: test262
+          sparse-checkout: |
+            harness
+            test/built-ins/Temporal/PlainDate/prototype/equals
+            test/intl402/Temporal/PlainDate/prototype/equals
+      - name: Require exact Temporal.PlainDate equals boundary
+        run: |
+          mapfile -t files < <(sed -e '/^#/d' -e '/^$/d' \
+            tools/test262_temporal_plain_date_equals_admission.txt)
+          TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
+            "${files[@]}" > temporal_plain_date_equals_result.txt 2>&1
+          cat temporal_plain_date_equals_result.txt
+          grep -q '^RATE=100.0 PASS=39 FAIL=0 SKIP=0 TOTAL=39 RAN=39$' \
+            temporal_plain_date_equals_result.txt
+      - name: Freeze Temporal.PlainDate equals blocker
+        run: |
+          mapfile -t files < <(cat \
+            tools/test262_temporal_plain_date_equals_admission.txt \
+            tools/test262_temporal_plain_date_equals_blockers.txt | \
+            sed -e '/^#/d' -e '/^$/d')
+          TEST262="$GITHUB_WORKSPACE/test262" \
+            python3 tools/test262_temporal_plain_date_equals_diagnostic.py \
+            "${files[@]}" > temporal_plain_date_equals_diagnostic.txt 2>&1
+          cat temporal_plain_date_equals_diagnostic.txt
+          grep -q '^RATE=97.5 PASS=39 FAIL=1 SKIP=0 TOTAL=40 RAN=40$' \
+            temporal_plain_date_equals_diagnostic.txt
+      - name: Require exact Intl402 Temporal.PlainDate equals boundary
+        run: |
+          mapfile -t files < <(sed -e '/^#/d' -e '/^$/d' \
+            tools/test262_temporal_plain_date_equals_intl_admission.txt)
+          TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
+            "${files[@]}" > temporal_plain_date_equals_intl_result.txt 2>&1
+          cat temporal_plain_date_equals_intl_result.txt
+          grep -q '^RATE=100.0 PASS=1 FAIL=0 SKIP=0 TOTAL=1 RAN=1$' \
+            temporal_plain_date_equals_intl_result.txt
+      - name: Freeze Intl402 Temporal.PlainDate equals blockers
+        run: |
+          mapfile -t files < <(cat \
+            tools/test262_temporal_plain_date_equals_intl_admission.txt \
+            tools/test262_temporal_plain_date_equals_intl_blockers.txt | \
+            sed -e '/^#/d' -e '/^$/d')
+          TEST262="$GITHUB_WORKSPACE/test262" \
+            python3 tools/test262_temporal_plain_date_equals_intl_diagnostic.py \
+            "${files[@]}" > temporal_plain_date_equals_intl_diagnostic.txt 2>&1
+          cat temporal_plain_date_equals_intl_diagnostic.txt
+          grep -q '^RATE=16.7 PASS=1 FAIL=5 SKIP=0 TOTAL=6 RAN=6$' \
+            temporal_plain_date_equals_intl_diagnostic.txt
 
   temporal-plain-date-time-core:
     needs: [build, setup]

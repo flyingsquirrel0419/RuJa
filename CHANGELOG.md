@@ -4,6 +4,24 @@
 
 ### Changed
 
+- Added Realm-local `Temporal.PlainDate.prototype.equals`. It brands the
+  receiver before converting its argument through the shared date-only record
+  boundary, then compares the three ISO fields and canonical calendar identity
+  without reading public accessors or allocating a result object. The pinned
+  direct boundary is exact **39/0/0** and forced **39/1/0** over 40 files. The
+  separately frozen Intl402 boundary is exact **1/0/0** and forced **1/5/0**
+  over six files. Four additional callers under `add`, `subtract`, and
+  non-ISO `monthCode` remain non-admitting dependencies in a separate
+  downstream inventory, completing the audited 50-file equality surface.
+
+  [Decision Log]
+  - 목적과 의도: PlainDate equality를 from/compare와 동일한 ToTemporalDate record 위에 구현하면서 receiver branding, ISO field equality, calendar equality를 명세 순서대로 보존한다.
+  - 기존 구현 및 제약 조건: date converter와 compact hidden slots는 있었지만 prototype equals가 없었다. direct 한 경로는 calendar sibling을 만들고 Intl402 다섯 경로는 non-ISO calendar construction/canonicalization/field semantics를 요구한다.
+  - 검토한 주요 대안: public accessor 비교, static from으로 임시 객체 생성, equals 전용 conversion 복제, receiver slots와 공용 immutable record 직접 비교를 검토했다.
+  - 선택한 방식: receiver를 먼저 hidden-slot brand하고 argument를 options 없이 변환한 뒤 fields가 같을 때만 canonical calendar ID를 비교한다. direct와 Intl402는 별도 exact complement로 동결하고 다른 메서드가 equals를 호출하는 네 파일은 non-admitting downstream manifest로 기록한다.
+  - 다른 대안 대신 이 방식을 선택한 이유: public getter와 임시 객체는 user code 및 allocation을 추가하고 converter 복제는 parser/order/fuel drift를 만든다. exact path만 false-positive TypeError와 미구현 calendar 지원 과장을 막는다.
+  - 장점, 단점 및 영향: hidden getter 비관찰, brand-first abrupt, cross-Realm errors, property/String conversion, byte fuel, ephemeral argument GC, zero-allocation Boolean과 installer rollback이 검증된다. installer는 117 maximum pins와 118 allocations가 되며 여섯 direct/Intl blocker와 네 downstream dependency는 각 선행 기능 구현 후 재감사한다.
+
 - Added Realm-local static `Temporal.PlainDate.compare`. It converts operands
   left-to-right through the shared date-only hidden-record boundary, ignores
   calendar identity for ISO field ordering, and returns allocation-free

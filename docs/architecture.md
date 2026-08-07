@@ -183,8 +183,8 @@ Static `Temporal.PlainDate.compare` invokes that converter for the first
 operand and only after it succeeds for the second. It compares the resulting
 ISO `(year, month, day)` records lexicographically and deliberately excludes
 calendar identity. The primitive Number result allocates no heap object.
-Adding the Realm-local native function raises current installer accounting to
-116 maximum pins and 117 allocations.
+At the static-compare checkpoint, the added Realm-local native function raised
+installer accounting to 116 maximum pins and 117 allocations.
 
 ```text
 [Decision Log]
@@ -194,6 +194,22 @@ Adding the Realm-local native function raises current installer accounting to
 - 선택한 방식: 공용 converter를 순차 호출하고 calendar를 제외한 세 ISO field tuple을 비교해 primitive를 반환한다.
 - 다른 대안 대신 이 방식을 선택한 이유: 직접 record 비교만 getter 비관찰, abrupt 순서, parser/fuel 단일 소스, allocation-free 결과를 동시에 보존한다.
 - 장점, 단점 및 영향: observable GC 중 operand rooting과 installer OOM rollback까지 고정된다. non-ISO calendar field interpretation은 calendar subsystem의 후속 책임이다.
+```
+
+`Temporal.PlainDate.prototype.equals` brands its receiver before invoking the
+same converter for the argument. It compares the compact ISO date first and
+only then the canonical calendar identifier, returning a primitive Boolean.
+No temporary PlainDate or result object is allocated. The Realm-local method
+raises current installer accounting to 117 maximum pins and 118 allocations.
+
+```text
+[Decision Log]
+- 목적과 의도: PlainDate equality의 receiver brand, argument conversion, ISO date, calendar identity 순서를 하나의 hidden-record 계약으로 고정한다.
+- 기존 구현 및 제약 조건: static from/compare가 공용 converter를 사용했지만 prototype equality가 없었고 non-ISO calendar aliases는 아직 지원 경계 밖이다.
+- 검토한 주요 대안: public accessors, from으로 임시 객체 생성, equals 전용 converter, receiver slots와 공용 record 직접 비교를 검토했다.
+- 선택한 방식: receiver slots를 먼저 추출하고 argument를 options 없이 변환한 뒤 fields와 canonical calendar ID를 short-circuit 비교한다.
+- 다른 대안 대신 이 방식을 선택한 이유: 직접 record 비교만 brand-first abrupt, getter 비관찰, parser/fuel 단일 소스, allocation-free Boolean을 함께 보존한다.
+- 장점, 단점 및 영향: cross-Realm errors, ephemeral argument GC와 installer OOM rollback이 검증된다. CalendarEquals는 현재 canonical ISO ID equality이며 aliases 도입 시 calendar subsystem에서 확장해야 한다.
 ```
 
 ## Temporal PlainDateTime hidden slots
@@ -258,11 +274,11 @@ and error Realm behavior remain shared.
 ```text
 [Decision Log]
 - 목적과 의도: equality와 factory가 하나의 ToTemporalDateTime 의미론을 공유하면서 equals의 임시 object allocation을 제거한다.
-- 기존 구현 및 제약 조건: from의 변환과 allocation이 한 native 함수에 결합돼 있었고 public accessors는 shadowing 및 user code re-entry를 관찰한다. PlainDate family hidden kinds와 named-zone transition backend는 아직 없다.
+- 기존 구현 및 제약 조건: from의 변환과 allocation이 한 native 함수에 결합돼 있었고 public accessors는 shadowing 및 user code re-entry를 관찰한다. calendar sibling hidden kinds와 named-zone transition backend는 아직 없다.
 - 검토한 주요 대안: from native 재호출, public getter 비교, equals 전용 converter, immutable record converter 추출을 검토했다.
 - 선택한 방식: 변환 함수는 compact fields/calendar만 반환하고 from은 method Realm allocator를 호출하며 equals는 receiver slots와 변환 tuple을 직접 비교한다.
 - 다른 대안 대신 이 방식을 선택한 이유: 임시 객체는 불필요한 allocation이고 getter 비교는 internal-slot contract를 위반한다. 공유 record만이 conversion ordering과 parser/fuel/range 동작을 한 곳에 고정한다.
-- 장점, 단점 및 영향: Boolean 결과는 heap cap에서도 성공하고 brand-first/cross-Realm/GC rooting이 검증된다. PlainDate 추가 시 generic bag보다 앞선 midnight hidden-slot branch가 필요하다.
+- 장점, 단점 및 영향: Boolean 결과는 heap cap에서도 성공하고 brand-first/cross-Realm/GC rooting이 검증된다. 후속 PlainDate hidden branch는 generic bag보다 앞선 midnight conversion으로 추가되었다.
 ```
 
 Static `Temporal.PlainDateTime.compare` consumes two of the same immutable

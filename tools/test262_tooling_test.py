@@ -169,6 +169,33 @@ from test262_temporal_plain_date_compare_intl_admission import (
     TEMPORAL_PLAIN_DATE_COMPARE_INTL_INCLUDES,
     TEMPORAL_PLAIN_DATE_COMPARE_INTL_NEGATIVE,
 )
+from test262_temporal_plain_date_equals_admission import (
+    TEMPORAL_PLAIN_DATE_EQUALS_BLOCKER_FEATURES,
+    TEMPORAL_PLAIN_DATE_EQUALS_BLOCKER_FLAGS,
+    TEMPORAL_PLAIN_DATE_EQUALS_BLOCKER_INCLUDES,
+    TEMPORAL_PLAIN_DATE_EQUALS_BLOCKER_NEGATIVE,
+    TEMPORAL_PLAIN_DATE_EQUALS_DOWNSTREAM_FEATURES,
+    TEMPORAL_PLAIN_DATE_EQUALS_DOWNSTREAM_FILES,
+    TEMPORAL_PLAIN_DATE_EQUALS_DOWNSTREAM_FLAGS,
+    TEMPORAL_PLAIN_DATE_EQUALS_DOWNSTREAM_INCLUDES,
+    TEMPORAL_PLAIN_DATE_EQUALS_DOWNSTREAM_NEGATIVE,
+    TEMPORAL_PLAIN_DATE_EQUALS_FEATURES,
+    TEMPORAL_PLAIN_DATE_EQUALS_FILES,
+    TEMPORAL_PLAIN_DATE_EQUALS_FLAGS,
+    TEMPORAL_PLAIN_DATE_EQUALS_INCLUDES,
+    TEMPORAL_PLAIN_DATE_EQUALS_NEGATIVE,
+)
+from test262_temporal_plain_date_equals_intl_admission import (
+    TEMPORAL_PLAIN_DATE_EQUALS_INTL_BLOCKER_FEATURES,
+    TEMPORAL_PLAIN_DATE_EQUALS_INTL_BLOCKER_FLAGS,
+    TEMPORAL_PLAIN_DATE_EQUALS_INTL_BLOCKER_INCLUDES,
+    TEMPORAL_PLAIN_DATE_EQUALS_INTL_BLOCKER_NEGATIVE,
+    TEMPORAL_PLAIN_DATE_EQUALS_INTL_FEATURES,
+    TEMPORAL_PLAIN_DATE_EQUALS_INTL_FILES,
+    TEMPORAL_PLAIN_DATE_EQUALS_INTL_FLAGS,
+    TEMPORAL_PLAIN_DATE_EQUALS_INTL_INCLUDES,
+    TEMPORAL_PLAIN_DATE_EQUALS_INTL_NEGATIVE,
+)
 from test262_temporal_plain_date_time_core_admission import (
     TEMPORAL_PLAIN_DATE_TIME_CORE_FEATURES,
     TEMPORAL_PLAIN_DATE_TIME_CORE_FILES,
@@ -4761,6 +4788,231 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                         self.assertTrue(tool.should_skip({"features": ["Temporal"]}, path))
                 finally:
                     tool.TEST262 = original_root
+
+    def test_temporal_plain_date_equals_manifests_are_exact_live_and_shared(self):
+        cases = (
+            (
+                TEMPORAL_PLAIN_DATE_EQUALS_FILES,
+                TEMPORAL_PLAIN_DATE_EQUALS_FEATURES,
+                TEMPORAL_PLAIN_DATE_EQUALS_INCLUDES,
+                TEMPORAL_PLAIN_DATE_EQUALS_FLAGS,
+                TEMPORAL_PLAIN_DATE_EQUALS_NEGATIVE,
+                TEMPORAL_PLAIN_DATE_EQUALS_BLOCKER_FEATURES,
+                TEMPORAL_PLAIN_DATE_EQUALS_BLOCKER_INCLUDES,
+                TEMPORAL_PLAIN_DATE_EQUALS_BLOCKER_FLAGS,
+                TEMPORAL_PLAIN_DATE_EQUALS_BLOCKER_NEGATIVE,
+                "test262_temporal_plain_date_equals_blockers.txt",
+                "built-ins/Temporal/PlainDate/prototype/equals",
+                "built-ins/Temporal/PlainDate/prototype/equals/future.js",
+                39,
+                1,
+                "temporal_plain_date_equals_path",
+                "temporal_plain_date_equals_features",
+            ),
+            (
+                TEMPORAL_PLAIN_DATE_EQUALS_INTL_FILES,
+                TEMPORAL_PLAIN_DATE_EQUALS_INTL_FEATURES,
+                TEMPORAL_PLAIN_DATE_EQUALS_INTL_INCLUDES,
+                TEMPORAL_PLAIN_DATE_EQUALS_INTL_FLAGS,
+                TEMPORAL_PLAIN_DATE_EQUALS_INTL_NEGATIVE,
+                TEMPORAL_PLAIN_DATE_EQUALS_INTL_BLOCKER_FEATURES,
+                TEMPORAL_PLAIN_DATE_EQUALS_INTL_BLOCKER_INCLUDES,
+                TEMPORAL_PLAIN_DATE_EQUALS_INTL_BLOCKER_FLAGS,
+                TEMPORAL_PLAIN_DATE_EQUALS_INTL_BLOCKER_NEGATIVE,
+                "test262_temporal_plain_date_equals_intl_blockers.txt",
+                "intl402/Temporal/PlainDate/prototype/equals",
+                "intl402/Temporal/PlainDate/prototype/equals/future.js",
+                1,
+                5,
+                "temporal_plain_date_equals_intl_path",
+                "temporal_plain_date_equals_intl_features",
+            ),
+        )
+        self.assertTrue(
+            TEMPORAL_PLAIN_DATE_EQUALS_FILES.isdisjoint(
+                TEMPORAL_PLAIN_DATE_COMPARE_FILES
+            )
+        )
+        self.assertTrue(
+            TEMPORAL_PLAIN_DATE_EQUALS_INTL_FILES.isdisjoint(
+                TEMPORAL_PLAIN_DATE_COMPARE_INTL_FILES
+            )
+        )
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        for (
+            files,
+            features_by_file,
+            includes_by_file,
+            flags_by_file,
+            negative_by_file,
+            blocker_features_by_file,
+            blocker_includes_by_file,
+            blocker_flags_by_file,
+            blocker_negative_by_file,
+            blocker_manifest,
+            method_relative,
+            future_relative,
+            expected_files,
+            expected_blockers,
+            path_helper,
+            feature_helper,
+        ) in cases:
+            blockers = {
+                line
+                for raw_line in Path(__file__).with_name(
+                    blocker_manifest
+                ).read_text().splitlines()
+                if (line := raw_line.strip()) and not line.startswith("#")
+            }
+            self.assertEqual(len(files), expected_files)
+            self.assertEqual(len(blockers), expected_blockers)
+            self.assertEqual(set(features_by_file), set(files))
+            self.assertEqual(set(includes_by_file), set(files))
+            self.assertEqual(set(flags_by_file), set(files))
+            self.assertEqual(set(negative_by_file), set(files))
+            self.assertEqual(set(blocker_features_by_file), blockers)
+            self.assertEqual(set(blocker_includes_by_file), blockers)
+            self.assertEqual(set(blocker_flags_by_file), blockers)
+            self.assertEqual(set(blocker_negative_by_file), blockers)
+            self.assertTrue(files.isdisjoint(blockers))
+
+            method_dir = test_root / method_relative
+            try:
+                live_files = (
+                    {
+                        path.relative_to(test_root).as_posix()
+                        for path in method_dir.glob("*.js")
+                        if "_FIXTURE" not in path.name
+                    }
+                    if method_dir.is_dir()
+                    else None
+                )
+            except OSError:
+                live_files = None
+            if live_files is not None:
+                self.assertEqual(live_files, set(files) | blockers)
+                for relative in files:
+                    path = test_root / relative
+                    metadata = test262_runner.parse_meta(path.read_text())
+                    self.assertEqual(
+                        frozenset(metadata.get("features", [])),
+                        features_by_file[relative],
+                        relative,
+                    )
+                    self.assertEqual(
+                        frozenset(metadata.get("includes", [])),
+                        includes_by_file[relative],
+                        relative,
+                    )
+                    self.assertEqual(
+                        frozenset(metadata.get("flags", [])),
+                        flags_by_file[relative],
+                        relative,
+                    )
+                    self.assertEqual(
+                        metadata.get("negative"), negative_by_file[relative], relative
+                    )
+                    for tool in (test262_runner, test262_analyze):
+                        self.assertTrue(getattr(tool, path_helper)(path), relative)
+                        self.assertEqual(
+                            getattr(tool, feature_helper)(path),
+                            features_by_file[relative],
+                        )
+                        self.assertFalse(tool.should_skip(metadata, path), relative)
+                for relative in blockers:
+                    path = test_root / relative
+                    metadata = test262_runner.parse_meta(path.read_text())
+                    self.assertEqual(
+                        frozenset(metadata.get("features", [])),
+                        blocker_features_by_file[relative],
+                        relative,
+                    )
+                    self.assertEqual(
+                        frozenset(metadata.get("includes", [])),
+                        blocker_includes_by_file[relative],
+                        relative,
+                    )
+                    self.assertEqual(
+                        frozenset(metadata.get("flags", [])),
+                        blocker_flags_by_file[relative],
+                        relative,
+                    )
+                    self.assertEqual(
+                        metadata.get("negative"),
+                        blocker_negative_by_file[relative],
+                        relative,
+                    )
+                    for tool in (test262_runner, test262_analyze):
+                        self.assertTrue(tool.should_skip(metadata, path), relative)
+
+            with tempfile.TemporaryDirectory() as temp_dir:
+                root = Path(temp_dir)
+                future = root / "test" / future_relative
+                outside = root / "test/built-ins/Other/prototype/equals/basic.js"
+                for tool in (test262_runner, test262_analyze):
+                    path_fn = getattr(tool, path_helper)
+                    features_fn = getattr(tool, feature_helper)
+                    self.assertFalse(path_fn(None))
+                    self.assertFalse(path_fn(object()))
+                    self.assertEqual(features_fn(None), frozenset())
+                    original_root = tool.TEST262
+                    tool.TEST262 = str(root)
+                    try:
+                        for relative, features in features_by_file.items():
+                            path = root / "test" / relative
+                            self.assertTrue(path_fn(path), relative)
+                            self.assertEqual(features_fn(path), features)
+                            self.assertFalse(
+                                tool.should_skip({"features": sorted(features)}, path)
+                            )
+                        for path in (future, outside):
+                            self.assertFalse(path_fn(path))
+                            self.assertEqual(features_fn(path), frozenset())
+                            self.assertTrue(
+                                tool.should_skip({"features": ["Temporal"]}, path)
+                            )
+                    finally:
+                        tool.TEST262 = original_root
+
+        downstream = TEMPORAL_PLAIN_DATE_EQUALS_DOWNSTREAM_FILES
+        self.assertEqual(len(downstream), 4)
+        self.assertEqual(set(TEMPORAL_PLAIN_DATE_EQUALS_DOWNSTREAM_FEATURES), downstream)
+        self.assertEqual(set(TEMPORAL_PLAIN_DATE_EQUALS_DOWNSTREAM_INCLUDES), downstream)
+        self.assertEqual(set(TEMPORAL_PLAIN_DATE_EQUALS_DOWNSTREAM_FLAGS), downstream)
+        self.assertEqual(set(TEMPORAL_PLAIN_DATE_EQUALS_DOWNSTREAM_NEGATIVE), downstream)
+        self.assertTrue(TEMPORAL_PLAIN_DATE_EQUALS_FILES.isdisjoint(downstream))
+        self.assertTrue(TEMPORAL_PLAIN_DATE_EQUALS_INTL_FILES.isdisjoint(downstream))
+        if all((test_root / relative).is_file() for relative in downstream):
+            for relative in downstream:
+                path = test_root / relative
+                metadata = test262_runner.parse_meta(path.read_text())
+                self.assertEqual(
+                    frozenset(metadata.get("features", [])),
+                    TEMPORAL_PLAIN_DATE_EQUALS_DOWNSTREAM_FEATURES[relative],
+                    relative,
+                )
+                self.assertEqual(
+                    frozenset(metadata.get("includes", [])),
+                    TEMPORAL_PLAIN_DATE_EQUALS_DOWNSTREAM_INCLUDES[relative],
+                    relative,
+                )
+                self.assertEqual(
+                    frozenset(metadata.get("flags", [])),
+                    TEMPORAL_PLAIN_DATE_EQUALS_DOWNSTREAM_FLAGS[relative],
+                    relative,
+                )
+                self.assertEqual(
+                    metadata.get("negative"),
+                    TEMPORAL_PLAIN_DATE_EQUALS_DOWNSTREAM_NEGATIVE[relative],
+                    relative,
+                )
+                for tool in (test262_runner, test262_analyze):
+                    self.assertFalse(tool.temporal_plain_date_equals_path(path), relative)
+                    self.assertFalse(
+                        tool.temporal_plain_date_equals_intl_path(path), relative
+                    )
+                    self.assertTrue(tool.should_skip(metadata, path), relative)
 
     def test_temporal_plain_date_from_manifest_is_exact_live_disjoint_and_shared(self):
         files = TEMPORAL_PLAIN_DATE_FROM_FILES
