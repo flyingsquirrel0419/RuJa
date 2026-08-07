@@ -25320,6 +25320,69 @@ fn temporal_plain_date_time_from_rejects_invalid_fields_after_required_checks() 
 }
 
 #[test]
+fn temporal_plain_date_time_equals_compares_hidden_records_and_converts_arguments() {
+    assert_eq!(
+        run(r#"
+            var value = new Temporal.PlainDateTime(1976, 11, 18, 15, 23, 30, 123, 456, 789);
+            var same = new Temporal.PlainDateTime(1976, 11, 18, 15, 23, 30, 123, 456, 789);
+            var reads = 0;
+            Object.defineProperty(same, 'year', {
+              get: function () { reads++; throw new Error('observed'); }
+            });
+            var zoned = new Temporal.ZonedDateTime(3661001001001n, '-00:02');
+            [
+              Temporal.PlainDateTime.prototype.equals.name,
+              Temporal.PlainDateTime.prototype.equals.length,
+              value.equals(same), reads,
+              value.equals(new Temporal.PlainDateTime(1976, 11, 18, 15, 23, 30, 123, 456, 788)),
+              value.equals({
+                year: 1976, month: 11, day: 18, hour: 15, minute: 23,
+                second: 30, millisecond: 123, microsecond: 456, nanosecond: 789
+              }),
+              value.equals('1976-11-18T15:23:30.123456789'),
+              new Temporal.PlainDateTime(1970, 1, 1, 0, 59, 1, 1, 1, 1).equals(zoned)
+            ].join('|');
+        "#),
+        Value::String(Arc::from("equals|1|true|0|false|true|true|true"))
+    );
+}
+
+#[test]
+fn temporal_plain_date_time_equals_brands_first_and_uses_function_realm() {
+    assert_eq!(
+        run(r#"
+            var reads = 0;
+            var argument = {};
+            Object.defineProperty(argument, 'calendar', {
+              get: function () { reads++; throw new Error('observed'); }
+            });
+            var equals = Temporal.PlainDateTime.prototype.equals;
+            var brandFirst = false;
+            try { equals.call({}, argument); }
+            catch (error) { brandFirst = error instanceof TypeError && reads === 0; }
+
+            var other = $262.createRealm().global;
+            var foreignEquals = other.Temporal.PlainDateTime.prototype.equals;
+            var foreign = new other.Temporal.PlainDateTime(2000, 5, 2, 12, 34, 56, 987, 654, 321);
+            var valid = foreignEquals.call(
+              foreign,
+              new Temporal.PlainDateTime(2000, 5, 2, 12, 34, 56, 987, 654, 321)
+            );
+            var receiverRealm = false;
+            var argumentRealm = false;
+            try { foreignEquals.call({}, foreign); } catch (error) {
+              receiverRealm = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            try { foreignEquals.call(foreign, 'invalid'); } catch (error) {
+              argumentRealm = error instanceof other.RangeError && !(error instanceof RangeError);
+            }
+            [brandFirst, valid, receiverRealm, argumentRealm].join('|');
+        "#),
+        Value::String(Arc::from("true|true|true|true"))
+    );
+}
+
+#[test]
 fn temporal_plain_date_time_rejects_invalid_fields_after_ordered_conversion() {
     for source in [
         "Temporal.PlainDateTime(1970, 1, 1)",

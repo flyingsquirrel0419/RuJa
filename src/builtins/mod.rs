@@ -6290,7 +6290,7 @@ pub(crate) fn install_temporal_namespace_in_env(
     global: Option<&Value>,
     object_proto: Value,
 ) -> error::Result<Value> {
-    vm.try_reserve_gc_pins(93)?;
+    vm.try_reserve_gc_pins(94)?;
     let mut pin_count = 0;
     let result = (|| {
         let instant_prototype = Value::Object(vm.alloc(HeapObj::Object(ObjectData {
@@ -6778,6 +6778,13 @@ pub(crate) fn install_temporal_namespace_in_env(
             env,
         )?);
         pin_count += vm.pin(&plain_value_of);
+        let plain_equals = Value::Object(vm.new_native_function_in_env_with_gc_retry(
+            "equals",
+            temporal_plain_date_time_equals,
+            1,
+            env,
+        )?);
+        pin_count += vm.pin(&plain_equals);
 
         let Value::Object(instant_constructor_index) = instant_constructor.clone() else {
             unreachable!()
@@ -6964,6 +6971,7 @@ pub(crate) fn install_temporal_namespace_in_env(
                 ] {
                     props.insert(PropertyKey::from(name), accessor_get_prop(getter));
                 }
+                props.insert(PropertyKey::from("equals"), data_prop(plain_equals));
                 props.insert(PropertyKey::from("valueOf"), data_prop(plain_value_of));
                 let mut tag = data_prop(Value::String(Arc::from("Temporal.PlainDateTime")));
                 tag.writable = false;
@@ -8566,41 +8574,61 @@ fn temporal_zoned_date_time_plain_fields(
     .map_err(|_| Error::range("Temporal.ZonedDateTime local date is out of range"))
 }
 
+fn to_temporal_plain_date_time(
+    vm: &mut Vm,
+    item: &Value,
+    options: Option<&Value>,
+) -> error::Result<(TemporalPlainDateTimeFields, Arc<str>)> {
+    if let Some(slots) = temporal_plain_date_time_slots_if_present(vm, item) {
+        temporal_plain_date_time_from_overflow(vm, options)?;
+        Ok(slots)
+    } else if let Some((epoch_nanoseconds, time_zone, calendar_identifier)) =
+        temporal_zoned_date_time_slots_if_present(vm, item)
+    {
+        let fields = temporal_zoned_date_time_plain_fields(&epoch_nanoseconds, &time_zone)?;
+        temporal_plain_date_time_from_overflow(vm, options)?;
+        Ok((fields, calendar_identifier))
+    } else if matches!(item, Value::Object(_)) {
+        temporal_plain_date_time_from_property_bag(vm, item, options)
+    } else {
+        let Value::String(source) = item else {
+            return Err(Error::type_err(
+                "Temporal.PlainDateTime input must be a String or object",
+            ));
+        };
+        vm.consume_fuel_units(source.len().min(i64::MAX as usize) as i64)?;
+        let parsed = temporal::parse_plain_date_time_string(source)
+            .ok_or_else(|| Error::range("Invalid Temporal.PlainDateTime string"))?;
+        temporal_plain_date_time_from_overflow(vm, options)?;
+        Ok((
+            temporal_plain_date_time_fields_from_iso(parsed.fields)?,
+            parsed.calendar_identifier,
+        ))
+    }
+}
+
 fn temporal_plain_date_time_from(
     vm: &mut Vm,
     args: &[Value],
     _this: Option<Value>,
 ) -> error::Result<Value> {
-    let item = args.first().unwrap_or(&Value::Undefined);
     let (fields, calendar_identifier) =
-        if let Some(slots) = temporal_plain_date_time_slots_if_present(vm, item) {
-            temporal_plain_date_time_from_overflow(vm, args.get(1))?;
-            slots
-        } else if let Some((epoch_nanoseconds, time_zone, calendar_identifier)) =
-            temporal_zoned_date_time_slots_if_present(vm, item)
-        {
-            let fields = temporal_zoned_date_time_plain_fields(&epoch_nanoseconds, &time_zone)?;
-            temporal_plain_date_time_from_overflow(vm, args.get(1))?;
-            (fields, calendar_identifier)
-        } else if matches!(item, Value::Object(_)) {
-            temporal_plain_date_time_from_property_bag(vm, item, args.get(1))?
-        } else {
-            let Value::String(source) = item else {
-                return Err(Error::type_err(
-                    "Temporal.PlainDateTime input must be a String or object",
-                ));
-            };
-            vm.consume_fuel_units(source.len().min(i64::MAX as usize) as i64)?;
-            let parsed = temporal::parse_plain_date_time_string(source)
-                .ok_or_else(|| Error::range("Invalid Temporal.PlainDateTime string"))?;
-            temporal_plain_date_time_from_overflow(vm, args.get(1))?;
-            (
-                temporal_plain_date_time_fields_from_iso(parsed.fields)?,
-                parsed.calendar_identifier,
-            )
-        };
+        to_temporal_plain_date_time(vm, args.first().unwrap_or(&Value::Undefined), args.get(1))?;
     let realm = vm.native_callee_closure().unwrap_or(vm.global);
     create_temporal_plain_date_time_in_realm(vm, fields, calendar_identifier, realm)
+}
+
+fn temporal_plain_date_time_equals(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let (fields, calendar_identifier) = temporal_plain_date_time_slots(vm, this)?;
+    let (other_fields, other_calendar) =
+        to_temporal_plain_date_time(vm, args.first().unwrap_or(&Value::Undefined), None)?;
+    Ok(Value::Bool(
+        fields == other_fields && temporal_calendar_equals(&calendar_identifier, &other_calendar),
+    ))
 }
 
 fn temporal_time_zone_from_value(vm: &mut Vm, value: Value) -> error::Result<TemporalTimeZone> {

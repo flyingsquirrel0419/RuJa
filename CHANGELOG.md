@@ -4,6 +4,23 @@
 
 ### Changed
 
+- Added Realm-local `Temporal.PlainDateTime.prototype.equals`. The method
+  brands the receiver before converting its argument through the same
+  allocation-free hidden-record boundary used by static `from`, then compares
+  all nine ISO fields and the calendar identity without observing public
+  properties or allocating a result object. The pinned method directory is
+  exact **39/0/0** with two PlainDate-family blockers. It also admits the
+  intended `from` optional-property assertion, moving that boundary to exact
+  **65/0/0** and forced **66/4/0** over 70 files.
+
+  [Decision Log]
+  - 목적과 의도: PlainDateTime equality를 명세 hidden slots와 `ToTemporalDateTime` conversion 위에 제공하고 `from`과 변환 semantics가 갈라지지 않게 한다.
+  - 기존 구현 및 제약 조건: static `from`은 complete reachable conversion을 구현했지만 항상 결과 객체를 할당했다. equals directory의 두 파일은 아직 없는 PlainDate family를 필요로 하고, `from/options-wrong-type.js`는 missing PlainDate TypeError false positive라 계속 blocker여야 한다.
+  - 검토한 주요 대안: public accessors 비교, `Temporal.PlainDateTime.from` 호출 후 임시 객체 비교, equals 전용 converter 복제, allocation-free shared record conversion을 검토했다.
+  - 선택한 방식: `to_temporal_plain_date_time`이 branded/property-bag/String/ZonedDateTime 입력을 compact fields/calendar tuple로 변환하고 `from`만 객체를 할당한다. equals는 receiver brand 후 같은 tuple을 받아 field equality와 calendar equality를 short-circuit한다.
+  - 다른 대안 대신 이 방식을 선택한 이유: public getter와 임시 객체는 observable behavior 및 GC 비용을 추가하고 converter 복제는 options/order/parser drift를 만든다. 공용 immutable record는 두 API의 coercion과 오류 경계를 동일하게 유지한다.
+  - 장점, 단점 및 영향: hidden-property 비관찰, brand-first error, negative ZonedDateTime balancing, cross-Realm error, byte fuel, allocation-free Boolean 결과, installer rollback과 exact 39/0이 검증된다. PlainDate family 도입 시 dedicated midnight/calendar hidden-slot fast paths를 추가하고 두 blocker를 재측정해야 한다.
+
 - Added Realm-local `Temporal.PlainDateTime.from` conversion for branded
   PlainDateTime and ZonedDateTime values, complete ISO property bags, and the
   audited PlainDateTime String grammar. Property preparation preserves the

@@ -14481,12 +14481,13 @@ and forced **259/7/0-skip**, and complete `withTimeZone` **16/0/0**.
 
 ## Temporal.PlainDateTime.from
 
-`tools/test262_temporal_plain_date_time_from_admission.txt` freezes **64**
+`tools/test262_temporal_plain_date_time_from_admission.txt` freezes **65**
 independently supported paths from the pinned 70-file static method directory.
-Dedicated CI requires **64 pass / 0 fail / 0 skip**. The six-file blocker
-manifest contains five paths that construct absent PlainDate-family objects
-and one path that calls absent `PlainDateTime.prototype.equals`. Forced full
-directory execution is **65 pass / 5 fail** because `options-wrong-type.js`
+Dedicated CI requires **65 pass / 0 fail / 0 skip**. The five-file blocker
+manifest contains paths that construct absent PlainDate-family objects.
+`argument-propertybag-optional-properties.js` moved into admission after
+PlainDateTime equals was implemented. Forced full directory execution is
+**66 pass / 4 fail** because `options-wrong-type.js`
 currently receives the expected TypeError from the missing `PlainDate`
 constructor before reaching its intended options assertion; this false
 positive remains blocked rather than overstating support.
@@ -14502,15 +14503,35 @@ PlainDateTime core, which is now exact **105/0/0** and forced **105/1/0** over
 ```text
 [Decision Log]
 - 목적과 의도: static PlainDateTime.from의 실제 독립 지원 경계와 core accessor 개선을 exact Test262 accounting에 반영한다.
-- 기존 구현 및 제약 조건: broad Temporal gate가 70-file directory 전체를 skip했고 여섯 파일은 아직 없는 PlainDate family 또는 PlainDateTime.equals를 실행한다. 이 중 한 파일은 missing-constructor TypeError가 기대 오류와 같아 강제 실행만 보면 거짓 양성이다.
-- 검토한 주요 대안: 70-file prefix 허용, forced 65개 전부 admission, parser/property-bag별 분리 manifest, independently reachable 64개와 dependency complement를 분리하는 방식을 검토했다.
-- 선택한 방식: 실제 intended assertion까지 독립 실행되는 64개 path와 metadata를 runner/analyzer 공유 manifest로 고정하고 여섯 dependency path를 blocker로 유지한다. forced diagnostic은 raw 65/5와 false-positive 이유를 함께 기록한다.
+- 기존 구현 및 제약 조건: broad Temporal gate가 70-file directory 전체를 skip했고 초기 여섯 파일은 아직 없는 PlainDate family 또는 PlainDateTime.equals를 실행했다. 이 중 한 파일은 missing-constructor TypeError가 기대 오류와 같아 강제 실행만 보면 거짓 양성이다.
+- 검토한 주요 대안: 70-file prefix 허용, forced pass 전부 admission, parser/property-bag별 분리 manifest, intended assertion에 도달하는 path와 dependency complement를 분리하는 방식을 검토했다.
+- 선택한 방식: 실제 intended assertion까지 독립 실행되는 65개 path와 metadata를 runner/analyzer 공유 manifest로 고정하고 다섯 PlainDate dependency path를 blocker로 유지한다. forced diagnostic은 raw 66/4와 false-positive 이유를 함께 기록한다.
 - 다른 대안 대신 이 방식을 선택한 이유: 단순 process pass는 빠른 선행 TypeError를 intended behavior 증명으로 오인할 수 있다. dependency-aware complement만이 현재 object model을 과장하지 않고 향후 PlainDate/equals 도입 때 재측정 지점을 보존한다.
-- 장점, 단점 및 영향: exact 64/0, forced 65/5, core 105/1 경계와 future-sibling gating이 재현된다. PlainDate family와 PlainDateTime.equals 구현 후 여섯 blocker를 assertion 도달 기준으로 다시 감사해야 한다.
+- 장점, 단점 및 영향: exact 65/0, forced 66/4, core 105/1 경계와 future-sibling gating이 재현된다. PlainDate family 구현 후 다섯 blocker를 assertion 도달 기준으로 다시 감사해야 한다.
 ```
 
 Implementation commit `31a7298` is confirmed by ordinary CI `31119606326`
 (**3/3**, attempt 4 after setup-only runner failures) and full Test262 CI
-`31119606515` (**66/66**, attempt 3). The dedicated job records exact
+`31119606515` (**66/66**, attempt 3). At that historical checkpoint the dedicated job records exact
 **64/0/0** and forced **65/5/0**; the updated core job records exact
 **105/0/0** and forced **105/1/0**.
+
+## Temporal.PlainDateTime.prototype.equals
+
+`tools/test262_temporal_plain_date_time_equals_admission.txt` freezes **39**
+independently supported paths from the pinned 41-file method directory.
+Dedicated CI requires **39 pass / 0 fail / 0 skip**; forced diagnostics require
+**39 pass / 2 fail / 0 skip**. `argument-plaindate.js` requires the absent
+PlainDate hidden kind, while `calendar-temporal-object.js` constructs absent
+PlainDate, PlainMonthDay, and PlainYearMonth objects. Future siblings remain
+behind the broad Temporal gate.
+
+```text
+[Decision Log]
+- 목적과 의도: PlainDateTime equality의 complete reachable corpus와 from downstream 개선을 exact accounting에 반영한다.
+- 기존 구현 및 제약 조건: broad Temporal gate가 41개 모두 skip했고 두 파일은 intended equals assertion 전에 아직 없는 PlainDate family를 생성한다. from blocker 한 개는 equals 부재만으로 막혀 있었다.
+- 검토한 주요 대안: directory prefix 전체 허용, 두 constructor dependency를 stub 처리, from manifest에 혼합, direct exact admission과 blocker complement를 검토했다.
+- 선택한 방식: 실제 독립 실행되는 39개 path/features를 runner/analyzer 공유 manifest로 열고 두 PlainDate-family path를 forced diagnostic에 고정한다. 재실측으로 통과한 from optional-properties path만 소유 manifest로 이동한다.
+- 다른 대안 대신 이 방식을 선택한 이유: prefix와 stub은 미구현 object model을 과장하고 method surface 혼합은 equals 회귀를 숨긴다. exact complement는 intended assertion 도달 여부를 보존한다.
+- 장점, 단점 및 영향: direct exact 39/0, forced 39/2, from exact 65/0 및 forced 66/4가 재현된다. PlainDate family 도입 시 두 direct blocker와 다섯 from blocker를 다시 감사해야 한다.
+```

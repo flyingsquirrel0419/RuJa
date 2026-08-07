@@ -179,6 +179,25 @@ PlainDateTime prototype.
 - 장점, 단점 및 영향: exact coercion order, required-before-range, Realm errors/results, negative epoch, extreme range, fuel, GC/OOM 경계가 한 conversion path에서 검증된다. named-zone transition과 비 ISO calendar type은 후속 hidden kinds/backend가 필요하다.
 ```
 
+`Temporal.PlainDateTime.prototype.equals` consumes that conversion as an
+immutable `(fields, calendar)` record rather than calling static `from`.
+Receiver branding happens before argument conversion. The method compares the
+nine compact ISO slots directly, compares canonical calendar identity only
+when the fields match, and returns a primitive Boolean without a heap result
+allocation. Static `from` is now the thin allocating wrapper around the same
+record conversion, so parser, property access order, overflow defaults, fuel,
+and error Realm behavior remain shared.
+
+```text
+[Decision Log]
+- 목적과 의도: equality와 factory가 하나의 ToTemporalDateTime 의미론을 공유하면서 equals의 임시 object allocation을 제거한다.
+- 기존 구현 및 제약 조건: from의 변환과 allocation이 한 native 함수에 결합돼 있었고 public accessors는 shadowing 및 user code re-entry를 관찰한다. PlainDate family hidden kinds와 named-zone transition backend는 아직 없다.
+- 검토한 주요 대안: from native 재호출, public getter 비교, equals 전용 converter, immutable record converter 추출을 검토했다.
+- 선택한 방식: 변환 함수는 compact fields/calendar만 반환하고 from은 method Realm allocator를 호출하며 equals는 receiver slots와 변환 tuple을 직접 비교한다.
+- 다른 대안 대신 이 방식을 선택한 이유: 임시 객체는 불필요한 allocation이고 getter 비교는 internal-slot contract를 위반한다. 공유 record만이 conversion ordering과 parser/fuel/range 동작을 한 곳에 고정한다.
+- 장점, 단점 및 영향: Boolean 결과는 heap cap에서도 성공하고 brand-first/cross-Realm/GC rooting이 검증된다. PlainDate 추가 시 generic bag보다 앞선 midnight hidden-slot branch가 필요하다.
+```
+
 `Temporal.ZonedDateTime.prototype.toPlainDateTime` reads only the receiver's
 hidden epoch, time-zone, and calendar slots. The time-zone dispatcher supplies
 the exact UTC/fixed offset; the shared ISO helper performs checked `epoch +

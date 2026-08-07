@@ -11,6 +11,7 @@ built-ins/Temporal/PlainDateTime/from/argument-propertybag-calendar-leap-second.
 built-ins/Temporal/PlainDateTime/from/argument-propertybag-calendar-string.js
 built-ins/Temporal/PlainDateTime/from/argument-propertybag-calendar-wrong-type.js
 built-ins/Temporal/PlainDateTime/from/argument-propertybag-calendar-year-zero.js
+built-ins/Temporal/PlainDateTime/from/argument-propertybag-optional-properties.js
 built-ins/Temporal/PlainDateTime/from/argument-string-calendar-annotation-invalid-key.js
 built-ins/Temporal/PlainDateTime/from/argument-string-calendar-annotation.js
 built-ins/Temporal/PlainDateTime/from/argument-string-calendar-case-insensitive.js

@@ -22,7 +22,8 @@ The following resource limits are enforced:
   hidden-slot construction, subclassing, 22 ISO/calendar accessors,
   `@@toStringTag`, always-throwing `valueOf`, and static `from` for branded
   PlainDateTime/ZonedDateTime values, ISO property bags, and the audited String
-  grammar; comparison, arithmetic, rounding, formatting, and remaining
+  grammar. Hidden-record `equals` is supported; static comparison, arithmetic,
+  rounding, formatting, and remaining
   conversion methods are not implemented.
   Realm-local `%Temporal.ZonedDateTime%` supports hidden-slot construction for
   UTC and fixed offsets, exact epoch/time-zone/calendar accessors, subclassing,
