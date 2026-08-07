@@ -14567,3 +14567,8 @@ that exact boundary to **49/0/0** and its forced diagnostic to **49/1/0**.
 - 다른 대안 대신 이 방식을 선택한 이유: prefix와 stub은 미구현 object model을 과장하고 method surface 혼합은 ordering 회귀를 숨긴다. exact complement는 intended assertion 도달 여부와 future sibling drift를 모두 보존한다.
 - 장점, 단점 및 영향: direct exact 40/0, forced 40/2, ZonedDateTime exact 49/0 및 forced 49/1이 재현된다. PlainDate family 도입 시 direct 두 blocker와 downstream 한 blocker를 다시 감사해야 한다.
 ```
+
+Implementation commit `bf45482` is confirmed by ordinary CI `31200775282`
+(**3/3**) and full Test262 CI `31200776243` (**68/68**). Dedicated jobs record
+PlainDateTime compare exact **40/0/0** and forced **40/2/0**, and the updated
+ZonedDateTime compare job records exact **49/0/0** and forced **49/1/0**.

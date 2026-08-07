@@ -20,6 +20,11 @@
   - 다른 대안 대신 이 방식을 선택한 이유: public getter와 임시 object는 observable behavior 및 GC 비용을 추가하고 converter 복제는 parser/order/fuel drift를 만든다. 명세상 calendar는 PlainDateTime ordering에 참여하지 않는다.
   - 장점, 단점 및 영향: 9-field ordering, +0, first-abrupt short circuit, cross-Realm errors, receiver 무시, byte fuel, allocation-free result와 installer rollback이 검증된다. PlainDate family 도입 시 두 direct blocker와 남은 ZonedDateTime blocker를 재측정해야 한다.
 
+  Implementation commit `bf45482` passes ordinary CI `31200775282` (**3/3**)
+  and full Test262 CI `31200776243` (**68/68**). Dedicated jobs confirm
+  PlainDateTime compare exact **40/0/0** and forced **40/2/0**, plus
+  ZonedDateTime compare exact **49/0/0** and forced **49/1/0**.
+
 - Added Realm-local `Temporal.PlainDateTime.prototype.equals`. The method
   brands the receiver before converting its argument through the same
   allocation-free hidden-record boundary used by static `from`, then compares
