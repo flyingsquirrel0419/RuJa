@@ -153,7 +153,29 @@ minimum valid PlainDate does not have a representable midnight PlainDateTime.
 - 검토한 주요 대안: PlainDateTime kind 재사용, ordinary properties, epoch-day 단일 슬롯, 별도 three-field date kind를 검토했다.
 - 선택한 방식: 독립 PlainDate kind와 Realm constructor/prototype을 추가하고 date validation은 정오, date-time conversion은 자정으로 각각 기존 exact ISO helper를 호출한다.
 - 다른 대안 대신 이 방식을 선택한 이유: 독립 kind만 RequireInternalSlot branding을 보존하고 두 범위 검사를 분리해야 극한 날짜에서 과도한 허용이나 거부를 피한다.
-- 장점, 단점 및 영향: hidden getter 비관찰, Realm/subclass, fuel, GC rollback과 downstream converter 공유가 고정된다. installer는 114 maximum pins와 115 allocations를 갖는다.
+- 장점, 단점 및 영향: hidden getter 비관찰, Realm/subclass, fuel, GC rollback과 downstream converter 공유가 고정된다. core-only checkpoint의 installer는 114 maximum pins와 115 allocations를 가졌다.
+```
+
+Static `Temporal.PlainDate.from` converges three branded fast paths, a
+dedicated ISO date property record, and parsed Strings into the same compact
+PlainDate slots. Branded values never expose public accessors. Ordinary object
+fields are rooted and converted in `calendar`, `day`, `month`, `monthCode`,
+`year` order; only then is `options.overflow` read and required/range
+validation performed. Strings share the low-level ISO date-time grammar but
+reject a UTC designator and ignore valid numeric offsets and zone annotations.
+Syntax is validated before options; a parsed date observes overflow before its
+noon range check. Allocation uses the native function
+Realm rather than the call receiver or source object's Realm. The added native
+function raises installer accounting to 115 maximum pins and 116 allocations.
+
+```text
+[Decision Log]
+- 목적과 의도: 모든 현재 reachable PlainDate 입력을 하나의 위조 불가능한 날짜 record와 Realm allocator로 수렴한다.
+- 기존 구현 및 제약 조건: PlainDateTime collector는 시간 필드를 추가로 관찰하며 ZonedDateTime local conversion은 date-time 범위를 적용해 날짜 전용 끝점과 다를 수 있다.
+- 검토한 주요 대안: PlainDateTime converter 재사용, public constructor 호출, branded-only factory, 전용 date converter를 검토했다.
+- 선택한 방식: 5-field BigInt-backed collector, 날짜 전용 ZonedDateTime local helper, 공용 저수준 parser 위의 PlainDate parser, method-Realm allocator를 조합한다.
+- 다른 대안 대신 이 방식을 선택한 이유: 전용 경계만 property order, hidden getter 비관찰, 정오 range, invalid-input/options abrupt 순서를 모두 보존한다.
+- 장점, 단점 및 영향: direct Test262 70/0과 core 78/0이 exact manifest로 고정된다. calendar sibling object 한 경로는 해당 hidden kinds가 생길 때까지 broad gate에 남는다.
 ```
 
 ## Temporal PlainDateTime hidden slots

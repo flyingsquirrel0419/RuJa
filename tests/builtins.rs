@@ -25252,6 +25252,147 @@ fn temporal_plain_date_constructor_preserves_order_range_and_function_realm() {
 }
 
 #[test]
+fn temporal_plain_date_from_converts_supported_inputs_without_observing_slots() {
+    assert_eq!(
+        run(r#"
+            var date = new Temporal.PlainDate(1976, 11, 18);
+            var dateTime = new Temporal.PlainDateTime(2000, 5, 2, 12, 34, 56);
+            var zoned = new Temporal.ZonedDateTime(0n, '+01:00');
+            var reads = 0;
+            for (var value of [date, dateTime, zoned]) {
+              for (var key of ['calendar', 'day', 'month', 'monthCode', 'year']) {
+                Object.defineProperty(value, key, {
+                  get: function () { reads++; throw new Error('observed'); }
+                });
+              }
+            }
+            var copied = Temporal.PlainDate.from(date, { overflow: 'reject' });
+            var fromDateTime = Temporal.PlainDate.from(dateTime);
+            var fromZoned = Temporal.PlainDate.from(zoned);
+            var constrained = Temporal.PlainDate.from({
+              year: 2021, month: 13, day: 40,
+              hour: { valueOf: function () { throw new Error('time observed'); } }
+            });
+            var parsed = Temporal.PlainDate.from('2016-12-31T23:59:60+00:00[u-ca=ISO8601]');
+            [
+              Temporal.PlainDate.from.name,
+              Temporal.PlainDate.from.length,
+              copied.year, copied.month, copied.day, copied.calendarId,
+              copied !== date,
+              fromDateTime.year, fromDateTime.month, fromDateTime.day,
+              fromZoned.year, fromZoned.month, fromZoned.day,
+              constrained.year, constrained.month, constrained.day,
+              parsed.year, parsed.month, parsed.day, parsed.calendarId,
+              reads
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "from|1|1976|11|18|iso8601|true|2000|5|2|1970|1|1|2021|12|31|2016|12|31|iso8601|0"
+        ))
+    );
+}
+
+#[test]
+fn temporal_plain_date_from_preserves_order_range_and_function_realm() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            function field(name, value, hint) {
+              var result = {};
+              result[hint || 'valueOf'] = function () { log.push(name); return value; };
+              return result;
+            }
+            var fields = {};
+            Object.defineProperty(fields, 'calendar', {
+              get: function () { log.push('calendar'); return 'iso8601'; }
+            });
+            for (var entry of [
+              ['day', field('day coercion', 31.9)],
+              ['month', field('month coercion', 12.9)],
+              ['monthCode', field('monthCode coercion', 'M12', 'toString')],
+              ['year', field('year coercion', 2021.9)]
+            ]) {
+              Object.defineProperty(fields, entry[0], {
+                get: (function (name, value) {
+                  return function () { log.push(name); return value; };
+                })(entry[0], entry[1])
+              });
+            }
+            var options = {};
+            Object.defineProperty(options, 'overflow', {
+              get: function () { log.push('overflow'); return field('overflow coercion', 'reject', 'toString'); }
+            });
+            var ordered = Temporal.PlainDate.from(fields, options);
+
+            var min = Temporal.PlainDate.from('-271821-04-19');
+            var max = Temporal.PlainDate.from('+275760-09-13T23:00+00:00');
+            var invalidBeforeOptions = false;
+            var invalidReads = 0;
+            try {
+              Temporal.PlainDate.from('2020-13-34', {
+                get overflow() { invalidReads++; return 'constrain'; }
+              });
+            } catch (error) { invalidBeforeOptions = error instanceof RangeError; }
+
+            var marker = {};
+            var rangeOptionReads = 0;
+            var rangeAfterOptions = false;
+            try {
+              Temporal.PlainDate.from('+275760-09-14', {
+                get overflow() { rangeOptionReads++; throw marker; }
+              });
+            } catch (error) { rangeAfterOptions = error === marker; }
+
+            var other = $262.createRealm().global;
+            var foreignFrom = other.Temporal.PlainDate.from;
+            var foreign = foreignFrom(new Temporal.PlainDateTime(2002, 7, 4));
+            var foreignError;
+            try { foreignFrom({ year: 2000, month: 2, day: 30 }, { overflow: 'reject' }); }
+            catch (error) {
+              foreignError = error instanceof other.RangeError && !(error instanceof RangeError);
+            }
+            class Custom extends Temporal.PlainDate {}
+            var subclassIgnored = Temporal.PlainDate.from.call(Custom, ordered);
+            var nonconstructable = false;
+            try { new Temporal.PlainDate.from(); }
+            catch (error) { nonconstructable = error instanceof TypeError; }
+            [
+              log.join(','), ordered.year, ordered.month, ordered.day,
+              min.day, max.day, invalidBeforeOptions, invalidReads,
+              rangeAfterOptions, rangeOptionReads,
+              Object.getPrototypeOf(foreign) === other.Temporal.PlainDate.prototype,
+              foreign.year, foreign.month, foreign.day, foreignError,
+              Object.getPrototypeOf(subclassIgnored) === Temporal.PlainDate.prototype,
+              nonconstructable
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "calendar,day,day coercion,month,month coercion,monthCode,monthCode coercion,year,year coercion,overflow,overflow coercion|2021|12|31|19|13|true|0|true|1|true|2002|7|4|true|true|true"
+        ))
+    );
+
+    for source in [
+        "Temporal.PlainDate.from()",
+        "Temporal.PlainDate.from(1)",
+        "Temporal.PlainDate.from('1976-11-18Z')",
+        "Temporal.PlainDate.from({ year: 2021, month: 2, day: 29 }, { overflow: 'reject' })",
+        "Temporal.PlainDate.from({ year: 2021, month: 1, monthCode: 'M02', day: 1 })",
+        "Temporal.PlainDate.from({ year: 2021, monthCode: 'M99L', day: 1 })",
+        "Temporal.PlainDate.from({ year: 2021, month: -1, day: 1 })",
+        "Temporal.PlainDate.from({ year: 2021, month: 1, day: -1 })",
+        "Temporal.PlainDate.from({ year: -271821, month: 4, day: 18 })",
+        "Temporal.PlainDate.from({ year: 275760, month: 9, day: 14 })",
+        "Temporal.PlainDate.from({ year: 2021, month: 1, day: 1 }, null)",
+    ] {
+        let error = run_err(source);
+        assert!(
+            error.contains("TypeError") || error.contains("RangeError"),
+            "{source}: {error}"
+        );
+    }
+}
+
+#[test]
 fn temporal_plain_date_time_conversion_uses_plain_date_slots_at_midnight() {
     assert_eq!(
         run(r#"

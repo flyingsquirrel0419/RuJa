@@ -14571,13 +14571,11 @@ ZonedDateTime compare job records exact **49/0/0** and forced **49/1/0**.
 
 ## Temporal.PlainDate hidden-slot core
 
-`tools/test262_temporal_plain_date_core_admission.txt` freezes **67** exact
+`tools/test262_temporal_plain_date_core_admission.txt` freezes **78** exact
 constructor, prototype metadata, ISO accessor, `valueOf`, and
-`@@toStringTag` paths from a pinned 78-file core candidate. The 11-file blocker
-manifest contains only paths whose basic assertions first call the
-out-of-scope `Temporal.PlainDate.from`. Dedicated CI requires **67 pass / 0
-fail / 0 skip**; the forced complement requires **67 pass / 11 fail / 0
-skip**.
+`@@toStringTag` paths from the complete pinned 78-file core candidate. The
+former 11-file `PlainDate.from` dependency complement is now empty. Dedicated
+CI requires **78 pass / 0 fail / 0 skip**.
 
 The hidden PlainDate-to-PlainDateTime midnight branch also releases four
 PlainDateTime.from paths, one equals path, and one compare path. Their current
@@ -14589,9 +14587,30 @@ PlainYearMonth, so PlainDate alone does not over-admit them.
 ```text
 [Decision Log]
 - 목적과 의도: PlainDate constructor/accessor core와 실제로 해제된 ToTemporalDateTime downstream 경계를 하나의 pinned evidence 단위로 고정한다.
-- 기존 구현 및 제약 조건: 78개 후보 중 11개는 core accessor assertion 전에 아직 없는 PlainDate.from을 호출하고, 세 downstream directory에는 PlainDate 및 calendar sibling dependency가 섞여 있었다.
+- 기존 구현 및 제약 조건: 초기 78개 후보 중 11개는 core accessor assertion 전에 아직 없던 PlainDate.from을 호출했고, 세 downstream directory에는 PlainDate 및 calendar sibling dependency가 섞여 있었다.
 - 검토한 주요 대안: PlainDate subtree prefix 허용, from stub, forced pass 전부 admission, exact core와 blocker complement를 검토했다.
-- 선택한 방식: 독립 실행되는 67개 path와 metadata만 runner/analyzer 공유 manifest로 열고 11개 from dependency를 forced diagnostic에 고정한다. downstream은 intended assertion까지 재실측한 6개만 각 owner manifest로 이동한다.
+- 선택한 방식: 초기에는 독립 실행되는 67개 path만 열었고, PlainDate.from 구현 후 intended assertion까지 재실측한 11개를 같은 core manifest로 이동했다. downstream은 실제 해제된 6개만 각 owner manifest에 유지한다.
 - 다른 대안 대신 이 방식을 선택한 이유: prefix와 stub은 미구현 API를 지원으로 계산하고 선행 TypeError false positive를 숨긴다. exact complement는 future sibling drift와 dependency 해제를 모두 검증한다.
-- 장점, 단점 및 영향: direct 67/0, forced 67/11과 downstream 69/1, 40/1, 41/1이 재현된다. 다음 PlainDate.from 단위가 11개 blocker의 명확한 재감사 지점이다.
+- 장점, 단점 및 영향: core 78/0과 downstream 69/1, 40/1, 41/1이 재현된다. 남은 세 downstream blocker는 calendar sibling 구현의 명확한 재감사 지점이다.
+```
+
+## Temporal.PlainDate.from
+
+`tools/test262_temporal_plain_date_from_admission.txt` freezes **70** exact
+paths from the pinned 71-file static method directory. Dedicated CI requires
+**70 pass / 0 fail / 0 skip**. The forced admission-plus-blocker diagnostic is
+**70 pass / 1 fail / 0 skip**; `calendar-temporal-object.js` requires absent
+PlainMonthDay and PlainYearMonth hidden kinds. Runner and analyzer share exact
+path/feature metadata, while tooling additionally freezes includes, flags,
+negative metadata, full live-directory complement, and malformed path input
+contracts.
+
+```text
+[Decision Log]
+- 목적과 의도: PlainDate.from의 실제 독립 지원 경계와 core factory dependency 해제를 pinned Test262 accounting에 반영한다.
+- 기존 구현 및 제약 조건: 71개 direct 파일 전체가 broad Temporal gate 뒤에 있었고 일부 TypeError 기대 테스트는 missing method만으로도 거짓 양성이 될 수 있었다. calendar helper는 아직 없는 PlainMonthDay/PlainYearMonth도 생성한다.
+- 검토한 주요 대안: directory prefix 허용, forced pass 전부 admission, core 11개만 여는 stub, intended assertion 기반 exact admission과 blocker complement를 검토했다.
+- 선택한 방식: 71개를 강제 실행하고 analyzer로 실패 원인을 분류한 뒤 intended assertions에 도달하는 70개만 exact manifest에 열고 calendar sibling 한 경로를 forced blocker로 고정한다.
+- 다른 대안 대신 이 방식을 선택한 이유: process exit와 오류 class만으로는 선행 TypeError false positive를 배제할 수 없다. live metadata 및 exact complement가 future sibling drift와 실제 method 회귀를 함께 검출한다.
+- 장점, 단점 및 영향: direct 70/0, forced 70/1, core 78/0이 재현된다. PlainMonthDay/PlainYearMonth 도입 시 마지막 direct blocker를 재감사해야 한다.
 ```

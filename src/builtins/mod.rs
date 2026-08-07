@@ -6290,7 +6290,7 @@ pub(crate) fn install_temporal_namespace_in_env(
     global: Option<&Value>,
     object_proto: Value,
 ) -> error::Result<Value> {
-    vm.try_reserve_gc_pins(114)?;
+    vm.try_reserve_gc_pins(115)?;
     let mut pin_count = 0;
     let result = (|| {
         let instant_prototype = Value::Object(vm.alloc(HeapObj::Object(ObjectData {
@@ -6811,6 +6811,13 @@ pub(crate) fn install_temporal_namespace_in_env(
                 NativeConstructMode::InternalDeferredPrototype,
             )?);
         pin_count += vm.pin(&plain_date_constructor);
+        let plain_date_from = Value::Object(vm.new_native_function_in_env_with_gc_retry(
+            "from",
+            temporal_plain_date_from,
+            1,
+            env,
+        )?);
+        pin_count += vm.pin(&plain_date_from);
 
         macro_rules! alloc_plain_date_getter {
             ($binding:ident, $name:literal, $native:ident) => {
@@ -7104,6 +7111,10 @@ pub(crate) fn install_temporal_namespace_in_env(
                 PropertyKey::from("prototype"),
                 const_prop(plain_date_prototype.clone()),
             );
+            function
+                .props
+                .lock()
+                .insert(PropertyKey::from("from"), data_prop(plain_date_from));
         });
         let Value::Object(plain_date_prototype_index) = plain_date_prototype.clone() else {
             unreachable!()
@@ -8105,6 +8116,20 @@ fn create_temporal_plain_date(
     result.map(Value::Object)
 }
 
+fn create_temporal_plain_date_in_realm(
+    vm: &mut Vm,
+    fields: TemporalPlainDateFields,
+    calendar_identifier: Arc<str>,
+    realm: GcIdx,
+) -> error::Result<Value> {
+    let prototype = vm
+        .realm_temporal_plain_date_prototypes
+        .get(&env::global_env_root(&vm.heap, realm).0)
+        .cloned()
+        .ok_or_else(|| Error::internal("Temporal.PlainDate prototype is not installed"))?;
+    create_temporal_plain_date(vm, fields, calendar_identifier, prototype)
+}
+
 fn temporal_plain_date_constructor(
     vm: &mut Vm,
     args: &[Value],
@@ -8781,6 +8806,124 @@ fn temporal_calendar_identifier_from_value(vm: &mut Vm, value: Value) -> error::
         .ok_or_else(|| Error::range("Invalid Temporal calendar identifier"))
 }
 
+struct TemporalPlainDatePropertyFields {
+    year: Option<BigInt>,
+    month: Option<BigInt>,
+    month_code: Option<(u8, bool)>,
+    day: Option<BigInt>,
+    calendar_identifier: Arc<str>,
+}
+
+fn temporal_plain_date_property_fields(
+    vm: &mut Vm,
+    item: &Value,
+) -> error::Result<TemporalPlainDatePropertyFields> {
+    vm.try_reserve_value_roots(std::slice::from_ref(item))?;
+    let item_pins = vm.pin(item);
+    let result = (|| {
+        let calendar = vm.get_property(item, "calendar")?;
+        let calendar_identifier = temporal_calendar_from_value(vm, calendar)?;
+        let numeric = |vm: &mut Vm, name: &str| -> error::Result<Option<BigInt>> {
+            match vm.get_property(item, name)? {
+                Value::Undefined => Ok(None),
+                value => temporal_integer_with_truncation(vm, value).map(Some),
+            }
+        };
+        let day = numeric(vm, "day")?;
+        let month = numeric(vm, "month")?;
+        let month_code = match vm.get_property(item, "monthCode")? {
+            Value::Undefined => None,
+            value => Some(temporal_month_code(vm, value)?),
+        };
+        let year = numeric(vm, "year")?;
+        Ok(TemporalPlainDatePropertyFields {
+            year,
+            month,
+            month_code,
+            day,
+            calendar_identifier,
+        })
+    })();
+    vm.unpin_many(item_pins);
+    result
+}
+
+fn temporal_plain_date_from_property_bag(
+    vm: &mut Vm,
+    item: &Value,
+    options: Option<&Value>,
+) -> error::Result<(TemporalPlainDateFields, Arc<str>)> {
+    let fields = temporal_plain_date_property_fields(vm, item)?;
+    let overflow = temporal_from_overflow(vm, options)?;
+
+    let year = fields
+        .year
+        .ok_or_else(|| Error::type_err("Temporal property bag requires year"))?;
+    if fields.month.is_none() && fields.month_code.is_none() {
+        return Err(Error::type_err(
+            "Temporal property bag requires month or monthCode",
+        ));
+    }
+    let day = fields
+        .day
+        .ok_or_else(|| Error::type_err("Temporal property bag requires day"))?;
+
+    if let Some((month_code, leap)) = fields.month_code {
+        if leap || !(1..=12).contains(&month_code) {
+            return Err(Error::range("Invalid monthCode for ISO 8601 calendar"));
+        }
+        if fields
+            .month
+            .as_ref()
+            .is_some_and(|month| month != &BigInt::from(month_code))
+        {
+            return Err(Error::range("month and monthCode do not agree"));
+        }
+    }
+
+    let mut month = fields
+        .month
+        .unwrap_or_else(|| BigInt::from(fields.month_code.unwrap().0));
+    if month <= BigInt::zero() {
+        return Err(Error::range("Temporal month is out of range"));
+    }
+    if month > BigInt::from(12) {
+        match overflow {
+            TemporalOverflow::Constrain if fields.month_code.is_none() => month = BigInt::from(12),
+            TemporalOverflow::Constrain | TemporalOverflow::Reject => {
+                return Err(Error::range("Temporal month is out of range"));
+            }
+        }
+    }
+    let year = year
+        .to_i128()
+        .ok_or_else(|| Error::range("Temporal year is out of range"))?;
+    let month = month
+        .to_i128()
+        .ok_or_else(|| Error::range("Temporal month is out of range"))?;
+    if day <= BigInt::zero() {
+        return Err(Error::range("Temporal day is out of range"));
+    }
+    let maximum_day = temporal::days_in_month(year, month)
+        .ok_or_else(|| Error::range("Temporal month is out of range"))?;
+    let day = if day > BigInt::from(maximum_day) {
+        match overflow {
+            TemporalOverflow::Constrain => maximum_day,
+            TemporalOverflow::Reject => {
+                return Err(Error::range("Temporal day is out of range"));
+            }
+        }
+    } else {
+        day.to_i128()
+            .ok_or_else(|| Error::range("Temporal day is out of range"))?
+    };
+
+    let resolved =
+        temporal_plain_date_fields([BigInt::from(year), BigInt::from(month), BigInt::from(day)])
+            .ok_or_else(|| Error::range("Temporal.PlainDate fields are out of range"))?;
+    Ok((resolved, fields.calendar_identifier))
+}
+
 struct TemporalPlainDateTimePropertyFields {
     year: Option<BigInt>,
     month: Option<BigInt>,
@@ -8844,15 +8987,10 @@ fn temporal_plain_date_time_property_fields(
     result
 }
 
-fn temporal_plain_date_time_from_overflow(
-    vm: &mut Vm,
-    options: Option<&Value>,
-) -> error::Result<TemporalOverflow> {
+fn temporal_from_overflow(vm: &mut Vm, options: Option<&Value>) -> error::Result<TemporalOverflow> {
     let options = options.cloned().unwrap_or(Value::Undefined);
     if !matches!(options, Value::Undefined | Value::Object(_)) {
-        return Err(Error::type_err(
-            "Temporal.PlainDateTime.from options must be an object",
-        ));
+        return Err(Error::type_err("Temporal options must be an object"));
     }
     vm.try_reserve_value_roots(std::slice::from_ref(&options))?;
     let pin_count = vm.pin(&options);
@@ -8881,7 +9019,7 @@ fn temporal_plain_date_time_from_property_bag(
     options: Option<&Value>,
 ) -> error::Result<(TemporalPlainDateTimeFields, Arc<str>)> {
     let fields = temporal_plain_date_time_property_fields(vm, item)?;
-    let overflow = temporal_plain_date_time_from_overflow(vm, options)?;
+    let overflow = temporal_from_overflow(vm, options)?;
 
     let year = fields
         .year
@@ -8983,23 +9121,97 @@ fn temporal_zoned_date_time_plain_fields(
     .map_err(|_| Error::range("Temporal.ZonedDateTime local date is out of range"))
 }
 
+fn temporal_zoned_date_time_plain_date_fields(
+    epoch_nanoseconds: &BigInt,
+    time_zone: &TemporalTimeZone,
+) -> error::Result<TemporalPlainDateFields> {
+    let offset_nanoseconds = temporal_time_zone_offset_nanoseconds(time_zone, epoch_nanoseconds)?;
+    let date_time = temporal::iso_date_time(epoch_nanoseconds, offset_nanoseconds)
+        .ok_or_else(|| Error::range("Temporal.ZonedDateTime local date is out of range"))?;
+    temporal_plain_date_fields([
+        BigInt::from(date_time.year),
+        BigInt::from(date_time.month),
+        BigInt::from(date_time.day),
+    ])
+    .ok_or_else(|| Error::range("Temporal.ZonedDateTime local date is out of range"))
+}
+
+fn to_temporal_plain_date(
+    vm: &mut Vm,
+    item: &Value,
+    options: Option<&Value>,
+) -> error::Result<(TemporalPlainDateFields, Arc<str>)> {
+    if let Some(slots) = temporal_plain_date_slots_if_present(vm, item) {
+        temporal_from_overflow(vm, options)?;
+        Ok(slots)
+    } else if let Some((epoch_nanoseconds, time_zone, calendar_identifier)) =
+        temporal_zoned_date_time_slots_if_present(vm, item)
+    {
+        let fields = temporal_zoned_date_time_plain_date_fields(&epoch_nanoseconds, &time_zone)?;
+        temporal_from_overflow(vm, options)?;
+        Ok((fields, calendar_identifier))
+    } else if let Some((date_time, calendar_identifier)) =
+        temporal_plain_date_time_slots_if_present(vm, item)
+    {
+        temporal_from_overflow(vm, options)?;
+        Ok((
+            TemporalPlainDateFields {
+                year: date_time.year,
+                month: date_time.month,
+                day: date_time.day,
+            },
+            calendar_identifier,
+        ))
+    } else if matches!(item, Value::Object(_)) {
+        temporal_plain_date_from_property_bag(vm, item, options)
+    } else {
+        let Value::String(source) = item else {
+            return Err(Error::type_err(
+                "Temporal.PlainDate input must be a String or object",
+            ));
+        };
+        vm.consume_fuel_units(source.len().min(i64::MAX as usize) as i64)?;
+        let parsed = temporal::parse_plain_date_string(source)
+            .ok_or_else(|| Error::range("Invalid Temporal.PlainDate string"))?;
+        temporal_from_overflow(vm, options)?;
+        let fields = temporal_plain_date_fields([
+            BigInt::from(parsed.year),
+            BigInt::from(parsed.month),
+            BigInt::from(parsed.day),
+        ])
+        .ok_or_else(|| Error::range("Temporal.PlainDate fields are out of range"))?;
+        Ok((fields, parsed.calendar_identifier))
+    }
+}
+
+fn temporal_plain_date_from(
+    vm: &mut Vm,
+    args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
+    let (fields, calendar_identifier) =
+        to_temporal_plain_date(vm, args.first().unwrap_or(&Value::Undefined), args.get(1))?;
+    let realm = vm.native_callee_closure().unwrap_or(vm.global);
+    create_temporal_plain_date_in_realm(vm, fields, calendar_identifier, realm)
+}
+
 fn to_temporal_plain_date_time(
     vm: &mut Vm,
     item: &Value,
     options: Option<&Value>,
 ) -> error::Result<(TemporalPlainDateTimeFields, Arc<str>)> {
     if let Some(slots) = temporal_plain_date_time_slots_if_present(vm, item) {
-        temporal_plain_date_time_from_overflow(vm, options)?;
+        temporal_from_overflow(vm, options)?;
         Ok(slots)
     } else if let Some((epoch_nanoseconds, time_zone, calendar_identifier)) =
         temporal_zoned_date_time_slots_if_present(vm, item)
     {
         let fields = temporal_zoned_date_time_plain_fields(&epoch_nanoseconds, &time_zone)?;
-        temporal_plain_date_time_from_overflow(vm, options)?;
+        temporal_from_overflow(vm, options)?;
         Ok((fields, calendar_identifier))
     } else if let Some((date, calendar_identifier)) = temporal_plain_date_slots_if_present(vm, item)
     {
-        temporal_plain_date_time_from_overflow(vm, options)?;
+        temporal_from_overflow(vm, options)?;
         Ok((
             temporal_plain_date_time_fields_from_iso(temporal::IsoDateTimeFields {
                 year: i128::from(date.year),
@@ -9025,7 +9237,7 @@ fn to_temporal_plain_date_time(
         vm.consume_fuel_units(source.len().min(i64::MAX as usize) as i64)?;
         let parsed = temporal::parse_plain_date_time_string(source)
             .ok_or_else(|| Error::range("Invalid Temporal.PlainDateTime string"))?;
-        temporal_plain_date_time_from_overflow(vm, options)?;
+        temporal_from_overflow(vm, options)?;
         Ok((
             temporal_plain_date_time_fields_from_iso(parsed.fields)?,
             parsed.calendar_identifier,

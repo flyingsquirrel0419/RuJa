@@ -4,13 +4,32 @@
 
 ### Changed
 
+- Added Realm-local static `Temporal.PlainDate.from`. It copies branded
+  PlainDate, PlainDateTime, and ZonedDateTime hidden slots; converts ISO date
+  property bags in observable `calendar`, `day`, `month`, `monthCode`, `year`
+  order; and parses the audited PlainDate String grammar without reading
+  public Temporal accessors. Invalid primitives and syntactically invalid
+  strings fail before options; parsed strings and prepared property fields
+  observe `overflow` before date-range validation. Results always use the native function Realm. The pinned direct
+  boundary is exact **70/0/0** and forced **70/1/0** over 71 files; the sole
+  blocker requires absent PlainMonthDay and PlainYearMonth. The former 11
+  PlainDate core blockers are now admitted, making that boundary **78/0/0**.
+
+  [Decision Log]
+  - 목적과 의도: PlainDate의 표준 conversion 경계를 hidden slots, property bag, String 입력에 대해 완결하고 accessor core의 factory 의존성을 제거한다.
+  - 기존 구현 및 제약 조건: constructor와 ISO accessors는 있었지만 static from이 없었다. PlainDateTime용 collector는 시간 getter까지 읽어 PlainDate의 관찰 순서를 깨고, calendar sibling hidden kinds는 아직 없다.
+  - 검토한 주요 대안: PlainDateTime.from 재사용, constructor 재호출, 11개 core 테스트용 stub, 날짜 전용 immutable conversion record를 검토했다.
+  - 선택한 방식: branded 세 종류는 hidden slots로 날짜/calendar를 복사하고, ordinary object는 5-field 전용 collector와 overflow 후 resolver를 사용하며, String은 공용 저수준 ISO parser에서 날짜와 calendar만 추출한다.
+  - 다른 대안 대신 이 방식을 선택한 이유: public accessor/constructor 재사용은 user code와 subclass를 관찰하고, stub은 intended assertion 이전 TypeError false positive를 만든다. 전용 collector만 명세 getter 순서와 시간 필드 비관찰을 동시에 보존한다.
+  - 장점, 단점 및 영향: constrain/reject, leap second, offset/annotation 문법, UTC designator 거부, 극한 날짜, method Realm, fuel, GC/OOM과 115 pins/116 allocations가 검증된다. calendar-temporal-object 한 경로는 PlainMonthDay/PlainYearMonth 도입 후 재측정한다.
+
 - Added Realm-local `%Temporal.PlainDate%` hidden-slot construction with a
   distinct three-field ISO date record, subclass/newTarget prototype
   selection, 16 branded calendar accessors, `@@toStringTag`, and the
   always-throwing `valueOf`. PlainDate values now convert to PlainDateTime at
   midnight through hidden slots without observing public properties. The
-  pinned core boundary is exact **67/0/0** with 11 explicit `PlainDate.from`
-  blockers. This releases four PlainDateTime.from paths, one equals path, and
+  pinned core boundary is now exact **78/0/0** after `PlainDate.from` removed
+  all 11 factory blockers. This releases four PlainDateTime.from paths, one equals path, and
   one compare path, moving those exact boundaries to **69/0/0**, **40/0/0**,
   and **41/0/0** respectively.
 
@@ -20,7 +39,7 @@
   - 검토한 주요 대안: PlainDateTime 브랜드 재사용, ordinary properties, PlainDate 전체 API 동시 구현, 독립 3-field kind와 constructor/accessor core를 검토했다.
   - 선택한 방식: 정오 기준 ISODateWithinLimits를 적용한 compact PlainDate slots와 calendar ID를 저장하고, 자정 PlainDateTime 변환은 generic property bag보다 앞에서 별도 범위 검증한다.
   - 다른 대안 대신 이 방식을 선택한 이유: 브랜드 재사용과 public properties는 internal-slot 구분 및 getter 비관찰을 깨뜨린다. 정오와 자정 경계를 분리해야 최솟값 PlainDate는 허용하면서 범위 밖 PlainDateTime 생성은 거부할 수 있다.
-  - 장점, 단점 및 영향: conversion order, 극한 날짜, distinct branding, hidden getter 비관찰, cross-Realm/subclass, fuel, GC/OOM rollback, 114 pins/115 allocations와 73개 신규 exact path가 검증된다. PlainDate.from과 calendar sibling types는 후속 단위다.
+  - 장점, 단점 및 영향: conversion order, 극한 날짜, distinct branding, hidden getter 비관찰, cross-Realm/subclass, fuel, GC/OOM rollback과 73개 신규 exact path가 검증된다. 초기 core installer는 114 pins/115 allocations였고 static from 추가 후 115/116이다. calendar sibling types는 후속 단위다.
 
 - Added Realm-local static `Temporal.PlainDateTime.compare`. It converts both
   operands left-to-right through the shared hidden-record boundary, ignores

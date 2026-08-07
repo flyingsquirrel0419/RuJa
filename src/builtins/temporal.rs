@@ -431,6 +431,28 @@ pub(crate) struct ParsedPlainDateTime {
     pub calendar_identifier: Arc<str>,
 }
 
+pub(crate) struct ParsedPlainDate {
+    pub year: i128,
+    pub month: i128,
+    pub day: i128,
+    pub calendar_identifier: Arc<str>,
+}
+
+pub(crate) fn parse_plain_date_string(source: &str) -> Option<ParsedPlainDate> {
+    let parsed = parse_date_time(source, true)?;
+    if parsed.z {
+        return None;
+    }
+    let calendar_identifier = zoned_date_time_calendar_identifier(source)?;
+    let date_time = iso_date_time(&BigInt::from(parsed.local_nanoseconds), 0)?;
+    Some(ParsedPlainDate {
+        year: date_time.year,
+        month: date_time.month,
+        day: date_time.day,
+        calendar_identifier,
+    })
+}
+
 pub(crate) fn parse_plain_date_time_string(source: &str) -> Option<ParsedPlainDateTime> {
     let parsed = parse_date_time(source, true)?;
     if parsed.z {
@@ -1139,9 +1161,10 @@ pub(crate) fn format_zoned_date_time(
 mod tests {
     use super::{
         format_instant, parse_calendar_identifier, parse_instant_string, parse_offset_string,
-        parse_plain_date_time_string, parse_time_zone_identifier, parse_time_zone_identifier_like,
-        parse_time_zone_offset, parse_zoned_date_time_string, resolve_zoned_date_time_epoch,
-        InstantPrecision, InstantRoundingMode, ZonedDateTimeOffsetOption,
+        parse_plain_date_string, parse_plain_date_time_string, parse_time_zone_identifier,
+        parse_time_zone_identifier_like, parse_time_zone_offset, parse_zoned_date_time_string,
+        resolve_zoned_date_time_epoch, InstantPrecision, InstantRoundingMode,
+        ZonedDateTimeOffsetOption,
     };
     use num_bigint::BigInt;
 
@@ -1443,6 +1466,31 @@ mod tests {
         assert!(parse_plain_date_time_string("1976-11-18+00:00").is_none());
         assert!(parse_plain_date_time_string("1976-11-18[u-ca=gregory]").is_none());
         assert!(parse_plain_date_time_string("-000000-11-18").is_none());
+    }
+
+    #[test]
+    fn plain_date_strings_extract_local_date_and_allow_offsets_with_time() {
+        for source in [
+            "1976-11-18",
+            "1976-11-18T15:23+00:00",
+            "1976-11-18T15:23+23:59[Custom][u-ca=ISO8601]",
+        ] {
+            let parsed = parse_plain_date_string(source).expect("PlainDate string should parse");
+            assert_eq!(parsed.year, 1976, "{source}");
+            assert_eq!(parsed.month, 11, "{source}");
+            assert_eq!(parsed.day, 18, "{source}");
+            assert_eq!(parsed.calendar_identifier.as_ref(), "iso8601", "{source}");
+        }
+
+        for source in [
+            "1976-11-18Z",
+            "1976-11-18T15:23Z",
+            "1976-11-18+00:00",
+            "1976-11-18[u-ca=gregory]",
+            "-000000-11-18",
+        ] {
+            assert!(parse_plain_date_string(source).is_none(), "{source}");
+        }
     }
 
     #[test]

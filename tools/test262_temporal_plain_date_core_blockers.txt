@@ -1,12 +1,1 @@
-# PlainDate core files that first require out-of-scope Temporal.PlainDate.from.
-built-ins/Temporal/PlainDate/prototype/day/basic.js
-built-ins/Temporal/PlainDate/prototype/dayOfYear/basic.js
-built-ins/Temporal/PlainDate/prototype/daysInMonth/basic.js
-built-ins/Temporal/PlainDate/prototype/daysInYear/basic.js
-built-ins/Temporal/PlainDate/prototype/inLeapYear/basic.js
-built-ins/Temporal/PlainDate/prototype/month/basic.js
-built-ins/Temporal/PlainDate/prototype/monthCode/basic.js
-built-ins/Temporal/PlainDate/prototype/monthCode/no-leap-months.js
-built-ins/Temporal/PlainDate/prototype/monthsInYear/basic.js
-built-ins/Temporal/PlainDate/prototype/valueOf/basic.js
-built-ins/Temporal/PlainDate/prototype/year/basic.js
+# PlainDate.from resolves every pinned hidden-slot core dependency.
