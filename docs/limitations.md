@@ -25,6 +25,11 @@ The following resource limits are enforced:
   grammar. Hidden-record `equals` and static lexicographic `compare` are
   supported; arithmetic, rounding, formatting, and remaining
   conversion methods are not implemented.
+  Realm-local `%Temporal.PlainDate%` supports distinct hidden-slot
+  construction, subclassing, 16 ISO/calendar accessors, `@@toStringTag`,
+  always-throwing `valueOf`, and hidden-slot conversion to PlainDateTime at
+  midnight. `PlainDate.from`, `compare`, formatting, arithmetic, and remaining
+  prototype conversion methods are not implemented.
   Realm-local `%Temporal.ZonedDateTime%` supports hidden-slot construction for
   UTC and fixed offsets, exact epoch/time-zone/calendar accessors, subclassing,
   all ISO civil/calendar/offset accessors, fixed-offset String and ISO
@@ -38,7 +43,7 @@ The following resource limits are enforced:
   minute-precision fixed offsets only. `startOfDay` rejects named zones until
   transition-aware midnight gap/overlap resolution exists. Named IANA time-zone transitions,
   the remaining ZonedDateTime string grammar, the remaining RFC 9557
-  grammar, calendar types, remaining duration operations, and `Temporal.Now` methods remain
+  grammar, PlainMonthDay/PlainYearMonth, remaining duration operations, and `Temporal.Now` methods remain
   unsupported.
 
 - **Execution fuel**: `Vm::set_fuel(Some(n))` bounds dispatched opcodes and

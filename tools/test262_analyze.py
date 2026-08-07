@@ -122,6 +122,10 @@ try:
         TEMPORAL_DURATION_CORE_FEATURES,
         TEMPORAL_DURATION_CORE_FILES,
     )
+    from test262_temporal_plain_date_core_admission import (
+        TEMPORAL_PLAIN_DATE_CORE_FEATURES,
+        TEMPORAL_PLAIN_DATE_CORE_FILES,
+    )
     from test262_temporal_plain_date_time_core_admission import (
         TEMPORAL_PLAIN_DATE_TIME_CORE_FEATURES,
         TEMPORAL_PLAIN_DATE_TIME_CORE_FILES,
@@ -460,6 +464,10 @@ except ModuleNotFoundError:
     from tools.test262_temporal_duration_core_admission import (
         TEMPORAL_DURATION_CORE_FEATURES,
         TEMPORAL_DURATION_CORE_FILES,
+    )
+    from tools.test262_temporal_plain_date_core_admission import (
+        TEMPORAL_PLAIN_DATE_CORE_FEATURES,
+        TEMPORAL_PLAIN_DATE_CORE_FILES,
     )
     from tools.test262_temporal_plain_date_time_core_admission import (
         TEMPORAL_PLAIN_DATE_TIME_CORE_FEATURES,
@@ -2668,6 +2676,21 @@ def temporal_duration_core_features(path):
     rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
     return TEMPORAL_DURATION_CORE_FEATURES[rel.as_posix()]
 
+def temporal_plain_date_core_path(path):
+    if path is None:
+        return False
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except (OSError, TypeError, ValueError):
+        return False
+    return rel.as_posix() in TEMPORAL_PLAIN_DATE_CORE_FILES
+
+def temporal_plain_date_core_features(path):
+    if not temporal_plain_date_core_path(path):
+        return frozenset()
+    rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    return TEMPORAL_PLAIN_DATE_CORE_FEATURES[rel.as_posix()]
+
 def temporal_plain_date_time_core_path(path):
     if path is None:
         return False
@@ -4594,6 +4617,8 @@ def should_skip(meta, path=None):
         feats.difference_update(temporal_zoned_date_time_to_plain_date_time_features(path))
     if path is not None and temporal_duration_core_path(path):
         feats.difference_update(temporal_duration_core_features(path))
+    if path is not None and temporal_plain_date_core_path(path):
+        feats.difference_update(temporal_plain_date_core_features(path))
     if path is not None and temporal_plain_date_time_core_path(path):
         feats.difference_update(temporal_plain_date_time_core_features(path))
     if path is not None and temporal_plain_date_time_from_path(path):

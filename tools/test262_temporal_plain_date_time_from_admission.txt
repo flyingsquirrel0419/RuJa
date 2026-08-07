@@ -1,4 +1,5 @@
 # Pinned Test262 revision: 9e61c12835c5e4a3bdba93850427e6742c4f64c4
+built-ins/Temporal/PlainDateTime/from/argument-plaindate.js
 # Exact supported Temporal.PlainDateTime.from surface.
 built-ins/Temporal/PlainDateTime/from/argument-number.js
 built-ins/Temporal/PlainDateTime/from/argument-object-month.js
@@ -52,10 +53,13 @@ built-ins/Temporal/PlainDateTime/from/no-fractional-minutes-hours.js
 built-ins/Temporal/PlainDateTime/from/not-a-constructor.js
 built-ins/Temporal/PlainDateTime/from/observable-get-overflow-argument-primitive.js
 built-ins/Temporal/PlainDateTime/from/observable-get-overflow-argument-string-invalid.js
+built-ins/Temporal/PlainDateTime/from/order-of-operations.js
 built-ins/Temporal/PlainDateTime/from/options-object.js
 built-ins/Temporal/PlainDateTime/from/options-read-before-algorithmic-validation.js
 built-ins/Temporal/PlainDateTime/from/options-undefined.js
+built-ins/Temporal/PlainDateTime/from/options-wrong-type.js
 built-ins/Temporal/PlainDateTime/from/overflow-default-constrain.js
+built-ins/Temporal/PlainDateTime/from/overflow-invalid-string.js
 built-ins/Temporal/PlainDateTime/from/overflow-reject.js
 built-ins/Temporal/PlainDateTime/from/overflow-undefined.js
 built-ins/Temporal/PlainDateTime/from/overflow-wrong-type.js

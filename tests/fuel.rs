@@ -278,6 +278,50 @@ fn temporal_plain_date_time_precharges_numeric_and_calendar_strings() {
 }
 
 #[test]
+fn temporal_plain_date_precharges_numeric_and_calendar_strings() {
+    const BUDGET: i64 = 20_000;
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        globalThis.plainDateYearShort = "2000";
+        globalThis.plainDateYearLong = "0".repeat(512) + "2000";
+        globalThis.plainDateCalendarShort = "x";
+        globalThis.plainDateCalendarLong = "x".repeat(512);
+        "#,
+    )
+    .expect("PlainDate fuel fixtures should initialize");
+
+    vm.set_fuel(Some(BUDGET));
+    vm.run("new Temporal.PlainDate(plainDateYearShort, 5, 2);")
+        .expect("short PlainDate field should convert");
+    let short_work = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+
+    vm.set_fuel(Some(BUDGET));
+    vm.run("new Temporal.PlainDate(plainDateYearLong, 5, 2);")
+        .expect("long PlainDate field should convert");
+    let long_work = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+    assert!(long_work >= short_work + 500);
+
+    vm.set_fuel(Some(long_work - 1));
+    let error = vm
+        .run("new Temporal.PlainDate(plainDateYearLong, 5, 2);")
+        .expect_err("N-1 fuel must abort PlainDate numeric field conversion");
+    assert_eq!(error.kind, ruja::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+
+    vm.set_fuel(Some(BUDGET));
+    vm.run("new Temporal.PlainDate(2000, 5, 2, plainDateCalendarShort);")
+        .expect_err("short invalid PlainDate calendar should throw");
+    let short_calendar_work = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+
+    vm.set_fuel(Some(BUDGET));
+    vm.run("new Temporal.PlainDate(2000, 5, 2, plainDateCalendarLong);")
+        .expect_err("long invalid PlainDate calendar should throw");
+    let long_calendar_work = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+    assert!(long_calendar_work >= short_calendar_work + 500);
+}
+
+#[test]
 fn temporal_instant_compare_precharges_each_string_argument() {
     const BUDGET: i64 = 20_000;
     let mut vm = Vm::new().expect("failed to initialize VM");

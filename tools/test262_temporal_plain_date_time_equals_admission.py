@@ -41,7 +41,7 @@ TEMPORAL_PLAIN_DATE_TIME_EQUALS_FEATURES = {
     path: _features(path) for path in TEMPORAL_PLAIN_DATE_TIME_EQUALS_FILES
 }
 
-if len(TEMPORAL_PLAIN_DATE_TIME_EQUALS_FILES) != 39:
+if len(TEMPORAL_PLAIN_DATE_TIME_EQUALS_FILES) != 40:
     raise RuntimeError(
-        "Temporal.PlainDateTime.prototype.equals admission must contain 39 files"
+        "Temporal.PlainDateTime.prototype.equals admission must contain 40 files"
     )

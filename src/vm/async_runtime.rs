@@ -1361,6 +1361,13 @@ impl Vm {
                 .cloned()
                 .unwrap_or(fallback));
         }
+        if intrinsic == "Temporal.PlainDate" {
+            return Ok(self
+                .realm_temporal_plain_date_prototypes
+                .get(&realm.0)
+                .cloned()
+                .unwrap_or(fallback));
+        }
         if intrinsic == "Temporal.PlainDateTime" {
             return Ok(self
                 .realm_temporal_plain_date_time_prototypes

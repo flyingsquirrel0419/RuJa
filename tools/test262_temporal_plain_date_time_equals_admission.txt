@@ -1,4 +1,5 @@
 # Pinned Test262 revision: 9e61c12835c5e4a3bdba93850427e6742c4f64c4
+built-ins/Temporal/PlainDateTime/prototype/equals/argument-plaindate.js
 # Exact supported Temporal.PlainDateTime.prototype.equals surface.
 built-ins/Temporal/PlainDateTime/prototype/equals/argument-number.js
 built-ins/Temporal/PlainDateTime/prototype/equals/argument-object-insufficient-data.js

@@ -44,6 +44,10 @@
   always-throwing `valueOf`, static `from` conversion for branded values, ISO
   property bags, and audited strings, hidden-record `equals`, and static
   lexicographic `compare`, with exact extreme-range validation.
+  Realm-local `Temporal.PlainDate` supports distinct hidden-slot construction,
+  subclassing, calendar ID, all 16 ISO/calendar accessors, `@@toStringTag`,
+  always-throwing `valueOf`, and getter-free midnight conversion through the
+  shared PlainDateTime `from`/`equals`/`compare` boundary.
   Realm-local `Temporal.ZonedDateTime`
   supports hidden-slot construction for UTC/fixed offsets, exact epoch and
   identifier accessors, all ISO civil/calendar/offset accessors, subclassing,
@@ -56,8 +60,9 @@
   option-aware `toString`, `toJSON`, and `valueOf`. ZonedDateTime strings may omit time when followed directly by a
   time-zone annotation. Property-bag
   conversion currently accepts ISO calendars with UTC or minute-precision
-  fixed offsets. Remaining PlainDateTime arithmetic/formatting and conversion methods, Duration
-  conversion/arithmetic, calendar types, named IANA timezone
+  fixed offsets. Remaining PlainDate and PlainDateTime factories,
+  arithmetic/formatting and conversion methods, Duration conversion/arithmetic,
+  calendar sibling types, named IANA timezone
   transitions, the remaining RFC 9557 grammar, and `Temporal.Now` methods
   remain outside the supported boundary.
 - `class`/`extends`/`super`

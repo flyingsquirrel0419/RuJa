@@ -116,7 +116,7 @@ against the hidden kind and never read same-named public properties; errors
 belong to the native function Realm, while constructor result prototypes obey
 `GetPrototypeFromConstructor` and therefore the `newTarget` Realm. Duration
 slots contain no GC references. Namespace installation nevertheless pins the
-prototype, constructor, and twelve getters until all 92 Temporal allocations
+   prototype, constructor, and twelve getters until all 115 Temporal allocations
 are complete, and Realm root/rollback inventories include both new registries.
 
 ```text
@@ -127,6 +127,33 @@ are complete, and Realm root/rollback inventories include both new registries.
 - 선택한 방식: 열 개의 f64 hidden slot을 원형 보존하고, 생성 시 finite/integral·single-sign 검증 후 BigInt normalized-time 계산을 수행한다. Realm별 constructor/prototype과 branded accessors를 기존 Temporal installer에 추가한다.
 - 다른 대안 대신 이 방식을 선택한 이유: ordinary properties는 brand와 비관찰 의미론을 깨고 i64는 명세상 유효한 큰 Number를 거부한다. BigInt 슬롯은 accessor가 원래 Number를 반환하는 계약과 맞지 않으며, 전체 API 동시 구현은 검증 범위를 과도하게 넓힌다.
 - 장점, 단점 및 영향: 큰 필드와 조합 범위, conversion order, cross-Realm/subclass, fuel, GC/OOM 경계가 독립적으로 검증된다. `Duration.from`, 문자열 parsing, balancing, rounding, compare/total은 이 record 위에 후속 구현해야 한다.
+```
+
+## Temporal PlainDate hidden slots
+
+`TemporalKind::PlainDate` is distinct from PlainDateTime and stores a compact
+ISO `(year, month, day)` record plus canonical calendar identifier. Its
+Realm-local constructor converts the three numeric inputs left-to-right,
+canonicalizes the String calendar, validates ISODateWithinLimits at noon, and
+only then resolves the `newTarget` prototype and allocates. Sixteen accessors
+read hidden slots directly; derived ISO calendar values reuse the same civil
+helpers as PlainDateTime.
+
+ToTemporalDateTime recognizes PlainDate after the PlainDateTime and
+ZonedDateTime hidden branches but before generic property-bag collection. It
+copies the hidden date and calendar, validates `overflow`, and creates a
+midnight date-time record without reading shadowed properties. PlainDate's
+noon range and PlainDateTime's midnight range remain separate because the
+minimum valid PlainDate does not have a representable midnight PlainDateTime.
+
+```text
+[Decision Log]
+- 목적과 의도: 날짜 전용 internal-slot identity와 PlainDate-to-PlainDateTime 자정 변환을 명세 record 경계에 맞춘다.
+- 기존 구현 및 제약 조건: 기존 Temporal heap family와 Realm registry는 수동 exhaustive inventory이며 PlainDateTime의 열린 범위는 PlainDate 정오 범위와 끝점이 다르다.
+- 검토한 주요 대안: PlainDateTime kind 재사용, ordinary properties, epoch-day 단일 슬롯, 별도 three-field date kind를 검토했다.
+- 선택한 방식: 독립 PlainDate kind와 Realm constructor/prototype을 추가하고 date validation은 정오, date-time conversion은 자정으로 각각 기존 exact ISO helper를 호출한다.
+- 다른 대안 대신 이 방식을 선택한 이유: 독립 kind만 RequireInternalSlot branding을 보존하고 두 범위 검사를 분리해야 극한 날짜에서 과도한 허용이나 거부를 피한다.
+- 장점, 단점 및 영향: hidden getter 비관찰, Realm/subclass, fuel, GC rollback과 downstream converter 공유가 고정된다. installer는 114 maximum pins와 115 allocations를 갖는다.
 ```
 
 ## Temporal PlainDateTime hidden slots
@@ -144,7 +171,7 @@ range whose endpoints are one day beyond the Instant limits. The constructor,
 prototype, 22 accessors, and `valueOf` are Realm-local roots. Accessors read
 hidden slots directly, derived ISO values reuse the ZonedDateTime civil helper,
 and creation revalidates the record before pinning the selected prototype.
-Namespace installation now has 92 maximum live pins and 93 allocation
+Namespace installation now has 114 maximum live pins and 115 allocation
 boundaries.
 
 ```text

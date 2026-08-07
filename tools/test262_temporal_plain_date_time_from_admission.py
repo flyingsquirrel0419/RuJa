@@ -18,6 +18,7 @@ def _features(path):
     if path.endswith((
         "/argument-propertybag-calendar-wrong-type.js",
         "/argument-wrong-type.js",
+        "/options-wrong-type.js",
     )):
         features.update({"BigInt", "Symbol"})
     if path.endswith((
@@ -40,5 +41,5 @@ TEMPORAL_PLAIN_DATE_TIME_FROM_FEATURES = {
     path: _features(path) for path in TEMPORAL_PLAIN_DATE_TIME_FROM_FILES
 }
 
-if len(TEMPORAL_PLAIN_DATE_TIME_FROM_FILES) != 65:
-    raise RuntimeError("Temporal.PlainDateTime.from admission must contain 65 files")
+if len(TEMPORAL_PLAIN_DATE_TIME_FROM_FILES) != 69:
+    raise RuntimeError("Temporal.PlainDateTime.from admission must contain 69 files")

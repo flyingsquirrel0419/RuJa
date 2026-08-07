@@ -25154,6 +25154,136 @@ fn temporal_duration_constructor_and_getters_honor_function_realms() {
 }
 
 #[test]
+fn temporal_plain_date_core_uses_distinct_hidden_iso_slots() {
+    assert_eq!(
+        run(r#"
+            var value = new Temporal.PlainDate(1976.9, 11.8, 18.7, 'ISO8601');
+            class Custom extends Temporal.PlainDate {}
+            var custom = new Custom(2000, 2, 29);
+            var yearGetter = Object.getOwnPropertyDescriptor(Temporal.PlainDate.prototype, 'year').get;
+            Object.defineProperty(value, 'year', { get: function () { throw new Error('observed'); } });
+            var distinctBrand = false;
+            try {
+              Object.getOwnPropertyDescriptor(Temporal.PlainDateTime.prototype, 'year').get.call(value);
+            } catch (error) { distinctBrand = error instanceof TypeError; }
+            [
+              Temporal.PlainDate.name,
+              Temporal.PlainDate.length,
+              yearGetter.call(value), value.month, value.monthCode, value.day,
+              value.calendarId, value.dayOfWeek, value.dayOfYear,
+              value.weekOfYear, value.yearOfWeek, value.daysInWeek,
+              value.daysInMonth, value.daysInYear, value.monthsInYear,
+              value.inLeapYear, value.era, value.eraYear,
+              Object.prototype.toString.call(value),
+              Object.getPrototypeOf(custom) === Custom.prototype,
+              distinctBrand
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "PlainDate|3|1976|11|M11|18|iso8601|4|323|47|1976|7|30|366|12|true|||[object Temporal.PlainDate]|true|true"
+        ))
+    );
+}
+
+#[test]
+fn temporal_plain_date_constructor_preserves_order_range_and_function_realm() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            function field(name, value) {
+              return { valueOf: function () { log.push(name); return value; } };
+            }
+            var converted = new Temporal.PlainDate(
+              field('year', 2000), field('month', 5), field('day', 2), 'ISO8601'
+            );
+            var min = new Temporal.PlainDate(-271821, 4, 19);
+            var max = new Temporal.PlainDate(275760, 9, 13);
+            var calendarBeforeRange = false;
+            try { new Temporal.PlainDate(2000, 13, 1, {}); }
+            catch (error) { calendarBeforeRange = error instanceof TypeError; }
+
+            var other = $262.createRealm().global;
+            var foreign = new other.Temporal.PlainDate(2001, 6, 3);
+            var getter = Object.getOwnPropertyDescriptor(other.Temporal.PlainDate.prototype, 'day').get;
+            var getterRealm;
+            var constructorRealm;
+            try { getter.call({}); } catch (error) {
+              getterRealm = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            try { new other.Temporal.PlainDate(2000, 2, 30); } catch (error) {
+              constructorRealm = error instanceof other.RangeError && !(error instanceof RangeError);
+            }
+            var NewTarget = function () {}.bind(null);
+            Object.defineProperty(NewTarget, 'prototype', { value: null });
+            var fallback = Reflect.construct(other.Temporal.PlainDate, [2002, 7, 4], NewTarget);
+            [
+              log.join(','), converted.day,
+              min.day, max.day, calendarBeforeRange,
+              getter.call(foreign), getterRealm, constructorRealm,
+              Object.getPrototypeOf(foreign) === other.Temporal.PlainDate.prototype,
+              Object.getPrototypeOf(fallback) === Temporal.PlainDate.prototype,
+              fallback.year
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "year,month,day|2|19|13|true|3|true|true|true|true|2002"
+        ))
+    );
+
+    for source in [
+        "Temporal.PlainDate(1970, 1, 1)",
+        "new Temporal.PlainDate()",
+        "new Temporal.PlainDate(1970, 1)",
+        "new Temporal.PlainDate(Symbol(), 1, 1)",
+        "new Temporal.PlainDate(1n, 1, 1)",
+        "new Temporal.PlainDate(NaN, 1, 1)",
+        "new Temporal.PlainDate(1970, 2, 29)",
+        "new Temporal.PlainDate(-271821, 4, 18)",
+        "new Temporal.PlainDate(275760, 9, 14)",
+        "Object.getOwnPropertyDescriptor(Temporal.PlainDate.prototype, 'year').get.call({})",
+        "new Temporal.PlainDate.prototype.valueOf()",
+    ] {
+        let error = run_err(source);
+        assert!(
+            error.contains("TypeError") || error.contains("RangeError"),
+            "{source}: {error}"
+        );
+    }
+}
+
+#[test]
+fn temporal_plain_date_time_conversion_uses_plain_date_slots_at_midnight() {
+    assert_eq!(
+        run(r#"
+            var date = new Temporal.PlainDate(2000, 5, 2, 'ISO8601');
+            var reads = 0;
+            for (var key of ['calendar', 'day', 'hour', 'microsecond', 'millisecond',
+                             'minute', 'month', 'monthCode', 'nanosecond', 'second', 'year']) {
+              Object.defineProperty(date, key, {
+                get: function () { reads++; throw new Error('observed'); }
+              });
+            }
+            var optionReads = 0;
+            var options = {};
+            Object.defineProperty(options, 'overflow', {
+              get: function () { optionReads++; return 'reject'; }
+            });
+            var converted = Temporal.PlainDateTime.from(date, options);
+            var midnight = new Temporal.PlainDateTime(2000, 5, 2);
+            [
+              converted.year, converted.month, converted.day,
+              converted.hour, converted.minute, converted.second,
+              converted.millisecond, converted.microsecond, converted.nanosecond,
+              converted.calendarId, reads, optionReads,
+              midnight.equals(date),
+              Temporal.PlainDateTime.compare(date, midnight)
+            ].join('|');
+        "#),
+        Value::String(Arc::from("2000|5|2|0|0|0|0|0|0|iso8601|0|1|true|0"))
+    );
+}
+
+#[test]
 fn temporal_plain_date_time_core_uses_hidden_iso_slots() {
     assert_eq!(
         run(r#"
