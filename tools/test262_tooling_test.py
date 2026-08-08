@@ -145,6 +145,11 @@ from test262_temporal_duration_core_admission import (
     TEMPORAL_DURATION_CORE_FILES,
 )
 from test262_temporal_plain_time_admission import (
+    TEMPORAL_PLAIN_TIME_COMPARE_FEATURES,
+    TEMPORAL_PLAIN_TIME_COMPARE_FILES,
+    TEMPORAL_PLAIN_TIME_COMPARE_FLAGS,
+    TEMPORAL_PLAIN_TIME_COMPARE_INCLUDES,
+    TEMPORAL_PLAIN_TIME_COMPARE_NEGATIVE,
     TEMPORAL_PLAIN_TIME_CORE_FEATURES,
     TEMPORAL_PLAIN_TIME_CORE_FILES,
     TEMPORAL_PLAIN_TIME_CORE_FLAGS,
@@ -14286,8 +14291,16 @@ class ClassSubclassBuiltinAdmissionTests(unittest.TestCase):
                 TEMPORAL_PLAIN_TIME_EQUALS_NEGATIVE,
                 "temporal_plain_time_equals",
             ),
+            (
+                TEMPORAL_PLAIN_TIME_COMPARE_FILES,
+                TEMPORAL_PLAIN_TIME_COMPARE_FEATURES,
+                TEMPORAL_PLAIN_TIME_COMPARE_INCLUDES,
+                TEMPORAL_PLAIN_TIME_COMPARE_FLAGS,
+                TEMPORAL_PLAIN_TIME_COMPARE_NEGATIVE,
+                "temporal_plain_time_compare",
+            ),
         )
-        self.assertEqual(tuple(len(cohort[0]) for cohort in cohorts), (40, 51, 7, 31))
+        self.assertEqual(tuple(len(cohort[0]) for cohort in cohorts), (40, 51, 7, 31, 32))
         for index, cohort in enumerate(cohorts):
             files, features, includes, flags, negative, _ = cohort
             self.assertEqual(set(features), files)
@@ -14344,6 +14357,10 @@ class ClassSubclassBuiltinAdmissionTests(unittest.TestCase):
                         path.relative_to(test_root).as_posix()
                         for path in (plain_time / "prototype/equals").glob("*.js")
                     },
+                    {
+                        path.relative_to(test_root).as_posix()
+                        for path in (plain_time / "compare").glob("*.js")
+                    },
                 )
             except OSError:
                 return None
@@ -14394,6 +14411,7 @@ class ClassSubclassBuiltinAdmissionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             future = root / "test/built-ins/Temporal/PlainTime/from/future.js"
+            compare_future = root / "test/built-ins/Temporal/PlainTime/compare/future.js"
             outside = root / "test/built-ins/Temporal/Other/from/basic.js"
             for tool in (test262_runner, test262_analyze):
                 original_root = tool.TEST262
@@ -14407,12 +14425,15 @@ class ClassSubclassBuiltinAdmissionTests(unittest.TestCase):
                                 getattr(tool, prefix + "_features")(path),
                                 features[relative],
                             )
-                        for path in (future, outside, None, object()):
+                        for path in (future, compare_future, outside, None, object()):
                             self.assertFalse(getattr(tool, prefix + "_path")(path))
                             self.assertEqual(
                                 getattr(tool, prefix + "_features")(path), frozenset()
                             )
                     self.assertTrue(tool.should_skip({"features": ["Temporal"]}, future))
+                    self.assertTrue(
+                        tool.should_skip({"features": ["Temporal"]}, compare_future)
+                    )
                     self.assertTrue(tool.should_skip({"features": ["Temporal"]}, outside))
                 finally:
                     tool.TEST262 = original_root

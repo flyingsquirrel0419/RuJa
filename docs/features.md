@@ -331,11 +331,13 @@
   rejects UTC-designator Strings and creates the result in the method Realm
 - **Temporal time core**: Realm-local `Temporal.PlainTime` construction stores
   six immutable ISO time fields in hidden slots, honors subclass/newTarget
-  prototypes, and exposes branded accessors, `@@toStringTag`, `from`, `equals`,
-  and `valueOf`. `from` and `equals` share ordered property-bag, String,
+  prototypes, and exposes branded accessors, `@@toStringTag`, `from`, static
+  `compare`, `equals`, and `valueOf`. `from`, `compare`, and `equals` share
+  ordered property-bag, String,
   PlainDateTime, ZonedDateTime, and cross-Realm PlainTime conversion without
   observing public Temporal accessors. Fresh results use the method Realm;
-  equality returns without allocating a heap result
+  equality and six-field lexicographic comparison return without allocating a
+  heap result
 - **RegExp**: literals `/pattern/flags` with `test`, `exec`, `match`, `source`,
   `flags`, `d`-flag match indices, forward lookahead, backward lookbehind,
   legacy quantified lookahead, Unicode named captures/backreferences,

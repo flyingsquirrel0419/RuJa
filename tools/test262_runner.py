@@ -127,6 +127,8 @@ try:
         TEMPORAL_DURATION_CORE_FILES,
     )
     from test262_temporal_plain_time_admission import (
+        TEMPORAL_PLAIN_TIME_COMPARE_FEATURES,
+        TEMPORAL_PLAIN_TIME_COMPARE_FILES,
         TEMPORAL_PLAIN_TIME_CORE_FEATURES,
         TEMPORAL_PLAIN_TIME_CORE_FILES,
         TEMPORAL_PLAIN_TIME_EQUALS_FEATURES,
@@ -524,6 +526,8 @@ except ModuleNotFoundError:
         TEMPORAL_DURATION_CORE_FILES,
     )
     from tools.test262_temporal_plain_time_admission import (
+        TEMPORAL_PLAIN_TIME_COMPARE_FEATURES,
+        TEMPORAL_PLAIN_TIME_COMPARE_FILES,
         TEMPORAL_PLAIN_TIME_CORE_FEATURES,
         TEMPORAL_PLAIN_TIME_CORE_FILES,
         TEMPORAL_PLAIN_TIME_EQUALS_FEATURES,
@@ -2839,6 +2843,14 @@ def temporal_plain_time_equals_features(path):
         path, TEMPORAL_PLAIN_TIME_EQUALS_FILES, TEMPORAL_PLAIN_TIME_EQUALS_FEATURES
     )
 
+def temporal_plain_time_compare_path(path):
+    return _temporal_plain_time_path(path, TEMPORAL_PLAIN_TIME_COMPARE_FILES)
+
+def temporal_plain_time_compare_features(path):
+    return _temporal_plain_time_features(
+        path, TEMPORAL_PLAIN_TIME_COMPARE_FILES, TEMPORAL_PLAIN_TIME_COMPARE_FEATURES
+    )
+
 def temporal_plain_date_core_path(path):
     if path is None:
         return False
@@ -4945,6 +4957,8 @@ def should_skip(meta, path=None):
         feats.difference_update(temporal_plain_time_value_of_features(path))
     if path is not None and temporal_plain_time_equals_path(path):
         feats.difference_update(temporal_plain_time_equals_features(path))
+    if path is not None and temporal_plain_time_compare_path(path):
+        feats.difference_update(temporal_plain_time_compare_features(path))
     if path is not None and temporal_plain_date_core_path(path):
         feats.difference_update(temporal_plain_date_core_features(path))
     if path is not None and temporal_plain_date_from_path(path):

@@ -23,6 +23,9 @@ TEMPORAL_PLAIN_TIME_VALUE_OF_FILES = _read_manifest(
 TEMPORAL_PLAIN_TIME_EQUALS_FILES = _read_manifest(
     "test262_temporal_plain_time_equals_admission.txt"
 )
+TEMPORAL_PLAIN_TIME_COMPARE_FILES = _read_manifest(
+    "test262_temporal_plain_time_compare_admission.txt"
+)
 
 _CORE_TEMPORAL_HELPERS = frozenset({
     "argument-convert.js",
@@ -83,6 +86,12 @@ _EQUALS_ARROW = frozenset({
     "argument-string-with-utc-designator.js",
     "year-zero.js",
 })
+_COMPARE_ARROW = frozenset({
+    "argument-string-no-implicit-midnight.js",
+    "argument-string-time-designator-required-for-disambiguation.js",
+    "argument-string-with-time-designator.js",
+    "argument-string-with-utc-designator.js",
+})
 
 
 def _features(path, cohort):
@@ -109,6 +118,13 @@ def _features(path, cohort):
             features.update(("BigInt", "Symbol"))
         elif name == "branding.js":
             features.add("Symbol")
+        if name == "not-a-constructor.js":
+            features.add("Reflect.construct")
+    elif cohort == "compare":
+        if name in _COMPARE_ARROW:
+            features.add("arrow-function")
+        if name == "argument-wrong-type.js":
+            features.update(("BigInt", "Symbol"))
         if name == "not-a-constructor.js":
             features.add("Reflect.construct")
     return frozenset(features)
@@ -152,6 +168,13 @@ def _includes(path, cohort):
             includes.add("propertyHelper.js")
         if name == "not-a-constructor.js":
             includes.add("isConstructor.js")
+    elif cohort == "compare":
+        if name == "argument-string-time-designator-required-for-disambiguation.js":
+            includes.add("temporalHelpers.js")
+        if name in {"length.js", "name.js", "prop-desc.js"}:
+            includes.add("propertyHelper.js")
+        if name == "not-a-constructor.js":
+            includes.add("isConstructor.js")
     return frozenset(includes)
 
 
@@ -188,12 +211,19 @@ def _metadata(files, cohort):
     TEMPORAL_PLAIN_TIME_EQUALS_FLAGS,
     TEMPORAL_PLAIN_TIME_EQUALS_NEGATIVE,
 ) = _metadata(TEMPORAL_PLAIN_TIME_EQUALS_FILES, "equals")
+(
+    TEMPORAL_PLAIN_TIME_COMPARE_FEATURES,
+    TEMPORAL_PLAIN_TIME_COMPARE_INCLUDES,
+    TEMPORAL_PLAIN_TIME_COMPARE_FLAGS,
+    TEMPORAL_PLAIN_TIME_COMPARE_NEGATIVE,
+) = _metadata(TEMPORAL_PLAIN_TIME_COMPARE_FILES, "compare")
 
 for files, count, label in (
     (TEMPORAL_PLAIN_TIME_CORE_FILES, 40, "core"),
     (TEMPORAL_PLAIN_TIME_FROM_FILES, 51, "from"),
     (TEMPORAL_PLAIN_TIME_VALUE_OF_FILES, 7, "valueOf"),
     (TEMPORAL_PLAIN_TIME_EQUALS_FILES, 31, "equals"),
+    (TEMPORAL_PLAIN_TIME_COMPARE_FILES, 32, "compare"),
 ):
     if len(files) != count:
         raise RuntimeError(f"Temporal.PlainTime {label} admission must contain {count} files")

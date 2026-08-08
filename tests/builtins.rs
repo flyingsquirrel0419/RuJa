@@ -25447,6 +25447,96 @@ fn temporal_plain_time_from_preserves_conversion_order_and_method_realm() {
 }
 
 #[test]
+fn temporal_plain_time_compare_is_lexicographic_ordered_and_realm_correct() {
+    assert_eq!(
+        run(r#"
+            var units = ['hour', 'minute', 'second', 'millisecond', 'microsecond', 'nanosecond'];
+            var signs = [];
+            for (var index = 0; index < units.length; index++) {
+              var earlier = [1, 2, 3, 4, 5, 6];
+              var later = [1, 2, 3, 4, 5, 6];
+              earlier[index] = earlier[index] - 1;
+              signs.push(Temporal.PlainTime.compare(
+                new Temporal.PlainTime(earlier[0], earlier[1], earlier[2], earlier[3], earlier[4], earlier[5]),
+                new Temporal.PlainTime(later[0], later[1], later[2], later[3], later[4], later[5])
+              ));
+              signs.push(Temporal.PlainTime.compare(
+                new Temporal.PlainTime(later[0], later[1], later[2], later[3], later[4], later[5]),
+                new Temporal.PlainTime(earlier[0], earlier[1], earlier[2], earlier[3], earlier[4], earlier[5])
+              ));
+            }
+
+            var hidden = new Temporal.PlainTime(7, 8, 9, 10, 11, 12);
+            for (var key of units) {
+              Object.defineProperty(hidden, key, {
+                get: function () { throw new Error('hidden getter observed'); }
+              });
+            }
+            var hiddenEqual = Temporal.PlainTime.compare(hidden, '07:08:09.010011012');
+            var fromDateTime = Temporal.PlainTime.compare(
+              new Temporal.PlainDateTime(2000, 5, 2, 7, 8, 9, 10, 11, 12), hidden
+            );
+            var fromZone = Temporal.PlainTime.compare(
+              new Temporal.ZonedDateTime(3661001001001n, '-00:02'), '00:59:01.001001001'
+            );
+
+            var order = [];
+            function bag(label, hour) {
+              var value = {};
+              for (var key of ['hour', 'microsecond', 'millisecond', 'minute', 'nanosecond', 'second']) {
+                Object.defineProperty(value, key, {
+                  get: (function (name) { return function () {
+                    order.push(label + ' get ' + name);
+                    return name === 'hour' ? hour : 0;
+                  }; })(key)
+                });
+              }
+              return value;
+            }
+            var ordered = Temporal.PlainTime.compare.call(null, bag('one', 1), bag('two', 2));
+            var secondObserved = false;
+            var marker = new Error('first');
+            var caughtMarker = false;
+            try {
+              Temporal.PlainTime.compare({ get hour() { throw marker; } }, {
+                get hour() { secondObserved = true; return 0; }
+              });
+            } catch (error) { caughtMarker = error === marker; }
+
+            var other = $262.createRealm().global;
+            var realmRangeError = false;
+            try { other.Temporal.PlainTime.compare('not a time', '00:00'); }
+            catch (error) {
+              realmRangeError = error instanceof other.RangeError && !(error instanceof RangeError);
+            }
+            var realmTypeError = false;
+            try { other.Temporal.PlainTime.compare(1, '00:00'); }
+            catch (error) {
+              realmTypeError = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            var foreignInput = Temporal.PlainTime.compare(
+              new other.Temporal.PlainTime(7, 8, 9, 10, 11, 12), hidden
+            );
+            var nonconstructable = false;
+            try { new Temporal.PlainTime.compare('00:00', '00:00'); }
+            catch (error) { nonconstructable = error instanceof TypeError; }
+
+            [
+              signs.join(','),
+              Object.is(Temporal.PlainTime.compare('12:34', '12:34'), +0),
+              hiddenEqual, fromDateTime, fromZone, ordered,
+              order.join(','), caughtMarker, secondObserved,
+              realmRangeError, realmTypeError, foreignInput, nonconstructable,
+              Temporal.PlainTime.compare.name, Temporal.PlainTime.compare.length
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "-1,1,-1,1,-1,1,-1,1,-1,1,-1,1|true|0|0|0|-1|one get hour,one get microsecond,one get millisecond,one get minute,one get nanosecond,one get second,two get hour,two get microsecond,two get millisecond,two get minute,two get nanosecond,two get second|true|false|true|true|0|true|compare|2"
+        ))
+    );
+}
+
+#[test]
 fn temporal_plain_date_from_converts_supported_inputs_without_observing_slots() {
     assert_eq!(
         run(r#"

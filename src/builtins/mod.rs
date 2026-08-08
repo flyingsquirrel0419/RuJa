@@ -6290,7 +6290,7 @@ pub(crate) fn install_temporal_namespace_in_env(
     global: Option<&Value>,
     object_proto: Value,
 ) -> error::Result<Value> {
-    vm.try_reserve_gc_pins(131)?;
+    vm.try_reserve_gc_pins(132)?;
     let mut pin_count = 0;
     let result = (|| {
         let instant_prototype = Value::Object(vm.alloc(HeapObj::Object(ObjectData {
@@ -7003,6 +7003,13 @@ pub(crate) fn install_temporal_namespace_in_env(
             env,
         )?);
         pin_count += vm.pin(&plain_time_equals);
+        let plain_time_compare = Value::Object(vm.new_native_function_in_env_with_gc_retry(
+            "compare",
+            temporal_plain_time_compare,
+            2,
+            env,
+        )?);
+        pin_count += vm.pin(&plain_time_compare);
 
         let Value::Object(instant_constructor_index) = instant_constructor.clone() else {
             unreachable!()
@@ -7288,6 +7295,10 @@ pub(crate) fn install_temporal_namespace_in_env(
                 .props
                 .lock()
                 .insert(PropertyKey::from("from"), data_prop(plain_time_from));
+            function
+                .props
+                .lock()
+                .insert(PropertyKey::from("compare"), data_prop(plain_time_compare));
         });
         let Value::Object(plain_time_prototype_index) = plain_time_prototype.clone() else {
             unreachable!()
@@ -9791,6 +9802,36 @@ fn temporal_plain_time_equals(
     let one = temporal_plain_time_slots(vm, this)?;
     let two = to_temporal_plain_time_fields(vm, args.first().unwrap_or(&Value::Undefined))?;
     Ok(Value::Bool(one == two))
+}
+
+fn temporal_plain_time_compare(
+    vm: &mut Vm,
+    args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
+    let one = to_temporal_plain_time_fields(vm, args.first().unwrap_or(&Value::Undefined))?;
+    let two = to_temporal_plain_time_fields(vm, args.get(1).unwrap_or(&Value::Undefined))?;
+    let result = match (
+        one.hour,
+        one.minute,
+        one.second,
+        one.millisecond,
+        one.microsecond,
+        one.nanosecond,
+    )
+        .cmp(&(
+            two.hour,
+            two.minute,
+            two.second,
+            two.millisecond,
+            two.microsecond,
+            two.nanosecond,
+        )) {
+        std::cmp::Ordering::Less => -1.0,
+        std::cmp::Ordering::Equal => 0.0,
+        std::cmp::Ordering::Greater => 1.0,
+    };
+    Ok(Value::Number(result))
 }
 
 fn temporal_time_record_or_midnight(

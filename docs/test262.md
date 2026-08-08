@@ -14738,33 +14738,33 @@ locale files stay blocked until that formatter layer is implemented.
 - 장점, 단점 및 영향: JSON 지원 수치는 독립적으로 재현되고 locale 미지원 범위와 선행 아키텍처 요구가 명확해진다. DateTimeFormat 도입 후 direct/Intl402 21개를 intended assertion 기준으로 다시 측정해야 한다.
 ```
 
-## Temporal.PlainTime core, from, valueOf, and equals
+## Temporal.PlainTime core, from, valueOf, equals, and compare
 
 At pinned Test262 revision
-`9e61c12835c5e4a3bdba93850427e6742c4f64c4`, four disjoint exact manifests
+`9e61c12835c5e4a3bdba93850427e6742c4f64c4`, five disjoint exact manifests
 cover the complete currently implemented PlainTime surface: constructor,
 prototype identity/tag, and six accessor directories are **40/0/0**; static
-`from` is **51/0/0**; prototype `valueOf` is **7/0/0**; and prototype `equals`
-is **31/0/0**. The combined dedicated CI boundary therefore requires
-**129 pass / 0 fail / 0 skip**.
+`from` is **51/0/0**; prototype `valueOf` is **7/0/0**; prototype `equals` is
+**31/0/0**; and static `compare` is **32/0/0**. The combined dedicated CI
+boundary therefore requires **161 pass / 0 fail / 0 skip**.
 
 One shared admission module freezes features, includes, flags, and negative
 metadata for every path. Runner and analyzer use exact membership rather than
-a PlainTime prefix, so unimplemented compare, arithmetic, difference,
-rounding, mutation, and serialization directories remain behind the broad
-Temporal gate. Tooling verifies all four live corpus complements, mutual
+a PlainTime prefix, so unimplemented arithmetic, difference, rounding,
+mutation, and serialization directories remain behind the broad Temporal
+gate. Tooling verifies all five live corpus complements, mutual
 disjointness, future/outside paths, and unavailable or unreadable corpus roots.
 The diagnostic re-runs every requested path and rejects per-file result drift
 before reporting its aggregate.
 
 ```text
 [Decision Log]
-- 목적과 의도: real PlainTime hidden-slot/ToTemporalTime 구현으로 도달 가능한 complete 129-file 표면을 method별로 정확히 공개한다.
-- 기존 구현 및 제약 조건: broad Temporal gate가 PlainTime 493개 전체를 숨겼고 constructor shape 한 건은 intrinsic 부재 상태에서도 false positive였다. 이번 구현은 core/from/valueOf/equals만 완결하며 나머지 메서드는 없다.
-- 검토한 주요 대안: PlainTime directory prefix admission, 네 독립 metadata 모듈, forced pass 자동 수용, 네 exact manifest와 shared metadata/diagnostic을 검토했다.
-- 선택한 방식: core 40, from 51, valueOf 7, equals 31을 disjoint manifest로 고정하고 runner/analyzer가 같은 map을 소비한다. live selection은 core의 top-level/identity/accessor 파일과 세 complete method directory를 각각 대조한다.
-- 다른 대안 대신 이 방식을 선택한 이유: prefix는 364개 미구현 sibling과 미래 파일을 자동 허용하고 forced pass에는 선행 오류 false positive가 섞일 수 있다. 공유 metadata는 중복 없이도 method별 accounting을 유지한다.
-- 장점, 단점 및 영향: exact/forced 129/0/0, metadata drift, malformed/future path, corpus PermissionError가 재현 가능하다. 새 PlainTime 메서드는 구현과 complete directory audit 후 별도 manifest로 추가해야 한다.
+- 목적과 의도: real PlainTime hidden-slot/ToTemporalTime 구현으로 도달 가능한 complete 161-file 표면을 method별로 정확히 공개한다.
+- 기존 구현 및 제약 조건: broad Temporal gate가 PlainTime 493개 전체를 숨겼고 constructor shape 한 건과 compare 두 건은 intrinsic/method 부재 상태에서도 false positive가 가능했다. 이번 구현은 core/from/valueOf/equals/compare만 완결하며 나머지 메서드는 없다.
+- 검토한 주요 대안: PlainTime directory prefix admission, 다섯 독립 metadata 모듈, forced pass 자동 수용, 다섯 exact manifest와 shared metadata/diagnostic을 검토했다.
+- 선택한 방식: core 40, from 51, valueOf 7, equals 31, compare 32를 disjoint manifest로 고정하고 runner/analyzer가 같은 map을 소비한다. live selection은 core의 top-level/identity/accessor 파일과 네 complete method directory를 각각 대조한다.
+- 다른 대안 대신 이 방식을 선택한 이유: prefix는 332개 미구현 sibling과 미래 파일을 자동 허용하고 forced pass에는 compare 부재 상태의 `argument-number.js`와 `not-a-constructor.js` 같은 선행 오류 false positive가 섞일 수 있다. 공유 metadata는 중복 없이도 method별 accounting을 유지한다.
+- 장점, 단점 및 영향: exact/forced 161/0/0, metadata drift, malformed/future path, corpus PermissionError가 재현 가능하다. pinned corpus 전체 검색에서 compare의 외부 호출자는 없었다. 새 PlainTime 메서드는 구현과 complete directory audit 후 별도 manifest로 추가해야 한다.
 ```
 
 ## Temporal.PlainDate.prototype.toPlainDateTime

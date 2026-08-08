@@ -91,12 +91,13 @@ jobs:
               tools/test262_temporal_plain_time_core_admission.txt \
               tools/test262_temporal_plain_time_from_admission.txt \
               tools/test262_temporal_plain_time_value_of_admission.txt \
-              tools/test262_temporal_plain_time_equals_admission.txt
+              tools/test262_temporal_plain_time_equals_admission.txt \
+              tools/test262_temporal_plain_time_compare_admission.txt
           )
           TEST262="$GITHUB_WORKSPACE/test262" \
             python3 tools/test262_temporal_plain_time_diagnostic.py \
             "${files[@]}" | tee temporal_plain_time_result.txt
-          grep -q '^RATE=100.0 PASS=129 FAIL=0 SKIP=0 TOTAL=129 RAN=129$' \
+          grep -q '^RATE=100.0 PASS=161 FAIL=0 SKIP=0 TOTAL=161 RAN=161$' \
             temporal_plain_time_result.txt
       - name: Run exact PlainDate.toPlainDateTime admissions
         run: |

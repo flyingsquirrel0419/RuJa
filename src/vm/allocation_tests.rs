@@ -482,6 +482,33 @@ fn temporal_namespace_installation_restores_roots_after_plain_time_prototype_fai
 }
 
 #[test]
+fn temporal_namespace_installation_restores_roots_after_plain_time_compare_failure() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.gc();
+    let original = vm.get_global("Temporal");
+    let baseline_pins = vm.gc_pins.len();
+    let baseline_live = vm.heap.live_count();
+    let baseline_registries = realm_registry_counts(&vm);
+    let global = vm.global;
+    let object_proto = vm.object_proto.clone();
+    // The first 130 allocations fit; PlainTime.compare is allocation 131.
+    vm.set_max_heap_objects(Some(baseline_live + 130));
+
+    let result =
+        crate::builtins::install_temporal_namespace_in_env(&mut vm, global, None, object_proto);
+
+    vm.set_max_heap_objects(None);
+    let error = result.expect_err("PlainTime.compare allocation must hit the cap");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(error.message, "heap limit exceeded");
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.get_global("Temporal"), original);
+    assert_eq!(realm_registry_counts(&vm), baseline_registries);
+    vm.gc();
+    assert_eq!(vm.heap.live_count(), baseline_live);
+}
+
+#[test]
 fn temporal_namespace_installation_covers_every_allocation_boundary() {
     let mut vm = Vm::new().expect("failed to initialize VM");
     vm.gc();
@@ -490,9 +517,9 @@ fn temporal_namespace_installation_covers_every_allocation_boundary() {
     let baseline_live = vm.heap.live_count();
     let global = vm.global;
 
-    // Allocations 18 through 132 cover the method/accessor batches and the
+    // Allocations 18 through 133 cover the method/accessor batches and the
     // two namespace objects that must publish only after the batch succeeds.
-    for extra_capacity in 17..132 {
+    for extra_capacity in 17..133 {
         vm.set_max_heap_objects(Some(baseline_live + extra_capacity));
         let object_proto = vm.object_proto.clone();
         let result =
@@ -513,16 +540,16 @@ fn temporal_namespace_installation_covers_every_allocation_boundary() {
         );
     }
 
-    vm.set_max_heap_objects(Some(baseline_live + 132));
+    vm.set_max_heap_objects(Some(baseline_live + 133));
     let object_proto = vm.object_proto.clone();
     let temporal =
         crate::builtins::install_temporal_namespace_in_env(&mut vm, global, None, object_proto)
-            .expect("exact 132-object capacity must install the complete namespace");
+            .expect("exact 133-object capacity must install the complete namespace");
     vm.set_max_heap_objects(None);
     assert_eq!(vm.gc_pins.len(), baseline_pins);
     assert_eq!(vm.get_global("Temporal"), temporal);
     assert_eq!(
-        vm.run("typeof Temporal.PlainDate === 'function' && typeof Temporal.PlainDate.from === 'function' && typeof Temporal.PlainDate.compare === 'function' && typeof Temporal.PlainDate.prototype.equals === 'function' && typeof Temporal.PlainDate.prototype.toPlainDateTime === 'function' && typeof Temporal.PlainDate.prototype.toString === 'function' && typeof Temporal.PlainDate.prototype.toJSON === 'function' && typeof Temporal.PlainTime === 'function' && typeof Temporal.PlainTime.from === 'function' && typeof Temporal.PlainTime.prototype.equals === 'function' && typeof Temporal.PlainTime.prototype.valueOf === 'function' && typeof Temporal.PlainDateTime.compare === 'function' && typeof Temporal.PlainDateTime.prototype.equals")
+        vm.run("typeof Temporal.PlainDate === 'function' && typeof Temporal.PlainDate.from === 'function' && typeof Temporal.PlainDate.compare === 'function' && typeof Temporal.PlainDate.prototype.equals === 'function' && typeof Temporal.PlainDate.prototype.toPlainDateTime === 'function' && typeof Temporal.PlainDate.prototype.toString === 'function' && typeof Temporal.PlainDate.prototype.toJSON === 'function' && typeof Temporal.PlainTime === 'function' && typeof Temporal.PlainTime.from === 'function' && typeof Temporal.PlainTime.compare === 'function' && typeof Temporal.PlainTime.prototype.equals === 'function' && typeof Temporal.PlainTime.prototype.valueOf === 'function' && typeof Temporal.PlainDateTime.compare === 'function' && typeof Temporal.PlainDateTime.prototype.equals")
             .expect("installed namespace should remain usable"),
         Value::String(Arc::from("function"))
     );
@@ -662,6 +689,28 @@ fn temporal_plain_time_equals_returns_without_heap_allocation() {
         .expect("PlainTime.equals should not allocate a result object");
     vm.set_max_heap_objects(None);
     assert_eq!(result, Value::Bool(true));
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.heap.live_count(), baseline_live);
+}
+
+#[test]
+fn temporal_plain_time_compare_returns_without_heap_allocation() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        "globalThis.plainTimeCompareOne = new Temporal.PlainTime(12, 34, 56); \
+         globalThis.plainTimeCompareTwo = new Temporal.PlainTime(12, 34, 57);",
+    )
+    .expect("PlainTime.compare fixtures should initialize");
+    vm.gc();
+    let baseline_pins = vm.gc_pins.len();
+    let baseline_live = vm.heap.live_count();
+
+    vm.set_max_heap_objects(Some(baseline_live));
+    let result = vm
+        .run("Temporal.PlainTime.compare(plainTimeCompareOne, plainTimeCompareTwo);")
+        .expect("PlainTime.compare should not allocate a result object");
+    vm.set_max_heap_objects(None);
+    assert_eq!(result, Value::Number(-1.0));
     assert_eq!(vm.gc_pins.len(), baseline_pins);
     assert_eq!(vm.heap.live_count(), baseline_live);
 }

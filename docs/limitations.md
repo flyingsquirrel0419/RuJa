@@ -41,10 +41,11 @@ The following resource limits are enforced:
   overstate locale support.
   Realm-local `%Temporal.PlainTime%` supports six-field hidden-slot
   construction, subclassing, branded accessors, `@@toStringTag`, static
-  `from`, hidden-record `equals`, and always-throwing `valueOf`. Conversion
+  `from` and lexicographic `compare`, hidden-record `equals`, and
+  always-throwing `valueOf`. Conversion
   accepts branded PlainTime/PlainDateTime/ZonedDateTime values, ordered time
-  property bags, and the audited time String grammar. Static `compare`,
-  arithmetic, difference, rounding, `with`, string/JSON/locale serialization,
+  property bags, and the audited time String grammar. Arithmetic, difference,
+  rounding, `with`, string/JSON/locale serialization,
   and other PlainTime methods remain unsupported.
   Realm-local `%Temporal.ZonedDateTime%` supports hidden-slot construction for
   UTC and fixed offsets, exact epoch/time-zone/calendar accessors, subclassing,
