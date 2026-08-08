@@ -621,6 +621,10 @@ fn resolve_time_zone_syntax(
 }
 
 struct ParsedTimeSyntax<'a> {
+    hour: i128,
+    minute: i128,
+    second: i128,
+    fraction_nanoseconds: i128,
     offset: Option<i128>,
     offset_has_sub_minute_syntax: bool,
     time_zone_annotation: Option<&'a [u8]>,
@@ -654,9 +658,11 @@ fn parse_time_syntax(source: &str) -> Option<ParsedTimeSyntax<'_>> {
     } else {
         false
     };
-    if second_present {
-        fraction_nanoseconds(bytes, &mut index)?;
-    }
+    let fraction_nanoseconds = if second_present {
+        fraction_nanoseconds(bytes, &mut index)?
+    } else {
+        0
+    };
     if hour > 23 || minute > 59 || second > 60 {
         return None;
     }
@@ -672,7 +678,6 @@ fn parse_time_syntax(source: &str) -> Option<ParsedTimeSyntax<'_>> {
         (None, false)
     };
     if !has_designator
-        && offset.is_some()
         && (parse_annotated_year_month(&bytes[..index]).is_some()
             || parse_annotated_month_day(&bytes[..index]).is_some())
     {
@@ -680,10 +685,62 @@ fn parse_time_syntax(source: &str) -> Option<ParsedTimeSyntax<'_>> {
     }
     let time_zone_annotation = parse_annotations(bytes, &mut index)?;
     (index == bytes.len()).then_some(ParsedTimeSyntax {
+        hour,
+        minute,
+        second: second.min(59),
+        fraction_nanoseconds,
         offset,
         offset_has_sub_minute_syntax: sub_minute,
         time_zone_annotation,
     })
+}
+
+pub(crate) struct ParsedPlainTime {
+    pub hour: i128,
+    pub minute: i128,
+    pub second: i128,
+    pub millisecond: i128,
+    pub microsecond: i128,
+    pub nanosecond: i128,
+}
+
+fn parsed_plain_time(
+    hour: i128,
+    minute: i128,
+    second: i128,
+    fraction_nanoseconds: i128,
+) -> ParsedPlainTime {
+    ParsedPlainTime {
+        hour,
+        minute,
+        second,
+        millisecond: fraction_nanoseconds / 1_000_000,
+        microsecond: (fraction_nanoseconds / 1_000) % 1_000,
+        nanosecond: fraction_nanoseconds % 1_000,
+    }
+}
+
+pub(crate) fn parse_plain_time_string(source: &str) -> Option<ParsedPlainTime> {
+    if let Some(parsed) = parse_time_syntax(source) {
+        return Some(parsed_plain_time(
+            parsed.hour,
+            parsed.minute,
+            parsed.second,
+            parsed.fraction_nanoseconds,
+        ));
+    }
+
+    let parsed = parse_date_time(source, false)?;
+    if parsed.z {
+        return None;
+    }
+    let date_time = iso_date_time(&BigInt::from(parsed.local_nanoseconds), 0)?;
+    Some(parsed_plain_time(
+        date_time.hour,
+        date_time.minute,
+        date_time.second,
+        date_time.millisecond * 1_000_000 + date_time.microsecond * 1_000 + date_time.nanosecond,
+    ))
 }
 
 fn parse_time_zone_from_time(source: &str) -> Option<i128> {
@@ -1184,9 +1241,9 @@ mod tests {
     use super::{
         format_instant, format_plain_date, parse_calendar_identifier, parse_instant_string,
         parse_offset_string, parse_plain_date_string, parse_plain_date_time_string,
-        parse_time_zone_identifier, parse_time_zone_identifier_like, parse_time_zone_offset,
-        parse_zoned_date_time_string, resolve_zoned_date_time_epoch, AnnotationDisplay,
-        InstantPrecision, InstantRoundingMode, ZonedDateTimeOffsetOption,
+        parse_plain_time_string, parse_time_zone_identifier, parse_time_zone_identifier_like,
+        parse_time_zone_offset, parse_zoned_date_time_string, resolve_zoned_date_time_epoch,
+        AnnotationDisplay, InstantPrecision, InstantRoundingMode, ZonedDateTimeOffsetOption,
     };
     use num_bigint::BigInt;
 
@@ -1504,6 +1561,35 @@ mod tests {
         assert!(parse_plain_date_time_string("1976-11-18+00:00").is_none());
         assert!(parse_plain_date_time_string("1976-11-18[u-ca=gregory]").is_none());
         assert!(parse_plain_date_time_string("-000000-11-18").is_none());
+    }
+
+    #[test]
+    fn plain_time_strings_accept_time_context_grammar_and_ignore_optional_data() {
+        for source in [
+            "12:34:56.123456789",
+            "T123456.123456789+23:59[Custom][u-ca=gregory]",
+            "1976-11-18T12:34:56.123456789+23:59[Custom][u-ca=gregory]",
+        ] {
+            let parsed = parse_plain_time_string(source).expect("PlainTime should parse");
+            assert_eq!(parsed.hour, 12, "{source}");
+            assert_eq!(parsed.minute, 34, "{source}");
+            assert_eq!(parsed.second, 56, "{source}");
+            assert_eq!(parsed.millisecond, 123, "{source}");
+            assert_eq!(parsed.microsecond, 456, "{source}");
+            assert_eq!(parsed.nanosecond, 789, "{source}");
+        }
+
+        let leap =
+            parse_plain_time_string("2016-12-31T23:59:60").expect("leap second should clamp");
+        assert_eq!(leap.second, 59);
+        for source in [
+            "1976-11-18",
+            "1976-11-18T12:34Z",
+            "-000000-11-18T12:34",
+            "2021-12",
+        ] {
+            assert!(parse_plain_time_string(source).is_none(), "{source}");
+        }
     }
 
     #[test]

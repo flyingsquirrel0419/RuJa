@@ -25799,6 +25799,144 @@ fn temporal_plain_date_to_json_brands_and_uses_function_realm() {
 }
 
 #[test]
+fn temporal_plain_date_to_plain_date_time_combines_hidden_date_and_time_records() {
+    assert_eq!(
+        run(r#"
+            var date = new Temporal.PlainDate(2000, 5, 2);
+            for (var key of ['calendarId', 'day', 'month', 'year']) {
+              Object.defineProperty(date, key, {
+                get: function () { throw new Error('date getter observed'); }
+              });
+            }
+            var source = new Temporal.PlainDateTime(1999, 7, 14, 11, 30, 23, 123, 456, 789);
+            for (var key of ['hour', 'minute', 'second', 'millisecond', 'microsecond', 'nanosecond']) {
+              Object.defineProperty(source, key, {
+                get: function () { throw new Error('time getter observed'); }
+              });
+            }
+            var fromSlots = date.toPlainDateTime(source);
+            var fromBag = date.toPlainDateTime({
+              hour: 25, minute: 70, second: 60,
+              millisecond: 1001, microsecond: -1, nanosecond: 42,
+              calendar: { toString: function () { throw new Error('calendar observed'); } }
+            });
+            var fromString = date.toPlainDateTime(
+              '1976-11-18T12:34:56.123456789+23:59[Custom][u-ca=gregory]'
+            );
+            var fromZone = date.toPlainDateTime(
+              new Temporal.ZonedDateTime(3661001001001n, '-00:02')
+            );
+            var midnight = date.toPlainDateTime();
+            [
+              [fromSlots.year, fromSlots.month, fromSlots.day, fromSlots.hour,
+                fromSlots.minute, fromSlots.second, fromSlots.millisecond,
+                fromSlots.microsecond, fromSlots.nanosecond, fromSlots.calendarId].join(','),
+              [fromBag.hour, fromBag.minute, fromBag.second, fromBag.millisecond,
+                fromBag.microsecond, fromBag.nanosecond].join(','),
+              [fromString.hour, fromString.minute, fromString.second,
+                fromString.millisecond, fromString.microsecond,
+                fromString.nanosecond].join(','),
+              [fromZone.hour, fromZone.minute, fromZone.second,
+                fromZone.millisecond, fromZone.microsecond,
+                fromZone.nanosecond].join(','),
+              [midnight.hour, midnight.minute, midnight.second].join(',')
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "2000,5,2,11,30,23,123,456,789,iso8601|23,59,59,999,0,42|12,34,56,123,456,789|0,59,1,1,1,1|0,0,0"
+        ))
+    );
+}
+
+#[test]
+fn temporal_plain_date_to_plain_date_time_preserves_order_gc_and_function_realm() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+    assert_eq!(
+        vm.run(r#"
+            var date = new Temporal.PlainDate(2000, 5, 2);
+            var order = [];
+            var fields = {};
+            for (var key of ['hour', 'microsecond', 'millisecond', 'minute', 'nanosecond', 'second']) {
+              Object.defineProperty(fields, key, {
+                get: (function (name) { return function () {
+                  order.push('get ' + name);
+                  forceGc();
+                  return { valueOf: function () { order.push('value ' + name); return 1; } };
+                }; })(key)
+              });
+            }
+            var result = date.toPlainDateTime(fields);
+            var brandFirst = false;
+            try {
+              Temporal.PlainDate.prototype.toPlainDateTime.call({}, new Proxy({}, {
+                get: function () { throw new Error('argument observed'); }
+              }));
+            } catch (error) { brandFirst = error instanceof TypeError; }
+
+            var other = $262.createRealm().global;
+            var foreignMethod = other.Temporal.PlainDate.prototype.toPlainDateTime;
+            var foreignResult = foreignMethod.call(date, { hour: 7 });
+            var foreignError = false;
+            try { foreignMethod.call(date, {}); } catch (error) {
+              foreignError = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            var nonconstructable = false;
+            try { new Temporal.PlainDate.prototype.toPlainDateTime(); }
+            catch (error) { nonconstructable = error instanceof TypeError; }
+            [
+              order.join(','), result.hour, result.nanosecond, brandFirst,
+              Object.getPrototypeOf(foreignResult) === other.Temporal.PlainDateTime.prototype,
+              foreignResult.hour, foreignError, nonconstructable
+            ].join('|');
+        "#).expect("PlainDate.toPlainDateTime should survive observable GC"),
+        Value::String(Arc::from(
+            "get hour,value hour,get microsecond,value microsecond,get millisecond,value millisecond,get minute,value minute,get nanosecond,value nanosecond,get second,value second|1|1|true|true|7|true|true"
+        ))
+    );
+}
+
+#[test]
+fn temporal_plain_date_to_plain_date_time_validates_time_strings_and_limits() {
+    assert_eq!(
+        run(r#"
+            var date = new Temporal.PlainDate(2000, 5, 2);
+            var valid = [
+              '12:34', 'T123456.123456789',
+              '1976-11-18T12:34+23:59[Custom][u-ca=gregory]',
+              '2016-12-31T23:59:60'
+            ].map(function (value) {
+              var result = date.toPlainDateTime(value);
+              return [result.hour, result.minute, result.second,
+                result.millisecond, result.microsecond, result.nanosecond].join(',');
+            });
+            var invalid = [
+              '1976-11-18', '1976-11-18T12:34Z', '-000000-11-18T12:34',
+              '2021-12', '12:34:56.1234567890'
+            ].map(function (value) {
+              try { date.toPlainDateTime(value); return false; }
+              catch (error) { return error instanceof RangeError; }
+            });
+            var lowerLimit = false;
+            try { new Temporal.PlainDate(-271821, 4, 19).toPlainDateTime(); }
+            catch (error) { lowerLimit = error instanceof RangeError; }
+            [valid.join(';'), invalid.join(','), lowerLimit].join('|');
+        "#),
+        Value::String(Arc::from(
+            "12,34,0,0,0,0;12,34,56,123,456,789;12,34,0,0,0,0;23,59,59,0,0,0|true,true,true,true,true|true"
+        ))
+    );
+}
+
+#[test]
 fn temporal_plain_date_time_conversion_uses_plain_date_slots_at_midnight() {
     assert_eq!(
         run(r#"

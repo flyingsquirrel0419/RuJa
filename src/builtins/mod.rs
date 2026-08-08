@@ -6290,7 +6290,7 @@ pub(crate) fn install_temporal_namespace_in_env(
     global: Option<&Value>,
     object_proto: Value,
 ) -> error::Result<Value> {
-    vm.try_reserve_gc_pins(119)?;
+    vm.try_reserve_gc_pins(120)?;
     let mut pin_count = 0;
     let result = (|| {
         let instant_prototype = Value::Object(vm.alloc(HeapObj::Object(ObjectData {
@@ -6927,6 +6927,14 @@ pub(crate) fn install_temporal_namespace_in_env(
             env,
         )?);
         pin_count += vm.pin(&plain_date_to_json);
+        let plain_date_to_plain_date_time =
+            Value::Object(vm.new_native_function_in_env_with_gc_retry(
+                "toPlainDateTime",
+                temporal_plain_date_to_plain_date_time,
+                0,
+                env,
+            )?);
+        pin_count += vm.pin(&plain_date_to_plain_date_time);
 
         let Value::Object(instant_constructor_index) = instant_constructor.clone() else {
             unreachable!()
@@ -7178,6 +7186,10 @@ pub(crate) fn install_temporal_namespace_in_env(
                 props.insert(PropertyKey::from(name), accessor_get_prop(getter));
             }
             props.insert(PropertyKey::from("equals"), data_prop(plain_date_equals));
+            props.insert(
+                PropertyKey::from("toPlainDateTime"),
+                data_prop(plain_date_to_plain_date_time),
+            );
             props.insert(
                 PropertyKey::from("toString"),
                 data_prop(plain_date_to_string),
@@ -9303,6 +9315,168 @@ fn temporal_plain_date_to_json(
         &calendar_identifier,
         temporal::AnnotationDisplay::Auto,
     )
+}
+
+#[derive(Clone, Copy)]
+struct TemporalPlainTimeFields {
+    hour: i128,
+    minute: i128,
+    second: i128,
+    millisecond: i128,
+    microsecond: i128,
+    nanosecond: i128,
+}
+
+impl TemporalPlainTimeFields {
+    const MIDNIGHT: Self = Self {
+        hour: 0,
+        minute: 0,
+        second: 0,
+        millisecond: 0,
+        microsecond: 0,
+        nanosecond: 0,
+    };
+
+    fn from_plain_date_time(fields: TemporalPlainDateTimeFields) -> Self {
+        Self {
+            hour: i128::from(fields.hour),
+            minute: i128::from(fields.minute),
+            second: i128::from(fields.second),
+            millisecond: i128::from(fields.millisecond),
+            microsecond: i128::from(fields.microsecond),
+            nanosecond: i128::from(fields.nanosecond),
+        }
+    }
+}
+
+fn temporal_plain_time_from_property_bag(
+    vm: &mut Vm,
+    item: &Value,
+) -> error::Result<TemporalPlainTimeFields> {
+    vm.try_reserve_value_roots(std::slice::from_ref(item))?;
+    let item_pins = vm.pin(item);
+    let result = (|| {
+        let numeric = |vm: &mut Vm, name: &str| -> error::Result<Option<BigInt>> {
+            match vm.get_property(item, name)? {
+                Value::Undefined => Ok(None),
+                value => temporal_integer_with_truncation(vm, value).map(Some),
+            }
+        };
+        let hour = numeric(vm, "hour")?;
+        let microsecond = numeric(vm, "microsecond")?;
+        let millisecond = numeric(vm, "millisecond")?;
+        let minute = numeric(vm, "minute")?;
+        let nanosecond = numeric(vm, "nanosecond")?;
+        let second = numeric(vm, "second")?;
+        if [
+            &hour,
+            &microsecond,
+            &millisecond,
+            &minute,
+            &nanosecond,
+            &second,
+        ]
+        .into_iter()
+        .all(Option::is_none)
+        {
+            return Err(Error::type_err(
+                "Temporal.PlainTime property bag requires a time field",
+            ));
+        }
+        Ok(TemporalPlainTimeFields {
+            hour: temporal_regulate_field(
+                hour.unwrap_or_else(BigInt::zero),
+                23,
+                TemporalOverflow::Constrain,
+            )?,
+            minute: temporal_regulate_field(
+                minute.unwrap_or_else(BigInt::zero),
+                59,
+                TemporalOverflow::Constrain,
+            )?,
+            second: temporal_regulate_field(
+                second.unwrap_or_else(BigInt::zero),
+                59,
+                TemporalOverflow::Constrain,
+            )?,
+            millisecond: temporal_regulate_field(
+                millisecond.unwrap_or_else(BigInt::zero),
+                999,
+                TemporalOverflow::Constrain,
+            )?,
+            microsecond: temporal_regulate_field(
+                microsecond.unwrap_or_else(BigInt::zero),
+                999,
+                TemporalOverflow::Constrain,
+            )?,
+            nanosecond: temporal_regulate_field(
+                nanosecond.unwrap_or_else(BigInt::zero),
+                999,
+                TemporalOverflow::Constrain,
+            )?,
+        })
+    })();
+    vm.unpin_many(item_pins);
+    result
+}
+
+fn temporal_time_record_or_midnight(
+    vm: &mut Vm,
+    item: &Value,
+) -> error::Result<TemporalPlainTimeFields> {
+    if item.is_undefined() {
+        return Ok(TemporalPlainTimeFields::MIDNIGHT);
+    }
+    if let Some((fields, _)) = temporal_plain_date_time_slots_if_present(vm, item) {
+        return Ok(TemporalPlainTimeFields::from_plain_date_time(fields));
+    }
+    if let Some((epoch_nanoseconds, time_zone, _)) =
+        temporal_zoned_date_time_slots_if_present(vm, item)
+    {
+        let fields = temporal_zoned_date_time_plain_fields(&epoch_nanoseconds, &time_zone)?;
+        return Ok(TemporalPlainTimeFields::from_plain_date_time(fields));
+    }
+    if matches!(item, Value::Object(_)) {
+        return temporal_plain_time_from_property_bag(vm, item);
+    }
+    let Value::String(source) = item else {
+        return Err(Error::type_err(
+            "Temporal.PlainTime input must be a String or object",
+        ));
+    };
+    vm.consume_fuel_units(source.len().min(i64::MAX as usize) as i64)?;
+    let parsed = temporal::parse_plain_time_string(source)
+        .ok_or_else(|| Error::range("Invalid Temporal.PlainTime string"))?;
+    Ok(TemporalPlainTimeFields {
+        hour: parsed.hour,
+        minute: parsed.minute,
+        second: parsed.second,
+        millisecond: parsed.millisecond,
+        microsecond: parsed.microsecond,
+        nanosecond: parsed.nanosecond,
+    })
+}
+
+fn temporal_plain_date_to_plain_date_time(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let (date, calendar_identifier) = temporal_plain_date_slots(vm, this)?;
+    let time = temporal_time_record_or_midnight(vm, args.first().unwrap_or(&Value::Undefined))?;
+    let fields = temporal_plain_date_time_fields_from_iso(temporal::IsoDateTimeFields {
+        year: i128::from(date.year),
+        month: i128::from(date.month),
+        day: i128::from(date.day),
+        hour: time.hour,
+        minute: time.minute,
+        second: time.second,
+        millisecond: time.millisecond,
+        microsecond: time.microsecond,
+        nanosecond: time.nanosecond,
+    })?;
+    let realm = vm.native_callee_closure().unwrap_or(vm.global);
+    create_temporal_plain_date_time_in_realm(vm, fields, calendar_identifier, realm)
 }
 
 fn temporal_plain_date_format(

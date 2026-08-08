@@ -175,6 +175,12 @@ jobs:
           TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_date_serialization_manifests_are_exact_live_and_shared
           -v
+      - name: Verify exact Temporal.PlainDate toPlainDateTime boundary
+        working-directory: tools
+        run: >-
+          TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
+          test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_date_to_plain_date_time_boundary_is_exact_live_and_shared
+          -v
       - name: Verify exact Temporal.PlainDateTime core admission
         working-directory: tools
         run: >-
@@ -1284,6 +1290,73 @@ jobs:
           cat temporal_plain_date_time_from_diagnostic.txt
           grep -q '^RATE=98.6 PASS=69 FAIL=1 SKIP=0 TOTAL=70 RAN=70$' \
             temporal_plain_date_time_from_diagnostic.txt
+
+  temporal-plain-date-to-plain-date-time:
+    needs: [build, setup]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download RuJa binary
+        uses: actions/download-artifact@v4
+        with:
+          name: ruja-release
+          path: target/release/
+      - run: chmod +x target/release/ruja
+      - name: Checkout pinned PlainDate.toPlainDateTime tests
+        uses: actions/checkout@v4
+        with:
+          repository: tc39/test262
+          ref: ${{ env.TEST262_REV }}
+          path: test262
+          sparse-checkout: |
+            harness
+            test/built-ins/Temporal/PlainDate/prototype/toPlainDateTime
+            test/intl402/Temporal/PlainDateTime/prototype/year/epoch-year.js
+      - name: Require exact PlainDate.toPlainDateTime admission
+        run: |
+          mapfile -t files < <(sed -e '/^#/d' -e '/^$/d' \
+            tools/test262_temporal_plain_date_to_plain_date_time_admission.txt)
+          TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
+            "${files[@]}" > temporal_plain_date_to_plain_date_time_result.txt 2>&1
+          cat temporal_plain_date_to_plain_date_time_result.txt
+          grep -q '^RATE=100.0 PASS=32 FAIL=0 SKIP=0 TOTAL=32 RAN=32$' \
+            temporal_plain_date_to_plain_date_time_result.txt
+      - name: Freeze PlainTime intrinsic blockers
+        run: |
+          mapfile -t files < <(sed -e '/^#/d' -e '/^$/d' \
+            tools/test262_temporal_plain_date_to_plain_date_time_blockers.txt)
+          TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
+            "${files[@]}" > temporal_plain_date_to_plain_date_time_blockers.txt 2>&1
+          cat temporal_plain_date_to_plain_date_time_blockers.txt
+          grep -q '^RATE=0.0 PASS=0 FAIL=0 SKIP=3 TOTAL=3 RAN=0$' \
+            temporal_plain_date_to_plain_date_time_blockers.txt
+      - name: Freeze forced direct result identity
+        run: |
+          mapfile -t files < <(cat \
+            tools/test262_temporal_plain_date_to_plain_date_time_admission.txt \
+            tools/test262_temporal_plain_date_to_plain_date_time_blockers.txt | \
+            sed -e '/^#/d' -e '/^$/d')
+          TEST262="$GITHUB_WORKSPACE/test262" \
+            python3 tools/test262_temporal_plain_date_to_plain_date_time_diagnostic.py \
+            "${files[@]}" > temporal_plain_date_to_plain_date_time_diagnostic.txt 2>&1
+          cat temporal_plain_date_to_plain_date_time_diagnostic.txt
+          grep -q '^RATE=91.4 PASS=32 FAIL=3 SKIP=0 TOTAL=35 RAN=35$' \
+            temporal_plain_date_to_plain_date_time_diagnostic.txt
+      - name: Freeze downstream non-ISO calendar blocker
+        run: |
+          mapfile -t files < <(sed -e '/^#/d' -e '/^$/d' \
+            tools/test262_temporal_plain_date_to_plain_date_time_downstream.txt)
+          TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
+            "${files[@]}" > temporal_plain_date_to_plain_date_time_downstream.txt 2>&1
+          cat temporal_plain_date_to_plain_date_time_downstream.txt
+          grep -q '^RATE=0.0 PASS=0 FAIL=0 SKIP=1 TOTAL=1 RAN=0$' \
+            temporal_plain_date_to_plain_date_time_downstream.txt
+          TEST262="$GITHUB_WORKSPACE/test262" \
+            python3 tools/test262_temporal_plain_date_to_plain_date_time_diagnostic.py \
+            "${files[@]}" > temporal_plain_date_to_plain_date_time_downstream_diagnostic.txt 2>&1
+          cat temporal_plain_date_to_plain_date_time_downstream_diagnostic.txt
+          grep -q '^RATE=0.0 PASS=0 FAIL=1 SKIP=0 TOTAL=1 RAN=1$' \
+            temporal_plain_date_to_plain_date_time_downstream_diagnostic.txt
 
   temporal-plain-date-time-equals:
     needs: [build, setup]

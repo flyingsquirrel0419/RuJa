@@ -218,8 +218,8 @@ boundary for serialization. It brands before options access, roots the options
 object across the single observable `calendarName` get and coercion, and sends
 only copied ISO fields plus the canonical calendar ID to a date-only formatter.
 That formatter shares calendar annotation emission with ZonedDateTime but does
-not inherit time, offset, or time-zone behavior. Current installer accounting
-is 118 maximum pins and 119 allocations.
+not inherit time, offset, or time-zone behavior. At the toString checkpoint,
+installer accounting was 118 maximum pins and 119 allocations.
 
 ```text
 [Decision Log]
@@ -236,8 +236,8 @@ non-constructable length-0 entry point. It brands the receiver, ignores every
 argument, and passes copied hidden ISO date and calendar slots directly to the
 same date-only formatter with `calendarName` fixed to `auto`. It therefore does
 not perform a property lookup for `toString` or expose any public date/calendar
-accessor. The method is installer allocation 118; current namespace
-installation requires 119 maximum pins and completes 120 allocations.
+accessor. The method is installer allocation 118; at the toJSON checkpoint,
+namespace installation required 119 maximum pins and completed 120 allocations.
 
 PlainDate `toLocaleString` deliberately remains absent. RuJa already exposes a
 partial `%Intl%`, so the specification's no-ECMA-402 ISO fallback is not the
@@ -4679,6 +4679,29 @@ and redefinition, while newly created Realms receive independent properties.
 - 선택한 방식: install_map_intrinsic_in_env와 install_set_intrinsic_in_env가 각 prototype에 표준 descriptor를 직접 설치한다.
 - 다른 대안 대신 이 방식을 선택한 이유: 내부 fallback은 property 삭제를 무시하고 instance/shared mutation은 descriptor 위치와 Realm 격리를 위반한다.
 - 장점, 단점 및 영향: main/created Realm, descriptor reflection, assignment rejection, deletion fallback, redefinition이 한 ordinary-property 경로를 공유한다.
+```
+
+### PlainDate time-record bridge
+
+`Temporal.PlainDate.prototype.toPlainDateTime` brands and copies the receiver's
+compact ISO date/calendar slots before converting its optional argument.
+`undefined` maps to a constant midnight record. Branded PlainDateTime and
+ZonedDateTime inputs copy hidden local time fields; ordinary objects are rooted
+once and read in `hour`, `microsecond`, `millisecond`, `minute`, `nanosecond`,
+`second` order, with each present value converted immediately. Strings are
+fuel-precharged by byte length and parsed through the shared Temporal grammar,
+retaining only time fields after all optional date, offset, zone, and annotation
+syntax has been validated. The final PlainDateTime alone is allocated in the
+native method Realm.
+
+```text
+[Decision Log]
+- 목적과 의도: ToTimeRecordOrMidnight와 CreateTemporalDateTime 사이의 명세 record 경계를 VM hidden-slot/Realm 모델에 직접 표현한다.
+- 기존 구현 및 제약 조건: PlainDateTime/ZonedDateTime local-time helpers는 존재하지만 PlainTime heap kind와 intrinsic은 없다. installer는 transactional pin batch와 exact allocation-boundary 검증을 요구한다.
+- 검토한 주요 대안: 임시 PlainTime heap object, generic PlainDateTime conversion, public time accessors, method 전용 internal time record를 검토했다.
+- 선택한 방식: six-field Copy internal record를 사용하고 입력 종류별 변환을 그 record로 융합한다. installer는 method allocation을 기존 순서 뒤에 추가해 이전 boundary index를 보존하고 120 pins/121 allocations를 예약한다.
+- 다른 대안 대신 이 방식을 선택한 이유: intermediate object는 관찰 불가능하면서 heap/GC 실패면만 늘리고, generic date-time conversion은 time-only property order와 required-field 규칙이 다르다. hidden record는 Realm과 GC ownership을 최종 객체 하나에 집중한다.
+- 장점, 단점 및 영향: receiver 및 branded input public getters를 우회하고 observable bag 순서, abrupt completion, GC rooting, root/heap failure retry, exact fuel을 보존한다. PlainTime intrinsic이 추가되면 그 hidden kind를 property-bag 분기보다 앞에서 record로 복사해야 한다.
 ```
 
 **Next:** [Features](features.md) · [Known limitations](limitations.md) · [Back to README](../README.md)

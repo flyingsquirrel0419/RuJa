@@ -5,6 +5,27 @@
 ### Changed
 
 - Added Realm-local, non-constructable
+  `Temporal.PlainDate.prototype.toPlainDateTime` with length 0. It brands the
+  receiver first, uses midnight for `undefined`, copies hidden time records
+  from PlainDateTime and ZonedDateTime, reads PlainTime property bags in
+  specification order with constrain overflow, and parses the complete audited
+  time-context String grammar while rejecting `Z`. Results combine the
+  receiver's hidden ISO date/calendar with the converted time in the method
+  Realm. At pinned Test262 revision
+  `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the direct boundary is exact
+  **32/0/0** and forced **32/3/0** over 35 files. The three blockers require
+  the absent `%Temporal.PlainTime%` intrinsic; one Intl402 downstream caller
+  remains blocked by non-ISO calendar mutation.
+
+  [Decision Log]
+  - 목적과 의도: PlainDate의 hidden date/calendar와 `ToTimeRecordOrMidnight` 결과를 명세 순서대로 결합해 PlainDateTime을 생성한다.
+  - 기존 구현 및 제약 조건: PlainDate, PlainDateTime, ZonedDateTime hidden slots와 date-time 생성기는 있었지만 PlainTime intrinsic은 아직 없다. generic PlainDateTime converter는 날짜 getter까지 관찰하므로 time-only property bag에 재사용할 수 없다.
+  - 검토한 주요 대안: 임시 PlainTime object 생성, PlainDateTime converter 재사용, 공개 accessors 호출, time-only internal record와 parser를 추가하는 방식을 검토했다.
+  - 선택한 방식: `ToTimeRecordOrMidnight`를 allocation-free internal time record로 융합하고 branded hidden slots, ordered property bag, String parser를 각각 그 record로 변환한다. 최종 결과만 method Realm에 할당한다.
+  - 다른 대안 대신 이 방식을 선택한 이유: 임시 object와 public accessors는 명세에 없는 allocation/user code를 관찰하며, date-time converter는 time-only getter 순서를 깨뜨린다. record 경계는 현재 observable semantics를 보존하면서 후속 PlainTime intrinsic fast path를 추가할 자리를 남긴다.
+  - 장점, 단점 및 영향: brand-first, getter/coercion order, GC/root/OOM retry, exact fuel, leap-second clamp, ambiguous String grammar, range와 Realm ownership이 검증된다. installer accounting은 120 maximum pins와 121 allocations가 된다. PlainTime intrinsic 도입 후 세 direct blocker와 time-brand fast path를 재감사해야 한다.
+
+- Added Realm-local, non-constructable
   `Temporal.PlainDate.prototype.toJSON` with length 0. It brands the receiver,
   ignores all arguments, and serializes the hidden ISO date and calendar
   through the shared PlainDate formatter with `calendarName: "auto"`; neither

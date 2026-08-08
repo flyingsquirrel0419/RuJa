@@ -323,6 +323,12 @@
   directories are admitted at **226/226**
 - **Date**: `now()`, constructor with timestamp, `getTime()`
 - **JSON**: `parse` (with reviver) and `stringify` (with replacer/space)
+- **Temporal date bridge**: Realm-local `Temporal.PlainDate` construction,
+  conversion, comparison, equality, ISO/RFC 9557 formatting, JSON
+  serialization, and `toPlainDateTime`. The bridge combines hidden date and
+  calendar slots with midnight, PlainDateTime/ZonedDateTime hidden time,
+  ordered constrained property bags, or validated time-context Strings. It
+  rejects UTC-designator Strings and creates the result in the method Realm
 - **RegExp**: literals `/pattern/flags` with `test`, `exec`, `match`, `source`,
   `flags`, `d`-flag match indices, forward lookahead, backward lookbehind,
   legacy quantified lookahead, Unicode named captures/backreferences,

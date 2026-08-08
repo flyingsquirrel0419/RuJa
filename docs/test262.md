@@ -14736,3 +14736,33 @@ locale files stay blocked until that formatter layer is implemented.
 - 다른 대안 대신 이 방식을 선택한 이유: forced process pass는 own-method 또는 DateTimeFormat 의미론을 증명하지 않는다. 부분 Intl 환경의 ISO fallback은 ECMA-402 계약과 충돌하며, exact complement만 false positive와 future corpus drift를 드러낸다.
 - 장점, 단점 및 영향: JSON 지원 수치는 독립적으로 재현되고 locale 미지원 범위와 선행 아키텍처 요구가 명확해진다. DateTimeFormat 도입 후 direct/Intl402 21개를 intended assertion 기준으로 다시 측정해야 한다.
 ```
+
+## Temporal.PlainDate.prototype.toPlainDateTime
+
+The pinned direct directory contains 35 files. Exact admission freezes **32
+pass / 0 fail / 0 skip**; forced execution freezes **32 pass / 3 fail / 0
+skip** and checks each file's expected identity before reporting the aggregate.
+`argument-wrong-type.js`, `basic.js`, and `limits.js` require the absent
+`%Temporal.PlainTime%` intrinsic and remain explicit blockers. Before the own
+method existed, only `argument-number.js` and `time-invalid.js` passed through
+unrelated errors; they are recorded as preimplementation false positives rather
+than baseline support.
+
+One whole-corpus downstream caller,
+`intl402/Temporal/PlainDateTime/prototype/year/epoch-year.js`, is frozen
+separately at exact **0/0/1** and forced **0/1/0**. It invokes
+`toPlainDateTime` only after unsupported non-ISO calendar `withCalendar`/`with`
+operations, so it cannot be credited to this method. Tooling freezes all 36
+paths' features, includes, flags, and negative metadata, verifies the complete
+live direct-directory complement, keeps runner/analyzer policy identical, and
+rejects malformed, outside, and future paths.
+
+```text
+[Decision Log]
+- 목적과 의도: PlainDate.toPlainDateTime의 complete direct surface와 실제 downstream dependency를 intended assertion 기준으로 계상한다.
+- 기존 구현 및 제약 조건: broad Temporal gate는 35개 direct 파일을 모두 숨겼고 missing own method 상태에서도 두 TypeError/invalid-input 파일이 거짓 통과했다. 세 파일은 PlainTime intrinsic을 직접 요구하고 Intl402 한 파일은 non-ISO calendar mutation에서 먼저 막힌다.
+- 검토한 주요 대안: directory prefix admission, forced pass 전부 admission, PlainTime shape stub, exact admission/blocker/downstream complement를 검토했다.
+- 선택한 방식: direct 32개만 exact admission하고 PlainTime 세 파일과 Intl402 한 파일을 별도 manifest에 둔다. diagnostic은 aggregate 전에 requested path별 pass/fail identity를 검사한다.
+- 다른 대안 대신 이 방식을 선택한 이유: prefix와 aggregate count만으로는 future drift나 pass/fail 교환을 검출하지 못하고, shape stub은 PlainTime brand/range semantics를 거짓 지원한다.
+- 장점, 단점 및 영향: exact 32/0, forced direct 32/3, downstream exact 0/0/1 및 forced 0/1이 재현된다. PlainTime intrinsic과 non-ISO calendar mutation 구현 후 각 manifest를 다시 감사해야 한다.
+```

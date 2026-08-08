@@ -175,6 +175,43 @@ fn temporal_plain_date_equals_precharges_input_bytes() {
 }
 
 #[test]
+fn temporal_plain_date_to_plain_date_time_precharges_input_bytes() {
+    const BUDGET: i64 = 10_000;
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        globalThis.plainDateToDateTime = new Temporal.PlainDate(1970, 1, 1);
+        globalThis.plainTimeShort = "12:34[foo=a]";
+        globalThis.plainTimeLong = "12:34[foo=" + "a".repeat(512) + "]";
+        "#,
+    )
+    .expect("PlainDate.toPlainDateTime fuel fixtures should initialize");
+
+    vm.set_fuel(Some(BUDGET));
+    vm.run("plainDateToDateTime.toPlainDateTime(plainTimeShort);")
+        .expect("short PlainTime input should parse");
+    let short_work = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+
+    vm.set_fuel(Some(BUDGET));
+    vm.run("plainDateToDateTime.toPlainDateTime(plainTimeLong);")
+        .expect("long PlainTime input should parse");
+    let long_work = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+    assert!(long_work >= short_work + 500);
+
+    vm.set_fuel(Some(long_work - 1));
+    let error = vm
+        .run("plainDateToDateTime.toPlainDateTime(plainTimeLong);")
+        .expect_err("N-1 fuel must abort before parsing");
+    assert_eq!(error.kind, ruja::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+
+    vm.set_fuel(Some(long_work));
+    vm.run("plainDateToDateTime.toPlainDateTime(plainTimeLong);")
+        .expect("exact measured fuel should parse successfully");
+    assert_eq!(vm.fuel_remaining(), Some(0));
+}
+
+#[test]
 fn temporal_plain_date_to_string_precharges_calendar_name_bytes() {
     const BUDGET: i64 = 10_000;
     let mut vm = Vm::new().expect("failed to initialize VM");

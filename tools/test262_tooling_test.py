@@ -229,6 +229,16 @@ from test262_temporal_plain_date_to_json_admission import (
     TEMPORAL_PLAIN_DATE_TO_JSON_INCLUDES,
     TEMPORAL_PLAIN_DATE_TO_JSON_NEGATIVE,
 )
+from test262_temporal_plain_date_to_plain_date_time_admission import (
+    TEMPORAL_PLAIN_DATE_TO_PLAIN_DATE_TIME_ALL_FEATURES,
+    TEMPORAL_PLAIN_DATE_TO_PLAIN_DATE_TIME_ALL_FLAGS,
+    TEMPORAL_PLAIN_DATE_TO_PLAIN_DATE_TIME_ALL_INCLUDES,
+    TEMPORAL_PLAIN_DATE_TO_PLAIN_DATE_TIME_ALL_NEGATIVE,
+    TEMPORAL_PLAIN_DATE_TO_PLAIN_DATE_TIME_BLOCKER_FILES,
+    TEMPORAL_PLAIN_DATE_TO_PLAIN_DATE_TIME_DOWNSTREAM_FILES,
+    TEMPORAL_PLAIN_DATE_TO_PLAIN_DATE_TIME_FEATURES,
+    TEMPORAL_PLAIN_DATE_TO_PLAIN_DATE_TIME_FILES,
+)
 from test262_temporal_plain_date_to_locale_string_admission import (
     TEMPORAL_PLAIN_DATE_TO_LOCALE_STRING_BLOCKER_FEATURES,
     TEMPORAL_PLAIN_DATE_TO_LOCALE_STRING_BLOCKER_FLAGS,
@@ -4574,6 +4584,95 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                             tool.temporal_plain_date_time_equals_features(path), frozenset()
                         )
                         self.assertTrue(tool.should_skip({"features": ["Temporal"]}, path))
+                finally:
+                    tool.TEST262 = original_root
+
+    def test_temporal_plain_date_to_plain_date_time_boundary_is_exact_live_and_shared(self):
+        admitted = TEMPORAL_PLAIN_DATE_TO_PLAIN_DATE_TIME_FILES
+        blockers = TEMPORAL_PLAIN_DATE_TO_PLAIN_DATE_TIME_BLOCKER_FILES
+        downstream = TEMPORAL_PLAIN_DATE_TO_PLAIN_DATE_TIME_DOWNSTREAM_FILES
+        all_files = admitted | blockers | downstream
+        self.assertEqual((len(admitted), len(blockers), len(downstream)), (32, 3, 1))
+        self.assertEqual(len(all_files), 36)
+        self.assertEqual(set(TEMPORAL_PLAIN_DATE_TO_PLAIN_DATE_TIME_FEATURES), admitted)
+        self.assertEqual(set(TEMPORAL_PLAIN_DATE_TO_PLAIN_DATE_TIME_ALL_FEATURES), all_files)
+        self.assertEqual(set(TEMPORAL_PLAIN_DATE_TO_PLAIN_DATE_TIME_ALL_INCLUDES), all_files)
+        self.assertEqual(set(TEMPORAL_PLAIN_DATE_TO_PLAIN_DATE_TIME_ALL_FLAGS), all_files)
+        self.assertEqual(set(TEMPORAL_PLAIN_DATE_TO_PLAIN_DATE_TIME_ALL_NEGATIVE), all_files)
+        preimplementation_false_positives = {
+            "built-ins/Temporal/PlainDate/prototype/toPlainDateTime/argument-number.js",
+            "built-ins/Temporal/PlainDate/prototype/toPlainDateTime/time-invalid.js",
+        }
+        self.assertTrue(preimplementation_false_positives < admitted)
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        method_dir = test_root / "built-ins/Temporal/PlainDate/prototype/toPlainDateTime"
+        if method_dir.is_dir():
+            live = {
+                path.relative_to(test_root).as_posix()
+                for path in method_dir.glob("*.js")
+                if "_FIXTURE" not in path.name
+            }
+            self.assertEqual(live, admitted | blockers)
+            for relative in all_files:
+                path = test_root / relative
+                metadata = test262_runner.parse_meta(path.read_text())
+                self.assertEqual(
+                    frozenset(metadata.get("features", [])),
+                    TEMPORAL_PLAIN_DATE_TO_PLAIN_DATE_TIME_ALL_FEATURES[relative],
+                    relative,
+                )
+                self.assertEqual(
+                    frozenset(metadata.get("includes", [])),
+                    TEMPORAL_PLAIN_DATE_TO_PLAIN_DATE_TIME_ALL_INCLUDES[relative],
+                    relative,
+                )
+                self.assertEqual(
+                    frozenset(metadata.get("flags", [])),
+                    TEMPORAL_PLAIN_DATE_TO_PLAIN_DATE_TIME_ALL_FLAGS[relative],
+                    relative,
+                )
+                self.assertEqual(
+                    metadata.get("negative"),
+                    TEMPORAL_PLAIN_DATE_TO_PLAIN_DATE_TIME_ALL_NEGATIVE[relative],
+                    relative,
+                )
+                for tool in (test262_runner, test262_analyze):
+                    if relative in admitted:
+                        self.assertTrue(tool.temporal_plain_date_to_plain_date_time_path(path))
+                        self.assertEqual(
+                            tool.temporal_plain_date_to_plain_date_time_features(path),
+                            TEMPORAL_PLAIN_DATE_TO_PLAIN_DATE_TIME_FEATURES[relative],
+                        )
+                        self.assertFalse(tool.should_skip(metadata, path), relative)
+                    else:
+                        self.assertFalse(tool.temporal_plain_date_to_plain_date_time_path(path))
+                        self.assertEqual(
+                            tool.temporal_plain_date_to_plain_date_time_features(path), frozenset()
+                        )
+                        self.assertTrue(tool.should_skip(metadata, path), relative)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            future = root / "test/built-ins/Temporal/PlainDate/prototype/toPlainDateTime/future.js"
+            malformed = root / "test/built-ins/Temporal/PlainDate/prototype/toPlainDateTime/basic.js.bak"
+            outside = root / "test/built-ins/Other/prototype/toPlainDateTime/basic.js"
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for relative, features in TEMPORAL_PLAIN_DATE_TO_PLAIN_DATE_TIME_FEATURES.items():
+                        path = root / "test" / relative
+                        self.assertTrue(tool.temporal_plain_date_to_plain_date_time_path(path))
+                        self.assertEqual(tool.temporal_plain_date_to_plain_date_time_features(path), features)
+                        self.assertFalse(tool.should_skip({"features": sorted(features)}, path))
+                    for path in (future, malformed, outside):
+                        self.assertFalse(tool.temporal_plain_date_to_plain_date_time_path(path))
+                        self.assertEqual(
+                            tool.temporal_plain_date_to_plain_date_time_features(path), frozenset()
+                        )
+                        self.assertTrue(tool.should_skip({"features": ["Temporal"]}, path))
+                    self.assertFalse(tool.temporal_plain_date_to_plain_date_time_path(None))
                 finally:
                     tool.TEST262 = original_root
 
