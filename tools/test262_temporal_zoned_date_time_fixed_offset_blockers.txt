@@ -5,5 +5,4 @@ built-ins/Temporal/ZonedDateTime/prototype/dayOfYear/basic.js
 built-ins/Temporal/ZonedDateTime/prototype/daysInMonth/basic.js
 built-ins/Temporal/ZonedDateTime/prototype/daysInYear/basic.js
 built-ins/Temporal/ZonedDateTime/prototype/inLeapYear/basic.js
-built-ins/Temporal/ZonedDateTime/prototype/toString/smallestunit-plurals-accepted.js
 built-ins/Temporal/ZonedDateTime/prototype/weekOfYear/basic.js

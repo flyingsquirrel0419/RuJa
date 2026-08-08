@@ -3611,8 +3611,8 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
             ).read_text().splitlines()
             if (line := raw_line.strip()) and not line.startswith("#")
         }
-        self.assertEqual(len(files), 259)
-        self.assertEqual(len(blockers), 7)
+        self.assertEqual(len(files), 260)
+        self.assertEqual(len(blockers), 6)
         self.assertEqual(set(features_by_file), set(files))
         self.assertTrue(files.isdisjoint(blockers))
         self.assertTrue(files.isdisjoint(TEMPORAL_ZONED_DATE_TIME_CORE_FILES))
@@ -3654,6 +3654,7 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
             "built-ins/Temporal/ZonedDateTime/prototype/toInstant/year-less-than-1.js",
             "built-ins/Temporal/ZonedDateTime/prototype/toInstant/year-less-than-99.js",
             "built-ins/Temporal/ZonedDateTime/prototype/toInstant/year-zero-leap-day.js",
+            "built-ins/Temporal/ZonedDateTime/prototype/toString/smallestunit-plurals-accepted.js",
         }
         property_helper_directories = {"from", "toInstant", "toString", "toJSON", "valueOf"}
 

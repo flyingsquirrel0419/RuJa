@@ -233,6 +233,7 @@ built-ins/Temporal/ZonedDateTime/prototype/toString/roundingmode-undefined.js
 built-ins/Temporal/ZonedDateTime/prototype/toString/roundingmode-wrong-type.js
 built-ins/Temporal/ZonedDateTime/prototype/toString/smallestunit-fractionalseconddigits.js
 built-ins/Temporal/ZonedDateTime/prototype/toString/smallestunit-invalid-string.js
+built-ins/Temporal/ZonedDateTime/prototype/toString/smallestunit-plurals-accepted.js
 built-ins/Temporal/ZonedDateTime/prototype/toString/smallestunit-undefined.js
 built-ins/Temporal/ZonedDateTime/prototype/toString/smallestunit-valid-units.js
 built-ins/Temporal/ZonedDateTime/prototype/toString/smallestunit-wrong-type.js

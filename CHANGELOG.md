@@ -17,8 +17,10 @@
   `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the complete admitted surface is
   exact **129/0/0**: core **40**, `from` **51**, `valueOf` **7**, and `equals`
   **31**. The complete direct PlainDate `toPlainDateTime` directory is now
-  **35/0/0** with no direct blockers. Installer accounting is 131 maximum live
-  pins and 132 allocations.
+  **35/0/0** with no direct blockers. A ZonedDateTime plural-smallest-unit
+  helper dependency also moves the fixed-offset boundary from **259/7** to
+  **260/6** over 266 files. Installer accounting is 131 maximum live pins and
+  132 allocations.
 
   [Decision Log]
   - 목적과 의도: 후속 PlainTime 연산이 신뢰할 수 있는 위조 불가능한 time record와 완전한 ToTemporalTime 입력 경계를 확립하고 PlainDate bridge의 남은 direct blocker를 제거한다.

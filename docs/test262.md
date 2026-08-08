@@ -14103,21 +14103,22 @@ surface.
 ## Temporal.ZonedDateTime fixed-offset civil and formatting surface
 
 `tools/test262_temporal_zoned_date_time_fixed_offset_admission.txt` freezes
-exactly **259** pinned files. The boundary covers the 24 ISO
+exactly **260** pinned files. The boundary covers the 24 ISO
 civil/calendar/offset accessors, `construction-and-properties.js`, complete
 `toInstant`, complete `toJSON` and `valueOf`, 61 independently runnable
-`toString` files, and 90 static `from` cases supported by branded values, the
+`toString` files, including the plural-smallest-unit helper now unlocked by
+PlainTime, and 90 static `from` cases supported by branded values, the
 strict fixed-offset string parser, or ISO property bags. Dedicated CI requires
-**259 pass / 0 fail / 0 skip**.
+**260 pass / 0 fail / 0 skip**.
 
 `tools/test262_temporal_zoned_date_time_fixed_offset_blockers.txt` freezes the
 exact unsupported complement. CI forces the complete 266-file surface and
-requires **259 pass / 7 fail / 0 skip**. The seven retained blockers are explicit:
+requires **260 pass / 6 fail / 0 skip**. The six retained blockers are explicit:
 one `from` case needs another Temporal calendar-bearing type; five
-`basic.js` accessor cases construct `Temporal.PlainDateTime`; and one
-`toString` helper checks other unimplemented Temporal constructors before
-comparing plural-unit string results. UTC and minute-precision fixed offsets
-are deterministic. Named IANA zones and DST transitions are not claimed.
+`basic.js` accessor cases require unsupported
+`Temporal.PlainDateTime.prototype.toZonedDateTime`. UTC and minute-precision
+fixed offsets are deterministic. Named IANA zones and DST transitions are not
+claimed.
 Implementation commit `02d019f` and CI contract correction `f9adc40` are
 confirmed by ordinary CI `30872435648` (**3/3**) and full matrix
 `30872435664` (**57/57**) for the preceding 243/23 checkpoint.
@@ -14127,9 +14128,9 @@ confirmed by ordinary CI `30872435648` (**3/3**) and full matrix
 - 목적과 의도: ZonedDateTime core 위에 exact fixed-offset civil 조회, Instant 변환, parsing, property-bag preparation, rounding, serialization을 추가하고 supported accounting에 반영한다.
 - 기존 구현 및 제약 조건: hidden slot과 civil/formatting은 있었지만 ordinary object `from`을 branded object로 오인했다. host tzdb와 Duration/PlainDateTime 등 다른 Temporal type은 없다.
 - 검토한 주요 대안: host timezone API, IANA identifier를 offset 없이 저장, prefix 전체 admission, f64/i128 조기 field 축소, exact fixed-offset property-bag 경로를 검토했다.
-- 선택한 방식: VM이 field/options Get과 coercion/root/fuel 순서를 소유하고 finite integer를 BigInt로 options 이후까지 보존한다. pure helper는 ISO calendar syntax, overflow-regulated civil fields와 fixed-offset arithmetic을 처리한다. runner/analyzer는 현재 통과한 259개 path만 해제하고 blocker manifest와 forced CI가 266개 전체 경계를 고정한다.
-- 다른 대안 대신 이 방식을 선택한 이유: host timezone은 native/WASM 결과가 다르고 tzdb 없는 IANA 지원은 DST 의미론을 위반한다. 조기 integer narrowing은 observable options-before-validation을 깨뜨리며 prefix admission은 7개 blocker와 미래 파일을 숨긴다.
-- 장점, 단점 및 영향: negative epoch, extended year, ISO week/year, 9개 rounding mode, property/option order, monthCode/overflow/offset mismatch, branding, method Realm, allocation rollback과 exact 259/0/0이 재현된다. named IANA/DST와 다른 Temporal types는 다음 구현 단위로 남는다.
+- 선택한 방식: VM이 field/options Get과 coercion/root/fuel 순서를 소유하고 finite integer를 BigInt로 options 이후까지 보존한다. pure helper는 ISO calendar syntax, overflow-regulated civil fields와 fixed-offset arithmetic을 처리한다. runner/analyzer는 현재 통과한 260개 path만 해제하고 blocker manifest와 forced CI가 266개 전체 경계를 고정한다.
+- 다른 대안 대신 이 방식을 선택한 이유: host timezone은 native/WASM 결과가 다르고 tzdb 없는 IANA 지원은 DST 의미론을 위반한다. 조기 integer narrowing은 observable options-before-validation을 깨뜨리며 prefix admission은 6개 blocker와 미래 파일을 숨긴다.
+- 장점, 단점 및 영향: negative epoch, extended year, ISO week/year, 9개 rounding mode, property/option order, monthCode/overflow/offset mismatch, branding, method Realm, allocation rollback과 exact 260/0/0이 재현된다. named IANA/DST와 다른 Temporal types는 다음 구현 단위로 남는다.
 ```
 
 ## Temporal.ZonedDateTime.prototype.equals

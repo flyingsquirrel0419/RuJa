@@ -582,7 +582,7 @@ jobs:
           TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
             "${files[@]}" > temporal_zoned_date_time_fixed_offset_result.txt 2>&1
           cat temporal_zoned_date_time_fixed_offset_result.txt
-          grep -q '^RATE=100.0 PASS=259 FAIL=0 SKIP=0 TOTAL=259 RAN=259$' \
+          grep -q '^RATE=100.0 PASS=260 FAIL=0 SKIP=0 TOTAL=260 RAN=260$' \
             temporal_zoned_date_time_fixed_offset_result.txt
       - name: Freeze Temporal.ZonedDateTime fixed-offset blockers
         run: |
@@ -594,7 +594,7 @@ jobs:
             python3 tools/test262_temporal_zoned_date_time_fixed_offset_diagnostic.py \
             "${files[@]}" > temporal_zoned_date_time_fixed_offset_diagnostic.txt 2>&1
           cat temporal_zoned_date_time_fixed_offset_diagnostic.txt
-          grep -q '^RATE=97.4 PASS=259 FAIL=7 SKIP=0 TOTAL=266 RAN=266$' \
+          grep -q '^RATE=97.7 PASS=260 FAIL=6 SKIP=0 TOTAL=266 RAN=266$' \
             temporal_zoned_date_time_fixed_offset_diagnostic.txt
 
   temporal-zoned-date-time-equals:
