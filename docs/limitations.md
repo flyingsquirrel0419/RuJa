@@ -31,8 +31,9 @@ The following resource limits are enforced:
   property bags, and audited strings, and hidden-slot conversion to
   PlainDateTime at midnight. Hidden-record `equals` and static `compare`
   support the same branded, property-bag, and String inputs for identity and
-  ISO field ordering. Formatting, arithmetic, and
-  remaining prototype conversion methods are not implemented.
+  ISO field ordering. `toString` supports ISO date formatting and all four
+  calendar annotation modes. Arithmetic, locale/JSON formatting, and remaining
+  prototype conversion methods are not implemented.
   Realm-local `%Temporal.ZonedDateTime%` supports hidden-slot construction for
   UTC and fixed offsets, exact epoch/time-zone/calendar accessors, subclassing,
   all ISO civil/calendar/offset accessors, fixed-offset String and ISO

@@ -1107,6 +1107,41 @@ pub(crate) enum AnnotationDisplay {
     Never,
 }
 
+fn write_calendar_annotation(
+    output: &mut String,
+    calendar_identifier: &str,
+    display: AnnotationDisplay,
+) {
+    let show = match display {
+        AnnotationDisplay::Auto => calendar_identifier != "iso8601",
+        AnnotationDisplay::Always | AnnotationDisplay::Critical => true,
+        AnnotationDisplay::Never => false,
+    };
+    if show {
+        output.push('[');
+        if display == AnnotationDisplay::Critical {
+            output.push('!');
+        }
+        output.push_str("u-ca=");
+        output.push_str(calendar_identifier);
+        output.push(']');
+    }
+}
+
+pub(crate) fn format_plain_date(
+    year: i32,
+    month: u8,
+    day: u8,
+    calendar_identifier: &str,
+    calendar_name: AnnotationDisplay,
+) -> Option<String> {
+    let mut output = String::with_capacity(32);
+    write_year(&mut output, i128::from(year))?;
+    write!(output, "-{month:02}-{day:02}").ok()?;
+    write_calendar_annotation(&mut output, calendar_identifier, calendar_name);
+    Some(output)
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct ZonedDateTimeFormatOptions {
     pub precision: InstantPrecision,
@@ -1140,33 +1175,36 @@ pub(crate) fn format_zoned_date_time(
         output.push_str(time_zone_identifier);
         output.push(']');
     }
-    let show_calendar = match options.calendar_name {
-        AnnotationDisplay::Auto => calendar_identifier != "iso8601",
-        AnnotationDisplay::Always | AnnotationDisplay::Critical => true,
-        AnnotationDisplay::Never => false,
-    };
-    if show_calendar {
-        output.push('[');
-        if options.calendar_name == AnnotationDisplay::Critical {
-            output.push('!');
-        }
-        output.push_str("u-ca=");
-        output.push_str(calendar_identifier);
-        output.push(']');
-    }
+    write_calendar_annotation(&mut output, calendar_identifier, options.calendar_name);
     Some(output)
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        format_instant, parse_calendar_identifier, parse_instant_string, parse_offset_string,
-        parse_plain_date_string, parse_plain_date_time_string, parse_time_zone_identifier,
-        parse_time_zone_identifier_like, parse_time_zone_offset, parse_zoned_date_time_string,
-        resolve_zoned_date_time_epoch, InstantPrecision, InstantRoundingMode,
-        ZonedDateTimeOffsetOption,
+        format_instant, format_plain_date, parse_calendar_identifier, parse_instant_string,
+        parse_offset_string, parse_plain_date_string, parse_plain_date_time_string,
+        parse_time_zone_identifier, parse_time_zone_identifier_like, parse_time_zone_offset,
+        parse_zoned_date_time_string, resolve_zoned_date_time_epoch, AnnotationDisplay,
+        InstantPrecision, InstantRoundingMode, ZonedDateTimeOffsetOption,
     };
     use num_bigint::BigInt;
+
+    #[test]
+    fn formats_plain_dates_with_shared_calendar_annotations() {
+        assert_eq!(
+            format_plain_date(2000, 5, 2, "gregory", AnnotationDisplay::Auto).as_deref(),
+            Some("2000-05-02[u-ca=gregory]")
+        );
+        assert_eq!(
+            format_plain_date(2000, 5, 2, "gregory", AnnotationDisplay::Never).as_deref(),
+            Some("2000-05-02")
+        );
+        assert_eq!(
+            format_plain_date(-1, 8, 7, "gregory", AnnotationDisplay::Critical).as_deref(),
+            Some("-000001-08-07[!u-ca=gregory]")
+        );
+    }
 
     #[test]
     fn parses_exact_canonical_instants() {

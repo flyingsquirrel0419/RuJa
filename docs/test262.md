@@ -14672,3 +14672,30 @@ matching the tooling's other optional-corpus checks.
 - 다른 대안 대신 이 방식을 선택한 이유: exact complement만 선행 TypeError 거짓 양성, future test drift, 미구현 calendar 의미론 과장을 동시에 검출한다.
 - 장점, 단점 및 영향: direct exact 39/0과 forced 39/1, Intl402 exact 1/0과 forced 1/5가 재현되고 전체 50-file 표면의 metadata가 고정된다. calendar sibling, arithmetic methods, non-ISO calendars 지원 후 blocker와 downstream dependency를 재감사해야 한다.
 ```
+
+## Temporal.PlainDate.prototype.toString
+
+`tools/test262_temporal_plain_date_to_string_admission.txt` freezes the complete
+18-file direct directory. Dedicated CI requires and forces **18 pass / 0 fail /
+0 skip**. Before the own method existed, `builtin.js`, `length.js`, `name.js`,
+and `not-a-constructor.js` passed accidentally through inherited
+`Object.prototype.toString`; exact-path execution plus `prop-desc.js` prevents
+that shape-only result from being credited again.
+
+The separate eight-file Intl402 directory has no independently reachable
+admissions. Shared execution is exact **0 pass / 0 fail / 8 skip** and forced
+execution is **0 pass / 8 fail / 0 skip**. `basic-persian.js` requires Persian
+field-to-ISO conversion; the other seven combine ISO assertions with `gregory`
+construction and preservation, so no file can be partially admitted. A pinned
+whole-corpus audit found no true JS-level downstream caller outside these 26
+files.
+
+```text
+[Decision Log]
+- 목적과 의도: PlainDate toString의 complete direct/Intl402 corpus를 own-method semantics와 non-ISO dependency 기준으로 정확히 계상한다.
+- 기존 구현 및 제약 조건: broad Temporal skip 아래 direct 18개와 Intl 8개가 숨겨졌고 inherited Object.prototype.toString의 함수 shape만으로 네 파일이 forced false positive였다.
+- 검토한 주요 대안: directory 전체 admission, forced pass만 admission, Intl의 ISO assertion 부분 계상, direct admission과 Intl blocker complement 분리를 검토했다.
+- 선택한 방식: direct 18개를 exact admission하고 Intl 8개를 전부 metadata-frozen blocker로 유지한다. 두 디렉터리의 live complement, malformed/future path, runner/analyzer parity를 함께 검증한다.
+- 다른 대안 대신 이 방식을 선택한 이유: 파일 단위 Test262 결과에서 Intl의 ISO와 non-ISO assertion을 분리할 수 없고 exact complement만 inherited-method false positive와 future corpus drift를 모두 검출한다.
+- 장점, 단점 및 영향: direct exact/forced 18/0, Intl exact 0/0/8, forced 0/8이 재현된다. non-ISO calendar construction과 field conversion 이후 Intl blocker를 다시 감사해야 한다.
+```

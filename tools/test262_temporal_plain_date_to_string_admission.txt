@@ -1,0 +1,19 @@
+# Pinned Test262 revision: 9e61c12835c5e4a3bdba93850427e6742c4f64c4
+built-ins/Temporal/PlainDate/prototype/toString/basic.js
+built-ins/Temporal/PlainDate/prototype/toString/branding.js
+built-ins/Temporal/PlainDate/prototype/toString/builtin.js
+built-ins/Temporal/PlainDate/prototype/toString/calendarname-always.js
+built-ins/Temporal/PlainDate/prototype/toString/calendarname-auto.js
+built-ins/Temporal/PlainDate/prototype/toString/calendarname-critical.js
+built-ins/Temporal/PlainDate/prototype/toString/calendarname-invalid-string.js
+built-ins/Temporal/PlainDate/prototype/toString/calendarname-never.js
+built-ins/Temporal/PlainDate/prototype/toString/calendarname-undefined.js
+built-ins/Temporal/PlainDate/prototype/toString/calendarname-wrong-type.js
+built-ins/Temporal/PlainDate/prototype/toString/length.js
+built-ins/Temporal/PlainDate/prototype/toString/name.js
+built-ins/Temporal/PlainDate/prototype/toString/not-a-constructor.js
+built-ins/Temporal/PlainDate/prototype/toString/options-object.js
+built-ins/Temporal/PlainDate/prototype/toString/options-wrong-type.js
+built-ins/Temporal/PlainDate/prototype/toString/order-of-operations.js
+built-ins/Temporal/PlainDate/prototype/toString/prop-desc.js
+built-ins/Temporal/PlainDate/prototype/toString/year-format.js

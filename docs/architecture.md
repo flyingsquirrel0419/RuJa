@@ -199,8 +199,9 @@ installer accounting to 116 maximum pins and 117 allocations.
 `Temporal.PlainDate.prototype.equals` brands its receiver before invoking the
 same converter for the argument. It compares the compact ISO date first and
 only then the canonical calendar identifier, returning a primitive Boolean.
-No temporary PlainDate or result object is allocated. The Realm-local method
-raises current installer accounting to 117 maximum pins and 118 allocations.
+No temporary PlainDate or result object is allocated. At the equals checkpoint,
+the Realm-local method raised installer accounting to 117 maximum pins and 118
+allocations.
 
 ```text
 [Decision Log]
@@ -210,6 +211,24 @@ raises current installer accounting to 117 maximum pins and 118 allocations.
 - 선택한 방식: receiver slots를 먼저 추출하고 argument를 options 없이 변환한 뒤 fields와 canonical calendar ID를 short-circuit 비교한다.
 - 다른 대안 대신 이 방식을 선택한 이유: 직접 record 비교만 brand-first abrupt, getter 비관찰, parser/fuel 단일 소스, allocation-free Boolean을 함께 보존한다.
 - 장점, 단점 및 영향: cross-Realm errors, ephemeral argument GC와 installer OOM rollback이 검증된다. CalendarEquals는 현재 canonical ISO ID equality이며 aliases 도입 시 calendar subsystem에서 확장해야 한다.
+```
+
+`Temporal.PlainDate.prototype.toString` preserves the same hidden-record
+boundary for serialization. It brands before options access, roots the options
+object across the single observable `calendarName` get and coercion, and sends
+only copied ISO fields plus the canonical calendar ID to a date-only formatter.
+That formatter shares calendar annotation emission with ZonedDateTime but does
+not inherit time, offset, or time-zone behavior. Current installer accounting
+is 118 maximum pins and 119 allocations.
+
+```text
+[Decision Log]
+- 목적과 의도: PlainDate serialization을 hidden ISO date/calendar와 RFC 9557 annotation 규칙 위에 두고 observable options 순서를 명세와 일치시킨다.
+- 기존 구현 및 제약 조건: own toString이 없어 Object.prototype.toString으로 fallback했고 ZonedDateTime formatter만 calendar annotation을 구현했다. non-ISO calendar construction은 아직 지원 경계 밖이다.
+- 검토한 주요 대안: public getter 조합, parser 왕복, ZonedDateTime midnight 포맷, date-only formatter와 annotation writer 공유를 검토했다.
+- 선택한 방식: 기존 ISO year padding을 재사용하는 PlainDate formatter를 만들고 annotation writer만 공용화한다. native method는 brand-first 후 calendarName 하나만 rooted conversion한다.
+- 다른 대안 대신 이 방식을 선택한 이유: date-only record formatter만 getter 비관찰, 불필요한 parse/rounding 제거, ZonedDateTime 의미론 비유입을 동시에 보장한다.
+- 장점, 단점 및 영향: 네 annotation mode, extended year, Realm/GC/abrupt/fuel/OOM 경계가 검증된다. formatter는 임의 canonical calendar ID를 표현하지만 non-ISO field conversion은 calendar subsystem의 후속 책임이다.
 ```
 
 ## Temporal PlainDateTime hidden slots

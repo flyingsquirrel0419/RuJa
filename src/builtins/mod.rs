@@ -6290,7 +6290,7 @@ pub(crate) fn install_temporal_namespace_in_env(
     global: Option<&Value>,
     object_proto: Value,
 ) -> error::Result<Value> {
-    vm.try_reserve_gc_pins(117)?;
+    vm.try_reserve_gc_pins(118)?;
     let mut pin_count = 0;
     let result = (|| {
         let instant_prototype = Value::Object(vm.alloc(HeapObj::Object(ObjectData {
@@ -6913,6 +6913,13 @@ pub(crate) fn install_temporal_namespace_in_env(
             env,
         )?);
         pin_count += vm.pin(&plain_date_equals);
+        let plain_date_to_string = Value::Object(vm.new_native_function_in_env_with_gc_retry(
+            "toString",
+            temporal_plain_date_to_string,
+            0,
+            env,
+        )?);
+        pin_count += vm.pin(&plain_date_to_string);
 
         let Value::Object(instant_constructor_index) = instant_constructor.clone() else {
             unreachable!()
@@ -7164,6 +7171,10 @@ pub(crate) fn install_temporal_namespace_in_env(
                 props.insert(PropertyKey::from(name), accessor_get_prop(getter));
             }
             props.insert(PropertyKey::from("equals"), data_prop(plain_date_equals));
+            props.insert(
+                PropertyKey::from("toString"),
+                data_prop(plain_date_to_string),
+            );
             props.insert(PropertyKey::from("valueOf"), data_prop(plain_date_value_of));
             let mut tag = data_prop(Value::String(Arc::from("Temporal.PlainDate")));
             tag.writable = false;
@@ -9240,6 +9251,46 @@ fn temporal_plain_date_equals(
     Ok(Value::Bool(
         fields == other_fields && temporal_calendar_equals(&calendar_identifier, &other_calendar),
     ))
+}
+
+fn temporal_plain_date_to_string(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let (fields, calendar_identifier) = temporal_plain_date_slots(vm, this)?;
+    let options = args.first().cloned().unwrap_or(Value::Undefined);
+    if !matches!(options, Value::Undefined | Value::Object(_)) {
+        return Err(Error::type_err(
+            "Temporal.PlainDate.prototype.toString options must be an object",
+        ));
+    }
+    vm.try_reserve_value_roots(std::slice::from_ref(&options))?;
+    let options_pin = vm.pin(&options);
+    let result = (|| {
+        let calendar_name = if options.is_undefined() {
+            None
+        } else {
+            match vm.get_property(&options, "calendarName")? {
+                Value::Undefined => None,
+                value => Some(temporal_option_to_string(vm, &value)?),
+            }
+        };
+        let calendar_name =
+            temporal_annotation_display(calendar_name.as_deref(), "calendarName", true)?;
+        temporal::format_plain_date(
+            fields.year,
+            fields.month,
+            fields.day,
+            &calendar_identifier,
+            calendar_name,
+        )
+        .map(Arc::<str>::from)
+        .map(Value::String)
+        .ok_or_else(|| Error::range("Temporal.PlainDate string formatting failed"))
+    })();
+    vm.unpin_many(options_pin);
+    result
 }
 
 fn to_temporal_plain_date_time(

@@ -47,8 +47,9 @@
   Realm-local `Temporal.PlainDate` supports distinct hidden-slot construction,
   subclassing, calendar ID, all 16 ISO/calendar accessors, `@@toStringTag`,
   always-throwing `valueOf`, static `from` for branded Temporal values, ISO
-  property bags, and audited strings, hidden-record `equals`, static ISO-date
-  `compare`, plus getter-free midnight conversion
+  property bags, and audited strings, hidden-record `equals`, RFC 9557
+  `toString` with calendar annotation control, static ISO-date `compare`, plus
+  getter-free midnight conversion
   through the shared PlainDateTime `from`/`equals`/`compare` boundary.
   Realm-local `Temporal.ZonedDateTime`
   supports hidden-slot construction for UTC/fixed offsets, exact epoch and

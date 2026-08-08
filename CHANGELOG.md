@@ -4,6 +4,21 @@
 
 ### Changed
 
+- Added Realm-local `Temporal.PlainDate.prototype.toString`. It brands the
+  receiver before observing options, reads `calendarName` exactly once, and
+  formats hidden ISO date/calendar slots with shared RFC 9557 calendar
+  annotation rules. The pinned direct directory is exact **18/0/0**. Its
+  separate Intl402 boundary is exact **0/0/8** and forced **0/8/0** because
+  every file requires non-ISO calendar construction or field conversion.
+
+  [Decision Log]
+  - 목적과 의도: PlainDate의 ISO/RFC 9557 문자열 표현을 명세의 brand, options, calendarName coercion, hidden-slot formatting 순서로 구현한다.
+  - 기존 구현 및 제약 조건: PlainDate own toString이 없어 Object.prototype.toString이 호출됐고 네 shape test가 거짓 통과했다. ZonedDateTime에는 calendar annotation 포맷이 있었지만 date-only formatter와 non-ISO calendar 실행 지원은 없었다.
+  - 검토한 주요 대안: public accessors 조합, 기존 parser round-trip, ZonedDateTime formatter에 midnight를 주입, ISO date 전용 formatter와 annotation writer 공유를 검토했다.
+  - 선택한 방식: 기존 year padding을 재사용하는 date-only formatter를 추가하고 calendar annotation writer만 ZonedDateTime과 공유한다. native method는 receiver slots를 먼저 복사한 뒤 rooted options에서 calendarName만 변환한다.
+  - 다른 대안 대신 이 방식을 선택한 이유: public accessors와 parser round-trip은 user code 및 불필요한 변환을 관찰하고, ZonedDateTime formatter는 time/offset/time-zone 의미론을 끌어온다. date-only formatter가 명세 record 경계를 가장 직접 보존한다.
+  - 장점, 단점 및 영향: signed year, 네 annotation mode, method-Realm errors, getter/coercion GC와 abrupt pin 복원, byte fuel, allocation-free heap 결과와 installer rollback이 검증된다. installer는 118 maximum pins와 119 allocations가 되며 Intl 여덟 파일은 non-ISO calendar subsystem 이후 재감사한다.
+
 - Added Realm-local `Temporal.PlainDate.prototype.equals`. It brands the
   receiver before converting its argument through the shared date-only record
   boundary, then compares the three ISO fields and canonical calendar identity

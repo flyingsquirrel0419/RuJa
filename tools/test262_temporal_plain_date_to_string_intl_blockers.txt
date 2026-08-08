@@ -1,0 +1,10 @@
+# Pinned Test262 revision: 9e61c12835c5e4a3bdba93850427e6742c4f64c4
+# Require non-ISO calendar construction, conversion, or field interpretation.
+intl402/Temporal/PlainDate/prototype/toString/basic-persian.js
+intl402/Temporal/PlainDate/prototype/toString/calendarname-always.js
+intl402/Temporal/PlainDate/prototype/toString/calendarname-auto.js
+intl402/Temporal/PlainDate/prototype/toString/calendarname-critical.js
+intl402/Temporal/PlainDate/prototype/toString/calendarname-never.js
+intl402/Temporal/PlainDate/prototype/toString/calendarname-undefined.js
+intl402/Temporal/PlainDate/prototype/toString/calendarname-wrong-type.js
+intl402/Temporal/PlainDate/prototype/toString/options-undefined.js

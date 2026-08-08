@@ -25640,6 +25640,112 @@ fn temporal_plain_date_equals_roots_argument_across_observable_gc() {
 }
 
 #[test]
+fn temporal_plain_date_to_string_formats_hidden_iso_date_and_calendar_annotation() {
+    assert_eq!(
+        run(r#"
+            var value = new Temporal.PlainDate(2000, 5, 2);
+            var reads = 0;
+            for (var key of ['calendarId', 'day', 'month', 'year']) {
+              Object.defineProperty(value, key, {
+                get: function () { reads++; throw new Error('observed'); }
+              });
+            }
+            [
+              Temporal.PlainDate.prototype.toString.name,
+              Temporal.PlainDate.prototype.toString.length,
+              value.toString(), reads,
+              value.toString({ calendarName: 'always' }),
+              value.toString({ calendarName: 'critical' }),
+              value.toString({ calendarName: 'never' }),
+              new Temporal.PlainDate(-1, 8, 7).toString(),
+              new Temporal.PlainDate(10000, 6, 7).toString()
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "toString|0|2000-05-02|0|2000-05-02[u-ca=iso8601]|2000-05-02[!u-ca=iso8601]|2000-05-02|-000001-08-07|+010000-06-07"
+        ))
+    );
+}
+
+#[test]
+fn temporal_plain_date_to_string_brands_first_and_uses_function_realm() {
+    assert_eq!(
+        run(r#"
+            var reads = 0;
+            var options = {};
+            Object.defineProperty(options, 'calendarName', {
+              get: function () { reads++; throw new Error('observed'); }
+            });
+            var toString = Temporal.PlainDate.prototype.toString;
+            var brandFirst = false;
+            try { toString.call({}, options); }
+            catch (error) { brandFirst = error instanceof TypeError && reads === 0; }
+
+            var primitiveOptions = false;
+            try { new Temporal.PlainDate(2000, 5, 2).toString(null); }
+            catch (error) { primitiveOptions = error instanceof TypeError; }
+            var callableOptions = new Temporal.PlainDate(2000, 5, 2).toString(function () {});
+            var symbolOption = false;
+            try {
+              new Temporal.PlainDate(2000, 5, 2).toString({ calendarName: Symbol() });
+            } catch (error) { symbolOption = error instanceof TypeError; }
+
+            var other = $262.createRealm().global;
+            var foreignToString = other.Temporal.PlainDate.prototype.toString;
+            var foreign = new other.Temporal.PlainDate(2000, 5, 2);
+            var valid = foreignToString.call(foreign, { calendarName: 'always' });
+            var receiverRealm = false;
+            var optionRealm = false;
+            try { foreignToString.call({}, undefined); } catch (error) {
+              receiverRealm = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            try { foreignToString.call(foreign, { calendarName: 'invalid' }); }
+            catch (error) {
+              optionRealm = error instanceof other.RangeError && !(error instanceof RangeError);
+            }
+            var nonconstructable = false;
+            try { new Temporal.PlainDate.prototype.toString(); }
+            catch (error) { nonconstructable = error instanceof TypeError; }
+            [
+              brandFirst, primitiveOptions, callableOptions, symbolOption, valid,
+              receiverRealm, optionRealm, nonconstructable
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "true|true|2000-05-02|true|2000-05-02[u-ca=iso8601]|true|true|true"
+        ))
+    );
+}
+
+#[test]
+fn temporal_plain_date_to_string_roots_options_across_observable_gc() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+    assert_eq!(
+        vm.run(
+            r#"
+            new Temporal.PlainDate(2000, 5, 2).toString({
+              get calendarName() {
+                forceGc();
+                return { toString() { forceGc(); return 'always'; } };
+              }
+            });
+            "#,
+        )
+        .expect("PlainDate.toString options should survive observable GC"),
+        Value::String(Arc::from("2000-05-02[u-ca=iso8601]"))
+    );
+}
+
+#[test]
 fn temporal_plain_date_time_conversion_uses_plain_date_slots_at_midnight() {
     assert_eq!(
         run(r#"

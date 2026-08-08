@@ -175,6 +175,47 @@ fn temporal_plain_date_equals_precharges_input_bytes() {
 }
 
 #[test]
+fn temporal_plain_date_to_string_precharges_calendar_name_bytes() {
+    const BUDGET: i64 = 10_000;
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        globalThis.plainDateToString = new Temporal.PlainDate(1970, 1, 1);
+        globalThis.plainDateToStringShort = "auto";
+        globalThis.plainDateToStringLong = "x".repeat(512);
+        "#,
+    )
+    .expect("PlainDate.toString fuel fixtures should initialize");
+
+    vm.set_fuel(Some(BUDGET));
+    vm.run("plainDateToString.toString({ calendarName: plainDateToStringShort });")
+        .expect("short calendarName should format");
+    let short_work = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+
+    vm.set_fuel(Some(BUDGET));
+    let error = vm
+        .run("plainDateToString.toString({ calendarName: plainDateToStringLong });")
+        .expect_err("long invalid calendarName should reach option validation");
+    assert_eq!(error.kind, ruja::ErrorKind::Range);
+    let long_work = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+    assert!(long_work >= short_work + 500);
+
+    vm.set_fuel(Some(long_work - 1));
+    let error = vm
+        .run("plainDateToString.toString({ calendarName: plainDateToStringLong });")
+        .expect_err("N-1 fuel must abort during option conversion");
+    assert_eq!(error.kind, ruja::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+
+    vm.set_fuel(Some(long_work));
+    let error = vm
+        .run("plainDateToString.toString({ calendarName: plainDateToStringLong });")
+        .expect_err("exact measured fuel should reach invalid-option validation");
+    assert_eq!(error.kind, ruja::ErrorKind::Range);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+}
+
+#[test]
 fn temporal_plain_date_time_compare_precharges_each_string_argument() {
     const BUDGET: i64 = 20_000;
     let mut vm = Vm::new().expect("failed to initialize VM");
