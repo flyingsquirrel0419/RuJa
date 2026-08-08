@@ -4699,7 +4699,7 @@ native method Realm.
 - 목적과 의도: ToTimeRecordOrMidnight와 CreateTemporalDateTime 사이의 명세 record 경계를 VM hidden-slot/Realm 모델에 직접 표현한다.
 - 기존 구현 및 제약 조건: 초기 bridge checkpoint에는 PlainDateTime/ZonedDateTime local-time helper만 있었고 이후 PlainTime heap kind와 intrinsic이 추가됐다. installer는 transactional pin batch와 exact allocation-boundary 검증을 요구한다.
 - 검토한 주요 대안: 임시 PlainTime heap object, generic PlainDateTime conversion, public time accessors, method 전용 internal time record를 검토했다.
-- 선택한 방식: six-field Copy internal record를 사용하고 PlainTime을 포함한 입력 종류별 변환을 shared ToTemporalTime 경로로 융합한다. installer는 이전 allocation index를 보존하면서 현재 132 pins/133 allocations를 예약한다.
+- 선택한 방식: six-field Copy internal record를 사용하고 PlainTime을 포함한 입력 종류별 변환을 shared ToTemporalTime 경로로 융합한다. installer는 이전 allocation index를 보존하면서 현재 133 pins/134 allocations를 예약한다.
 - 다른 대안 대신 이 방식을 선택한 이유: intermediate object는 관찰 불가능하면서 heap/GC 실패면만 늘리고, generic date-time conversion은 time-only property order와 required-field 규칙이 다르다. hidden record는 Realm과 GC ownership을 최종 객체 하나에 집중한다.
 - 장점, 단점 및 영향: receiver 및 branded input public getters를 우회하고 observable bag 순서, abrupt completion, GC rooting, root/heap failure retry, exact fuel을 보존한다. PlainTime hidden kind는 property-bag 분기보다 먼저 복사되며 direct 35-file bridge surface가 완결된다.
 ```
@@ -4713,7 +4713,7 @@ selects the `newTarget` prototype only after validation, and allocates through
 the pinned collecting path. Six accessors and `valueOf` brand directly against
 the heap kind, so public property mutation cannot forge or alter time state.
 
-Static `from` and `compare`, prototype `equals`, and PlainDate
+Static `from` and `compare`, prototype `equals` and `toString`, and PlainDate
 `toPlainDateTime` share one
 `ToTemporalTime` record conversion. Branded PlainTime, PlainDateTime, and
 ZonedDateTime inputs bypass public accessors. Ordinary bags read hour,
@@ -4722,8 +4722,12 @@ before options; Strings parse before options and precharge source bytes. The
 factory creates a fresh object in the native method Realm, while equality and
 static comparison operate on copied records without a result allocation.
 `compare` completes the first conversion before starting the second and orders
-hour through nanosecond lexicographically. The installer reserves 132 live
-pins across 133 allocations and publishes both new Realm registries
+hour through nanosecond lexicographically. `toString` brands before options,
+then reads and converts `fractionalSecondDigits`, `roundingMode`, and
+`smallestUnit` in order. It rounds the copied fields as positive
+nanoseconds-of-day, wraps midnight, and delegates time emission to the same
+writer used by Instant/ZonedDateTime ISO formatting. The installer reserves
+133 live pins across 134 allocations and publishes both new Realm registries
 only after the complete namespace succeeds.
 
 ```text
@@ -4731,9 +4735,9 @@ only after the complete namespace succeeds.
 - 목적과 의도: PlainTime의 위조 불가능한 internal-slot identity와 모든 현재 소비자가 공유할 ToTemporalTime record 경계를 확립한다.
 - 기존 구현 및 제약 조건: PlainDate bridge는 time-only record를 가졌지만 real PlainTime brand와 Realm intrinsic이 없었다. Temporal installer, GC exhaustive match, async intrinsic fallback, Realm root/rollback inventory는 새 kind마다 수동 동기화가 필요하다.
 - 검토한 주요 대안: ordinary properties, PlainDateTime kind 재사용, bridge shape stub, converter별 중복 구현, compact PlainTime kind와 shared record conversion을 검토했다.
-- 선택한 방식: six-field Copy slots를 독립 Temporal kind에 저장하고 constructor/accessors/from/equals/valueOf/compare 및 PlainDate bridge를 하나의 converter에 연결한다. 생성만 prototype을 root하고 equality와 comparison은 allocation-free로 유지한다. compare는 첫 변환의 abrupt completion이 둘째 입력 관찰을 막도록 두 converter 호출을 명시적으로 순서화한다.
+- 선택한 방식: six-field Copy slots를 독립 Temporal kind에 저장하고 constructor/accessors/from/equals/valueOf/compare/toString 및 PlainDate bridge를 하나의 record 경계에 연결한다. 생성만 prototype을 root하고 equality, comparison, string primitive 결과는 heap-object allocation 없이 유지한다. compare는 첫 변환의 abrupt completion이 둘째 입력 관찰을 막도록 두 converter 호출을 명시적으로 순서화하고, toString은 기존 precision/rounding parser와 공용 time writer를 재사용한다.
 - 다른 대안 대신 이 방식을 선택한 이유: ordinary properties와 stub은 RequireInternalSlot 및 getter 비관찰을 제공하지 못하고 PlainDateTime 재사용은 존재하지 않는 date/calendar state를 부여한다. shared converter만 getter/options/fuel/Realm 순서의 drift를 막는다.
-- 장점, 단점 및 영향: cross-Realm brand/result/error, subclass prototype, fresh clone, constrain/reject, hidden getter 비관찰, OOM/root retry와 각 compare operand의 exact fuel이 고정된다. compare는 allocation 131이며 기존 번호를 바꾸지 않는다. 후속 arithmetic/rounding/difference/serialization은 이 record 위에 추가하되 installer accounting과 exact admission을 함께 갱신해야 한다.
+- 장점, 단점 및 영향: cross-Realm brand/result/error, subclass prototype, fresh clone, constrain/reject, hidden getter 비관찰, OOM/root retry와 option/operand exact fuel이 고정된다. compare는 allocation 131, toString은 allocation 132이며 기존 번호를 바꾸지 않는다. 후속 arithmetic/rounding/difference/JSON/locale serialization은 이 record 위에 추가하되 installer accounting과 exact admission을 함께 갱신해야 한다.
 ```
 
 **Next:** [Features](features.md) · [Known limitations](limitations.md) · [Back to README](../README.md)

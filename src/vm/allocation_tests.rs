@@ -509,6 +509,33 @@ fn temporal_namespace_installation_restores_roots_after_plain_time_compare_failu
 }
 
 #[test]
+fn temporal_namespace_installation_restores_roots_after_plain_time_to_string_failure() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.gc();
+    let original = vm.get_global("Temporal");
+    let baseline_pins = vm.gc_pins.len();
+    let baseline_live = vm.heap.live_count();
+    let baseline_registries = realm_registry_counts(&vm);
+    let global = vm.global;
+    let object_proto = vm.object_proto.clone();
+    // The first 131 allocations fit; PlainTime.prototype.toString is allocation 132.
+    vm.set_max_heap_objects(Some(baseline_live + 131));
+
+    let result =
+        crate::builtins::install_temporal_namespace_in_env(&mut vm, global, None, object_proto);
+
+    vm.set_max_heap_objects(None);
+    let error = result.expect_err("PlainTime.prototype.toString allocation must hit the cap");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(error.message, "heap limit exceeded");
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.get_global("Temporal"), original);
+    assert_eq!(realm_registry_counts(&vm), baseline_registries);
+    vm.gc();
+    assert_eq!(vm.heap.live_count(), baseline_live);
+}
+
+#[test]
 fn temporal_namespace_installation_covers_every_allocation_boundary() {
     let mut vm = Vm::new().expect("failed to initialize VM");
     vm.gc();
@@ -517,9 +544,9 @@ fn temporal_namespace_installation_covers_every_allocation_boundary() {
     let baseline_live = vm.heap.live_count();
     let global = vm.global;
 
-    // Allocations 18 through 133 cover the method/accessor batches and the
+    // Allocations 18 through 134 cover the method/accessor batches and the
     // two namespace objects that must publish only after the batch succeeds.
-    for extra_capacity in 17..133 {
+    for extra_capacity in 17..134 {
         vm.set_max_heap_objects(Some(baseline_live + extra_capacity));
         let object_proto = vm.object_proto.clone();
         let result =
@@ -540,16 +567,16 @@ fn temporal_namespace_installation_covers_every_allocation_boundary() {
         );
     }
 
-    vm.set_max_heap_objects(Some(baseline_live + 133));
+    vm.set_max_heap_objects(Some(baseline_live + 134));
     let object_proto = vm.object_proto.clone();
     let temporal =
         crate::builtins::install_temporal_namespace_in_env(&mut vm, global, None, object_proto)
-            .expect("exact 133-object capacity must install the complete namespace");
+            .expect("exact 134-object capacity must install the complete namespace");
     vm.set_max_heap_objects(None);
     assert_eq!(vm.gc_pins.len(), baseline_pins);
     assert_eq!(vm.get_global("Temporal"), temporal);
     assert_eq!(
-        vm.run("typeof Temporal.PlainDate === 'function' && typeof Temporal.PlainDate.from === 'function' && typeof Temporal.PlainDate.compare === 'function' && typeof Temporal.PlainDate.prototype.equals === 'function' && typeof Temporal.PlainDate.prototype.toPlainDateTime === 'function' && typeof Temporal.PlainDate.prototype.toString === 'function' && typeof Temporal.PlainDate.prototype.toJSON === 'function' && typeof Temporal.PlainTime === 'function' && typeof Temporal.PlainTime.from === 'function' && typeof Temporal.PlainTime.compare === 'function' && typeof Temporal.PlainTime.prototype.equals === 'function' && typeof Temporal.PlainTime.prototype.valueOf === 'function' && typeof Temporal.PlainDateTime.compare === 'function' && typeof Temporal.PlainDateTime.prototype.equals")
+        vm.run("typeof Temporal.PlainDate === 'function' && typeof Temporal.PlainDate.from === 'function' && typeof Temporal.PlainDate.compare === 'function' && typeof Temporal.PlainDate.prototype.equals === 'function' && typeof Temporal.PlainDate.prototype.toPlainDateTime === 'function' && typeof Temporal.PlainDate.prototype.toString === 'function' && typeof Temporal.PlainDate.prototype.toJSON === 'function' && typeof Temporal.PlainTime === 'function' && typeof Temporal.PlainTime.from === 'function' && typeof Temporal.PlainTime.compare === 'function' && typeof Temporal.PlainTime.prototype.equals === 'function' && typeof Temporal.PlainTime.prototype.toString === 'function' && typeof Temporal.PlainTime.prototype.valueOf === 'function' && typeof Temporal.PlainDateTime.compare === 'function' && typeof Temporal.PlainDateTime.prototype.equals")
             .expect("installed namespace should remain usable"),
         Value::String(Arc::from("function"))
     );
@@ -712,6 +739,149 @@ fn temporal_plain_time_compare_returns_without_heap_allocation() {
     vm.set_max_heap_objects(None);
     assert_eq!(result, Value::Number(-1.0));
     assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.heap.live_count(), baseline_live);
+}
+
+#[test]
+fn temporal_plain_time_to_string_returns_without_heap_allocation_and_restores_roots() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        "globalThis.plainTimeToStringValue = new Temporal.PlainTime(12, 34, 56, 123, 456, 789); \
+         globalThis.plainTimeToStringOptions = { smallestUnit: 'microsecond' };",
+    )
+    .expect("PlainTime.toString fixture should initialize");
+    vm.gc();
+    let baseline_pins = vm.gc_pins.len();
+    let baseline_live = vm.heap.live_count();
+
+    vm.set_max_heap_objects(Some(baseline_live));
+    let result = vm
+        .run("plainTimeToStringValue.toString(plainTimeToStringOptions);")
+        .expect("PlainTime.toString should not allocate a result object");
+    vm.set_max_heap_objects(None);
+    assert_eq!(result, Value::String(Arc::from("12:34:56.123456")));
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.heap.live_count(), baseline_live);
+
+    let error = vm
+        .run(
+            "plainTimeToStringValue.toString({ get roundingMode() { throw new Error('stop'); } });",
+        )
+        .expect_err("abrupt option access should propagate");
+    assert_eq!(error.message, "stop");
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+}
+
+#[test]
+fn temporal_plain_time_to_string_roots_observable_options_and_retries_failures() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forcePlainTimeToStringGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("GC hook should register");
+    vm.register_fn(
+        "failPlainTimeToStringRoot",
+        |vm, _, _| {
+            vm.fail_next_gc_pin_reservation = true;
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("root-reservation hook should register");
+    vm.run(
+        r#"
+        globalThis.plainTimeRootValue = new Temporal.PlainTime(12, 34, 56, 123, 456, 789);
+        globalThis.plainTimeRootOrder = [];
+        globalThis.plainTimeGcOptions = {};
+        for (var key of ['fractionalSecondDigits', 'roundingMode', 'smallestUnit']) {
+          Object.defineProperty(plainTimeGcOptions, key, {
+            get: (function (name) { return function () {
+              plainTimeRootOrder.push('get ' + name);
+              forcePlainTimeToStringGc();
+              return { toString: function () {
+                plainTimeRootOrder.push('coerce ' + name);
+                forcePlainTimeToStringGc();
+                return name === 'fractionalSecondDigits' ? 'auto' :
+                  name === 'roundingMode' ? 'trunc' : 'millisecond';
+              }};
+            }; })(key)
+          });
+        }
+        globalThis.plainTimeRootGets = 0;
+        globalThis.plainTimeFailOptions = {};
+        "#,
+    )
+    .expect("PlainTime.toString root fixtures should initialize");
+    vm.gc();
+    let baseline_pins = vm.gc_pins.len();
+    let baseline_live = vm.heap.live_count();
+
+    assert_eq!(
+        vm.run("plainTimeRootValue.toString(plainTimeGcOptions) + '|' + plainTimeRootOrder.join(',');")
+            .expect("options should survive getter and coercion GC"),
+        Value::String(Arc::from(
+            "12:34:56.123|get fractionalSecondDigits,coerce fractionalSecondDigits,get roundingMode,coerce roundingMode,get smallestUnit,coerce smallestUnit"
+        ))
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    vm.run(
+        "Object.defineProperty(plainTimeFailOptions, 'fractionalSecondDigits', { get: function () { plainTimeRootGets++; return 'auto'; }, configurable: true });",
+    )
+    .expect("options-root failure getter should install");
+    // Native dispatch reserves first; fail the method's options-root preflight.
+    vm.gc_pin_reservation_failure_countdown = Some(1);
+    let error = vm
+        .run("plainTimeRootValue.toString(plainTimeFailOptions);")
+        .expect_err("options-root reservation should fail before getters");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.gc_pin_reservation_failure_countdown, None);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(
+        vm.run("plainTimeRootGets;")
+            .expect("getter count should remain readable"),
+        Value::Number(0.0)
+    );
+
+    for (property, valid) in [
+        ("fractionalSecondDigits", "auto"),
+        ("roundingMode", "trunc"),
+        ("smallestUnit", "millisecond"),
+    ] {
+        vm.run(&format!(
+            "Object.defineProperty(plainTimeFailOptions, '{property}', {{ get: function () {{ plainTimeRootGets++; failPlainTimeToStringRoot(); return {{ toString: function () {{ plainTimeRootGets += 100; return '{valid}'; }} }}; }}, configurable: true }});"
+        ))
+        .expect("failing option getter should install");
+        let error = vm
+            .run("plainTimeRootValue.toString(plainTimeFailOptions);")
+            .expect_err("option coercion root reservation should fail");
+        assert_eq!(error.kind, crate::error::ErrorKind::Range, "{property}");
+        assert!(!vm.fail_next_gc_pin_reservation, "{property}");
+        assert_eq!(vm.gc_pins.len(), baseline_pins, "{property}");
+        assert_eq!(
+            vm.run("plainTimeRootGets;")
+                .expect("getter count should remain readable"),
+            Value::Number(1.0),
+            "{property} coercion must not start after reservation failure"
+        );
+        vm.run(&format!(
+            "Object.defineProperty(plainTimeFailOptions, '{property}', {{ value: '{valid}', configurable: true }}); plainTimeRootGets = 0;"
+        ))
+        .expect("valid option should replace failing getter");
+    }
+
+    assert_eq!(
+        vm.run("plainTimeRootValue.toString(plainTimeFailOptions);")
+            .expect("PlainTime.toString should retry after root failures"),
+        Value::String(Arc::from("12:34:56.123"))
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    vm.gc();
     assert_eq!(vm.heap.live_count(), baseline_live);
 }
 

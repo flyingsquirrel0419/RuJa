@@ -165,6 +165,11 @@ from test262_temporal_plain_time_admission import (
     TEMPORAL_PLAIN_TIME_FROM_FLAGS,
     TEMPORAL_PLAIN_TIME_FROM_INCLUDES,
     TEMPORAL_PLAIN_TIME_FROM_NEGATIVE,
+    TEMPORAL_PLAIN_TIME_TO_STRING_FEATURES,
+    TEMPORAL_PLAIN_TIME_TO_STRING_FILES,
+    TEMPORAL_PLAIN_TIME_TO_STRING_FLAGS,
+    TEMPORAL_PLAIN_TIME_TO_STRING_INCLUDES,
+    TEMPORAL_PLAIN_TIME_TO_STRING_NEGATIVE,
     TEMPORAL_PLAIN_TIME_VALUE_OF_FEATURES,
     TEMPORAL_PLAIN_TIME_VALUE_OF_FILES,
     TEMPORAL_PLAIN_TIME_VALUE_OF_FLAGS,
@@ -14299,8 +14304,18 @@ class ClassSubclassBuiltinAdmissionTests(unittest.TestCase):
                 TEMPORAL_PLAIN_TIME_COMPARE_NEGATIVE,
                 "temporal_plain_time_compare",
             ),
+            (
+                TEMPORAL_PLAIN_TIME_TO_STRING_FILES,
+                TEMPORAL_PLAIN_TIME_TO_STRING_FEATURES,
+                TEMPORAL_PLAIN_TIME_TO_STRING_INCLUDES,
+                TEMPORAL_PLAIN_TIME_TO_STRING_FLAGS,
+                TEMPORAL_PLAIN_TIME_TO_STRING_NEGATIVE,
+                "temporal_plain_time_to_string",
+            ),
         )
-        self.assertEqual(tuple(len(cohort[0]) for cohort in cohorts), (40, 51, 7, 31, 32))
+        self.assertEqual(
+            tuple(len(cohort[0]) for cohort in cohorts), (40, 51, 7, 31, 32, 40)
+        )
         for index, cohort in enumerate(cohorts):
             files, features, includes, flags, negative, _ = cohort
             self.assertEqual(set(features), files)
@@ -14361,6 +14376,10 @@ class ClassSubclassBuiltinAdmissionTests(unittest.TestCase):
                         path.relative_to(test_root).as_posix()
                         for path in (plain_time / "compare").glob("*.js")
                     },
+                    {
+                        path.relative_to(test_root).as_posix()
+                        for path in (plain_time / "prototype/toString").glob("*.js")
+                    },
                 )
             except OSError:
                 return None
@@ -14412,6 +14431,9 @@ class ClassSubclassBuiltinAdmissionTests(unittest.TestCase):
             root = Path(temp_dir)
             future = root / "test/built-ins/Temporal/PlainTime/from/future.js"
             compare_future = root / "test/built-ins/Temporal/PlainTime/compare/future.js"
+            to_string_future = (
+                root / "test/built-ins/Temporal/PlainTime/prototype/toString/future.js"
+            )
             outside = root / "test/built-ins/Temporal/Other/from/basic.js"
             for tool in (test262_runner, test262_analyze):
                 original_root = tool.TEST262
@@ -14425,7 +14447,14 @@ class ClassSubclassBuiltinAdmissionTests(unittest.TestCase):
                                 getattr(tool, prefix + "_features")(path),
                                 features[relative],
                             )
-                        for path in (future, compare_future, outside, None, object()):
+                        for path in (
+                            future,
+                            compare_future,
+                            to_string_future,
+                            outside,
+                            None,
+                            object(),
+                        ):
                             self.assertFalse(getattr(tool, prefix + "_path")(path))
                             self.assertEqual(
                                 getattr(tool, prefix + "_features")(path), frozenset()
@@ -14433,6 +14462,9 @@ class ClassSubclassBuiltinAdmissionTests(unittest.TestCase):
                     self.assertTrue(tool.should_skip({"features": ["Temporal"]}, future))
                     self.assertTrue(
                         tool.should_skip({"features": ["Temporal"]}, compare_future)
+                    )
+                    self.assertTrue(
+                        tool.should_skip({"features": ["Temporal"]}, to_string_future)
                     )
                     self.assertTrue(tool.should_skip({"features": ["Temporal"]}, outside))
                 finally:

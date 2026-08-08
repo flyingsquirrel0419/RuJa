@@ -1095,15 +1095,25 @@ fn format_iso_date_time(
     let days = local.div_euclid(nanoseconds_per_day);
     let within_day = local.rem_euclid(nanoseconds_per_day);
     let (year, month, day) = civil_from_days(days)?;
-    let second_of_day = within_day / NS_PER_SECOND;
+    let mut output = String::with_capacity(40);
+    write_year(&mut output, year)?;
+    write!(output, "-{month:02}-{day:02}T").ok()?;
+    write_time(&mut output, within_day, precision)?;
+    Some(output)
+}
+
+fn write_time(
+    output: &mut String,
+    within_day_nanoseconds: i128,
+    precision: InstantPrecision,
+) -> Option<()> {
+    let second_of_day = within_day_nanoseconds / NS_PER_SECOND;
     let hour = second_of_day / 3_600;
     let minute = second_of_day % 3_600 / 60;
     let second = second_of_day % 60;
-    let fraction = within_day % NS_PER_SECOND;
+    let fraction = within_day_nanoseconds % NS_PER_SECOND;
 
-    let mut output = String::with_capacity(40);
-    write_year(&mut output, year)?;
-    write!(output, "-{month:02}-{day:02}T{hour:02}:{minute:02}").ok()?;
+    write!(output, "{hour:02}:{minute:02}").ok()?;
     if precision != InstantPrecision::Minute {
         write!(output, ":{second:02}").ok()?;
         match precision {
@@ -1125,6 +1135,32 @@ fn format_iso_date_time(
             _ => {}
         }
     }
+    Some(())
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn format_plain_time(
+    hour: u8,
+    minute: u8,
+    second: u8,
+    millisecond: u16,
+    microsecond: u16,
+    nanosecond: u16,
+    precision: InstantPrecision,
+    rounding_mode: InstantRoundingMode,
+) -> Option<String> {
+    let quantity = (((((i128::from(hour) * 60 + i128::from(minute)) * 60 + i128::from(second))
+        * 1_000
+        + i128::from(millisecond))
+        * 1_000
+        + i128::from(microsecond))
+        * 1_000)
+        + i128::from(nanosecond);
+    let rounded = round_as_if_positive(quantity, rounding_increment(precision)?, rounding_mode)?;
+    let nanoseconds_per_day = SECONDS_PER_DAY.checked_mul(NS_PER_SECOND)?;
+    let within_day = rounded.rem_euclid(nanoseconds_per_day);
+    let mut output = String::with_capacity(18);
+    write_time(&mut output, within_day, precision)?;
     Some(output)
 }
 
@@ -1239,11 +1275,12 @@ pub(crate) fn format_zoned_date_time(
 #[cfg(test)]
 mod tests {
     use super::{
-        format_instant, format_plain_date, parse_calendar_identifier, parse_instant_string,
-        parse_offset_string, parse_plain_date_string, parse_plain_date_time_string,
-        parse_plain_time_string, parse_time_zone_identifier, parse_time_zone_identifier_like,
-        parse_time_zone_offset, parse_zoned_date_time_string, resolve_zoned_date_time_epoch,
-        AnnotationDisplay, InstantPrecision, InstantRoundingMode, ZonedDateTimeOffsetOption,
+        format_instant, format_plain_date, format_plain_time, parse_calendar_identifier,
+        parse_instant_string, parse_offset_string, parse_plain_date_string,
+        parse_plain_date_time_string, parse_plain_time_string, parse_time_zone_identifier,
+        parse_time_zone_identifier_like, parse_time_zone_offset, parse_zoned_date_time_string,
+        resolve_zoned_date_time_epoch, AnnotationDisplay, InstantPrecision, InstantRoundingMode,
+        ZonedDateTimeOffsetOption,
     };
     use num_bigint::BigInt;
 
@@ -1654,5 +1691,65 @@ mod tests {
                 "{mode:?}"
             );
         }
+    }
+
+    #[test]
+    fn formats_plain_times_with_precision_and_midnight_rollover() {
+        assert_eq!(
+            format_plain_time(
+                12,
+                34,
+                56,
+                123,
+                456,
+                789,
+                InstantPrecision::Auto,
+                InstantRoundingMode::Trunc,
+            )
+            .as_deref(),
+            Some("12:34:56.123456789")
+        );
+        assert_eq!(
+            format_plain_time(
+                12,
+                34,
+                56,
+                123,
+                456,
+                789,
+                InstantPrecision::Minute,
+                InstantRoundingMode::Trunc,
+            )
+            .as_deref(),
+            Some("12:34")
+        );
+        assert_eq!(
+            format_plain_time(
+                23,
+                59,
+                59,
+                999,
+                999,
+                999,
+                InstantPrecision::Digits(0),
+                InstantRoundingMode::Ceil,
+            )
+            .as_deref(),
+            Some("00:00:00")
+        );
+        assert_eq!(
+            format_plain_time(
+                12,
+                34,
+                56,
+                123,
+                500,
+                0,
+                InstantPrecision::Digits(3),
+                InstantRoundingMode::HalfEven,
+            )
+            .as_deref(),
+            Some("12:34:56.124")
+        );
     }
 }

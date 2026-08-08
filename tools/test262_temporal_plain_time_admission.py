@@ -26,6 +26,9 @@ TEMPORAL_PLAIN_TIME_EQUALS_FILES = _read_manifest(
 TEMPORAL_PLAIN_TIME_COMPARE_FILES = _read_manifest(
     "test262_temporal_plain_time_compare_admission.txt"
 )
+TEMPORAL_PLAIN_TIME_TO_STRING_FILES = _read_manifest(
+    "test262_temporal_plain_time_to_string_admission.txt"
+)
 
 _CORE_TEMPORAL_HELPERS = frozenset({
     "argument-convert.js",
@@ -92,6 +95,13 @@ _COMPARE_ARROW = frozenset({
     "argument-string-with-time-designator.js",
     "argument-string-with-utc-designator.js",
 })
+_TO_STRING_COMPARE_ARRAY = frozenset({
+    "fractionalseconddigits-wrong-type.js",
+    "options-read-before-algorithmic-validation.js",
+    "order-of-operations.js",
+    "roundingmode-wrong-type.js",
+    "smallestunit-wrong-type.js",
+})
 
 
 def _features(path, cohort):
@@ -124,6 +134,13 @@ def _features(path, cohort):
         if name in _COMPARE_ARROW:
             features.add("arrow-function")
         if name == "argument-wrong-type.js":
+            features.update(("BigInt", "Symbol"))
+        if name == "not-a-constructor.js":
+            features.add("Reflect.construct")
+    elif cohort == "toString":
+        if name == "branding.js":
+            features.add("Symbol")
+        elif name == "options-wrong-type.js":
             features.update(("BigInt", "Symbol"))
         if name == "not-a-constructor.js":
             features.add("Reflect.construct")
@@ -175,6 +192,15 @@ def _includes(path, cohort):
             includes.add("propertyHelper.js")
         if name == "not-a-constructor.js":
             includes.add("isConstructor.js")
+    elif cohort == "toString":
+        if name in _TO_STRING_COMPARE_ARRAY:
+            includes.update(("compareArray.js", "temporalHelpers.js"))
+        elif name == "smallestunit-plurals-accepted.js":
+            includes.add("temporalHelpers.js")
+        if name in {"length.js", "name.js", "prop-desc.js"}:
+            includes.add("propertyHelper.js")
+        if name == "not-a-constructor.js":
+            includes.add("isConstructor.js")
     return frozenset(includes)
 
 
@@ -217,6 +243,12 @@ def _metadata(files, cohort):
     TEMPORAL_PLAIN_TIME_COMPARE_FLAGS,
     TEMPORAL_PLAIN_TIME_COMPARE_NEGATIVE,
 ) = _metadata(TEMPORAL_PLAIN_TIME_COMPARE_FILES, "compare")
+(
+    TEMPORAL_PLAIN_TIME_TO_STRING_FEATURES,
+    TEMPORAL_PLAIN_TIME_TO_STRING_INCLUDES,
+    TEMPORAL_PLAIN_TIME_TO_STRING_FLAGS,
+    TEMPORAL_PLAIN_TIME_TO_STRING_NEGATIVE,
+) = _metadata(TEMPORAL_PLAIN_TIME_TO_STRING_FILES, "toString")
 
 for files, count, label in (
     (TEMPORAL_PLAIN_TIME_CORE_FILES, 40, "core"),
@@ -224,6 +256,7 @@ for files, count, label in (
     (TEMPORAL_PLAIN_TIME_VALUE_OF_FILES, 7, "valueOf"),
     (TEMPORAL_PLAIN_TIME_EQUALS_FILES, 31, "equals"),
     (TEMPORAL_PLAIN_TIME_COMPARE_FILES, 32, "compare"),
+    (TEMPORAL_PLAIN_TIME_TO_STRING_FILES, 40, "toString"),
 ):
     if len(files) != count:
         raise RuntimeError(f"Temporal.PlainTime {label} admission must contain {count} files")

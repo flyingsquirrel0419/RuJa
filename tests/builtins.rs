@@ -25537,6 +25537,72 @@ fn temporal_plain_time_compare_is_lexicographic_ordered_and_realm_correct() {
 }
 
 #[test]
+fn temporal_plain_time_to_string_formats_rounds_and_observes_options_in_order() {
+    assert_eq!(
+        run(r#"
+            var time = new Temporal.PlainTime(12, 34, 56, 123, 456, 789);
+            for (var key of ['hour', 'minute', 'second', 'millisecond', 'microsecond', 'nanosecond']) {
+              Object.defineProperty(time, key, {
+                get: function () { throw new Error('hidden getter observed'); }
+              });
+            }
+
+            var order = [];
+            var options = {};
+            for (var key of ['fractionalSecondDigits', 'roundingMode', 'smallestUnit']) {
+              Object.defineProperty(options, key, {
+                get: (function (name) { return function () {
+                  order.push('get ' + name);
+                  return { toString: function () {
+                    order.push('toString ' + name);
+                    return name === 'fractionalSecondDigits' ? 'auto' :
+                      name === 'roundingMode' ? 'trunc' : 'millisecond';
+                  }};
+                }; })(key)
+              });
+            }
+            var ordered = time.toString(options);
+            var midnight = new Temporal.PlainTime(23, 59, 59, 999, 999, 999)
+              .toString({ fractionalSecondDigits: 0, roundingMode: 'ceil' });
+            var minute = time.toString({ smallestUnit: 'minutes' });
+
+            var marker = new Error('marker');
+            var caughtMarker = false;
+            try { time.toString({ get roundingMode() { throw marker; } }); }
+            catch (error) { caughtMarker = error === marker; }
+            var optionsObserved = false;
+            try {
+              Temporal.PlainTime.prototype.toString.call({}, {
+                get fractionalSecondDigits() { optionsObserved = true; }
+              });
+            } catch (error) {}
+
+            var other = $262.createRealm().global;
+            var foreign = new other.Temporal.PlainTime(1, 2, 3, 4, 5, 6);
+            var crossRealm = Temporal.PlainTime.prototype.toString.call(foreign);
+            var realmType = false;
+            var realmRange = false;
+            try { other.Temporal.PlainTime.prototype.toString.call({}); }
+            catch (error) {
+              realmType = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            try { other.Temporal.PlainTime.prototype.toString.call(foreign, { smallestUnit: 'hour' }); }
+            catch (error) {
+              realmRange = error instanceof other.RangeError && !(error instanceof RangeError);
+            }
+            [
+              ordered, order.join(','), midnight, minute, caughtMarker, optionsObserved,
+              crossRealm, realmType, realmRange,
+              time.toString.name, time.toString.length
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "12:34:56.123|get fractionalSecondDigits,toString fractionalSecondDigits,get roundingMode,toString roundingMode,get smallestUnit,toString smallestUnit|00:00:00|12:34|true|false|01:02:03.004005006|true|true|toString|0"
+        ))
+    );
+}
+
+#[test]
 fn temporal_plain_date_from_converts_supported_inputs_without_observing_slots() {
     assert_eq!(
         run(r#"

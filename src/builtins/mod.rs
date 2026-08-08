@@ -6290,7 +6290,7 @@ pub(crate) fn install_temporal_namespace_in_env(
     global: Option<&Value>,
     object_proto: Value,
 ) -> error::Result<Value> {
-    vm.try_reserve_gc_pins(132)?;
+    vm.try_reserve_gc_pins(133)?;
     let mut pin_count = 0;
     let result = (|| {
         let instant_prototype = Value::Object(vm.alloc(HeapObj::Object(ObjectData {
@@ -7010,6 +7010,13 @@ pub(crate) fn install_temporal_namespace_in_env(
             env,
         )?);
         pin_count += vm.pin(&plain_time_compare);
+        let plain_time_to_string = Value::Object(vm.new_native_function_in_env_with_gc_retry(
+            "toString",
+            temporal_plain_time_to_string,
+            0,
+            env,
+        )?);
+        pin_count += vm.pin(&plain_time_to_string);
 
         let Value::Object(instant_constructor_index) = instant_constructor.clone() else {
             unreachable!()
@@ -7320,6 +7327,10 @@ pub(crate) fn install_temporal_namespace_in_env(
                 props.insert(PropertyKey::from(name), accessor_get_prop(getter));
             }
             props.insert(PropertyKey::from("equals"), data_prop(plain_time_equals));
+            props.insert(
+                PropertyKey::from("toString"),
+                data_prop(plain_time_to_string),
+            );
             props.insert(PropertyKey::from("valueOf"), data_prop(plain_time_value_of));
             let mut tag = data_prop(Value::String(Arc::from("Temporal.PlainTime")));
             tag.writable = false;
@@ -9832,6 +9843,71 @@ fn temporal_plain_time_compare(
         std::cmp::Ordering::Greater => 1.0,
     };
     Ok(Value::Number(result))
+}
+
+fn temporal_plain_time_to_string(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let fields = temporal_plain_time_slots(vm, this)?;
+    let options = args.first().cloned().unwrap_or(Value::Undefined);
+    if !matches!(options, Value::Undefined | Value::Object(_)) {
+        return Err(Error::type_err(
+            "Temporal.PlainTime.prototype.toString options must be an object",
+        ));
+    }
+
+    vm.try_reserve_value_roots(std::slice::from_ref(&options))?;
+    let options_pin = vm.pin(&options);
+    let result = (|| {
+        let get_option = |vm: &mut Vm, name: &str| {
+            if options.is_undefined() {
+                Ok(Value::Undefined)
+            } else {
+                vm.get_property(&options, name)
+            }
+        };
+
+        let fractional_second_digits = match get_option(vm, "fractionalSecondDigits")? {
+            Value::Undefined => InstantFractionalSecondDigits::Auto,
+            Value::Number(number) => InstantFractionalSecondDigits::Number(number),
+            value => InstantFractionalSecondDigits::String(temporal_option_to_string(vm, &value)?),
+        };
+        let fractional_second_digits =
+            temporal_instant_fractional_second_digits(fractional_second_digits)?;
+        let rounding_mode_value = get_option(vm, "roundingMode")?;
+        let rounding_mode = if rounding_mode_value.is_undefined() {
+            None
+        } else {
+            Some(temporal_option_to_string(vm, &rounding_mode_value)?)
+        };
+        let rounding_mode = temporal_instant_rounding_mode(rounding_mode.as_deref())?;
+        let smallest_unit_value = get_option(vm, "smallestUnit")?;
+        let smallest_unit = if smallest_unit_value.is_undefined() {
+            None
+        } else {
+            Some(temporal_option_to_string(vm, &smallest_unit_value)?)
+        };
+        let smallest_unit = temporal_instant_smallest_unit(smallest_unit.as_deref())?;
+        let precision = temporal_instant_precision(fractional_second_digits, smallest_unit)?;
+
+        temporal::format_plain_time(
+            fields.hour,
+            fields.minute,
+            fields.second,
+            fields.millisecond,
+            fields.microsecond,
+            fields.nanosecond,
+            precision,
+            rounding_mode,
+        )
+        .map(Arc::<str>::from)
+        .map(Value::String)
+        .ok_or_else(|| Error::range("Temporal.PlainTime string formatting failed"))
+    })();
+    vm.unpin_many(options_pin);
+    result
 }
 
 fn temporal_time_record_or_midnight(
