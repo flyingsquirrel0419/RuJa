@@ -1,0 +1,8 @@
+# Exact Temporal.PlainTime prototype valueOf admissions.
+built-ins/Temporal/PlainTime/prototype/valueOf/basic.js
+built-ins/Temporal/PlainTime/prototype/valueOf/branding.js
+built-ins/Temporal/PlainTime/prototype/valueOf/builtin.js
+built-ins/Temporal/PlainTime/prototype/valueOf/length.js
+built-ins/Temporal/PlainTime/prototype/valueOf/name.js
+built-ins/Temporal/PlainTime/prototype/valueOf/not-a-constructor.js
+built-ins/Temporal/PlainTime/prototype/valueOf/prop-desc.js

@@ -98,10 +98,10 @@ TEMPORAL_PLAIN_DATE_TO_PLAIN_DATE_TIME_ALL_NEGATIVE = {
     path: None for path in _ALL
 }
 
-if len(TEMPORAL_PLAIN_DATE_TO_PLAIN_DATE_TIME_FILES) != 32:
-    raise RuntimeError("PlainDate.toPlainDateTime admission must contain 32 files")
-if len(TEMPORAL_PLAIN_DATE_TO_PLAIN_DATE_TIME_BLOCKER_FILES) != 3:
-    raise RuntimeError("PlainDate.toPlainDateTime blockers must contain 3 files")
+if len(TEMPORAL_PLAIN_DATE_TO_PLAIN_DATE_TIME_FILES) != 35:
+    raise RuntimeError("PlainDate.toPlainDateTime admission must contain 35 files")
+if TEMPORAL_PLAIN_DATE_TO_PLAIN_DATE_TIME_BLOCKER_FILES:
+    raise RuntimeError("PlainDate.toPlainDateTime direct blockers must be empty")
 if len(TEMPORAL_PLAIN_DATE_TO_PLAIN_DATE_TIME_DOWNSTREAM_FILES) != 1:
     raise RuntimeError("PlainDate.toPlainDateTime downstream must contain 1 file")
 if len(_ALL) != 36:

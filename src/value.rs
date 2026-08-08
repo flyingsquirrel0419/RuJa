@@ -1060,6 +1060,9 @@ pub enum TemporalKind {
         fields: TemporalPlainDateFields,
         calendar_identifier: Arc<str>,
     },
+    PlainTime {
+        fields: TemporalPlainTimeFields,
+    },
     PlainDateTime {
         fields: TemporalPlainDateTimeFields,
         calendar_identifier: Arc<str>,
@@ -1090,6 +1093,16 @@ pub struct TemporalPlainDateFields {
     pub year: i32,
     pub month: u8,
     pub day: u8,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TemporalPlainTimeFields {
+    pub hour: u8,
+    pub minute: u8,
+    pub second: u8,
+    pub millisecond: u16,
+    pub microsecond: u16,
+    pub nanosecond: u16,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

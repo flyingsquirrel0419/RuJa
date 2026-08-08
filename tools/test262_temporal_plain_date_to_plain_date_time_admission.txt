@@ -19,9 +19,12 @@ built-ins/Temporal/PlainDate/prototype/toPlainDateTime/argument-string-with-time
 built-ins/Temporal/PlainDate/prototype/toPlainDateTime/argument-string-with-utc-designator.js
 built-ins/Temporal/PlainDate/prototype/toPlainDateTime/argument-zoneddatetime-balance-negative-time-units.js
 built-ins/Temporal/PlainDate/prototype/toPlainDateTime/argument-zoneddatetime-negative-epochnanoseconds.js
+built-ins/Temporal/PlainDate/prototype/toPlainDateTime/argument-wrong-type.js
+built-ins/Temporal/PlainDate/prototype/toPlainDateTime/basic.js
 built-ins/Temporal/PlainDate/prototype/toPlainDateTime/branding.js
 built-ins/Temporal/PlainDate/prototype/toPlainDateTime/builtin.js
 built-ins/Temporal/PlainDate/prototype/toPlainDateTime/leap-second.js
+built-ins/Temporal/PlainDate/prototype/toPlainDateTime/limits.js
 built-ins/Temporal/PlainDate/prototype/toPlainDateTime/length.js
 built-ins/Temporal/PlainDate/prototype/toPlainDateTime/name.js
 built-ins/Temporal/PlainDate/prototype/toPlainDateTime/not-a-constructor.js

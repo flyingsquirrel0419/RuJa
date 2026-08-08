@@ -25252,6 +25252,201 @@ fn temporal_plain_date_constructor_preserves_order_range_and_function_realm() {
 }
 
 #[test]
+fn temporal_plain_time_core_uses_hidden_slots_realms_and_subclass_prototypes() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            function field(name, value) {
+              return { valueOf: function () { log.push(name); return value; } };
+            }
+            var value = new Temporal.PlainTime(
+              field('hour', 12.9), field('minute', 34.8), field('second', 56.7),
+              field('millisecond', 123.6), field('microsecond', 456.5),
+              field('nanosecond', 789.4)
+            );
+            var defaults = new Temporal.PlainTime();
+            class Custom extends Temporal.PlainTime {}
+            var custom = new Custom(1, 2, 3, 4, 5, 6);
+            var hourGetter = Object.getOwnPropertyDescriptor(
+              Temporal.PlainTime.prototype, 'hour'
+            ).get;
+            var distinctBrand = false;
+            try {
+              Object.getOwnPropertyDescriptor(
+                Temporal.PlainDateTime.prototype, 'hour'
+              ).get.call(value);
+            } catch (error) { distinctBrand = error instanceof TypeError; }
+
+            var other = $262.createRealm().global;
+            var foreign = new other.Temporal.PlainTime(7, 8, 9, 10, 11, 12);
+            var foreignGetter = Object.getOwnPropertyDescriptor(
+              other.Temporal.PlainTime.prototype, 'nanosecond'
+            ).get;
+            var getterRealm = false;
+            var constructorRealm = false;
+            try { foreignGetter.call({}); } catch (error) {
+              getterRealm = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            try { new other.Temporal.PlainTime(24); } catch (error) {
+              constructorRealm = error instanceof other.RangeError && !(error instanceof RangeError);
+            }
+            var NewTarget = function () {}.bind(null);
+            Object.defineProperty(NewTarget, 'prototype', { value: null });
+            var fallback = Reflect.construct(
+              other.Temporal.PlainTime, [13, 14, 15, 16, 17, 18], NewTarget
+            );
+            [
+              Temporal.PlainTime.name, Temporal.PlainTime.length, log.join(','),
+              hourGetter.call(value), value.minute, value.second,
+              value.millisecond, value.microsecond, value.nanosecond,
+              defaults.hour, Object.prototype.toString.call(value),
+              Object.getPrototypeOf(custom) === Custom.prototype,
+              custom.nanosecond, distinctBrand,
+              Object.getPrototypeOf(foreign) === other.Temporal.PlainTime.prototype,
+              foreignGetter.call(foreign), getterRealm, constructorRealm,
+              Object.getPrototypeOf(fallback) === Temporal.PlainTime.prototype,
+              fallback.hour
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "PlainTime|0|hour,minute,second,millisecond,microsecond,nanosecond|12|34|56|123|456|789|0|[object Temporal.PlainTime]|true|6|true|true|12|true|true|true|13"
+        ))
+    );
+
+    for source in [
+        "Temporal.PlainTime()",
+        "new Temporal.PlainTime(24)",
+        "new Temporal.PlainTime(0, 60)",
+        "new Temporal.PlainTime(0, 0, 60)",
+        "new Temporal.PlainTime(0, 0, 0, 1000)",
+        "new Temporal.PlainTime(0, 0, 0, 0, 1000)",
+        "new Temporal.PlainTime(0, 0, 0, 0, 0, 1000)",
+        "new Temporal.PlainTime(Symbol())",
+        "new Temporal.PlainTime(1n)",
+        "Object.getOwnPropertyDescriptor(Temporal.PlainTime.prototype, 'hour').get.call({})",
+    ] {
+        let error = run_err(source);
+        assert!(
+            error.contains("TypeError") || error.contains("RangeError"),
+            "{source}: {error}"
+        );
+    }
+}
+
+#[test]
+fn temporal_plain_time_hidden_record_feeds_plain_date_to_plain_date_time() {
+    assert_eq!(
+        run(r#"
+            var time = new Temporal.PlainTime(11, 30, 23, 123, 456, 789);
+            for (var key of [
+              'hour', 'minute', 'second', 'millisecond', 'microsecond', 'nanosecond'
+            ]) {
+              Object.defineProperty(time, key, {
+                get: function () { throw new Error('time getter observed'); }
+              });
+            }
+            var result = new Temporal.PlainDate(2000, 5, 2).toPlainDateTime(time);
+            [result.year, result.month, result.day, result.hour, result.minute,
+              result.second, result.millisecond, result.microsecond,
+              result.nanosecond].join(',');
+        "#),
+        Value::String(Arc::from("2000,5,2,11,30,23,123,456,789"))
+    );
+}
+
+#[test]
+fn temporal_plain_time_from_preserves_conversion_order_and_method_realm() {
+    assert_eq!(
+        run(r#"
+            var order = [];
+            var fields = {};
+            for (var key of [
+              'hour', 'microsecond', 'millisecond', 'minute', 'nanosecond', 'second'
+            ]) {
+              Object.defineProperty(fields, key, {
+                get: (function (name) { return function () {
+                  order.push('get ' + name);
+                  return { valueOf: function () { order.push('value ' + name); return 99; } };
+                }; })(key)
+              });
+            }
+            var options = {
+              get overflow() { order.push('get overflow'); return 'constrain'; }
+            };
+            var constrained = Temporal.PlainTime.from(fields, options);
+            var source = new Temporal.PlainTime(1, 2, 3, 4, 5, 6);
+            for (var key of [
+              'hour', 'minute', 'second', 'millisecond', 'microsecond', 'nanosecond'
+            ]) {
+              Object.defineProperty(source, key, {
+                get: function () { throw new Error('source getter observed'); }
+              });
+            }
+            var cloned = Temporal.PlainTime.from(source, { overflow: 'reject' });
+            var equalsBag = source.equals({
+              hour: 1, minute: 2, second: 3,
+              millisecond: 4, microsecond: 5, nanosecond: 6
+            });
+            var fromDateTime = Temporal.PlainTime.from(
+              new Temporal.PlainDateTime(2000, 5, 2, 7, 8, 9, 10, 11, 12)
+            );
+            var fromZone = Temporal.PlainTime.from(
+              new Temporal.ZonedDateTime(3661001001001n, '-00:02')
+            );
+            var fromString = Temporal.PlainTime.from('12:34:56.123456789');
+            var invalidOptionsObserved = false;
+            try {
+              Temporal.PlainTime.from('invalid', {
+                get overflow() { invalidOptionsObserved = true; return 'constrain'; }
+              });
+            } catch (error) {}
+
+            var other = $262.createRealm().global;
+            var foreignFrom = other.Temporal.PlainTime.from;
+            var foreign = foreignFrom(source);
+            var foreignError = false;
+            try { foreignFrom({ hour: 24 }, { overflow: 'reject' }); }
+            catch (error) {
+              foreignError = error instanceof other.RangeError && !(error instanceof RangeError);
+            }
+            var valueOfError = false;
+            try { other.Temporal.PlainTime.prototype.valueOf.call(foreign); }
+            catch (error) {
+              valueOfError = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            var nonconstructable = false;
+            try { new Temporal.PlainTime.from('12:34'); }
+            catch (error) { nonconstructable = error instanceof TypeError; }
+            [
+              order.join(','),
+              [constrained.hour, constrained.minute, constrained.second,
+                constrained.millisecond, constrained.microsecond,
+                constrained.nanosecond].join(','),
+              cloned !== source,
+              equalsBag,
+              [cloned.hour, cloned.minute, cloned.second, cloned.millisecond,
+                cloned.microsecond, cloned.nanosecond].join(','),
+              [fromDateTime.hour, fromDateTime.minute, fromDateTime.second,
+                fromDateTime.millisecond, fromDateTime.microsecond,
+                fromDateTime.nanosecond].join(','),
+              [fromZone.hour, fromZone.minute, fromZone.second,
+                fromZone.millisecond, fromZone.microsecond,
+                fromZone.nanosecond].join(','),
+              [fromString.hour, fromString.minute, fromString.second,
+                fromString.millisecond, fromString.microsecond,
+                fromString.nanosecond].join(','),
+              invalidOptionsObserved,
+              Object.getPrototypeOf(foreign) === other.Temporal.PlainTime.prototype,
+              foreign.hour, foreignError, valueOfError, nonconstructable
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "get hour,value hour,get microsecond,value microsecond,get millisecond,value millisecond,get minute,value minute,get nanosecond,value nanosecond,get second,value second,get overflow|23,59,59,99,99,99|true|true|1,2,3,4,5,6|7,8,9,10,11,12|0,59,1,1,1,1|12,34,56,123,456,789|false|true|1|true|true|true"
+        ))
+    );
+}
+
+#[test]
 fn temporal_plain_date_from_converts_supported_inputs_without_observing_slots() {
     assert_eq!(
         run(r#"

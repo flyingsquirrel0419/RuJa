@@ -144,6 +144,28 @@ from test262_temporal_duration_core_admission import (
     TEMPORAL_DURATION_CORE_FEATURES,
     TEMPORAL_DURATION_CORE_FILES,
 )
+from test262_temporal_plain_time_admission import (
+    TEMPORAL_PLAIN_TIME_CORE_FEATURES,
+    TEMPORAL_PLAIN_TIME_CORE_FILES,
+    TEMPORAL_PLAIN_TIME_CORE_FLAGS,
+    TEMPORAL_PLAIN_TIME_CORE_INCLUDES,
+    TEMPORAL_PLAIN_TIME_CORE_NEGATIVE,
+    TEMPORAL_PLAIN_TIME_EQUALS_FEATURES,
+    TEMPORAL_PLAIN_TIME_EQUALS_FILES,
+    TEMPORAL_PLAIN_TIME_EQUALS_FLAGS,
+    TEMPORAL_PLAIN_TIME_EQUALS_INCLUDES,
+    TEMPORAL_PLAIN_TIME_EQUALS_NEGATIVE,
+    TEMPORAL_PLAIN_TIME_FROM_FEATURES,
+    TEMPORAL_PLAIN_TIME_FROM_FILES,
+    TEMPORAL_PLAIN_TIME_FROM_FLAGS,
+    TEMPORAL_PLAIN_TIME_FROM_INCLUDES,
+    TEMPORAL_PLAIN_TIME_FROM_NEGATIVE,
+    TEMPORAL_PLAIN_TIME_VALUE_OF_FEATURES,
+    TEMPORAL_PLAIN_TIME_VALUE_OF_FILES,
+    TEMPORAL_PLAIN_TIME_VALUE_OF_FLAGS,
+    TEMPORAL_PLAIN_TIME_VALUE_OF_INCLUDES,
+    TEMPORAL_PLAIN_TIME_VALUE_OF_NEGATIVE,
+)
 from test262_temporal_plain_date_core_admission import (
     TEMPORAL_PLAIN_DATE_CORE_FEATURES,
     TEMPORAL_PLAIN_DATE_CORE_FILES,
@@ -4592,7 +4614,7 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
         blockers = TEMPORAL_PLAIN_DATE_TO_PLAIN_DATE_TIME_BLOCKER_FILES
         downstream = TEMPORAL_PLAIN_DATE_TO_PLAIN_DATE_TIME_DOWNSTREAM_FILES
         all_files = admitted | blockers | downstream
-        self.assertEqual((len(admitted), len(blockers), len(downstream)), (32, 3, 1))
+        self.assertEqual((len(admitted), len(blockers), len(downstream)), (35, 0, 1))
         self.assertEqual(len(all_files), 36)
         self.assertEqual(set(TEMPORAL_PLAIN_DATE_TO_PLAIN_DATE_TIME_FEATURES), admitted)
         self.assertEqual(set(TEMPORAL_PLAIN_DATE_TO_PLAIN_DATE_TIME_ALL_FEATURES), all_files)
@@ -14226,6 +14248,171 @@ class ClassSubclassBuiltinAdmissionTests(unittest.TestCase):
                             outside,
                         )
                     )
+                finally:
+                    tool.TEST262 = original_root
+
+    def test_temporal_plain_time_manifests_are_exact_live_and_shared(self):
+        cohorts = (
+            (
+                TEMPORAL_PLAIN_TIME_CORE_FILES,
+                TEMPORAL_PLAIN_TIME_CORE_FEATURES,
+                TEMPORAL_PLAIN_TIME_CORE_INCLUDES,
+                TEMPORAL_PLAIN_TIME_CORE_FLAGS,
+                TEMPORAL_PLAIN_TIME_CORE_NEGATIVE,
+                "temporal_plain_time_core",
+            ),
+            (
+                TEMPORAL_PLAIN_TIME_FROM_FILES,
+                TEMPORAL_PLAIN_TIME_FROM_FEATURES,
+                TEMPORAL_PLAIN_TIME_FROM_INCLUDES,
+                TEMPORAL_PLAIN_TIME_FROM_FLAGS,
+                TEMPORAL_PLAIN_TIME_FROM_NEGATIVE,
+                "temporal_plain_time_from",
+            ),
+            (
+                TEMPORAL_PLAIN_TIME_VALUE_OF_FILES,
+                TEMPORAL_PLAIN_TIME_VALUE_OF_FEATURES,
+                TEMPORAL_PLAIN_TIME_VALUE_OF_INCLUDES,
+                TEMPORAL_PLAIN_TIME_VALUE_OF_FLAGS,
+                TEMPORAL_PLAIN_TIME_VALUE_OF_NEGATIVE,
+                "temporal_plain_time_value_of",
+            ),
+            (
+                TEMPORAL_PLAIN_TIME_EQUALS_FILES,
+                TEMPORAL_PLAIN_TIME_EQUALS_FEATURES,
+                TEMPORAL_PLAIN_TIME_EQUALS_INCLUDES,
+                TEMPORAL_PLAIN_TIME_EQUALS_FLAGS,
+                TEMPORAL_PLAIN_TIME_EQUALS_NEGATIVE,
+                "temporal_plain_time_equals",
+            ),
+        )
+        self.assertEqual(tuple(len(cohort[0]) for cohort in cohorts), (40, 51, 7, 31))
+        for index, cohort in enumerate(cohorts):
+            files, features, includes, flags, negative, _ = cohort
+            self.assertEqual(set(features), files)
+            self.assertEqual(set(includes), files)
+            self.assertEqual(set(flags), files)
+            self.assertEqual(set(negative), files)
+            for other in cohorts[index + 1 :]:
+                self.assertTrue(files.isdisjoint(other[0]))
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        plain_time = test_root / "built-ins/Temporal/PlainTime"
+
+        def live_cohorts():
+            try:
+                if not plain_time.is_dir():
+                    return None
+                core = set(
+                    path.relative_to(test_root).as_posix()
+                    for path in plain_time.glob("*.js")
+                    if "_FIXTURE" not in path.name
+                )
+                core.update(
+                    (plain_time / relative).relative_to(test_root).as_posix()
+                    for relative in (
+                        "prototype/constructor.js",
+                        "prototype/prop-desc.js",
+                        "prototype/toStringTag/prop-desc.js",
+                    )
+                )
+                for name in (
+                    "hour",
+                    "minute",
+                    "second",
+                    "millisecond",
+                    "microsecond",
+                    "nanosecond",
+                ):
+                    core.update(
+                        path.relative_to(test_root).as_posix()
+                        for path in (plain_time / "prototype" / name).glob("*.js")
+                        if "_FIXTURE" not in path.name
+                    )
+                return (
+                    core,
+                    {
+                        path.relative_to(test_root).as_posix()
+                        for path in (plain_time / "from").glob("*.js")
+                    },
+                    {
+                        path.relative_to(test_root).as_posix()
+                        for path in (plain_time / "prototype/valueOf").glob("*.js")
+                    },
+                    {
+                        path.relative_to(test_root).as_posix()
+                        for path in (plain_time / "prototype/equals").glob("*.js")
+                    },
+                )
+            except OSError:
+                return None
+
+        live = live_cohorts()
+        if live is not None:
+            self.assertEqual(tuple(set(cohort[0]) for cohort in cohorts), live)
+
+            def read_live_metadata(path):
+                try:
+                    return test262_runner.parse_meta(path.read_text())
+                except OSError:
+                    return None
+
+            for files, features, includes, flags, negative, prefix in cohorts:
+                path_check = getattr(test262_runner, prefix + "_path")
+                for relative in files:
+                    path = test_root / relative
+                    metadata = read_live_metadata(path)
+                    if metadata is None:
+                        self.skipTest("live Test262 checkout is inaccessible")
+                    self.assertEqual(
+                        frozenset(metadata.get("features", [])), features[relative], relative
+                    )
+                    self.assertEqual(
+                        frozenset(metadata.get("includes", [])), includes[relative], relative
+                    )
+                    self.assertEqual(
+                        frozenset(metadata.get("flags", [])), flags[relative], relative
+                    )
+                    self.assertEqual(metadata.get("negative"), negative[relative], relative)
+                    self.assertTrue(path_check(path), relative)
+                    for tool in (test262_runner, test262_analyze):
+                        self.assertTrue(getattr(tool, prefix + "_path")(path), relative)
+                        self.assertEqual(
+                            getattr(tool, prefix + "_features")(path),
+                            features[relative],
+                            relative,
+                        )
+                        self.assertFalse(tool.should_skip(metadata, path), relative)
+
+            with patch("pathlib.Path.read_text", side_effect=PermissionError):
+                self.assertIsNone(read_live_metadata(test_root / next(iter(cohorts[0][0]))))
+
+        with patch("pathlib.Path.is_dir", side_effect=PermissionError):
+            self.assertIsNone(live_cohorts())
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            future = root / "test/built-ins/Temporal/PlainTime/from/future.js"
+            outside = root / "test/built-ins/Temporal/Other/from/basic.js"
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for files, features, _, _, _, prefix in cohorts:
+                        for relative in files:
+                            path = root / "test" / relative
+                            self.assertTrue(getattr(tool, prefix + "_path")(path), relative)
+                            self.assertEqual(
+                                getattr(tool, prefix + "_features")(path),
+                                features[relative],
+                            )
+                        for path in (future, outside, None, object()):
+                            self.assertFalse(getattr(tool, prefix + "_path")(path))
+                            self.assertEqual(
+                                getattr(tool, prefix + "_features")(path), frozenset()
+                            )
+                    self.assertTrue(tool.should_skip({"features": ["Temporal"]}, future))
+                    self.assertTrue(tool.should_skip({"features": ["Temporal"]}, outside))
                 finally:
                     tool.TEST262 = original_root
 

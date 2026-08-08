@@ -583,6 +583,8 @@ pub struct Vm {
     pub(crate) realm_temporal_duration_prototypes: HashMap<usize, Value>,
     pub(crate) realm_temporal_plain_date_constructors: HashMap<usize, Value>,
     pub(crate) realm_temporal_plain_date_prototypes: HashMap<usize, Value>,
+    pub(crate) realm_temporal_plain_time_constructors: HashMap<usize, Value>,
+    pub(crate) realm_temporal_plain_time_prototypes: HashMap<usize, Value>,
     pub(crate) realm_temporal_plain_date_time_constructors: HashMap<usize, Value>,
     pub(crate) realm_temporal_plain_date_time_prototypes: HashMap<usize, Value>,
     pub(crate) realm_temporal_zoned_date_time_constructors: HashMap<usize, Value>,
@@ -1353,6 +1355,8 @@ impl Vm {
             realm_temporal_duration_prototypes: HashMap::new(),
             realm_temporal_plain_date_constructors: HashMap::new(),
             realm_temporal_plain_date_prototypes: HashMap::new(),
+            realm_temporal_plain_time_constructors: HashMap::new(),
+            realm_temporal_plain_time_prototypes: HashMap::new(),
             realm_temporal_plain_date_time_constructors: HashMap::new(),
             realm_temporal_plain_date_time_prototypes: HashMap::new(),
             realm_temporal_zoned_date_time_constructors: HashMap::new(),
@@ -3069,6 +3073,8 @@ impl Vm {
         self.realm_temporal_duration_prototypes.remove(&realm);
         self.realm_temporal_plain_date_constructors.remove(&realm);
         self.realm_temporal_plain_date_prototypes.remove(&realm);
+        self.realm_temporal_plain_time_constructors.remove(&realm);
+        self.realm_temporal_plain_time_prototypes.remove(&realm);
         self.realm_temporal_plain_date_time_constructors
             .remove(&realm);
         self.realm_temporal_plain_date_time_prototypes
@@ -3186,6 +3192,8 @@ impl Vm {
         push_realm_value!(realm_temporal_duration_prototypes);
         push_realm_value!(realm_temporal_plain_date_constructors);
         push_realm_value!(realm_temporal_plain_date_prototypes);
+        push_realm_value!(realm_temporal_plain_time_constructors);
+        push_realm_value!(realm_temporal_plain_time_prototypes);
         push_realm_value!(realm_temporal_plain_date_time_constructors);
         push_realm_value!(realm_temporal_plain_date_time_prototypes);
         push_realm_value!(realm_temporal_zoned_date_time_constructors);

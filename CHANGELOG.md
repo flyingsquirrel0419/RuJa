@@ -4,6 +4,30 @@
 
 ### Changed
 
+- Added Realm-local `%Temporal.PlainTime%` with immutable six-field hidden
+  slots, subclass-aware construction, six branded accessors, `@@toStringTag`,
+  static `from`, hidden-record `equals`, and the always-throwing `valueOf`.
+  `ToTemporalTime` now shares one conversion boundary for branded PlainTime,
+  PlainDateTime, and ZonedDateTime values, ordered time property bags, and the
+  audited String grammar. Static `from` always creates a fresh result in the
+  method Realm; `equals` compares records without allocating a result object.
+  Constructor conversion remains left-to-right, options are observed at their
+  specification point, and all result/prototype allocations retain exact
+  GC-root, OOM-retry, and input-byte fuel behavior. At pinned Test262 revision
+  `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the complete admitted surface is
+  exact **129/0/0**: core **40**, `from` **51**, `valueOf` **7**, and `equals`
+  **31**. The complete direct PlainDate `toPlainDateTime` directory is now
+  **35/0/0** with no direct blockers. Installer accounting is 131 maximum live
+  pins and 132 allocations.
+
+  [Decision Log]
+  - 목적과 의도: 후속 PlainTime 연산이 신뢰할 수 있는 위조 불가능한 time record와 완전한 ToTemporalTime 입력 경계를 확립하고 PlainDate bridge의 남은 direct blocker를 제거한다.
+  - 기존 구현 및 제약 조건: PlainDate.toPlainDateTime에는 allocation-free time record와 parser가 있었지만 PlainTime heap kind/intrinsic/from/equals가 없었다. Temporal installer와 Realm registry는 수동 exhaustive inventory이며 모든 새 allocation 실패 지점을 rollback해야 한다.
+  - 검토한 주요 대안: ordinary public properties, PlainDateTime kind 재사용, bridge 전용 shape stub, 메서드마다 converter 복제, compact 전용 kind와 shared converter를 검토했다.
+  - 선택한 방식: six-field compact hidden kind를 Realm별 constructor/prototype에 연결하고 constructor/accessor/from/equals/valueOf와 bridge가 같은 validated record 변환을 사용한다. exact manifest는 core/from/valueOf/equals를 분리하지만 하나의 metadata 모듈과 진단기로 공유한다.
+  - 다른 대안 대신 이 방식을 선택한 이유: public properties와 shape stub은 brand 및 getter 비관찰을 깨고 PlainDateTime 재사용은 date/calendar 슬롯을 거짓 부여한다. converter 복제는 options/getter/fuel 순서를 분기시키며 broad admission은 미구현 arithmetic과 future tests를 자동 허용한다.
+  - 장점, 단점 및 영향: cross-Realm/newTarget, hidden getter 비관찰, conversion order, constrain/reject, fresh clone, zero-allocation equality, GC/OOM/root retry와 exact fuel이 한 경로로 검증된다. add/subtract/compare/round/since/until/with/string/locale 메서드는 후속 단위로 남는다.
+
 - Added Realm-local, non-constructable
   `Temporal.PlainDate.prototype.toPlainDateTime` with length 0. It brands the
   receiver first, uses midnight for `undefined`, copies hidden time records
@@ -11,11 +35,12 @@
   specification order with constrain overflow, and parses the complete audited
   time-context String grammar while rejecting `Z`. Results combine the
   receiver's hidden ISO date/calendar with the converted time in the method
-  Realm. At pinned Test262 revision
+  Realm. At this initial bridge checkpoint, pinned Test262 revision
   `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the direct boundary is exact
   **32/0/0** and forced **32/3/0** over 35 files. The three blockers require
-  the absent `%Temporal.PlainTime%` intrinsic; one Intl402 downstream caller
-  remains blocked by non-ISO calendar mutation.
+  the then-absent `%Temporal.PlainTime%` intrinsic; the later PlainTime entry
+  above closes all three. One Intl402 downstream caller remains blocked by
+  non-ISO calendar mutation.
 
   [Decision Log]
   - 목적과 의도: PlainDate의 hidden date/calendar와 `ToTimeRecordOrMidnight` 결과를 명세 순서대로 결합해 PlainDateTime을 생성한다.
@@ -23,7 +48,7 @@
   - 검토한 주요 대안: 임시 PlainTime object 생성, PlainDateTime converter 재사용, 공개 accessors 호출, time-only internal record와 parser를 추가하는 방식을 검토했다.
   - 선택한 방식: `ToTimeRecordOrMidnight`를 allocation-free internal time record로 융합하고 branded hidden slots, ordered property bag, String parser를 각각 그 record로 변환한다. 최종 결과만 method Realm에 할당한다.
   - 다른 대안 대신 이 방식을 선택한 이유: 임시 object와 public accessors는 명세에 없는 allocation/user code를 관찰하며, date-time converter는 time-only getter 순서를 깨뜨린다. record 경계는 현재 observable semantics를 보존하면서 후속 PlainTime intrinsic fast path를 추가할 자리를 남긴다.
-  - 장점, 단점 및 영향: brand-first, getter/coercion order, GC/root/OOM retry, exact fuel, leap-second clamp, ambiguous String grammar, range와 Realm ownership이 검증된다. installer accounting은 120 maximum pins와 121 allocations가 된다. PlainTime intrinsic 도입 후 세 direct blocker와 time-brand fast path를 재감사해야 한다.
+  - 장점, 단점 및 영향: brand-first, getter/coercion order, GC/root/OOM retry, exact fuel, leap-second clamp, ambiguous String grammar, range와 Realm ownership이 검증된다. 이 checkpoint의 installer accounting은 120 maximum pins와 121 allocations였으며 후속 PlainTime 단위가 세 direct blocker와 hidden-slot fast path를 완결했다.
 
 - Added Realm-local, non-constructable
   `Temporal.PlainDate.prototype.toJSON` with length 0. It brands the receiver,

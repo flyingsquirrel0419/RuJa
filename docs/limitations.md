@@ -39,6 +39,13 @@ The following resource limits are enforced:
   remains absent until full ECMA-402 `Intl.DateTimeFormat` semantics exist;
   exposing an ISO-only fallback alongside RuJa's partial `%Intl%` would
   overstate locale support.
+  Realm-local `%Temporal.PlainTime%` supports six-field hidden-slot
+  construction, subclassing, branded accessors, `@@toStringTag`, static
+  `from`, hidden-record `equals`, and always-throwing `valueOf`. Conversion
+  accepts branded PlainTime/PlainDateTime/ZonedDateTime values, ordered time
+  property bags, and the audited time String grammar. Static `compare`,
+  arithmetic, difference, rounding, `with`, string/JSON/locale serialization,
+  and other PlainTime methods remain unsupported.
   Realm-local `%Temporal.ZonedDateTime%` supports hidden-slot construction for
   UTC and fixed offsets, exact epoch/time-zone/calendar accessors, subclassing,
   all ISO civil/calendar/offset accessors, fixed-offset String and ISO
@@ -655,13 +662,10 @@ guarantees are required.
   supportedValuesOf result counts and string chunks are fuel-precharged and Vec
   growth is fallible, but their bounded static strings become fresh `Arc<str>`
   values whose bytes are not charged to the VM heap-object cap
-- `%Temporal.PlainTime%` is not yet installed. PlainDate `toPlainDateTime`
-  implements the reachable `ToTimeRecordOrMidnight` semantics through an
-  internal allocation-free record, including property bags, Strings,
-  PlainDateTime, and ZonedDateTime. Direct tests that construct or brand a
-  PlainTime remain blocked, and the PlainTime hidden-slot fast path must be
-  added with that intrinsic. Non-ISO calendar mutation also remains unsupported,
-  so the related Intl402 epoch-year caller is not admitted
+- PlainDate `toPlainDateTime` implements complete direct
+  `ToTimeRecordOrMidnight` semantics, including the PlainTime hidden-slot fast
+  path. Non-ISO calendar mutation remains unsupported, so the related Intl402
+  epoch-year downstream caller is not admitted
 - Wrapper objects (`new String(x)`, `new Number(x)`, `new Boolean(x)`,
   `Object(x)`) now store the wrapped primitive, so `.valueOf()` and
   `ToPrimitive` resolve to it (`new Number(5) + 1 === 6`). Boxed-string

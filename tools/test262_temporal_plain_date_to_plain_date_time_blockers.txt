@@ -1,4 +1,1 @@
-# Require the not-yet-installed %Temporal.PlainTime% intrinsic.
-built-ins/Temporal/PlainDate/prototype/toPlainDateTime/argument-wrong-type.js
-built-ins/Temporal/PlainDate/prototype/toPlainDateTime/basic.js
-built-ins/Temporal/PlainDate/prototype/toPlainDateTime/limits.js
+# No direct blockers remain at the pinned Test262 revision.

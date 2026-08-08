@@ -455,6 +455,33 @@ fn temporal_namespace_installation_restores_roots_after_plain_date_to_plain_date
 }
 
 #[test]
+fn temporal_namespace_installation_restores_roots_after_plain_time_prototype_failure() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.gc();
+    let original = vm.get_global("Temporal");
+    let baseline_pins = vm.gc_pins.len();
+    let baseline_live = vm.heap.live_count();
+    let baseline_registries = realm_registry_counts(&vm);
+    let global = vm.global;
+    let object_proto = vm.object_proto.clone();
+    // The first 119 allocations fit; PlainTime.prototype is allocation 120.
+    vm.set_max_heap_objects(Some(baseline_live + 119));
+
+    let result =
+        crate::builtins::install_temporal_namespace_in_env(&mut vm, global, None, object_proto);
+
+    vm.set_max_heap_objects(None);
+    let error = result.expect_err("PlainTime.prototype allocation must hit the cap");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(error.message, "heap limit exceeded");
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.get_global("Temporal"), original);
+    assert_eq!(realm_registry_counts(&vm), baseline_registries);
+    vm.gc();
+    assert_eq!(vm.heap.live_count(), baseline_live);
+}
+
+#[test]
 fn temporal_namespace_installation_covers_every_allocation_boundary() {
     let mut vm = Vm::new().expect("failed to initialize VM");
     vm.gc();
@@ -463,9 +490,9 @@ fn temporal_namespace_installation_covers_every_allocation_boundary() {
     let baseline_live = vm.heap.live_count();
     let global = vm.global;
 
-    // Allocations 18 through 121 cover the method/accessor batches and the
+    // Allocations 18 through 132 cover the method/accessor batches and the
     // two namespace objects that must publish only after the batch succeeds.
-    for extra_capacity in 17..121 {
+    for extra_capacity in 17..132 {
         vm.set_max_heap_objects(Some(baseline_live + extra_capacity));
         let object_proto = vm.object_proto.clone();
         let result =
@@ -486,16 +513,16 @@ fn temporal_namespace_installation_covers_every_allocation_boundary() {
         );
     }
 
-    vm.set_max_heap_objects(Some(baseline_live + 121));
+    vm.set_max_heap_objects(Some(baseline_live + 132));
     let object_proto = vm.object_proto.clone();
     let temporal =
         crate::builtins::install_temporal_namespace_in_env(&mut vm, global, None, object_proto)
-            .expect("exact 121-object capacity must install the complete namespace");
+            .expect("exact 132-object capacity must install the complete namespace");
     vm.set_max_heap_objects(None);
     assert_eq!(vm.gc_pins.len(), baseline_pins);
     assert_eq!(vm.get_global("Temporal"), temporal);
     assert_eq!(
-        vm.run("typeof Temporal.PlainDate === 'function' && typeof Temporal.PlainDate.from === 'function' && typeof Temporal.PlainDate.compare === 'function' && typeof Temporal.PlainDate.prototype.equals === 'function' && typeof Temporal.PlainDate.prototype.toPlainDateTime === 'function' && typeof Temporal.PlainDate.prototype.toString === 'function' && typeof Temporal.PlainDate.prototype.toJSON === 'function' && typeof Temporal.PlainDateTime.compare === 'function' && typeof Temporal.PlainDateTime.prototype.equals")
+        vm.run("typeof Temporal.PlainDate === 'function' && typeof Temporal.PlainDate.from === 'function' && typeof Temporal.PlainDate.compare === 'function' && typeof Temporal.PlainDate.prototype.equals === 'function' && typeof Temporal.PlainDate.prototype.toPlainDateTime === 'function' && typeof Temporal.PlainDate.prototype.toString === 'function' && typeof Temporal.PlainDate.prototype.toJSON === 'function' && typeof Temporal.PlainTime === 'function' && typeof Temporal.PlainTime.from === 'function' && typeof Temporal.PlainTime.prototype.equals === 'function' && typeof Temporal.PlainTime.prototype.valueOf === 'function' && typeof Temporal.PlainDateTime.compare === 'function' && typeof Temporal.PlainDateTime.prototype.equals")
             .expect("installed namespace should remain usable"),
         Value::String(Arc::from("function"))
     );
@@ -526,6 +553,117 @@ fn temporal_plain_date_result_allocation_fails_cleanly_and_retries_after_gc() {
     vm.set_max_heap_objects(None);
     assert_eq!(result, Value::Number(2.0));
     assert_eq!(vm.gc_pins.len(), baseline_pins);
+}
+
+#[test]
+fn temporal_plain_time_result_allocation_fails_cleanly_and_retries_after_gc() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.gc();
+    let baseline_pins = vm.gc_pins.len();
+    let baseline_live = vm.heap.live_count();
+
+    vm.set_max_heap_objects(Some(baseline_live));
+    let error = vm
+        .run("new Temporal.PlainTime(12, 34, 56, 123, 456, 789);")
+        .expect_err("PlainTime result allocation must obey the exact heap cap");
+    vm.set_max_heap_objects(None);
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(error.message, "heap limit exceeded");
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.heap.live_count(), baseline_live);
+
+    let _garbage = vm.new_object().expect("garbage allocation should succeed");
+    vm.set_max_heap_objects(Some(vm.heap.live_count()));
+    let result = vm
+        .run("new Temporal.PlainTime(12, 34, 56, 123, 456, 789).nanosecond;")
+        .expect("PlainTime construction should retry after collection");
+    vm.set_max_heap_objects(None);
+    assert_eq!(result, Value::Number(789.0));
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+}
+
+#[test]
+fn temporal_plain_time_from_result_failures_restore_roots_and_retry() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "failNextPlainTimeRootReservation",
+        |vm, _, _| {
+            vm.fail_next_gc_pin_reservation = true;
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("PlainTime root-reservation hook should register");
+    vm.run(
+        r#"
+        globalThis.plainTimeFromGets = 0;
+        globalThis.plainTimeFromFields = { hour: 12, minute: 34 };
+        globalThis.plainTimeFromOptions = {
+          get overflow() {
+            plainTimeFromGets++;
+            failNextPlainTimeRootReservation();
+            return 'constrain';
+          }
+        };
+        "#,
+    )
+    .expect("PlainTime.from fixtures should initialize");
+    vm.gc();
+    let baseline_pins = vm.gc_pins.len();
+    let baseline_live = vm.heap.live_count();
+
+    vm.set_max_heap_objects(Some(baseline_live));
+    let error = vm
+        .run("Temporal.PlainTime.from('12:34');")
+        .expect_err("PlainTime.from result allocation must obey the exact heap cap");
+    vm.set_max_heap_objects(None);
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(error.message, "heap limit exceeded");
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.heap.live_count(), baseline_live);
+
+    let error = vm
+        .run("Temporal.PlainTime.from(plainTimeFromFields, plainTimeFromOptions);")
+        .expect_err("PlainTime.from result-prototype reservation should fail");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert!(!vm.fail_next_gc_pin_reservation);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(
+        vm.run("plainTimeFromGets;")
+            .expect("PlainTime option getter count should remain readable"),
+        Value::Number(1.0)
+    );
+    vm.gc();
+    assert_eq!(vm.heap.live_count(), baseline_live);
+
+    assert_eq!(
+        vm.run("Temporal.PlainTime.from(plainTimeFromFields).minute;")
+            .expect("PlainTime.from should retry after root failure"),
+        Value::Number(34.0)
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+}
+
+#[test]
+fn temporal_plain_time_equals_returns_without_heap_allocation() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        "globalThis.plainTimeEqualsOne = new Temporal.PlainTime(12, 34, 56); \
+         globalThis.plainTimeEqualsTwo = new Temporal.PlainTime(12, 34, 56);",
+    )
+    .expect("PlainTime.equals fixtures should initialize");
+    vm.gc();
+    let baseline_pins = vm.gc_pins.len();
+    let baseline_live = vm.heap.live_count();
+
+    vm.set_max_heap_objects(Some(baseline_live));
+    let result = vm
+        .run("plainTimeEqualsOne.equals(plainTimeEqualsTwo);")
+        .expect("PlainTime.equals should not allocate a result object");
+    vm.set_max_heap_objects(None);
+    assert_eq!(result, Value::Bool(true));
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.heap.live_count(), baseline_live);
 }
 
 #[test]
@@ -2408,6 +2546,7 @@ const DEFERRED_NATIVE_CONSTRUCTOR_SOURCES: &[&str] = &[
     "Temporal.Instant",
     "Temporal.Duration",
     "Temporal.PlainDate",
+    "Temporal.PlainTime",
     "Temporal.PlainDateTime",
     "Temporal.ZonedDateTime",
 ];
@@ -2438,7 +2577,7 @@ const FOREIGN_EAGER_NATIVE_CONSTRUCTOR_SOURCES: &[&str] = &[
     "SuppressedError",
 ];
 
-fn realm_registry_counts(vm: &Vm) -> [usize; 57] {
+fn realm_registry_counts(vm: &Vm) -> [usize; 59] {
     [
         vm.realm_globals.len(),
         vm.realm_object_prototypes.len(),
@@ -2469,6 +2608,8 @@ fn realm_registry_counts(vm: &Vm) -> [usize; 57] {
         vm.realm_temporal_duration_prototypes.len(),
         vm.realm_temporal_plain_date_constructors.len(),
         vm.realm_temporal_plain_date_prototypes.len(),
+        vm.realm_temporal_plain_time_constructors.len(),
+        vm.realm_temporal_plain_time_prototypes.len(),
         vm.realm_temporal_plain_date_time_constructors.len(),
         vm.realm_temporal_plain_date_time_prototypes.len(),
         vm.realm_temporal_zoned_date_time_constructors.len(),
@@ -2575,7 +2716,7 @@ fn assert_main_realm_range_error(vm: &Vm, error: &crate::error::Error) {
 fn assert_failed_realm_attempt(
     vm: &mut Vm,
     baseline_live: usize,
-    baseline_registries: [usize; 57],
+    baseline_registries: [usize; 59],
     baseline_pins: usize,
     extra_capacity: usize,
 ) {
