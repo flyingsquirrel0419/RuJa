@@ -4607,12 +4607,20 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
 
         test_root = Path(test262_runner.TEST262) / "test"
         method_dir = test_root / "built-ins/Temporal/PlainDate/prototype/toPlainDateTime"
-        if method_dir.is_dir():
-            live = {
-                path.relative_to(test_root).as_posix()
-                for path in method_dir.glob("*.js")
-                if "_FIXTURE" not in path.name
-            }
+        def live_direct_files():
+            try:
+                if not method_dir.is_dir():
+                    return None
+                return {
+                    path.relative_to(test_root).as_posix()
+                    for path in method_dir.glob("*.js")
+                    if "_FIXTURE" not in path.name
+                }
+            except OSError:
+                return None
+
+        live = live_direct_files()
+        if live is not None:
             self.assertEqual(live, admitted | blockers)
             for relative in all_files:
                 path = test_root / relative
@@ -4651,6 +4659,9 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                             tool.temporal_plain_date_to_plain_date_time_features(path), frozenset()
                         )
                         self.assertTrue(tool.should_skip(metadata, path), relative)
+
+        with patch("pathlib.Path.is_dir", side_effect=PermissionError):
+            self.assertIsNone(live_direct_files())
 
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
