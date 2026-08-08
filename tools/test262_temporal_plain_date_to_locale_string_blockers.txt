@@ -1,0 +1,7 @@
+built-ins/Temporal/PlainDate/prototype/toLocaleString/branding.js
+built-ins/Temporal/PlainDate/prototype/toLocaleString/builtin.js
+built-ins/Temporal/PlainDate/prototype/toLocaleString/length.js
+built-ins/Temporal/PlainDate/prototype/toLocaleString/name.js
+built-ins/Temporal/PlainDate/prototype/toLocaleString/not-a-constructor.js
+built-ins/Temporal/PlainDate/prototype/toLocaleString/prop-desc.js
+built-ins/Temporal/PlainDate/prototype/toLocaleString/return-string.js

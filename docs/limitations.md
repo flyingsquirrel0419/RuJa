@@ -32,8 +32,13 @@ The following resource limits are enforced:
   PlainDateTime at midnight. Hidden-record `equals` and static `compare`
   support the same branded, property-bag, and String inputs for identity and
   ISO field ordering. `toString` supports ISO date formatting and all four
-  calendar annotation modes. Arithmetic, locale/JSON formatting, and remaining
-  prototype conversion methods are not implemented.
+  calendar annotation modes; `toJSON` serializes the same hidden date/calendar
+  record with automatic calendar annotation and ignores its arguments.
+  Arithmetic, locale formatting, and remaining prototype conversion methods
+  are not implemented. In particular, `PlainDate.prototype.toLocaleString`
+  remains absent until full ECMA-402 `Intl.DateTimeFormat` semantics exist;
+  exposing an ISO-only fallback alongside RuJa's partial `%Intl%` would
+  overstate locale support.
   Realm-local `%Temporal.ZonedDateTime%` supports hidden-slot construction for
   UTC and fixed offsets, exact epoch/time-zone/calendar accessors, subclassing,
   all ISO civil/calendar/offset accessors, fixed-offset String and ISO
@@ -640,8 +645,12 @@ guarantees are required.
   implements all six keys and publishes the 10 collations that the same matrix
   accepts; currency remains empty. NumberFormat, DateTimeFormat, DisplayNames,
   RelativeTimeFormat, PluralRules, ListFormat, and Segmenter remain unsupported.
-  Array, TypedArray, Number, BigInt, and Date locale-sensitive methods retain
-  their documented non-ECMA-402 behavior until those formatter units land.
+  `Temporal.PlainDate.prototype.toLocaleString` remains absent rather than
+  using the specification's no-ECMA-402 fallback, because RuJa already exposes
+  a partial `%Intl%`; it requires a Realm-local DateTimeFormat implementation
+  with Temporal calendar/options/time-zone semantics. Array, TypedArray,
+  Number, BigInt, and Date locale-sensitive methods retain their documented
+  non-ECMA-402 behavior until those formatter units land.
   Locale-info and
   supportedValuesOf result counts and string chunks are fuel-precharged and Vec
   growth is fallible, but their bounded static strings become fresh `Arc<str>`

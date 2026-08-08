@@ -4,6 +4,25 @@
 
 ### Changed
 
+- Added Realm-local, non-constructable
+  `Temporal.PlainDate.prototype.toJSON` with length 0. It brands the receiver,
+  ignores all arguments, and serializes the hidden ISO date and calendar
+  through the shared PlainDate formatter with `calendarName: "auto"`; neither
+  public accessors nor an overridden `toString` are observed. At pinned
+  Test262 revision `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the complete
+  direct directory is exact and forced **8/0/0**. The same 29-file
+  serialization audit keeps direct `toLocaleString` at exact **0/0/7** and
+  forced **5/2/0**, and Intl402 `toLocaleString` at exact **0/0/14** and forced
+  **2/12/0**; no downstream callers exist outside those directories.
+
+  [Decision Log]
+  - 목적과 의도: PlainDate JSON serialization을 hidden ISO date/calendar record에 직접 연결하고, 같은 serialization sibling 감사에서 locale 지원 경계를 과장하지 않는다.
+  - 기존 구현 및 제약 조건: 공용 PlainDate formatter와 own toString은 있었지만 toJSON은 없었다. RuJa는 부분 `%Intl%`을 노출하지만 `Intl.DateTimeFormat`과 Temporal locale-format semantics는 아직 구현하지 않았다.
+  - 검토한 주요 대안: `toString` property 호출, public getter 조합, toJSON 전용 formatter 복제, 공용 formatter 직접 호출, ISO 문자열만 반환하는 `toLocaleString` fallback을 검토했다.
+  - 선택한 방식: Realm-local length-0 native toJSON이 receiver를 brand하고 arguments를 무시한 뒤 copied hidden slots를 공용 formatter의 `calendarName: "auto"` 경로로 보낸다. `toLocaleString` direct/Intl402 파일은 DateTimeFormat 구현 전까지 전부 비승인 상태로 유지한다.
+  - 다른 대안 대신 이 방식을 선택한 이유: public `toString`이나 getters를 호출하면 명세에 없는 user code가 관찰되고 formatter 복제는 year/annotation 규칙을 분기시킨다. 부분 Intl 환경에서 ISO fallback을 설치하면 ECMA-402가 요구하는 locale, options, calendar, time-zone 의미론을 거짓 지원한다.
+  - 장점, 단점 및 영향: branding, argument 비관찰, hidden-slot serialization, extended year, JSON.stringify, function shape, Realm-local error와 installer rollback을 한 경로로 검증한다. installer accounting은 toJSON allocation 118을 포함해 119 maximum pins와 120 allocations가 된다. locale formatting은 full DateTimeFormat semantics 구현 후 21개 blocker를 재감사해야 한다.
+
 - Added Realm-local `Temporal.PlainDate.prototype.toString`. It brands the
   receiver before observing options, reads `calendarName` exactly once, and
   formats hidden ISO date/calendar slots with shared RFC 9557 calendar

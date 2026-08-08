@@ -231,6 +231,30 @@ is 118 maximum pins and 119 allocations.
 - 장점, 단점 및 영향: 네 annotation mode, extended year, Realm/GC/abrupt/fuel/OOM 경계가 검증된다. formatter는 임의 canonical calendar ID를 표현하지만 non-ISO field conversion은 calendar subsystem의 후속 책임이다.
 ```
 
+`Temporal.PlainDate.prototype.toJSON` is a separate Realm-local,
+non-constructable length-0 entry point. It brands the receiver, ignores every
+argument, and passes copied hidden ISO date and calendar slots directly to the
+same date-only formatter with `calendarName` fixed to `auto`. It therefore does
+not perform a property lookup for `toString` or expose any public date/calendar
+accessor. The method is installer allocation 118; current namespace
+installation requires 119 maximum pins and completes 120 allocations.
+
+PlainDate `toLocaleString` deliberately remains absent. RuJa already exposes a
+partial `%Intl%`, so the specification's no-ECMA-402 ISO fallback is not the
+right architecture for this engine. The locale entry point must instead be
+built on Realm-local `Intl.DateTimeFormat`, including Temporal calendar,
+options, conflict, default-field, and time-zone behavior.
+
+```text
+[Decision Log]
+- 목적과 의도: JSON serialization은 기존 hidden-record formatter에 연결하되 locale serialization은 ECMA-402 formatter 계층이 준비될 때까지 분리한다.
+- 기존 구현 및 제약 조건: PlainDate toString은 date-only formatter를 소유하지만, 현재 `%Intl%`에는 DateTimeFormat이 없고 Temporal-aware locale option/calendar/time-zone 처리를 제공할 계층도 없다.
+- 검토한 주요 대안: public toString 위임, formatter 복제, JSON 전용 hidden-record 호출, toLocaleString의 ISO fallback, DateTimeFormat 선행 구현을 검토했다.
+- 선택한 방식: toJSON은 brand 후 copied slots를 `calendarName: auto`로 공용 formatter에 직접 전달하고 arguments를 관찰하지 않는다. toLocaleString은 DateTimeFormat과 함께 구현할 별도 단위로 남긴다.
+- 다른 대안 대신 이 방식을 선택한 이유: direct hidden-record 호출만 overridden methods/getters 비관찰과 포맷 단일 소스를 보존한다. 부분 Intl을 가진 엔진에 no-Intl fallback을 넣으면 표준 locale API의 존재와 실제 의미론이 불일치한다.
+- 장점, 단점 및 영향: JSON 경로는 Realm/function shape, hidden slots, calendar annotation과 installer OOM accounting을 독립 검증할 수 있다. locale 경로는 더 큰 선행 구현이 필요하지만 잘못된 ISO-only API를 호환성 부채로 만들지 않는다.
+```
+
 ## Temporal PlainDateTime hidden slots
 
 `TemporalKind::PlainDateTime` stores nine validated ISO fields in compact

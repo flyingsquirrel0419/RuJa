@@ -1,0 +1,8 @@
+built-ins/Temporal/PlainDate/prototype/toJSON/basic.js
+built-ins/Temporal/PlainDate/prototype/toJSON/branding.js
+built-ins/Temporal/PlainDate/prototype/toJSON/builtin.js
+built-ins/Temporal/PlainDate/prototype/toJSON/length.js
+built-ins/Temporal/PlainDate/prototype/toJSON/name.js
+built-ins/Temporal/PlainDate/prototype/toJSON/not-a-constructor.js
+built-ins/Temporal/PlainDate/prototype/toJSON/prop-desc.js
+built-ins/Temporal/PlainDate/prototype/toJSON/year-format.js

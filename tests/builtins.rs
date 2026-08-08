@@ -25746,6 +25746,59 @@ fn temporal_plain_date_to_string_roots_options_across_observable_gc() {
 }
 
 #[test]
+fn temporal_plain_date_to_json_formats_hidden_date_and_ignores_arguments() {
+    assert_eq!(
+        run(r#"
+            var value = new Temporal.PlainDate(2000, 5, 2);
+            var reads = 0;
+            for (var key of ['calendarId', 'day', 'month', 'year']) {
+              Object.defineProperty(value, key, {
+                get: function () { reads++; throw new Error('observed'); }
+              });
+            }
+            value.toString = function () { throw new Error('delegated'); };
+            var ignored = new Proxy({}, {
+              get: function () { throw new Error('argument observed'); }
+            });
+            [
+              Temporal.PlainDate.prototype.toJSON.name,
+              Temporal.PlainDate.prototype.toJSON.length,
+              value.toJSON(ignored), reads,
+              new Temporal.PlainDate(-1, 8, 7).toJSON(),
+              new Temporal.PlainDate(10000, 6, 7).toJSON(),
+              JSON.stringify({ date: value })
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "toJSON|0|2000-05-02|0|-000001-08-07|+010000-06-07|{\"date\":\"2000-05-02\"}"
+        ))
+    );
+}
+
+#[test]
+fn temporal_plain_date_to_json_brands_and_uses_function_realm() {
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var foreignToJSON = other.Temporal.PlainDate.prototype.toJSON;
+            var main = new Temporal.PlainDate(2000, 5, 2);
+            var foreign = new other.Temporal.PlainDate(2000, 5, 2);
+            var mainResult = foreignToJSON.call(main);
+            var foreignResult = foreignToJSON.call(foreign);
+            var receiverRealm = false;
+            try { foreignToJSON.call({}); } catch (error) {
+              receiverRealm = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            var nonconstructable = false;
+            try { new Temporal.PlainDate.prototype.toJSON(); }
+            catch (error) { nonconstructable = error instanceof TypeError; }
+            [mainResult, foreignResult, receiverRealm, nonconstructable].join('|');
+        "#),
+        Value::String(Arc::from("2000-05-02|2000-05-02|true|true"))
+    );
+}
+
+#[test]
 fn temporal_plain_date_time_conversion_uses_plain_date_slots_at_midnight() {
     assert_eq!(
         run(r#"

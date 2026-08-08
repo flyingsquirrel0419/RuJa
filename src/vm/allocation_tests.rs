@@ -405,6 +405,31 @@ fn temporal_namespace_installation_restores_roots_after_plain_date_to_string_fai
 }
 
 #[test]
+fn temporal_namespace_installation_restores_roots_after_plain_date_to_json_failure() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.gc();
+    let original = vm.get_global("Temporal");
+    let baseline_pins = vm.gc_pins.len();
+    let baseline_live = vm.heap.live_count();
+    let global = vm.global;
+    let object_proto = vm.object_proto.clone();
+    // One hundred seventeen earlier allocations fit; the 118th, PlainDate.toJSON, must fail.
+    vm.set_max_heap_objects(Some(baseline_live + 117));
+
+    let result =
+        crate::builtins::install_temporal_namespace_in_env(&mut vm, global, None, object_proto);
+
+    vm.set_max_heap_objects(None);
+    let error = result.expect_err("PlainDate.toJSON allocation must hit the cap");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(error.message, "heap limit exceeded");
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.get_global("Temporal"), original);
+    vm.gc();
+    assert_eq!(vm.heap.live_count(), baseline_live);
+}
+
+#[test]
 fn temporal_namespace_installation_covers_every_allocation_boundary() {
     let mut vm = Vm::new().expect("failed to initialize VM");
     vm.gc();
@@ -413,9 +438,9 @@ fn temporal_namespace_installation_covers_every_allocation_boundary() {
     let baseline_live = vm.heap.live_count();
     let global = vm.global;
 
-    // Allocations 18 through 119 cover the method/accessor batches and the
+    // Allocations 18 through 120 cover the method/accessor batches and the
     // two namespace objects that must publish only after the batch succeeds.
-    for extra_capacity in 17..119 {
+    for extra_capacity in 17..120 {
         vm.set_max_heap_objects(Some(baseline_live + extra_capacity));
         let object_proto = vm.object_proto.clone();
         let result =
@@ -436,16 +461,16 @@ fn temporal_namespace_installation_covers_every_allocation_boundary() {
         );
     }
 
-    vm.set_max_heap_objects(Some(baseline_live + 119));
+    vm.set_max_heap_objects(Some(baseline_live + 120));
     let object_proto = vm.object_proto.clone();
     let temporal =
         crate::builtins::install_temporal_namespace_in_env(&mut vm, global, None, object_proto)
-            .expect("exact 119-object capacity must install the complete namespace");
+            .expect("exact 120-object capacity must install the complete namespace");
     vm.set_max_heap_objects(None);
     assert_eq!(vm.gc_pins.len(), baseline_pins);
     assert_eq!(vm.get_global("Temporal"), temporal);
     assert_eq!(
-        vm.run("typeof Temporal.PlainDate === 'function' && typeof Temporal.PlainDate.from === 'function' && typeof Temporal.PlainDate.compare === 'function' && typeof Temporal.PlainDate.prototype.equals === 'function' && typeof Temporal.PlainDate.prototype.toString === 'function' && typeof Temporal.PlainDateTime.compare === 'function' && typeof Temporal.PlainDateTime.prototype.equals")
+        vm.run("typeof Temporal.PlainDate === 'function' && typeof Temporal.PlainDate.from === 'function' && typeof Temporal.PlainDate.compare === 'function' && typeof Temporal.PlainDate.prototype.equals === 'function' && typeof Temporal.PlainDate.prototype.toString === 'function' && typeof Temporal.PlainDate.prototype.toJSON === 'function' && typeof Temporal.PlainDateTime.compare === 'function' && typeof Temporal.PlainDateTime.prototype.equals")
             .expect("installed namespace should remain usable"),
         Value::String(Arc::from("function"))
     );
@@ -564,6 +589,25 @@ fn temporal_plain_date_to_string_returns_without_heap_object_allocation() {
     let result = vm
         .run("plainDateToStringValue.toString();")
         .expect("PlainDate.toString should not allocate a heap object");
+    vm.set_max_heap_objects(None);
+    assert_eq!(result, Value::String(Arc::from("2000-05-02")));
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.heap.live_count(), baseline_live);
+}
+
+#[test]
+fn temporal_plain_date_to_json_returns_without_heap_object_allocation() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run("globalThis.plainDateToJsonValue = new Temporal.PlainDate(2000, 5, 2);")
+        .expect("PlainDate.toJSON fixture should initialize");
+    vm.gc();
+    let baseline_pins = vm.gc_pins.len();
+    let baseline_live = vm.heap.live_count();
+
+    vm.set_max_heap_objects(Some(baseline_live));
+    let result = vm
+        .run("plainDateToJsonValue.toJSON();")
+        .expect("PlainDate.toJSON should not allocate a heap object");
     vm.set_max_heap_objects(None);
     assert_eq!(result, Value::String(Arc::from("2000-05-02")));
     assert_eq!(vm.gc_pins.len(), baseline_pins);

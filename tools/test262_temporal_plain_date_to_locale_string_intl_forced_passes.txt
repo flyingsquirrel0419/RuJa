@@ -1,0 +1,2 @@
+intl402/Temporal/PlainDate/prototype/toLocaleString/default-does-not-include-time-and-time-zone-name.js
+intl402/Temporal/PlainDate/prototype/toLocaleString/ignore-timezone.js

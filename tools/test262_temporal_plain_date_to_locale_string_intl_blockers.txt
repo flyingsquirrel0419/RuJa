@@ -1,0 +1,14 @@
+intl402/Temporal/PlainDate/prototype/toLocaleString/basic.js
+intl402/Temporal/PlainDate/prototype/toLocaleString/calendar-mismatch.js
+intl402/Temporal/PlainDate/prototype/toLocaleString/dateStyle-timeStyle-undefined.js
+intl402/Temporal/PlainDate/prototype/toLocaleString/dateStyle.js
+intl402/Temporal/PlainDate/prototype/toLocaleString/datestyle-and-timestyle.js
+intl402/Temporal/PlainDate/prototype/toLocaleString/datestyle-not-adjusted-when-no-conflicting-options.js
+intl402/Temporal/PlainDate/prototype/toLocaleString/default-does-not-include-time-and-time-zone-name.js
+intl402/Temporal/PlainDate/prototype/toLocaleString/era.js
+intl402/Temporal/PlainDate/prototype/toLocaleString/ignore-timezone.js
+intl402/Temporal/PlainDate/prototype/toLocaleString/locales-undefined.js
+intl402/Temporal/PlainDate/prototype/toLocaleString/lone-options-accepted.js
+intl402/Temporal/PlainDate/prototype/toLocaleString/options-conflict.js
+intl402/Temporal/PlainDate/prototype/toLocaleString/options-undefined.js
+intl402/Temporal/PlainDate/prototype/toLocaleString/resolved-time-zone.js

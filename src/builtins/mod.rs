@@ -6290,7 +6290,7 @@ pub(crate) fn install_temporal_namespace_in_env(
     global: Option<&Value>,
     object_proto: Value,
 ) -> error::Result<Value> {
-    vm.try_reserve_gc_pins(118)?;
+    vm.try_reserve_gc_pins(119)?;
     let mut pin_count = 0;
     let result = (|| {
         let instant_prototype = Value::Object(vm.alloc(HeapObj::Object(ObjectData {
@@ -6920,6 +6920,13 @@ pub(crate) fn install_temporal_namespace_in_env(
             env,
         )?);
         pin_count += vm.pin(&plain_date_to_string);
+        let plain_date_to_json = Value::Object(vm.new_native_function_in_env_with_gc_retry(
+            "toJSON",
+            temporal_plain_date_to_json,
+            0,
+            env,
+        )?);
+        pin_count += vm.pin(&plain_date_to_json);
 
         let Value::Object(instant_constructor_index) = instant_constructor.clone() else {
             unreachable!()
@@ -7175,6 +7182,7 @@ pub(crate) fn install_temporal_namespace_in_env(
                 PropertyKey::from("toString"),
                 data_prop(plain_date_to_string),
             );
+            props.insert(PropertyKey::from("toJSON"), data_prop(plain_date_to_json));
             props.insert(PropertyKey::from("valueOf"), data_prop(plain_date_value_of));
             let mut tag = data_prop(Value::String(Arc::from("Temporal.PlainDate")));
             tag.writable = false;
@@ -9278,19 +9286,40 @@ fn temporal_plain_date_to_string(
         };
         let calendar_name =
             temporal_annotation_display(calendar_name.as_deref(), "calendarName", true)?;
-        temporal::format_plain_date(
-            fields.year,
-            fields.month,
-            fields.day,
-            &calendar_identifier,
-            calendar_name,
-        )
-        .map(Arc::<str>::from)
-        .map(Value::String)
-        .ok_or_else(|| Error::range("Temporal.PlainDate string formatting failed"))
+        temporal_plain_date_format(fields, &calendar_identifier, calendar_name)
     })();
     vm.unpin_many(options_pin);
     result
+}
+
+fn temporal_plain_date_to_json(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let (fields, calendar_identifier) = temporal_plain_date_slots(vm, this)?;
+    temporal_plain_date_format(
+        fields,
+        &calendar_identifier,
+        temporal::AnnotationDisplay::Auto,
+    )
+}
+
+fn temporal_plain_date_format(
+    fields: TemporalPlainDateFields,
+    calendar_identifier: &str,
+    calendar_name: temporal::AnnotationDisplay,
+) -> error::Result<Value> {
+    temporal::format_plain_date(
+        fields.year,
+        fields.month,
+        fields.day,
+        calendar_identifier,
+        calendar_name,
+    )
+    .map(Arc::<str>::from)
+    .map(Value::String)
+    .ok_or_else(|| Error::range("Temporal.PlainDate string formatting failed"))
 }
 
 fn to_temporal_plain_date_time(

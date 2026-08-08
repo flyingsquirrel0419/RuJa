@@ -14699,3 +14699,40 @@ files.
 - 다른 대안 대신 이 방식을 선택한 이유: 파일 단위 Test262 결과에서 Intl의 ISO와 non-ISO assertion을 분리할 수 없고 exact complement만 inherited-method false positive와 future corpus drift를 모두 검출한다.
 - 장점, 단점 및 영향: direct exact/forced 18/0, Intl exact 0/0/8, forced 0/8이 재현된다. non-ISO calendar construction과 field conversion 이후 Intl blocker를 다시 감사해야 한다.
 ```
+
+## Temporal.PlainDate serialization siblings
+
+At pinned Test262 revision
+`9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the complete eight-file direct
+`Temporal.PlainDate.prototype.toJSON` directory is exact and forced **8 pass /
+0 fail / 0 skip**. This covers branding, descriptor and function shape,
+non-construction, ignored arguments, extended years, and hidden date/calendar
+serialization without delegating through a mutable public `toString`.
+
+The sibling `toLocaleString` directories remain fully non-admitting. The
+seven-file direct directory is exact **0 pass / 0 fail / 7 skip** and forced
+**5 pass / 2 fail / 0 skip**. Its `builtin.js`, `length.js`, `name.js`,
+`not-a-constructor.js`, and `return-string.js` results are inherited-method
+false positives rather than evidence of a conforming own locale method. The
+14-file Intl402 directory is exact **0 pass / 0 fail / 14 skip** and forced
+**2 pass / 12 fail / 0 skip**. `default-does-not-include-time-and-time-zone-name.js`
+and `ignore-timezone.js` are likewise false positives that do not prove the
+required DateTimeFormat behavior. A whole-corpus call-site audit found no true
+downstream caller outside these 29 direct and Intl402 files.
+
+RuJa exposes a partial `%Intl%` but no `Intl.DateTimeFormat`. Consequently, an
+ISO-returning own `toLocaleString` would not be the specification's valid
+no-ECMA-402 fallback for this engine and would falsely admit function-shape
+tests while omitting locale negotiation, Temporal calendar conversion,
+date-style/component conflicts, defaults, and time-zone handling. All 21
+locale files stay blocked until that formatter layer is implemented.
+
+```text
+[Decision Log]
+- 목적과 의도: PlainDate serialization sibling 29개의 실제 assertion 도달 범위를 고정하고 toJSON 지원을 locale formatting 지원으로 오인하지 않게 한다.
+- 기존 구현 및 제약 조건: toJSON direct 8개는 hidden-record formatter만으로 완결되지만 direct toLocaleString 7개와 Intl402 14개는 broad gate 아래 있었고 inherited method 또는 선행 오류로 forced false positive가 생긴다. DateTimeFormat은 아직 없다.
+- 검토한 주요 대안: 세 directory 전체 admission, forced pass만 admission, direct locale shape tests만 admission, ISO-only locale fallback, toJSON만 exact admission하고 locale complement를 유지하는 방식을 검토했다.
+- 선택한 방식: toJSON 8개는 exact/forced 8/0/0으로 열고 direct locale는 exact 0/0/7 및 forced 5/2/0, Intl402 locale는 exact 0/0/14 및 forced 2/12/0으로 전부 blocker에 유지한다. 29개 밖 downstream 부재도 별도 감사한다.
+- 다른 대안 대신 이 방식을 선택한 이유: forced process pass는 own-method 또는 DateTimeFormat 의미론을 증명하지 않는다. 부분 Intl 환경의 ISO fallback은 ECMA-402 계약과 충돌하며, exact complement만 false positive와 future corpus drift를 드러낸다.
+- 장점, 단점 및 영향: JSON 지원 수치는 독립적으로 재현되고 locale 미지원 범위와 선행 아키텍처 요구가 명확해진다. DateTimeFormat 도입 후 direct/Intl402 21개를 intended assertion 기준으로 다시 측정해야 한다.
+```

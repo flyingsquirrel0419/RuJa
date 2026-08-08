@@ -169,6 +169,12 @@ jobs:
           TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_date_to_string_manifests_are_exact_live_and_shared
           -v
+      - name: Verify exact Temporal.PlainDate serialization admissions
+        working-directory: tools
+        run: >-
+          TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
+          test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_plain_date_serialization_manifests_are_exact_live_and_shared
+          -v
       - name: Verify exact Temporal.PlainDateTime core admission
         working-directory: tools
         run: >-
@@ -1114,6 +1120,86 @@ jobs:
           cat temporal_plain_date_to_string_intl_diagnostic.txt
           grep -q '^RATE=0.0 PASS=0 FAIL=8 SKIP=0 TOTAL=8 RAN=8$' \
             temporal_plain_date_to_string_intl_diagnostic.txt
+
+  temporal-plain-date-serialization:
+    needs: [build, setup]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download RuJa binary
+        uses: actions/download-artifact@v4
+        with:
+          name: ruja-release
+          path: target/release/
+      - run: chmod +x target/release/ruja
+      - name: Checkout pinned Temporal.PlainDate serialization tests
+        uses: actions/checkout@v4
+        with:
+          repository: tc39/test262
+          ref: ${{ env.TEST262_REV }}
+          path: test262
+          sparse-checkout: |
+            harness
+            test/built-ins/Temporal/PlainDate/prototype/toJSON
+            test/built-ins/Temporal/PlainDate/prototype/toLocaleString
+            test/intl402/Temporal/PlainDate/prototype/toLocaleString
+      - name: Require exact Temporal.PlainDate toJSON boundary
+        run: |
+          mapfile -t files < <(sed -e '/^#/d' -e '/^$/d' \
+            tools/test262_temporal_plain_date_to_json_admission.txt)
+          TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
+            "${files[@]}" > temporal_plain_date_to_json_result.txt 2>&1
+          cat temporal_plain_date_to_json_result.txt
+          grep -q '^RATE=100.0 PASS=8 FAIL=0 SKIP=0 TOTAL=8 RAN=8$' \
+            temporal_plain_date_to_json_result.txt
+      - name: Freeze complete Temporal.PlainDate toJSON surface
+        run: |
+          mapfile -t files < <(sed -e '/^#/d' -e '/^$/d' \
+            tools/test262_temporal_plain_date_to_json_admission.txt)
+          TEST262="$GITHUB_WORKSPACE/test262" \
+            python3 tools/test262_temporal_plain_date_to_json_diagnostic.py \
+            "${files[@]}" > temporal_plain_date_to_json_diagnostic.txt 2>&1
+          cat temporal_plain_date_to_json_diagnostic.txt
+          grep -q '^RATE=100.0 PASS=8 FAIL=0 SKIP=0 TOTAL=8 RAN=8$' \
+            temporal_plain_date_to_json_diagnostic.txt
+      - name: Require exact direct Temporal.PlainDate toLocaleString boundary
+        run: |
+          mapfile -t files < <(sed -e '/^#/d' -e '/^$/d' \
+            tools/test262_temporal_plain_date_to_locale_string_blockers.txt)
+          TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
+            "${files[@]}" > temporal_plain_date_to_locale_string_result.txt 2>&1
+          cat temporal_plain_date_to_locale_string_result.txt
+          grep -q '^RATE=0.0 PASS=0 FAIL=0 SKIP=7 TOTAL=7 RAN=0$' \
+            temporal_plain_date_to_locale_string_result.txt
+      - name: Freeze direct Temporal.PlainDate toLocaleString blockers
+        run: |
+          mapfile -t files < <(sed -e '/^#/d' -e '/^$/d' \
+            tools/test262_temporal_plain_date_to_locale_string_blockers.txt)
+          TEST262="$GITHUB_WORKSPACE/test262" \
+            python3 tools/test262_temporal_plain_date_to_locale_string_diagnostic.py \
+            "${files[@]}" > temporal_plain_date_to_locale_string_diagnostic.txt 2>&1
+          cat temporal_plain_date_to_locale_string_diagnostic.txt
+          grep -q '^RATE=71.4 PASS=5 FAIL=2 SKIP=0 TOTAL=7 RAN=7$' \
+            temporal_plain_date_to_locale_string_diagnostic.txt
+      - name: Require exact Intl402 Temporal.PlainDate toLocaleString boundary
+        run: |
+          mapfile -t files < <(sed -e '/^#/d' -e '/^$/d' \
+            tools/test262_temporal_plain_date_to_locale_string_intl_blockers.txt)
+          TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
+            "${files[@]}" > temporal_plain_date_to_locale_string_intl_result.txt 2>&1
+          cat temporal_plain_date_to_locale_string_intl_result.txt
+          grep -q '^RATE=0.0 PASS=0 FAIL=0 SKIP=14 TOTAL=14 RAN=0$' \
+            temporal_plain_date_to_locale_string_intl_result.txt
+      - name: Freeze Intl402 Temporal.PlainDate toLocaleString blockers
+        run: |
+          mapfile -t files < <(sed -e '/^#/d' -e '/^$/d' \
+            tools/test262_temporal_plain_date_to_locale_string_intl_blockers.txt)
+          TEST262="$GITHUB_WORKSPACE/test262" \
+            python3 tools/test262_temporal_plain_date_to_locale_string_intl_diagnostic.py \
+            "${files[@]}" > temporal_plain_date_to_locale_string_intl_diagnostic.txt 2>&1
+          cat temporal_plain_date_to_locale_string_intl_diagnostic.txt
+          grep -q '^RATE=14.3 PASS=2 FAIL=12 SKIP=0 TOTAL=14 RAN=14$' \
+            temporal_plain_date_to_locale_string_intl_diagnostic.txt
 
   temporal-plain-date-time-core:
     needs: [build, setup]

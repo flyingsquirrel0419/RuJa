@@ -218,6 +218,39 @@ from test262_temporal_plain_date_to_string_intl_admission import (
     TEMPORAL_PLAIN_DATE_TO_STRING_INTL_INCLUDES,
     TEMPORAL_PLAIN_DATE_TO_STRING_INTL_NEGATIVE,
 )
+from test262_temporal_plain_date_to_json_admission import (
+    TEMPORAL_PLAIN_DATE_TO_JSON_BLOCKER_FEATURES,
+    TEMPORAL_PLAIN_DATE_TO_JSON_BLOCKER_FLAGS,
+    TEMPORAL_PLAIN_DATE_TO_JSON_BLOCKER_INCLUDES,
+    TEMPORAL_PLAIN_DATE_TO_JSON_BLOCKER_NEGATIVE,
+    TEMPORAL_PLAIN_DATE_TO_JSON_FEATURES,
+    TEMPORAL_PLAIN_DATE_TO_JSON_FILES,
+    TEMPORAL_PLAIN_DATE_TO_JSON_FLAGS,
+    TEMPORAL_PLAIN_DATE_TO_JSON_INCLUDES,
+    TEMPORAL_PLAIN_DATE_TO_JSON_NEGATIVE,
+)
+from test262_temporal_plain_date_to_locale_string_admission import (
+    TEMPORAL_PLAIN_DATE_TO_LOCALE_STRING_BLOCKER_FEATURES,
+    TEMPORAL_PLAIN_DATE_TO_LOCALE_STRING_BLOCKER_FLAGS,
+    TEMPORAL_PLAIN_DATE_TO_LOCALE_STRING_BLOCKER_INCLUDES,
+    TEMPORAL_PLAIN_DATE_TO_LOCALE_STRING_BLOCKER_NEGATIVE,
+    TEMPORAL_PLAIN_DATE_TO_LOCALE_STRING_FEATURES,
+    TEMPORAL_PLAIN_DATE_TO_LOCALE_STRING_FILES,
+    TEMPORAL_PLAIN_DATE_TO_LOCALE_STRING_FLAGS,
+    TEMPORAL_PLAIN_DATE_TO_LOCALE_STRING_INCLUDES,
+    TEMPORAL_PLAIN_DATE_TO_LOCALE_STRING_NEGATIVE,
+)
+from test262_temporal_plain_date_to_locale_string_intl_admission import (
+    TEMPORAL_PLAIN_DATE_TO_LOCALE_STRING_INTL_BLOCKER_FEATURES,
+    TEMPORAL_PLAIN_DATE_TO_LOCALE_STRING_INTL_BLOCKER_FLAGS,
+    TEMPORAL_PLAIN_DATE_TO_LOCALE_STRING_INTL_BLOCKER_INCLUDES,
+    TEMPORAL_PLAIN_DATE_TO_LOCALE_STRING_INTL_BLOCKER_NEGATIVE,
+    TEMPORAL_PLAIN_DATE_TO_LOCALE_STRING_INTL_FEATURES,
+    TEMPORAL_PLAIN_DATE_TO_LOCALE_STRING_INTL_FILES,
+    TEMPORAL_PLAIN_DATE_TO_LOCALE_STRING_INTL_FLAGS,
+    TEMPORAL_PLAIN_DATE_TO_LOCALE_STRING_INTL_INCLUDES,
+    TEMPORAL_PLAIN_DATE_TO_LOCALE_STRING_INTL_NEGATIVE,
+)
 from test262_temporal_plain_date_time_core_admission import (
     TEMPORAL_PLAIN_DATE_TIME_CORE_FEATURES,
     TEMPORAL_PLAIN_DATE_TIME_CORE_FILES,
@@ -5227,6 +5260,197 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                             self.assertTrue(
                                 tool.should_skip({"features": ["Temporal"]}, path)
                             )
+                    finally:
+                        tool.TEST262 = original_root
+
+    def test_temporal_plain_date_serialization_manifests_are_exact_live_and_shared(self):
+        cases = (
+            (
+                TEMPORAL_PLAIN_DATE_TO_JSON_FILES,
+                TEMPORAL_PLAIN_DATE_TO_JSON_FEATURES,
+                TEMPORAL_PLAIN_DATE_TO_JSON_INCLUDES,
+                TEMPORAL_PLAIN_DATE_TO_JSON_FLAGS,
+                TEMPORAL_PLAIN_DATE_TO_JSON_NEGATIVE,
+                TEMPORAL_PLAIN_DATE_TO_JSON_BLOCKER_FEATURES,
+                TEMPORAL_PLAIN_DATE_TO_JSON_BLOCKER_INCLUDES,
+                TEMPORAL_PLAIN_DATE_TO_JSON_BLOCKER_FLAGS,
+                TEMPORAL_PLAIN_DATE_TO_JSON_BLOCKER_NEGATIVE,
+                "test262_temporal_plain_date_to_json_blockers.txt",
+                "built-ins/Temporal/PlainDate/prototype/toJSON",
+                8,
+                0,
+                "temporal_plain_date_to_json_path",
+                "temporal_plain_date_to_json_features",
+            ),
+            (
+                TEMPORAL_PLAIN_DATE_TO_LOCALE_STRING_FILES,
+                TEMPORAL_PLAIN_DATE_TO_LOCALE_STRING_FEATURES,
+                TEMPORAL_PLAIN_DATE_TO_LOCALE_STRING_INCLUDES,
+                TEMPORAL_PLAIN_DATE_TO_LOCALE_STRING_FLAGS,
+                TEMPORAL_PLAIN_DATE_TO_LOCALE_STRING_NEGATIVE,
+                TEMPORAL_PLAIN_DATE_TO_LOCALE_STRING_BLOCKER_FEATURES,
+                TEMPORAL_PLAIN_DATE_TO_LOCALE_STRING_BLOCKER_INCLUDES,
+                TEMPORAL_PLAIN_DATE_TO_LOCALE_STRING_BLOCKER_FLAGS,
+                TEMPORAL_PLAIN_DATE_TO_LOCALE_STRING_BLOCKER_NEGATIVE,
+                "test262_temporal_plain_date_to_locale_string_blockers.txt",
+                "built-ins/Temporal/PlainDate/prototype/toLocaleString",
+                0,
+                7,
+                "temporal_plain_date_to_locale_string_path",
+                "temporal_plain_date_to_locale_string_features",
+            ),
+            (
+                TEMPORAL_PLAIN_DATE_TO_LOCALE_STRING_INTL_FILES,
+                TEMPORAL_PLAIN_DATE_TO_LOCALE_STRING_INTL_FEATURES,
+                TEMPORAL_PLAIN_DATE_TO_LOCALE_STRING_INTL_INCLUDES,
+                TEMPORAL_PLAIN_DATE_TO_LOCALE_STRING_INTL_FLAGS,
+                TEMPORAL_PLAIN_DATE_TO_LOCALE_STRING_INTL_NEGATIVE,
+                TEMPORAL_PLAIN_DATE_TO_LOCALE_STRING_INTL_BLOCKER_FEATURES,
+                TEMPORAL_PLAIN_DATE_TO_LOCALE_STRING_INTL_BLOCKER_INCLUDES,
+                TEMPORAL_PLAIN_DATE_TO_LOCALE_STRING_INTL_BLOCKER_FLAGS,
+                TEMPORAL_PLAIN_DATE_TO_LOCALE_STRING_INTL_BLOCKER_NEGATIVE,
+                "test262_temporal_plain_date_to_locale_string_intl_blockers.txt",
+                "intl402/Temporal/PlainDate/prototype/toLocaleString",
+                0,
+                14,
+                "temporal_plain_date_to_locale_string_intl_path",
+                "temporal_plain_date_to_locale_string_intl_features",
+            ),
+        )
+        preimplementation_false_positives = (
+            {"built-ins/Temporal/PlainDate/prototype/toJSON/not-a-constructor.js"},
+            {
+                "built-ins/Temporal/PlainDate/prototype/toLocaleString/builtin.js",
+                "built-ins/Temporal/PlainDate/prototype/toLocaleString/length.js",
+                "built-ins/Temporal/PlainDate/prototype/toLocaleString/name.js",
+                "built-ins/Temporal/PlainDate/prototype/toLocaleString/not-a-constructor.js",
+                "built-ins/Temporal/PlainDate/prototype/toLocaleString/return-string.js",
+            },
+            {
+                "intl402/Temporal/PlainDate/prototype/toLocaleString/default-does-not-include-time-and-time-zone-name.js",
+                "intl402/Temporal/PlainDate/prototype/toLocaleString/ignore-timezone.js",
+            },
+        )
+        test_root = Path(test262_runner.TEST262) / "test"
+
+        forced_pass_manifests = (
+            None,
+            "test262_temporal_plain_date_to_locale_string_forced_passes.txt",
+            "test262_temporal_plain_date_to_locale_string_intl_forced_passes.txt",
+        )
+
+        for case, accidental, forced_pass_manifest in zip(
+            cases, preimplementation_false_positives, forced_pass_manifests
+        ):
+            (
+                files,
+                features_by_file,
+                includes_by_file,
+                flags_by_file,
+                negative_by_file,
+                blocker_features_by_file,
+                blocker_includes_by_file,
+                blocker_flags_by_file,
+                blocker_negative_by_file,
+                blocker_manifest,
+                method_relative,
+                expected_files,
+                expected_blockers,
+                path_helper,
+                feature_helper,
+            ) = case
+            blockers = {
+                line
+                for raw_line in Path(__file__).with_name(
+                    blocker_manifest
+                ).read_text().splitlines()
+                if (line := raw_line.strip()) and not line.startswith("#")
+            }
+            self.assertEqual(len(files), expected_files)
+            self.assertEqual(len(blockers), expected_blockers)
+            self.assertEqual(set(features_by_file), set(files))
+            self.assertEqual(set(includes_by_file), set(files))
+            self.assertEqual(set(flags_by_file), set(files))
+            self.assertEqual(set(negative_by_file), set(files))
+            self.assertEqual(set(blocker_features_by_file), blockers)
+            self.assertEqual(set(blocker_includes_by_file), blockers)
+            self.assertEqual(set(blocker_flags_by_file), blockers)
+            self.assertEqual(set(blocker_negative_by_file), blockers)
+            self.assertTrue(files.isdisjoint(blockers))
+            self.assertTrue(accidental <= (set(files) | blockers))
+            if forced_pass_manifest is not None:
+                forced_passes = {
+                    line
+                    for raw_line in Path(__file__).with_name(
+                        forced_pass_manifest
+                    ).read_text().splitlines()
+                    if (line := raw_line.strip()) and not line.startswith("#")
+                }
+                self.assertEqual(forced_passes, accidental)
+                self.assertTrue(forced_passes <= blockers)
+
+            method_dir = test_root / method_relative
+            try:
+                live_files = (
+                    {
+                        path.relative_to(test_root).as_posix()
+                        for path in method_dir.glob("*.js")
+                        if "_FIXTURE" not in path.name
+                    }
+                    if method_dir.is_dir()
+                    else None
+                )
+            except OSError:
+                live_files = None
+            if live_files is not None:
+                self.assertEqual(live_files, set(files) | blockers)
+                for relative in set(files) | blockers:
+                    path = test_root / relative
+                    metadata = test262_runner.parse_meta(path.read_text())
+                    if relative in files:
+                        expected_features = features_by_file[relative]
+                        expected_includes = includes_by_file[relative]
+                        expected_flags = flags_by_file[relative]
+                        expected_negative = negative_by_file[relative]
+                    else:
+                        expected_features = blocker_features_by_file[relative]
+                        expected_includes = blocker_includes_by_file[relative]
+                        expected_flags = blocker_flags_by_file[relative]
+                        expected_negative = blocker_negative_by_file[relative]
+                    self.assertEqual(frozenset(metadata.get("features", [])), expected_features)
+                    self.assertEqual(frozenset(metadata.get("includes", [])), expected_includes)
+                    self.assertEqual(frozenset(metadata.get("flags", [])), expected_flags)
+                    self.assertEqual(metadata.get("negative"), expected_negative)
+                    for tool in (test262_runner, test262_analyze):
+                        self.assertEqual(getattr(tool, path_helper)(path), relative in files)
+                        self.assertEqual(
+                            getattr(tool, feature_helper)(path),
+                            expected_features if relative in files else frozenset(),
+                        )
+                        self.assertEqual(tool.should_skip(metadata, path), relative in blockers)
+
+            with tempfile.TemporaryDirectory() as temp_dir:
+                root = Path(temp_dir)
+                future = root / "test" / method_relative / "future.js"
+                outside = root / "test/built-ins/Other/prototype/toJSON/basic.js"
+                for tool in (test262_runner, test262_analyze):
+                    path_fn = getattr(tool, path_helper)
+                    features_fn = getattr(tool, feature_helper)
+                    self.assertFalse(path_fn(None))
+                    self.assertFalse(path_fn(object()))
+                    self.assertEqual(features_fn(None), frozenset())
+                    original_root = tool.TEST262
+                    tool.TEST262 = str(root)
+                    try:
+                        for relative, features in features_by_file.items():
+                            path = root / "test" / relative
+                            self.assertTrue(path_fn(path), relative)
+                            self.assertEqual(features_fn(path), features)
+                            self.assertFalse(tool.should_skip({"features": sorted(features)}, path))
+                        for path in (future, outside):
+                            self.assertFalse(path_fn(path))
+                            self.assertEqual(features_fn(path), frozenset())
+                            self.assertTrue(tool.should_skip({"features": ["Temporal"]}, path))
                     finally:
                         tool.TEST262 = original_root
 
