@@ -25060,6 +25060,101 @@ fn temporal_duration_core_uses_hidden_slots_and_exact_integer_fields() {
 }
 
 #[test]
+fn temporal_duration_from_converts_bags_strings_and_hidden_slots_in_order() {
+    assert_eq!(
+        run(r#"
+            var reads = [];
+            var fields = {};
+            var names = [
+              'days', 'hours', 'microseconds', 'milliseconds', 'minutes',
+              'months', 'nanoseconds', 'seconds', 'weeks', 'years'
+            ];
+            names.forEach(function (name, index) {
+              Object.defineProperty(fields, name, {
+                get: function () {
+                  reads.push('get ' + name);
+                  return { valueOf: function () {
+                    reads.push('value ' + name);
+                    return index + 1;
+                  } };
+                }
+              });
+            });
+            var converted = Temporal.Duration.from(fields);
+            var source = new Temporal.Duration(1, 2, 3, 4, 5, 6, 7, 8, 9, 10);
+            Object.defineProperty(source, 'years', {
+              get: function () { throw new Error('public getter observed'); }
+            });
+            var copied = Temporal.Duration.from(source);
+            var parsed = Temporal.Duration.from('-P1Y2M3W4DT5H6M7.987654321S');
+            [
+              Temporal.Duration.from.name,
+              Temporal.Duration.from.length,
+              reads.join(','),
+              [converted.years, converted.months, converted.weeks, converted.days,
+               converted.hours, converted.minutes, converted.seconds,
+               converted.milliseconds, converted.microseconds,
+               converted.nanoseconds].join(','),
+              copied !== source,
+              copied.years,
+              [parsed.years, parsed.months, parsed.weeks, parsed.days, parsed.hours,
+               parsed.minutes, parsed.seconds, parsed.milliseconds,
+               parsed.microseconds, parsed.nanoseconds].join(',')
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "from|1|get days,value days,get hours,value hours,get microseconds,value microseconds,get milliseconds,value milliseconds,get minutes,value minutes,get months,value months,get nanoseconds,value nanoseconds,get seconds,value seconds,get weeks,value weeks,get years,value years|10,6,9,1,2,5,8,4,3,7|true|1|-1,-2,-3,-4,-5,-6,-7,-987,-654,-321"
+        ))
+    );
+}
+
+#[test]
+fn temporal_duration_from_uses_method_realm_and_rejects_invalid_inputs() {
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var foreignFrom = other.Temporal.Duration.from;
+            var foreignResult = foreignFrom(new Temporal.Duration(7));
+            var mainResult = Temporal.Duration.from(new other.Temporal.Duration(8));
+            var rangeRealm;
+            var typeRealm;
+            try { foreignFrom('PT0.1H0M'); } catch (error) {
+              rangeRealm = error instanceof other.RangeError && !(error instanceof RangeError);
+            }
+            try { foreignFrom({}); } catch (error) {
+              typeRealm = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            [
+              Object.getPrototypeOf(foreignResult) === other.Temporal.Duration.prototype,
+              Object.getPrototypeOf(mainResult) === Temporal.Duration.prototype,
+              foreignResult.years,
+              mainResult.years,
+              rangeRealm,
+              typeRealm
+            ].join('|');
+        "#),
+        Value::String(Arc::from("true|true|7|8|true|true"))
+    );
+
+    for source in [
+        "Temporal.Duration.from()",
+        "Temporal.Duration.from({})",
+        "Temporal.Duration.from({ hours: 1, minutes: -1 })",
+        "Temporal.Duration.from({ seconds: 1.5 })",
+        "Temporal.Duration.from(Symbol())",
+        "Temporal.Duration.from('PT')",
+        "Temporal.Duration.from('PT0.1H0M')",
+        "new Temporal.Duration.from('P1D')",
+    ] {
+        let error = run_err(source);
+        assert!(
+            error.contains("TypeError") || error.contains("RangeError"),
+            "{source}: {error}"
+        );
+    }
+}
+
+#[test]
 fn temporal_duration_rejects_non_integral_mixed_and_out_of_range_fields() {
     for source in [
         "Temporal.Duration()",

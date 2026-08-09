@@ -6290,7 +6290,7 @@ pub(crate) fn install_temporal_namespace_in_env(
     global: Option<&Value>,
     object_proto: Value,
 ) -> error::Result<Value> {
-    vm.try_reserve_gc_pins(136)?;
+    vm.try_reserve_gc_pins(137)?;
     let mut pin_count = 0;
     let result = (|| {
         let instant_prototype = Value::Object(vm.alloc(HeapObj::Object(ObjectData {
@@ -7038,6 +7038,13 @@ pub(crate) fn install_temporal_namespace_in_env(
             env,
         )?);
         pin_count += vm.pin(&plain_time_with);
+        let duration_from = Value::Object(vm.new_native_function_in_env_with_gc_retry(
+            "from",
+            temporal_duration_from,
+            1,
+            env,
+        )?);
+        pin_count += vm.pin(&duration_from);
 
         let Value::Object(instant_constructor_index) = instant_constructor.clone() else {
             unreachable!()
@@ -7108,6 +7115,10 @@ pub(crate) fn install_temporal_namespace_in_env(
                 PropertyKey::from("prototype"),
                 const_prop(duration_prototype.clone()),
             );
+            function
+                .props
+                .lock()
+                .insert(PropertyKey::from("from"), data_prop(duration_from));
         });
         let Value::Object(duration_prototype_index) = duration_prototype.clone() else {
             unreachable!()
@@ -7746,6 +7757,19 @@ fn temporal_duration_slots(vm: &Vm, this: Option<Value>) -> error::Result<Tempor
     })
 }
 
+fn temporal_duration_slots_if_present(vm: &Vm, value: &Value) -> Option<TemporalDurationFields> {
+    let Value::Object(index) = value else {
+        return None;
+    };
+    vm.heap.with_obj(index.0, |object| match object {
+        HeapObj::Temporal(TemporalData {
+            kind: TemporalKind::Duration { fields },
+            ..
+        }) => Some(*fields),
+        _ => None,
+    })
+}
+
 fn create_temporal_duration(
     vm: &mut Vm,
     fields: TemporalDurationFields,
@@ -7764,6 +7788,119 @@ fn create_temporal_duration(
     }));
     vm.unpin_many(pin_count);
     result.map(Value::Object)
+}
+
+fn create_temporal_duration_in_realm(
+    vm: &mut Vm,
+    fields: TemporalDurationFields,
+    realm: GcIdx,
+) -> error::Result<Value> {
+    let prototype = vm
+        .realm_temporal_duration_prototypes
+        .get(&env::global_env_root(&vm.heap, realm).0)
+        .cloned()
+        .ok_or_else(|| Error::internal("Temporal.Duration prototype is not installed"))?;
+    create_temporal_duration(vm, fields, prototype)
+}
+
+fn temporal_duration_property_fields_rooted(
+    vm: &mut Vm,
+    item: &Value,
+) -> error::Result<TemporalDurationFields> {
+    let numeric = |vm: &mut Vm, name: &str| -> error::Result<Option<f64>> {
+        match vm.get_property(item, name)? {
+            Value::Undefined => Ok(None),
+            value => temporal_integer_if_integral(vm, value).map(Some),
+        }
+    };
+    let days = numeric(vm, "days")?;
+    let hours = numeric(vm, "hours")?;
+    let microseconds = numeric(vm, "microseconds")?;
+    let milliseconds = numeric(vm, "milliseconds")?;
+    let minutes = numeric(vm, "minutes")?;
+    let months = numeric(vm, "months")?;
+    let nanoseconds = numeric(vm, "nanoseconds")?;
+    let seconds = numeric(vm, "seconds")?;
+    let weeks = numeric(vm, "weeks")?;
+    let years = numeric(vm, "years")?;
+    if [
+        days,
+        hours,
+        microseconds,
+        milliseconds,
+        minutes,
+        months,
+        nanoseconds,
+        seconds,
+        weeks,
+        years,
+    ]
+    .into_iter()
+    .all(|field| field.is_none())
+    {
+        return Err(Error::type_err(
+            "Temporal.Duration property bag requires a duration field",
+        ));
+    }
+    let fields = TemporalDurationFields {
+        years: years.unwrap_or(0.0),
+        months: months.unwrap_or(0.0),
+        weeks: weeks.unwrap_or(0.0),
+        days: days.unwrap_or(0.0),
+        hours: hours.unwrap_or(0.0),
+        minutes: minutes.unwrap_or(0.0),
+        seconds: seconds.unwrap_or(0.0),
+        milliseconds: milliseconds.unwrap_or(0.0),
+        microseconds: microseconds.unwrap_or(0.0),
+        nanoseconds: nanoseconds.unwrap_or(0.0),
+    };
+    temporal_duration_is_valid(&fields)
+        .then_some(fields)
+        .ok_or_else(|| Error::range("Invalid Temporal.Duration fields"))
+}
+
+fn to_temporal_duration_fields(vm: &mut Vm, item: &Value) -> error::Result<TemporalDurationFields> {
+    if let Some(fields) = temporal_duration_slots_if_present(vm, item) {
+        return Ok(fields);
+    }
+    if matches!(item, Value::Object(_)) {
+        return temporal_with_rooted_value(vm, item.clone(), |vm, item| {
+            temporal_duration_property_fields_rooted(vm, item)
+        });
+    }
+    let Value::String(source) = item else {
+        return Err(Error::type_err(
+            "Temporal.Duration input must be a String or object",
+        ));
+    };
+    vm.consume_fuel_units(source.len().min(i64::MAX as usize) as i64)?;
+    let parsed = temporal::parse_duration_string(source)
+        .ok_or_else(|| Error::range("Invalid Temporal.Duration string"))?;
+    let fields = TemporalDurationFields {
+        years: parsed.years,
+        months: parsed.months,
+        weeks: parsed.weeks,
+        days: parsed.days,
+        hours: parsed.hours,
+        minutes: parsed.minutes,
+        seconds: parsed.seconds,
+        milliseconds: parsed.milliseconds,
+        microseconds: parsed.microseconds,
+        nanoseconds: parsed.nanoseconds,
+    };
+    temporal_duration_is_valid(&fields)
+        .then_some(fields)
+        .ok_or_else(|| Error::range("Invalid Temporal.Duration fields"))
+}
+
+fn temporal_duration_from(
+    vm: &mut Vm,
+    args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
+    let fields = to_temporal_duration_fields(vm, args.first().unwrap_or(&Value::Undefined))?;
+    let realm = vm.native_callee_closure().unwrap_or(vm.global);
+    create_temporal_duration_in_realm(vm, fields, realm)
 }
 
 fn temporal_duration_constructor(

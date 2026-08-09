@@ -38,7 +38,9 @@
   ambiguity-checked annotated date/time forms, and
   `Date.prototype.toTemporalInstant`. Realm-local `Temporal.Duration` supports
   hidden-slot construction, subclassing, ten numeric field accessors, `sign`,
-  and `blank`, with exact mixed-sign and normalized-range validation.
+  `blank`, and static `from` conversion for hidden-slot values, duration
+  property bags, and ISO Duration strings, with exact mixed-sign and
+  normalized-range validation.
   Realm-local `Temporal.PlainDateTime` supports hidden-slot construction,
   subclassing, calendar ID, all ISO date/time and derived calendar accessors,
   always-throwing `valueOf`, static `from` conversion for branded values, ISO
@@ -65,7 +67,7 @@
   time-zone annotation. Property-bag
   conversion currently accepts ISO calendars with UTC or minute-precision
   fixed offsets. Remaining PlainDate and PlainDateTime methods,
-  arithmetic/formatting and conversion methods, Duration conversion/arithmetic,
+  arithmetic/formatting and conversion methods, remaining Duration arithmetic,
   calendar sibling types, named IANA timezone
   transitions, the remaining RFC 9557 grammar, and `Temporal.Now` methods
   remain outside the supported boundary.
@@ -348,6 +350,14 @@
   in the method Realm. `with` rejects calendar/time-zone-bearing or branded
   date/time inputs, merges defined partial fields in observable specification
   order, and supports both constrain and reject overflow
+- **Temporal duration conversion**: `Temporal.Duration.from` copies branded
+  hidden slots without public getter observation, or converts all ten plural
+  duration properties in specification order. ISO Duration parsing supports
+  signed date/time components, comma or period fractions, and exact
+  nanosecond decomposition of fractional hours, minutes, and seconds. Fresh
+  results use the method Realm; mixed signs, non-integral bags, malformed
+  strings, and normalized values at or beyond the specification limit fail
+  before allocation
 - **RegExp**: literals `/pattern/flags` with `test`, `exec`, `match`, `source`,
   `flags`, `d`-flag match indices, forward lookahead, backward lookbehind,
   legacy quantified lookahead, Unicode named captures/backreferences,

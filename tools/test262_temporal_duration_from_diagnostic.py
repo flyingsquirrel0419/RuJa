@@ -1,24 +1,16 @@
 #!/usr/bin/env python3
-"""Force the frozen Temporal.Duration hidden-slot core through RuJa."""
+"""Force the frozen Temporal.Duration.from surface through RuJa."""
 
 from pathlib import Path
 
 import test262_runner
 
-TOOLS = Path(__file__).resolve().parent
+from test262_temporal_duration_from_admission import (
+    TEMPORAL_DURATION_FROM_ALL_FILES,
+    TEMPORAL_DURATION_FROM_BLOCKERS,
+)
 
 
-def read_manifest(name):
-    return frozenset(
-        line
-        for raw_line in (TOOLS / name).read_text().splitlines()
-        if (line := raw_line.strip()) and not line.startswith("#")
-    )
-
-
-ADMITTED = read_manifest("test262_temporal_duration_core_admission.txt")
-BLOCKERS = read_manifest("test262_temporal_duration_core_blockers.txt")
-SURFACE = ADMITTED | BLOCKERS
 _SHARED_SHOULD_SKIP = test262_runner.should_skip
 
 
@@ -35,7 +27,7 @@ def _relative(path):
 
 
 def should_skip(meta, path=None):
-    if path is not None and _relative(path) in SURFACE:
+    if path is not None and _relative(path) in TEMPORAL_DURATION_FROM_ALL_FILES:
         return False
     return _SHARED_SHOULD_SKIP(meta, path)
 
@@ -43,12 +35,15 @@ def should_skip(meta, path=None):
 def verify_expected_results(arguments):
     requested = {_relative(Path(test262_runner.TEST262) / "test" / path) for path in arguments}
     requested.discard(None)
-    frozen = requested & SURFACE
+    frozen = requested & TEMPORAL_DURATION_FROM_ALL_FILES
     test_root = Path(test262_runner.TEST262) / "test"
     actual = {path: test262_runner.run_test(test_root / path) for path in frozen}
-    expected = {path: "fail" if path in BLOCKERS else "pass" for path in frozen}
+    expected = {
+        path: "fail" if path in TEMPORAL_DURATION_FROM_BLOCKERS else "pass"
+        for path in frozen
+    }
     if actual != expected:
-        raise RuntimeError(f"Temporal.Duration core forced results drifted: {actual}")
+        raise RuntimeError(f"Temporal.Duration.from forced results drifted: {actual}")
 
 
 if __name__ == "__main__":

@@ -72,6 +72,7 @@ built-ins/Temporal/Duration/prototype/sign/basic.js
 built-ins/Temporal/Duration/prototype/sign/blank-duration.js
 built-ins/Temporal/Duration/prototype/sign/branding.js
 built-ins/Temporal/Duration/prototype/sign/prop-desc.js
+built-ins/Temporal/Duration/prototype/blank/basic.js
 built-ins/Temporal/Duration/prototype/blank/branding.js
 built-ins/Temporal/Duration/prototype/blank/prop-desc.js
 built-ins/Temporal/Duration/prototype/toStringTag/prop-desc.js

@@ -4,6 +4,34 @@
 
 ### Changed
 
+- Added Realm-local static `Temporal.Duration.from` with a shared
+  `ToTemporalDuration` conversion boundary. Branded Duration values copy all
+  ten hidden slots without observing public getters; ordinary objects are
+  rooted while `days`, `hours`, `microseconds`, `milliseconds`, `minutes`,
+  `months`, `nanoseconds`, `seconds`, `weeks`, and `years` are read and
+  converted in specification order. Signed ISO Duration strings accept both
+  decimal separators and decompose fractional hours, minutes, and seconds to
+  exact nanoseconds without early floating-point arithmetic. Mixed signs,
+  non-integral or infinite fields, malformed strings, and normalized values at
+  the Duration limits are rejected before result allocation. Fresh results
+  use the native method Realm and ignore receiver subclasses. At pinned
+  Test262 revision `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the direct
+  `from` directory is exact **29/0/0** with two explicit downstream blockers:
+  one requires `Duration.prototype.with/total`, and one requires
+  `Duration.prototype.toString`. The former `prototype/blank/basic.js`
+  blocker is now admitted, moving Duration core to exact **77/0/0** and forced
+  **77/1/0**. Installer accounting is 137 maximum live pins and 138
+  allocations; `Duration.from` is allocation 136 and all prior indices remain
+  stable.
+
+  [Decision Log]
+  - 목적과 의도: PlainTime arithmetic과 후속 Duration API가 공유할 실제 ToTemporalDuration 경계를 먼저 완결하고 Duration.from 자체를 독립적으로 검증한다.
+  - 기존 구현 및 제약 조건: Duration constructor와 immutable f64 hidden slots 및 BigInt range validator는 있었지만 branded copy, property-bag reader, ISO Duration parser, method-Realm factory가 없었다. add/subtract 직접 파일 여덟 개도 Duration.from에서 먼저 막혔다.
+  - 검토한 주요 대안: add/subtract 내부 전용 변환, 세 API 동시 구현, public accessor 복사, f64 기반 fractional parsing, 공용 converter와 from을 선행 단위로 구현하는 방식을 검토했다.
+  - 선택한 방식: hidden-slot fast path, rooted 10-field partial record, allocation-free checked-decimal parser를 하나의 converter로 합치고 static from은 method-Realm factory만 호출한다. arithmetic은 다음 단위에서 같은 converter를 사용한다.
+  - 다른 대안 대신 이 방식을 선택한 이유: API별 변환 복제는 getter/order/range drift를 만들고 public accessors는 명세에 없는 user code를 관찰한다. 세 API 동시 변경은 parser와 arithmetic 결함을 분리하기 어렵고 f64 fraction 계산은 nanosecond 정확도를 잃는다.
+  - 장점, 단점 및 영향: property/coercion order, hidden getter 비관찰, exact fractional parsing, cross-Realm result/error, GC/OOM/root retry와 byte fuel이 고정된다. from 29개와 core 77개는 exact admission되며 with/total/toString 의존 두 파일은 거짓 지원 없이 남는다. 다음 PlainTime.add/subtract는 변환과 유효성 검사를 재사용하고 정확한 i128/BigInt 시간 합산만 추가하면 된다.
+
 - Added Realm-local `%Temporal.PlainTime%` with immutable six-field hidden
   slots, subclass-aware construction, six branded accessors, `@@toStringTag`,
   static `from` and `compare`, hidden-record `equals`, option-aware ISO time

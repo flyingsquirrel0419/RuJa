@@ -1,0 +1,5 @@
+# Pinned Test262 revision: 9e61c12835c5e4a3bdba93850427e6742c4f64c4
+# Requires Temporal.Duration.prototype.with and total.
+built-ins/Temporal/Duration/from/argument-duration-max.js
+# Requires Temporal.Duration.prototype.toString.
+built-ins/Temporal/Duration/from/argument-duration-precision-exact-numerical-values.js

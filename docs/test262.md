@@ -14802,3 +14802,34 @@ rejects malformed, outside, and future paths.
 - 다른 대안 대신 이 방식을 선택한 이유: blocker 유지는 실제 지원을 과소계상하고 shape stub은 brand/range semantics를 거짓 지원한다. exact direct/downstream 분리만 unrelated non-ISO 선행 실패를 지원으로 오인하지 않는다.
 - 장점, 단점 및 영향: direct exact/forced 35/0/0과 downstream exact 0/0/1 및 forced 0/1이 재현된다. non-ISO calendar mutation 구현 후 downstream 한 건만 다시 감사하면 된다.
 ```
+
+## Temporal.Duration.from
+
+At pinned Test262 revision
+`9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the direct
+`Temporal.Duration.from` directory contains 31 files. The exact manifest
+admits **29 pass / 0 fail / 0 skip**. Forced execution of the complete
+directory is **29 pass / 2 fail / 0 skip**: `argument-duration-max.js`
+converts its first case and then reaches absent `Duration.prototype.with`,
+while
+`argument-duration-precision-exact-numerical-values.js` successfully creates
+its Duration and then reaches absent `Duration.prototype.toString`.
+
+The existing Duration hidden-slot core simultaneously moves
+`prototype/blank/basic.js` from its blocker complement into exact admission,
+because its intended assertion now reaches `Duration.from`. Core accounting is
+therefore exact **77/0/0** and forced **77/1/0**; `max.js` remains blocked by
+`Duration.prototype.total`. Shared runner/analyzer manifests freeze every
+path's features, includes, flags, and negative metadata. Dedicated diagnostics
+verify exact path identities before aggregate rates, and reject malformed,
+outside, future, or inaccessible corpus paths.
+
+```text
+[Decision Log]
+- 목적과 의도: Duration.from의 complete direct directory와 기존 Duration core dependency 이동을 실제 intended assertion 도달 기준으로 계상한다.
+- 기존 구현 및 제약 조건: broad Temporal feature gate가 31개 direct 파일을 모두 숨겼고 core blank/basic도 from 부재로 실패했다. direct 두 파일은 from 성공 후 아직 없는 with/total 또는 toString을 호출한다.
+- 검토한 주요 대안: Duration/from prefix 전체 허용, forced pass만 자동 수용, 후행 실패 두 파일도 from 지원으로 계상, exact admission과 explicit blocker complement를 검토했다.
+- 선택한 방식: 실제 통과한 29개 path와 live metadata만 exact manifest에 열고 후행 API 두 파일은 complete complement로 고정한다. core blank/basic은 재실행 후 admission으로 이동하고 max.js만 blocker에 남긴다.
+- 다른 대안 대신 이 방식을 선택한 이유: prefix는 future siblings를 자동 허용하고 process-level forced failure는 from의 intended assertion 도달 여부를 구분하지 않는다. explicit complement만 현재 구현 진전과 남은 API dependency를 동시에 보존한다.
+- 장점, 단점 및 영향: direct exact 29/0과 forced 29/2, core exact 77/0과 forced 77/1, metadata/corpus drift와 future gating이 재현된다. Duration with/total/toString 구현 시 세 blocker를 각각 다시 실측해야 한다.
+```

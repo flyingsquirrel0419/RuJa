@@ -22,5 +22,5 @@ TEMPORAL_DURATION_CORE_FEATURES = {
     path: _features(path) for path in TEMPORAL_DURATION_CORE_FILES
 }
 
-if len(TEMPORAL_DURATION_CORE_FILES) != 76:
-    raise RuntimeError("Temporal.Duration core admission must contain 76 files")
+if len(TEMPORAL_DURATION_CORE_FILES) != 77:
+    raise RuntimeError("Temporal.Duration core admission must contain 77 files")

@@ -16,9 +16,11 @@ The following resource limits are enforced:
   extended date/time/offset forms, nanosecond-precision offset seconds, and the
   audited RFC 9557 annotation subset, with a required `Z` or numeric offset.
   Realm-local `%Temporal.Duration%` supports hidden-slot construction,
-  subclassing, all ten numeric accessors, `sign`, and `blank`; `from`, string
-  parsing, balancing, rounding, `compare`, `total`, and the remaining Duration
-  methods are not implemented. Realm-local `%Temporal.PlainDateTime%` supports
+  subclassing, all ten numeric accessors, `sign`, `blank`, and static `from`
+  for branded Duration values, ordered duration property bags, and ISO
+  Duration strings. Duration arithmetic, formatting, balancing, rounding,
+  `compare`, `total`, and the remaining methods are not implemented.
+  Realm-local `%Temporal.PlainDateTime%` supports
   hidden-slot construction, subclassing, 22 ISO/calendar accessors,
   `@@toStringTag`, always-throwing `valueOf`, and static `from` for branded
   PlainDateTime/ZonedDateTime values, ISO property bags, and the audited String

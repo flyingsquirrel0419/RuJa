@@ -4761,4 +4761,34 @@ live pins across 137 allocations.
 - 장점, 단점 및 영향: cross-Realm brand/result/error, subclass prototype, fresh clone, constrain/reject, hidden getter 비관찰, OOM/root retry와 option/operand exact fuel이 고정된다. compare는 allocation 131, toString은 132, toJSON은 133, round는 134, with는 135이며 installer는 136 pins/137 allocations가 된다. 후속 arithmetic/difference/locale serialization은 이 record 위에 추가하되 installer accounting과 exact admission을 함께 갱신해야 한다.
 ```
 
+## Temporal Duration conversion boundary
+
+`Temporal.Duration.from` and future DurationLike consumers share one
+`ToTemporalDuration` path. A branded Duration copies its immutable ten-field
+record directly. Ordinary objects remain pinned while plural fields are read
+and immediately converted in `days`, `hours`, `microseconds`, `milliseconds`,
+`minutes`, `months`, `nanoseconds`, `seconds`, `weeks`, `years` order. At least
+one field must be present. The existing BigInt validator then enforces a single
+sign, the 2^32 date-unit bounds, and the normalized 2^53-second time bound
+without summing large Number values in floating point.
+
+Primitive Strings are fuel-precharged by byte length and parsed without heap
+objects. The parser validates ordered ISO date/time units, requires fractions
+to terminate the duration, and scales up to nine decimal digits against exact
+i128 unit nanoseconds. It then splits fractional hours or minutes into lower
+integer fields. Static `from` allocates only the final Duration against the
+intrinsic prototype of the native method Realm. It is allocation 136; the
+complete Temporal installer now reserves 137 maximum live pins across 138
+allocations while preserving every earlier index.
+
+```text
+[Decision Log]
+- 목적과 의도: 모든 DurationLike 소비자가 공유할 hidden-slot, observable property, String 입력의 명세 변환 경계를 확립한다.
+- 기존 구현 및 제약 조건: Duration hidden slots와 exact BigInt validator는 있었지만 변환기는 constructor argument list에만 한정됐고 ISO Duration parser와 method-Realm clone factory가 없었다. PlainTime add/subtract는 같은 변환 계약을 요구한다.
+- 검토한 주요 대안: 소비자별 reader/parser 복제, public accessors 기반 clone, fractional component의 f64 산술, add/subtract와 한 번에 도입, 공용 converter를 static from으로 먼저 검증하는 방식을 검토했다.
+- 선택한 방식: branded fast path, rooted alphabetical partial record, checked-decimal ISO parser, 기존 exact validator, method-Realm factory를 한 경로로 합친다. PlainTime arithmetic은 다음 단위에서 이 record를 정확한 정수 nanoseconds로 변환한다.
+- 다른 대안 대신 이 방식을 선택한 이유: public accessors는 hidden-slot 비관찰을 깨고 converter 복제는 getter/coercion/range 순서를 분기시킨다. f64 합산은 2^53 인접 값을 오판하며 세 API 동시 구현은 parser와 balance 실패를 격리하기 어렵다.
+- 장점, 단점 및 영향: fresh clone, cross-Realm brand/result/error, exact fraction/range, GC/root/OOM retry와 input-byte fuel이 재현된다. Duration.from direct 두 파일은 아직 없는 with/total 및 toString에서 후행 실패하므로 blocker로 유지된다. 다음 add/subtract는 options를 관찰하지 않고 years/months/weeks/days를 계산에서 버리되 변환 유효성은 그대로 적용해야 한다.
+```
+
 **Next:** [Features](features.md) · [Known limitations](limitations.md) · [Back to README](../README.md)

@@ -2,6 +2,7 @@
 """Regression tests for RuJa's shared test262 process support."""
 
 import io
+import os
 import subprocess
 import sys
 import tempfile
@@ -143,6 +144,20 @@ from test262_temporal_zoned_date_time_to_plain_date_time_admission import (
 from test262_temporal_duration_core_admission import (
     TEMPORAL_DURATION_CORE_FEATURES,
     TEMPORAL_DURATION_CORE_FILES,
+)
+from test262_temporal_duration_from_admission import (
+    TEMPORAL_DURATION_FROM_ALL_FEATURES,
+    TEMPORAL_DURATION_FROM_ALL_FILES,
+    TEMPORAL_DURATION_FROM_ALL_FLAGS,
+    TEMPORAL_DURATION_FROM_ALL_INCLUDES,
+    TEMPORAL_DURATION_FROM_ALL_NEGATIVE,
+    TEMPORAL_DURATION_FROM_BLOCKER_FEATURES,
+    TEMPORAL_DURATION_FROM_BLOCKER_FLAGS,
+    TEMPORAL_DURATION_FROM_BLOCKER_INCLUDES,
+    TEMPORAL_DURATION_FROM_BLOCKER_NEGATIVE,
+    TEMPORAL_DURATION_FROM_BLOCKERS,
+    TEMPORAL_DURATION_FROM_FEATURES,
+    TEMPORAL_DURATION_FROM_FILES,
 )
 from test262_temporal_plain_time_admission import (
     TEMPORAL_PLAIN_TIME_COMPARE_FEATURES,
@@ -4373,8 +4388,8 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
             ).read_text().splitlines()
             if (line := raw_line.strip()) and not line.startswith("#")
         }
-        self.assertEqual(len(files), 76)
-        self.assertEqual(len(blockers), 2)
+        self.assertEqual(len(files), 77)
+        self.assertEqual(len(blockers), 1)
         self.assertEqual(set(features_by_file), set(files))
         self.assertTrue(files.isdisjoint(blockers))
 
@@ -4402,7 +4417,7 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                     for path in duration_dir.glob("*.js")
                     if "_FIXTURE" not in path.name
                 }
-                if duration_dir.is_dir()
+                if duration_dir.is_dir() and (duration_dir / "basic.js").is_file()
                 else None
             )
             if live_files is not None:
@@ -4470,6 +4485,193 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                         self.assertFalse(tool.temporal_duration_core_path(path))
                         self.assertEqual(tool.temporal_duration_core_features(path), frozenset())
                         self.assertTrue(tool.should_skip({"features": ["Temporal"]}, path))
+                finally:
+                    tool.TEST262 = original_root
+
+    def test_temporal_duration_from_manifest_is_exact_live_disjoint_and_shared(self):
+        admitted = TEMPORAL_DURATION_FROM_FILES
+        blockers = TEMPORAL_DURATION_FROM_BLOCKERS
+        all_files = TEMPORAL_DURATION_FROM_ALL_FILES
+        self.assertEqual((len(admitted), len(blockers), len(all_files)), (29, 2, 31))
+        self.assertEqual(
+            blockers,
+            {
+                "built-ins/Temporal/Duration/from/argument-duration-max.js",
+                "built-ins/Temporal/Duration/from/argument-duration-precision-exact-numerical-values.js",
+            },
+        )
+        self.assertTrue(admitted.isdisjoint(blockers))
+        self.assertEqual(admitted | blockers, all_files)
+        self.assertEqual(set(TEMPORAL_DURATION_FROM_FEATURES), admitted)
+        self.assertEqual(set(TEMPORAL_DURATION_FROM_ALL_FEATURES), all_files)
+        self.assertEqual(set(TEMPORAL_DURATION_FROM_ALL_INCLUDES), all_files)
+        self.assertEqual(set(TEMPORAL_DURATION_FROM_ALL_FLAGS), all_files)
+        self.assertEqual(set(TEMPORAL_DURATION_FROM_ALL_NEGATIVE), all_files)
+        self.assertEqual(set(TEMPORAL_DURATION_FROM_BLOCKER_FEATURES), blockers)
+        self.assertEqual(set(TEMPORAL_DURATION_FROM_BLOCKER_INCLUDES), blockers)
+        self.assertEqual(set(TEMPORAL_DURATION_FROM_BLOCKER_FLAGS), blockers)
+        self.assertEqual(set(TEMPORAL_DURATION_FROM_BLOCKER_NEGATIVE), blockers)
+
+        tools_dir = Path(__file__).resolve().parent
+        for manifest in tools_dir.glob("test262_*_admission.txt"):
+            if manifest.name == "test262_temporal_duration_from_admission.txt":
+                continue
+            existing = {
+                line
+                for raw_line in manifest.read_text().splitlines()
+                if (line := raw_line.strip()) and not line.startswith("#")
+            }
+            self.assertTrue(admitted.isdisjoint(existing), manifest.name)
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        method_dir = test_root / "built-ins/Temporal/Duration/from"
+        corpus_required = "TEST262" in os.environ
+
+        def live_direct_files():
+            try:
+                if not method_dir.is_dir():
+                    if corpus_required:
+                        raise FileNotFoundError(method_dir)
+                    return None
+                return {
+                    path.relative_to(test_root).as_posix()
+                    for path in method_dir.glob("*.js")
+                    if "_FIXTURE" not in path.name
+                }
+            except OSError:
+                if corpus_required:
+                    raise
+                return None
+
+        def read_live_metadata(path):
+            try:
+                return test262_runner.parse_meta(path.read_text())
+            except OSError:
+                if corpus_required:
+                    raise
+                return None
+
+        live = live_direct_files()
+        if live is not None:
+            self.assertEqual(live, all_files)
+            for relative in all_files:
+                path = test_root / relative
+                metadata = read_live_metadata(path)
+                if metadata is None:
+                    self.skipTest("live Test262 checkout is inaccessible")
+                self.assertEqual(
+                    frozenset(metadata.get("features", [])),
+                    TEMPORAL_DURATION_FROM_ALL_FEATURES[relative],
+                    relative,
+                )
+                self.assertEqual(
+                    frozenset(metadata.get("includes", [])),
+                    TEMPORAL_DURATION_FROM_ALL_INCLUDES[relative],
+                    relative,
+                )
+                self.assertEqual(
+                    frozenset(metadata.get("flags", [])),
+                    TEMPORAL_DURATION_FROM_ALL_FLAGS[relative],
+                    relative,
+                )
+                self.assertEqual(
+                    metadata.get("negative"),
+                    TEMPORAL_DURATION_FROM_ALL_NEGATIVE[relative],
+                    relative,
+                )
+                for tool in (test262_runner, test262_analyze):
+                    if relative in admitted:
+                        self.assertTrue(tool.temporal_duration_from_path(path), relative)
+                        self.assertEqual(
+                            tool.temporal_duration_from_features(path),
+                            TEMPORAL_DURATION_FROM_FEATURES[relative],
+                            relative,
+                        )
+                        self.assertFalse(tool.should_skip(metadata, path), relative)
+                    else:
+                        self.assertFalse(tool.temporal_duration_from_path(path), relative)
+                        self.assertEqual(
+                            tool.temporal_duration_from_features(path), frozenset()
+                        )
+                        self.assertTrue(tool.should_skip(metadata, path), relative)
+
+            with patch("pathlib.Path.read_text", side_effect=PermissionError):
+                path = test_root / next(iter(all_files))
+                if corpus_required:
+                    with self.assertRaises(PermissionError):
+                        read_live_metadata(path)
+                else:
+                    self.assertIsNone(read_live_metadata(path))
+
+        with patch("pathlib.Path.is_dir", side_effect=PermissionError):
+            if corpus_required:
+                with self.assertRaises(PermissionError):
+                    live_direct_files()
+            else:
+                self.assertIsNone(live_direct_files())
+        with patch("pathlib.Path.is_dir", return_value=False):
+            if corpus_required:
+                with self.assertRaises(FileNotFoundError):
+                    live_direct_files()
+            else:
+                self.assertIsNone(live_direct_files())
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            future = root / "test/built-ins/Temporal/Duration/from/future.js"
+            malformed = root / "test/built-ins/Temporal/Duration/from/basic.js.bak"
+            outside = root / "test/built-ins/Temporal/Duration/prototype/from/basic.js"
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for relative in admitted:
+                        path = root / "test" / relative
+                        self.assertTrue(tool.temporal_duration_from_path(path), relative)
+                        self.assertEqual(
+                            tool.temporal_duration_from_features(path),
+                            TEMPORAL_DURATION_FROM_FEATURES[relative],
+                        )
+                        self.assertFalse(
+                            tool.should_skip(
+                                {
+                                    "features": sorted(
+                                        TEMPORAL_DURATION_FROM_FEATURES[relative]
+                                    )
+                                },
+                                path,
+                            )
+                        )
+                    for relative in blockers:
+                        path = root / "test" / relative
+                        self.assertFalse(tool.temporal_duration_from_path(path), relative)
+                        self.assertEqual(
+                            tool.temporal_duration_from_features(path), frozenset()
+                        )
+                        self.assertTrue(
+                            tool.should_skip(
+                                {
+                                    "features": sorted(
+                                        TEMPORAL_DURATION_FROM_BLOCKER_FEATURES[relative]
+                                    )
+                                },
+                                path,
+                            )
+                        )
+                    for path in (future, malformed, outside, None, object()):
+                        self.assertFalse(tool.temporal_duration_from_path(path))
+                        self.assertEqual(
+                            tool.temporal_duration_from_features(path), frozenset()
+                        )
+                    for path in (future, malformed, outside):
+                        self.assertTrue(
+                            tool.should_skip({"features": ["Temporal"]}, path)
+                        )
+                    with patch("pathlib.Path.resolve", side_effect=PermissionError):
+                        self.assertFalse(tool.temporal_duration_from_path(future))
+                        self.assertEqual(
+                            tool.temporal_duration_from_features(future), frozenset()
+                        )
                 finally:
                     tool.TEST262 = original_root
 

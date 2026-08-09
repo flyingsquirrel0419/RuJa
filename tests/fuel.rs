@@ -569,6 +569,60 @@ fn temporal_duration_numeric_string_conversion_precharges_input_bytes() {
 }
 
 #[test]
+fn temporal_duration_from_precharges_source_and_field_strings() {
+    const BUDGET: i64 = 20_000;
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        globalThis.durationFromShort = "PT1S";
+        globalThis.durationFromLong = "PT" + "0".repeat(512) + "1S";
+        globalThis.durationFromShortField = { valueOf() { return "1"; } };
+        globalThis.durationFromLongField = { valueOf() { return "0".repeat(512) + "1"; } };
+        "#,
+    )
+    .expect("Duration.from fuel fixtures should initialize");
+
+    for (short, long, label) in [
+        (
+            "Temporal.Duration.from(durationFromShort);",
+            "Temporal.Duration.from(durationFromLong);",
+            "source",
+        ),
+        (
+            "Temporal.Duration.from({ seconds: durationFromShortField });",
+            "Temporal.Duration.from({ seconds: durationFromLongField });",
+            "field",
+        ),
+    ] {
+        vm.set_fuel(Some(BUDGET));
+        vm.run(short)
+            .expect("short Duration.from conversion should run");
+        let short_work = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+
+        vm.set_fuel(Some(BUDGET));
+        vm.run(long)
+            .expect("long Duration.from conversion should run");
+        let long_work = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+        assert!(
+            long_work >= short_work + 500,
+            "Duration.from {label} conversion must charge produced bytes"
+        );
+
+        vm.set_fuel(Some(long_work - 1));
+        let error = vm
+            .run(long)
+            .expect_err("N-1 fuel must abort Duration.from conversion");
+        assert_eq!(error.kind, ruja::ErrorKind::Fuel, "{label}");
+        assert_eq!(vm.fuel_remaining(), Some(0), "{label}");
+
+        vm.set_fuel(Some(long_work));
+        vm.run(long)
+            .expect("exact measured fuel should complete Duration.from conversion");
+        assert_eq!(vm.fuel_remaining(), Some(0), "{label}");
+    }
+}
+
+#[test]
 fn temporal_plain_date_time_precharges_numeric_and_calendar_strings() {
     const BUDGET: i64 = 20_000;
     let mut vm = Vm::new().expect("failed to initialize VM");

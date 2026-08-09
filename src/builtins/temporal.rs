@@ -6,6 +6,196 @@ use std::sync::Arc;
 const NS_PER_SECOND: i128 = 1_000_000_000;
 const SECONDS_PER_DAY: i128 = 86_400;
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct ParsedDuration {
+    pub years: f64,
+    pub months: f64,
+    pub weeks: f64,
+    pub days: f64,
+    pub hours: f64,
+    pub minutes: f64,
+    pub seconds: f64,
+    pub milliseconds: f64,
+    pub microseconds: f64,
+    pub nanoseconds: f64,
+}
+
+fn duration_number(bytes: &[u8], index: &mut usize) -> Option<(f64, Option<(i128, usize)>)> {
+    let integer_start = *index;
+    while bytes.get(*index).is_some_and(u8::is_ascii_digit) {
+        *index += 1;
+    }
+    if *index == integer_start {
+        return None;
+    }
+    let integer = std::str::from_utf8(&bytes[integer_start..*index])
+        .ok()?
+        .parse::<f64>()
+        .ok()?;
+    if !matches!(bytes.get(*index), Some(b'.') | Some(b',')) {
+        return Some((integer, None));
+    }
+    *index += 1;
+    let fraction_start = *index;
+    while bytes.get(*index).is_some_and(u8::is_ascii_digit) {
+        *index += 1;
+    }
+    let digits = *index - fraction_start;
+    if !(1..=9).contains(&digits) {
+        return None;
+    }
+    let numerator = bytes[fraction_start..*index]
+        .iter()
+        .fold(0_i128, |value, byte| value * 10 + i128::from(byte - b'0'));
+    Some((integer, Some((numerator, digits))))
+}
+
+fn duration_fraction_nanoseconds(numerator: i128, digits: usize, unit: i128) -> Option<i128> {
+    numerator
+        .checked_mul(unit)?
+        .checked_div(10_i128.pow(u32::try_from(digits).ok()?))
+}
+
+fn split_duration_nanoseconds(mut nanoseconds: i128) -> Option<(f64, f64, f64, f64, f64, f64)> {
+    let hours = nanoseconds / (3_600 * NS_PER_SECOND);
+    nanoseconds %= 3_600 * NS_PER_SECOND;
+    let minutes = nanoseconds / (60 * NS_PER_SECOND);
+    nanoseconds %= 60 * NS_PER_SECOND;
+    let seconds = nanoseconds / NS_PER_SECOND;
+    nanoseconds %= NS_PER_SECOND;
+    let milliseconds = nanoseconds / 1_000_000;
+    nanoseconds %= 1_000_000;
+    let microseconds = nanoseconds / 1_000;
+    let nanoseconds = nanoseconds % 1_000;
+    Some((
+        hours.to_f64()?,
+        minutes.to_f64()?,
+        seconds.to_f64()?,
+        milliseconds.to_f64()?,
+        microseconds.to_f64()?,
+        nanoseconds.to_f64()?,
+    ))
+}
+
+pub(crate) fn parse_duration_string(source: &str) -> Option<ParsedDuration> {
+    let bytes = source.as_bytes();
+    let mut index = 0;
+    let sign = match bytes.first() {
+        Some(b'-') => {
+            index += 1;
+            -1.0
+        }
+        Some(b'+') => {
+            index += 1;
+            1.0
+        }
+        _ => 1.0,
+    };
+    if !bytes
+        .get(index)
+        .is_some_and(|byte| byte.eq_ignore_ascii_case(&b'p'))
+    {
+        return None;
+    }
+    index += 1;
+
+    let mut fields = [0.0; 10];
+    let mut any = false;
+    let mut last_date_rank = None;
+    while index < bytes.len()
+        && !bytes
+            .get(index)
+            .is_some_and(|byte| byte.eq_ignore_ascii_case(&b't'))
+    {
+        let (value, fraction) = duration_number(bytes, &mut index)?;
+        if fraction.is_some() {
+            return None;
+        }
+        let unit = bytes.get(index)?.to_ascii_uppercase();
+        index += 1;
+        let (rank, slot) = match unit {
+            b'Y' => (0, 0),
+            b'M' => (1, 1),
+            b'W' => (2, 2),
+            b'D' => (3, 3),
+            _ => return None,
+        };
+        if last_date_rank.is_some_and(|previous| rank <= previous) {
+            return None;
+        }
+        last_date_rank = Some(rank);
+        fields[slot] = value;
+        any = true;
+    }
+
+    if bytes
+        .get(index)
+        .is_some_and(|byte| byte.eq_ignore_ascii_case(&b't'))
+    {
+        index += 1;
+        let time_start = index;
+        let mut last_time_rank = None;
+        while index < bytes.len() {
+            let (value, fraction) = duration_number(bytes, &mut index)?;
+            let unit = bytes.get(index)?.to_ascii_uppercase();
+            index += 1;
+            let (rank, slot, unit_nanoseconds) = match unit {
+                b'H' => (0, 4, 3_600 * NS_PER_SECOND),
+                b'M' => (1, 5, 60 * NS_PER_SECOND),
+                b'S' => (2, 6, NS_PER_SECOND),
+                _ => return None,
+            };
+            if last_time_rank.is_some_and(|previous| rank <= previous) {
+                return None;
+            }
+            last_time_rank = Some(rank);
+            fields[slot] = value;
+            any = true;
+
+            if let Some((numerator, digits)) = fraction {
+                if index != bytes.len() {
+                    return None;
+                }
+                let fractional =
+                    duration_fraction_nanoseconds(numerator, digits, unit_nanoseconds)?;
+                let (hours, minutes, seconds, milliseconds, microseconds, nanoseconds) =
+                    split_duration_nanoseconds(fractional)?;
+                fields[4] += hours;
+                fields[5] += minutes;
+                fields[6] += seconds;
+                fields[7] += milliseconds;
+                fields[8] += microseconds;
+                fields[9] += nanoseconds;
+            }
+        }
+        if index == time_start {
+            return None;
+        }
+    }
+    if !any || index != bytes.len() {
+        return None;
+    }
+
+    for field in &mut fields {
+        *field *= sign;
+        if *field == 0.0 {
+            *field = 0.0;
+        }
+    }
+    Some(ParsedDuration {
+        years: fields[0],
+        months: fields[1],
+        weeks: fields[2],
+        days: fields[3],
+        hours: fields[4],
+        minutes: fields[5],
+        seconds: fields[6],
+        milliseconds: fields[7],
+        microseconds: fields[8],
+        nanoseconds: fields[9],
+    })
+}
+
 fn digits(bytes: &[u8], index: &mut usize, count: usize) -> Option<i128> {
     let end = index.checked_add(count)?;
     let slice = bytes.get(*index..end)?;
@@ -1377,13 +1567,77 @@ pub(crate) fn format_zoned_date_time(
 mod tests {
     use super::{
         format_instant, format_plain_date, format_plain_time, parse_calendar_identifier,
-        parse_instant_string, parse_offset_string, parse_plain_date_string,
+        parse_duration_string, parse_instant_string, parse_offset_string, parse_plain_date_string,
         parse_plain_date_time_string, parse_plain_time_string, parse_time_zone_identifier,
         parse_time_zone_identifier_like, parse_time_zone_offset, parse_zoned_date_time_string,
         resolve_zoned_date_time_epoch, AnnotationDisplay, InstantPrecision, InstantRoundingMode,
         ZonedDateTimeOffsetOption,
     };
     use num_bigint::BigInt;
+
+    #[test]
+    fn parses_duration_strings_with_exact_fractional_time_units() {
+        let duration =
+            parse_duration_string("-P1Y2M3W4DT5H6M7.987654321S").expect("duration should parse");
+        assert_eq!(
+            [
+                duration.years,
+                duration.months,
+                duration.weeks,
+                duration.days,
+                duration.hours,
+                duration.minutes,
+                duration.seconds,
+                duration.milliseconds,
+                duration.microseconds,
+                duration.nanoseconds,
+            ],
+            [-1.0, -2.0, -3.0, -4.0, -5.0, -6.0, -7.0, -987.0, -654.0, -321.0]
+        );
+
+        let hours = parse_duration_string("PT0.999999999H").expect("hours should parse");
+        assert_eq!(
+            [
+                hours.hours,
+                hours.minutes,
+                hours.seconds,
+                hours.milliseconds,
+                hours.microseconds,
+                hours.nanoseconds,
+            ],
+            [0.0, 59.0, 59.0, 999.0, 996.0, 400.0]
+        );
+        let minutes = parse_duration_string("PT0.000000011M").expect("minutes should parse");
+        assert_eq!(
+            [
+                minutes.seconds,
+                minutes.milliseconds,
+                minutes.microseconds,
+                minutes.nanoseconds,
+            ],
+            [0.0, 0.0, 0.0, 660.0]
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_duration_string_structure() {
+        for source in [
+            "",
+            "P",
+            "PT",
+            "P0.5Y",
+            "P2H",
+            "PT.1H",
+            "PT2.H",
+            "PT0.1H0M",
+            "PT0.1M0S",
+            "PT1S1M",
+            "P1D1Y",
+            "PT1.1234567890S",
+        ] {
+            assert!(parse_duration_string(source).is_none(), "{source}");
+        }
+    }
 
     #[test]
     fn formats_plain_dates_with_shared_calendar_annotations() {
