@@ -137,6 +137,8 @@ try:
         TEMPORAL_PLAIN_TIME_FROM_FILES,
         TEMPORAL_PLAIN_TIME_TO_STRING_FEATURES,
         TEMPORAL_PLAIN_TIME_TO_STRING_FILES,
+        TEMPORAL_PLAIN_TIME_TO_JSON_FEATURES,
+        TEMPORAL_PLAIN_TIME_TO_JSON_FILES,
         TEMPORAL_PLAIN_TIME_VALUE_OF_FEATURES,
         TEMPORAL_PLAIN_TIME_VALUE_OF_FILES,
     )
@@ -538,6 +540,8 @@ except ModuleNotFoundError:
         TEMPORAL_PLAIN_TIME_FROM_FILES,
         TEMPORAL_PLAIN_TIME_TO_STRING_FEATURES,
         TEMPORAL_PLAIN_TIME_TO_STRING_FILES,
+        TEMPORAL_PLAIN_TIME_TO_JSON_FEATURES,
+        TEMPORAL_PLAIN_TIME_TO_JSON_FILES,
         TEMPORAL_PLAIN_TIME_VALUE_OF_FEATURES,
         TEMPORAL_PLAIN_TIME_VALUE_OF_FILES,
     )
@@ -2865,6 +2869,16 @@ def temporal_plain_time_to_string_features(path):
         TEMPORAL_PLAIN_TIME_TO_STRING_FEATURES,
     )
 
+def temporal_plain_time_to_json_path(path):
+    return _temporal_plain_time_path(path, TEMPORAL_PLAIN_TIME_TO_JSON_FILES)
+
+def temporal_plain_time_to_json_features(path):
+    return _temporal_plain_time_features(
+        path,
+        TEMPORAL_PLAIN_TIME_TO_JSON_FILES,
+        TEMPORAL_PLAIN_TIME_TO_JSON_FEATURES,
+    )
+
 def temporal_plain_date_core_path(path):
     if path is None:
         return False
@@ -4975,6 +4989,8 @@ def should_skip(meta, path=None):
         feats.difference_update(temporal_plain_time_compare_features(path))
     if path is not None and temporal_plain_time_to_string_path(path):
         feats.difference_update(temporal_plain_time_to_string_features(path))
+    if path is not None and temporal_plain_time_to_json_path(path):
+        feats.difference_update(temporal_plain_time_to_json_features(path))
     if path is not None and temporal_plain_date_core_path(path):
         feats.difference_update(temporal_plain_date_core_features(path))
     if path is not None and temporal_plain_date_from_path(path):

@@ -7,7 +7,7 @@
 - Added Realm-local `%Temporal.PlainTime%` with immutable six-field hidden
   slots, subclass-aware construction, six branded accessors, `@@toStringTag`,
   static `from` and `compare`, hidden-record `equals`, option-aware ISO time
-  `toString`, and the always-throwing `valueOf`.
+  `toString`, hidden-record `toJSON`, and the always-throwing `valueOf`.
   `ToTemporalTime` now shares one conversion boundary for branded PlainTime,
   PlainDateTime, and ZonedDateTime values, ordered time property bags, and the
   audited String grammar. Static `from` always creates a fresh result in the
@@ -19,25 +19,28 @@
   `fractionalSecondDigits`, `roundingMode`, and `smallestUnit` in specification
   order, and uses the shared nanosecond formatter for auto/fixed precision,
   all rounding modes, and midnight rollover without observing public fields.
+  Prototype `toJSON` ignores every argument and serializes the same copied
+  hidden record at automatic precision without dispatching through a mutable
+  `toString` property.
   Constructor conversion remains left-to-right, options are observed at their
   specification point, and all result/prototype allocations retain exact
   GC-root, OOM-retry, and input-byte fuel behavior. At pinned Test262 revision
   `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the complete admitted surface is
-  exact **201/0/0**: core **40**, `from` **51**, `valueOf` **7**, `equals`
-  **31**, `compare` **32**, and `toString` **40**. The complete direct PlainDate
+  exact **208/0/0**: core **40**, `from` **51**, `valueOf` **7**, `equals`
+  **31**, `compare` **32**, `toString` **40**, and `toJSON` **7**. The complete direct PlainDate
   `toPlainDateTime` directory is now
   **35/0/0** with no direct blockers. A ZonedDateTime plural-smallest-unit
   helper dependency also moves the fixed-offset boundary from **259/7** to
-  **260/6** over 266 files. Installer accounting is 133 maximum live pins and
-  134 allocations.
+  **260/6** over 266 files. Installer accounting is 134 maximum live pins and
+  135 allocations.
 
   [Decision Log]
   - 목적과 의도: 후속 PlainTime 연산이 신뢰할 수 있는 위조 불가능한 time record와 완전한 ToTemporalTime 입력 경계를 확립하고 PlainDate bridge의 남은 direct blocker를 제거한다.
   - 기존 구현 및 제약 조건: PlainDate.toPlainDateTime에는 allocation-free time record와 parser가 있었지만 PlainTime heap kind/intrinsic/from/equals가 없었다. Temporal installer와 Realm registry는 수동 exhaustive inventory이며 모든 새 allocation 실패 지점을 rollback해야 한다.
   - 검토한 주요 대안: ordinary public properties, PlainDateTime kind 재사용, bridge 전용 shape stub, 메서드마다 converter 복제, compact 전용 kind와 shared converter를 검토했다.
-  - 선택한 방식: six-field compact hidden kind를 Realm별 constructor/prototype에 연결하고 constructor/accessor/from/equals/valueOf/compare/toString과 bridge가 같은 validated record 및 formatting primitive를 사용한다. compare는 첫 operand 변환을 완결한 뒤 둘째를 변환하고 six-field tuple을 allocation 없이 비교한다. toString은 brand-first options 처리 후 nanosecond-of-day를 공용 precision/rounding formatter로 직렬화한다. exact manifest는 core/from/valueOf/equals/compare/toString을 분리하지만 하나의 metadata 모듈과 진단기로 공유한다.
+  - 선택한 방식: six-field compact hidden kind를 Realm별 constructor/prototype에 연결하고 constructor/accessor/from/equals/valueOf/compare/toString/toJSON과 bridge가 같은 validated record 및 formatting primitive를 사용한다. compare는 첫 operand 변환을 완결한 뒤 둘째를 변환하고 six-field tuple을 allocation 없이 비교한다. toString은 brand-first options 처리 후 nanosecond-of-day를 공용 precision/rounding formatter로 직렬화하고 toJSON은 같은 formatter의 auto/trunc identity 경로를 직접 호출한다. exact manifest는 각 surface를 분리하지만 하나의 metadata 모듈과 진단기로 공유한다.
   - 다른 대안 대신 이 방식을 선택한 이유: public properties와 shape stub은 brand 및 getter 비관찰을 깨고 PlainDateTime 재사용은 date/calendar 슬롯을 거짓 부여한다. converter 복제는 options/getter/fuel 순서를 분기시키며 broad admission은 미구현 arithmetic과 future tests를 자동 허용한다.
-  - 장점, 단점 및 영향: cross-Realm/newTarget, hidden getter 비관찰, conversion/order/rounding, constrain/reject, fresh clone, allocation-free equality/comparison/string result, GC/OOM/root retry와 exact fuel이 한 경로로 검증된다. toString은 allocation 132로 기존 번호를 보존하며 installer는 133 maximum pins/134 allocations가 된다. add/subtract/round/since/until/with/JSON/locale 메서드는 후속 단위로 남는다.
+  - 장점, 단점 및 영향: cross-Realm/newTarget, hidden getter 비관찰, conversion/order/rounding, constrain/reject, fresh clone, allocation-free equality/comparison/string result, GC/OOM/root retry와 exact fuel이 한 경로로 검증된다. toString은 allocation 132, toJSON은 133으로 기존 번호를 보존하며 installer는 134 maximum pins/135 allocations가 된다. add/subtract/round/since/until/with/locale 메서드는 후속 단위로 남는다.
 
 - Added Realm-local, non-constructable
   `Temporal.PlainDate.prototype.toPlainDateTime` with length 0. It brands the

@@ -6290,7 +6290,7 @@ pub(crate) fn install_temporal_namespace_in_env(
     global: Option<&Value>,
     object_proto: Value,
 ) -> error::Result<Value> {
-    vm.try_reserve_gc_pins(133)?;
+    vm.try_reserve_gc_pins(134)?;
     let mut pin_count = 0;
     let result = (|| {
         let instant_prototype = Value::Object(vm.alloc(HeapObj::Object(ObjectData {
@@ -7017,6 +7017,13 @@ pub(crate) fn install_temporal_namespace_in_env(
             env,
         )?);
         pin_count += vm.pin(&plain_time_to_string);
+        let plain_time_to_json = Value::Object(vm.new_native_function_in_env_with_gc_retry(
+            "toJSON",
+            temporal_plain_time_to_json,
+            0,
+            env,
+        )?);
+        pin_count += vm.pin(&plain_time_to_json);
 
         let Value::Object(instant_constructor_index) = instant_constructor.clone() else {
             unreachable!()
@@ -7331,6 +7338,7 @@ pub(crate) fn install_temporal_namespace_in_env(
                 PropertyKey::from("toString"),
                 data_prop(plain_time_to_string),
             );
+            props.insert(PropertyKey::from("toJSON"), data_prop(plain_time_to_json));
             props.insert(PropertyKey::from("valueOf"), data_prop(plain_time_value_of));
             let mut tag = data_prop(Value::String(Arc::from("Temporal.PlainTime")));
             tag.writable = false;
@@ -9892,22 +9900,43 @@ fn temporal_plain_time_to_string(
         let smallest_unit = temporal_instant_smallest_unit(smallest_unit.as_deref())?;
         let precision = temporal_instant_precision(fractional_second_digits, smallest_unit)?;
 
-        temporal::format_plain_time(
-            fields.hour,
-            fields.minute,
-            fields.second,
-            fields.millisecond,
-            fields.microsecond,
-            fields.nanosecond,
-            precision,
-            rounding_mode,
-        )
-        .map(Arc::<str>::from)
-        .map(Value::String)
-        .ok_or_else(|| Error::range("Temporal.PlainTime string formatting failed"))
+        temporal_plain_time_format(fields, precision, rounding_mode)
     })();
     vm.unpin_many(options_pin);
     result
+}
+
+fn temporal_plain_time_to_json(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let fields = temporal_plain_time_slots(vm, this)?;
+    temporal_plain_time_format(
+        fields,
+        temporal::InstantPrecision::Auto,
+        temporal::InstantRoundingMode::Trunc,
+    )
+}
+
+fn temporal_plain_time_format(
+    fields: TemporalPlainTimeFields,
+    precision: temporal::InstantPrecision,
+    rounding_mode: temporal::InstantRoundingMode,
+) -> error::Result<Value> {
+    temporal::format_plain_time(
+        fields.hour,
+        fields.minute,
+        fields.second,
+        fields.millisecond,
+        fields.microsecond,
+        fields.nanosecond,
+        precision,
+        rounding_mode,
+    )
+    .map(Arc::<str>::from)
+    .map(Value::String)
+    .ok_or_else(|| Error::range("Temporal.PlainTime string formatting failed"))
 }
 
 fn temporal_time_record_or_midnight(

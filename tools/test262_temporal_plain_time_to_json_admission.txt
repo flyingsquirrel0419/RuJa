@@ -1,0 +1,8 @@
+# Exact Temporal.PlainTime prototype toJSON admissions.
+built-ins/Temporal/PlainTime/prototype/toJSON/basic.js
+built-ins/Temporal/PlainTime/prototype/toJSON/branding.js
+built-ins/Temporal/PlainTime/prototype/toJSON/builtin.js
+built-ins/Temporal/PlainTime/prototype/toJSON/length.js
+built-ins/Temporal/PlainTime/prototype/toJSON/name.js
+built-ins/Temporal/PlainTime/prototype/toJSON/not-a-constructor.js
+built-ins/Temporal/PlainTime/prototype/toJSON/prop-desc.js

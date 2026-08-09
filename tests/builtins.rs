@@ -25603,6 +25603,50 @@ fn temporal_plain_time_to_string_formats_rounds_and_observes_options_in_order() 
 }
 
 #[test]
+fn temporal_plain_time_to_json_formats_hidden_time_and_ignores_arguments() {
+    assert_eq!(
+        run(r#"
+            var value = new Temporal.PlainTime(15, 23, 30, 123, 400);
+            var reads = 0;
+            for (var key of ['hour', 'minute', 'second', 'millisecond', 'microsecond', 'nanosecond']) {
+              Object.defineProperty(value, key, {
+                get: function () { reads++; throw new Error('observed'); }
+              });
+            }
+            value.toString = function () { throw new Error('delegated'); };
+            var ignored = new Proxy({}, {
+              get: function () { throw new Error('argument observed'); }
+            });
+            var other = $262.createRealm().global;
+            var foreignToJSON = other.Temporal.PlainTime.prototype.toJSON;
+            var foreign = new other.Temporal.PlainTime(5, 3, 1);
+            var mainOnForeign = Temporal.PlainTime.prototype.toJSON.call(foreign);
+            var foreignOnMain = foreignToJSON.call(value);
+            var realmType = false;
+            try { foreignToJSON.call({}); } catch (error) {
+              realmType = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            var nonconstructable = false;
+            try { new Temporal.PlainTime.prototype.toJSON(); }
+            catch (error) { nonconstructable = error instanceof TypeError; }
+            [
+              Temporal.PlainTime.prototype.toJSON.name,
+              Temporal.PlainTime.prototype.toJSON.length,
+              value.toJSON(ignored), reads,
+              new Temporal.PlainTime(5, 3, 1).toJSON(),
+              new Temporal.PlainTime(15, 23).toJSON(),
+              foreignToJSON.call(foreign), mainOnForeign, foreignOnMain,
+              realmType, nonconstructable,
+              JSON.stringify({ time: value })
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "toJSON|0|15:23:30.1234|0|05:03:01|15:23:00|05:03:01|05:03:01|15:23:30.1234|true|true|{\"time\":\"15:23:30.1234\"}"
+        ))
+    );
+}
+
+#[test]
 fn temporal_plain_date_from_converts_supported_inputs_without_observing_slots() {
     assert_eq!(
         run(r#"

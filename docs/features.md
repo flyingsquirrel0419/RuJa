@@ -332,7 +332,8 @@
 - **Temporal time core**: Realm-local `Temporal.PlainTime` construction stores
   six immutable ISO time fields in hidden slots, honors subclass/newTarget
   prototypes, and exposes branded accessors, `@@toStringTag`, `from`, static
-  `compare`, `equals`, option-aware ISO `toString`, and `valueOf`. `from`,
+  `compare`, `equals`, option-aware ISO `toString`, hidden-record `toJSON`,
+  and `valueOf`. `from`,
   `compare`, and `equals` share
   ordered property-bag, String,
   PlainDateTime, ZonedDateTime, and cross-Realm PlainTime conversion without
@@ -340,7 +341,8 @@
   equality and six-field lexicographic comparison return without allocating a
   heap result. `toString` supports auto or 0-9 fractional digits, minute
   through nanosecond precision, every Temporal rounding mode, and midnight
-  rollover without observing public accessors
+  rollover without observing public accessors. `toJSON` ignores arguments and
+  serializes automatic precision directly from hidden fields
 - **RegExp**: literals `/pattern/flags` with `test`, `exec`, `match`, `source`,
   `flags`, `d`-flag match indices, forward lookahead, backward lookbehind,
   legacy quantified lookahead, Unicode named captures/backreferences,
