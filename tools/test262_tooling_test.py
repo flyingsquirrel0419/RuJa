@@ -159,6 +159,13 @@ from test262_temporal_duration_from_admission import (
     TEMPORAL_DURATION_FROM_FEATURES,
     TEMPORAL_DURATION_FROM_FILES,
 )
+from test262_temporal_duration_with_admission import (
+    TEMPORAL_DURATION_WITH_FEATURES,
+    TEMPORAL_DURATION_WITH_FILES,
+    TEMPORAL_DURATION_WITH_FLAGS,
+    TEMPORAL_DURATION_WITH_INCLUDES,
+    TEMPORAL_DURATION_WITH_NEGATIVE,
+)
 from test262_temporal_plain_time_admission import (
     TEMPORAL_PLAIN_TIME_ADD_FEATURES,
     TEMPORAL_PLAIN_TIME_ADD_FILES,
@@ -4682,6 +4689,120 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                         self.assertEqual(
                             tool.temporal_duration_from_features(future), frozenset()
                         )
+                finally:
+                    tool.TEST262 = original_root
+
+    def test_temporal_duration_with_manifest_is_exact_live_disjoint_and_shared(self):
+        files = TEMPORAL_DURATION_WITH_FILES
+        self.assertEqual(len(files), 22)
+        self.assertEqual(set(TEMPORAL_DURATION_WITH_FEATURES), files)
+        self.assertEqual(set(TEMPORAL_DURATION_WITH_INCLUDES), files)
+        self.assertEqual(set(TEMPORAL_DURATION_WITH_FLAGS), files)
+        self.assertEqual(set(TEMPORAL_DURATION_WITH_NEGATIVE), files)
+
+        tools_dir = Path(__file__).resolve().parent
+        for manifest in tools_dir.glob("test262_*_admission.txt"):
+            if manifest.name == "test262_temporal_duration_with_admission.txt":
+                continue
+            existing = {
+                line
+                for raw_line in manifest.read_text().splitlines()
+                if (line := raw_line.strip()) and not line.startswith("#")
+            }
+            self.assertTrue(files.isdisjoint(existing), manifest.name)
+
+        test_root = Path(test262_runner.TEST262) / "test"
+        method_dir = test_root / "built-ins/Temporal/Duration/prototype/with"
+        corpus_required = "TEST262" in os.environ
+
+        def live_files():
+            try:
+                if not method_dir.is_dir():
+                    if corpus_required:
+                        raise FileNotFoundError(method_dir)
+                    return None
+                return {
+                    path.relative_to(test_root).as_posix()
+                    for path in method_dir.glob("*.js")
+                    if "_FIXTURE" not in path.name
+                }
+            except OSError:
+                if corpus_required:
+                    raise
+                return None
+
+        live = live_files()
+        if live is not None:
+            self.assertEqual(live, files)
+            for relative in files:
+                path = test_root / relative
+                metadata = test262_runner.parse_meta(path.read_text())
+                self.assertEqual(
+                    frozenset(metadata.get("features", [])),
+                    TEMPORAL_DURATION_WITH_FEATURES[relative],
+                    relative,
+                )
+                self.assertEqual(
+                    frozenset(metadata.get("includes", [])),
+                    TEMPORAL_DURATION_WITH_INCLUDES[relative],
+                    relative,
+                )
+                self.assertEqual(
+                    frozenset(metadata.get("flags", [])),
+                    TEMPORAL_DURATION_WITH_FLAGS[relative],
+                    relative,
+                )
+                self.assertEqual(
+                    metadata.get("negative"),
+                    TEMPORAL_DURATION_WITH_NEGATIVE[relative],
+                    relative,
+                )
+                for tool in (test262_runner, test262_analyze):
+                    self.assertTrue(tool.temporal_duration_with_path(path), relative)
+                    self.assertEqual(
+                        tool.temporal_duration_with_features(path),
+                        TEMPORAL_DURATION_WITH_FEATURES[relative],
+                    )
+                    self.assertFalse(tool.should_skip(metadata, path), relative)
+
+        with patch("pathlib.Path.is_dir", side_effect=PermissionError):
+            if corpus_required:
+                with self.assertRaises(PermissionError):
+                    live_files()
+            else:
+                self.assertIsNone(live_files())
+        with patch("pathlib.Path.is_dir", return_value=False):
+            if corpus_required:
+                with self.assertRaises(FileNotFoundError):
+                    live_files()
+            else:
+                self.assertIsNone(live_files())
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            future = root / "test/built-ins/Temporal/Duration/prototype/with/future.js"
+            malformed = root / "test/built-ins/Temporal/Duration/prototype/with/basic.js.bak"
+            outside = root / "test/built-ins/Temporal/Duration/with/basic.js"
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for relative in files:
+                        path = root / "test" / relative
+                        self.assertTrue(tool.temporal_duration_with_path(path), relative)
+                        self.assertEqual(
+                            tool.temporal_duration_with_features(path),
+                            TEMPORAL_DURATION_WITH_FEATURES[relative],
+                        )
+                    for path in (future, malformed, outside, None, object()):
+                        self.assertFalse(tool.temporal_duration_with_path(path))
+                        self.assertEqual(
+                            tool.temporal_duration_with_features(path), frozenset()
+                        )
+                    for path in (future, malformed, outside):
+                        self.assertTrue(tool.should_skip({"features": ["Temporal"]}, path))
+                    with patch("pathlib.Path.resolve", side_effect=PermissionError):
+                        self.assertFalse(tool.temporal_duration_with_path(future))
                 finally:
                     tool.TEST262 = original_root
 

@@ -82,8 +82,20 @@ jobs:
             test/language/comments
             test/language/white-space
             test/language/punctuators
+            test/built-ins/Temporal/Duration/prototype/with
             test/built-ins/Temporal/PlainTime
             test/built-ins/Temporal/PlainDate/prototype/toPlainDateTime
+      - name: Run exact Temporal.Duration.prototype.with admission
+        run: |
+          mapfile -t files < <(
+            grep -hEv '^(#|$)' \
+              tools/test262_temporal_duration_with_admission.txt
+          )
+          TEST262="$GITHUB_WORKSPACE/test262" \
+            python3 tools/test262_temporal_duration_with_diagnostic.py \
+            "${files[@]}" | tee temporal_duration_with_result.txt
+          grep -q '^RATE=100.0 PASS=22 FAIL=0 SKIP=0 TOTAL=22 RAN=22$' \
+            temporal_duration_with_result.txt
       - name: Run exact Temporal.PlainTime admissions
         run: |
           mapfile -t files < <(

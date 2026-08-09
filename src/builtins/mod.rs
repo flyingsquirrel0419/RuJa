@@ -6290,7 +6290,7 @@ pub(crate) fn install_temporal_namespace_in_env(
     global: Option<&Value>,
     object_proto: Value,
 ) -> error::Result<Value> {
-    vm.try_reserve_gc_pins(139)?;
+    vm.try_reserve_gc_pins(140)?;
     let mut pin_count = 0;
     let result = (|| {
         let instant_prototype = Value::Object(vm.alloc(HeapObj::Object(ObjectData {
@@ -7059,6 +7059,13 @@ pub(crate) fn install_temporal_namespace_in_env(
             env,
         )?);
         pin_count += vm.pin(&plain_time_subtract);
+        let duration_with = Value::Object(vm.new_native_function_in_env_with_gc_retry(
+            "with",
+            temporal_duration_with,
+            1,
+            env,
+        )?);
+        pin_count += vm.pin(&duration_with);
 
         let Value::Object(instant_constructor_index) = instant_constructor.clone() else {
             unreachable!()
@@ -7185,6 +7192,7 @@ pub(crate) fn install_temporal_namespace_in_env(
                 PropertyKey::from("blank"),
                 accessor_get_prop(duration_blank),
             );
+            props.insert(PropertyKey::from("with"), data_prop(duration_with));
             let mut tag = data_prop(Value::String(Arc::from("Temporal.Duration")));
             tag.writable = false;
             props.insert(
@@ -7822,10 +7830,56 @@ fn create_temporal_duration_in_realm(
     create_temporal_duration(vm, fields, prototype)
 }
 
-fn temporal_duration_property_fields_rooted(
+#[derive(Clone, Copy)]
+struct TemporalPartialDurationFields {
+    years: Option<f64>,
+    months: Option<f64>,
+    weeks: Option<f64>,
+    days: Option<f64>,
+    hours: Option<f64>,
+    minutes: Option<f64>,
+    seconds: Option<f64>,
+    milliseconds: Option<f64>,
+    microseconds: Option<f64>,
+    nanoseconds: Option<f64>,
+}
+
+impl TemporalPartialDurationFields {
+    fn merge(self, fallback: TemporalDurationFields) -> TemporalDurationFields {
+        TemporalDurationFields {
+            years: self.years.unwrap_or(fallback.years),
+            months: self.months.unwrap_or(fallback.months),
+            weeks: self.weeks.unwrap_or(fallback.weeks),
+            days: self.days.unwrap_or(fallback.days),
+            hours: self.hours.unwrap_or(fallback.hours),
+            minutes: self.minutes.unwrap_or(fallback.minutes),
+            seconds: self.seconds.unwrap_or(fallback.seconds),
+            milliseconds: self.milliseconds.unwrap_or(fallback.milliseconds),
+            microseconds: self.microseconds.unwrap_or(fallback.microseconds),
+            nanoseconds: self.nanoseconds.unwrap_or(fallback.nanoseconds),
+        }
+    }
+}
+
+fn temporal_zero_duration_fields() -> TemporalDurationFields {
+    TemporalDurationFields {
+        years: 0.0,
+        months: 0.0,
+        weeks: 0.0,
+        days: 0.0,
+        hours: 0.0,
+        minutes: 0.0,
+        seconds: 0.0,
+        milliseconds: 0.0,
+        microseconds: 0.0,
+        nanoseconds: 0.0,
+    }
+}
+
+fn temporal_partial_duration_fields_rooted(
     vm: &mut Vm,
     item: &Value,
-) -> error::Result<TemporalDurationFields> {
+) -> error::Result<TemporalPartialDurationFields> {
     let numeric = |vm: &mut Vm, name: &str| -> error::Result<Option<f64>> {
         match vm.get_property(item, name)? {
             Value::Undefined => Ok(None),
@@ -7861,18 +7915,27 @@ fn temporal_duration_property_fields_rooted(
             "Temporal.Duration property bag requires a duration field",
         ));
     }
-    let fields = TemporalDurationFields {
-        years: years.unwrap_or(0.0),
-        months: months.unwrap_or(0.0),
-        weeks: weeks.unwrap_or(0.0),
-        days: days.unwrap_or(0.0),
-        hours: hours.unwrap_or(0.0),
-        minutes: minutes.unwrap_or(0.0),
-        seconds: seconds.unwrap_or(0.0),
-        milliseconds: milliseconds.unwrap_or(0.0),
-        microseconds: microseconds.unwrap_or(0.0),
-        nanoseconds: nanoseconds.unwrap_or(0.0),
+    let partial = TemporalPartialDurationFields {
+        years,
+        months,
+        weeks,
+        days,
+        hours,
+        minutes,
+        seconds,
+        milliseconds,
+        microseconds,
+        nanoseconds,
     };
+    Ok(partial)
+}
+
+fn temporal_duration_property_fields_rooted(
+    vm: &mut Vm,
+    item: &Value,
+) -> error::Result<TemporalDurationFields> {
+    let fields =
+        temporal_partial_duration_fields_rooted(vm, item)?.merge(temporal_zero_duration_fields());
     temporal_duration_is_valid(&fields)
         .then_some(fields)
         .ok_or_else(|| Error::range("Invalid Temporal.Duration fields"))
@@ -7920,6 +7983,25 @@ fn temporal_duration_from(
     let fields = to_temporal_duration_fields(vm, args.first().unwrap_or(&Value::Undefined))?;
     let realm = vm.native_callee_closure().unwrap_or(vm.global);
     create_temporal_duration_in_realm(vm, fields, realm)
+}
+
+fn temporal_duration_with(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let receiver = temporal_duration_slots(vm, this)?;
+    let item = args.first().cloned().unwrap_or(Value::Undefined);
+    if !matches!(item, Value::Object(_)) {
+        return Err(Error::type_err(
+            "Temporal.Duration.prototype.with requires an object",
+        ));
+    }
+    let partial = temporal_with_rooted_value(vm, item, |vm, item| {
+        temporal_partial_duration_fields_rooted(vm, item)
+    })?;
+    let realm = vm.native_callee_closure().unwrap_or(vm.global);
+    create_temporal_duration_in_realm(vm, partial.merge(receiver), realm)
 }
 
 fn temporal_duration_time_nanoseconds(fields: TemporalDurationFields) -> error::Result<i128> {

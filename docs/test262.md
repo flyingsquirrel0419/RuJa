@@ -14811,7 +14811,8 @@ At pinned Test262 revision
 `Temporal.Duration.from` directory contains 31 files. The exact manifest
 admits **29 pass / 0 fail / 0 skip**. Forced execution of the complete
 directory is **29 pass / 2 fail / 0 skip**: `argument-duration-max.js`
-converts its first case and then reaches absent `Duration.prototype.with`,
+converts its first case, passes `Duration.prototype.with`, and then reaches
+absent `Duration.prototype.total`,
 while
 `argument-duration-precision-exact-numerical-values.js` successfully creates
 its Duration and then reaches absent `Duration.prototype.toString`.
@@ -14832,5 +14833,36 @@ outside, future, or inaccessible corpus paths.
 - 검토한 주요 대안: Duration/from prefix 전체 허용, forced pass만 자동 수용, 후행 실패 두 파일도 from 지원으로 계상, exact admission과 explicit blocker complement를 검토했다.
 - 선택한 방식: 실제 통과한 29개 path와 live metadata만 exact manifest에 열고 후행 API 두 파일은 complete complement로 고정한다. core blank/basic은 재실행 후 admission으로 이동하고 max.js만 blocker에 남긴다.
 - 다른 대안 대신 이 방식을 선택한 이유: prefix는 future siblings를 자동 허용하고 process-level forced failure는 from의 intended assertion 도달 여부를 구분하지 않는다. explicit complement만 현재 구현 진전과 남은 API dependency를 동시에 보존한다.
-- 장점, 단점 및 영향: direct exact 29/0과 forced 29/2, core exact 77/0과 forced 77/1, metadata/corpus drift와 future gating이 재현된다. Duration with/total/toString 구현 시 세 blocker를 각각 다시 실측해야 한다.
+- 장점, 단점 및 영향: direct exact 29/0과 forced 29/2, core exact 77/0과 forced 77/1, metadata/corpus drift와 future gating이 재현된다. Duration.with 구현 후 maximum blocker는 total에서 실패하며 total/toString 구현 시 남은 blocker를 각각 다시 실측해야 한다.
+```
+
+## Temporal.Duration.prototype.with
+
+At pinned Test262 revision
+`9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the complete direct
+`Temporal.Duration.prototype.with` directory contains 22 files. Exact runner
+admission and forced diagnostic execution are both **22 pass / 0 fail / 0
+skip**. No blocker complement remains.
+
+The frozen manifest records each path's live features, includes, flags, and
+negative metadata. Runner and analyzer admit only those exact paths;
+malformed, outside-root, inaccessible, future sibling, and absent configured
+corpus paths fail closed. The dedicated diagnostic verifies every requested
+path's expected pass identity before reporting the aggregate `22/0/0` rate.
+Ordinary and full workflows both reproduce that boundary from the pinned
+sparse checkout.
+
+`Duration.from/argument-duration-max.js` is intentionally not admitted as a
+`with` test. Forced `Duration.from` execution proves that its `with` calls now
+complete and that the file's remaining failure is the downstream absent
+`Duration.prototype.total` dependency.
+
+```text
+[Decision Log]
+- 목적과 의도: Duration.prototype.with의 complete direct surface와 downstream Duration.from 개선을 path identity 및 live metadata로 고정한다.
+- 기존 구현 및 제약 조건: broad Temporal feature gate가 direct 22개를 모두 숨겼고 Duration.from maximum 파일은 with와 total을 연속 호출해 process-level failure만으로 두 API를 구분할 수 없었다.
+- 검토한 주요 대안: directory prefix 허용, forced aggregate만 기록, Duration.from downstream 파일을 with admission에 포함, exact direct manifest와 별도 downstream 진단을 검토했다.
+- 선택한 방식: direct 22개만 exact manifest로 admission하고 diagnostic도 같은 complete set을 강제한다. Duration.from complete diagnostic은 기존 blocker identity를 유지하되 실패 지점이 total로 이동했음을 문서화한다.
+- 다른 대안 대신 이 방식을 선택한 이유: prefix는 future siblings를 자동 허용하고 aggregate failure는 intended assertion 도달을 증명하지 못한다. downstream 파일 admission은 total 부재를 with 실패로 오계상한다.
+- 장점, 단점 및 영향: direct exact/forced 22/0/0, metadata drift, future gating, configured-corpus failure가 재현된다. total 구현 시 Duration.from blocker 한 건만 재측정하면 된다.
 ```

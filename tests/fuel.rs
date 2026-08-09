@@ -623,6 +623,43 @@ fn temporal_duration_from_precharges_source_and_field_strings() {
 }
 
 #[test]
+fn temporal_duration_with_precharges_partial_field_strings() {
+    const BUDGET: i64 = 20_000;
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        globalThis.durationWithFuel = new Temporal.Duration(1);
+        globalThis.durationWithShortField = { valueOf() { return "2"; } };
+        globalThis.durationWithLongField = { valueOf() { return "0".repeat(512) + "2"; } };
+        "#,
+    )
+    .expect("Duration.with fuel fixtures should initialize");
+
+    vm.set_fuel(Some(BUDGET));
+    vm.run("durationWithFuel.with({ years: durationWithShortField });")
+        .expect("short Duration.with field should convert");
+    let short_work = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+
+    vm.set_fuel(Some(BUDGET));
+    vm.run("durationWithFuel.with({ years: durationWithLongField });")
+        .expect("long Duration.with field should convert");
+    let long_work = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+    assert!(long_work >= short_work + 500);
+
+    vm.set_fuel(Some(long_work - 1));
+    let error = vm
+        .run("durationWithFuel.with({ years: durationWithLongField });")
+        .expect_err("N-1 fuel must abort Duration.with conversion");
+    assert_eq!(error.kind, ruja::ErrorKind::Fuel);
+    assert_eq!(vm.fuel_remaining(), Some(0));
+
+    vm.set_fuel(Some(long_work));
+    vm.run("durationWithFuel.with({ years: durationWithLongField });")
+        .expect("exact fuel must complete Duration.with conversion");
+    assert_eq!(vm.fuel_remaining(), Some(0));
+}
+
+#[test]
 fn temporal_plain_time_arithmetic_precharges_duration_strings_and_fields() {
     const BUDGET: i64 = 20_000;
     let mut vm = Vm::new().expect("failed to initialize VM");

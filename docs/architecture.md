@@ -4788,7 +4788,42 @@ Temporal installer at this checkpoint reserved 137 maximum live pins across
 - 검토한 주요 대안: 소비자별 reader/parser 복제, public accessors 기반 clone, fractional component의 f64 산술, add/subtract와 한 번에 도입, 공용 converter를 static from으로 먼저 검증하는 방식을 검토했다.
 - 선택한 방식: branded fast path, rooted alphabetical partial record, checked-decimal ISO parser, 기존 exact validator, method-Realm factory를 한 경로로 합친다. PlainTime arithmetic은 다음 단위에서 이 record를 정확한 정수 nanoseconds로 변환한다.
 - 다른 대안 대신 이 방식을 선택한 이유: public accessors는 hidden-slot 비관찰을 깨고 converter 복제는 getter/coercion/range 순서를 분기시킨다. f64 합산은 2^53 인접 값을 오판하며 세 API 동시 구현은 parser와 balance 실패를 격리하기 어렵다.
-- 장점, 단점 및 영향: fresh clone, cross-Realm brand/result/error, exact fraction/range, GC/root/OOM retry와 input-byte fuel이 재현된다. Duration.from direct 두 파일은 아직 없는 with/total 및 toString에서 후행 실패하므로 blocker로 유지된다. 다음 add/subtract는 options를 관찰하지 않고 years/months/weeks/days를 계산에서 버리되 변환 유효성은 그대로 적용해야 한다.
+- 장점, 단점 및 영향: fresh clone, cross-Realm brand/result/error, exact fraction/range, GC/root/OOM retry와 input-byte fuel이 재현된다. Duration.from direct 두 파일은 total 및 toString에서 후행 실패하며, maximum case의 with 단계는 이제 통과한다. PlainTime add/subtract는 이 변환을 재사용해 options를 관찰하지 않고 years/months/weeks/days를 계산에서 버리되 변환 유효성은 유지한다.
+```
+
+## Temporal Duration partial update boundary
+
+`Temporal.Duration.prototype.with` shares property access with the complete
+DurationLike object converter but not its completion policy. The ordered
+reader returns ten `Option<f64>` fields after rooting the argument and
+observing `days`, `hours`, `microseconds`, `milliseconds`, `minutes`, `months`,
+`nanoseconds`, `seconds`, `weeks`, and `years`. A missing or `undefined`
+property remains absent. This reader performs conversion only; it does not
+validate the partial record in isolation.
+
+`Temporal.Duration.from` completes that partial record against zero and then
+validates it. `Duration.prototype.with` instead brands and copies its receiver
+first, requires an object argument, completes the partial record against the
+receiver, and validates the merged record. Deferring validation permits a
+partial bag to replace the complete sign of a Duration while still rejecting
+sign conflicts with fields retained from the receiver. Branded Duration
+arguments deliberately take the ordinary property-bag path because this API
+must observe their public plural getters rather than copy hidden slots.
+
+Result allocation uses the intrinsic Duration prototype from the native
+method Realm. Receiver subclasses, constructors, and species are not
+observed. `Duration.from` remains allocation 136, PlainTime add/subtract are
+137 and 138, and `Duration.prototype.with` is 139. The installer reserves 140
+maximum live pins across 141 allocations.
+
+```text
+[Decision Log]
+- 목적과 의도: complete DurationLike 변환과 partial Duration update가 property access를 공유하되 서로 다른 completion/validation 시점을 명시적으로 분리한다.
+- 기존 구현 및 제약 조건: from의 object path는 absent field를 zero-fill하고 branded input을 hidden slots에서 복사한다. with는 absent field를 receiver에서 유지하고 branded argument의 public getters도 관찰해야 한다.
+- 검토한 주요 대안: from converter 직접 재사용, 별도 reader 복제, branded fast path, partial record 선검증, optional partial record와 merge 후 검증을 검토했다.
+- 선택한 방식: rooted ordered reader는 optional conversion record만 반환한다. 소비자가 zero 또는 receiver record와 병합한 뒤 공용 exact validator 및 Realm-local factory를 호출한다.
+- 다른 대안 대신 이 방식을 선택한 이유: 직접 재사용은 absent 의미를 잃고 reader 복제는 observable order drift를 만든다. hidden-slot fast path는 required getter observation을 생략하며 선검증은 valid full-sign replacement를 거부한다.
+- 장점, 단점 및 영향: from/with가 order와 numeric conversion을 공유하면서 각 API의 completion semantics, abrupt completion, sign replacement, cross-Realm ownership, GC/OOM/fuel 경계를 독립적으로 유지한다. 향후 total/round/add/subtract는 complete record 소비자로 별도 설계해야 한다.
 ```
 
 ## Temporal PlainTime arithmetic

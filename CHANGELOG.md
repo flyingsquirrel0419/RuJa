@@ -4,6 +4,31 @@
 
 ### Changed
 
+- Added Realm-local, non-constructable, length-1
+  `Temporal.Duration.prototype.with`. The method brands its receiver before
+  observing the required object argument, reads and converts all ten plural
+  properties in specification order, and merges only defined fields with the
+  receiver's hidden duration record. Branded Duration arguments remain
+  ordinary partial property bags, so overridden public getters are observed.
+  Validation is deferred until after the merge, allowing a complete sign
+  replacement while rejecting mixed-sign or out-of-range results. Fresh
+  values use the native method Realm and ignore receiver subclasses,
+  constructors, and species. At pinned Test262 revision
+  `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the complete direct directory is
+  exact **22/0/0**. The `Duration.from` maximum-value blocker now passes
+  `with` and fails only at the still-absent `Duration.prototype.total`.
+  `Duration.from` remains allocation 136, PlainTime add/subtract remain 137
+  and 138, `Duration.prototype.with` is 139, and the installer reserves 140
+  maximum live pins across 141 allocations.
+
+  [Decision Log]
+  - 목적과 의도: Duration hidden record를 부분 DurationLike 갱신에 연결하면서 명세의 observable getter/coercion 순서와 최종 sign/range 검증 위치를 보존한다.
+  - 기존 구현 및 제약 조건: Duration.from은 branded hidden-slot copy와 complete object conversion을 공유했지만 with는 branded argument도 public property bag으로 관찰하고 absent field를 receiver 값으로 유지해야 한다.
+  - 검토한 주요 대안: Duration.from converter 재사용, branded argument hidden-slot fast path, partial record 선검증, sentinel zero merge, optional-field partial reader와 merge 후 검증을 검토했다.
+  - 선택한 방식: 공용 ordered reader가 `Option<f64>` partial record만 만들고, from은 zero record와 병합한 뒤 검증하며 with는 copied receiver와 병합한 뒤 기존 exact validator와 method-Realm factory를 호출한다.
+  - 다른 대안 대신 이 방식을 선택한 이유: complete converter와 hidden-slot fast path는 absent/undefined 및 overridden getter 관찰을 깨고, partial 선검증은 전체 sign 교체를 잘못 거부한다. sentinel zero는 absent와 명시적 zero를 구분하지 못한다.
+  - 장점, 단점 및 영향: brand/error precedence, ten-field order, sign replacement/conflict, cross-Realm result/error, GC/root/OOM retry와 exact fuel이 고정된다. total, toString, arithmetic/balancing은 별도 단위로 남는다.
+
 - Added Realm-local, non-constructable
   `Temporal.PlainTime.prototype.add` and `subtract`. Both methods brand the
   receiver before converting the duration-like argument through the shared

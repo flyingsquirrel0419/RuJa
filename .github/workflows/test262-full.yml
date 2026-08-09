@@ -144,6 +144,12 @@ jobs:
           TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
           test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_duration_from_manifest_is_exact_live_disjoint_and_shared
           -v
+      - name: Verify exact Temporal.Duration.prototype.with admission
+        working-directory: tools
+        run: >-
+          TEST262="$GITHUB_WORKSPACE/test262" python3 -m unittest
+          test262_tooling_test.ModuleCoreAdmissionTests.test_temporal_duration_with_manifest_is_exact_live_disjoint_and_shared
+          -v
       - name: Verify exact Temporal.PlainDate core admission
         working-directory: tools
         run: >-
@@ -902,6 +908,46 @@ jobs:
           cat temporal_duration_from_diagnostic.txt
           grep -q '^RATE=93.5 PASS=29 FAIL=2 SKIP=0 TOTAL=31 RAN=31$' \
             temporal_duration_from_diagnostic.txt
+
+  temporal-duration-with:
+    needs: [build, setup]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download RuJa binary
+        uses: actions/download-artifact@v4
+        with:
+          name: ruja-release
+          path: target/release/
+      - run: chmod +x target/release/ruja
+      - name: Checkout pinned Temporal.Duration.prototype.with tests
+        uses: actions/checkout@v4
+        with:
+          repository: tc39/test262
+          ref: ${{ env.TEST262_REV }}
+          path: test262
+          sparse-checkout: |
+            harness
+            test/built-ins/Temporal/Duration/prototype/with
+      - name: Require exact Temporal.Duration.prototype.with boundary
+        run: |
+          mapfile -t files < <(sed -e '/^#/d' -e '/^$/d' \
+            tools/test262_temporal_duration_with_admission.txt)
+          TEST262="$GITHUB_WORKSPACE/test262" python3 tools/test262_runner.py \
+            "${files[@]}" > temporal_duration_with_result.txt 2>&1
+          cat temporal_duration_with_result.txt
+          grep -q '^RATE=100.0 PASS=22 FAIL=0 SKIP=0 TOTAL=22 RAN=22$' \
+            temporal_duration_with_result.txt
+      - name: Recheck complete Temporal.Duration.prototype.with surface
+        run: |
+          mapfile -t files < <(sed -e '/^#/d' -e '/^$/d' \
+            tools/test262_temporal_duration_with_admission.txt)
+          TEST262="$GITHUB_WORKSPACE/test262" \
+            python3 tools/test262_temporal_duration_with_diagnostic.py \
+            "${files[@]}" > temporal_duration_with_diagnostic.txt 2>&1
+          cat temporal_duration_with_diagnostic.txt
+          grep -q '^RATE=100.0 PASS=22 FAIL=0 SKIP=0 TOTAL=22 RAN=22$' \
+            temporal_duration_with_diagnostic.txt
 
   temporal-plain-date-core:
     needs: [build, setup]

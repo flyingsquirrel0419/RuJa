@@ -18,7 +18,9 @@ The following resource limits are enforced:
   Realm-local `%Temporal.Duration%` supports hidden-slot construction,
   subclassing, all ten numeric accessors, `sign`, `blank`, and static `from`
   for branded Duration values, ordered duration property bags, and ISO
-  Duration strings. Duration arithmetic, formatting, balancing, rounding,
+  Duration strings. `Duration.prototype.with` supports ordered partial object
+  updates, complete sign replacement, merged sign/range validation, and
+  method-Realm results. Duration arithmetic, formatting, balancing, rounding,
   `compare`, `total`, and the remaining methods are not implemented.
   Realm-local `%Temporal.PlainDateTime%` supports
   hidden-slot construction, subclassing, 22 ISO/calendar accessors,

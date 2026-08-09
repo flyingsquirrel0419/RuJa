@@ -361,7 +361,10 @@
   nanosecond decomposition of fractional hours, minutes, and seconds. Fresh
   results use the method Realm; mixed signs, non-integral bags, malformed
   strings, and normalized values at or beyond the specification limit fail
-  before allocation
+  before allocation. `Temporal.Duration.prototype.with` observes branded and
+  ordinary object arguments as partial plural-property bags, preserves
+  undefined fields from the receiver, validates after merging, and returns a
+  fresh intrinsic Duration in the method Realm
 - **RegExp**: literals `/pattern/flags` with `test`, `exec`, `match`, `source`,
   `flags`, `d`-flag match indices, forward lookahead, backward lookbehind,
   legacy quantified lookahead, Unicode named captures/backreferences,

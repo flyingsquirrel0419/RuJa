@@ -25155,6 +25155,115 @@ fn temporal_duration_from_uses_method_realm_and_rejects_invalid_inputs() {
 }
 
 #[test]
+fn temporal_duration_with_merges_partial_fields_in_specification_order() {
+    assert_eq!(
+        run(r#"
+            var duration = new Temporal.Duration(1, 2, 3, 4, 5, 6, 7, 8, 9, 10);
+            var order = [];
+            var fields = {};
+            for (var key of ['days', 'hours', 'microseconds', 'milliseconds', 'minutes', 'months', 'nanoseconds', 'seconds', 'weeks', 'years']) {
+              Object.defineProperty(fields, key, {
+                get: (function (name) { return function () {
+                  order.push('get ' + name);
+                  return { valueOf: function () { order.push('coerce ' + name); return 1; } };
+                }; })(key)
+              });
+            }
+            var all = duration.with(fields);
+            var partial = duration.with({ months: undefined, hours: 12, nanoseconds: 13 });
+            var source = new Temporal.Duration(2);
+            var sourceReads = 0;
+            Object.defineProperty(source, 'years', {
+              get: function () { sourceReads++; return 9; }
+            });
+            var fromBrandedBag = duration.with(source);
+            var replacedSign = Temporal.Duration.from({ years: 5, days: 1 })
+              .with({ years: -1, days: 0, minutes: -1 });
+            [
+              [all.years, all.months, all.weeks, all.days, all.hours, all.minutes,
+               all.seconds, all.milliseconds, all.microseconds, all.nanoseconds].join(','),
+              order.join(','),
+              [partial.years, partial.months, partial.hours, partial.nanoseconds].join(','),
+              fromBrandedBag.years, sourceReads,
+              [replacedSign.years, replacedSign.days, replacedSign.minutes, replacedSign.sign].join(',')
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "1,1,1,1,1,1,1,1,1,1|get days,coerce days,get hours,coerce hours,get microseconds,coerce microseconds,get milliseconds,coerce milliseconds,get minutes,coerce minutes,get months,coerce months,get nanoseconds,coerce nanoseconds,get seconds,coerce seconds,get weeks,coerce weeks,get years,coerce years|1,2,12,13|9|1|-1,0,-1,-1"
+        ))
+    );
+}
+
+#[test]
+fn temporal_duration_with_validates_partial_and_merged_records() {
+    for source in [
+        "new Temporal.Duration(1).with()",
+        "new Temporal.Duration(1).with('P1D')",
+        "new Temporal.Duration(1).with({})",
+        "new Temporal.Duration(1).with({ year: 1 })",
+        "new Temporal.Duration(1).with({ hours: 1, minutes: -1 })",
+        "new Temporal.Duration(1, 1).with({ years: -1 })",
+        "new Temporal.Duration(1).with({ seconds: 1.5 })",
+        "new Temporal.Duration(1).with({ years: 2 ** 32 })",
+        "new Temporal.Duration(1).with({ seconds: 2 ** 53 })",
+    ] {
+        let error = run_err(source);
+        assert!(
+            error.contains("TypeError") || error.contains("RangeError"),
+            "{source}: {error}"
+        );
+    }
+}
+
+#[test]
+fn temporal_duration_with_brands_first_and_uses_method_realm() {
+    assert_eq!(
+        run(r#"
+            var observed = false;
+            try {
+              Temporal.Duration.prototype.with.call({}, {
+                get years() { observed = true; return 1; }
+              });
+            } catch (error) {}
+            class Derived extends Temporal.Duration {}
+            var derived = new Derived(1).with({ years: 2 });
+            var other = $262.createRealm().global;
+            var foreignWith = other.Temporal.Duration.prototype.with;
+            var foreignResult = foreignWith.call(new Temporal.Duration(1), { years: 3 });
+            var mainResult = Temporal.Duration.prototype.with.call(
+              new other.Temporal.Duration(1), { years: 4 }
+            );
+            var foreignType = false;
+            var foreignRange = false;
+            try { foreignWith.call({}, { years: 1 }); } catch (error) {
+              foreignType = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            try { foreignWith.call(new other.Temporal.Duration(1, 1), { years: -1 }); }
+            catch (error) {
+              foreignRange = error instanceof other.RangeError && !(error instanceof RangeError);
+            }
+            var nonconstructable = false;
+            try { new Temporal.Duration.prototype.with({ years: 1 }); }
+            catch (error) { nonconstructable = error instanceof TypeError; }
+            [
+              Temporal.Duration.prototype.with.name,
+              Temporal.Duration.prototype.with.length,
+              observed,
+              Object.getPrototypeOf(derived) === Temporal.Duration.prototype,
+              !(derived instanceof Derived),
+              Object.getPrototypeOf(foreignResult) === other.Temporal.Duration.prototype,
+              Object.getPrototypeOf(mainResult) === Temporal.Duration.prototype,
+              foreignResult.years, mainResult.years,
+              foreignType, foreignRange, nonconstructable
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "with|1|false|true|true|true|true|3|4|true|true|true"
+        ))
+    );
+}
+
+#[test]
 fn temporal_duration_rejects_non_integral_mixed_and_out_of_range_fields() {
     for source in [
         "Temporal.Duration()",
