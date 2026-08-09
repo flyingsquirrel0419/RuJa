@@ -160,6 +160,11 @@ from test262_temporal_duration_from_admission import (
     TEMPORAL_DURATION_FROM_FILES,
 )
 from test262_temporal_plain_time_admission import (
+    TEMPORAL_PLAIN_TIME_ADD_FEATURES,
+    TEMPORAL_PLAIN_TIME_ADD_FILES,
+    TEMPORAL_PLAIN_TIME_ADD_FLAGS,
+    TEMPORAL_PLAIN_TIME_ADD_INCLUDES,
+    TEMPORAL_PLAIN_TIME_ADD_NEGATIVE,
     TEMPORAL_PLAIN_TIME_COMPARE_FEATURES,
     TEMPORAL_PLAIN_TIME_COMPARE_FILES,
     TEMPORAL_PLAIN_TIME_COMPARE_FLAGS,
@@ -185,6 +190,11 @@ from test262_temporal_plain_time_admission import (
     TEMPORAL_PLAIN_TIME_ROUND_FLAGS,
     TEMPORAL_PLAIN_TIME_ROUND_INCLUDES,
     TEMPORAL_PLAIN_TIME_ROUND_NEGATIVE,
+    TEMPORAL_PLAIN_TIME_SUBTRACT_FEATURES,
+    TEMPORAL_PLAIN_TIME_SUBTRACT_FILES,
+    TEMPORAL_PLAIN_TIME_SUBTRACT_FLAGS,
+    TEMPORAL_PLAIN_TIME_SUBTRACT_INCLUDES,
+    TEMPORAL_PLAIN_TIME_SUBTRACT_NEGATIVE,
     TEMPORAL_PLAIN_TIME_WITH_BLOCKERS,
     TEMPORAL_PLAIN_TIME_WITH_FEATURES,
     TEMPORAL_PLAIN_TIME_WITH_FILES,
@@ -14554,10 +14564,26 @@ class ClassSubclassBuiltinAdmissionTests(unittest.TestCase):
                 TEMPORAL_PLAIN_TIME_WITH_NEGATIVE,
                 "temporal_plain_time_with",
             ),
+            (
+                TEMPORAL_PLAIN_TIME_ADD_FILES,
+                TEMPORAL_PLAIN_TIME_ADD_FEATURES,
+                TEMPORAL_PLAIN_TIME_ADD_INCLUDES,
+                TEMPORAL_PLAIN_TIME_ADD_FLAGS,
+                TEMPORAL_PLAIN_TIME_ADD_NEGATIVE,
+                "temporal_plain_time_add",
+            ),
+            (
+                TEMPORAL_PLAIN_TIME_SUBTRACT_FILES,
+                TEMPORAL_PLAIN_TIME_SUBTRACT_FEATURES,
+                TEMPORAL_PLAIN_TIME_SUBTRACT_INCLUDES,
+                TEMPORAL_PLAIN_TIME_SUBTRACT_FLAGS,
+                TEMPORAL_PLAIN_TIME_SUBTRACT_NEGATIVE,
+                "temporal_plain_time_subtract",
+            ),
         )
         self.assertEqual(
             tuple(len(cohort[0]) for cohort in cohorts),
-            (40, 51, 7, 31, 32, 40, 7, 42, 21),
+            (40, 51, 7, 31, 32, 40, 7, 42, 21, 32, 32),
         )
         for index, cohort in enumerate(cohorts):
             files, features, includes, flags, negative, _ = cohort
@@ -14636,6 +14662,14 @@ class ClassSubclassBuiltinAdmissionTests(unittest.TestCase):
                         for path in (plain_time / "prototype/with").glob("*.js")
                         if path.relative_to(test_root).as_posix()
                         not in TEMPORAL_PLAIN_TIME_WITH_BLOCKERS
+                    },
+                    {
+                        path.relative_to(test_root).as_posix()
+                        for path in (plain_time / "prototype/add").glob("*.js")
+                    },
+                    {
+                        path.relative_to(test_root).as_posix()
+                        for path in (plain_time / "prototype/subtract").glob("*.js")
                     },
                 )
             except OSError:
@@ -14722,6 +14756,12 @@ class ClassSubclassBuiltinAdmissionTests(unittest.TestCase):
             with_future = (
                 root / "test/built-ins/Temporal/PlainTime/prototype/with/future.js"
             )
+            add_future = (
+                root / "test/built-ins/Temporal/PlainTime/prototype/add/future.js"
+            )
+            subtract_future = (
+                root / "test/built-ins/Temporal/PlainTime/prototype/subtract/future.js"
+            )
             outside = root / "test/built-ins/Temporal/Other/from/basic.js"
             for tool in (test262_runner, test262_analyze):
                 original_root = tool.TEST262
@@ -14742,6 +14782,8 @@ class ClassSubclassBuiltinAdmissionTests(unittest.TestCase):
                             to_json_future,
                             round_future,
                             with_future,
+                            add_future,
+                            subtract_future,
                             outside,
                             None,
                             object(),
@@ -14765,6 +14807,12 @@ class ClassSubclassBuiltinAdmissionTests(unittest.TestCase):
                     )
                     self.assertTrue(
                         tool.should_skip({"features": ["Temporal"]}, with_future)
+                    )
+                    self.assertTrue(
+                        tool.should_skip({"features": ["Temporal"]}, add_future)
+                    )
+                    self.assertTrue(
+                        tool.should_skip({"features": ["Temporal"]}, subtract_future)
                     )
                     self.assertTrue(tool.should_skip({"features": ["Temporal"]}, outside))
                 finally:

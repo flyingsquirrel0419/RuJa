@@ -25974,6 +25974,121 @@ fn temporal_plain_time_with_uses_method_realm_and_intrinsic_prototype() {
 }
 
 #[test]
+fn temporal_plain_time_add_and_subtract_balance_exact_time_fields() {
+    assert_eq!(
+        run(r#"
+            var base = new Temporal.PlainTime(23, 59, 59, 999, 999, 999);
+            var duration = new Temporal.Duration(9, 8, 7, 6, 1, 2, 3, 4, 5, 6);
+            var reads = 0;
+            for (var key of ['years', 'months', 'weeks', 'days', 'hours', 'minutes', 'seconds', 'milliseconds', 'microseconds', 'nanoseconds']) {
+              Object.defineProperty(duration, key, {
+                get: function () { reads++; throw new Error('hidden getter observed'); }
+              });
+            }
+            [
+              base.add({ nanoseconds: 1 }).toString(),
+              new Temporal.PlainTime().subtract({ nanoseconds: 1 }).toString(),
+              new Temporal.PlainTime(12, 34, 56, 123, 456, 789).add(duration).toString(),
+              new Temporal.PlainTime(12, 34, 56, 123, 456, 789).subtract(duration).toString(),
+              new Temporal.PlainTime().add('PT9007199254740991S').toString(),
+              new Temporal.PlainTime(1, 2, 3).add({ years: 1, months: 2, weeks: 3, days: 4 }).toString(),
+              reads
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "00:00:00|23:59:59.999999999|13:36:59.127461795|11:32:53.119451783|07:36:31|01:02:03|0"
+        ))
+    );
+}
+
+#[test]
+fn temporal_plain_time_add_and_subtract_observe_conversion_order_and_ignore_options() {
+    assert_eq!(
+        run(r#"
+            var time = new Temporal.PlainTime(12, 34, 56);
+            var order = [];
+            var bag = {};
+            for (var key of ['days', 'hours', 'microseconds', 'milliseconds', 'minutes', 'months', 'nanoseconds', 'seconds', 'weeks', 'years']) {
+              Object.defineProperty(bag, key, {
+                get: (function (name) { return function () {
+                  order.push('get ' + name);
+                  return { valueOf: function () { order.push('coerce ' + name); return 0; } };
+                }; })(key)
+              });
+            }
+            var ignored = new Proxy({}, { get: function () { throw new Error('options observed'); } });
+            var brandObserved = false;
+            try {
+              Temporal.PlainTime.prototype.add.call({}, {
+                get hours() { brandObserved = true; return 1; }
+              });
+            } catch (error) {}
+            var marker = new Error('marker');
+            var markerCaught = false;
+            try { time.subtract({ get hours() { throw marker; } }); }
+            catch (error) { markerCaught = error === marker; }
+            var invalidDate = false;
+            try { time.add({ years: 4294967296 }); }
+            catch (error) { invalidDate = error instanceof RangeError; }
+            var invalidTime = false;
+            try { time.subtract({ hours: Infinity }); }
+            catch (error) { invalidTime = error instanceof RangeError; }
+            [
+              time.add(bag, ignored).toString(), order.join(','), brandObserved,
+              markerCaught, invalidDate, invalidTime
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "12:34:56|get days,coerce days,get hours,coerce hours,get microseconds,coerce microseconds,get milliseconds,coerce milliseconds,get minutes,coerce minutes,get months,coerce months,get nanoseconds,coerce nanoseconds,get seconds,coerce seconds,get weeks,coerce weeks,get years,coerce years|false|true|true|true"
+        ))
+    );
+}
+
+#[test]
+fn temporal_plain_time_add_and_subtract_use_method_realm_intrinsics() {
+    assert_eq!(
+        run(r#"
+            class Derived extends Temporal.PlainTime {}
+            var derived = new Derived(12, 31).add({ minutes: 1 });
+            var other = $262.createRealm().global;
+            var foreign = new other.Temporal.PlainTime(12, 31);
+            var mainResult = Temporal.PlainTime.prototype.add.call(foreign, { minutes: 1 });
+            var foreignSubtract = other.Temporal.PlainTime.prototype.subtract;
+            var foreignResult = foreignSubtract.call(new Temporal.PlainTime(12, 31), { minutes: 1 });
+            var foreignType = false;
+            var foreignRange = false;
+            try { foreignSubtract.call({}, { minutes: 1 }); } catch (error) {
+              foreignType = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            try { foreignSubtract.call(foreign, { hours: Infinity }); } catch (error) {
+              foreignRange = error instanceof other.RangeError && !(error instanceof RangeError);
+            }
+            var addConstructable = true;
+            var subtractConstructable = true;
+            try { new Temporal.PlainTime.prototype.add({ minutes: 1 }); }
+            catch (error) { addConstructable = false; }
+            try { new Temporal.PlainTime.prototype.subtract({ minutes: 1 }); }
+            catch (error) { subtractConstructable = false; }
+            [
+              Temporal.PlainTime.prototype.add.name,
+              Temporal.PlainTime.prototype.add.length,
+              Temporal.PlainTime.prototype.subtract.name,
+              Temporal.PlainTime.prototype.subtract.length,
+              derived.toString(),
+              Object.getPrototypeOf(derived) === Temporal.PlainTime.prototype,
+              !(derived instanceof Derived),
+              Object.getPrototypeOf(mainResult) === Temporal.PlainTime.prototype,
+              Object.getPrototypeOf(foreignResult) === other.Temporal.PlainTime.prototype,
+              foreignType, foreignRange, addConstructable, subtractConstructable
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "add|1|subtract|1|12:32:00|true|true|true|true|true|true|false|false"
+        ))
+    );
+}
+
+#[test]
 fn temporal_plain_date_from_converts_supported_inputs_without_observing_slots() {
     assert_eq!(
         run(r#"

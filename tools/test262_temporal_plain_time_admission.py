@@ -41,6 +41,12 @@ TEMPORAL_PLAIN_TIME_WITH_FILES = _read_manifest(
 TEMPORAL_PLAIN_TIME_WITH_BLOCKERS = _read_manifest(
     "test262_temporal_plain_time_with_blockers.txt"
 )
+TEMPORAL_PLAIN_TIME_ADD_FILES = _read_manifest(
+    "test262_temporal_plain_time_add_admission.txt"
+)
+TEMPORAL_PLAIN_TIME_SUBTRACT_FILES = _read_manifest(
+    "test262_temporal_plain_time_subtract_admission.txt"
+)
 
 _CORE_TEMPORAL_HELPERS = frozenset({
     "argument-convert.js",
@@ -166,6 +172,24 @@ _WITH_TEMPORAL_HELPERS = frozenset({
     "overflow-wrong-type.js",
     "subclassing-ignored.js",
 })
+_ARITHMETIC_TEMPORAL_HELPERS = frozenset({
+    "add-large-subseconds.js",
+    "argument-duration-max.js",
+    "argument-duration.js",
+    "argument-higher-units.js",
+    "argument-object.js",
+    "argument-string-fractional-units-rounding-mode.js",
+    "argument-string-negative-fractional-units.js",
+    "argument-string.js",
+    "balance-negative-time-units.js",
+    "blank-duration.js",
+    "options-ignored.js",
+    "order-of-operations.js",
+    "precision-exact-mathematical-values-1.js",
+    "precision-exact-mathematical-values-2.js",
+    "subclassing-ignored.js",
+    "subtract-large-subseconds.js",
+})
 
 
 def _features(path, cohort):
@@ -230,6 +254,11 @@ def _features(path, cohort):
             features.add("Symbol")
         elif name == "options-wrong-type.js":
             features.update(("BigInt", "Symbol"))
+        if name == "not-a-constructor.js":
+            features.add("Reflect.construct")
+    elif cohort in {"add", "subtract"}:
+        if name in {"argument-not-object.js", "branding.js", "options-ignored.js"}:
+            features.add("Symbol")
         if name == "not-a-constructor.js":
             features.add("Reflect.construct")
     return frozenset(features)
@@ -312,6 +341,15 @@ def _includes(path, cohort):
             includes.add("propertyHelper.js")
         if name == "not-a-constructor.js":
             includes.add("isConstructor.js")
+    elif cohort in {"add", "subtract"}:
+        if name == "order-of-operations.js":
+            includes.add("compareArray.js")
+        if name in _ARITHMETIC_TEMPORAL_HELPERS:
+            includes.add("temporalHelpers.js")
+        if name in {"length.js", "name.js", "prop-desc.js"}:
+            includes.add("propertyHelper.js")
+        if name == "not-a-constructor.js":
+            includes.add("isConstructor.js")
     return frozenset(includes)
 
 
@@ -378,6 +416,18 @@ def _metadata(files, cohort):
     TEMPORAL_PLAIN_TIME_WITH_FLAGS,
     TEMPORAL_PLAIN_TIME_WITH_NEGATIVE,
 ) = _metadata(TEMPORAL_PLAIN_TIME_WITH_FILES, "with")
+(
+    TEMPORAL_PLAIN_TIME_ADD_FEATURES,
+    TEMPORAL_PLAIN_TIME_ADD_INCLUDES,
+    TEMPORAL_PLAIN_TIME_ADD_FLAGS,
+    TEMPORAL_PLAIN_TIME_ADD_NEGATIVE,
+) = _metadata(TEMPORAL_PLAIN_TIME_ADD_FILES, "add")
+(
+    TEMPORAL_PLAIN_TIME_SUBTRACT_FEATURES,
+    TEMPORAL_PLAIN_TIME_SUBTRACT_INCLUDES,
+    TEMPORAL_PLAIN_TIME_SUBTRACT_FLAGS,
+    TEMPORAL_PLAIN_TIME_SUBTRACT_NEGATIVE,
+) = _metadata(TEMPORAL_PLAIN_TIME_SUBTRACT_FILES, "subtract")
 
 for files, count, label in (
     (TEMPORAL_PLAIN_TIME_CORE_FILES, 40, "core"),
@@ -389,6 +439,8 @@ for files, count, label in (
     (TEMPORAL_PLAIN_TIME_TO_JSON_FILES, 7, "toJSON"),
     (TEMPORAL_PLAIN_TIME_ROUND_FILES, 42, "round"),
     (TEMPORAL_PLAIN_TIME_WITH_FILES, 21, "with"),
+    (TEMPORAL_PLAIN_TIME_ADD_FILES, 32, "add"),
+    (TEMPORAL_PLAIN_TIME_SUBTRACT_FILES, 32, "subtract"),
 ):
     if len(files) != count:
         raise RuntimeError(f"Temporal.PlainTime {label} admission must contain {count} files")

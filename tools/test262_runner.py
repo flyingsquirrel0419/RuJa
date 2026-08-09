@@ -131,6 +131,8 @@ try:
         TEMPORAL_DURATION_FROM_FILES,
     )
     from test262_temporal_plain_time_admission import (
+        TEMPORAL_PLAIN_TIME_ADD_FEATURES,
+        TEMPORAL_PLAIN_TIME_ADD_FILES,
         TEMPORAL_PLAIN_TIME_COMPARE_FEATURES,
         TEMPORAL_PLAIN_TIME_COMPARE_FILES,
         TEMPORAL_PLAIN_TIME_CORE_FEATURES,
@@ -141,6 +143,8 @@ try:
         TEMPORAL_PLAIN_TIME_FROM_FILES,
         TEMPORAL_PLAIN_TIME_ROUND_FEATURES,
         TEMPORAL_PLAIN_TIME_ROUND_FILES,
+        TEMPORAL_PLAIN_TIME_SUBTRACT_FEATURES,
+        TEMPORAL_PLAIN_TIME_SUBTRACT_FILES,
         TEMPORAL_PLAIN_TIME_WITH_FEATURES,
         TEMPORAL_PLAIN_TIME_WITH_FILES,
         TEMPORAL_PLAIN_TIME_TO_STRING_FEATURES,
@@ -542,6 +546,8 @@ except ModuleNotFoundError:
         TEMPORAL_DURATION_FROM_FILES,
     )
     from tools.test262_temporal_plain_time_admission import (
+        TEMPORAL_PLAIN_TIME_ADD_FEATURES,
+        TEMPORAL_PLAIN_TIME_ADD_FILES,
         TEMPORAL_PLAIN_TIME_COMPARE_FEATURES,
         TEMPORAL_PLAIN_TIME_COMPARE_FILES,
         TEMPORAL_PLAIN_TIME_CORE_FEATURES,
@@ -552,6 +558,8 @@ except ModuleNotFoundError:
         TEMPORAL_PLAIN_TIME_FROM_FILES,
         TEMPORAL_PLAIN_TIME_ROUND_FEATURES,
         TEMPORAL_PLAIN_TIME_ROUND_FILES,
+        TEMPORAL_PLAIN_TIME_SUBTRACT_FEATURES,
+        TEMPORAL_PLAIN_TIME_SUBTRACT_FILES,
         TEMPORAL_PLAIN_TIME_WITH_FEATURES,
         TEMPORAL_PLAIN_TIME_WITH_FILES,
         TEMPORAL_PLAIN_TIME_TO_STRING_FEATURES,
@@ -2928,6 +2936,24 @@ def temporal_plain_time_with_features(path):
         path, TEMPORAL_PLAIN_TIME_WITH_FILES, TEMPORAL_PLAIN_TIME_WITH_FEATURES
     )
 
+def temporal_plain_time_add_path(path):
+    return _temporal_plain_time_path(path, TEMPORAL_PLAIN_TIME_ADD_FILES)
+
+def temporal_plain_time_add_features(path):
+    return _temporal_plain_time_features(
+        path, TEMPORAL_PLAIN_TIME_ADD_FILES, TEMPORAL_PLAIN_TIME_ADD_FEATURES
+    )
+
+def temporal_plain_time_subtract_path(path):
+    return _temporal_plain_time_path(path, TEMPORAL_PLAIN_TIME_SUBTRACT_FILES)
+
+def temporal_plain_time_subtract_features(path):
+    return _temporal_plain_time_features(
+        path,
+        TEMPORAL_PLAIN_TIME_SUBTRACT_FILES,
+        TEMPORAL_PLAIN_TIME_SUBTRACT_FEATURES,
+    )
+
 def temporal_plain_date_core_path(path):
     if path is None:
         return False
@@ -5046,6 +5072,10 @@ def should_skip(meta, path=None):
         feats.difference_update(temporal_plain_time_round_features(path))
     if path is not None and temporal_plain_time_with_path(path):
         feats.difference_update(temporal_plain_time_with_features(path))
+    if path is not None and temporal_plain_time_add_path(path):
+        feats.difference_update(temporal_plain_time_add_features(path))
+    if path is not None and temporal_plain_time_subtract_path(path):
+        feats.difference_update(temporal_plain_time_subtract_features(path))
     if path is not None and temporal_plain_date_core_path(path):
         feats.difference_update(temporal_plain_date_core_features(path))
     if path is not None and temporal_plain_date_from_path(path):

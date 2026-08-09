@@ -14738,26 +14738,27 @@ locale files stay blocked until that formatter layer is implemented.
 - 장점, 단점 및 영향: JSON 지원 수치는 독립적으로 재현되고 locale 미지원 범위와 선행 아키텍처 요구가 명확해진다. DateTimeFormat 도입 후 direct/Intl402 21개를 intended assertion 기준으로 다시 측정해야 한다.
 ```
 
-## Temporal.PlainTime core, from, valueOf, equals, compare, toString, toJSON, round, and with
+## Temporal.PlainTime core, conversion, formatting, and arithmetic
 
 At pinned Test262 revision
-`9e61c12835c5e4a3bdba93850427e6742c4f64c4`, nine disjoint exact manifests
+`9e61c12835c5e4a3bdba93850427e6742c4f64c4`, eleven disjoint exact manifests
 cover the complete currently implemented PlainTime surface: constructor,
 prototype identity/tag, and six accessor directories are **40/0/0**; static
 `from` is **51/0/0**; prototype `valueOf` is **7/0/0**; prototype `equals` is
 **31/0/0**; static `compare` is **32/0/0**; prototype `toString` is
 **40/0/0**; prototype `toJSON` is **7/0/0**; prototype `round` is
-**42/0/0**; and prototype `with` is **21/0/0**. The combined dedicated CI
-boundary therefore requires **271 pass / 0 fail / 0 skip**. The 22nd direct
+**42/0/0**; prototype `with` is **21/0/0**; and the complete prototype `add`
+and `subtract` directories are **32/0/0** each. The combined dedicated CI
+boundary therefore requires **335 pass / 0 fail / 0 skip**. The 22nd direct
 `with` file, `plaintimelike-invalid.js`, is a non-admitting blocker because it
 constructs the absent PlainMonthDay and PlainYearMonth types before reaching
 the method under test. Forced execution of all 22 files is **21 pass / 1 fail**.
 
 One shared admission module freezes features, includes, flags, and negative
 metadata for every path. Runner and analyzer use exact membership rather than
-a PlainTime prefix, so unimplemented arithmetic, difference, and
+a PlainTime prefix, so unimplemented difference and
 locale directories remain behind the broad Temporal gate. Tooling verifies
-all nine live corpus complements, the complete 21-admission plus one-blocker
+all eleven live corpus complements, the complete 21-admission plus one-blocker
 `with` directory, mutual
 disjointness, future/outside paths, and unavailable or unreadable corpus roots.
 The diagnostic re-runs every requested path and rejects per-file result drift
@@ -14765,12 +14766,12 @@ before reporting its aggregate.
 
 ```text
 [Decision Log]
-- 목적과 의도: real PlainTime hidden-slot/ToTemporalTime 구현으로 도달 가능한 complete 271-file 표면을 method별로 정확히 공개한다.
+- 목적과 의도: real PlainTime hidden-slot/ToTemporalTime/ToTemporalDuration 구현으로 도달 가능한 complete 335-file 표면을 method별로 정확히 공개한다.
 - 기존 구현 및 제약 조건: broad Temporal gate가 PlainTime 493개 전체를 숨겼고 method 부재 상태에서도 unrelated TypeError false positive가 가능했다. with direct 22개 중 한 파일은 아직 없는 PlainMonthDay/PlainYearMonth를 먼저 생성한다.
-- 검토한 주요 대안: PlainTime directory prefix admission, method별 독립 metadata 모듈, forced pass 자동 수용, nine exact manifest와 shared metadata/diagnostic 및 explicit blocker를 검토했다.
-- 선택한 방식: core 40, from 51, valueOf 7, equals 31, compare 32, toString 40, toJSON 7, round 42, with 21을 disjoint manifest로 고정하고 runner/analyzer가 같은 map을 소비한다. live selection은 with directory의 21 admissions와 one-file blocker 합집합도 검증한다.
-- 다른 대안 대신 이 방식을 선택한 이유: prefix는 222개 미구현 sibling과 미래 파일을 자동 허용하며 forced process pass는 intended assertion 도달을 증명하지 않는다. 명시 blocker만 선행 constructor 의존성을 정직하게 보존한다.
-- 장점, 단점 및 영향: exact/forced admitted 271/0/0, full with 21/1, metadata drift, malformed/future path, corpus PermissionError가 재현 가능하다. pinned corpus 전체 검색에서 with 외부 PlainTime receiver 호출자는 없었다. 493개 중 222개는 미승인 상태로 남으며 PlainMonthDay/PlainYearMonth 구현 후 blocker 한 건을 재감사해야 한다.
+- 검토한 주요 대안: PlainTime directory prefix admission, method별 독립 metadata 모듈, forced pass 자동 수용, eleven exact manifest와 shared metadata/diagnostic 및 explicit blocker를 검토했다.
+- 선택한 방식: core 40, from 51, valueOf 7, equals 31, compare 32, toString 40, toJSON 7, round 42, with 21, add 32, subtract 32를 disjoint manifest로 고정하고 runner/analyzer가 같은 map을 소비한다. live selection은 with directory의 21 admissions와 one-file blocker 합집합도 검증한다.
+- 다른 대안 대신 이 방식을 선택한 이유: prefix는 158개 미구현 sibling과 미래 파일을 자동 허용하며 forced process pass는 intended assertion 도달을 증명하지 않는다. 명시 blocker만 선행 constructor 의존성을 정직하게 보존한다.
+- 장점, 단점 및 영향: exact/forced admitted 335/0/0, full with 21/1, metadata drift, malformed/future path, corpus PermissionError가 재현 가능하다. 493개 중 158개는 미승인 상태로 남으며 PlainMonthDay/PlainYearMonth 구현 후 blocker 한 건을 재감사해야 한다.
 ```
 
 ## Temporal.PlainDate.prototype.toPlainDateTime

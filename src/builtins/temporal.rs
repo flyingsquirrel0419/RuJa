@@ -1243,6 +1243,49 @@ pub(crate) fn round_plain_time(
     ))
 }
 
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn add_plain_time(
+    hour: u8,
+    minute: u8,
+    second: u8,
+    millisecond: u16,
+    microsecond: u16,
+    nanosecond: u16,
+    duration_nanoseconds: i128,
+) -> Option<(u8, u8, u8, u16, u16, u16)> {
+    let time_nanoseconds =
+        (((((i128::from(hour) * 60 + i128::from(minute)) * 60 + i128::from(second)) * 1_000
+            + i128::from(millisecond))
+            * 1_000
+            + i128::from(microsecond))
+            * 1_000)
+            + i128::from(nanosecond);
+    let day_nanoseconds = SECONDS_PER_DAY.checked_mul(NS_PER_SECOND)?;
+    let mut remainder = time_nanoseconds
+        .checked_add(duration_nanoseconds)?
+        .rem_euclid(day_nanoseconds);
+
+    let result_hour = remainder / (3_600 * NS_PER_SECOND);
+    remainder %= 3_600 * NS_PER_SECOND;
+    let result_minute = remainder / (60 * NS_PER_SECOND);
+    remainder %= 60 * NS_PER_SECOND;
+    let result_second = remainder / NS_PER_SECOND;
+    remainder %= NS_PER_SECOND;
+    let result_millisecond = remainder / 1_000_000;
+    remainder %= 1_000_000;
+    let result_microsecond = remainder / 1_000;
+    let result_nanosecond = remainder % 1_000;
+
+    Some((
+        u8::try_from(result_hour).ok()?,
+        u8::try_from(result_minute).ok()?,
+        u8::try_from(result_second).ok()?,
+        u16::try_from(result_millisecond).ok()?,
+        u16::try_from(result_microsecond).ok()?,
+        u16::try_from(result_nanosecond).ok()?,
+    ))
+}
+
 fn civil_from_days(days: i128) -> Option<(i128, i128, i128)> {
     let shifted = days.checked_add(719_468)?;
     let era = if shifted >= 0 {
@@ -1566,12 +1609,12 @@ pub(crate) fn format_zoned_date_time(
 #[cfg(test)]
 mod tests {
     use super::{
-        format_instant, format_plain_date, format_plain_time, parse_calendar_identifier,
-        parse_duration_string, parse_instant_string, parse_offset_string, parse_plain_date_string,
-        parse_plain_date_time_string, parse_plain_time_string, parse_time_zone_identifier,
-        parse_time_zone_identifier_like, parse_time_zone_offset, parse_zoned_date_time_string,
-        resolve_zoned_date_time_epoch, AnnotationDisplay, InstantPrecision, InstantRoundingMode,
-        ZonedDateTimeOffsetOption,
+        add_plain_time, format_instant, format_plain_date, format_plain_time,
+        parse_calendar_identifier, parse_duration_string, parse_instant_string,
+        parse_offset_string, parse_plain_date_string, parse_plain_date_time_string,
+        parse_plain_time_string, parse_time_zone_identifier, parse_time_zone_identifier_like,
+        parse_time_zone_offset, parse_zoned_date_time_string, resolve_zoned_date_time_epoch,
+        AnnotationDisplay, InstantPrecision, InstantRoundingMode, ZonedDateTimeOffsetOption,
     };
     use num_bigint::BigInt;
 
@@ -1637,6 +1680,22 @@ mod tests {
         ] {
             assert!(parse_duration_string(source).is_none(), "{source}");
         }
+    }
+
+    #[test]
+    fn adds_plain_time_with_exact_midnight_wrapping() {
+        assert_eq!(
+            add_plain_time(23, 59, 59, 999, 999, 999, 1),
+            Some((0, 0, 0, 0, 0, 0))
+        );
+        assert_eq!(
+            add_plain_time(0, 0, 0, 0, 0, 0, -1),
+            Some((23, 59, 59, 999, 999, 999))
+        );
+        assert_eq!(
+            add_plain_time(12, 34, 56, 123, 456, 789, 86_400_000_000_000),
+            Some((12, 34, 56, 123, 456, 789))
+        );
     }
 
     #[test]

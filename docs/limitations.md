@@ -45,14 +45,14 @@ The following resource limits are enforced:
   construction, subclassing, branded accessors, `@@toStringTag`, static
   `from` and lexicographic `compare`, hidden-record `equals`, and
   option-aware ISO `toString`, hidden-record `toJSON`, exact `round`, partial
-  field `with`, plus always-throwing
+  field `with`, exact `add` and `subtract`, plus always-throwing
   `valueOf`. Conversion
   accepts branded PlainTime/PlainDateTime/ZonedDateTime values, ordered time
   property bags, and the audited time String grammar. `round` supports String
   shorthand, all time units, valid increments, all rounding modes, and
   midnight rollover. `with` implements partial merge and constrain/reject
   overflow, but one direct Test262 case remains blocked by absent
-  PlainMonthDay/PlainYearMonth constructors. Arithmetic, difference, locale serialization,
+  PlainMonthDay/PlainYearMonth constructors. Difference, locale serialization,
   and other PlainTime methods remain unsupported.
   Realm-local `%Temporal.ZonedDateTime%` supports hidden-slot construction for
   UTC and fixed offsets, exact epoch/time-zone/calendar accessors, subclassing,

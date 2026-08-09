@@ -1425,14 +1425,16 @@ jobs:
             tools/test262_temporal_plain_time_compare_admission.txt \
             tools/test262_temporal_plain_time_to_string_admission.txt \
             tools/test262_temporal_plain_time_to_json_admission.txt \
-            tools/test262_temporal_plain_time_round_admission.txt \
-            tools/test262_temporal_plain_time_with_admission.txt | \
+              tools/test262_temporal_plain_time_round_admission.txt \
+              tools/test262_temporal_plain_time_with_admission.txt \
+              tools/test262_temporal_plain_time_add_admission.txt \
+              tools/test262_temporal_plain_time_subtract_admission.txt | \
             sed -e '/^#/d' -e '/^$/d')
           TEST262="$GITHUB_WORKSPACE/test262" \
             python3 tools/test262_temporal_plain_time_diagnostic.py \
             "${files[@]}" > temporal_plain_time_result.txt 2>&1
           cat temporal_plain_time_result.txt
-          grep -q '^RATE=100.0 PASS=271 FAIL=0 SKIP=0 TOTAL=271 RAN=271$' \
+          grep -q '^RATE=100.0 PASS=335 FAIL=0 SKIP=0 TOTAL=335 RAN=335$' \
             temporal_plain_time_result.txt
           mapfile -t with_files < <(
             grep -hEv '^(#|$)' \

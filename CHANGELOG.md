@@ -4,6 +4,30 @@
 
 ### Changed
 
+- Added Realm-local, non-constructable
+  `Temporal.PlainTime.prototype.add` and `subtract`. Both methods brand the
+  receiver before converting the duration-like argument through the shared
+  `ToTemporalDuration` boundary, validate all ten duration fields, and ignore
+  years, months, weeks, and days only after validation. The six time fields
+  are converted and summed as exact integer nanoseconds; subtraction negates
+  only after conversion succeeds, and Euclidean modulo balances every result
+  into one 24-hour day. Options and later arguments are never observed.
+  Fresh results use the native method Realm and ignore receiver subclasses.
+  At pinned Test262 revision
+  `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, both complete direct
+  directories are exact **32/0/0**, moving the combined admitted PlainTime
+  surface to **335/0/0**. `Duration.from` remains allocation 136, add and
+  subtract are allocations 137 and 138, and the Temporal installer now
+  reserves 139 maximum live pins across 140 allocations.
+
+  [Decision Log]
+  - 목적과 의도: 공용 DurationLike 변환을 실제 PlainTime 시계 산술에 연결하면서 변환 관찰 순서, 정밀도, Realm ownership을 완결한다.
+  - 기존 구현 및 제약 조건: Duration.from 단위에서 branded/object/String 변환과 exact 유효성 검사는 완성됐지만 PlainTime에는 duration 시간 필드를 합산하고 하루 안으로 balance하는 경로가 없었다.
+  - 검토한 주요 대안: f64 합산, 임시 Duration/PlainTime 객체, add와 subtract의 독립 구현, date unit까지 시계 합산, 공용 exact record 경로를 검토했다.
+  - 선택한 방식: 변환된 열 필드를 다시 방어 검증하고 여섯 time field만 BigInt에서 i128 nanoseconds로 정확히 합산한다. add/subtract는 하나의 operation-parameterized 경로를 공유하며 subtract 부호 반전은 변환 완료 뒤 수행한다.
+  - 다른 대안 대신 이 방식을 선택한 이유: f64 nanoseconds는 safe integer 범위를 넘고 임시 객체는 관찰 불가능한 GC/OOM 실패면을 늘린다. 독립 경로는 brand/order/Realm drift를 만들며 date unit 합산은 PlainTime 명세와 다르다.
+  - 장점, 단점 및 영향: midnight 양방향 wrap, 최대 Duration 정밀도, hidden getter 비관찰, options 무시, cross-Realm result/error, GC/root/OOM retry와 fuel이 한 경로로 고정된다. difference와 locale 계열은 별도 단위로 남는다.
+
 - Added Realm-local static `Temporal.Duration.from` with a shared
   `ToTemporalDuration` conversion boundary. Branded Duration values copy all
   ten hidden slots without observing public getters; ordinary objects are
@@ -20,9 +44,9 @@
   one requires `Duration.prototype.with/total`, and one requires
   `Duration.prototype.toString`. The former `prototype/blank/basic.js`
   blocker is now admitted, moving Duration core to exact **77/0/0** and forced
-  **77/1/0**. Installer accounting is 137 maximum live pins and 138
-  allocations; `Duration.from` is allocation 136 and all prior indices remain
-  stable.
+  **77/1/0**. At this checkpoint, installer accounting was 137 maximum live
+  pins and 138 allocations; `Duration.from` is allocation 136 and all prior
+  indices remain stable.
 
   [Decision Log]
   - 목적과 의도: PlainTime arithmetic과 후속 Duration API가 공유할 실제 ToTemporalDuration 경계를 먼저 완결하고 Duration.from 자체를 독립적으로 검증한다.
@@ -30,7 +54,7 @@
   - 검토한 주요 대안: add/subtract 내부 전용 변환, 세 API 동시 구현, public accessor 복사, f64 기반 fractional parsing, 공용 converter와 from을 선행 단위로 구현하는 방식을 검토했다.
   - 선택한 방식: hidden-slot fast path, rooted 10-field partial record, allocation-free checked-decimal parser를 하나의 converter로 합치고 static from은 method-Realm factory만 호출한다. arithmetic은 다음 단위에서 같은 converter를 사용한다.
   - 다른 대안 대신 이 방식을 선택한 이유: API별 변환 복제는 getter/order/range drift를 만들고 public accessors는 명세에 없는 user code를 관찰한다. 세 API 동시 변경은 parser와 arithmetic 결함을 분리하기 어렵고 f64 fraction 계산은 nanosecond 정확도를 잃는다.
-  - 장점, 단점 및 영향: property/coercion order, hidden getter 비관찰, exact fractional parsing, cross-Realm result/error, GC/OOM/root retry와 byte fuel이 고정된다. from 29개와 core 77개는 exact admission되며 with/total/toString 의존 두 파일은 거짓 지원 없이 남는다. 다음 PlainTime.add/subtract는 변환과 유효성 검사를 재사용하고 정확한 i128/BigInt 시간 합산만 추가하면 된다.
+  - 장점, 단점 및 영향: property/coercion order, hidden getter 비관찰, exact fractional parsing, cross-Realm result/error, GC/OOM/root retry와 byte fuel이 고정된다. from 29개와 core 77개는 exact admission되며 with/total/toString 의존 두 파일은 거짓 지원 없이 남는다. 위 arithmetic 단위가 이 변환과 유효성 검사를 재사용해 정확한 i128/BigInt 시간 합산을 추가한다.
 
 - Added Realm-local `%Temporal.PlainTime%` with immutable six-field hidden
   slots, subclass-aware construction, six branded accessors, `@@toStringTag`,
@@ -67,8 +91,9 @@
   Constructor conversion remains left-to-right, options are observed at their
   specification point, and all result/prototype allocations retain exact
   GC-root, OOM-retry, and input-byte fuel behavior. At pinned Test262 revision
-  `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the complete admitted surface is
-  exact **271/0/0**: core **40**, `from` **51**, `valueOf` **7**, `equals`
+  `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the admitted surface before the
+  arithmetic entry above was exact **271/0/0**: core **40**, `from` **51**,
+  `valueOf` **7**, `equals`
   **31**, `compare` **32**, `toString` **40**, `toJSON` **7**, and `round`
   **42**, plus `with` **21**. The remaining direct `with` file is frozen as a
   blocker because it invokes the absent PlainMonthDay and PlainYearMonth
@@ -77,7 +102,7 @@
   **35/0/0** with no direct blockers. A ZonedDateTime plural-smallest-unit
   helper dependency also moves the fixed-offset boundary from **259/7** to
   **260/6** over 266 files. Installer accounting is 136 maximum live pins and
-  137 allocations.
+  137 allocations at that checkpoint.
 
   [Decision Log]
   - 목적과 의도: 후속 PlainTime 연산이 신뢰할 수 있는 위조 불가능한 time record와 완전한 ToTemporalTime 입력 경계를 확립하고 PlainDate bridge의 남은 direct blocker를 제거한다.

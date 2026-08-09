@@ -6290,7 +6290,7 @@ pub(crate) fn install_temporal_namespace_in_env(
     global: Option<&Value>,
     object_proto: Value,
 ) -> error::Result<Value> {
-    vm.try_reserve_gc_pins(137)?;
+    vm.try_reserve_gc_pins(139)?;
     let mut pin_count = 0;
     let result = (|| {
         let instant_prototype = Value::Object(vm.alloc(HeapObj::Object(ObjectData {
@@ -7045,6 +7045,20 @@ pub(crate) fn install_temporal_namespace_in_env(
             env,
         )?);
         pin_count += vm.pin(&duration_from);
+        let plain_time_add = Value::Object(vm.new_native_function_in_env_with_gc_retry(
+            "add",
+            temporal_plain_time_add,
+            1,
+            env,
+        )?);
+        pin_count += vm.pin(&plain_time_add);
+        let plain_time_subtract = Value::Object(vm.new_native_function_in_env_with_gc_retry(
+            "subtract",
+            temporal_plain_time_subtract,
+            1,
+            env,
+        )?);
+        pin_count += vm.pin(&plain_time_subtract);
 
         let Value::Object(instant_constructor_index) = instant_constructor.clone() else {
             unreachable!()
@@ -7366,6 +7380,11 @@ pub(crate) fn install_temporal_namespace_in_env(
             props.insert(PropertyKey::from("toJSON"), data_prop(plain_time_to_json));
             props.insert(PropertyKey::from("round"), data_prop(plain_time_round));
             props.insert(PropertyKey::from("with"), data_prop(plain_time_with));
+            props.insert(PropertyKey::from("add"), data_prop(plain_time_add));
+            props.insert(
+                PropertyKey::from("subtract"),
+                data_prop(plain_time_subtract),
+            );
             props.insert(PropertyKey::from("valueOf"), data_prop(plain_time_value_of));
             let mut tag = data_prop(Value::String(Arc::from("Temporal.PlainTime")));
             tag.writable = false;
@@ -7901,6 +7920,24 @@ fn temporal_duration_from(
     let fields = to_temporal_duration_fields(vm, args.first().unwrap_or(&Value::Undefined))?;
     let realm = vm.native_callee_closure().unwrap_or(vm.global);
     create_temporal_duration_in_realm(vm, fields, realm)
+}
+
+fn temporal_duration_time_nanoseconds(fields: TemporalDurationFields) -> error::Result<i128> {
+    if !temporal_duration_is_valid(&fields) {
+        return Err(Error::range("Invalid Temporal.Duration fields"));
+    }
+    let integer = |value: f64| {
+        BigInt::from_f64(value).ok_or_else(|| Error::range("Invalid Temporal.Duration fields"))
+    };
+    let total = integer(fields.hours)? * BigInt::from(3_600_000_000_000_i64)
+        + integer(fields.minutes)? * BigInt::from(60_000_000_000_i64)
+        + integer(fields.seconds)? * BigInt::from(1_000_000_000_i64)
+        + integer(fields.milliseconds)? * BigInt::from(1_000_000_i64)
+        + integer(fields.microseconds)? * BigInt::from(1_000_i64)
+        + integer(fields.nanoseconds)?;
+    total
+        .to_i128()
+        .ok_or_else(|| Error::range("Temporal.Duration time fields are out of range"))
 }
 
 fn temporal_duration_constructor(
@@ -10266,6 +10303,63 @@ fn temporal_plain_time_with(
     let fields = result?;
     let realm = vm.native_callee_closure().unwrap_or(vm.global);
     create_temporal_plain_time_in_realm(vm, fields, realm)
+}
+
+fn temporal_plain_time_add_or_subtract(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+    subtract: bool,
+) -> error::Result<Value> {
+    let receiver = temporal_plain_time_slots(vm, this)?;
+    let duration = to_temporal_duration_fields(vm, args.first().unwrap_or(&Value::Undefined))?;
+    let duration_nanoseconds = temporal_duration_time_nanoseconds(duration)?;
+    let duration_nanoseconds = if subtract {
+        duration_nanoseconds
+            .checked_neg()
+            .ok_or_else(|| Error::range("Temporal.Duration time fields are out of range"))?
+    } else {
+        duration_nanoseconds
+    };
+    let (hour, minute, second, millisecond, microsecond, nanosecond) = temporal::add_plain_time(
+        receiver.hour,
+        receiver.minute,
+        receiver.second,
+        receiver.millisecond,
+        receiver.microsecond,
+        receiver.nanosecond,
+        duration_nanoseconds,
+    )
+    .ok_or_else(|| Error::range("Temporal.PlainTime arithmetic failed"))?;
+    let realm = vm.native_callee_closure().unwrap_or(vm.global);
+    create_temporal_plain_time_in_realm(
+        vm,
+        TemporalPlainTimeFields {
+            hour,
+            minute,
+            second,
+            millisecond,
+            microsecond,
+            nanosecond,
+        },
+        realm,
+    )
+}
+
+fn temporal_plain_time_add(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    temporal_plain_time_add_or_subtract(vm, args, this, false)
+}
+
+fn temporal_plain_time_subtract(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    temporal_plain_time_add_or_subtract(vm, args, this, true)
 }
 
 fn temporal_plain_time_format(

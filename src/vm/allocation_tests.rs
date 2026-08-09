@@ -644,6 +644,60 @@ fn temporal_namespace_installation_restores_roots_after_duration_from_failure() 
 }
 
 #[test]
+fn temporal_namespace_installation_restores_roots_after_plain_time_add_failure() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.gc();
+    let original = vm.get_global("Temporal");
+    let baseline_pins = vm.gc_pins.len();
+    let baseline_live = vm.heap.live_count();
+    let baseline_registries = realm_registry_counts(&vm);
+    let global = vm.global;
+    let object_proto = vm.object_proto.clone();
+    // Duration.from remains allocation 136; PlainTime.prototype.add is 137.
+    vm.set_max_heap_objects(Some(baseline_live + 136));
+
+    let result =
+        crate::builtins::install_temporal_namespace_in_env(&mut vm, global, None, object_proto);
+
+    vm.set_max_heap_objects(None);
+    let error = result.expect_err("PlainTime.prototype.add allocation must hit the cap");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(error.message, "heap limit exceeded");
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.get_global("Temporal"), original);
+    assert_eq!(realm_registry_counts(&vm), baseline_registries);
+    vm.gc();
+    assert_eq!(vm.heap.live_count(), baseline_live);
+}
+
+#[test]
+fn temporal_namespace_installation_restores_roots_after_plain_time_subtract_failure() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.gc();
+    let original = vm.get_global("Temporal");
+    let baseline_pins = vm.gc_pins.len();
+    let baseline_live = vm.heap.live_count();
+    let baseline_registries = realm_registry_counts(&vm);
+    let global = vm.global;
+    let object_proto = vm.object_proto.clone();
+    // PlainTime.prototype.subtract is allocation 138.
+    vm.set_max_heap_objects(Some(baseline_live + 137));
+
+    let result =
+        crate::builtins::install_temporal_namespace_in_env(&mut vm, global, None, object_proto);
+
+    vm.set_max_heap_objects(None);
+    let error = result.expect_err("PlainTime.prototype.subtract allocation must hit the cap");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(error.message, "heap limit exceeded");
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.get_global("Temporal"), original);
+    assert_eq!(realm_registry_counts(&vm), baseline_registries);
+    vm.gc();
+    assert_eq!(vm.heap.live_count(), baseline_live);
+}
+
+#[test]
 fn temporal_namespace_installation_root_reservation_failure_is_atomic() {
     let mut vm = Vm::new().expect("failed to initialize VM");
     vm.gc();
@@ -676,9 +730,9 @@ fn temporal_namespace_installation_covers_every_allocation_boundary() {
     let baseline_live = vm.heap.live_count();
     let global = vm.global;
 
-    // Allocations 18 through 138 cover the method/accessor batches and the
+    // Allocations 18 through 140 cover the method/accessor batches and the
     // two namespace objects that must publish only after the batch succeeds.
-    for extra_capacity in 17..138 {
+    for extra_capacity in 17..140 {
         vm.set_max_heap_objects(Some(baseline_live + extra_capacity));
         let object_proto = vm.object_proto.clone();
         let result =
@@ -699,16 +753,16 @@ fn temporal_namespace_installation_covers_every_allocation_boundary() {
         );
     }
 
-    vm.set_max_heap_objects(Some(baseline_live + 138));
+    vm.set_max_heap_objects(Some(baseline_live + 140));
     let object_proto = vm.object_proto.clone();
     let temporal =
         crate::builtins::install_temporal_namespace_in_env(&mut vm, global, None, object_proto)
-            .expect("exact 138-object capacity must install the complete namespace");
+            .expect("exact 140-object capacity must install the complete namespace");
     vm.set_max_heap_objects(None);
     assert_eq!(vm.gc_pins.len(), baseline_pins);
     assert_eq!(vm.get_global("Temporal"), temporal);
     assert_eq!(
-        vm.run("typeof Temporal.Duration.from === 'function' && typeof Temporal.PlainDate === 'function' && typeof Temporal.PlainDate.from === 'function' && typeof Temporal.PlainDate.compare === 'function' && typeof Temporal.PlainDate.prototype.equals === 'function' && typeof Temporal.PlainDate.prototype.toPlainDateTime === 'function' && typeof Temporal.PlainDate.prototype.toString === 'function' && typeof Temporal.PlainDate.prototype.toJSON === 'function' && typeof Temporal.PlainTime === 'function' && typeof Temporal.PlainTime.from === 'function' && typeof Temporal.PlainTime.compare === 'function' && typeof Temporal.PlainTime.prototype.equals === 'function' && typeof Temporal.PlainTime.prototype.toString === 'function' && typeof Temporal.PlainTime.prototype.toJSON === 'function' && typeof Temporal.PlainTime.prototype.round === 'function' && typeof Temporal.PlainTime.prototype.with === 'function' && typeof Temporal.PlainTime.prototype.valueOf === 'function' && typeof Temporal.PlainDateTime.compare === 'function' && typeof Temporal.PlainDateTime.prototype.equals")
+        vm.run("typeof Temporal.Duration.from === 'function' && typeof Temporal.PlainDate === 'function' && typeof Temporal.PlainDate.from === 'function' && typeof Temporal.PlainDate.compare === 'function' && typeof Temporal.PlainDate.prototype.equals === 'function' && typeof Temporal.PlainDate.prototype.toPlainDateTime === 'function' && typeof Temporal.PlainDate.prototype.toString === 'function' && typeof Temporal.PlainDate.prototype.toJSON === 'function' && typeof Temporal.PlainTime === 'function' && typeof Temporal.PlainTime.from === 'function' && typeof Temporal.PlainTime.compare === 'function' && typeof Temporal.PlainTime.prototype.equals === 'function' && typeof Temporal.PlainTime.prototype.toString === 'function' && typeof Temporal.PlainTime.prototype.toJSON === 'function' && typeof Temporal.PlainTime.prototype.round === 'function' && typeof Temporal.PlainTime.prototype.with === 'function' && typeof Temporal.PlainTime.prototype.add === 'function' && typeof Temporal.PlainTime.prototype.subtract === 'function' && typeof Temporal.PlainTime.prototype.valueOf === 'function' && typeof Temporal.PlainDateTime.compare === 'function' && typeof Temporal.PlainDateTime.prototype.equals")
             .expect("installed namespace should remain usable"),
         Value::String(Arc::from("function"))
     );
@@ -1273,6 +1327,113 @@ fn temporal_plain_time_with_roots_observable_inputs_and_retries_failures() {
             .expect("PlainTime.with should retry after reservation failures"),
         Value::Number(5.0)
     );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+}
+
+#[test]
+fn temporal_plain_time_arithmetic_roots_duration_input_and_retries_failures() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forcePlainTimeArithmeticGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("PlainTime arithmetic GC hook should register");
+    vm.register_fn(
+        "failPlainTimeArithmeticRoot",
+        |vm, _, _| {
+            vm.fail_next_gc_pin_reservation = true;
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("PlainTime arithmetic root hook should register");
+    vm.run(
+        r#"
+        globalThis.plainTimeArithmeticValue = new Temporal.PlainTime(12, 34, 56);
+        globalThis.plainTimeArithmeticGets = 0;
+        globalThis.plainTimeArithmeticBag = {};
+        Object.defineProperty(plainTimeArithmeticBag, 'hours', {
+          get: function () {
+            plainTimeArithmeticGets++;
+            forcePlainTimeArithmeticGc();
+            return { valueOf: function () {
+              plainTimeArithmeticGets += 100;
+              forcePlainTimeArithmeticGc();
+              return 2;
+            } };
+          }, configurable: true
+        });
+        globalThis.plainTimeArithmeticResultBag = {};
+        Object.defineProperty(plainTimeArithmeticResultBag, 'hours', {
+          get: function () { return { valueOf: function () {
+            failPlainTimeArithmeticRoot();
+            return 1;
+          } }; }
+        });
+        "#,
+    )
+    .expect("PlainTime arithmetic fixtures should initialize");
+    vm.gc();
+    let baseline_pins = vm.gc_pins.len();
+    let baseline_live = vm.heap.live_count();
+
+    assert_eq!(
+        vm.run("plainTimeArithmeticValue.add(plainTimeArithmeticBag).toString();")
+            .expect("add duration input must survive getter and coercion GC"),
+        Value::String(Arc::from("14:34:56"))
+    );
+    assert_eq!(
+        vm.run("plainTimeArithmeticValue.subtract(plainTimeArithmeticBag).toString();")
+            .expect("subtract duration input must survive getter and coercion GC"),
+        Value::String(Arc::from("10:34:56"))
+    );
+    assert_eq!(
+        vm.run("plainTimeArithmeticGets;")
+            .expect("PlainTime arithmetic getter count should remain readable"),
+        Value::Number(202.0)
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    vm.fail_next_gc_pin_reservation = true;
+    let error = vm
+        .run("plainTimeArithmeticValue.add(plainTimeArithmeticBag);")
+        .expect_err("add input-root reservation must fail before getters");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(
+        vm.run("plainTimeArithmeticGets;")
+            .expect("PlainTime arithmetic getter count should remain readable"),
+        Value::Number(202.0)
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    let error = vm
+        .run("plainTimeArithmeticValue.subtract(plainTimeArithmeticResultBag);")
+        .expect_err("subtract result-prototype reservation must fail");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert!(!vm.fail_next_gc_pin_reservation);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    vm.set_max_heap_objects(Some(baseline_live));
+    let error = vm
+        .run("plainTimeArithmeticValue.add('PT1H');")
+        .expect_err("add result allocation must obey the exact heap cap");
+    vm.set_max_heap_objects(None);
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(error.message, "heap limit exceeded");
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.heap.live_count(), baseline_live);
+
+    let _garbage = vm.new_object().expect("garbage allocation should succeed");
+    vm.set_max_heap_objects(Some(vm.heap.live_count()));
+    let result = vm
+        .run("plainTimeArithmeticValue.subtract('PT1H').hour;")
+        .expect("PlainTime arithmetic should retry after collection");
+    vm.set_max_heap_objects(None);
+    assert_eq!(result, Value::Number(11.0));
     assert_eq!(vm.gc_pins.len(), baseline_pins);
 }
 

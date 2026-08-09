@@ -4748,8 +4748,8 @@ can invoke user code. Supported Temporal date/time brands are rejected from
 hidden kinds without observing public properties; Instant and Duration remain
 eligible ordinary partial bags as required. Overflow is read only after all
 field conversions, and result allocation occurs after input roots are released
-through the method Realm's intrinsic prototype. The installer now reserves 136
-live pins across 137 allocations.
+through the method Realm's intrinsic prototype. At the `with` checkpoint, the
+installer reserved 136 live pins across 137 allocations.
 
 ```text
 [Decision Log]
@@ -4778,8 +4778,8 @@ to terminate the duration, and scales up to nine decimal digits against exact
 i128 unit nanoseconds. It then splits fractional hours or minutes into lower
 integer fields. Static `from` allocates only the final Duration against the
 intrinsic prototype of the native method Realm. It is allocation 136; the
-complete Temporal installer now reserves 137 maximum live pins across 138
-allocations while preserving every earlier index.
+Temporal installer at this checkpoint reserved 137 maximum live pins across
+138 allocations while preserving every earlier index.
 
 ```text
 [Decision Log]
@@ -4789,6 +4789,35 @@ allocations while preserving every earlier index.
 - 선택한 방식: branded fast path, rooted alphabetical partial record, checked-decimal ISO parser, 기존 exact validator, method-Realm factory를 한 경로로 합친다. PlainTime arithmetic은 다음 단위에서 이 record를 정확한 정수 nanoseconds로 변환한다.
 - 다른 대안 대신 이 방식을 선택한 이유: public accessors는 hidden-slot 비관찰을 깨고 converter 복제는 getter/coercion/range 순서를 분기시킨다. f64 합산은 2^53 인접 값을 오판하며 세 API 동시 구현은 parser와 balance 실패를 격리하기 어렵다.
 - 장점, 단점 및 영향: fresh clone, cross-Realm brand/result/error, exact fraction/range, GC/root/OOM retry와 input-byte fuel이 재현된다. Duration.from direct 두 파일은 아직 없는 with/total 및 toString에서 후행 실패하므로 blocker로 유지된다. 다음 add/subtract는 options를 관찰하지 않고 years/months/weeks/days를 계산에서 버리되 변환 유효성은 그대로 적용해야 한다.
+```
+
+## Temporal PlainTime arithmetic
+
+`Temporal.PlainTime.prototype.add` and `subtract` share one native arithmetic
+path. Receiver branding precedes every argument observation. The duration-like
+argument then crosses the same branded-slot, rooted property-bag, or checked
+ISO String boundary as `Temporal.Duration.from`, including validation of all
+ten fields. Years, months, weeks, and days are discarded only for clock
+calculation; their invalid values still reject the conversion.
+
+Each of the six time fields is converted independently to exact integer
+nanoseconds before summation. Subtract negates that completed sum rather than
+changing conversion input or order. The receiver time and duration are added
+in i128, reduced with Euclidean modulo over 24 hours, and split back into the
+six compact PlainTime slots. No options property is read. Result allocation
+uses the intrinsic PlainTime prototype from the native method Realm, not the
+receiver's subclass or constructor. `Duration.from` remains allocation 136;
+add and subtract are 137 and 138. The installer reserves 139 maximum live pins
+across 140 allocations.
+
+```text
+[Decision Log]
+- 목적과 의도: AddDurationToTime의 exact clock arithmetic을 기존 ToTemporalDuration 및 PlainTime hidden-slot 경계에 연결한다.
+- 기존 구현 및 제약 조건: DurationLike 변환은 exact range와 observable order를 보장하지만 결과 필드는 f64 hidden integer로 저장된다. 최대 normalized duration의 nanoseconds는 Number safe range를 넘고 date units는 PlainTime 계산에서 무시해야 한다.
+- 검토한 주요 대안: f64 산술, temporary Duration clone, add/subtract별 구현, BigInt 결과를 끝까지 유지, 공용 i128 balance helper를 검토했다.
+- 선택한 방식: validated f64 integer를 field별 BigInt로 복원해 exact nanoseconds sum을 만들고 bounded i128로 변환한다. shared helper가 signed delta를 Euclidean modulo로 balance하며 두 메서드는 subtract의 post-conversion negate만 달리한다.
+- 다른 대안 대신 이 방식을 선택한 이유: f64 합산은 큰 second/subsecond 조합에서 정밀도를 잃고 temporary object는 명세에 없는 allocation을 추가한다. 공용 경로는 brand/order/options/Realm 동작의 분기를 막고 i128은 Duration limit보다 충분히 넓다.
+- 장점, 단점 및 영향: 최대 경계, 음수 midnight wrap, hidden getter 비관찰, abrupt identity, ignored options, method-Realm 결과와 GC/root/OOM/fuel 경계가 재현된다. calendar-relative date arithmetic이나 difference semantics는 포함하지 않는다.
 ```
 
 **Next:** [Features](features.md) · [Known limitations](limitations.md) · [Back to README](../README.md)

@@ -623,6 +623,61 @@ fn temporal_duration_from_precharges_source_and_field_strings() {
 }
 
 #[test]
+fn temporal_plain_time_arithmetic_precharges_duration_strings_and_fields() {
+    const BUDGET: i64 = 20_000;
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        globalThis.plainTimeArithmeticFuel = new Temporal.PlainTime(12, 34, 56);
+        globalThis.plainTimeArithmeticShort = "PT1S";
+        globalThis.plainTimeArithmeticLong = "PT" + "0".repeat(512) + "1S";
+        globalThis.plainTimeArithmeticShortField = { valueOf() { return "1"; } };
+        globalThis.plainTimeArithmeticLongField = { valueOf() { return "0".repeat(512) + "1"; } };
+        "#,
+    )
+    .expect("PlainTime arithmetic fuel fixtures should initialize");
+
+    for (short, long, label) in [
+        (
+            "plainTimeArithmeticFuel.add(plainTimeArithmeticShort);",
+            "plainTimeArithmeticFuel.add(plainTimeArithmeticLong);",
+            "source",
+        ),
+        (
+            "plainTimeArithmeticFuel.subtract({ seconds: plainTimeArithmeticShortField });",
+            "plainTimeArithmeticFuel.subtract({ seconds: plainTimeArithmeticLongField });",
+            "field",
+        ),
+    ] {
+        vm.set_fuel(Some(BUDGET));
+        vm.run(short)
+            .expect("short PlainTime arithmetic conversion should run");
+        let short_work = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+
+        vm.set_fuel(Some(BUDGET));
+        vm.run(long)
+            .expect("long PlainTime arithmetic conversion should run");
+        let long_work = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+        assert!(
+            long_work >= short_work + 500,
+            "PlainTime arithmetic {label} conversion must charge produced bytes"
+        );
+
+        vm.set_fuel(Some(long_work - 1));
+        let error = vm
+            .run(long)
+            .expect_err("N-1 fuel must abort PlainTime arithmetic conversion");
+        assert_eq!(error.kind, ruja::ErrorKind::Fuel, "{label}");
+        assert_eq!(vm.fuel_remaining(), Some(0), "{label}");
+
+        vm.set_fuel(Some(long_work));
+        vm.run(long)
+            .expect("exact fuel must complete PlainTime arithmetic conversion");
+        assert_eq!(vm.fuel_remaining(), Some(0), "{label}");
+    }
+}
+
+#[test]
 fn temporal_plain_date_time_precharges_numeric_and_calendar_strings() {
     const BUDGET: i64 = 20_000;
     let mut vm = Vm::new().expect("failed to initialize VM");

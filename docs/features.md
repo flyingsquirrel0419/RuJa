@@ -335,7 +335,8 @@
   six immutable ISO time fields in hidden slots, honors subclass/newTarget
   prototypes, and exposes branded accessors, `@@toStringTag`, `from`, static
   `compare`, `equals`, option-aware ISO `toString`, hidden-record `toJSON`,
-  exact `round`, partial-record `with`, and `valueOf`. `from`,
+  exact `round`, partial-record `with`, exact `add` and `subtract`, and
+  `valueOf`. `from`,
   `compare`, and `equals` share
   ordered property-bag, String,
   PlainDateTime, ZonedDateTime, and cross-Realm PlainTime conversion without
@@ -349,7 +350,10 @@
   every Temporal rounding mode; it wraps midnight and creates a fresh result
   in the method Realm. `with` rejects calendar/time-zone-bearing or branded
   date/time inputs, merges defined partial fields in observable specification
-  order, and supports both constrain and reject overflow
+  order, and supports both constrain and reject overflow. `add` and
+  `subtract` validate complete DurationLike inputs, combine only the six time
+  units as exact integer nanoseconds, wrap at midnight, ignore options, and
+  return fresh method-Realm results
 - **Temporal duration conversion**: `Temporal.Duration.from` copies branded
   hidden slots without public getter observation, or converts all ten plural
   duration properties in specification order. ISO Duration parsing supports
