@@ -391,6 +391,47 @@ fn temporal_plain_time_round_precharges_option_strings() {
 }
 
 #[test]
+fn temporal_plain_time_with_precharges_field_and_overflow_strings() {
+    const BUDGET: i64 = 20_000;
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        globalThis.plainTimeWithFuel = new Temporal.PlainTime(12, 34, 56);
+        globalThis.plainTimeWithShortNumber = { valueOf() { return '1'; } };
+        globalThis.plainTimeWithLongNumber = { valueOf() { return '1' + ' '.repeat(512); } };
+        globalThis.plainTimeWithShortString = { toString() { return 'constrain'; } };
+        globalThis.plainTimeWithLongString = { toString() { return 'x'.repeat(512); } };
+        "#,
+    )
+    .expect("PlainTime.with fuel fixtures should initialize");
+
+    for (expression_short, expression_long, label) in [
+        (
+            "plainTimeWithFuel.with({ hour: plainTimeWithShortNumber });",
+            "plainTimeWithFuel.with({ hour: plainTimeWithLongNumber });",
+            "field",
+        ),
+        (
+            "try { plainTimeWithFuel.with({ hour: 1 }, { overflow: plainTimeWithShortString }); } catch (error) {}",
+            "try { plainTimeWithFuel.with({ hour: 1 }, { overflow: plainTimeWithLongString }); } catch (error) {}",
+            "overflow",
+        ),
+    ] {
+        vm.set_fuel(Some(BUDGET));
+        vm.run(expression_short).expect("short conversion should run");
+        let short_work = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+
+        vm.set_fuel(Some(BUDGET));
+        vm.run(expression_long).expect("long conversion should run");
+        let long_work = BUDGET - vm.fuel_remaining().expect("fuel should remain enabled");
+        assert!(
+            long_work >= short_work + 500,
+            "{label} conversion must charge the produced string"
+        );
+    }
+}
+
+#[test]
 fn temporal_plain_date_to_string_precharges_calendar_name_bytes() {
     const BUDGET: i64 = 10_000;
     let mut vm = Vm::new().expect("failed to initialize VM");

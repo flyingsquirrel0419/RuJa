@@ -590,6 +590,33 @@ fn temporal_namespace_installation_restores_roots_after_plain_time_round_failure
 }
 
 #[test]
+fn temporal_namespace_installation_restores_roots_after_plain_time_with_failure() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.gc();
+    let original = vm.get_global("Temporal");
+    let baseline_pins = vm.gc_pins.len();
+    let baseline_live = vm.heap.live_count();
+    let baseline_registries = realm_registry_counts(&vm);
+    let global = vm.global;
+    let object_proto = vm.object_proto.clone();
+    // The first 134 allocations fit; PlainTime.prototype.with is allocation 135.
+    vm.set_max_heap_objects(Some(baseline_live + 134));
+
+    let result =
+        crate::builtins::install_temporal_namespace_in_env(&mut vm, global, None, object_proto);
+
+    vm.set_max_heap_objects(None);
+    let error = result.expect_err("PlainTime.prototype.with allocation must hit the cap");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(error.message, "heap limit exceeded");
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.get_global("Temporal"), original);
+    assert_eq!(realm_registry_counts(&vm), baseline_registries);
+    vm.gc();
+    assert_eq!(vm.heap.live_count(), baseline_live);
+}
+
+#[test]
 fn temporal_namespace_installation_covers_every_allocation_boundary() {
     let mut vm = Vm::new().expect("failed to initialize VM");
     vm.gc();
@@ -598,9 +625,9 @@ fn temporal_namespace_installation_covers_every_allocation_boundary() {
     let baseline_live = vm.heap.live_count();
     let global = vm.global;
 
-    // Allocations 18 through 136 cover the method/accessor batches and the
+    // Allocations 18 through 137 cover the method/accessor batches and the
     // two namespace objects that must publish only after the batch succeeds.
-    for extra_capacity in 17..136 {
+    for extra_capacity in 17..137 {
         vm.set_max_heap_objects(Some(baseline_live + extra_capacity));
         let object_proto = vm.object_proto.clone();
         let result =
@@ -621,16 +648,16 @@ fn temporal_namespace_installation_covers_every_allocation_boundary() {
         );
     }
 
-    vm.set_max_heap_objects(Some(baseline_live + 136));
+    vm.set_max_heap_objects(Some(baseline_live + 137));
     let object_proto = vm.object_proto.clone();
     let temporal =
         crate::builtins::install_temporal_namespace_in_env(&mut vm, global, None, object_proto)
-            .expect("exact 136-object capacity must install the complete namespace");
+            .expect("exact 137-object capacity must install the complete namespace");
     vm.set_max_heap_objects(None);
     assert_eq!(vm.gc_pins.len(), baseline_pins);
     assert_eq!(vm.get_global("Temporal"), temporal);
     assert_eq!(
-        vm.run("typeof Temporal.PlainDate === 'function' && typeof Temporal.PlainDate.from === 'function' && typeof Temporal.PlainDate.compare === 'function' && typeof Temporal.PlainDate.prototype.equals === 'function' && typeof Temporal.PlainDate.prototype.toPlainDateTime === 'function' && typeof Temporal.PlainDate.prototype.toString === 'function' && typeof Temporal.PlainDate.prototype.toJSON === 'function' && typeof Temporal.PlainTime === 'function' && typeof Temporal.PlainTime.from === 'function' && typeof Temporal.PlainTime.compare === 'function' && typeof Temporal.PlainTime.prototype.equals === 'function' && typeof Temporal.PlainTime.prototype.toString === 'function' && typeof Temporal.PlainTime.prototype.toJSON === 'function' && typeof Temporal.PlainTime.prototype.round === 'function' && typeof Temporal.PlainTime.prototype.valueOf === 'function' && typeof Temporal.PlainDateTime.compare === 'function' && typeof Temporal.PlainDateTime.prototype.equals")
+        vm.run("typeof Temporal.PlainDate === 'function' && typeof Temporal.PlainDate.from === 'function' && typeof Temporal.PlainDate.compare === 'function' && typeof Temporal.PlainDate.prototype.equals === 'function' && typeof Temporal.PlainDate.prototype.toPlainDateTime === 'function' && typeof Temporal.PlainDate.prototype.toString === 'function' && typeof Temporal.PlainDate.prototype.toJSON === 'function' && typeof Temporal.PlainTime === 'function' && typeof Temporal.PlainTime.from === 'function' && typeof Temporal.PlainTime.compare === 'function' && typeof Temporal.PlainTime.prototype.equals === 'function' && typeof Temporal.PlainTime.prototype.toString === 'function' && typeof Temporal.PlainTime.prototype.toJSON === 'function' && typeof Temporal.PlainTime.prototype.round === 'function' && typeof Temporal.PlainTime.prototype.with === 'function' && typeof Temporal.PlainTime.prototype.valueOf === 'function' && typeof Temporal.PlainDateTime.compare === 'function' && typeof Temporal.PlainDateTime.prototype.equals")
             .expect("installed namespace should remain usable"),
         Value::String(Arc::from("function"))
     );
@@ -1000,6 +1027,200 @@ fn temporal_plain_time_round_roots_options_and_retries_every_reservation_failure
         vm.run("plainTimeRoundRootValue.round('second').second;")
             .expect("PlainTime.round should retry after reservation failures"),
         Value::Number(56.0)
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+}
+
+#[test]
+fn temporal_plain_time_with_result_allocation_restores_roots_and_retries() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        "globalThis.plainTimeWithValue = new Temporal.PlainTime(12, 34, 56); \
+         globalThis.plainTimeWithFields = { minute: 5 };",
+    )
+    .expect("PlainTime.with fixtures should initialize");
+    vm.gc();
+    let baseline_pins = vm.gc_pins.len();
+    let baseline_live = vm.heap.live_count();
+
+    vm.set_max_heap_objects(Some(baseline_live));
+    let error = vm
+        .run("plainTimeWithValue.with(plainTimeWithFields);")
+        .expect_err("PlainTime.with result allocation must obey the exact heap cap");
+    vm.set_max_heap_objects(None);
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(error.message, "heap limit exceeded");
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(vm.heap.live_count(), baseline_live);
+
+    let _garbage = vm.new_object().expect("garbage allocation should succeed");
+    vm.set_max_heap_objects(Some(vm.heap.live_count()));
+    let result = vm
+        .run("plainTimeWithValue.with(plainTimeWithFields).minute;")
+        .expect("PlainTime.with should retry after collection");
+    vm.set_max_heap_objects(None);
+    assert_eq!(result, Value::Number(5.0));
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+}
+
+#[test]
+fn temporal_plain_time_with_roots_observable_inputs_and_retries_failures() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forcePlainTimeWithGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("GC hook should register");
+    vm.register_fn(
+        "failPlainTimeWithRoot",
+        |vm, _, _| {
+            vm.fail_next_gc_pin_reservation = true;
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("root-reservation hook should register");
+    vm.run(
+        r#"
+        globalThis.plainTimeWithRootValue = new Temporal.PlainTime(12, 34, 56, 123, 456, 789);
+        globalThis.plainTimeWithRootOrder = [];
+        globalThis.plainTimeWithGcFields = {};
+        for (var key of ['calendar', 'timeZone']) {
+          Object.defineProperty(plainTimeWithGcFields, key, {
+            get: (function (name) { return function () {
+              plainTimeWithRootOrder.push('get ' + name);
+              forcePlainTimeWithGc();
+              return undefined;
+            }; })(key)
+          });
+        }
+        for (var key of ['hour', 'microsecond', 'millisecond', 'minute', 'nanosecond', 'second']) {
+          Object.defineProperty(plainTimeWithGcFields, key, {
+            get: (function (name) { return function () {
+              plainTimeWithRootOrder.push('get ' + name);
+              forcePlainTimeWithGc();
+              return { valueOf: function () {
+                plainTimeWithRootOrder.push('coerce ' + name);
+                forcePlainTimeWithGc();
+                return 1;
+              }};
+            }; })(key)
+          });
+        }
+        globalThis.plainTimeWithGcOptions = { get overflow() {
+          plainTimeWithRootOrder.push('get overflow');
+          forcePlainTimeWithGc();
+          return { toString: function () {
+            plainTimeWithRootOrder.push('coerce overflow');
+            forcePlainTimeWithGc();
+            return 'constrain';
+          }};
+        }};
+        globalThis.plainTimeWithFailGets = 0;
+        globalThis.plainTimeWithFailFields = { hour: 1 };
+        globalThis.plainTimeWithFailOptions = { overflow: 'constrain' };
+        "#,
+    )
+    .expect("PlainTime.with root fixtures should initialize");
+    vm.gc();
+    let baseline_pins = vm.gc_pins.len();
+
+    assert_eq!(
+        vm.run("plainTimeWithRootValue.with(plainTimeWithGcFields, plainTimeWithGcOptions).toString() + '|' + plainTimeWithRootOrder.join(',');")
+            .expect("with inputs should survive getter and coercion GC"),
+        Value::String(Arc::from(
+            "01:01:01.001001001|get calendar,get timeZone,get hour,coerce hour,get microsecond,coerce microsecond,get millisecond,coerce millisecond,get minute,coerce minute,get nanosecond,coerce nanosecond,get second,coerce second,get overflow,coerce overflow"
+        ))
+    );
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    vm.run(
+        "Object.defineProperty(plainTimeWithFailFields, 'calendar', { get: function () { plainTimeWithFailGets++; return undefined; }, configurable: true });",
+    )
+    .expect("outer-root failure getter should install");
+    // Native dispatch reserves first; fail the method's combined input-root preflight.
+    vm.gc_pin_reservation_failure_countdown = Some(1);
+    let error = vm
+        .run("plainTimeWithRootValue.with(plainTimeWithFailFields, plainTimeWithFailOptions);")
+        .expect_err("with input-root reservation should fail before getters");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert_eq!(vm.gc_pin_reservation_failure_countdown, None);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(
+        vm.run("plainTimeWithFailGets;")
+            .expect("with getter count should remain readable"),
+        Value::Number(0.0)
+    );
+    vm.run(
+        "Object.defineProperty(plainTimeWithFailFields, 'calendar', { value: undefined, configurable: true }); plainTimeWithFailGets = 0;",
+    )
+    .expect("calendar getter should reset after the outer-root failure");
+
+    for property in [
+        "hour",
+        "microsecond",
+        "millisecond",
+        "minute",
+        "nanosecond",
+        "second",
+    ] {
+        vm.run(&format!(
+            "Object.defineProperty(plainTimeWithFailFields, '{property}', {{ get: function () {{ plainTimeWithFailGets++; failPlainTimeWithRoot(); return {{ valueOf: function () {{ plainTimeWithFailGets += 100; return 1; }} }}; }}, configurable: true }});"
+        ))
+        .expect("failing with field getter should install");
+        let error = vm
+            .run("plainTimeWithRootValue.with(plainTimeWithFailFields, plainTimeWithFailOptions);")
+            .expect_err("with field coercion root reservation should fail");
+        assert_eq!(error.kind, crate::error::ErrorKind::Range, "{property}");
+        assert!(!vm.fail_next_gc_pin_reservation, "{property}");
+        assert_eq!(vm.gc_pins.len(), baseline_pins, "{property}");
+        assert_eq!(
+            vm.run("plainTimeWithFailGets;")
+                .expect("with getter count should remain readable"),
+            Value::Number(1.0),
+            "{property} coercion must not start after reservation failure"
+        );
+        vm.run(&format!(
+            "Object.defineProperty(plainTimeWithFailFields, '{property}', {{ value: 1, configurable: true }}); plainTimeWithFailGets = 0;"
+        ))
+        .expect("valid with field should replace failing getter");
+    }
+
+    vm.run(
+        "Object.defineProperty(plainTimeWithFailOptions, 'overflow', { get: function () { plainTimeWithFailGets++; failPlainTimeWithRoot(); return { toString: function () { plainTimeWithFailGets += 100; return 'constrain'; } }; }, configurable: true });",
+    )
+    .expect("failing overflow getter should install");
+    let error = vm
+        .run("plainTimeWithRootValue.with(plainTimeWithFailFields, plainTimeWithFailOptions);")
+        .expect_err("with overflow coercion root reservation should fail");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert!(!vm.fail_next_gc_pin_reservation);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+    assert_eq!(
+        vm.run("plainTimeWithFailGets;")
+            .expect("overflow getter count should remain readable"),
+        Value::Number(1.0)
+    );
+
+    vm.run(
+        "Object.defineProperty(plainTimeWithFailOptions, 'overflow', { get: function () { return { toString: function () { failPlainTimeWithRoot(); return 'constrain'; } }; }, configurable: true });",
+    )
+    .expect("result-prototype failure coercion should install");
+    let error = vm
+        .run("plainTimeWithRootValue.with(plainTimeWithFailFields, plainTimeWithFailOptions);")
+        .expect_err("with result-prototype reservation should fail");
+    assert_eq!(error.kind, crate::error::ErrorKind::Range);
+    assert!(!vm.fail_next_gc_pin_reservation);
+    assert_eq!(vm.gc_pins.len(), baseline_pins);
+
+    assert_eq!(
+        vm.run("plainTimeWithRootValue.with({ minute: 5 }).minute;")
+            .expect("PlainTime.with should retry after reservation failures"),
+        Value::Number(5.0)
     );
     assert_eq!(vm.gc_pins.len(), baseline_pins);
 }

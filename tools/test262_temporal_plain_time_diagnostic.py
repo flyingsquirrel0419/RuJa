@@ -10,6 +10,8 @@ from test262_temporal_plain_time_admission import (
     TEMPORAL_PLAIN_TIME_EQUALS_FILES,
     TEMPORAL_PLAIN_TIME_FROM_FILES,
     TEMPORAL_PLAIN_TIME_ROUND_FILES,
+    TEMPORAL_PLAIN_TIME_WITH_FILES,
+    TEMPORAL_PLAIN_TIME_WITH_BLOCKERS,
     TEMPORAL_PLAIN_TIME_TO_STRING_FILES,
     TEMPORAL_PLAIN_TIME_TO_JSON_FILES,
     TEMPORAL_PLAIN_TIME_VALUE_OF_FILES,
@@ -20,6 +22,8 @@ SURFACE = (
     TEMPORAL_PLAIN_TIME_CORE_FILES
     | TEMPORAL_PLAIN_TIME_FROM_FILES
     | TEMPORAL_PLAIN_TIME_ROUND_FILES
+    | TEMPORAL_PLAIN_TIME_WITH_FILES
+    | TEMPORAL_PLAIN_TIME_WITH_BLOCKERS
     | TEMPORAL_PLAIN_TIME_VALUE_OF_FILES
     | TEMPORAL_PLAIN_TIME_EQUALS_FILES
     | TEMPORAL_PLAIN_TIME_COMPARE_FILES
@@ -53,7 +57,10 @@ def verify_expected_results(arguments):
     frozen = requested & SURFACE
     test_root = Path(test262_runner.TEST262) / "test"
     actual = {path: test262_runner.run_test(test_root / path) for path in frozen}
-    expected = {path: "pass" for path in frozen}
+    expected = {
+        path: "fail" if path in TEMPORAL_PLAIN_TIME_WITH_BLOCKERS else "pass"
+        for path in frozen
+    }
     if actual != expected:
         raise RuntimeError(f"Temporal.PlainTime forced results drifted: {actual}")
 

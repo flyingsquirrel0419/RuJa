@@ -1,0 +1,22 @@
+# Exact Temporal.PlainTime prototype with admissions.
+built-ins/Temporal/PlainTime/prototype/with/argument-not-object.js
+built-ins/Temporal/PlainTime/prototype/with/basic.js
+built-ins/Temporal/PlainTime/prototype/with/branding.js
+built-ins/Temporal/PlainTime/prototype/with/builtin.js
+built-ins/Temporal/PlainTime/prototype/with/copy-properties-not-undefined.js
+built-ins/Temporal/PlainTime/prototype/with/infinity-throws-rangeerror.js
+built-ins/Temporal/PlainTime/prototype/with/length.js
+built-ins/Temporal/PlainTime/prototype/with/name.js
+built-ins/Temporal/PlainTime/prototype/with/not-a-constructor.js
+built-ins/Temporal/PlainTime/prototype/with/options-invalid.js
+built-ins/Temporal/PlainTime/prototype/with/options-object.js
+built-ins/Temporal/PlainTime/prototype/with/options-read-before-algorithmic-validation.js
+built-ins/Temporal/PlainTime/prototype/with/options-undefined.js
+built-ins/Temporal/PlainTime/prototype/with/options-wrong-type.js
+built-ins/Temporal/PlainTime/prototype/with/order-of-operations.js
+built-ins/Temporal/PlainTime/prototype/with/overflow-invalid-string.js
+built-ins/Temporal/PlainTime/prototype/with/overflow-undefined.js
+built-ins/Temporal/PlainTime/prototype/with/overflow-wrong-type.js
+built-ins/Temporal/PlainTime/prototype/with/prop-desc.js
+built-ins/Temporal/PlainTime/prototype/with/subclassing-ignored.js
+built-ins/Temporal/PlainTime/prototype/with/throws-if-time-is-invalid-when-overflow-is-reject.js

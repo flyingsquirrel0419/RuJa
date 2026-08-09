@@ -6290,7 +6290,7 @@ pub(crate) fn install_temporal_namespace_in_env(
     global: Option<&Value>,
     object_proto: Value,
 ) -> error::Result<Value> {
-    vm.try_reserve_gc_pins(135)?;
+    vm.try_reserve_gc_pins(136)?;
     let mut pin_count = 0;
     let result = (|| {
         let instant_prototype = Value::Object(vm.alloc(HeapObj::Object(ObjectData {
@@ -7031,6 +7031,13 @@ pub(crate) fn install_temporal_namespace_in_env(
             env,
         )?);
         pin_count += vm.pin(&plain_time_round);
+        let plain_time_with = Value::Object(vm.new_native_function_in_env_with_gc_retry(
+            "with",
+            temporal_plain_time_with,
+            1,
+            env,
+        )?);
+        pin_count += vm.pin(&plain_time_with);
 
         let Value::Object(instant_constructor_index) = instant_constructor.clone() else {
             unreachable!()
@@ -7347,6 +7354,7 @@ pub(crate) fn install_temporal_namespace_in_env(
             );
             props.insert(PropertyKey::from("toJSON"), data_prop(plain_time_to_json));
             props.insert(PropertyKey::from("round"), data_prop(plain_time_round));
+            props.insert(PropertyKey::from("with"), data_prop(plain_time_with));
             props.insert(PropertyKey::from("valueOf"), data_prop(plain_time_value_of));
             let mut tag = data_prop(Value::String(Arc::from("Temporal.PlainTime")));
             tag.writable = false;
@@ -9663,12 +9671,53 @@ impl TemporalPlainTimeRecord {
 }
 
 struct TemporalPlainTimePropertyFields {
-    hour: BigInt,
-    minute: BigInt,
-    second: BigInt,
-    millisecond: BigInt,
-    microsecond: BigInt,
-    nanosecond: BigInt,
+    hour: Option<BigInt>,
+    minute: Option<BigInt>,
+    second: Option<BigInt>,
+    millisecond: Option<BigInt>,
+    microsecond: Option<BigInt>,
+    nanosecond: Option<BigInt>,
+}
+
+fn temporal_plain_time_property_fields_rooted(
+    vm: &mut Vm,
+    item: &Value,
+) -> error::Result<TemporalPlainTimePropertyFields> {
+    let numeric = |vm: &mut Vm, name: &str| -> error::Result<Option<BigInt>> {
+        match vm.get_property(item, name)? {
+            Value::Undefined => Ok(None),
+            value => temporal_integer_with_truncation(vm, value).map(Some),
+        }
+    };
+    let hour = numeric(vm, "hour")?;
+    let microsecond = numeric(vm, "microsecond")?;
+    let millisecond = numeric(vm, "millisecond")?;
+    let minute = numeric(vm, "minute")?;
+    let nanosecond = numeric(vm, "nanosecond")?;
+    let second = numeric(vm, "second")?;
+    if [
+        &hour,
+        &microsecond,
+        &millisecond,
+        &minute,
+        &nanosecond,
+        &second,
+    ]
+    .into_iter()
+    .all(Option::is_none)
+    {
+        return Err(Error::type_err(
+            "Temporal.PlainTime property bag requires a time field",
+        ));
+    }
+    Ok(TemporalPlainTimePropertyFields {
+        hour,
+        minute,
+        second,
+        millisecond,
+        microsecond,
+        nanosecond,
+    })
 }
 
 fn temporal_plain_time_property_fields(
@@ -9677,43 +9726,7 @@ fn temporal_plain_time_property_fields(
 ) -> error::Result<TemporalPlainTimePropertyFields> {
     vm.try_reserve_value_roots(std::slice::from_ref(item))?;
     let item_pins = vm.pin(item);
-    let result = (|| {
-        let numeric = |vm: &mut Vm, name: &str| -> error::Result<Option<BigInt>> {
-            match vm.get_property(item, name)? {
-                Value::Undefined => Ok(None),
-                value => temporal_integer_with_truncation(vm, value).map(Some),
-            }
-        };
-        let hour = numeric(vm, "hour")?;
-        let microsecond = numeric(vm, "microsecond")?;
-        let millisecond = numeric(vm, "millisecond")?;
-        let minute = numeric(vm, "minute")?;
-        let nanosecond = numeric(vm, "nanosecond")?;
-        let second = numeric(vm, "second")?;
-        if [
-            &hour,
-            &microsecond,
-            &millisecond,
-            &minute,
-            &nanosecond,
-            &second,
-        ]
-        .into_iter()
-        .all(Option::is_none)
-        {
-            return Err(Error::type_err(
-                "Temporal.PlainTime property bag requires a time field",
-            ));
-        }
-        Ok(TemporalPlainTimePropertyFields {
-            hour: hour.unwrap_or_else(BigInt::zero),
-            minute: minute.unwrap_or_else(BigInt::zero),
-            second: second.unwrap_or_else(BigInt::zero),
-            millisecond: millisecond.unwrap_or_else(BigInt::zero),
-            microsecond: microsecond.unwrap_or_else(BigInt::zero),
-            nanosecond: nanosecond.unwrap_or_else(BigInt::zero),
-        })
-    })();
+    let result = temporal_plain_time_property_fields_rooted(vm, item);
     vm.unpin_many(item_pins);
     result
 }
@@ -9764,12 +9777,12 @@ fn to_temporal_plain_time_fields_with_options(
         let overflow = temporal_from_overflow(vm, options)?;
         return temporal_plain_time_fields(
             [
-                fields.hour,
-                fields.minute,
-                fields.second,
-                fields.millisecond,
-                fields.microsecond,
-                fields.nanosecond,
+                fields.hour.unwrap_or_else(BigInt::zero),
+                fields.minute.unwrap_or_else(BigInt::zero),
+                fields.second.unwrap_or_else(BigInt::zero),
+                fields.millisecond.unwrap_or_else(BigInt::zero),
+                fields.microsecond.unwrap_or_else(BigInt::zero),
+                fields.nanosecond.unwrap_or_else(BigInt::zero),
             ],
             overflow,
         );
@@ -10037,6 +10050,85 @@ fn temporal_plain_time_round_unit(value: &str) -> error::Result<temporal::TimeUn
         "nanosecond" | "nanoseconds" => temporal::TimeUnit::Nanosecond,
         _ => return Err(Error::range("Invalid Temporal smallestUnit option")),
     })
+}
+
+fn temporal_plain_time_with(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let receiver = temporal_plain_time_slots(vm, this)?;
+    let item = args.first().cloned().unwrap_or(Value::Undefined);
+    let options = args.get(1).cloned().unwrap_or(Value::Undefined);
+    if !matches!(item, Value::Object(_)) {
+        return Err(Error::type_err(
+            "Temporal.PlainTime.prototype.with requires an object",
+        ));
+    }
+
+    vm.try_reserve_value_roots(&[item.clone(), options.clone()])?;
+    let pins = vm.pin_many(&[item.clone(), options.clone()]);
+    let result = (|| {
+        let is_temporal_date_or_time = if let Value::Object(index) = &item {
+            vm.heap.with_obj(index.0, |object| {
+                matches!(
+                    object,
+                    HeapObj::Temporal(TemporalData {
+                        kind: TemporalKind::PlainDate { .. }
+                            | TemporalKind::PlainTime { .. }
+                            | TemporalKind::PlainDateTime { .. }
+                            | TemporalKind::ZonedDateTime { .. },
+                        ..
+                    })
+                )
+            })
+        } else {
+            false
+        };
+        if is_temporal_date_or_time {
+            return Err(Error::type_err(
+                "Temporal.PlainTime.prototype.with requires a partial Temporal object",
+            ));
+        }
+        if !vm.get_property(&item, "calendar")?.is_undefined() {
+            return Err(Error::type_err(
+                "Temporal.PlainTime.prototype.with rejects calendar",
+            ));
+        }
+        if !vm.get_property(&item, "timeZone")?.is_undefined() {
+            return Err(Error::type_err(
+                "Temporal.PlainTime.prototype.with rejects timeZone",
+            ));
+        }
+
+        let partial = temporal_plain_time_property_fields_rooted(vm, &item)?;
+        let overflow = temporal_from_overflow(vm, Some(&options))?;
+        temporal_plain_time_fields(
+            [
+                partial.hour.unwrap_or_else(|| BigInt::from(receiver.hour)),
+                partial
+                    .minute
+                    .unwrap_or_else(|| BigInt::from(receiver.minute)),
+                partial
+                    .second
+                    .unwrap_or_else(|| BigInt::from(receiver.second)),
+                partial
+                    .millisecond
+                    .unwrap_or_else(|| BigInt::from(receiver.millisecond)),
+                partial
+                    .microsecond
+                    .unwrap_or_else(|| BigInt::from(receiver.microsecond)),
+                partial
+                    .nanosecond
+                    .unwrap_or_else(|| BigInt::from(receiver.nanosecond)),
+            ],
+            overflow,
+        )
+    })();
+    vm.unpin_many(pins);
+    let fields = result?;
+    let realm = vm.native_callee_closure().unwrap_or(vm.global);
+    create_temporal_plain_time_in_realm(vm, fields, realm)
 }
 
 fn temporal_plain_time_format(

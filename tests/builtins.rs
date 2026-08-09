@@ -25766,6 +25766,119 @@ fn temporal_plain_time_round_uses_method_realm_and_intrinsic_prototype() {
 }
 
 #[test]
+fn temporal_plain_time_with_merges_partial_fields_and_regulates_overflow() {
+    assert_eq!(
+        run(r#"
+            var time = new Temporal.PlainTime(15, 23, 30, 123, 456, 789);
+            var merged = time.with({ minute: 8.9, nanosecond: 3 });
+            var retained = time.with({ hour: 8, second: undefined });
+            var constrained = time.with({ hour: 30, minute: -2 });
+            var rejected = false;
+            try { time.with({ second: 60 }, { overflow: 'reject' }); }
+            catch (error) { rejected = error instanceof RangeError; }
+            var empty = false;
+            try { time.with({ hours: 8 }); }
+            catch (error) { empty = error instanceof TypeError; }
+            var branded = false;
+            try { time.with(new Temporal.PlainTime(1)); }
+            catch (error) { branded = error instanceof TypeError; }
+            var instant = new Temporal.Instant(0n);
+            instant.hour = 4;
+            var duration = new Temporal.Duration();
+            duration.minute = 5;
+            [
+              merged.toString(), retained.toString(), constrained.toString(),
+              rejected, empty, branded,
+              time.with(instant).toString(), time.with(duration).toString()
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "15:08:30.123456003|08:23:30.123456789|23:00:30.123456789|true|true|true|04:23:30.123456789|15:05:30.123456789"
+        ))
+    );
+}
+
+#[test]
+fn temporal_plain_time_with_observes_spec_order_and_brand_first() {
+    assert_eq!(
+        run(r#"
+            var time = new Temporal.PlainTime(12, 34, 56, 987, 654, 321);
+            var order = [];
+            var fields = {};
+            for (var key of ['calendar', 'timeZone']) {
+              Object.defineProperty(fields, key, {
+                get: (function (name) { return function () {
+                  order.push('get ' + name); return undefined;
+                }; })(key)
+              });
+            }
+            for (var key of ['hour', 'microsecond', 'millisecond', 'minute', 'nanosecond', 'second']) {
+              Object.defineProperty(fields, key, {
+                get: (function (name) { return function () {
+                  order.push('get ' + name);
+                  return { valueOf: function () { order.push('coerce ' + name); return 1.7; } };
+                }; })(key)
+              });
+            }
+            var options = {};
+            Object.defineProperty(options, 'overflow', { get: function () {
+              order.push('get overflow');
+              return { toString: function () { order.push('coerce overflow'); return 'constrain'; } };
+            }});
+            var result = time.with(fields, options);
+            var brandObserved = false;
+            try {
+              Temporal.PlainTime.prototype.with.call({}, {
+                get calendar() { brandObserved = true; return undefined; }, hour: 1
+              });
+            } catch (error) {}
+            var calendarOrder = [];
+            try { time.with({
+              get calendar() { calendarOrder.push('calendar'); return 'iso8601'; },
+              get timeZone() { calendarOrder.push('timeZone'); return undefined; },
+              get hour() { calendarOrder.push('hour'); return 1; }
+            }); } catch (error) {}
+            [result.toString(), order.join(','), brandObserved, calendarOrder.join(',')].join('|');
+        "#),
+        Value::String(Arc::from(
+            "01:01:01.001001001|get calendar,get timeZone,get hour,coerce hour,get microsecond,coerce microsecond,get millisecond,coerce millisecond,get minute,coerce minute,get nanosecond,coerce nanosecond,get second,coerce second,get overflow,coerce overflow|false|calendar"
+        ))
+    );
+}
+
+#[test]
+fn temporal_plain_time_with_uses_method_realm_and_intrinsic_prototype() {
+    assert_eq!(
+        run(r#"
+            class Derived extends Temporal.PlainTime {}
+            var derived = new Derived(12, 31).with({ minute: 5 });
+            var other = $262.createRealm().global;
+            var foreign = new other.Temporal.PlainTime(12, 31);
+            var mainResult = Temporal.PlainTime.prototype.with.call(foreign, { minute: 5 });
+            var foreignWith = other.Temporal.PlainTime.prototype.with;
+            var foreignResult = foreignWith.call(new Temporal.PlainTime(12, 31), { minute: 5 });
+            var foreignType = false;
+            try { foreignWith.call({}, { minute: 5 }); } catch (error) {
+              foreignType = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            var nonconstructable = false;
+            try { new Temporal.PlainTime.prototype.with({ minute: 5 }); }
+            catch (error) { nonconstructable = error instanceof TypeError; }
+            [
+              Temporal.PlainTime.prototype.with.name,
+              Temporal.PlainTime.prototype.with.length,
+              Object.getPrototypeOf(derived) === Temporal.PlainTime.prototype,
+              !(derived instanceof Derived),
+              Object.getPrototypeOf(mainResult) === Temporal.PlainTime.prototype,
+              Object.getPrototypeOf(foreignResult) === other.Temporal.PlainTime.prototype,
+              foreignType, nonconstructable
+            ].join('|');
+        "#),
+        Value::String(Arc::from("with|1|true|true|true|true|true|true"))
+    );
+}
+
+#[test]
 fn temporal_plain_date_from_converts_supported_inputs_without_observing_slots() {
     assert_eq!(
         run(r#"

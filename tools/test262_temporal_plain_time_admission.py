@@ -35,6 +35,12 @@ TEMPORAL_PLAIN_TIME_TO_JSON_FILES = _read_manifest(
 TEMPORAL_PLAIN_TIME_ROUND_FILES = _read_manifest(
     "test262_temporal_plain_time_round_admission.txt"
 )
+TEMPORAL_PLAIN_TIME_WITH_FILES = _read_manifest(
+    "test262_temporal_plain_time_with_admission.txt"
+)
+TEMPORAL_PLAIN_TIME_WITH_BLOCKERS = _read_manifest(
+    "test262_temporal_plain_time_with_blockers.txt"
+)
 
 _CORE_TEMPORAL_HELPERS = frozenset({
     "argument-convert.js",
@@ -142,6 +148,24 @@ _ROUND_TEMPORAL_HELPERS = frozenset({
     "smallestunit-wrong-type.js",
     "subclassing-ignored.js",
 })
+_WITH_COMPARE_ARRAY = frozenset({
+    "infinity-throws-rangeerror.js",
+    "options-read-before-algorithmic-validation.js",
+    "order-of-operations.js",
+    "overflow-wrong-type.js",
+})
+_WITH_TEMPORAL_HELPERS = frozenset({
+    "basic.js",
+    "copy-properties-not-undefined.js",
+    "infinity-throws-rangeerror.js",
+    "options-object.js",
+    "options-read-before-algorithmic-validation.js",
+    "options-undefined.js",
+    "order-of-operations.js",
+    "overflow-undefined.js",
+    "overflow-wrong-type.js",
+    "subclassing-ignored.js",
+})
 
 
 def _features(path, cohort):
@@ -199,6 +223,13 @@ def _features(path, cohort):
             "smallestunit-string-shorthand.js",
         }:
             features.add("arrow-function")
+        if name == "not-a-constructor.js":
+            features.add("Reflect.construct")
+    elif cohort == "with":
+        if name == "branding.js":
+            features.add("Symbol")
+        elif name == "options-wrong-type.js":
+            features.update(("BigInt", "Symbol"))
         if name == "not-a-constructor.js":
             features.add("Reflect.construct")
     return frozenset(features)
@@ -272,6 +303,15 @@ def _includes(path, cohort):
             includes.add("propertyHelper.js")
         if name == "not-a-constructor.js":
             includes.add("isConstructor.js")
+    elif cohort == "with":
+        if name in _WITH_COMPARE_ARRAY:
+            includes.add("compareArray.js")
+        if name in _WITH_TEMPORAL_HELPERS:
+            includes.add("temporalHelpers.js")
+        if name in {"length.js", "name.js", "prop-desc.js"}:
+            includes.add("propertyHelper.js")
+        if name == "not-a-constructor.js":
+            includes.add("isConstructor.js")
     return frozenset(includes)
 
 
@@ -332,6 +372,12 @@ def _metadata(files, cohort):
     TEMPORAL_PLAIN_TIME_ROUND_FLAGS,
     TEMPORAL_PLAIN_TIME_ROUND_NEGATIVE,
 ) = _metadata(TEMPORAL_PLAIN_TIME_ROUND_FILES, "round")
+(
+    TEMPORAL_PLAIN_TIME_WITH_FEATURES,
+    TEMPORAL_PLAIN_TIME_WITH_INCLUDES,
+    TEMPORAL_PLAIN_TIME_WITH_FLAGS,
+    TEMPORAL_PLAIN_TIME_WITH_NEGATIVE,
+) = _metadata(TEMPORAL_PLAIN_TIME_WITH_FILES, "with")
 
 for files, count, label in (
     (TEMPORAL_PLAIN_TIME_CORE_FILES, 40, "core"),
@@ -342,6 +388,7 @@ for files, count, label in (
     (TEMPORAL_PLAIN_TIME_TO_STRING_FILES, 40, "toString"),
     (TEMPORAL_PLAIN_TIME_TO_JSON_FILES, 7, "toJSON"),
     (TEMPORAL_PLAIN_TIME_ROUND_FILES, 42, "round"),
+    (TEMPORAL_PLAIN_TIME_WITH_FILES, 21, "with"),
 ):
     if len(files) != count:
         raise RuntimeError(f"Temporal.PlainTime {label} admission must contain {count} files")

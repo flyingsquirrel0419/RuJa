@@ -133,6 +133,8 @@ try:
         TEMPORAL_PLAIN_TIME_FROM_FILES,
         TEMPORAL_PLAIN_TIME_ROUND_FEATURES,
         TEMPORAL_PLAIN_TIME_ROUND_FILES,
+        TEMPORAL_PLAIN_TIME_WITH_FEATURES,
+        TEMPORAL_PLAIN_TIME_WITH_FILES,
         TEMPORAL_PLAIN_TIME_TO_STRING_FEATURES,
         TEMPORAL_PLAIN_TIME_TO_STRING_FILES,
         TEMPORAL_PLAIN_TIME_TO_JSON_FEATURES,
@@ -538,6 +540,8 @@ except ModuleNotFoundError:
         TEMPORAL_PLAIN_TIME_FROM_FILES,
         TEMPORAL_PLAIN_TIME_ROUND_FEATURES,
         TEMPORAL_PLAIN_TIME_ROUND_FILES,
+        TEMPORAL_PLAIN_TIME_WITH_FEATURES,
+        TEMPORAL_PLAIN_TIME_WITH_FILES,
         TEMPORAL_PLAIN_TIME_TO_STRING_FEATURES,
         TEMPORAL_PLAIN_TIME_TO_STRING_FILES,
         TEMPORAL_PLAIN_TIME_TO_JSON_FEATURES,
@@ -2885,6 +2889,14 @@ def temporal_plain_time_round_features(path):
         TEMPORAL_PLAIN_TIME_ROUND_FEATURES,
     )
 
+def temporal_plain_time_with_path(path):
+    return _temporal_plain_time_path(path, TEMPORAL_PLAIN_TIME_WITH_FILES)
+
+def temporal_plain_time_with_features(path):
+    return _temporal_plain_time_features(
+        path, TEMPORAL_PLAIN_TIME_WITH_FILES, TEMPORAL_PLAIN_TIME_WITH_FEATURES
+    )
+
 def temporal_plain_date_core_path(path):
     if path is None:
         return False
@@ -5007,6 +5019,8 @@ def should_skip(meta, path=None):
         feats.difference_update(temporal_plain_time_to_json_features(path))
     if path is not None and temporal_plain_time_round_path(path):
         feats.difference_update(temporal_plain_time_round_features(path))
+    if path is not None and temporal_plain_time_with_path(path):
+        feats.difference_update(temporal_plain_time_with_features(path))
     if path is not None and temporal_plain_date_core_path(path):
         feats.difference_update(temporal_plain_date_core_features(path))
     if path is not None and temporal_plain_date_from_path(path):

@@ -170,6 +170,12 @@ from test262_temporal_plain_time_admission import (
     TEMPORAL_PLAIN_TIME_ROUND_FLAGS,
     TEMPORAL_PLAIN_TIME_ROUND_INCLUDES,
     TEMPORAL_PLAIN_TIME_ROUND_NEGATIVE,
+    TEMPORAL_PLAIN_TIME_WITH_BLOCKERS,
+    TEMPORAL_PLAIN_TIME_WITH_FEATURES,
+    TEMPORAL_PLAIN_TIME_WITH_FILES,
+    TEMPORAL_PLAIN_TIME_WITH_FLAGS,
+    TEMPORAL_PLAIN_TIME_WITH_INCLUDES,
+    TEMPORAL_PLAIN_TIME_WITH_NEGATIVE,
     TEMPORAL_PLAIN_TIME_TO_STRING_FEATURES,
     TEMPORAL_PLAIN_TIME_TO_STRING_FILES,
     TEMPORAL_PLAIN_TIME_TO_STRING_FLAGS,
@@ -14338,10 +14344,18 @@ class ClassSubclassBuiltinAdmissionTests(unittest.TestCase):
                 TEMPORAL_PLAIN_TIME_ROUND_NEGATIVE,
                 "temporal_plain_time_round",
             ),
+            (
+                TEMPORAL_PLAIN_TIME_WITH_FILES,
+                TEMPORAL_PLAIN_TIME_WITH_FEATURES,
+                TEMPORAL_PLAIN_TIME_WITH_INCLUDES,
+                TEMPORAL_PLAIN_TIME_WITH_FLAGS,
+                TEMPORAL_PLAIN_TIME_WITH_NEGATIVE,
+                "temporal_plain_time_with",
+            ),
         )
         self.assertEqual(
             tuple(len(cohort[0]) for cohort in cohorts),
-            (40, 51, 7, 31, 32, 40, 7, 42),
+            (40, 51, 7, 31, 32, 40, 7, 42, 21),
         )
         for index, cohort in enumerate(cohorts):
             files, features, includes, flags, negative, _ = cohort
@@ -14415,6 +14429,12 @@ class ClassSubclassBuiltinAdmissionTests(unittest.TestCase):
                         path.relative_to(test_root).as_posix()
                         for path in (plain_time / "prototype/round").glob("*.js")
                     },
+                    {
+                        path.relative_to(test_root).as_posix()
+                        for path in (plain_time / "prototype/with").glob("*.js")
+                        if path.relative_to(test_root).as_posix()
+                        not in TEMPORAL_PLAIN_TIME_WITH_BLOCKERS
+                    },
                 )
             except OSError:
                 return None
@@ -14422,6 +14442,28 @@ class ClassSubclassBuiltinAdmissionTests(unittest.TestCase):
         live = live_cohorts()
         if live is not None:
             self.assertEqual(tuple(set(cohort[0]) for cohort in cohorts), live)
+            all_live_with = {
+                path.relative_to(test_root).as_posix()
+                for path in (plain_time / "prototype/with").glob("*.js")
+            }
+            self.assertEqual(
+                all_live_with,
+                TEMPORAL_PLAIN_TIME_WITH_FILES | TEMPORAL_PLAIN_TIME_WITH_BLOCKERS,
+            )
+            self.assertEqual(len(TEMPORAL_PLAIN_TIME_WITH_BLOCKERS), 1)
+            for relative in TEMPORAL_PLAIN_TIME_WITH_BLOCKERS:
+                path = test_root / relative
+                metadata = test262_runner.parse_meta(path.read_text())
+                self.assertEqual(frozenset(metadata.get("features", [])), {"Temporal"})
+                self.assertEqual(frozenset(metadata.get("includes", [])), frozenset())
+                self.assertEqual(frozenset(metadata.get("flags", [])), frozenset())
+                self.assertIsNone(metadata.get("negative"))
+                for tool in (test262_runner, test262_analyze):
+                    self.assertFalse(tool.temporal_plain_time_with_path(path))
+                    self.assertEqual(
+                        tool.temporal_plain_time_with_features(path), frozenset()
+                    )
+                    self.assertTrue(tool.should_skip(metadata, path))
 
             def read_live_metadata(path):
                 try:
@@ -14475,6 +14517,9 @@ class ClassSubclassBuiltinAdmissionTests(unittest.TestCase):
             round_future = (
                 root / "test/built-ins/Temporal/PlainTime/prototype/round/future.js"
             )
+            with_future = (
+                root / "test/built-ins/Temporal/PlainTime/prototype/with/future.js"
+            )
             outside = root / "test/built-ins/Temporal/Other/from/basic.js"
             for tool in (test262_runner, test262_analyze):
                 original_root = tool.TEST262
@@ -14494,6 +14539,7 @@ class ClassSubclassBuiltinAdmissionTests(unittest.TestCase):
                             to_string_future,
                             to_json_future,
                             round_future,
+                            with_future,
                             outside,
                             None,
                             object(),
@@ -14514,6 +14560,9 @@ class ClassSubclassBuiltinAdmissionTests(unittest.TestCase):
                     )
                     self.assertTrue(
                         tool.should_skip({"features": ["Temporal"]}, round_future)
+                    )
+                    self.assertTrue(
+                        tool.should_skip({"features": ["Temporal"]}, with_future)
                     )
                     self.assertTrue(tool.should_skip({"features": ["Temporal"]}, outside))
                 finally:
