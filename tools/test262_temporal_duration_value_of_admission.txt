@@ -1,0 +1,8 @@
+# Exact Temporal.Duration.prototype.valueOf admission at Test262 9e61c12835c5e4a3bdba93850427e6742c4f64c4.
+built-ins/Temporal/Duration/prototype/valueOf/basic.js
+built-ins/Temporal/Duration/prototype/valueOf/branding.js
+built-ins/Temporal/Duration/prototype/valueOf/builtin.js
+built-ins/Temporal/Duration/prototype/valueOf/length.js
+built-ins/Temporal/Duration/prototype/valueOf/name.js
+built-ins/Temporal/Duration/prototype/valueOf/not-a-constructor.js
+built-ins/Temporal/Duration/prototype/valueOf/prop-desc.js

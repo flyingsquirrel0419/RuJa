@@ -14402,13 +14402,13 @@ reproduces exact `startOfDay` **9/0/0**.
 
 ## Temporal.Duration hidden-slot core
 
-`tools/test262_temporal_duration_core_admission.txt` freezes **76** exact
+`tools/test262_temporal_duration_core_admission.txt` freezes **77** exact
 paths covering the constructor root, prototype metadata, and all ten field,
-`sign`, and independently runnable `blank` accessor tests. The dedicated CI job requires **76 pass / 0
+`sign`, and independently runnable `blank` accessor tests. The dedicated CI job requires **77 pass / 0
 fail / 0 skip**. The paired blocker manifest completes a frozen 78-file core
-surface: `max.js` reaches the unimplemented `Duration.prototype.total`, and
-`prototype/blank/basic.js` reaches the unimplemented `Duration.from`.
-Forced diagnostics therefore require **76 pass / 2 fail / 0 skip**.
+surface: `max.js` reaches the unimplemented `Duration.prototype.total`.
+`prototype/blank/basic.js` entered admission when `Duration.from` was added.
+Forced diagnostics therefore require **77 pass / 1 fail / 0 skip**.
 
 The same unit unlocks nine previously frozen ZonedDateTime wrong-type paths,
 including the constructor core's `calendar-wrong-type.js`.
@@ -14420,17 +14420,18 @@ pinned revision before admission; future Duration siblings remain gated.
 ```text
 [Decision Log]
 - 목적과 의도: Duration constructor/hidden accessor core의 실제 지원 범위와 그 도입으로 해제된 기존 Temporal 의존 경계를 exact accounting에 반영한다.
-- 기존 구현 및 제약 조건: broad Temporal gate는 Duration 540개 전체를 skip하며, core 후보 중 두 파일은 constructor/accessor 검증 전에 아직 없는 `from` 또는 `total`을 호출한다. 기존 ZonedDateTime blocker 9개는 wrong-type fixture로 Duration을 생성한다.
-- 검토한 주요 대안: Duration prefix 전체 admission, constructor root만 허용, 두 의존 API를 stub 처리, 실제 통과한 76개와 2개 complement를 분리하고 기존 blocker를 재실측하는 방식을 검토했다.
-- 선택한 방식: constructor 직접 자식, prototype metadata, 열두 accessor directory의 78개를 core surface로 동결하고 76개 admission/2개 blocker로 나눈다. runner/analyzer feature map, live disjointness, exact/forced CI를 공유하며 기존 manifest에서 통과한 9개를 이동한다.
+- 기존 구현 및 제약 조건: broad Temporal gate는 Duration 540개 전체를 skip하며, core 후보 중 `max.js`는 constructor/accessor 검증 뒤 아직 없는 `total`을 호출한다. `prototype/blank/basic.js`의 이전 `from` 의존은 Duration.from 구현으로 해제됐다. 기존 ZonedDateTime blocker 9개는 wrong-type fixture로 Duration을 생성한다.
+- 검토한 주요 대안: Duration prefix 전체 admission, constructor root만 허용, 의존 API를 stub 처리, 실제 통과한 77개와 one-file complement를 분리하고 기존 blocker를 재실측하는 방식을 검토했다.
+- 선택한 방식: constructor 직접 자식, prototype metadata, 열두 accessor directory의 78개를 core surface로 동결하고 77개 admission/1개 blocker로 나눈다. runner/analyzer feature map, live disjointness, exact/forced CI를 공유하며 기존 manifest에서 통과한 경로를 이동한다.
 - 다른 대안 대신 이 방식을 선택한 이유: prefix는 수백 개 미구현 arithmetic/string API를 거짓 지원하고 stub은 real Duration brand를 증명하지 않는다. 명시적 complement와 재실측만이 구현 효과와 남은 의존성을 동시에 보여 준다.
-- 장점, 단점 및 영향: exact 76/0/0과 forced 76/2 및 ZonedDateTime 개선 경계가 재현된다. `Duration.from`/`total` 구현 시 두 blocker를 다시 측정해야 하며 새 sibling은 자동 입장하지 않는다.
+- 장점, 단점 및 영향: exact 77/0/0과 forced 77/1 및 ZonedDateTime 개선 경계가 재현된다. `Duration.total` 구현 시 남은 blocker를 다시 측정해야 하며 새 sibling은 자동 입장하지 않는다.
 ```
 
-Implementation commit `dc926dd` is confirmed by ordinary CI `31100834541`
-(**3/3**) and full Test262 CI `31100834476` (**63/63**). The dedicated jobs
-reproduce Duration exact **76/0/0** and forced **76/2/0-skip** together with
-the updated ZonedDateTime admission boundaries.
+Initial implementation commit `dc926dd` was confirmed by ordinary CI
+`31100834541` (**3/3**) and full Test262 CI `31100834476` (**63/63**). After
+`Duration.from` admitted `prototype/blank/basic.js`, full CI `31338280840`
+reproduced the current Duration core exact **77/0/0** and forced
+**77/1/0-skip** boundaries.
 
 ## Temporal.PlainDateTime hidden-slot core
 
@@ -14893,4 +14894,32 @@ combined `17/0/0` rate from sparse pinned checkouts.
 - 선택한 방식: 9개 abs와 8개 negated manifest를 분리하고 공용 module, runner/analyzer helper, exact identity diagnostic, dedicated CI job으로 17개 합집합을 검증한다.
 - 다른 대안 대신 이 방식을 선택한 이유: core 편입은 hidden-slot 기반선 의미를 흐리고 prefix는 future siblings를 자동 허용한다. 단일 manifest는 method drift를 숨기며 완전 중복 tooling은 대칭 metadata의 유지보수 drift를 만든다.
 - 장점, 단점 및 영향: method별 9/0/0과 8/0/0, combined 17/0/0, live metadata/corpus drift, future gating이 재현된다. Duration direct admitted 합계는 17 증가하고 broad built-ins pass도 17 증가한다.
+```
+
+## Temporal.Duration.prototype.valueOf
+
+At pinned Test262 revision
+`9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the complete direct `valueOf`
+directory contains 7 files and is exact **7 pass / 0 fail / 0 skip**. The
+surface covers direct and relational coercion, arbitrary receivers, built-in
+shape, length/name/property descriptors, and nonconstruction. No blocker
+complement remains.
+
+`tools/test262_temporal_duration_value_of_admission.txt` owns these seven
+paths independently from Duration core and unary transforms. Its metadata
+module freezes live features, includes, flags, and negative records. Runner
+and analyzer admit only exact manifest identities; malformed, outside-root,
+inaccessible, absent configured corpus, and future sibling paths fail closed.
+Ordinary CI and a dedicated full-workflow job both require literal
+`PASS=7 FAIL=0 SKIP=0 TOTAL=7 RAN=7`, so aggregate success cannot hide an
+incomplete method directory.
+
+```text
+[Decision Log]
+- 목적과 의도: Duration.valueOf의 complete direct surface를 기존 Duration cohorts와 분리해 exact supported accounting에 반영한다.
+- 기존 구현 및 제약 조건: broad Temporal feature gate가 7개를 모두 skip했고 upstream branding 파일은 이름과 달리 valid/invalid receiver 모두 동일 TypeError만 확인한다. 실제 no-brand/no-observation과 method-Realm 동작은 runtime 테스트가 보완한다.
+- 검토한 주요 대안: Duration core 편입, directory prefix 허용, Instant valueOf manifest 재사용, Duration 전용 exact manifest를 검토했다.
+- 선택한 방식: pinned 7-path manifest와 metadata map을 runner/analyzer가 공유하고 live-corpus/disjointness/future-path unittest 및 literal 7/0/0 CI gate를 둔다.
+- 다른 대안 대신 이 방식을 선택한 이유: core 편입은 hidden-slot 기반선의 책임을 흐리고 prefix는 future siblings를 검토 없이 허용한다. Instant와 경로는 대칭이지만 method ownership과 corpus drift는 독립적으로 추적해야 한다.
+- 장점, 단점 및 영향: complete 7/0/0, metadata identity, configured-corpus availability, future gating이 재현된다. Test262가 직접 구분하지 못하는 Realm과 non-observation은 Rust runtime/resource 테스트가 고정한다.
 ```

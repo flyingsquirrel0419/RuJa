@@ -130,6 +130,10 @@ try:
         TEMPORAL_DURATION_WITH_FEATURES,
         TEMPORAL_DURATION_WITH_FILES,
     )
+    from test262_temporal_duration_value_of_admission import (
+        TEMPORAL_DURATION_VALUE_OF_FEATURES,
+        TEMPORAL_DURATION_VALUE_OF_FILES,
+    )
     from test262_temporal_duration_unary_admission import (
         TEMPORAL_DURATION_ABS_FEATURES,
         TEMPORAL_DURATION_ABS_FILES,
@@ -554,6 +558,10 @@ except ModuleNotFoundError:
     from tools.test262_temporal_duration_with_admission import (
         TEMPORAL_DURATION_WITH_FEATURES,
         TEMPORAL_DURATION_WITH_FILES,
+    )
+    from tools.test262_temporal_duration_value_of_admission import (
+        TEMPORAL_DURATION_VALUE_OF_FEATURES,
+        TEMPORAL_DURATION_VALUE_OF_FILES,
     )
     from tools.test262_temporal_duration_unary_admission import (
         TEMPORAL_DURATION_ABS_FEATURES,
@@ -2870,6 +2878,21 @@ def temporal_duration_with_features(path):
     rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
     return TEMPORAL_DURATION_WITH_FEATURES[rel.as_posix()]
 
+def temporal_duration_value_of_path(path):
+    if path is None:
+        return False
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except (OSError, TypeError, ValueError):
+        return False
+    return rel.as_posix() in TEMPORAL_DURATION_VALUE_OF_FILES
+
+def temporal_duration_value_of_features(path):
+    if not temporal_duration_value_of_path(path):
+        return frozenset()
+    rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    return TEMPORAL_DURATION_VALUE_OF_FEATURES[rel.as_posix()]
+
 def _temporal_duration_unary_path(path, files):
     if path is None:
         return False
@@ -5122,6 +5145,8 @@ def should_skip(meta, path=None):
         feats.difference_update(temporal_duration_from_features(path))
     if path is not None and temporal_duration_with_path(path):
         feats.difference_update(temporal_duration_with_features(path))
+    if path is not None and temporal_duration_value_of_path(path):
+        feats.difference_update(temporal_duration_value_of_features(path))
     if path is not None and temporal_duration_abs_path(path):
         feats.difference_update(temporal_duration_abs_features(path))
     if path is not None and temporal_duration_negated_path(path):

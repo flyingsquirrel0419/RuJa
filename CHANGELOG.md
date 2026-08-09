@@ -5,6 +5,25 @@
 ### Changed
 
 - Added Realm-local, non-constructable, length-0
+  `Temporal.Duration.prototype.valueOf`. Every call immediately throws a
+  `TypeError` from the native method Realm without branding or otherwise
+  observing the receiver, arguments, public accessors, constructors, or
+  species. Relational and numeric coercion can no longer fall through to
+  serialized Duration strings. At pinned Test262 revision
+  `9e61c12835c5e4a3bdba93850427e6742c4f64c4`, the complete direct directory is
+  exact **7/0/0**. Existing allocations 136 through 141 remain stable,
+  `valueOf` is allocation 142, and the installer reserves 143 maximum live
+  pins across 144 allocations.
+
+  [Decision Log]
+  - 목적과 의도: Duration의 암시적 primitive coercion을 명세대로 금지하고 잘못된 문자열 사전식 비교 경로를 닫는다.
+  - 기존 구현 및 제약 조건: Duration prototype은 `Object.prototype.valueOf`를 상속해 객체를 반환했으므로 비교 연산이 후속 `toString` 변환으로 진행될 수 있었다. 명세 알고리즘은 receiver brand 검사 없이 즉시 예외를 던진다.
+  - 검토한 주요 대안: branded receiver만 거부, Object.prototype 경로 유지, `toString` 구현 후 비교 허용, 기존 Temporal valueOf와 동일한 unconditional native throw를 검토했다.
+  - 선택한 방식: 각 Realm의 Duration prototype에 length-0 native `valueOf`를 설치하고 모든 receiver와 인수에서 method Realm의 `TypeError`를 첫 단계로 반환한다.
+  - 다른 대안 대신 이 방식을 선택한 이유: brand 검사는 명세에 없는 receiver 관찰과 오류 precedence를 만들고 문자열 비교는 시간 길이 의미를 표현하지 못한다. 공용 native-function 설치 경로는 nonconstruction과 Realm ownership을 이미 보장한다.
+  - 장점, 단점 및 영향: valid/invalid/cross-Realm receiver, ignored arguments, relational coercion, descriptor, exact error-only allocation과 installer rollback이 고정된다. Duration의 명시적 compare/total/formatting은 별도 API 구현이 필요하다.
+
+- Added Realm-local, non-constructable, length-0
   `Temporal.Duration.prototype.abs` and `negated` through one hidden-record
   sign-transform path. Both methods brand the receiver, ignore every
   argument, avoid public fields, constructors, and species, and return a fresh

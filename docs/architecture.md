@@ -4841,7 +4841,8 @@ factory used by other native Duration results. This preserves all existing
 range invariants, always creates a fresh object, and ignores receiver subclass
 prototypes. `Duration.from`, PlainTime add/subtract, and Duration.with remain
 allocations 136 through 139. Negated and abs are 140 and 141; the installer
-reserves 142 maximum live pins across 143 allocations.
+then installs `Duration.prototype.valueOf` at 142 and reserves 143 maximum live
+pins across 144 allocations.
 
 ```text
 [Decision Log]
@@ -4851,6 +4852,33 @@ reserves 142 maximum live pins across 143 allocations.
 - 선택한 방식: brand helper로 copied record를 얻고 operation enum으로 열 필드를 변환한다. zero branch는 항상 `0.0`을 반환하고 native callee Realm의 intrinsic factory만 호출한다.
 - 다른 대안 대신 이 방식을 선택한 이유: constructor/public 경로는 명세에 없는 user code와 prototype lookup을 관찰한다. duplicated field lists는 누락 위험이 있고 raw negate는 SameValue-visible signed zero를 만든다.
 - 장점, 단점 및 영향: no-getter/no-argument behavior, fresh result, cross-Realm errors/results, subclass ignoring, OOM/root retry, installer atomicity가 한 경로에서 검증된다. 후속 arithmetic이나 balancing 정책은 포함하지 않는다.
+```
+
+## Temporal Duration primitive-coercion boundary
+
+`Temporal.Duration.prototype.valueOf` is an unconditional native throw rather
+than a branded hidden-slot operation. The specification's first and only step
+throws `TypeError`, so the implementation must not inspect the receiver, read
+arguments or accessors, dispatch through `constructor`/`Symbol.species`, or
+allocate a result. Native errors are materialized in the function's Realm;
+calling a foreign method with either a local Duration or an arbitrary receiver
+therefore produces the foreign Realm's `TypeError`.
+
+The method is installed after the currently supported `with`, `negated`, and
+`abs` properties, preserving their established allocation ordinals. It is
+allocation 142; the complete Temporal installer reserves 143 maximum live pins
+across 144 allocations. Exact heap-cap tests allow only the required error
+object and verify no result allocation, while installer tests cover failure at
+the new function allocation and every batch boundary.
+
+```text
+[Decision Log]
+- 목적과 의도: Duration이 암시적 primitive conversion과 문자열 비교에 참여하지 못하도록 명세의 unconditional throw 경계를 Realm/resource 계약까지 고정한다.
+- 기존 구현 및 제약 조건: Object.prototype.valueOf 상속은 객체를 반환해 후속 toString coercion을 허용했다. 다른 Temporal valueOf 구현은 같은 always-throw 동작을 사용하지만 Duration installer accounting에는 새 pinned function이 필요하다.
+- 검토한 주요 대안: receiver brand 후 throw, 공용 Object.prototype 유지, shared generic callback, Duration 전용 native callback을 검토했다.
+- 선택한 방식: receiver/arguments를 받되 사용하지 않는 Duration 전용 length-0 native callback을 method Realm에 설치하고 즉시 TypeError를 반환한다.
+- 다른 대안 대신 이 방식을 선택한 이유: brand 검사는 명세에 없는 관찰과 오류 precedence를 만들며 Object.prototype 경로는 coercion 차단 목적을 달성하지 못한다. 전용 callback은 진단 메시지와 ownership을 명확히 유지한다.
+- 장점, 단점 및 영향: receiver 종류와 인수에 무관한 method-Realm 오류, nonconstruction, zero-result allocation, installer rollback이 재현된다. 명시적 Duration 비교나 문자열화 기능은 추가하지 않는다.
 ```
 
 ## Temporal PlainTime arithmetic

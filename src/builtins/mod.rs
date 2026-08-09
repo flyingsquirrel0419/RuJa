@@ -6290,7 +6290,7 @@ pub(crate) fn install_temporal_namespace_in_env(
     global: Option<&Value>,
     object_proto: Value,
 ) -> error::Result<Value> {
-    vm.try_reserve_gc_pins(142)?;
+    vm.try_reserve_gc_pins(143)?;
     let mut pin_count = 0;
     let result = (|| {
         let instant_prototype = Value::Object(vm.alloc(HeapObj::Object(ObjectData {
@@ -7080,6 +7080,13 @@ pub(crate) fn install_temporal_namespace_in_env(
             env,
         )?);
         pin_count += vm.pin(&duration_abs);
+        let duration_value_of = Value::Object(vm.new_native_function_in_env_with_gc_retry(
+            "valueOf",
+            temporal_duration_value_of,
+            0,
+            env,
+        )?);
+        pin_count += vm.pin(&duration_value_of);
 
         let Value::Object(instant_constructor_index) = instant_constructor.clone() else {
             unreachable!()
@@ -7209,6 +7216,7 @@ pub(crate) fn install_temporal_namespace_in_env(
             props.insert(PropertyKey::from("with"), data_prop(duration_with));
             props.insert(PropertyKey::from("negated"), data_prop(duration_negated));
             props.insert(PropertyKey::from("abs"), data_prop(duration_abs));
+            props.insert(PropertyKey::from("valueOf"), data_prop(duration_value_of));
             let mut tag = data_prop(Value::String(Arc::from("Temporal.Duration")));
             tag.writable = false;
             props.insert(
@@ -8072,6 +8080,16 @@ fn temporal_duration_negated(
     this: Option<Value>,
 ) -> error::Result<Value> {
     temporal_duration_sign_transform(vm, this, TemporalDurationSignTransform::Negate)
+}
+
+fn temporal_duration_value_of(
+    _vm: &mut Vm,
+    _args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
+    Err(Error::type_err(
+        "Temporal.Duration.prototype.valueOf always throws",
+    ))
 }
 
 fn temporal_duration_time_nanoseconds(fields: TemporalDurationFields) -> error::Result<i128> {

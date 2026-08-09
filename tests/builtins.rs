@@ -25344,6 +25344,70 @@ fn temporal_duration_abs_and_negated_brand_and_use_method_realm() {
 }
 
 #[test]
+fn temporal_duration_value_of_always_throws_in_the_method_realm() {
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var method = other.Temporal.Duration.prototype.valueOf;
+            var duration = new Temporal.Duration(1);
+            var observed = false;
+            var argument = {};
+            Object.defineProperty(argument, 'years', {
+              get: function () { observed = true; throw new Error('observed'); }
+            });
+            var receiver = new Proxy({}, {
+              get: function () { observed = true; throw new Error('observed'); }
+            });
+            var ownError;
+            var foreignReceiverError;
+            var arbitraryReceiverError;
+            try { method.call(new other.Temporal.Duration(2), argument); }
+            catch (error) {
+              ownError = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            try { method.call(duration, argument); } catch (error) {
+              foreignReceiverError =
+                error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            try { method.call(receiver, argument); } catch (error) {
+              arbitraryReceiverError =
+                error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            var nonconstructable = false;
+            try { new Temporal.Duration.prototype.valueOf(); }
+            catch (error) { nonconstructable = error instanceof TypeError; }
+            var descriptor = Object.getOwnPropertyDescriptor(
+              other.Temporal.Duration.prototype,
+              'valueOf'
+            );
+            [
+              method.length,
+              method.name,
+              descriptor.writable,
+              descriptor.enumerable,
+              descriptor.configurable,
+              ownError,
+              foreignReceiverError,
+              arbitraryReceiverError,
+              nonconstructable,
+              observed
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "0|valueOf|true|false|true|true|true|true|true|false"
+        ))
+    );
+    for source in [
+        "new Temporal.Duration(1).valueOf()",
+        "Temporal.Duration.prototype.valueOf.call({})",
+        "new Temporal.Duration.prototype.valueOf()",
+        "new Temporal.Duration(1) < new Temporal.Duration(2)",
+    ] {
+        assert!(run_err(source).contains("TypeError"), "{source}");
+    }
+}
+
+#[test]
 fn temporal_duration_rejects_non_integral_mixed_and_out_of_range_fields() {
     for source in [
         "Temporal.Duration()",

@@ -40,7 +40,9 @@
   hidden-slot construction, subclassing, ten numeric field accessors, `sign`,
   `blank`, and static `from` conversion for hidden-slot values, duration
   property bags, and ISO Duration strings, with exact mixed-sign and
-  normalized-range validation.
+  normalized-range validation. Prototype `with` performs ordered partial
+  updates, `abs`/`negated` transform hidden signs, and `valueOf` always throws
+  to reject implicit primitive coercion.
   Realm-local `Temporal.PlainDateTime` supports hidden-slot construction,
   subclassing, calendar ID, all ISO date/time and derived calendar accessors,
   always-throwing `valueOf`, static `from` conversion for branded values, ISO
@@ -366,7 +368,9 @@
   undefined fields from the receiver, validates after merging, and returns a
   fresh intrinsic Duration in the method Realm. `abs` and `negated` transform
   copied hidden slots without observing public state, normalize signed zero,
-  and create fresh method-Realm results
+  and create fresh method-Realm results. `valueOf` immediately throws a
+  method-Realm `TypeError` for every receiver and ignores all arguments,
+  preventing implicit primitive comparison
 - **RegExp**: literals `/pattern/flags` with `test`, `exec`, `match`, `source`,
   `flags`, `d`-flag match indices, forward lookahead, backward lookbehind,
   legacy quantified lookahead, Unicode named captures/backreferences,
